@@ -3,6 +3,7 @@
 #include "../dsp/constants.hpp"
 #include "buffer_pool.hpp"
 #include "state_pool.hpp"
+#include <cmath>
 #include <cstdint>
 
 namespace cedar {
@@ -49,6 +50,30 @@ struct ExecutionContext {
     void set_sample_rate(float rate) {
         sample_rate = rate;
         inv_sample_rate = 1.0f / rate;
+    }
+
+    // Timing helper methods for sequencing opcodes
+    [[nodiscard]] float samples_per_beat() const noexcept {
+        return (60.0f / bpm) * sample_rate;
+    }
+
+    [[nodiscard]] float samples_per_bar() const noexcept {
+        return samples_per_beat() * 4.0f;
+    }
+
+    [[nodiscard]] float samples_per_cycle() const noexcept {
+        return samples_per_bar();  // 1 cycle = 4 beats = 1 bar
+    }
+
+    // Get beat position for a specific sample offset within current block
+    [[nodiscard]] float beat_at_sample(std::size_t sample_offset) const noexcept {
+        return static_cast<float>(global_sample_counter + sample_offset) / samples_per_beat();
+    }
+
+    // Get phase (0-1) within beat for a sample offset
+    [[nodiscard]] float beat_phase_at_sample(std::size_t sample_offset) const noexcept {
+        float spb = samples_per_beat();
+        return std::fmod(static_cast<float>(global_sample_counter + sample_offset), spb) / spb;
     }
 };
 

@@ -202,6 +202,31 @@ void VM::execute(const Instruction& inst) {
             op_sah(ctx_, inst);
             break;
 
+        // === Sequencing & Timing ===
+        case Opcode::CLOCK:
+            op_clock(ctx_, inst);
+            break;
+
+        [[likely]] case Opcode::LFO:
+            op_lfo(ctx_, inst);
+            break;
+
+        case Opcode::SEQ_STEP:
+            op_seq_step(ctx_, inst);
+            break;
+
+        case Opcode::EUCLID:
+            op_euclid(ctx_, inst);
+            break;
+
+        case Opcode::TRIGGER:
+            op_trigger(ctx_, inst);
+            break;
+
+        case Opcode::TIMELINE:
+            op_timeline(ctx_, inst);
+            break;
+
         // === Reserved/Invalid ===
         [[unlikely]] case Opcode::ENV_ADSR:
         [[unlikely]] case Opcode::ENV_AR:

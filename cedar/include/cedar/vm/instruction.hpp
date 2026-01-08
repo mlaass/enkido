@@ -64,7 +64,14 @@ enum class Opcode : std::uint8_t {
     DELAY = 70,
 
     // Effects (80-89) - reserved
-    // Sequencers (90-99) - reserved
+
+    // Sequencers & Timing (90-99)
+    CLOCK = 90,       // Beat/bar phase output (rate field: 0=beat, 1=bar, 2=cycle)
+    LFO = 91,         // Beat-synced LFO (reserved field: shape 0-6)
+    SEQ_STEP = 92,    // Step sequencer
+    EUCLID = 93,      // Euclidean rhythm trigger generator
+    TRIGGER = 94,     // Beat-division impulse generator
+    TIMELINE = 95,    // Breakpoint automation
 
     INVALID = 255
 };
