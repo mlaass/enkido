@@ -31,11 +31,21 @@ digit      = "0"..."9" ;
 true  false  post  pat  seq  timeline  note
 ```
 
-**Built-in Identifiers** (resolved at semantic analysis, not lexing):
-```
-co  beat  sin  cos  saw  tri  sqr  lp  hp  bp  svflp  svfhp
-add  sub  mul  div  pow  neg  out  ...
-```
+**Built-in Functions** (resolved at semantic analysis, not parsing):
+
+Built-in functions are parsed as regular function calls. The semantic analyzer resolves them to VM opcodes. This list is extensible without grammar changes.
+
+See `docs/bytecode_synth_architecture.md` for the complete opcode reference. Common built-ins include:
+
+| Category | Functions |
+|----------|-----------|
+| Oscillators | `sin`, `tri`, `saw`, `sqr`, `phasor`, `noise` |
+| Filters | `lp`, `hp`, `bp`, `svflp`, `svfhp`, `svfbp`, `onepole` |
+| Envelopes | `adsr`, `ar`, `perc` |
+| Effects | `delay`, `reverb`, `freeverb`, `chorus`, `flanger` |
+| Math | `add`, `sub`, `mul`, `div`, `pow`, `abs`, `sqrt`, `log`, `exp`, `min`, `max`, `clamp` |
+| Utility | `mtof`, `slew`, `sah`, `out` |
+| Timing | `co`, `beat` |
 
 ### 2.3 Literals
 
@@ -275,7 +285,7 @@ p.map(hz -> saw(hz) |> lp(%, 1000))
 
 ## 5. Operator Desugaring
 
-The parser produces an AST where all binary/unary operators become function calls:
+The parser produces an AST where all binary operators become function calls:
 
 | Expression | AST Representation |
 |------------|-------------------|
@@ -284,9 +294,11 @@ The parser produces an AST where all binary/unary operators become function call
 | `a * b` | `mul(a, b)` |
 | `a / b` | `div(a, b)` |
 | `a ^ b` | `pow(a, b)` |
-| `neg(y)` | `neg(y)` |
 
-**Note:** There is no unary minus operator. For `x * -1`, the lexer produces `-1` as a negative number literal. For `x * -y`, write `x * neg(y)`.
+**Negation:** There is no unary minus operator. Use these patterns:
+- `x * -1` — lexer produces `-1` as a single negative number literal
+- `x * neg(y)` — explicit negation function
+- `neg(x)` desugars to `sub(0, x)` in semantic analysis
 
 ## 6. Mini-Notation Grammar
 
@@ -466,3 +478,73 @@ quote        = '"' | "'" | "`" ;
 letter       = "a"..."z" | "A"..."Z" | "_" ;
 digit        = "0"..."9" ;
 ```
+
+## 11. Compiler Implementation Notes
+
+This section provides guidance for implementing the Akkado compiler. See `docs/initial_prd.md` for the full technical specification.
+
+### 11.1 Lexer: String Interning
+
+Use **string interning** to convert identifiers and keywords into unique `uint32_t` IDs. This allows the parser to perform integer comparisons instead of string comparisons.
+
+```
+"saw" → intern("saw") → 42
+"saw" → intern("saw") → 42  (same ID)
+```
+
+Use **FNV-1a** hashing for fast, non-cryptographic identifier hashing.
+
+### 11.2 Parser: Data-Oriented AST
+
+Store the AST in a **contiguous arena** (`std::vector<Node>`) rather than heap-allocating individual nodes:
+
+- Use `uint32_t` indices for child/sibling links instead of pointers
+- Improves cache locality and reduces memory overhead
+- Enables simple serialization
+
+```cpp
+struct Node {
+    NodeType type;
+    uint32_t first_child;   // Index into arena
+    uint32_t next_sibling;  // Index into arena
+    uint32_t token_id;      // Interned identifier
+    // ... payload
+};
+```
+
+### 11.3 Semantic ID Path Tracking (Hot-Swap)
+
+For live-coding state preservation, maintain a **path stack** during AST construction. Each node receives a stable **semantic ID** derived from its path:
+
+```
+main/track1/osc → FNV-1a hash → 0x7A3B2C1D
+```
+
+When code is updated:
+1. Compare semantic IDs between old and new DAG
+2. Re-bind matching IDs to existing state in the StatePool
+3. Apply micro-crossfade (5-10ms) for structural changes
+
+### 11.4 DAG Construction
+
+After parsing, flatten the AST into a **Directed Acyclic Graph** representing signal flow:
+
+1. **Topological sort** (Kahn's algorithm or DFS) to determine execution order
+2. All buffer dependencies must be satisfied before a node executes
+3. Result: linear array of bytecode instructions
+
+### 11.5 Bytecode Format
+
+Each instruction is **128 bits (16 bytes)** for fast decoding:
+
+```
+[opcode:8][rate:8][out:16][in0:16][in1:16][in2:16][reserved:16][state_id:32]
+```
+
+See `cedar/include/cedar/vm/instruction.hpp` for the current implementation.
+
+### 11.6 Threading Model
+
+- **Triple buffer**: Compiler writes to "Next", audio thread reads from "Current"
+- **Atomic pointer swap** at block boundaries
+- **Lock-free SPSC queues** for parameter updates

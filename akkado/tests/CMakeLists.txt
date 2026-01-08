@@ -18,6 +18,8 @@ include(Catch)
 add_executable(akkado_tests
     test_akkado.cpp
     test_diagnostics.cpp
+    test_lexer.cpp
+    test_parser.cpp
 )
 
 target_link_libraries(akkado_tests

@@ -38,6 +38,8 @@ endif()
 add_library(akkado STATIC
     src/akkado.cpp
     src/diagnostics.cpp
+    src/lexer.cpp
+    src/parser.cpp
 )
 
 target_include_directories(akkado
