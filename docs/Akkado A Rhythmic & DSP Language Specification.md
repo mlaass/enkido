@@ -1,159 +1,468 @@
-# **Akkado: A Rhythmic & DSP Language Specification**
+# Akkado: Language Specification v2
 
-Akkado is a domain-specific language (DSL) designed for live-coding musical patterns and modular synthesis. It combines the rhythmic power of **Strudel/Tidal Mini-Notation** with a functional **Directed Acyclic Graph (DAG)** approach to audio signal processing.
+Akkado is a domain-specific language for live-coding musical patterns and modular synthesis. It combines Strudel/Tidal-style mini-notation with a functional DAG approach to audio signal processing.
 
-## **1\. Core Philosophy**
+## 1. Core Philosophy
 
-* **The Pattern is the Trigger:** Patterns (defined via mini-notation) act as control signals ($Triggers, Velocities, Pitches$).  
-* **The Closure is the Voice:** Anonymous functions bridge the gap between control data and audio synthesis.  
-* **The Pipe is the Edge:** The |\> operator defines the flow of data through the graph.  
-* **The Hole is the Port:** The % symbol represents an explicit input port for signal injection, allowing for serial and parallel processing.
+- **The Pattern is the Trigger:** Patterns (via mini-notation) produce control signals (triggers, velocities, pitches).
+- **The Closure is the Voice:** Anonymous functions bridge control data and audio synthesis.
+- **The Pipe is the Edge:** The `|>` operator defines signal flow through the DAG.
+- **The Hole is the Port:** The `%` symbol is an explicit input port for signal injection.
 
-## **2\. Formal EBNF Grammar**
+## 2. Lexical Structure
 
-### **2.1 High-Level Structure**
+### 2.1 Whitespace and Comments
 
-program             \= { statement | comment } ;  
-statement           \= assignment | post\_processing | expression ;  
-assignment          \= identifier \= expression ;  
-post\_processing     \= "post" "(" closure ")" ;  
-comment             \= "//" { all\_characters } "\\n" ;
+- Whitespace (space, tab, newline) separates tokens but is otherwise ignored.
+- Line comments start with `//` and extend to end of line.
+- No block comments.
+- No semicolons.
 
-(\* Precedence: Pipes (Lowest) \-\> Math \-\> Atoms (Highest) \*)  
-expression          \= math\_expr { "|\> " term } ;
+### 2.2 Identifiers and Keywords
 
-### **2.2 Terms and Atoms**
+```ebnf
+identifier = letter { letter | digit | "_" } ;
+letter     = "a"..."z" | "A"..."Z" | "_" ;
+digit      = "0"..."9" ;
+```
 
-term                \= function\_call   
-                    | closure   
-                    | mini\_literal   
-                    | hole   
-                    | identifier   
-                    | "(" expression ")" ;
+**Reserved Keywords:**
+```
+true  false  post  pat  seq  timeline  note
+```
 
-primary             \= term | literal ;  
-hole                \= "%" ;
+**Built-in Identifiers** (resolved at semantic analysis, not lexing):
+```
+co  beat  sin  cos  saw  tri  sqr  lp  hp  bp  svflp  svfhp
+add  sub  mul  div  pow  neg  out  ...
+```
 
-### **2.3 Signal Mathematics**
+### 2.3 Literals
 
-math\_expr           \= multiplication { ( "+" | "-" ) multiplication } ;  
-multiplication      \= power { ( "\*" | "/" ) power } ;  
-power               \= primary { "^" primary } ;
+**Numbers:**
+```ebnf
+number = [ "-" ] digit { digit } [ "." digit { digit } ] ;
+```
+The lexer consumes `-` as part of the number only when immediately followed by a digit with no intervening whitespace. Otherwise `-` is a separate token.
 
-### **2.4 Functions and Closures**
+Examples:
+- `42` — integer
+- `3.14` — float
+- `-1` — negative number (single token)
+- `x - 1` — subtraction (three tokens)
+- `x * -1` — multiply by negative (four tokens: `x`, `*`, `-1`)
+- `x * -y` — requires `neg()`: write `x * neg(y)`
 
-closure             \= "(" \[ arg\_decl\_list \] ")" "-\>" ( block | expression ) ;  
-arg\_decl\_list       \= identifier { "," identifier } ;  
-block               \= "{" { statement } \[ expression \] "}" ;
+**Booleans:**
+```ebnf
+bool_literal = "true" | "false" ;
+```
 
-function\_call       \= identifier "(" \[ named\_arg\_list \] ")" ;  
-named\_arg\_list      \= named\_argument { "," named\_argument } ;  
-named\_argument      \= \[ identifier ":" \] expression ;
+**Strings:**
+```ebnf
+string = quote { any_char | escape_seq } quote ;
+quote  = '"' | "'" | "`" ;
+```
+All three quote types are equivalent. Strings may span multiple lines.
 
-### **2.5 Literals & Tokens**
+Escape sequences: `\\`, `\"`, `\'`, `` \` ``, `\n`, `\t`, `\r`
 
-literal             \= number | pitch\_literal | chord\_literal | bool\_literal | string\_literal ;
+**Pitch Literals** (outside mini-notation):
+```ebnf
+pitch_literal = "'" pitch_name octave "'" ;
+pitch_name    = ( "a"..."g" | "A"..."G" ) [ "#" | "b" ] ;
+octave        = digit ;
+```
+Octave is **required** outside mini-notation.
 
-pitch\_literal       \= "'" ( "a"..."g" | "A"..."G" ) \[ "\#" | "b" \] digit "'" ;  
-chord\_literal       \= "'" ( pitch\_token { pitch\_token } | pitch\_token ":" chord\_type ) "'" ;  
-chord\_type          \= "maj" | "min" | "dom7" | "maj7" | "min7" | "dim" | "aug" | "sus2" | "sus4" ;
+Examples: `'c4'`, `'f#3'`, `'Bb5'`
 
-number              \= \[ "-" \] digit { digit } \[ "." { digit } \] ;  
-bool\_literal        \= "true" | "false" ;  
-string\_literal      \= '"' { any\_character } '"' ;  
-identifier          \= letter { letter | digit | "\_" } ;
+**Chord Literals:**
+```ebnf
+chord_literal = "'" pitch_name octave ":" chord_type "'" ;
+chord_type    = "maj" | "min" | "dom7" | "maj7" | "min7" | "dim" | "aug" | "sus2" | "sus4" ;
+```
 
-mini\_literal        \= pattern\_type "(" quote mini\_content quote \[ "," closure \] ")" ;  
-pattern\_type        \= "pat" | "seq" | "timeline" | "note" ;  
-quote               \= "'" | '"' | "\`" ;
+Examples: `'c4:maj'`, `'a3:min7'`
 
-### **2.6 Basic Characters**
+### 2.4 Operators and Delimiters
 
-letter              \= "a"..."z" | "A"..."Z" ;  
-digit               \= "0"..."9" ;  
-any\_character       \= ? all visible characters ? ;  
-all\_characters      \= any\_character | " " | "\\t" ;
+**Operators** (in precedence order, highest first):
+| Token | Name | Desugars To |
+|-------|------|-------------|
+| `.` | Method call | (special syntax) |
+| `^` | Power | `pow(a, b)` |
+| `*` `/` | Multiply, Divide | `mul(a, b)`, `div(a, b)` |
+| `+` `-` | Add, Subtract | `add(a, b)`, `sub(a, b)` |
+| `|>` | Pipe | (signal flow) |
 
-## **3\. Mini-Notation Sub-Grammar**
+**Other Tokens:**
+```
+(  )  [  ]  {  }  ,  :  %  ->  =
+```
 
-The mini\_content string describes the distribution of events over time.
+## 3. Grammar
 
-mini\_content        \= { sequence\_element | " " | "\\n" } ;  
-sequence\_element    \= mini\_node \[ modifier \] ;
+### 3.1 Program Structure
 
-mini\_node           \= atom   
-                    | group          (\* \[a b c\] \*)  
-                    | sequence       (\* \<a b c\> \- one element per cycle \*)  
-                    | polyphony      (\* \[a, b, c\] \- parallel/chords \*)  
-                    | choice         (\* a | b | c \- random selection \*)  
-                    | "(" mini\_content ")" ;
+```ebnf
+program    = { statement } ;
+statement  = assignment | post_stmt | pipe_expr ;
+assignment = identifier "=" pipe_expr ;
+post_stmt  = "post" "(" closure ")" ;
+```
 
-atom                \= pitch\_token | chord\_token | inline\_chord | sample\_token | rest\_token | euclidean ;  
-group               \= "\[" mini\_content "\]" ;  
-sequence            \= "\<" mini\_content "\>" ;  
-polyphony           \= mini\_node { "," mini\_node } ;  
-choice              \= mini\_node { "|" mini\_node } ;  
-euclidean           \= mini\_node "(" number "," number \[ "," number \] ")" ;
+Statements are separated by newlines or simply sequenced. No semicolons.
 
-modifier            \= speed\_mod | length\_mod | weight\_mod | repeat\_mod | chance\_mod ;  
-speed\_mod           \= ( "\*" | "/" ) number ;  
-length\_mod          \= ":" number ;           (\* e.g. c3:4 for 4-step duration \*)  
-weight\_mod          \= "@" number ;  
-repeat\_mod          \= "\!" \[ number \] ;  
-chance\_mod          \= "?" \[ number \] ;
+### 3.2 Expressions — Precedence Hierarchy
 
-pitch\_token         \= ( "a"..."g" | "A"..."G" ) \[ "\#" | "b" \] \[ digit \] ;  
-chord\_token         \= pitch\_token ":" chord\_type ;  
-inline\_chord        \= pitch\_token { pitch\_token } ; (\* e.g. c3e3g3 \*)  
-sample\_token        \= { letter | digit | "\_" | ":" } ;  
-rest\_token          \= "\~" | "\_" ;
+From lowest to highest precedence:
 
-## **4\. Chord Support & Signal Expansion**
+```ebnf
+pipe_expr   = add_expr { "|>" add_expr } ;
+add_expr    = mul_expr { ( "+" | "-" ) mul_expr } ;
+mul_expr    = pow_expr { ( "*" | "/" ) pow_expr } ;
+pow_expr    = method_expr { "^" method_expr } ;
+method_expr = primary { "." identifier "(" [ arg_list ] ")" } ;
+primary     = atom | "(" pipe_expr ")" ;
+```
 
-Flux-DAG treats chords as **Signal Arrays**. When a chord literal or a polyphonic pattern is passed to a UGen, the engine performs "Implicit Expansion."
+**Key Rule:** Pipes (`|>`) are the lowest precedence. The `%` hole references the left-hand side value. Pipes can appear anywhere an expression is valid, including function arguments and closure bodies.
 
-### **4.1 Chord Definition Styles**
+### 3.3 Atoms
 
-1. **Named Chords:** 'c4:maj' $\\rightarrow$ $\[261.6, 329.6, 392.0\]$ (Hz)  
-2. **Inline Chords:** 'c3e3g3' $\\rightarrow$ $\[130.8, 164.8, 196.0\]$ (Hz)
+```ebnf
+atom = number
+     | bool_literal
+     | string
+     | pitch_literal
+     | chord_literal
+     | identifier
+     | hole
+     | function_call
+     | closure
+     | mini_literal ;
 
-### **4.2 Expansion Rules**
+hole = "%" ;
+```
 
-When a UGen receives an array of values (a chord) where it expects a single value:
+### 3.4 Function Calls
 
-1. **Oscillators:** The oscillator node is duplicated for each frequency in the array. The outputs are summed by default.  
-2. **Manual Mapping:** Users can use .map() on a chord signal to define custom per-voice behavior.  
-   * p.map(hz \-\> saw(hz) |\> lp(%, 1000))
+```ebnf
+function_call = identifier "(" [ arg_list ] ")" ;
+arg_list      = argument { "," argument } ;
+argument      = [ identifier ":" ] pipe_expr ;
+```
 
-## **5\. The Clock System**
+Named arguments use `name: value` syntax. Positional and named can mix, but positional must come first.
 
-### **5.1 BPM and Cycles**
+Examples:
+```
+saw(440)
+lp(%, 1000, 0.7)
+svflp(in: %, cut: 800, q: 0.5)
+```
 
-* **BPM (Beats Per Minute):** Defines the pulse. By default, **1 Cycle \= 4 Beats**.  
-* **Cycle Duration (**$T\_c$**):** $T\_c \= (60 / \\text{BPM}) \\times 4$.
+### 3.5 Method Calls
 
-### **5.2 Reserved Keywords**
+```ebnf
+method_call = primary "." identifier "(" [ arg_list ] ")" ;
+```
 
-* co: **Cycle Offset** (0 to 1 ramp over 1 cycle).  
-* beat(n): Phasor completing every n beats.
+Methods bind tighter than all binary operators. Methods chain left-to-right.
 
-## **6\. The Hole (%) Resolution Rules**
+Examples:
+```
+p.map(hz -> saw(hz))
+signal.map(f).filter(g).take(4)
+%.map(x -> x * 0.5)
+```
 
-1. **Explicit Injection:** LHS is bound to every % on RHS.  
-2. **Implicit Injection:** If no % exists, LHS is the first argument of the RHS function.  
-3. **Variable Reuse:** Assignments create reusable nodes.
+### 3.6 Closures
 
-## **7\. Full Implementation Example**
+```ebnf
+closure        = "(" [ param_list ] ")" "->" closure_body ;
+param_list     = identifier { "," identifier } ;
+closure_body   = block | pipe_expr ;
+block          = "{" { statement } [ pipe_expr ] "}" ;
+```
 
-bpm \= 120
+**Closure Body Rule:** The closure body is "greedy" — it captures everything including pipes.
 
-// Using inline chords and length shorthand (:4) in a sequence  
-pad \= seq('c3e3g3b3:4@1 c3e3g3b3d4:4@1 g3a\#3d4g4:4@1 e3g3b3e4:4@1', (trig, v, p) \-\> {  
-  env \= ar(attack: 1, release: 3, trig: trig)  
-  p.map(hz \-\> saw(hz)) \* env \* v \* 0.05  
-})  
-|\> svflp(in: %, cut: 400 \+ 300 \* sin(hz: 1/16 \* co), q: 0.7)  
-|\> velvet(in: %, size: 2.8, damping: 0.6, decay: 0.9) \* 0.8 \+ %  
-|\> lexicon(in: %, size: 3.5, diffusion: 0.7, damping: 0.6, modulation: 0.5) \* 0.6 \+ %  
-|\> tanh(% \* 0.6)  
-|\> out(L: %, R: delay(in: %, time: 0.002))  
+```
+(x) -> x + 1              // body is "x + 1"
+(x) -> x |> f(%)          // body is "x |> f(%)" → rewrites to f(x)
+(x) -> x + 1 |> f(%)      // body is "x + 1 |> f(%)" → rewrites to f(x + 1)
+((x) -> x + 1) |> f(%)    // parens needed to pipe the closure itself
+(x) -> { ... }            // body is the block
+```
+
+**Block Return:** The last expression in a block is the implicit return value.
+
+```
+(x) -> {
+    y = x + 1
+    y * 2         // this is returned
+}
+```
+
+### 3.7 Mini-Notation Literals
+
+```ebnf
+mini_literal = pattern_kw "(" string [ "," closure ] ")" ;
+pattern_kw   = "pat" | "seq" | "timeline" | "note" ;
+```
+
+The string contains mini-notation (see Section 5). The optional closure receives event data.
+
+Examples:
+```
+pat("bd sd bd sd")
+seq("c4 e4 g4", (t, v, p) -> saw(p) * v)
+```
+
+## 4. Pipe Semantics
+
+### 4.1 Pipe as Let-Binding Rewrite
+
+The pipe operator `|>` is a syntactic rewrite. It evaluates the left-hand side once and substitutes all `%` holes in the right-hand side with that value:
+
+```
+LHS |> RHS    →    let $temp = LHS in RHS[% → $temp]
+```
+
+### 4.2 Rewrite Examples
+
+| Expression | Rewrite |
+|------------|---------|
+| `a \|> f(%)` | `f(a)` |
+| `a \|> f(%, %)` | `let x = a in f(x, x)` |
+| `a \|> f(%) \|> g(%)` | `let x = a in let y = f(x) in g(y)` |
+| `a \|> % + % * 0.5` | `let x = a in x + x * 0.5` |
+| `foo(a \|> f(%))` | `foo(f(a))` |
+| `(x) -> x \|> f(%)` | `(x) -> f(x)` |
+
+### 4.3 The Hole (`%`)
+
+The `%` symbol references the left-hand side of the enclosing pipe.
+
+```
+saw(440) |> lp(%, 1000)     // % is the saw output
+         |> delay(%, 0.5)   // % is the filtered output
+         |> % * 0.5         // % is the delayed output
+```
+
+**Multiple Holes:** All `%` in a pipe stage receive the **same** value (evaluated once).
+
+```
+saw(440) |> lp(%, sin(%))   // both % are the same saw output
+```
+
+### 4.4 Pipes in Arguments and Closures
+
+Pipes can appear anywhere an expression is valid:
+
+```
+// Pipe as function argument
+reverb(saw(440) |> lp(%, 1000))
+
+// Pipe in closure body (closure is greedy)
+p.map(hz -> saw(hz) |> lp(%, 1000))
+
+// Pipe the closure itself (needs parens)
+((x) -> x * 2) |> apply(%, 42)
+```
+
+## 5. Operator Desugaring
+
+The parser produces an AST where all binary/unary operators become function calls:
+
+| Expression | AST Representation |
+|------------|-------------------|
+| `a + b` | `add(a, b)` |
+| `a - b` | `sub(a, b)` |
+| `a * b` | `mul(a, b)` |
+| `a / b` | `div(a, b)` |
+| `a ^ b` | `pow(a, b)` |
+| `neg(y)` | `neg(y)` |
+
+**Note:** There is no unary minus operator. For `x * -1`, the lexer produces `-1` as a negative number literal. For `x * -y`, write `x * neg(y)`.
+
+## 6. Mini-Notation Grammar
+
+Mini-notation appears inside pattern strings and has its own sub-grammar.
+
+### 6.1 Structure
+
+```ebnf
+mini_content = { mini_element } ;
+mini_element = mini_atom [ modifier ] ;
+```
+
+### 6.2 Atoms
+
+```ebnf
+mini_atom = pitch_token
+          | chord_token
+          | inline_chord
+          | sample_token
+          | rest
+          | group
+          | sequence
+          | polyrhythm
+          | "(" mini_content ")" ;
+
+pitch_token  = pitch_name [ octave ] ;
+chord_token  = pitch_token ":" chord_type ;
+inline_chord = pitch_token pitch_token { pitch_token } ;
+sample_token = letter { letter | digit | "_" } [ ":" digit ] ;
+rest         = "~" | "_" ;
+```
+
+**Pitch tokens** inside mini-notation: octave is **optional** (defaults to 4).
+
+Examples: `c`, `c4`, `f#`, `Bb3`
+
+### 6.3 Groupings
+
+```ebnf
+group      = "[" mini_content "]" ;
+sequence   = "<" mini_content ">" ;
+polyrhythm = "[" mini_atom { "," mini_atom } "]" ;
+```
+
+- `[a b c]` — subdivide: all events in one cycle
+- `<a b c>` — sequence: one event per cycle, rotating
+- `[a, b, c]` — polyrhythm: all events play simultaneously
+
+### 6.4 Modifiers
+
+```ebnf
+modifier = speed_mod | length_mod | weight_mod | repeat_mod | chance_mod ;
+
+speed_mod  = ( "*" | "/" ) number ;
+length_mod = ":" number ;
+weight_mod = "@" number ;
+repeat_mod = "!" [ number ] ;
+chance_mod = "?" [ number ] ;
+```
+
+| Modifier | Meaning | Example |
+|----------|---------|---------|
+| `*n` | Speed up by n | `c4*2` |
+| `/n` | Slow down by n | `c4/2` |
+| `:n` | Duration of n steps | `c4:4` |
+| `@n` | Weight/probability | `c4@0.5` |
+| `!n` | Repeat n times | `c4!3` |
+| `?n` | Chance (0-1) | `c4?0.5` |
+
+### 6.5 Euclidean Rhythms
+
+```ebnf
+euclidean = mini_atom "(" number "," number [ "," number ] ")" ;
+```
+
+`x(k,n)` — k hits over n steps
+`x(k,n,r)` — with rotation r
+
+Example: `bd(3,8)` — 3 kicks over 8 steps
+
+### 6.6 Choice
+
+```ebnf
+choice = mini_atom { "|" mini_atom } ;
+```
+
+Random selection each cycle: `bd | sd | hh`
+
+## 7. Clock System
+
+### 7.1 Timing
+
+- **BPM:** Beats per minute (set via `bpm = 120`)
+- **Cycle:** 1 cycle = 4 beats by default
+- **Cycle Duration:** `T = (60 / BPM) * 4` seconds
+
+### 7.2 Built-in Timing Signals
+
+| Identifier | Description |
+|------------|-------------|
+| `co` | Cycle offset: 0→1 ramp over one cycle |
+| `beat(n)` | Phasor completing every n beats |
+
+## 8. Chord Expansion
+
+Chord literals and inline chords expand to frequency arrays:
+
+```
+'c4:maj'   -> [261.6, 329.6, 392.0]  // C, E, G in Hz
+'c3e3g3'   -> [130.8, 164.8, 196.0]  // inline chord
+```
+
+When passed to a UGen expecting a scalar:
+1. The UGen is duplicated for each frequency
+2. Outputs are summed by default
+3. Use `.map()` for custom per-voice processing:
+   ```
+   p.map(hz -> saw(hz) |> lp(%, 1000))
+   ```
+
+## 9. Complete Example
+
+```
+bpm = 120
+
+pad = seq("c3e3g3b3:4 g3b3d4:4 a3c4e4:4 f3a3c4:4", (t, v, p) -> {
+    env = ar(attack: 0.5, release: 2, trig: t)
+    p.map(hz -> saw(hz)) * env * v * 0.1
+})
+|> svflp(in: %, cut: 400 + 300 * co, q: 0.7)
+|> delay(in: %, time: 0.375, fb: 0.4) * 0.5 + %
+|> out(L: %, R: %)
+```
+
+## 10. Grammar Summary (Complete EBNF)
+
+```ebnf
+(* Program *)
+program     = { statement } ;
+statement   = assignment | post_stmt | pipe_expr ;
+assignment  = identifier "=" pipe_expr ;
+post_stmt   = "post" "(" closure ")" ;
+
+(* Expressions - lowest to highest precedence *)
+pipe_expr   = add_expr { "|>" add_expr } ;
+add_expr    = mul_expr { ( "+" | "-" ) mul_expr } ;
+mul_expr    = pow_expr { ( "*" | "/" ) pow_expr } ;
+pow_expr    = method_expr { "^" method_expr } ;
+method_expr = primary { "." identifier "(" [ arg_list ] ")" } ;
+primary     = atom | "(" pipe_expr ")" ;
+
+(* Atoms *)
+atom = number | bool_literal | string | pitch_literal | chord_literal
+     | identifier | hole | function_call | closure | mini_literal ;
+hole = "%" ;
+
+(* Functions and Methods *)
+function_call = identifier "(" [ arg_list ] ")" ;
+arg_list      = argument { "," argument } ;
+argument      = [ identifier ":" ] pipe_expr ;
+
+(* Closures *)
+closure      = "(" [ param_list ] ")" "->" closure_body ;
+param_list   = identifier { "," identifier } ;
+closure_body = block | pipe_expr ;
+block        = "{" { statement } [ pipe_expr ] "}" ;
+
+(* Patterns *)
+mini_literal = pattern_kw "(" string [ "," closure ] ")" ;
+pattern_kw   = "pat" | "seq" | "timeline" | "note" ;
+
+(* Lexical *)
+identifier   = letter { letter | digit | "_" } ;
+number       = [ "-" ] digit { digit } [ "." digit { digit } ] ;
+string       = quote { character } quote ;
+quote        = '"' | "'" | "`" ;
+letter       = "a"..."z" | "A"..."Z" | "_" ;
+digit        = "0"..."9" ;
+```
