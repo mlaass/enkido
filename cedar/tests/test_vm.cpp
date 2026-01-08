@@ -6,6 +6,7 @@
 #include "cedar/opcodes/sequencing.hpp"
 #include <array>
 #include <cmath>
+#include <vector>
 
 using namespace cedar;
 using Catch::Matchers::WithinAbs;
@@ -655,5 +656,320 @@ TEST_CASE("VM TIMELINE opcode", "[vm][sequencing]") {
         for (std::size_t i = 1; i < BLOCK_SIZE; ++i) {
             CHECK(result[i] >= result[i - 1]);
         }
+    }
+}
+
+// ============================================================================
+// Hot-Swap & Crossfade Tests
+// ============================================================================
+
+TEST_CASE("VM hot-swap basics", "[vm][hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("load_program returns Success") {
+        auto inst = make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f);
+        auto result = vm.load_program(std::span{&inst, 1});
+        CHECK(result == VM::LoadResult::Success);
+    }
+
+    SECTION("swap happens at block boundary") {
+        auto inst = make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f);
+        (void)vm.load_program(std::span{&inst, 1});
+
+        // Before process_block, swap is pending
+        CHECK(vm.swap_count() == 0);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // After process_block, swap has occurred
+        CHECK(vm.swap_count() == 1);
+    }
+
+    SECTION("multiple swaps increment counter") {
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        auto inst1 = make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f);
+        (void)vm.load_program(std::span{&inst1, 1});
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.swap_count() == 1);
+
+        auto inst2 = make_const_instruction(Opcode::PUSH_CONST, 0, 2.0f);
+        (void)vm.load_program(std::span{&inst2, 1});
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.swap_count() == 2);
+    }
+}
+
+TEST_CASE("VM state preservation across hot-swap", "[vm][hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("oscillator phase preserved when state_id matches") {
+        // Program 1: 440 Hz oscillator with state_id = 42
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 42)
+        };
+        (void)vm.load_program(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Run for several blocks to accumulate phase
+        for (int i = 0; i < 100; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // State should exist
+        CHECK(vm.states().exists(42));
+
+        // Program 2: Same state_id but different frequency
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 880.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 42)  // Same state_id!
+        };
+        (void)vm.load_program(program2);
+        vm.process_block(left.data(), right.data());
+
+        // State should still exist (preserved across swap)
+        CHECK(vm.states().exists(42));
+    }
+
+    SECTION("orphaned state removed after swap") {
+        // Program 1: oscillator with state_id = 100
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 100)
+        };
+        (void)vm.load_program(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.states().exists(100));
+
+        // Program 2: Different state_id = 200
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 200)  // Different state_id
+        };
+        (void)vm.load_program(program2);
+
+        // Process a few blocks (to complete any crossfade)
+        for (int i = 0; i < 10; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // Call gc_sweep to clean up
+        vm.hot_swap_begin();
+        vm.process_block(left.data(), right.data());
+        vm.hot_swap_end();
+
+        // New state should exist
+        CHECK(vm.states().exists(200));
+        // Old state should be removed (orphaned)
+        CHECK_FALSE(vm.states().exists(100));
+    }
+}
+
+TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("no crossfade for first program load") {
+        auto inst = make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f);
+        (void)vm.load_program(std::span{&inst, 1});
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Should not be crossfading after first load
+        CHECK_FALSE(vm.is_crossfading());
+    }
+
+    SECTION("no crossfade for identical structure") {
+        // Program 1: oscillator with state_id = 50
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 50)
+        };
+        vm.load_program_immediate(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Program 2: IDENTICAL to program 1 (same state_id, same values)
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),  // Same freq
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 50)      // Same state_id
+        };
+        (void)vm.load_program(program2);
+        vm.process_block(left.data(), right.data());
+
+        // Should not be crossfading (identical programs)
+        CHECK_FALSE(vm.is_crossfading());
+    }
+
+    SECTION("state preserved even with crossfade") {
+        // Program 1: oscillator with state_id = 51
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 51)
+        };
+        vm.load_program_immediate(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.states().exists(51));
+
+        // Program 2: Different parameter, same state_id (may or may not crossfade)
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 880.0f),  // Different freq
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 51)      // Same state_id
+        };
+        (void)vm.load_program(program2);
+
+        // Process several blocks to complete any crossfade
+        for (int i = 0; i < 10; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // State should still exist (preserved across swap regardless of crossfade)
+        CHECK(vm.states().exists(51));
+    }
+
+    SECTION("crossfade triggers on structural change") {
+        // Program 1: single oscillator
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 60)
+        };
+        (void)vm.load_program(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Program 2: Added another oscillator (different state_id)
+        std::array<Instruction, 4> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 60),
+            make_const_instruction(Opcode::PUSH_CONST, 2, 220.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 3, 2, 61)  // New state_id!
+        };
+        (void)vm.load_program(program2);
+        vm.process_block(left.data(), right.data());
+
+        // Should be crossfading (structural change: node added)
+        CHECK(vm.is_crossfading());
+    }
+
+    SECTION("crossfade completes after configured blocks") {
+        vm.set_crossfade_blocks(3);  // 3 blocks
+
+        // Program 1
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 70)
+        };
+        (void)vm.load_program(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Program 2: structural change
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 71)  // Different state_id
+        };
+        (void)vm.load_program(program2);
+
+        // Block 1: swap + crossfade starts (position starts at 0, advances after this block)
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.is_crossfading());
+        // Position is 0.0 at start, will advance on next block
+
+        // Block 2: crossfade continues, position advances
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.is_crossfading());
+        CHECK(vm.crossfade_position() > 0.0f);
+
+        // Block 3: crossfade continues
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.is_crossfading());
+
+        // Block 4: crossfade should complete
+        vm.process_block(left.data(), right.data());
+        CHECK_FALSE(vm.is_crossfading());
+    }
+
+    SECTION("crossfade position progresses 0 to 1") {
+        vm.set_crossfade_blocks(3);
+
+        // Setup programs that will trigger crossfade
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 80)
+        };
+        (void)vm.load_program(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 81)
+        };
+        (void)vm.load_program(program2);
+
+        // Track crossfade positions
+        std::vector<float> positions;
+        for (int i = 0; i < 5; ++i) {
+            vm.process_block(left.data(), right.data());
+            if (vm.is_crossfading()) {
+                positions.push_back(vm.crossfade_position());
+            }
+        }
+
+        // Positions should increase
+        for (std::size_t i = 1; i < positions.size(); ++i) {
+            CHECK(positions[i] > positions[i-1]);
+        }
+    }
+}
+
+TEST_CASE("VM load_program_immediate", "[vm][hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("immediate load works without process_block") {
+        auto inst = make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f);
+        bool result = vm.load_program_immediate(std::span{&inst, 1});
+        CHECK(result);
+        CHECK(vm.has_program());
+    }
+
+    SECTION("immediate load resets state") {
+        // First load with state
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 90)
+        };
+        vm.load_program_immediate(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.states().exists(90));
+
+        // Second immediate load should reset
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 91)
+        };
+        vm.load_program_immediate(program2);
+        vm.process_block(left.data(), right.data());
+
+        // Old state should be gone (reset clears all)
+        CHECK_FALSE(vm.states().exists(90));
+        CHECK(vm.states().exists(91));
     }
 }
