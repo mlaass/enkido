@@ -17,6 +17,7 @@ include(Catch)
 
 add_executable(cedar_tests
     test_cedar.cpp
+    test_vm.cpp
 )
 
 target_link_libraries(cedar_tests

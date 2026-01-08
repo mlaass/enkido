@@ -5,6 +5,9 @@
 
 namespace cedar {
 
+// Forward declarations
+class VM;
+
 /// Cedar version information
 struct Version {
     static constexpr int major = 0;

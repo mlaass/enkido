@@ -30,6 +30,7 @@ endif()
 # Cedar library
 add_library(cedar STATIC
     src/cedar.cpp
+    src/vm/vm.cpp
 )
 
 target_include_directories(cedar
