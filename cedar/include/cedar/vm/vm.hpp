@@ -4,6 +4,7 @@
 #include "context.hpp"
 #include "buffer_pool.hpp"
 #include "state_pool.hpp"
+#include "env_map.hpp"
 #include "swap_controller.hpp"
 #include "crossfade_state.hpp"
 #include <span>
@@ -75,6 +76,23 @@ public:
     void set_bpm(float bpm);
 
     // =========================================================================
+    // External Parameter Binding (Thread-safe - can be called from any thread)
+    // =========================================================================
+
+    // Set external parameter value (creates if doesn't exist)
+    // Returns false if MAX_ENV_PARAMS reached
+    bool set_param(const char* name, float value);
+
+    // Set parameter with custom slew time in milliseconds
+    bool set_param(const char* name, float value, float slew_ms);
+
+    // Remove external parameter
+    void remove_param(const char* name);
+
+    // Check if external parameter exists
+    [[nodiscard]] bool has_param(const char* name) const;
+
+    // =========================================================================
     // Query API
     // =========================================================================
 
@@ -87,6 +105,7 @@ public:
     [[nodiscard]] const ExecutionContext& context() const { return ctx_; }
     [[nodiscard]] BufferPool& buffers() { return buffer_pool_; }
     [[nodiscard]] StatePool& states() { return state_pool_; }
+    [[nodiscard]] EnvMap& env_map() { return env_map_; }
 
 private:
     // Execute program from a specific slot
@@ -123,6 +142,7 @@ private:
     // Memory pools (owned)
     BufferPool buffer_pool_;
     StatePool state_pool_;
+    EnvMap env_map_;
 };
 
 }  // namespace cedar

@@ -8,6 +8,7 @@ VM::VM() {
     // Initialize context with pointers to our pools
     ctx_.buffers = &buffer_pool_;
     ctx_.states = &state_pool_;
+    ctx_.env_map = &env_map_;
 }
 
 VM::~VM() = default;
@@ -89,7 +90,13 @@ void VM::handle_swap() {
     if (crossfade_state_.is_completing()) {
         swap_controller_.release_previous();
         crossfade_state_.complete();
+        // Move orphaned states to fading pool
+        state_pool_.gc_sweep();
     }
+
+    // Advance fade-out for orphaned states (every block)
+    state_pool_.advance_fading();
+    state_pool_.gc_fading();
 
     // Advance crossfade if active
     if (crossfade_state_.is_active()) {
@@ -380,6 +387,10 @@ void VM::execute(const Instruction& inst) {
             op_sah(ctx_, inst);
             break;
 
+        case Opcode::ENV_GET:
+            op_env_get(ctx_, inst);
+            break;
+
         // === Sequencing & Timing ===
         case Opcode::CLOCK:
             op_clock(ctx_, inst);
@@ -440,6 +451,7 @@ void VM::hot_swap_end() {
 
 void VM::set_crossfade_blocks(std::uint32_t blocks) {
     crossfade_config_.set_duration(blocks);
+    state_pool_.set_fade_blocks(blocks);
 }
 
 // ============================================================================
@@ -448,10 +460,31 @@ void VM::set_crossfade_blocks(std::uint32_t blocks) {
 
 void VM::set_sample_rate(float rate) {
     ctx_.set_sample_rate(rate);
+    env_map_.set_sample_rate(rate);
 }
 
 void VM::set_bpm(float bpm) {
     ctx_.bpm = bpm;
+}
+
+// ============================================================================
+// External Parameter Binding
+// ============================================================================
+
+bool VM::set_param(const char* name, float value) {
+    return env_map_.set_param(name, value);
+}
+
+bool VM::set_param(const char* name, float value, float slew_ms) {
+    return env_map_.set_param(name, value, slew_ms);
+}
+
+void VM::remove_param(const char* name) {
+    env_map_.remove_param(name);
+}
+
+bool VM::has_param(const char* name) const {
+    return env_map_.has_param(name);
 }
 
 // ============================================================================

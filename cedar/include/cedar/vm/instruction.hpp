@@ -55,6 +55,7 @@ enum class Opcode : std::uint8_t {
     DC = 53,          // DC offset
     SLEW = 54,        // Slew rate limiter
     SAH = 55,         // Sample and hold
+    ENV_GET = 56,     // Read external parameter from EnvMap
 
     // Envelopes (60-69) - reserved
     ENV_ADSR = 60,

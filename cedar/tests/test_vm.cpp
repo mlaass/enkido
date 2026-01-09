@@ -973,3 +973,270 @@ TEST_CASE("VM load_program_immediate", "[vm][hotswap]") {
         CHECK(vm.states().exists(91));
     }
 }
+
+// ============================================================================
+// StatePool Fade-Out Tests
+// ============================================================================
+
+TEST_CASE("StatePool fade-out tracking", "[state_pool][fadeout]") {
+    StatePool pool;
+    pool.set_fade_blocks(3);
+
+    SECTION("orphaned state moves to fading pool") {
+        // Create a state
+        pool.begin_frame();
+        auto& osc = pool.get_or_create<OscState>(100);
+        osc.phase = 0.5f;
+
+        // Don't touch state 100 in next frame
+        pool.begin_frame();
+        pool.gc_sweep();
+
+        // Should be in fading pool, not active
+        CHECK_FALSE(pool.exists(100));
+        CHECK(pool.fading_count() == 1);
+        CHECK(pool.get_fading<OscState>(100) != nullptr);
+        CHECK_THAT(pool.get_fade_gain(100), WithinAbs(1.0f, 1e-6f));
+
+        // Preserved phase value
+        const auto* fading = pool.get_fading<OscState>(100);
+        REQUIRE(fading != nullptr);
+        CHECK_THAT(fading->phase, WithinAbs(0.5f, 1e-6f));
+    }
+
+    SECTION("fade gain decrements per block") {
+        pool.begin_frame();
+        pool.get_or_create<OscState>(200);
+        pool.begin_frame();
+        pool.gc_sweep();
+
+        // Initial gain is 1.0
+        CHECK_THAT(pool.get_fade_gain(200), WithinAbs(1.0f, 1e-6f));
+
+        // After one advance, gain decreases
+        pool.advance_fading();
+        CHECK(pool.get_fade_gain(200) < 1.0f);
+        CHECK(pool.get_fade_gain(200) > 0.0f);
+
+        // After all blocks, gain is 0
+        pool.advance_fading();
+        pool.advance_fading();
+        CHECK_THAT(pool.get_fade_gain(200), WithinAbs(0.0f, 1e-6f));
+    }
+
+    SECTION("gc_fading removes completed fades") {
+        pool.begin_frame();
+        pool.get_or_create<OscState>(300);
+        pool.begin_frame();
+        pool.gc_sweep();
+
+        CHECK(pool.fading_count() == 1);
+
+        // Complete the fade
+        pool.advance_fading();
+        pool.advance_fading();
+        pool.advance_fading();
+        pool.gc_fading();
+
+        CHECK(pool.fading_count() == 0);
+        CHECK(pool.get_fading<OscState>(300) == nullptr);
+    }
+
+    SECTION("active states return fade gain 1.0") {
+        pool.begin_frame();
+        pool.get_or_create<OscState>(400);
+        CHECK_THAT(pool.get_fade_gain(400), WithinAbs(1.0f, 1e-6f));
+    }
+
+    SECTION("non-existent states return fade gain 0.0") {
+        CHECK_THAT(pool.get_fade_gain(999), WithinAbs(0.0f, 1e-6f));
+    }
+}
+
+TEST_CASE("VM fade-out integration", "[vm][fadeout]") {
+    VM vm;
+
+    SECTION("fade-out syncs with crossfade duration") {
+        // Initial program with state
+        std::array<Instruction, 2> program1 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 100)
+        };
+        vm.load_program_immediate(program1);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.states().exists(100));
+
+        // Swap to program without state 100
+        std::array<Instruction, 2> program2 = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 880.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 200)  // Different state ID
+        };
+        vm.load_program(program2);
+
+        // Process until crossfade completes
+        for (int i = 0; i < 10; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // State 100 should eventually be cleaned up
+        CHECK_FALSE(vm.states().exists(100));
+        CHECK(vm.states().exists(200));
+    }
+}
+
+// ============================================================================
+// EnvMap Tests
+// ============================================================================
+
+TEST_CASE("EnvMap basic operations", "[env_map]") {
+    EnvMap env;
+    env.set_sample_rate(48000.0f);
+
+    SECTION("set and get parameter") {
+        CHECK(env.set_param("Speed", 0.8f));
+        CHECK(env.has_param("Speed"));
+
+        std::uint32_t hash = fnv1a_hash("Speed");
+        CHECK_THAT(env.get_target(hash), WithinAbs(0.8f, 1e-6f));
+    }
+
+    SECTION("parameter starts at zero, interpolates to target") {
+        env.set_param("Volume", 1.0f, 1.0f);  // 1ms slew
+        std::uint32_t hash = fnv1a_hash("Volume");
+
+        // Initial current should be 0
+        CHECK_THAT(env.get(hash), WithinAbs(0.0f, 1e-6f));
+
+        // After some interpolation steps, should approach target
+        for (int i = 0; i < 1000; ++i) {
+            env.update_interpolation_sample();
+        }
+
+        float value = env.get(hash);
+        CHECK(value > 0.5f);  // Should have moved toward 1.0
+    }
+
+    SECTION("remove parameter") {
+        env.set_param("Test", 0.5f);
+        CHECK(env.has_param("Test"));
+
+        env.remove_param("Test");
+        CHECK_FALSE(env.has_param("Test"));
+    }
+
+    SECTION("non-existent parameter returns 0") {
+        std::uint32_t hash = fnv1a_hash("NonExistent");
+        CHECK_THAT(env.get(hash), WithinAbs(0.0f, 1e-6f));
+    }
+
+    SECTION("multiple parameters") {
+        CHECK(env.set_param("Param1", 0.1f));
+        CHECK(env.set_param("Param2", 0.2f));
+        CHECK(env.set_param("Param3", 0.3f));
+
+        CHECK(env.param_count() == 3);
+
+        CHECK_THAT(env.get_target(fnv1a_hash("Param1")), WithinAbs(0.1f, 1e-6f));
+        CHECK_THAT(env.get_target(fnv1a_hash("Param2")), WithinAbs(0.2f, 1e-6f));
+        CHECK_THAT(env.get_target(fnv1a_hash("Param3")), WithinAbs(0.3f, 1e-6f));
+    }
+
+    SECTION("update existing parameter") {
+        env.set_param("Update", 0.5f);
+        CHECK_THAT(env.get_target(fnv1a_hash("Update")), WithinAbs(0.5f, 1e-6f));
+
+        env.set_param("Update", 0.9f);
+        CHECK_THAT(env.get_target(fnv1a_hash("Update")), WithinAbs(0.9f, 1e-6f));
+
+        // Should still be only one parameter
+        CHECK(env.param_count() == 1);
+    }
+
+    SECTION("reset clears all parameters") {
+        env.set_param("A", 1.0f);
+        env.set_param("B", 2.0f);
+        CHECK(env.param_count() == 2);
+
+        env.reset();
+        CHECK(env.param_count() == 0);
+        CHECK_FALSE(env.has_param("A"));
+        CHECK_FALSE(env.has_param("B"));
+    }
+}
+
+TEST_CASE("VM external parameter binding", "[vm][env]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("set_param creates parameter") {
+        CHECK(vm.set_param("Cutoff", 0.5f));
+        CHECK(vm.has_param("Cutoff"));
+    }
+
+    SECTION("ENV_GET reads parameter") {
+        vm.set_param("Amplitude", 0.75f, 0.1f);  // Very fast slew
+
+        // Create program with ENV_GET
+        std::uint32_t hash = fnv1a_hash("Amplitude");
+        std::array<Instruction, 2> program = {
+            Instruction::make_nullary(Opcode::ENV_GET, 0, hash),
+            Instruction::make_unary(Opcode::OUTPUT, 0, 0)
+        };
+        vm.load_program_immediate(program);
+
+        // Process several blocks to allow interpolation
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        for (int block = 0; block < 10; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // Output should be approaching 0.75
+        const float* buf = vm.buffers().get(0);
+        CHECK(buf[BLOCK_SIZE - 1] > 0.5f);
+    }
+
+    SECTION("ENV_GET with fallback for missing param") {
+        // Create fallback buffer
+        std::array<Instruction, 2> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.25f),  // fallback = 0.25
+            Instruction{Opcode::ENV_GET, 0, 0, {1, 0xFFFF, 0xFFFF}, 0, fnv1a_hash("Missing")}
+        };
+        vm.load_program_immediate(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Should use fallback value
+        const float* buf = vm.buffers().get(0);
+        CHECK_THAT(buf[0], WithinAbs(0.25f, 1e-6f));
+    }
+
+    SECTION("parameter changes are smoothed") {
+        vm.set_param("Smooth", 0.0f, 10.0f);  // 10ms slew
+
+        std::uint32_t hash = fnv1a_hash("Smooth");
+        std::array<Instruction, 1> program = {
+            Instruction::make_nullary(Opcode::ENV_GET, 0, hash)
+        };
+        vm.load_program_immediate(program);
+
+        // Initial process
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        // Change parameter
+        vm.set_param("Smooth", 1.0f, 10.0f);
+
+        // Process and check that transition is gradual
+        vm.process_block(left.data(), right.data());
+        const float* buf = vm.buffers().get(0);
+
+        // First sample should still be close to 0
+        CHECK(buf[0] < 0.5f);
+
+        // Last sample should be higher but not yet at 1.0
+        CHECK(buf[BLOCK_SIZE - 1] > buf[0]);
+    }
+}

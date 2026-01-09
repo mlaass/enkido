@@ -8,6 +8,9 @@
 
 namespace cedar {
 
+// Forward declaration
+class EnvMap;
+
 // Execution context passed to every opcode
 // Contains all runtime state needed for audio processing
 struct ExecutionContext {
@@ -16,6 +19,9 @@ struct ExecutionContext {
 
     // State pool (persistent DSP state)
     StatePool* states = nullptr;
+
+    // Environment parameter map (external inputs)
+    EnvMap* env_map = nullptr;
 
     // Output buffers (stereo, provided by caller)
     float* output_left = nullptr;

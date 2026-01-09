@@ -2,6 +2,7 @@
 
 #include "../vm/context.hpp"
 #include "../vm/instruction.hpp"
+#include "../vm/env_map.hpp"
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
 #include <cmath>
@@ -123,6 +124,39 @@ inline void op_sah(ExecutionContext& ctx, const Instruction& inst) {
         }
         state.prev_trigger = trigger[i];
         out[i] = state.held_value;
+    }
+}
+
+// ENV_GET: Read external environment parameter with interpolation
+// state_id contains FNV-1a hash of parameter name
+// inputs[0]: optional fallback value buffer (BUFFER_UNUSED if none)
+[[gnu::always_inline]]
+inline void op_env_get(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+
+    // Get fallback value if provided
+    float fallback = 0.0f;
+    if (inst.inputs[0] != BUFFER_UNUSED) {
+        fallback = ctx.buffers->get(inst.inputs[0])[0];  // Control-rate sample
+    }
+
+    // Check if env_map is available
+    if (!ctx.env_map) {
+        std::fill_n(out, BLOCK_SIZE, fallback);
+        return;
+    }
+
+    // Per-sample interpolation for smooth transitions
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        ctx.env_map->update_interpolation_sample();
+        float value = ctx.env_map->get(inst.state_id);
+
+        // Return fallback if parameter doesn't exist
+        if (!ctx.env_map->has_param_hash(inst.state_id)) {
+            out[i] = fallback;
+        } else {
+            out[i] = value;
+        }
     }
 }
 
