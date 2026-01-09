@@ -104,6 +104,10 @@ if(EMSCRIPTEN)
     target_compile_options(enkido_compiler_options INTERFACE
         -fno-exceptions
         -fno-rtti
+        -pthread  # Required for AudioWorklet shared memory
+    )
+    target_link_options(enkido_compiler_options INTERFACE
+        -pthread
     )
     target_compile_definitions(enkido_compiler_options INTERFACE
         ENKIDO_WASM=1

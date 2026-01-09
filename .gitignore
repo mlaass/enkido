@@ -35,3 +35,4 @@ _deps/
 
 # Bytecode output
 *.cedar
+docs/bytecode_*.md
