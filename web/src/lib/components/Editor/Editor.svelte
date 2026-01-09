@@ -6,8 +6,6 @@
 	import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 	import { editorStore } from '$stores/editor.svelte';
-	import { audioEngine } from '$stores/audio.svelte';
-	import { compile } from '$lib/compiler/akkado';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -61,64 +59,15 @@
 			key: 'Ctrl-Enter',
 			mac: 'Cmd-Enter',
 			run: () => {
-				evaluate();
+				// Sync editor content to store before evaluating
+				if (view) {
+					editorStore.setCode(view.state.doc.toString());
+				}
+				editorStore.evaluate();
 				return true;
 			}
 		}
 	]);
-
-	async function evaluate() {
-		console.log('[Editor] evaluate() called');
-		if (!view) {
-			console.log('[Editor] No view, returning');
-			return;
-		}
-
-		const code = view.state.doc.toString();
-		console.log('[Editor] Code to compile:', code.substring(0, 100) + '...');
-		editorStore.setCode(code);
-
-		try {
-			// Compile with akkado.wasm
-			console.log('[Editor] Calling compile()...');
-			const result = await compile(code);
-			console.log('[Editor] Compile result:', result);
-
-			if (result.success && result.bytecode) {
-				// Ensure audio engine is initialized before loading program
-				if (!audioEngine.isInitialized) {
-					console.log('[Editor] Initializing audio engine first...');
-					await audioEngine.play();
-					// Give the worklet time to initialize
-					await new Promise(resolve => setTimeout(resolve, 500));
-				}
-				// Send bytecode to Cedar VM
-				audioEngine.loadProgram(result.bytecode);
-				editorStore.markCompiled();
-				editorStore.setCompileError(null);
-				console.log('[Editor] Compiled and loaded bytecode:', result.bytecode.length, 'bytes');
-			} else {
-				// Show first error
-				const firstError = result.diagnostics.find(d => d.severity === 2);
-				const errorMsg = firstError
-					? `${firstError.message} (line ${firstError.line})`
-					: 'Compilation failed';
-				editorStore.setCompileError(errorMsg);
-				console.error('[Editor] Compile error:', errorMsg);
-			}
-		} catch (err) {
-			const errorMsg = err instanceof Error ? err.message : String(err);
-			editorStore.setCompileError(errorMsg);
-			console.error('[Editor] Compile exception:', err);
-			console.error('[Editor] Stack:', err instanceof Error ? err.stack : 'N/A');
-		}
-		console.log('[Editor] evaluate() finished');
-
-		// Start playback if not already playing
-		if (!audioEngine.isPlaying) {
-			audioEngine.play();
-		}
-	}
 
 	onMount(() => {
 		const state = EditorState.create({

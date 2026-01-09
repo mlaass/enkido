@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { audioEngine } from '$stores/audio.svelte';
 	import { editorStore } from '$stores/editor.svelte';
-	import { compile } from '$lib/compiler/akkado';
 
 	let bpmInput = $state(audioEngine.bpm.toString());
 	let volumePercent = $derived(Math.round(audioEngine.volume * 100));
@@ -10,24 +9,8 @@
 		if (audioEngine.isPlaying) {
 			audioEngine.pause();
 		} else {
-			// If no program loaded, compile and load first
-			if (!audioEngine.hasProgram) {
-				const result = await compile(editorStore.code);
-				if (result.success && result.bytecode) {
-					audioEngine.loadProgram(result.bytecode);
-					editorStore.markCompiled();
-					editorStore.setCompileError(null);
-				} else {
-					// Show compile error
-					const firstError = result.diagnostics.find(d => d.severity === 2);
-					const errorMsg = firstError
-						? `${firstError.message} (line ${firstError.line})`
-						: 'Compilation failed';
-					editorStore.setCompileError(errorMsg);
-					return; // Don't play if compile failed
-				}
-			}
-			audioEngine.play();
+			// Use the same evaluate function as Ctrl+Enter
+			editorStore.evaluate();
 		}
 	}
 
