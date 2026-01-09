@@ -262,6 +262,50 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         }
     }
 
+    if (n.type == NodeType::Closure) {
+        // Validate closure: collect parameters, then check body for captures
+        std::set<std::string> params;
+
+        // Push a new scope for closure parameters
+        symbols_.push_scope();
+
+        // Collect parameter names (Identifier children before body)
+        NodeIndex child = n.first_child;
+        NodeIndex body = NULL_NODE;
+
+        while (child != NULL_NODE) {
+            const Node& child_node = output_arena_[child];
+            if (child_node.type == NodeType::Identifier) {
+                const std::string& param_name = child_node.as_identifier();
+                params.insert(param_name);
+                // Define parameter in current scope
+                symbols_.define_variable(param_name, 0xFFFF);
+            } else {
+                // This is the body
+                body = child;
+                break;
+            }
+            child = child_node.next_sibling;
+        }
+
+        // Check body for captured variables
+        if (body != NULL_NODE) {
+            check_closure_captures(body, params, n.location);
+        }
+
+        // Recurse to children (including body) while params are in scope
+        child = n.first_child;
+        while (child != NULL_NODE) {
+            resolve_and_validate(child);
+            child = output_arena_[child].next_sibling;
+        }
+
+        // Pop scope - parameters go out of scope
+        symbols_.pop_scope();
+
+        return;  // Already recursed, don't do it again below
+    }
+
     // Recurse to children
     NodeIndex child = n.first_child;
     while (child != NULL_NODE) {
@@ -311,6 +355,44 @@ void SemanticAnalyzer::warning(const std::string& message, SourceLocation loc) {
     diag.filename = filename_;
     diag.location = loc;
     diagnostics_.push_back(std::move(diag));
+}
+
+void SemanticAnalyzer::check_closure_captures(NodeIndex node,
+                                               const std::set<std::string>& params,
+                                               SourceLocation closure_loc) {
+    if (node == NULL_NODE) return;
+
+    const Node& n = output_arena_[node];
+
+    if (n.type == NodeType::Identifier) {
+        const std::string& name = n.as_identifier();
+
+        // Check if it's a parameter
+        if (params.find(name) != params.end()) {
+            return;  // OK - parameter reference
+        }
+
+        // Check if it's a builtin
+        auto sym = symbols_.lookup(name);
+        if (sym && sym->kind == SymbolKind::Builtin) {
+            return;  // OK - builtin function
+        }
+
+        // It's a captured variable - not allowed in simple closures
+        error("E008", "Closure captures variable '" + name +
+              "' - simple closures can only use parameters and builtins", n.location);
+        return;
+    }
+
+    // For Call nodes, the function name is in data, not as a child
+    // So we don't need special handling - just check children
+
+    // Recurse to children
+    NodeIndex child = n.first_child;
+    while (child != NULL_NODE) {
+        check_closure_captures(child, params, closure_loc);
+        child = output_arena_[child].next_sibling;
+    }
 }
 
 } // namespace akkado

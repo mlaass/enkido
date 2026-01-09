@@ -50,6 +50,51 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         CHECK(inst[1].inputs[0] == inst[0].out_buffer);  // OSC reads CONST output
     }
 
+    SECTION("pitch literal as oscillator frequency") {
+        auto result = akkado::compile("saw('a4')");  // A4 = 440 Hz
+
+        REQUIRE(result.success);
+        // Should have 3 instructions: PUSH_CONST (69), MTOF, OSC_SAW
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        // PUSH_CONST should push MIDI note 69 (A4)
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        float midi_note;
+        std::memcpy(&midi_note, &inst[0].state_id, sizeof(float));
+        CHECK(midi_note == 69.0f);
+
+        // MTOF converts MIDI to frequency
+        CHECK(inst[1].opcode == cedar::Opcode::MTOF);
+        CHECK(inst[1].inputs[0] == inst[0].out_buffer);
+
+        // OSC_SAW uses the MTOF output
+        CHECK(inst[2].opcode == cedar::Opcode::OSC_SAW);
+        CHECK(inst[2].inputs[0] == inst[1].out_buffer);
+    }
+
+    SECTION("chord literal as oscillator frequency (uses root)") {
+        auto result = akkado::compile("saw('c4:maj')");  // C4 major chord, root = 60
+
+        REQUIRE(result.success);
+        // Should have 3 instructions: PUSH_CONST (60), MTOF, OSC_SAW
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        // PUSH_CONST should push MIDI note 60 (C4 - root of chord)
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        float midi_note;
+        std::memcpy(&midi_note, &inst[0].state_id, sizeof(float));
+        CHECK(midi_note == 60.0f);
+
+        CHECK(inst[1].opcode == cedar::Opcode::MTOF);
+        CHECK(inst[2].opcode == cedar::Opcode::OSC_SAW);
+    }
+
     SECTION("pipe expression: saw(440) |> out(%, %)") {
         auto result = akkado::compile("saw(440) |> out(%, %)");
 
@@ -127,6 +172,29 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
+    }
+
+    SECTION("simple closure compiles (single param)") {
+        auto result = akkado::compile("(x) -> saw(x)");
+
+        // Should compile - no captures
+        REQUIRE(result.success);
+    }
+
+    SECTION("closure with captured variable produces error") {
+        auto result = akkado::compile("y = 440\n(x) -> saw(y)");
+
+        // Should fail - captures 'y'
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        CHECK(result.diagnostics[0].code == "E008");
+    }
+
+    SECTION("closure with multiple params") {
+        auto result = akkado::compile("(x, y) -> add(x, y)");
+
+        // Should compile - no captures
+        REQUIRE(result.success);
     }
 }
 

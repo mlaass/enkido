@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 #include "diagnostics.hpp"
 
 namespace akkado {
@@ -17,6 +18,8 @@ enum class TokenType : std::uint8_t {
     Number,         // 42, 3.14, -1.5
     String,         // "hello"
     Identifier,     // foo, bar_baz
+    PitchLit,       // 'c4', 'f#3', 'Bb5'
+    ChordLit,       // 'c4:maj', 'a3:min7'
 
     // Keywords
     True,           // true
@@ -81,6 +84,8 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::Number:       return "Number";
         case TokenType::String:       return "String";
         case TokenType::Identifier:   return "Identifier";
+        case TokenType::PitchLit:     return "PitchLit";
+        case TokenType::ChordLit:     return "ChordLit";
         case TokenType::True:         return "True";
         case TokenType::False:        return "False";
         case TokenType::Post:         return "Post";
@@ -130,8 +135,19 @@ struct NumericValue {
     bool is_integer;
 };
 
-/// Token value - can be a number, string, or nothing
-using TokenValue = std::variant<std::monostate, NumericValue, std::string>;
+/// Pitch value (MIDI note number)
+struct PitchValue {
+    std::uint8_t midi_note;
+};
+
+/// Chord value (root MIDI note + intervals)
+struct ChordValue {
+    std::uint8_t root_midi;
+    std::vector<std::int8_t> intervals;
+};
+
+/// Token value - can be a number, string, pitch, chord, or nothing
+using TokenValue = std::variant<std::monostate, NumericValue, std::string, PitchValue, ChordValue>;
 
 /// A single token from the lexer
 struct Token {
@@ -154,6 +170,16 @@ struct Token {
     /// Get string value (assumes type == String or Identifier)
     [[nodiscard]] const std::string& as_string() const {
         return std::get<std::string>(value);
+    }
+
+    /// Get pitch MIDI note (assumes type == PitchLit)
+    [[nodiscard]] std::uint8_t as_pitch() const {
+        return std::get<PitchValue>(value).midi_note;
+    }
+
+    /// Get chord value (assumes type == ChordLit)
+    [[nodiscard]] const ChordValue& as_chord() const {
+        return std::get<ChordValue>(value);
     }
 };
 

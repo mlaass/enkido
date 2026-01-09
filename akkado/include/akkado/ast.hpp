@@ -19,6 +19,8 @@ enum class NodeType : std::uint8_t {
     NumberLit,      // Numeric literal
     BoolLit,        // true/false
     StringLit,      // "..." or '...' or `...`
+    PitchLit,       // 'c4', 'f#3', 'Bb5' (MIDI note)
+    ChordLit,       // 'c4:maj', 'a3:min7' (chord)
 
     // Identifiers
     Identifier,     // Variable or function name
@@ -52,6 +54,8 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::NumberLit:   return "NumberLit";
         case NodeType::BoolLit:     return "BoolLit";
         case NodeType::StringLit:   return "StringLit";
+        case NodeType::PitchLit:    return "PitchLit";
+        case NodeType::ChordLit:    return "ChordLit";
         case NodeType::Identifier:  return "Identifier";
         case NodeType::Hole:        return "Hole";
         case NodeType::BinaryOp:    return "BinaryOp";
@@ -116,6 +120,8 @@ struct Node {
     struct BinaryOpData { BinOp op; };
     struct ArgumentData { std::optional<std::string> name; };  // Named arg
     struct PatternData { PatternType pattern_type; };
+    struct PitchData { std::uint8_t midi_note; };
+    struct ChordData { std::uint8_t root_midi; std::vector<std::int8_t> intervals; };
 
     std::variant<
         std::monostate,
@@ -125,7 +131,9 @@ struct Node {
         IdentifierData,
         BinaryOpData,
         ArgumentData,
-        PatternData
+        PatternData,
+        PitchData,
+        ChordData
     > data;
 
     // Type-safe accessors
@@ -155,6 +163,14 @@ struct Node {
 
     [[nodiscard]] PatternType as_pattern_type() const {
         return std::get<PatternData>(data).pattern_type;
+    }
+
+    [[nodiscard]] std::uint8_t as_pitch() const {
+        return std::get<PitchData>(data).midi_note;
+    }
+
+    [[nodiscard]] const ChordData& as_chord() const {
+        return std::get<ChordData>(data);
     }
 };
 

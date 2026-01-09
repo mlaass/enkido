@@ -111,6 +111,227 @@ TEST_CASE("Lexer numbers", "[lexer]") {
         CHECK(tokens[1].type == TokenType::Plus);
         CHECK(tokens[2].type == TokenType::Number);
     }
+
+    SECTION("leading decimal") {
+        auto [tokens, diags] = lex(".001 .5 .123456");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 4);
+
+        CHECK(tokens[0].type == TokenType::Number);
+        CHECK_THAT(tokens[0].as_number(), WithinRel(0.001));
+
+        CHECK(tokens[1].type == TokenType::Number);
+        CHECK_THAT(tokens[1].as_number(), WithinRel(0.5));
+
+        CHECK(tokens[2].type == TokenType::Number);
+        CHECK_THAT(tokens[2].as_number(), WithinRel(0.123456));
+    }
+
+    SECTION("scientific notation") {
+        auto [tokens, diags] = lex("1e3 1E3 1e-3 1e+3 2.5e10 2.5E-10");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 7);
+
+        CHECK(tokens[0].type == TokenType::Number);
+        CHECK_THAT(tokens[0].as_number(), WithinRel(1000.0));
+
+        CHECK(tokens[1].type == TokenType::Number);
+        CHECK_THAT(tokens[1].as_number(), WithinRel(1000.0));
+
+        CHECK(tokens[2].type == TokenType::Number);
+        CHECK_THAT(tokens[2].as_number(), WithinRel(0.001));
+
+        CHECK(tokens[3].type == TokenType::Number);
+        CHECK_THAT(tokens[3].as_number(), WithinRel(1000.0));
+
+        CHECK(tokens[4].type == TokenType::Number);
+        CHECK_THAT(tokens[4].as_number(), WithinRel(2.5e10));
+
+        CHECK(tokens[5].type == TokenType::Number);
+        CHECK_THAT(tokens[5].as_number(), WithinRel(2.5e-10));
+    }
+
+    SECTION("leading decimal with scientific notation") {
+        auto [tokens, diags] = lex(".5e2 .001E3");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        CHECK(tokens[0].type == TokenType::Number);
+        CHECK_THAT(tokens[0].as_number(), WithinRel(50.0));
+
+        CHECK(tokens[1].type == TokenType::Number);
+        CHECK_THAT(tokens[1].as_number(), WithinRel(1.0));
+    }
+
+    SECTION("integer distinguished from float") {
+        auto [tokens, diags] = lex("42 42.0 42e0");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 4);
+
+        // 42 is integer
+        CHECK(std::get<NumericValue>(tokens[0].value).is_integer);
+
+        // 42.0 is not integer
+        CHECK_FALSE(std::get<NumericValue>(tokens[1].value).is_integer);
+
+        // 42e0 is not integer (has exponent)
+        CHECK_FALSE(std::get<NumericValue>(tokens[2].value).is_integer);
+    }
+}
+
+TEST_CASE("Lexer pitch literals", "[lexer]") {
+    SECTION("basic pitches") {
+        auto [tokens, diags] = lex("'c4' 'a4' 'g3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 4);
+
+        // C4 = 60 (middle C)
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 60);
+
+        // A4 = 69 (concert pitch)
+        CHECK(tokens[1].type == TokenType::PitchLit);
+        CHECK(tokens[1].as_pitch() == 69);
+
+        // G3 = 55
+        CHECK(tokens[2].type == TokenType::PitchLit);
+        CHECK(tokens[2].as_pitch() == 55);
+    }
+
+    SECTION("sharps") {
+        auto [tokens, diags] = lex("'c#4' 'f#3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        // C#4 = 61
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 61);
+
+        // F#3 = 54
+        CHECK(tokens[1].type == TokenType::PitchLit);
+        CHECK(tokens[1].as_pitch() == 54);
+    }
+
+    SECTION("flats") {
+        auto [tokens, diags] = lex("'bb3' 'eb4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        // Bb3 = 58 (B3=59, Bb3=58)
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 58);
+
+        // Eb4 = 63 (E4=64, Eb4=63)
+        CHECK(tokens[1].type == TokenType::PitchLit);
+        CHECK(tokens[1].as_pitch() == 63);
+    }
+
+    SECTION("uppercase note names") {
+        auto [tokens, diags] = lex("'C4' 'A#2' 'Bb5'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 4);
+
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 60);  // C4
+
+        CHECK(tokens[1].type == TokenType::PitchLit);
+        CHECK(tokens[1].as_pitch() == 46);  // A#2
+
+        CHECK(tokens[2].type == TokenType::PitchLit);
+        CHECK(tokens[2].as_pitch() == 82);  // Bb5
+    }
+
+    SECTION("extreme octaves") {
+        auto [tokens, diags] = lex("'c0' 'c10'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        // C0 = 12
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 12);
+
+        // C10 would be 132, but clamped to 127
+        CHECK(tokens[1].type == TokenType::PitchLit);
+        CHECK(tokens[1].as_pitch() == 127);
+    }
+
+    SECTION("non-pitch single-quoted strings remain strings") {
+        // 'hello' should still be a string, not a pitch
+        auto [tokens, diags] = lex("'hello'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::String);
+        CHECK(tokens[0].as_string() == "hello");
+    }
+}
+
+TEST_CASE("Lexer chord literals", "[lexer]") {
+    SECTION("major chord") {
+        auto [tokens, diags] = lex("'c4:maj'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 60);  // C4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals[0] == 0);  // root
+        CHECK(chord.intervals[1] == 4);  // major third
+        CHECK(chord.intervals[2] == 7);  // perfect fifth
+    }
+
+    SECTION("minor chord with sharp") {
+        auto [tokens, diags] = lex("'f#3:min'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 54);  // F#3
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals[0] == 0);   // root
+        CHECK(chord.intervals[1] == 3);   // minor third
+        CHECK(chord.intervals[2] == 7);   // perfect fifth
+    }
+
+    SECTION("seventh chord") {
+        auto [tokens, diags] = lex("'a3:dom7'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 57);  // A3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals[0] == 0);   // root
+        CHECK(chord.intervals[1] == 4);   // major third
+        CHECK(chord.intervals[2] == 7);   // perfect fifth
+        CHECK(chord.intervals[3] == 10);  // minor seventh
+    }
+
+    SECTION("power chord") {
+        auto [tokens, diags] = lex("'e2:5'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 40);  // E2
+        REQUIRE(chord.intervals.size() == 2);
+        CHECK(chord.intervals[0] == 0);  // root
+        CHECK(chord.intervals[1] == 7);  // perfect fifth
+    }
+
+    SECTION("unknown chord type falls back to string") {
+        // 'c4:xyz' should be a string since 'xyz' is not a known chord
+        auto [tokens, diags] = lex("'c4:xyz'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::String);
+        CHECK(tokens[0].as_string() == "c4:xyz");
+    }
 }
 
 TEST_CASE("Lexer strings", "[lexer]") {

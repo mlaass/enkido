@@ -112,6 +112,90 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             return out;
         }
 
+        case NodeType::PitchLit: {
+            // Emit PUSH_CONST for MIDI note, then MTOF to convert to frequency
+            std::uint16_t midi_buf = buffers_.allocate();
+            if (midi_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Push MIDI note value
+            cedar::Instruction push_inst{};
+            push_inst.opcode = cedar::Opcode::PUSH_CONST;
+            push_inst.out_buffer = midi_buf;
+            push_inst.inputs[0] = 0xFFFF;
+            push_inst.inputs[1] = 0xFFFF;
+            push_inst.inputs[2] = 0xFFFF;
+
+            float midi_value = static_cast<float>(n.as_pitch());
+            std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
+            emit(push_inst);
+
+            // Allocate output buffer for frequency
+            std::uint16_t freq_buf = buffers_.allocate();
+            if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // MTOF: convert MIDI note to frequency
+            cedar::Instruction mtof_inst{};
+            mtof_inst.opcode = cedar::Opcode::MTOF;
+            mtof_inst.out_buffer = freq_buf;
+            mtof_inst.inputs[0] = midi_buf;
+            mtof_inst.inputs[1] = 0xFFFF;
+            mtof_inst.inputs[2] = 0xFFFF;
+            mtof_inst.state_id = 0;
+            emit(mtof_inst);
+
+            node_buffers_[node] = freq_buf;
+            return freq_buf;
+        }
+
+        case NodeType::ChordLit: {
+            // For MVP, emit first note (root) of chord
+            // Full chord expansion would require array support
+            const auto& chord = n.as_chord();
+            std::uint8_t root_midi = chord.root_midi;
+
+            // Emit PUSH_CONST for MIDI note, then MTOF
+            std::uint16_t midi_buf = buffers_.allocate();
+            if (midi_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            cedar::Instruction push_inst{};
+            push_inst.opcode = cedar::Opcode::PUSH_CONST;
+            push_inst.out_buffer = midi_buf;
+            push_inst.inputs[0] = 0xFFFF;
+            push_inst.inputs[1] = 0xFFFF;
+            push_inst.inputs[2] = 0xFFFF;
+
+            float midi_value = static_cast<float>(root_midi);
+            std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
+            emit(push_inst);
+
+            std::uint16_t freq_buf = buffers_.allocate();
+            if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            cedar::Instruction mtof_inst{};
+            mtof_inst.opcode = cedar::Opcode::MTOF;
+            mtof_inst.out_buffer = freq_buf;
+            mtof_inst.inputs[0] = midi_buf;
+            mtof_inst.inputs[1] = 0xFFFF;
+            mtof_inst.inputs[2] = 0xFFFF;
+            mtof_inst.state_id = 0;
+            emit(mtof_inst);
+
+            node_buffers_[node] = freq_buf;
+            return freq_buf;
+        }
+
         case NodeType::Identifier: {
             const std::string& name = n.as_identifier();
             auto sym = symbols_->lookup(name);
@@ -280,9 +364,45 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             error("E111", "Pipe should have been rewritten", n.location);
             return BufferAllocator::BUFFER_UNUSED;
 
-        case NodeType::Closure:
-            error("E112", "Closures not supported in MVP", n.location);
-            return BufferAllocator::BUFFER_UNUSED;
+        case NodeType::Closure: {
+            // For simple closures: allocate buffers for parameters, then generate body
+            // Find parameters and body
+            std::vector<std::string> param_names;
+            NodeIndex child = n.first_child;
+            NodeIndex body = NULL_NODE;
+
+            while (child != NULL_NODE) {
+                const Node& child_node = ast_->arena[child];
+                if (child_node.type == NodeType::Identifier) {
+                    param_names.push_back(child_node.as_identifier());
+                } else {
+                    body = child;
+                    break;
+                }
+                child = ast_->arena[child].next_sibling;
+            }
+
+            if (body == NULL_NODE) {
+                error("E112", "Closure has no body", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Allocate input buffers for parameters and bind them
+            for (const auto& param : param_names) {
+                std::uint16_t param_buf = buffers_.allocate();
+                if (param_buf == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+                // Update symbol table with actual buffer index
+                symbols_->define_variable(param, param_buf);
+            }
+
+            // Generate code for body
+            std::uint16_t body_buf = visit(body);
+            node_buffers_[node] = body_buf;
+            return body_buf;
+        }
 
         case NodeType::MethodCall:
             error("E113", "Method calls not supported in MVP", n.location);

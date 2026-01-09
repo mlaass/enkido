@@ -3,6 +3,7 @@
 #include "ast.hpp"
 #include "diagnostics.hpp"
 #include "symbol_table.hpp"
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -57,6 +58,10 @@ private:
     // Helper: Validate argument count for builtin
     void validate_arguments(const std::string& func_name, const BuiltinInfo& builtin,
                            std::size_t arg_count, SourceLocation loc);
+
+    // Helper: Check for variable captures in closure body
+    void check_closure_captures(NodeIndex node, const std::set<std::string>& params,
+                                SourceLocation closure_loc);
 
     // Error reporting helpers
     void error(const std::string& message, SourceLocation loc);

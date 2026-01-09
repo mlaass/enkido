@@ -70,6 +70,8 @@ private:
 
     // Specific expression parsers
     NodeIndex parse_number();
+    NodeIndex parse_pitch();
+    NodeIndex parse_chord();
     NodeIndex parse_bool();
     NodeIndex parse_string();
     NodeIndex parse_identifier_or_call();

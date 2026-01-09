@@ -270,6 +270,10 @@ NodeIndex Parser::parse_prefix() {
     switch (current().type) {
         case TokenType::Number:
             return parse_number();
+        case TokenType::PitchLit:
+            return parse_pitch();
+        case TokenType::ChordLit:
+            return parse_chord();
         case TokenType::True:
         case TokenType::False:
             return parse_bool();
@@ -317,6 +321,21 @@ NodeIndex Parser::parse_number() {
     auto& num_val = std::get<NumericValue>(tok.value);
     arena_[node].data = Node::NumberData{num_val.value, num_val.is_integer};
 
+    return node;
+}
+
+NodeIndex Parser::parse_pitch() {
+    Token tok = advance();
+    NodeIndex node = make_node(NodeType::PitchLit, tok);
+    arena_[node].data = Node::PitchData{tok.as_pitch()};
+    return node;
+}
+
+NodeIndex Parser::parse_chord() {
+    Token tok = advance();
+    NodeIndex node = make_node(NodeType::ChordLit, tok);
+    const auto& chord = tok.as_chord();
+    arena_[node].data = Node::ChordData{chord.root_midi, chord.intervals};
     return node;
 }
 

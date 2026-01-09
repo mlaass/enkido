@@ -1,4 +1,5 @@
 #include "akkado/lexer.hpp"
+#include "akkado/music_theory.hpp"
 #include <charconv>
 #include <unordered_map>
 
@@ -199,7 +200,12 @@ Token Lexer::lex_token() {
         case '@': return make_token(TokenType::At);
         case '~': return make_token(TokenType::Tilde);
         case '^': return make_token(TokenType::Caret);
-        case '.': return make_token(TokenType::Dot);
+        case '.':
+            // Check for leading decimal number (.001, .5)
+            if (is_digit(peek())) {
+                return lex_number();
+            }
+            return make_token(TokenType::Dot);
 
         // Potentially multi-character tokens
         case '+': return make_token(TokenType::Plus);
@@ -250,10 +256,15 @@ Token Lexer::lex_token() {
             }
             return make_token(TokenType::Greater);
 
-        // Strings
+        // Strings (and pitch literals for single quotes)
         case '"':
-        case '\'':
         case '`':
+            return lex_string(c);
+        case '\'':
+            // Try to lex as pitch or chord literal first ('c4', 'f#3', 'c4:maj', etc.)
+            if (auto pitch_or_chord = try_lex_pitch_or_chord()) {
+                return *pitch_or_chord;
+            }
             return lex_string(c);
 
         default:
@@ -263,20 +274,55 @@ Token Lexer::lex_token() {
 
 Token Lexer::lex_number() {
     bool has_dot = false;
+    bool has_exponent = false;
     bool is_negative = source_[start_] == '-';
 
-    // Consume digits before decimal point
-    while (is_digit(peek())) {
-        advance();
-    }
-
-    // Look for decimal part
-    if (peek() == '.' && is_digit(peek_next())) {
+    // Handle leading decimal (.001, .5)
+    if (source_[start_] == '.') {
         has_dot = true;
-        advance(); // consume '.'
-
+        // Digits after decimal already confirmed by caller
         while (is_digit(peek())) {
             advance();
+        }
+    } else {
+        // Consume digits before decimal point
+        while (is_digit(peek())) {
+            advance();
+        }
+
+        // Look for decimal part
+        if (peek() == '.' && is_digit(peek_next())) {
+            has_dot = true;
+            advance(); // consume '.'
+
+            while (is_digit(peek())) {
+                advance();
+            }
+        }
+    }
+
+    // Look for scientific notation (e/E with optional +/- and digits)
+    if (peek() == 'e' || peek() == 'E') {
+        char next = peek_next();
+        bool valid_exponent = is_digit(next) ||
+            ((next == '+' || next == '-') && current_ + 2 < source_.size() &&
+             is_digit(source_[current_ + 2]));
+
+        if (valid_exponent) {
+            has_exponent = true;
+            advance(); // consume 'e' or 'E'
+
+            if (peek() == '+' || peek() == '-') {
+                advance(); // consume sign
+            }
+
+            if (!is_digit(peek())) {
+                return make_error_token("Expected digit after exponent");
+            }
+
+            while (is_digit(peek())) {
+                advance();
+            }
         }
     }
 
@@ -289,7 +335,9 @@ Token Lexer::lex_number() {
         return make_error_token("Invalid number");
     }
 
-    return make_token(TokenType::Number, NumericValue{value, !has_dot});
+    // Integer only if no decimal and no exponent
+    bool is_integer = !has_dot && !has_exponent;
+    return make_token(TokenType::Number, NumericValue{value, is_integer});
 }
 
 Token Lexer::lex_string(char quote) {
@@ -359,6 +407,114 @@ TokenType Lexer::identifier_type(std::string_view text) const {
         return it->second;
     }
     return TokenType::Identifier;
+}
+
+std::optional<Token> Lexer::try_lex_pitch_or_chord() {
+    // Try to match pitch pattern: [a-gA-G][#b]?[0-9]'
+    // Or chord pattern: [a-gA-G][#b]?[0-9]:[chord_type]'
+    // We're positioned right after the opening quote
+    std::size_t lookahead = current_;
+
+    // Check for note letter
+    if (lookahead >= source_.size()) return std::nullopt;
+    char note_char = source_[lookahead];
+    if (!((note_char >= 'a' && note_char <= 'g') ||
+          (note_char >= 'A' && note_char <= 'G'))) {
+        return std::nullopt;
+    }
+    lookahead++;
+
+    // Check for optional accidental (# or b)
+    int accidental = 0;
+    if (lookahead < source_.size()) {
+        char acc_char = source_[lookahead];
+        if (acc_char == '#') {
+            accidental = 1;
+            lookahead++;
+        } else if (acc_char == 'b') {
+            accidental = -1;
+            lookahead++;
+        }
+    }
+
+    // Check for octave digit
+    if (lookahead >= source_.size()) return std::nullopt;
+    if (!is_digit(source_[lookahead])) return std::nullopt;
+    std::size_t octave_start = lookahead;
+    lookahead++;
+
+    // Allow double-digit octave (e.g., 10)
+    if (lookahead < source_.size() && is_digit(source_[lookahead])) {
+        lookahead++;
+    }
+    std::size_t octave_end = lookahead;
+
+    // Check for chord type (colon followed by chord name)
+    bool is_chord = false;
+    const std::vector<std::int8_t>* chord_intervals = nullptr;
+
+    if (lookahead < source_.size() && source_[lookahead] == ':') {
+        // Could be a chord - look for chord type
+        std::size_t chord_start = lookahead + 1;
+        std::size_t chord_end = chord_start;
+
+        // Scan for chord type name (alphanumeric)
+        while (chord_end < source_.size() &&
+               (is_alpha(source_[chord_end]) || is_digit(source_[chord_end]))) {
+            chord_end++;
+        }
+
+        if (chord_end > chord_start) {
+            std::string_view chord_name = source_.substr(chord_start, chord_end - chord_start);
+            chord_intervals = lookup_chord(chord_name);
+
+            if (chord_intervals != nullptr) {
+                // Valid chord type found
+                is_chord = true;
+                lookahead = chord_end;
+            }
+        }
+    }
+
+    // Check for closing quote
+    if (lookahead >= source_.size() || source_[lookahead] != '\'') {
+        return std::nullopt;
+    }
+
+    // We have a valid pitch or chord literal - now parse it
+    // Note letter semitones: C=0, D=2, E=4, F=5, G=7, A=9, B=11
+    static constexpr int semitones[] = {9, 11, 0, 2, 4, 5, 7}; // a, b, c, d, e, f, g
+    char note_lower = note_char | 0x20; // to lowercase
+    int note_semitone = semitones[note_lower - 'a'];
+
+    // Parse octave
+    int octave = source_[octave_start] - '0';
+    if (octave_end - octave_start > 1) {
+        // Double digit octave
+        octave = octave * 10 + (source_[octave_start + 1] - '0');
+    }
+
+    // MIDI note: (octave + 1) * 12 + semitone + accidental
+    int midi_note = (octave + 1) * 12 + note_semitone + accidental;
+
+    // Clamp to valid MIDI range
+    if (midi_note < 0) midi_note = 0;
+    if (midi_note > 127) midi_note = 127;
+
+    // Consume all characters including closing quote
+    while (current_ < lookahead) {
+        advance();
+    }
+    advance(); // closing quote
+
+    if (is_chord) {
+        return make_token(TokenType::ChordLit, ChordValue{
+            static_cast<std::uint8_t>(midi_note),
+            *chord_intervals
+        });
+    } else {
+        return make_token(TokenType::PitchLit, PitchValue{static_cast<std::uint8_t>(midi_note)});
+    }
 }
 
 void Lexer::add_error(std::string_view message) {

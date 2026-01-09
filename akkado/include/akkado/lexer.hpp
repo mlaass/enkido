@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 #include <cstdint>
+#include <optional>
 #include "token.hpp"
 #include "diagnostics.hpp"
 
@@ -58,6 +59,7 @@ private:
     Token lex_number();
     Token lex_string(char quote);
     Token lex_identifier();
+    std::optional<Token> try_lex_pitch_or_chord();  // Try to lex 'c4', 'f#3', 'c4:maj', etc.
 
     // Keyword lookup
     [[nodiscard]] TokenType identifier_type(std::string_view text) const;
