@@ -35,6 +35,8 @@ function createAudioEngine() {
 	let workletNode: AudioWorkletNode | null = null;
 	let gainNode: GainNode | null = null;
 	let analyserNode: AnalyserNode | null = null;
+	let wasmJsCode: string | null = null;
+	let wasmBinary: ArrayBuffer | null = null;
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -58,6 +60,16 @@ function createAudioEngine() {
 			analyserNode.fftSize = 2048;
 			analyserNode.smoothingTimeConstant = 0.8;
 
+			// Pre-fetch WASM JS code and binary in parallel
+			console.log('[AudioEngine] Fetching WASM module...');
+			const [jsResponse, wasmResponse] = await Promise.all([
+				fetch('/wasm/enkido.js'),
+				fetch('/wasm/enkido.wasm')
+			]);
+			wasmJsCode = await jsResponse.text();
+			wasmBinary = await wasmResponse.arrayBuffer();
+			console.log('[AudioEngine] WASM fetched:', wasmJsCode.length, 'bytes JS,', wasmBinary.byteLength, 'bytes WASM');
+
 			// Load AudioWorklet processor
 			await audioContext.audioWorklet.addModule('/worklet/cedar-processor.js');
 
@@ -78,9 +90,6 @@ function createAudioEngine() {
 			gainNode.connect(analyserNode);
 			analyserNode.connect(audioContext.destination);
 
-			// Set initial BPM
-			workletNode.port.postMessage({ type: 'setBpm', bpm: state.bpm });
-
 			state.isInitialized = true;
 			state.isLoading = false;
 			console.log('[AudioEngine] Initialized with AudioWorklet');
@@ -93,8 +102,14 @@ function createAudioEngine() {
 
 	function handleWorkletMessage(msg: { type: string; [key: string]: unknown }) {
 		switch (msg.type) {
+			case 'requestInit':
+				// Worklet is requesting the WASM module
+				sendWasmToWorklet();
+				break;
 			case 'initialized':
-				console.log('[AudioEngine] Worklet initialized');
+				console.log('[AudioEngine] Worklet WASM initialized');
+				// Set initial BPM after worklet is ready
+				workletNode?.port.postMessage({ type: 'setBpm', bpm: state.bpm });
 				break;
 			case 'programLoaded':
 				state.hasProgram = true;
@@ -105,6 +120,23 @@ function createAudioEngine() {
 				console.error('[AudioEngine] Worklet error:', msg.message);
 				break;
 		}
+	}
+
+	function sendWasmToWorklet() {
+		if (!workletNode || !wasmJsCode || !wasmBinary) {
+			console.error('[AudioEngine] Cannot send WASM - not ready');
+			return;
+		}
+
+		console.log('[AudioEngine] Sending WASM to worklet...');
+
+		// Send the JS code and binary to the worklet
+		// Clone the binary since we want to keep a copy
+		workletNode.port.postMessage({
+			type: 'init',
+			jsCode: wasmJsCode,
+			wasmBinary: wasmBinary.slice(0)
+		});
 	}
 
 	async function play() {
@@ -154,14 +186,19 @@ function createAudioEngine() {
 	 */
 	function loadProgram(bytecode: Uint8Array) {
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load program - not initialized');
+			console.warn('[AudioEngine] Cannot load program - worklet not initialized');
 			return;
 		}
 
+		console.log('[AudioEngine] Loading program, bytecode size:', bytecode.length);
+
+		// Clone the bytecode since we're transferring the buffer
+		const bytecodeClone = bytecode.slice();
+
 		// Transfer bytecode to worklet
 		workletNode.port.postMessage(
-			{ type: 'loadProgram', bytecode: bytecode.buffer },
-			[bytecode.buffer]
+			{ type: 'loadProgram', bytecode: bytecodeClone.buffer },
+			[bytecodeClone.buffer]
 		);
 	}
 

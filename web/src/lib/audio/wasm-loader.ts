@@ -63,15 +63,35 @@ let module: EnkidoModule | null = null;
 /**
  * Load the Enkido WASM module
  * Can be called multiple times - returns cached promise
+ * Only works in browser context (not SSR)
  */
 export async function loadEnkidoModule(): Promise<EnkidoModule> {
+	// Guard against SSR
+	if (typeof window === 'undefined') {
+		throw new Error('WASM module can only be loaded in browser context');
+	}
+
 	if (module) return module;
 
 	if (!modulePromise) {
 		modulePromise = (async () => {
-			// Dynamic import of the WASM module
-			// @ts-expect-error - Module is loaded at runtime
-			const createModule = (await import('/wasm/enkido.js')).default as EnkidoModuleFactory;
+			// Load the WASM module script dynamically
+			// Using globalThis to access the factory function after script loads
+			if (!(globalThis as any).createEnkidoModule) {
+				await new Promise<void>((resolve, reject) => {
+					const script = document.createElement('script');
+					script.src = '/wasm/enkido.js';
+					script.onload = () => resolve();
+					script.onerror = () => reject(new Error('Failed to load enkido.js'));
+					document.head.appendChild(script);
+				});
+			}
+
+			const createModule = (globalThis as any).createEnkidoModule as EnkidoModuleFactory;
+			if (!createModule) {
+				throw new Error('createEnkidoModule not found after loading script');
+			}
+
 			const mod = await createModule();
 			module = mod;
 			return mod;

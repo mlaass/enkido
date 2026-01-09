@@ -11,7 +11,7 @@
 <div class="app">
 	<header class="header">
 		<div class="header-left">
-			<span class="logo">enkido</span>
+			<span class="logo"><img width="32" height="32" src="/img/logo.svg" alt="Enkido" /> Enkido</span>
 		</div>
 		<Transport />
 		<div class="header-right">

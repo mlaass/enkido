@@ -16,7 +16,8 @@ const config = {
 			$lib: './src/lib',
 			$components: './src/lib/components',
 			$audio: './src/lib/audio',
-			$stores: './src/lib/stores'
+			$stores: './src/lib/stores',
+			$compiler: './src/lib/compiler'
 		}
 	}
 };
