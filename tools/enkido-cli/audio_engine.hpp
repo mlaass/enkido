@@ -3,6 +3,7 @@
 #include "cedar/vm/vm.hpp"
 #include "cedar/dsp/constants.hpp"
 #include <atomic>
+#include <array>
 #include <cstdint>
 
 namespace enkido {
@@ -47,6 +48,10 @@ public:
     // Get current config
     [[nodiscard]] const Config& config() const { return config_; }
 
+    // Waveform visualization (thread-safe)
+    static constexpr std::size_t WAVEFORM_SIZE = 512;  // ~10ms at 48kHz
+    void get_waveform(float* out, std::size_t count) const;
+
 private:
     // SDL2 audio callback (static to match C callback signature)
     static void audio_callback(void* userdata, std::uint8_t* stream, int len);
@@ -60,6 +65,10 @@ private:
 
     // SDL2 device ID (0 = not initialized)
     std::uint32_t device_id_ = 0;
+
+    // Waveform ring buffer for visualization
+    std::array<float, WAVEFORM_SIZE> waveform_buffer_{};
+    std::atomic<std::size_t> waveform_write_pos_{0};
 };
 
 // Global signal flag for Ctrl+C handling

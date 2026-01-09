@@ -157,7 +157,25 @@ void AudioEngine::audio_callback(void* userdata, std::uint8_t* stream, int len) 
             output[(offset + i) * 2 + 1] = right[i];
         }
 
+        // Capture waveform for visualization (mix to mono)
+        std::size_t write_pos = engine->waveform_write_pos_.load(std::memory_order_relaxed);
+        for (std::size_t i = 0; i < chunk; ++i) {
+            float mono = (left[i] + right[i]) * 0.5f;
+            engine->waveform_buffer_[write_pos % WAVEFORM_SIZE] = mono;
+            write_pos++;
+        }
+        engine->waveform_write_pos_.store(write_pos % WAVEFORM_SIZE, std::memory_order_release);
+
         offset += chunk;
+    }
+}
+
+void AudioEngine::get_waveform(float* out, std::size_t count) const {
+    if (count > WAVEFORM_SIZE) count = WAVEFORM_SIZE;
+    std::size_t pos = waveform_write_pos_.load(std::memory_order_acquire);
+    for (std::size_t i = 0; i < count; ++i) {
+        std::size_t idx = (pos + WAVEFORM_SIZE - count + i) % WAVEFORM_SIZE;
+        out[i] = waveform_buffer_[idx];
     }
 }
 

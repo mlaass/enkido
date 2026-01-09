@@ -80,6 +80,9 @@ private:
     std::vector<std::string> path_stack_;
     std::uint32_t anonymous_counter_ = 0;
 
+    // Track call counts per stateful function for unique state_ids
+    std::unordered_map<std::string, std::uint32_t> call_counters_;
+
     // Map from AST node index to output buffer index
     std::unordered_map<NodeIndex, std::uint16_t> node_buffers_;
 };

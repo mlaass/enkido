@@ -29,6 +29,7 @@ private:
 
     // Rendering
     void render();
+    void render_waveform();
     void render_gutter();
     void render_editor();
     void render_status_bar();

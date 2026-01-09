@@ -163,6 +163,26 @@ public:
     }
 
     // =========================================================================
+    // Reset API (for VM::reset)
+    // =========================================================================
+
+    // Reset all slots to initial state
+    // Only call when audio is stopped!
+    void reset() noexcept {
+        // Clear all slots
+        for (auto& slot : slots_) {
+            slot.clear();
+        }
+        // Reset to initial state: slot 0 active (empty), others empty
+        slots_[0].state.store(ProgramSlot::State::Active, std::memory_order_relaxed);
+        slots_[1].state.store(ProgramSlot::State::Empty, std::memory_order_relaxed);
+        slots_[2].state.store(ProgramSlot::State::Empty, std::memory_order_relaxed);
+        current_idx_.store(0, std::memory_order_relaxed);
+        previous_idx_.store(1, std::memory_order_relaxed);
+        swap_pending_.store(false, std::memory_order_relaxed);
+    }
+
+    // =========================================================================
     // Query API (thread-safe)
     // =========================================================================
 

@@ -266,7 +266,7 @@ void UIMode::compile_and_play() {
             err << diag.message;
         }
         status_message_ = "Error: " + err.str();
-        playing_ = false;
+        // Don't change playing_ - old program keeps running if it was playing
         return;
     }
 
@@ -280,13 +280,23 @@ void UIMode::compile_and_play() {
         // Hot-swap for glitch-free transition while playing
         auto load_result = engine_.vm().load_program(instructions);
         if (load_result != cedar::VM::LoadResult::Success) {
-            status_message_ = "Error: Failed to load program";
+            switch (load_result) {
+                case cedar::VM::LoadResult::SlotBusy:
+                    status_message_ = "Error: VM busy (try again)";
+                    break;
+                case cedar::VM::LoadResult::TooLarge:
+                    status_message_ = "Error: Program too large";
+                    break;
+                default:
+                    status_message_ = "Error: Failed to load program";
+                    break;
+            }
             return;
         }
     } else {
         // Immediate load when stopped (resets VM, avoids slot exhaustion)
         if (!engine_.vm().load_program_immediate(instructions)) {
-            status_message_ = "Error: Failed to load program";
+            status_message_ = "Error: Failed to load program (invalid bytecode?)";
             return;
         }
     }
@@ -317,11 +327,40 @@ void UIMode::render() {
     SDL_SetRenderDrawColor(renderer_, BG_COLOR.r, BG_COLOR.g, BG_COLOR.b, BG_COLOR.a);
     SDL_RenderClear(renderer_);
 
+    render_waveform();  // Behind everything
     render_error_highlights();
     render_gutter();
     render_editor();
     render_cursor();
     render_status_bar();
+}
+
+void UIMode::render_waveform() {
+    if (!playing_) return;
+
+    // Get waveform data
+    constexpr std::size_t SAMPLES = 256;
+    float waveform[SAMPLES];
+    engine_.get_waveform(waveform, SAMPLES);
+
+    // Draw area: editor region (excluding gutter and status bar)
+    int x_start = GUTTER_WIDTH;
+    int x_end = window_width_;
+    int y_center = (window_height_ - STATUS_HEIGHT) / 2;
+    int amplitude = (window_height_ - STATUS_HEIGHT) / 3;
+
+    // Dim green color for waveform
+    SDL_SetRenderDrawColor(renderer_, 60, 120, 80, 40);
+
+    // Draw waveform as connected lines
+    float x_step = static_cast<float>(x_end - x_start) / SAMPLES;
+    for (std::size_t i = 1; i < SAMPLES; ++i) {
+        int x1 = x_start + static_cast<int>(static_cast<float>(i - 1) * x_step);
+        int y1 = y_center - static_cast<int>(waveform[i - 1] * static_cast<float>(amplitude));
+        int x2 = x_start + static_cast<int>(static_cast<float>(i) * x_step);
+        int y2 = y_center - static_cast<int>(waveform[i] * static_cast<float>(amplitude));
+        SDL_RenderDrawLine(renderer_, x1, y1, x2, y2);
+    }
 }
 
 void UIMode::render_gutter() {

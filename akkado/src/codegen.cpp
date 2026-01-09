@@ -23,6 +23,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     path_stack_.clear();
     anonymous_counter_ = 0;
     node_buffers_.clear();
+    call_counters_.clear();
 
     // Start with "main" path
     push_path("main");
@@ -257,13 +258,21 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return BufferAllocator::BUFFER_UNUSED;
             }
 
-            // Visit arguments first (dependencies must be satisfied)
-            // Arguments are children of the Call node
+            // For stateful functions, push path BEFORE visiting children
+            // so nested calls see their parent's context
+            bool pushed_path = false;
+            if (builtin->requires_state) {
+                std::uint32_t count = call_counters_[func_name]++;
+                std::string unique_name = func_name + "#" + std::to_string(count);
+                push_path(unique_name);
+                pushed_path = true;
+            }
+
+            // Visit arguments (dependencies must be satisfied)
             std::vector<std::uint16_t> arg_buffers;
             NodeIndex arg = n.first_child;
             while (arg != NULL_NODE) {
                 const Node& arg_node = ast_->arena[arg];
-                // Arguments may be wrapped in Argument nodes
                 NodeIndex arg_value = arg;
                 if (arg_node.type == NodeType::Argument) {
                     arg_value = arg_node.first_child;
@@ -277,6 +286,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             std::uint16_t out = buffers_.allocate();
             if (out == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
+                if (pushed_path) pop_path();
                 return BufferAllocator::BUFFER_UNUSED;
             }
 
@@ -288,9 +298,8 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[1] = arg_buffers.size() > 1 ? arg_buffers[1] : 0xFFFF;
             inst.inputs[2] = arg_buffers.size() > 2 ? arg_buffers[2] : 0xFFFF;
 
-            // Generate state_id if needed
-            if (builtin->requires_state) {
-                push_path(func_name);
+            // Generate state_id from current path (already pushed if stateful)
+            if (pushed_path) {
                 inst.state_id = compute_state_id();
                 pop_path();
             } else {

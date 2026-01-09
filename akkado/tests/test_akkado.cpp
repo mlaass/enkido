@@ -118,7 +118,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         auto result = akkado::compile("saw(440) |> lp(%, 1000, 0.7) |> out(%, %)");
 
         REQUIRE(result.success);
-        // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7), FILTER_LP, OUTPUT
+        // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7), FILTER_SVF_LP, OUTPUT
         REQUIRE(result.bytecode.size() == 6 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[6];
@@ -129,7 +129,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
         CHECK(inst[2].opcode == cedar::Opcode::PUSH_CONST);  // 1000
         CHECK(inst[3].opcode == cedar::Opcode::PUSH_CONST);  // 0.7
-        CHECK(inst[4].opcode == cedar::Opcode::FILTER_LP);
+        CHECK(inst[4].opcode == cedar::Opcode::FILTER_SVF_LP);  // SVF is default
         CHECK(inst[5].opcode == cedar::Opcode::OUTPUT);
 
         // Filter input is saw output
