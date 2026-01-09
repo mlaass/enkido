@@ -1,14 +1,17 @@
 #include "akkado/akkado.hpp"
+#include "akkado/lexer.hpp"
+#include "akkado/parser.hpp"
+#include "akkado/analyzer.hpp"
+#include "akkado/codegen.hpp"
+#include <cedar/vm/instruction.hpp>
 #include <fstream>
 #include <sstream>
+#include <cstring>
 
 namespace akkado {
 
 CompileResult compile(std::string_view source, std::string_view filename) {
     CompileResult result;
-
-    // TODO: Implement lexer, parser, semantic analysis, and codegen
-    // For now, return a placeholder error
 
     if (source.empty()) {
         result.diagnostics.push_back(Diagnostic{
@@ -22,16 +25,56 @@ CompileResult compile(std::string_view source, std::string_view filename) {
         return result;
     }
 
-    // Placeholder: compilation not yet implemented
-    result.diagnostics.push_back(Diagnostic{
-        .severity = Severity::Info,
-        .code = "I000",
-        .message = "Akkado compiler not yet implemented",
-        .filename = std::string(filename),
-        .location = {.line = 1, .column = 1, .offset = 0, .length = 0}
-    });
+    // Phase 1: Lexing
+    auto [tokens, lex_diags] = lex(source, filename);
+    result.diagnostics.insert(result.diagnostics.end(),
+                              lex_diags.begin(), lex_diags.end());
 
-    result.success = false;
+    if (has_errors(lex_diags)) {
+        result.success = false;
+        return result;
+    }
+
+    // Phase 2: Parsing
+    auto [ast, parse_diags] = parse(std::move(tokens), source, filename);
+    result.diagnostics.insert(result.diagnostics.end(),
+                              parse_diags.begin(), parse_diags.end());
+
+    if (has_errors(parse_diags)) {
+        result.success = false;
+        return result;
+    }
+
+    // Phase 3: Semantic Analysis
+    SemanticAnalyzer analyzer;
+    auto analysis = analyzer.analyze(ast, filename);
+    result.diagnostics.insert(result.diagnostics.end(),
+                              analysis.diagnostics.begin(),
+                              analysis.diagnostics.end());
+
+    if (!analysis.success) {
+        result.success = false;
+        return result;
+    }
+
+    // Phase 4: Code Generation
+    CodeGenerator codegen;
+    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename);
+    result.diagnostics.insert(result.diagnostics.end(),
+                              gen.diagnostics.begin(),
+                              gen.diagnostics.end());
+
+    if (!gen.success) {
+        result.success = false;
+        return result;
+    }
+
+    // Convert instructions to byte array
+    result.bytecode.resize(gen.instructions.size() * sizeof(cedar::Instruction));
+    std::memcpy(result.bytecode.data(), gen.instructions.data(),
+                result.bytecode.size());
+
+    result.success = true;
     return result;
 }
 

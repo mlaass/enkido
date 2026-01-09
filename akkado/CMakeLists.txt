@@ -40,6 +40,9 @@ add_library(akkado STATIC
     src/diagnostics.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/symbol_table.cpp
+    src/analyzer.cpp
+    src/codegen.cpp
 )
 
 target_include_directories(akkado
