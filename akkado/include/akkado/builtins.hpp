@@ -27,12 +27,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"phasor",  {cedar::Opcode::OSC_PHASOR, 1, 0, true}},
 
     // Filters (3 inputs: signal, cutoff, q, stateful for delay lines)
-    {"lp",      {cedar::Opcode::FILTER_LP,     3, 0, true}},
-    {"hp",      {cedar::Opcode::FILTER_HP,     3, 0, true}},
-    {"bp",      {cedar::Opcode::FILTER_BP,     3, 0, true}},
-    {"svflp",   {cedar::Opcode::FILTER_SVF_LP, 3, 0, true}},
-    {"svfhp",   {cedar::Opcode::FILTER_SVF_HP, 3, 0, true}},
-    {"svfbp",   {cedar::Opcode::FILTER_SVF_BP, 3, 0, true}},
+    // SVF (State Variable Filter) - stable under modulation
+    {"lp",      {cedar::Opcode::FILTER_SVF_LP, 3, 0, true}},
+    {"hp",      {cedar::Opcode::FILTER_SVF_HP, 3, 0, true}},
+    {"bp",      {cedar::Opcode::FILTER_SVF_BP, 3, 0, true}},
 
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false}},

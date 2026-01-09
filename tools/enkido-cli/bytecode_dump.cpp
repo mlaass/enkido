@@ -29,10 +29,7 @@ const char* opcode_name(cedar::Opcode op) {
         case cedar::Opcode::OSC_RAMP:   return "OSC_RAMP";
         case cedar::Opcode::OSC_PHASOR: return "OSC_PHASOR";
 
-        // Filters
-        case cedar::Opcode::FILTER_LP:     return "FILTER_LP";
-        case cedar::Opcode::FILTER_HP:     return "FILTER_HP";
-        case cedar::Opcode::FILTER_BP:     return "FILTER_BP";
+        // Filters (SVF only)
         case cedar::Opcode::FILTER_SVF_LP: return "FILTER_SVF_LP";
         case cedar::Opcode::FILTER_SVF_HP: return "FILTER_SVF_HP";
         case cedar::Opcode::FILTER_SVF_BP: return "FILTER_SVF_BP";
@@ -151,9 +148,6 @@ std::string format_instruction(const cedar::Instruction& inst, std::size_t index
             }
             break;
 
-        case cedar::Opcode::FILTER_LP:
-        case cedar::Opcode::FILTER_HP:
-        case cedar::Opcode::FILTER_BP:
         case cedar::Opcode::FILTER_SVF_LP:
         case cedar::Opcode::FILTER_SVF_HP:
         case cedar::Opcode::FILTER_SVF_BP:

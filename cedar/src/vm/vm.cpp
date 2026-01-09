@@ -126,6 +126,10 @@ void VM::handle_swap() {
     if (old_slot && old_slot->instruction_count > 0 &&
         requires_crossfade(old_slot, new_slot)) {
         crossfade_state_.begin(crossfade_config_.duration_blocks);
+    } else {
+        // No crossfade needed - immediately release previous slot
+        // This prevents slot starvation when doing rapid non-structural changes
+        swap_controller_.release_previous();
     }
 }
 
@@ -296,20 +300,8 @@ void VM::execute(const Instruction& inst) {
             op_osc_phasor(ctx_, inst);
             break;
 
-        // === Filters ===
-        [[likely]] case Opcode::FILTER_LP:
-            op_filter_lp(ctx_, inst);
-            break;
-
-        case Opcode::FILTER_HP:
-            op_filter_hp(ctx_, inst);
-            break;
-
-        case Opcode::FILTER_BP:
-            op_filter_bp(ctx_, inst);
-            break;
-
-        case Opcode::FILTER_SVF_LP:
+        // === Filters (SVF only) ===
+        [[likely]] case Opcode::FILTER_SVF_LP:
             op_filter_svf_lp(ctx_, inst);
             break;
 
@@ -432,6 +424,7 @@ void VM::execute(const Instruction& inst) {
 // ============================================================================
 
 void VM::reset() {
+    swap_controller_.reset();
     buffer_pool_.clear_all();
     state_pool_.reset();
     crossfade_state_.complete();

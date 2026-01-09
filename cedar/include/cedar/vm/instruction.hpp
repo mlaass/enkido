@@ -29,9 +29,7 @@ enum class Opcode : std::uint8_t {
     OSC_PHASOR = 25,
 
     // Filters (30-39)
-    FILTER_LP = 30,
-    FILTER_HP = 31,
-    FILTER_BP = 32,
+    // Note: Opcodes 30-32 removed (biquad filters deprecated in favor of SVF)
     FILTER_SVF_LP = 33,
     FILTER_SVF_HP = 34,
     FILTER_SVF_BP = 35,

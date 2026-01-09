@@ -165,13 +165,13 @@ TEST_CASE("VM filters", "[vm][filters]") {
     VM vm;
     vm.set_sample_rate(48000.0f);
 
-    SECTION("FILTER_LP attenuates high frequencies") {
+    SECTION("FILTER_SVF_LP attenuates high frequencies") {
         // Generate noise, filter it with lowpass at 1000 Hz
         std::array<Instruction, 4> program = {
-            Instruction::make_nullary(Opcode::NOISE, 0, 1),            // noise in buf0
-            make_const_instruction(Opcode::PUSH_CONST, 1, 1000.0f),    // cutoff
-            make_const_instruction(Opcode::PUSH_CONST, 2, 0.707f),     // Q
-            Instruction::make_ternary(Opcode::FILTER_LP, 3, 0, 1, 2, 2) // filter with state_id=2
+            Instruction::make_nullary(Opcode::NOISE, 0, 1),                // noise in buf0
+            make_const_instruction(Opcode::PUSH_CONST, 1, 1000.0f),        // cutoff
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.707f),         // Q
+            Instruction::make_ternary(Opcode::FILTER_SVF_LP, 3, 0, 1, 2, 2) // filter with state_id=2
         };
         vm.load_program(program);
 
@@ -277,7 +277,7 @@ TEST_CASE("VM signal chain", "[vm][integration]") {
             Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 1),         // osc -> buf1
             make_const_instruction(Opcode::PUSH_CONST, 2, 2000.0f),    // cutoff
             make_const_instruction(Opcode::PUSH_CONST, 3, 0.707f),     // Q
-            Instruction::make_ternary(Opcode::FILTER_LP, 4, 1, 2, 3, 2) // filter -> buf4
+            Instruction::make_ternary(Opcode::FILTER_SVF_LP, 4, 1, 2, 3, 2) // filter -> buf4
         };
         vm.load_program(program);
 

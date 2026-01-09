@@ -10,21 +10,6 @@ struct OscState {
     float phase = 0.0f;  // 0.0 to 1.0
 };
 
-// Biquad filter state - 2 samples of I/O history plus coefficients
-struct BiquadState {
-    // Filter memory
-    float x1 = 0.0f, x2 = 0.0f;  // Input history
-    float y1 = 0.0f, y2 = 0.0f;  // Output history
-
-    // Cached coefficients (normalized by a0)
-    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
-    float a1 = 0.0f, a2 = 0.0f;
-
-    // Last parameters (for coefficient caching)
-    float last_freq = -1.0f;
-    float last_q = -1.0f;
-};
-
 // SVF (State Variable Filter) state
 struct SVFState {
     float ic1eq = 0.0f;
@@ -134,7 +119,6 @@ struct TimelineState {
 using DSPState = std::variant<
     std::monostate,
     OscState,
-    BiquadState,
     SVFState,
     NoiseState,
     SlewState,
