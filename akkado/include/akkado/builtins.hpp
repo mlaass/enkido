@@ -105,6 +105,56 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"in", "time", "fb", "", "", ""},
                  {NAN, NAN, NAN}}},  // mix packed in reserved field
 
+    // Reverbs (stateful - large delay networks)
+    {"freeverb", {cedar::Opcode::REVERB_FREEVERB, 1, 2, true,
+                  {"in", "room", "damp", "", "", ""},
+                  {0.5f, 0.5f, NAN}}},  // mix packed in reserved
+    {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 2, true,
+                  {"in", "decay", "predelay", "", "", ""},
+                  {0.7f, 20.0f, NAN}}},  // damping + mod in reserved
+    {"fdn",      {cedar::Opcode::REVERB_FDN, 1, 2, true,
+                  {"in", "decay", "damp", "", "", ""},
+                  {0.8f, 0.3f, NAN}}},  // size_mod in reserved
+
+    // Modulation Effects (stateful - delay lines with LFOs)
+    {"chorus",   {cedar::Opcode::EFFECT_CHORUS, 1, 2, true,
+                  {"in", "rate", "depth", "", "", ""},
+                  {0.5f, 0.5f, NAN}}},  // mix in reserved
+    {"flanger",  {cedar::Opcode::EFFECT_FLANGER, 1, 2, true,
+                  {"in", "rate", "depth", "", "", ""},
+                  {1.0f, 0.7f, NAN}}},  // feedback + mix in reserved
+    {"phaser",   {cedar::Opcode::EFFECT_PHASER, 1, 2, true,
+                  {"in", "rate", "depth", "", "", ""},
+                  {0.5f, 0.8f, NAN}}},  // feedback + stages in reserved
+    {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 0, true,
+                  {"in", "time", "fb", "", "", ""},
+                  {NAN, NAN, NAN}}},  // damping in reserved
+
+    // Distortion
+    {"tanh",     {cedar::Opcode::DISTORT_TANH, 1, 1, false,
+                  {"in", "drive", "", "", "", ""},
+                  {2.0f, NAN, NAN}}},  // Default drive = 2x
+    {"softclip", {cedar::Opcode::DISTORT_SOFT, 1, 1, false,
+                  {"in", "thresh", "", "", "", ""},
+                  {0.5f, NAN, NAN}}},  // Default threshold
+    {"bitcrush", {cedar::Opcode::DISTORT_BITCRUSH, 1, 2, true,
+                  {"in", "bits", "rate", "", "", ""},
+                  {8.0f, 0.5f, NAN}}},  // stateful for S&H
+    {"fold",     {cedar::Opcode::DISTORT_FOLD, 1, 1, false,
+                  {"in", "thresh", "", "", "", ""},
+                  {0.5f, NAN, NAN}}},  // symmetry in reserved
+
+    // Dynamics (stateful - envelope followers)
+    {"comp",     {cedar::Opcode::DYNAMICS_COMP, 1, 2, true,
+                  {"in", "thresh", "ratio", "", "", ""},
+                  {-12.0f, 4.0f, NAN}}},  // attack/release in reserved
+    {"limiter",  {cedar::Opcode::DYNAMICS_LIMITER, 1, 2, true,
+                  {"in", "ceiling", "release", "", "", ""},
+                  {-0.1f, 0.1f, NAN}}},  // lookahead in state
+    {"gate",     {cedar::Opcode::DYNAMICS_GATE, 1, 2, true,
+                  {"in", "thresh", "hyst", "", "", ""},
+                  {-40.0f, 6.0f, NAN}}},  // attack/release in reserved
+
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false,
                  {"a", "b", "", "", "", ""},
@@ -221,6 +271,20 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"svflp",     "lp"},
     {"svfhp",     "hp"},
     {"svfbp",     "bp"},
+    // Reverb aliases
+    {"reverb",    "freeverb"},
+    {"plate",     "dattorro"},
+    {"room",      "fdn"},
+    // Distortion aliases
+    {"distort",   "tanh"},
+    {"saturate",  "tanh"},
+    {"crush",     "bitcrush"},
+    {"wavefold",  "fold"},
+    // Dynamics aliases
+    {"compress",  "comp"},
+    {"compressor", "comp"},
+    {"limit",     "limiter"},
+    {"noisegate", "gate"},
 };
 
 /// Lookup a builtin by name, handling aliases
