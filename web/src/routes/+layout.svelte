@@ -1,11 +1,14 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { initializeDocs } from '$lib/docs';
 
 	let { children } = $props();
 
-	// Initialize documentation system immediately
-	initializeDocs();
+	// Initialize documentation system on mount (client-side only)
+	onMount(() => {
+		initializeDocs();
+	});
 </script>
 
 <svelte:head>

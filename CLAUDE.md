@@ -119,9 +119,45 @@ enkido/
 ├── tools/
 │   ├── cedar-cli/  # Bytecode player
 │   └── akkado-cli/ # Compiler CLI
+├── web/            # SvelteKit web app
+│   ├── src/
+│   ├── static/docs/  # Markdown documentation
+│   └── scripts/      # Build scripts
 ├── cmake/          # CMake modules
 └── docs/           # Design documentation
 ```
+
+## Web App
+
+The web app is a SvelteKit application in the `web/` directory. Always use `bun` (not npm).
+
+```bash
+cd web
+
+# Development
+bun run dev
+
+# Build (includes docs index generation)
+bun run build
+
+# Type checking
+bun run check
+```
+
+### Documentation System
+
+Documentation lives in `web/static/docs/` as markdown files with YAML frontmatter. The F1 help system uses a pre-built lookup index for instant keyword lookup.
+
+**When adding or modifying documentation:**
+
+```bash
+# Rebuild the docs lookup index after changing markdown files
+bun run build:docs
+```
+
+This generates `src/lib/docs/lookup-index.ts` which maps keywords to documentation sections. The index is built from:
+- Frontmatter `keywords` arrays
+- H2 headings in builtin docs (for function-level anchors)
 
 ## Implementation Notes
 

@@ -1,10 +1,11 @@
 /**
  * F1 context-sensitive help lookup
  *
- * Provides keyword-to-documentation lookup for the F1 help feature.
+ * Uses pre-built lookup index for instant keyword-to-documentation lookup.
  */
 
 import { docsStore } from '$lib/stores/docs.svelte';
+import { lookupIndex } from './lookup-index';
 
 /**
  * Trigger F1 help for a keyword
@@ -16,8 +17,15 @@ export function triggerF1Help(keyword: string): boolean {
 		return false;
 	}
 
-	// Use the store's lookup function
-	return docsStore.f1Lookup(keyword);
+	const entry = lookupIndex[keyword.toLowerCase()];
+
+	if (entry) {
+		docsStore.setCategory(entry.category as any);
+		docsStore.setDocument(entry.slug, entry.anchor);
+		return true;
+	}
+
+	return false;
 }
 
 /**

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite dev",
-    "build": "bunx --bun vite build",
+    "build": "bun scripts/build-docs-index.ts && bunx --bun vite build",
+    "build:docs": "bun scripts/build-docs-index.ts",
     "preview": "bunx --bun vite preview",
     "check": "bunx svelte-kit sync && bunx svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "bunx svelte-kit sync && bunx svelte-check --tsconfig ./tsconfig.json --watch"

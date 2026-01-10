@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import DocsPanel from '$lib/docs/components/DocsPanel.svelte';
 
 	interface Props {
@@ -9,6 +10,17 @@
 	let { collapsed = $bindable(false), position = 'left' }: Props = $props();
 
 	let activeTab: 'controls' | 'settings' | 'docs' = $state('controls');
+
+	// Listen for F1 help events from the editor
+	onMount(() => {
+		function handleF1Help() {
+			activeTab = 'docs';
+			collapsed = false;
+		}
+
+		window.addEventListener('nkido:f1-help', handleF1Help);
+		return () => window.removeEventListener('nkido:f1-help', handleF1Help);
+	});
 </script>
 
 <aside class="panel" class:collapsed class:left={position === 'left'} class:right={position === 'right'}>

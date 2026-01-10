@@ -9,9 +9,16 @@ import matter from 'gray-matter';
 import { Marked } from 'marked';
 import type { DocFile, DocFrontmatter, LookupEntry } from './types';
 
-/** Custom renderer that marks akk code blocks */
+/** Custom renderer that adds IDs to headings and marks akk code blocks */
 const marked = new Marked({
 	renderer: {
+		heading({ text, depth }) {
+			const id = text
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-|-$/g, '');
+			return `<h${depth} id="${id}">${text}</h${depth}>\n`;
+		},
 		code({ text, lang }) {
 			const isAkkado = lang === 'akk' || lang === 'akkado';
 			if (isAkkado) {

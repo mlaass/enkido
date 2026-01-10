@@ -110,7 +110,6 @@
 			run: (editorView) => {
 				const word = getWordAtCursor(editorView);
 				if (word) {
-					// Dispatch custom event to notify the parent to focus docs panel
 					const found = triggerF1Help(word);
 					if (found) {
 						window.dispatchEvent(new CustomEvent('nkido:f1-help', { detail: { word } }));
