@@ -371,7 +371,6 @@ The parser produces an AST where all binary operators become function calls:
 
 Mini-notation appears inside pattern strings and has its own sub-grammar.
 
-> **Implementation Note:** The mini-notation grammar below represents the target design. Currently, pattern strings are stored as raw text and parsed at runtime. The internal mini-notation parser is planned but not yet fully implemented.
 
 ### 6.1 Structure
 
