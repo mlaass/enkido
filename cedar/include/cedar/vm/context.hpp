@@ -3,6 +3,7 @@
 #include "../dsp/constants.hpp"
 #include "buffer_pool.hpp"
 #include "state_pool.hpp"
+#include "audio_arena.hpp"
 #include <cmath>
 #include <cstdint>
 
@@ -19,6 +20,9 @@ struct ExecutionContext {
 
     // State pool (persistent DSP state)
     StatePool* states = nullptr;
+
+    // Audio arena (pre-allocated memory for delay lines, reverb buffers, etc.)
+    AudioArena* arena = nullptr;
 
     // Environment parameter map (external inputs)
     EnvMap* env_map = nullptr;

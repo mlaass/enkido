@@ -60,10 +60,23 @@ enum class Opcode : std::uint8_t {
     ENV_ADSR = 60,
     ENV_AR = 61,
 
-    // Delays (70-79) - reserved
+    // Delays & Reverbs (70-79)
     DELAY = 70,
+    REVERB_FREEVERB = 71,    // Schroeder-Moorer algorithm
+    REVERB_DATTORRO = 72,    // Plate reverb
+    REVERB_FDN = 73,         // Feedback Delay Network
 
-    // Effects (80-89) - reserved
+    // Effects - Modulation (80-83)
+    EFFECT_CHORUS = 80,      // Multi-voice chorus
+    EFFECT_FLANGER = 81,     // Modulated delay with feedback
+    EFFECT_PHASER = 82,      // Cascaded allpass filters
+    EFFECT_COMB = 83,        // Feedback comb filter
+
+    // Effects - Distortion (84-89)
+    DISTORT_TANH = 84,       // Tanh saturation
+    DISTORT_SOFT = 85,       // Polynomial soft clipping
+    DISTORT_BITCRUSH = 86,   // Bit/sample rate reduction
+    DISTORT_FOLD = 87,       // Wavefolder
 
     // Sequencers & Timing (90-99)
     CLOCK = 90,       // Beat/bar phase output (rate field: 0=beat, 1=bar, 2=cycle)
@@ -72,6 +85,11 @@ enum class Opcode : std::uint8_t {
     EUCLID = 93,      // Euclidean rhythm trigger generator
     TRIGGER = 94,     // Beat-division impulse generator
     TIMELINE = 95,    // Breakpoint automation
+
+    // Dynamics (100-109)
+    DYNAMICS_COMP = 100,     // Feedforward compressor
+    DYNAMICS_LIMITER = 101,  // Brick-wall limiter
+    DYNAMICS_GATE = 102,     // Noise gate with hysteresis
 
     INVALID = 255
 };

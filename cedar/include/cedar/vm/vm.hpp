@@ -170,6 +170,7 @@ private:
     BufferPool buffer_pool_;
     StatePool state_pool_;
     EnvMap env_map_;
+    AudioArena audio_arena_;
 };
 
 }  // namespace cedar

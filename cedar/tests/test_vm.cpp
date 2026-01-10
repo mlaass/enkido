@@ -790,7 +790,7 @@ TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
         CHECK_FALSE(vm.is_crossfading());
     }
 
-    SECTION("no crossfade for identical structure") {
+    SECTION("always crossfade even for identical structure") {
         // Program 1: oscillator with state_id = 50
         std::array<Instruction, 2> program1 = {
             make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
@@ -809,8 +809,9 @@ TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
         (void)vm.load_program(program2);
         vm.process_block(left.data(), right.data());
 
-        // Should not be crossfading (identical programs)
-        CHECK_FALSE(vm.is_crossfading());
+        // Always crossfade when replacing a program to avoid pops from
+        // stateless instruction changes (arithmetic, constants, routing)
+        CHECK(vm.is_crossfading());
     }
 
     SECTION("state preserved even with crossfade") {
@@ -900,7 +901,11 @@ TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
         vm.process_block(left.data(), right.data());
         CHECK(vm.is_crossfading());
 
-        // Block 4: crossfade should complete
+        // Block 4: final crossfade block at position 1.0 (Completing phase)
+        vm.process_block(left.data(), right.data());
+        CHECK(vm.is_crossfading());
+
+        // Block 5: crossfade should complete (cleanup)
         vm.process_block(left.data(), right.data());
         CHECK_FALSE(vm.is_crossfading());
     }

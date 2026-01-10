@@ -71,7 +71,7 @@ struct CrossfadeState {
     }
 
     [[nodiscard]] bool is_active() const noexcept {
-        return phase == Phase::Active || phase == Phase::Pending;
+        return phase == Phase::Active || phase == Phase::Pending || phase == Phase::Completing;
     }
 
     [[nodiscard]] bool is_completing() const noexcept {

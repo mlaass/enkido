@@ -9,6 +9,7 @@ VM::VM() {
     // Initialize context with pointers to our pools
     ctx_.buffers = &buffer_pool_;
     ctx_.states = &state_pool_;
+    ctx_.arena = &audio_arena_;
     ctx_.env_map = &env_map_;
 }
 
@@ -169,37 +170,16 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
 }
 
 bool VM::requires_crossfade(const ProgramSlot* old_slot,
-                           const ProgramSlot* new_slot) const {
+                           [[maybe_unused]] const ProgramSlot* new_slot) const {
     if (!old_slot || old_slot->instruction_count == 0) {
         // First program load - no crossfade needed
         return false;
     }
 
-    // Quick check: identical signatures mean no structural change
-    if (old_slot->signature == new_slot->signature) {
-        return false;
-    }
-
-    // Check for added or removed state IDs
-    auto old_ids = old_slot->get_state_ids();
-    auto new_ids = new_slot->get_state_ids();
-
-    // Count IDs in new but not in old (added nodes)
-    for (auto id : new_ids) {
-        if (!old_slot->has_state_id(id)) {
-            return true;  // Node added
-        }
-    }
-
-    // Count IDs in old but not in new (removed nodes)
-    for (auto id : old_ids) {
-        if (!new_slot->has_state_id(id)) {
-            return true;  // Node removed
-        }
-    }
-
-    // No structural changes
-    return false;
+    // Always crossfade when replacing an existing program
+    // The signature-based detection misses changes to stateless instructions
+    // (arithmetic, routing, output) which can cause audible pops
+    return true;
 }
 
 void VM::rebind_states([[maybe_unused]] const ProgramSlot* old_slot,
@@ -427,6 +407,66 @@ void VM::execute(const Instruction& inst) {
             op_delay(ctx_, inst);
             break;
 
+        // === Reverbs ===
+        case Opcode::REVERB_FREEVERB:
+            op_reverb_freeverb(ctx_, inst);
+            break;
+
+        case Opcode::REVERB_DATTORRO:
+            op_reverb_dattorro(ctx_, inst);
+            break;
+
+        case Opcode::REVERB_FDN:
+            op_reverb_fdn(ctx_, inst);
+            break;
+
+        // === Modulation Effects ===
+        case Opcode::EFFECT_CHORUS:
+            op_effect_chorus(ctx_, inst);
+            break;
+
+        case Opcode::EFFECT_FLANGER:
+            op_effect_flanger(ctx_, inst);
+            break;
+
+        case Opcode::EFFECT_PHASER:
+            op_effect_phaser(ctx_, inst);
+            break;
+
+        case Opcode::EFFECT_COMB:
+            op_effect_comb(ctx_, inst);
+            break;
+
+        // === Distortion ===
+        case Opcode::DISTORT_TANH:
+            op_distort_tanh(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_SOFT:
+            op_distort_soft(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_BITCRUSH:
+            op_distort_bitcrush(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_FOLD:
+            op_distort_fold(ctx_, inst);
+            break;
+
+        // === Dynamics ===
+        case Opcode::DYNAMICS_COMP:
+            op_dynamics_comp(ctx_, inst);
+            break;
+
+        case Opcode::DYNAMICS_LIMITER:
+            op_dynamics_limiter(ctx_, inst);
+            break;
+
+        case Opcode::DYNAMICS_GATE:
+            op_dynamics_gate(ctx_, inst);
+            break;
+
         // === Invalid ===
         [[unlikely]] case Opcode::INVALID:
         [[unlikely]] default:
@@ -443,6 +483,7 @@ void VM::reset() {
     swap_controller_.reset();
     buffer_pool_.clear_all();
     state_pool_.reset();
+    audio_arena_.reset();  // Reset arena when states are cleared
     crossfade_state_.complete();
     ctx_.global_sample_counter = 0;
     ctx_.block_counter = 0;

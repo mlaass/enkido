@@ -1,0 +1,252 @@
+#pragma once
+
+#include "../vm/context.hpp"
+#include "../vm/instruction.hpp"
+#include "../dsp/constants.hpp"
+#include "dsp_state.hpp"
+#include "dsp_utils.hpp"
+#include <cmath>
+#include <algorithm>
+
+namespace cedar {
+
+// ============================================================================
+// EFFECT_COMB: Feedback Comb Filter with Damping
+// ============================================================================
+// in0: input signal
+// in1: delay time (ms, 0.1-100)
+// in2: feedback (-0.99 to 0.99)
+// reserved low byte: damping (0-255 -> 0.0-1.0)
+//
+// Fundamental building block for many effects. Creates resonances at
+// multiples of the fundamental frequency (1000/delay_ms Hz).
+
+[[gnu::always_inline]]
+inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* delay_ms = ctx.buffers->get(inst.inputs[1]);
+    const float* feedback = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<CombFilterState>(inst.state_id);
+
+    float damp = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+
+    // Ensure buffer is allocated from arena
+    state.ensure_buffer(ctx.arena);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Calculate delay in samples
+        float delay_samples = std::clamp(delay_ms[i], 0.1f, 100.0f) * 0.001f * ctx.sample_rate;
+        delay_samples = std::min(delay_samples, static_cast<float>(CombFilterState::MAX_COMB_SAMPLES - 1));
+
+        // Read from delay line with interpolation
+        float delayed = delay_read_linear(state.buffer, CombFilterState::MAX_COMB_SAMPLES,
+                                          state.write_pos, delay_samples);
+
+        // Apply damping (lowpass in feedback path)
+        float fb = std::clamp(feedback[i], -0.99f, 0.99f);
+        state.filter_state = delayed * (1.0f - damp) + state.filter_state * damp;
+
+        // Write to delay line
+        state.buffer[state.write_pos] = input[i] + fb * state.filter_state;
+        state.write_pos = (state.write_pos + 1) % CombFilterState::MAX_COMB_SAMPLES;
+
+        out[i] = delayed;
+    }
+}
+
+// ============================================================================
+// EFFECT_FLANGER: Flanger Effect
+// ============================================================================
+// in0: input signal
+// in1: LFO rate (Hz, 0.1-10)
+// in2: depth (0.0-1.0)
+// reserved: feedback (high byte 0-255 -> -0.99 to 0.99), mix (low byte 0-255 -> 0.0-1.0)
+//
+// Short modulated delay (0.1-10ms) with feedback. Creates metallic,
+// jet-plane-like sweeping effect. Classic for guitars and synths.
+
+[[gnu::always_inline]]
+inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* rate = ctx.buffers->get(inst.inputs[1]);
+    const float* depth = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<FlangerState>(inst.state_id);
+
+    // Decode reserved parameters
+    float feedback = (static_cast<float>((inst.reserved >> 8) & 0xFF) / 127.5f) - 1.0f;
+    feedback = std::clamp(feedback, -0.99f, 0.99f);
+    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+
+    // Ensure buffer is allocated from arena
+    state.ensure_buffer(ctx.arena);
+
+    constexpr float MIN_DELAY_MS = 0.1f;
+    constexpr float MAX_DELAY_MS = 10.0f;
+    constexpr float CENTER_DELAY_MS = (MIN_DELAY_MS + MAX_DELAY_MS) * 0.5f;
+    constexpr float DEPTH_RANGE_MS = (MAX_DELAY_MS - MIN_DELAY_MS) * 0.5f;
+
+    float inv_sample_rate = 1.0f / ctx.sample_rate;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Update LFO phase
+        float lfo_rate = std::clamp(rate[i], 0.1f, 10.0f);
+        state.lfo_phase += lfo_rate * inv_sample_rate;
+        if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
+
+        // Calculate modulated delay time
+        float lfo = std::sin(state.lfo_phase * TWO_PI);
+        float d = std::clamp(depth[i], 0.0f, 1.0f);
+        float delay_ms = CENTER_DELAY_MS + lfo * d * DEPTH_RANGE_MS;
+        float delay_samples = delay_ms * 0.001f * ctx.sample_rate;
+        delay_samples = std::min(delay_samples, static_cast<float>(FlangerState::MAX_FLANGER_SAMPLES - 1));
+
+        // Read from delay line
+        float delayed = delay_read_linear(state.buffer, FlangerState::MAX_FLANGER_SAMPLES,
+                                          state.write_pos, delay_samples);
+
+        // Write with feedback
+        state.buffer[state.write_pos] = input[i] + feedback * delayed;
+        state.write_pos = (state.write_pos + 1) % FlangerState::MAX_FLANGER_SAMPLES;
+
+        // Output with wet/dry mix
+        out[i] = input[i] * (1.0f - mix) + delayed * mix;
+    }
+}
+
+// ============================================================================
+// EFFECT_CHORUS: Multi-Voice Chorus
+// ============================================================================
+// in0: input signal
+// in1: LFO rate (Hz, 0.1-5)
+// in2: depth (0.0-1.0)
+// reserved: mix (low byte 0-255 -> 0.0-1.0)
+//
+// Multiple detuned delay lines create a rich, thick sound.
+// Uses 3 voices with slightly offset LFO phases for maximum width.
+
+[[gnu::always_inline]]
+inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* rate = ctx.buffers->get(inst.inputs[1]);
+    const float* depth = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<ChorusState>(inst.state_id);
+
+    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+
+    // Ensure buffer is allocated from arena
+    state.ensure_buffer(ctx.arena);
+
+    constexpr float BASE_DELAY_MS = 20.0f;
+    constexpr float DEPTH_RANGE_MS = 10.0f;
+
+    // LFO phase offsets for each voice (spread across cycle)
+    constexpr float PHASE_OFFSETS[ChorusState::NUM_VOICES] = {0.0f, 0.33f, 0.67f};
+
+    float inv_sample_rate = 1.0f / ctx.sample_rate;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Update master LFO phase
+        float lfo_rate = std::clamp(rate[i], 0.1f, 5.0f);
+        state.lfo_phase += lfo_rate * inv_sample_rate;
+        if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
+
+        float d = std::clamp(depth[i], 0.0f, 1.0f);
+
+        // Sum contributions from all voices
+        float wet = 0.0f;
+        for (std::size_t v = 0; v < ChorusState::NUM_VOICES; ++v) {
+            // Each voice has offset LFO phase
+            float voice_phase = state.lfo_phase + PHASE_OFFSETS[v];
+            if (voice_phase >= 1.0f) voice_phase -= 1.0f;
+
+            float lfo = std::sin(voice_phase * TWO_PI);
+            float delay_ms = BASE_DELAY_MS + lfo * d * DEPTH_RANGE_MS;
+            float delay_samples = delay_ms * 0.001f * ctx.sample_rate;
+            delay_samples = std::clamp(delay_samples, 1.0f, static_cast<float>(ChorusState::MAX_CHORUS_SAMPLES - 1));
+
+            wet += delay_read_linear(state.buffer, ChorusState::MAX_CHORUS_SAMPLES,
+                                     state.write_pos, delay_samples);
+        }
+        wet /= static_cast<float>(ChorusState::NUM_VOICES);
+
+        // Write dry signal to delay line
+        state.buffer[state.write_pos] = input[i];
+        state.write_pos = (state.write_pos + 1) % ChorusState::MAX_CHORUS_SAMPLES;
+
+        // Output with wet/dry mix
+        out[i] = input[i] * (1.0f - mix) + wet * mix;
+    }
+}
+
+// ============================================================================
+// EFFECT_PHASER: All-Pass Phaser
+// ============================================================================
+// in0: input signal
+// in1: LFO rate (Hz, 0.1-5)
+// in2: depth (0.0-1.0)
+// reserved: feedback (high byte 0-255 -> 0.0-0.99), stages (low byte, clamped 2-12)
+//
+// Cascaded first-order allpass filters with modulated center frequencies.
+// Creates notches that sweep through the spectrum. Classic phaser sound.
+
+[[gnu::always_inline]]
+inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* rate = ctx.buffers->get(inst.inputs[1]);
+    const float* depth = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<PhaserState>(inst.state_id);
+
+    // Decode parameters
+    float feedback = static_cast<float>((inst.reserved >> 8) & 0xFF) / 255.0f * 0.99f;
+    std::size_t num_stages = std::clamp(static_cast<std::size_t>(inst.reserved & 0xFF),
+                                         std::size_t{2}, PhaserState::NUM_STAGES);
+
+    constexpr float MIN_FREQ = 200.0f;
+    constexpr float MAX_FREQ = 4000.0f;
+
+    float inv_sample_rate = 1.0f / ctx.sample_rate;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Update LFO phase
+        float lfo_rate = std::clamp(rate[i], 0.1f, 5.0f);
+        state.lfo_phase += lfo_rate * inv_sample_rate;
+        if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
+
+        // Calculate center frequency for allpass filters
+        float lfo = std::sin(state.lfo_phase * TWO_PI);
+        float d = std::clamp(depth[i], 0.0f, 1.0f);
+
+        // Logarithmic frequency sweep
+        float freq_factor = std::exp(lfo * d * 2.0f);  // ~0.13 to ~7.4 range
+        float center_freq = std::sqrt(MIN_FREQ * MAX_FREQ) * freq_factor;
+        center_freq = std::clamp(center_freq, MIN_FREQ, MAX_FREQ);
+
+        // Calculate allpass coefficient
+        // First-order allpass: y[n] = a * x[n] + x[n-1] - a * y[n-1]
+        // Where a = (tan(pi*f/fs) - 1) / (tan(pi*f/fs) + 1)
+        float tan_val = std::tan(PI * center_freq * inv_sample_rate);
+        float a = (tan_val - 1.0f) / (tan_val + 1.0f);
+
+        // Apply feedback from last stage
+        float x = input[i] + feedback * state.last_output;
+
+        // Cascade allpass stages
+        for (std::size_t s = 0; s < num_stages; ++s) {
+            float y = a * x + state.allpass_state[s] - a * state.allpass_delay[s];
+            state.allpass_state[s] = x;
+            state.allpass_delay[s] = y;
+            x = y;
+        }
+
+        state.last_output = x;
+
+        // Mix phased signal with dry (notch effect)
+        out[i] = (input[i] + x) * 0.5f;
+    }
+}
+
+}  // namespace cedar

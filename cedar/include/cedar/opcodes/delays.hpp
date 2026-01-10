@@ -35,7 +35,7 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
     float max_delay_ms = 2000.0f;  // 2 second max delay
     std::size_t max_samples = static_cast<std::size_t>(max_delay_ms * 0.001f * ctx.sample_rate) + 1;
     max_samples = std::min(max_samples, DelayState::MAX_DELAY_SAMPLES);
-    state.ensure_buffer(max_samples);
+    state.ensure_buffer(max_samples, ctx.arena);
 
     if (!state.buffer) {
         // Buffer allocation failed, output silence
@@ -100,7 +100,7 @@ inline void op_delay_sync(ExecutionContext& ctx, const Instruction& inst) {
     float max_beats = 4.0f;
     std::size_t max_samples = static_cast<std::size_t>(max_beats * samples_per_beat) + 1;
     max_samples = std::min(max_samples, DelayState::MAX_DELAY_SAMPLES);
-    state.ensure_buffer(max_samples);
+    state.ensure_buffer(max_samples, ctx.arena);
 
     if (!state.buffer) {
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
