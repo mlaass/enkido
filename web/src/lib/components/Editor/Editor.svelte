@@ -6,9 +6,39 @@
 	import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 	import { editorStore } from '$stores/editor.svelte';
+	import { audioEngine } from '$stores/audio.svelte';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
+
+	// Map superscript Unicode to ASCII ^N (fixes macOS text substitution)
+	const superscriptMap: Record<string, string> = {
+		'⁰': '^0', '¹': '^1', '²': '^2', '³': '^3', '⁴': '^4',
+		'⁵': '^5', '⁶': '^6', '⁷': '^7', '⁸': '^8', '⁹': '^9'
+	};
+	const superscriptRegex = /[⁰¹²³⁴⁵⁶⁷⁸⁹]/g;
+
+	// Transaction filter to normalize superscripts back to ^N notation
+	const normalizeSuperscripts = EditorState.transactionFilter.of((tr) => {
+		if (!tr.docChanged) return tr;
+
+		const newDoc = tr.newDoc.toString();
+		const matches = Array.from(newDoc.matchAll(superscriptRegex));
+		if (!matches.length) return tr;
+
+		// Return original transaction plus replacement changes
+		return [
+			tr,
+			...matches.map(m => ({
+				changes: {
+					from: m.index!,
+					to: m.index! + 1,
+					insert: superscriptMap[m[0]]
+				},
+				sequential: true
+			}))
+		];
+	});
 
 	// Dark theme for the editor
 	const darkTheme = EditorView.theme({
@@ -53,7 +83,7 @@
 		}
 	}, { dark: true });
 
-	// Custom keybinding for evaluate (Ctrl+Enter)
+	// Custom keybindings for evaluate and stop
 	const evaluateKeymap = keymap.of([
 		{
 			key: 'Ctrl-Enter',
@@ -64,6 +94,13 @@
 					editorStore.setCode(view.state.doc.toString());
 				}
 				editorStore.evaluate();
+				return true;
+			}
+		},
+		{
+			key: 'Escape',
+			run: () => {
+				audioEngine.stop();
 				return true;
 			}
 		}
@@ -98,6 +135,16 @@
 					indentWithTab
 				]),
 				darkTheme,
+				// Disable OS-level text substitutions (e.g., ^2 → ²)
+				EditorView.contentAttributes.of({
+					spellcheck: 'false',
+					autocorrect: 'off',
+					autocapitalize: 'off',
+					'data-gramm': 'false',
+					'data-gramm_editor': 'false'
+				}),
+				// Normalize superscripts back to ^N if OS still substitutes
+				normalizeSuperscripts,
 				EditorView.updateListener.of((update) => {
 					if (update.docChanged) {
 						editorStore.setCode(update.state.doc.toString());
