@@ -1,4 +1,6 @@
 <script lang="ts">
+	import DocsPanel from '$lib/docs/components/DocsPanel.svelte';
+
 	interface Props {
 		collapsed?: boolean;
 		position?: 'left' | 'right';
@@ -65,10 +67,7 @@
 					<p class="hint">Theme, audio output, buffer size</p>
 				</div>
 			{:else if activeTab === 'docs'}
-				<div class="tab-content">
-					<p class="placeholder">Documentation coming soon...</p>
-					<p class="hint">Quick reference for Akkado syntax and built-in functions</p>
-				</div>
+				<DocsPanel />
 			{/if}
 		</div>
 	{/if}

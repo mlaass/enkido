@@ -7,6 +7,7 @@
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 	import { editorStore } from '$stores/editor.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
+	import { triggerF1Help, getWordAtCursor } from '$lib/docs/lookup';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -83,7 +84,7 @@
 		}
 	}, { dark: true });
 
-	// Custom keybindings for evaluate and stop
+	// Custom keybindings for evaluate, stop, and help
 	const evaluateKeymap = keymap.of([
 		{
 			key: 'Ctrl-Enter',
@@ -102,6 +103,20 @@
 			run: () => {
 				audioEngine.stop();
 				return true;
+			}
+		},
+		{
+			key: 'F1',
+			run: (editorView) => {
+				const word = getWordAtCursor(editorView);
+				if (word) {
+					// Dispatch custom event to notify the parent to focus docs panel
+					const found = triggerF1Help(word);
+					if (found) {
+						window.dispatchEvent(new CustomEvent('nkido:f1-help', { detail: { word } }));
+					}
+				}
+				return true; // Prevent browser help
 			}
 		}
 	]);
@@ -175,7 +190,7 @@
 			{/if}
 		</div>
 		<div class="status-center">
-			<span class="hint">Ctrl+Enter to evaluate</span>
+			<span class="hint">Ctrl+Enter to evaluate | F1 for help</span>
 		</div>
 		<div class="status-right">
 			{#if editorStore.lastCompileError}

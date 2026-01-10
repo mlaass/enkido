@@ -1,7 +1,11 @@
 <script lang="ts">
 	import '../app.css';
+	import { initializeDocs } from '$lib/docs';
 
 	let { children } = $props();
+
+	// Initialize documentation system immediately
+	initializeDocs();
 </script>
 
 <svelte:head>
