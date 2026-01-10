@@ -40,6 +40,9 @@ add_library(akkado STATIC
     src/diagnostics.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/mini_lexer.cpp
+    src/mini_parser.cpp
+    src/pattern_eval.cpp
     src/symbol_table.cpp
     src/analyzer.cpp
     src/codegen.cpp

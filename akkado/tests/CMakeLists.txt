@@ -20,6 +20,7 @@ add_executable(akkado_tests
     test_diagnostics.cpp
     test_lexer.cpp
     test_parser.cpp
+    test_mini_notation.cpp
 )
 
 target_link_libraries(akkado_tests

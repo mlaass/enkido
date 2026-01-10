@@ -36,8 +36,18 @@ enum class NodeType : std::uint8_t {
     // Arguments
     Argument,       // Named or positional argument
 
-    // Patterns
+    // Patterns (top-level pattern constructs)
     MiniLiteral,    // pat("..."), seq("...", closure), etc.
+
+    // Mini-notation AST (parsed pattern content)
+    MiniPattern,    // Root of parsed mini-notation pattern
+    MiniAtom,       // Single pitch, sample, or rest
+    MiniGroup,      // [a b c] - subdivision (elements share parent time span)
+    MiniSequence,   // <a b c> - alternating sequence (one per cycle, rotating)
+    MiniPolyrhythm, // [a, b, c] - polyrhythm (all elements simultaneously)
+    MiniChoice,     // a | b | c - random choice each cycle
+    MiniEuclidean,  // x(k,n,r) - euclidean rhythm
+    MiniModified,   // Atom with modifier (speed, weight, etc.)
 
     // Statements
     Assignment,     // x = expr
@@ -64,8 +74,16 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::Pipe:        return "Pipe";
         case NodeType::Closure:     return "Closure";
         case NodeType::Argument:    return "Argument";
-        case NodeType::MiniLiteral: return "MiniLiteral";
-        case NodeType::Assignment:  return "Assignment";
+        case NodeType::MiniLiteral:    return "MiniLiteral";
+        case NodeType::MiniPattern:    return "MiniPattern";
+        case NodeType::MiniAtom:       return "MiniAtom";
+        case NodeType::MiniGroup:      return "MiniGroup";
+        case NodeType::MiniSequence:   return "MiniSequence";
+        case NodeType::MiniPolyrhythm: return "MiniPolyrhythm";
+        case NodeType::MiniChoice:     return "MiniChoice";
+        case NodeType::MiniEuclidean:  return "MiniEuclidean";
+        case NodeType::MiniModified:   return "MiniModified";
+        case NodeType::Assignment:     return "Assignment";
         case NodeType::PostStmt:    return "PostStmt";
         case NodeType::Block:       return "Block";
         case NodeType::Program:     return "Program";
@@ -124,6 +142,44 @@ struct Node {
     struct ChordData { std::uint8_t root_midi; std::vector<std::int8_t> intervals; };
     struct ClosureParamData { std::string name; std::optional<double> default_value; };  // Closure param with optional default
 
+    // Mini-notation atom types
+    enum class MiniAtomKind : std::uint8_t {
+        Pitch,      // Note pitch (MIDI note number)
+        Sample,     // Sample name with optional variant
+        Rest,       // Rest/silence (~, _)
+    };
+
+    // Mini-notation modifier types
+    enum class MiniModifierType : std::uint8_t {
+        Speed,      // *n - speed up by factor n
+        Slow,       // /n - slow down by factor n
+        Duration,   // :n - hold for n steps
+        Weight,     // @n - probability weight
+        Repeat,     // !n - repeat n times
+        Chance,     // ?n - probability of playing (0-1)
+    };
+
+    // Data for mini-notation atoms
+    struct MiniAtomData {
+        MiniAtomKind kind;
+        std::uint8_t midi_note;     // For Pitch kind
+        std::string sample_name;    // For Sample kind
+        std::uint8_t sample_variant; // For Sample kind (e.g., bd:2)
+    };
+
+    // Data for mini-notation euclidean patterns
+    struct MiniEuclideanData {
+        std::uint8_t hits;      // Number of hits
+        std::uint8_t steps;     // Number of steps
+        std::uint8_t rotation;  // Rotation offset
+    };
+
+    // Data for mini-notation modifiers
+    struct MiniModifierData {
+        MiniModifierType modifier_type;
+        float value;
+    };
+
     std::variant<
         std::monostate,
         NumberData,
@@ -135,7 +191,10 @@ struct Node {
         PatternData,
         PitchData,
         ChordData,
-        ClosureParamData
+        ClosureParamData,
+        MiniAtomData,
+        MiniEuclideanData,
+        MiniModifierData
     > data;
 
     // Type-safe accessors
@@ -177,6 +236,18 @@ struct Node {
 
     [[nodiscard]] const ClosureParamData& as_closure_param() const {
         return std::get<ClosureParamData>(data);
+    }
+
+    [[nodiscard]] const MiniAtomData& as_mini_atom() const {
+        return std::get<MiniAtomData>(data);
+    }
+
+    [[nodiscard]] const MiniEuclideanData& as_mini_euclidean() const {
+        return std::get<MiniEuclideanData>(data);
+    }
+
+    [[nodiscard]] const MiniModifierData& as_mini_modifier() const {
+        return std::get<MiniModifierData>(data);
     }
 };
 

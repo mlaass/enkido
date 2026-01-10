@@ -375,10 +375,11 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
         CHECK(ast.arena[mini].as_pattern_type() == PatternType::Pat);
 
-        // First child is the pattern string
-        NodeIndex str = ast.arena[mini].first_child;
-        REQUIRE(ast.arena[str].type == NodeType::StringLit);
-        CHECK(ast.arena[str].as_string() == "bd sd");
+        // First child is the parsed MiniPattern (not StringLit anymore)
+        NodeIndex pattern = ast.arena[mini].first_child;
+        REQUIRE(ast.arena[pattern].type == NodeType::MiniPattern);
+        // MiniPattern should have 2 sample atoms: "bd" and "sd"
+        CHECK(ast.arena.child_count(pattern) == 2);
     }
 
     SECTION("seq with closure") {
@@ -387,11 +388,13 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
         CHECK(ast.arena[mini].as_pattern_type() == PatternType::Seq);
 
-        // Should have 2 children: string and closure
+        // Should have 2 children: MiniPattern and closure
         CHECK(ast.arena.child_count(mini) == 2);
 
-        NodeIndex str = ast.arena[mini].first_child;
-        NodeIndex closure = ast.arena[str].next_sibling;
+        NodeIndex pattern = ast.arena[mini].first_child;
+        CHECK(ast.arena[pattern].type == NodeType::MiniPattern);
+
+        NodeIndex closure = ast.arena[pattern].next_sibling;
         CHECK(ast.arena[closure].type == NodeType::Closure);
     }
 }

@@ -1,5 +1,6 @@
 #include "akkado/codegen.hpp"
 #include "akkado/builtins.hpp"
+#include "akkado/pattern_eval.hpp"
 #include <cedar/vm/state_pool.hpp>
 #include <cstring>
 
@@ -458,9 +459,182 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             error("E113", "Method calls not supported in MVP", n.location);
             return BufferAllocator::BUFFER_UNUSED;
 
-        case NodeType::MiniLiteral:
-            error("E114", "Mini-notation patterns not supported in MVP", n.location);
-            return BufferAllocator::BUFFER_UNUSED;
+        case NodeType::MiniLiteral: {
+            // Get pattern type (used for future pat/seq/timeline differentiation)
+            [[maybe_unused]] PatternType pat_type = n.as_pattern_type();
+
+            // Get children: first is MiniPattern, second (optional) is closure
+            NodeIndex pattern_node = n.first_child;
+            NodeIndex closure_node = NULL_NODE;
+
+            if (pattern_node != NULL_NODE) {
+                closure_node = ast_->arena[pattern_node].next_sibling;
+            }
+
+            if (pattern_node == NULL_NODE) {
+                error("E114", "Pattern has no parsed content", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Push path for semantic ID
+            std::uint32_t pat_count = call_counters_["pat"]++;
+            push_path("pat#" + std::to_string(pat_count));
+            std::uint32_t state_id = compute_state_id();
+
+            // Evaluate pattern to get events
+            PatternEventStream events = evaluate_pattern(pattern_node, ast_->arena, 0);
+
+            if (events.empty()) {
+                // Empty pattern - just return a constant 0
+                std::uint16_t out = buffers_.allocate();
+                if (out == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    pop_path();
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+                cedar::Instruction inst{};
+                inst.opcode = cedar::Opcode::PUSH_CONST;
+                inst.out_buffer = out;
+                inst.inputs[0] = 0xFFFF;
+                inst.inputs[1] = 0xFFFF;
+                inst.inputs[2] = 0xFFFF;
+                float zero = 0.0f;
+                std::memcpy(&inst.state_id, &zero, sizeof(float));
+                emit(inst);
+                pop_path();
+                node_buffers_[node] = out;
+                return out;
+            }
+
+            // Allocate buffers for pattern outputs
+            std::uint16_t trigger_buf = buffers_.allocate();
+            std::uint16_t pitch_buf = buffers_.allocate();
+            std::uint16_t velocity_buf = buffers_.allocate();
+
+            if (trigger_buf == BufferAllocator::BUFFER_UNUSED ||
+                pitch_buf == BufferAllocator::BUFFER_UNUSED ||
+                velocity_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                pop_path();
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Emit CLOCK to get bar phase (0-1 over cycle)
+            std::uint16_t clock_buf = buffers_.allocate();
+            if (clock_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                pop_path();
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+            cedar::Instruction clock_inst{};
+            clock_inst.opcode = cedar::Opcode::CLOCK;
+            clock_inst.rate = 1;  // 1 = bar_phase
+            clock_inst.out_buffer = clock_buf;
+            clock_inst.inputs[0] = 0xFFFF;
+            clock_inst.inputs[1] = 0xFFFF;
+            clock_inst.inputs[2] = 0xFFFF;
+            clock_inst.state_id = 0;
+            emit(clock_inst);
+
+            // For simple patterns, use SEQ_STEP to sequence through values
+            // Emit speed = number of events (steps per cycle)
+            std::uint16_t speed_buf = buffers_.allocate();
+            if (speed_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                pop_path();
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+            cedar::Instruction speed_inst{};
+            speed_inst.opcode = cedar::Opcode::PUSH_CONST;
+            speed_inst.out_buffer = speed_buf;
+            speed_inst.inputs[0] = 0xFFFF;
+            speed_inst.inputs[1] = 0xFFFF;
+            speed_inst.inputs[2] = 0xFFFF;
+            float speed = static_cast<float>(events.size());
+            std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
+            emit(speed_inst);
+
+            // Emit SEQ_STEP for pitch (the state will hold the pitch values)
+            cedar::Instruction seq_inst{};
+            seq_inst.opcode = cedar::Opcode::SEQ_STEP;
+            seq_inst.out_buffer = pitch_buf;
+            seq_inst.inputs[0] = speed_buf;
+            seq_inst.inputs[1] = 0xFFFF;
+            seq_inst.inputs[2] = 0xFFFF;
+            seq_inst.state_id = state_id;
+            emit(seq_inst);
+
+            // Emit TRIGGER for gate signal
+            cedar::Instruction trig_inst{};
+            trig_inst.opcode = cedar::Opcode::TRIGGER;
+            trig_inst.out_buffer = trigger_buf;
+            trig_inst.inputs[0] = speed_buf;
+            trig_inst.inputs[1] = 0xFFFF;
+            trig_inst.inputs[2] = 0xFFFF;
+            trig_inst.state_id = state_id + 1;
+            emit(trig_inst);
+
+            // Emit constant 1.0 for velocity (for now)
+            cedar::Instruction vel_inst{};
+            vel_inst.opcode = cedar::Opcode::PUSH_CONST;
+            vel_inst.out_buffer = velocity_buf;
+            vel_inst.inputs[0] = 0xFFFF;
+            vel_inst.inputs[1] = 0xFFFF;
+            vel_inst.inputs[2] = 0xFFFF;
+            float one = 1.0f;
+            std::memcpy(&vel_inst.state_id, &one, sizeof(float));
+            emit(vel_inst);
+
+            std::uint16_t result_buf = pitch_buf;
+
+            // If there's a closure, bind parameters and generate it
+            if (closure_node != NULL_NODE) {
+                // Closure params are typically (t, v, p) for trigger, velocity, pitch
+                // Find parameter names from closure
+                const Node& closure = ast_->arena[closure_node];
+                std::vector<std::string> param_names;
+                NodeIndex child = closure.first_child;
+                NodeIndex body = NULL_NODE;
+
+                while (child != NULL_NODE) {
+                    const Node& child_node = ast_->arena[child];
+                    if (child_node.type == NodeType::Identifier) {
+                        if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                            param_names.push_back(child_node.as_closure_param().name);
+                        } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                            param_names.push_back(child_node.as_identifier());
+                        } else {
+                            body = child;
+                            break;
+                        }
+                    } else {
+                        body = child;
+                        break;
+                    }
+                    child = ast_->arena[child].next_sibling;
+                }
+
+                // Bind parameters: t=trigger, v=velocity, p=pitch
+                if (param_names.size() >= 1) {
+                    symbols_->define_variable(param_names[0], trigger_buf);
+                }
+                if (param_names.size() >= 2) {
+                    symbols_->define_variable(param_names[1], velocity_buf);
+                }
+                if (param_names.size() >= 3) {
+                    symbols_->define_variable(param_names[2], pitch_buf);
+                }
+
+                // Generate closure body
+                if (body != NULL_NODE) {
+                    result_buf = visit(body);
+                }
+            }
+
+            pop_path();
+            node_buffers_[node] = result_buf;
+            return result_buf;
+        }
 
         case NodeType::PostStmt:
             error("E115", "Post statements not supported in MVP", n.location);

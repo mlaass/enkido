@@ -1,4 +1,5 @@
 #include "akkado/parser.hpp"
+#include "akkado/mini_parser.hpp"
 #include <stdexcept>
 
 namespace akkado {
@@ -753,8 +754,22 @@ NodeIndex Parser::parse_mini_literal() {
         return node;
     }
 
-    NodeIndex pattern_str = parse_string();
-    arena_.add_child(node, pattern_str);
+    Token pattern_tok = advance();
+    const std::string& pattern_str = pattern_tok.as_string();
+
+    // Parse the mini-notation string into AST nodes
+    auto [pattern_ast, mini_diags] = parse_mini(pattern_str, arena_, pattern_tok.location);
+
+    // Add mini-notation diagnostics to our diagnostics
+    for (auto& diag : mini_diags) {
+        diag.filename = filename_;
+        diagnostics_.push_back(std::move(diag));
+    }
+
+    // Add the parsed pattern as a child
+    if (pattern_ast != NULL_NODE) {
+        arena_.add_child(node, pattern_ast);
+    }
 
     // Optional second argument: closure
     if (match(TokenType::Comma)) {
