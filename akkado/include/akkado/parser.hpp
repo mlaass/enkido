@@ -20,6 +20,12 @@ enum class Precedence : std::uint8_t {
     Primary,        // literals, identifiers
 };
 
+/// Parsed closure parameter with optional default
+struct ParsedParam {
+    std::string name;
+    std::optional<double> default_value;
+};
+
 /// Parser for the Akkado language
 ///
 /// Uses Pratt parsing (precedence climbing) to handle operator precedence.
@@ -91,7 +97,7 @@ private:
     std::vector<NodeIndex> parse_argument_list();
 
     // Closure helpers
-    std::vector<std::string> parse_param_list();
+    std::vector<ParsedParam> parse_param_list();
     NodeIndex parse_closure_body();
     NodeIndex parse_block();
 

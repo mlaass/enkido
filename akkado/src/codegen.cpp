@@ -282,6 +282,38 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 arg = ast_->arena[arg].next_sibling;
             }
 
+            // Special case: out() with single argument (mono to stereo)
+            if (func_name == "out" && arg_buffers.size() == 1) {
+                arg_buffers.push_back(arg_buffers[0]);  // Duplicate L to R
+            }
+
+            // Fill in missing optional arguments with defaults
+            std::size_t total_params = builtin->total_params();
+            for (std::size_t i = arg_buffers.size(); i < total_params; ++i) {
+                if (builtin->has_default(i)) {
+                    // Emit PUSH_CONST for the default value
+                    std::uint16_t default_buf = buffers_.allocate();
+                    if (default_buf == BufferAllocator::BUFFER_UNUSED) {
+                        error("E101", "Buffer pool exhausted", n.location);
+                        if (pushed_path) pop_path();
+                        return BufferAllocator::BUFFER_UNUSED;
+                    }
+
+                    cedar::Instruction push_inst{};
+                    push_inst.opcode = cedar::Opcode::PUSH_CONST;
+                    push_inst.out_buffer = default_buf;
+                    push_inst.inputs[0] = 0xFFFF;
+                    push_inst.inputs[1] = 0xFFFF;
+                    push_inst.inputs[2] = 0xFFFF;
+
+                    float default_val = builtin->get_default(i);
+                    std::memcpy(&push_inst.state_id, &default_val, sizeof(float));
+                    emit(push_inst);
+
+                    arg_buffers.push_back(default_buf);
+                }
+            }
+
             // Allocate output buffer
             std::uint16_t out = buffers_.allocate();
             if (out == BufferAllocator::BUFFER_UNUSED) {
@@ -376,6 +408,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
         case NodeType::Closure: {
             // For simple closures: allocate buffers for parameters, then generate body
             // Find parameters and body
+            // Parameters may be stored as IdentifierData or ClosureParamData
             std::vector<std::string> param_names;
             NodeIndex child = n.first_child;
             NodeIndex body = NULL_NODE;
@@ -383,7 +416,15 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             while (child != NULL_NODE) {
                 const Node& child_node = ast_->arena[child];
                 if (child_node.type == NodeType::Identifier) {
-                    param_names.push_back(child_node.as_identifier());
+                    // Check if it's IdentifierData or ClosureParamData
+                    if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                        param_names.push_back(child_node.as_closure_param().name);
+                    } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                        param_names.push_back(child_node.as_identifier());
+                    } else {
+                        body = child;
+                        break;
+                    }
                 } else {
                     body = child;
                     break;

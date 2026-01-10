@@ -241,9 +241,12 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         if (!sym) {
             error("E004", "Unknown function: '" + func_name + "'", n.location);
         } else if (sym->kind == SymbolKind::Builtin) {
+            // Reorder named arguments if any
+            reorder_named_arguments(node, sym->builtin, func_name);
+
             // Count arguments (children of the Call node)
             std::size_t arg_count = 0;
-            NodeIndex arg = n.first_child;
+            NodeIndex arg = output_arena_[node].first_child;
             while (arg != NULL_NODE) {
                 arg_count++;
                 arg = output_arena_[arg].next_sibling;
@@ -270,13 +273,24 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         symbols_.push_scope();
 
         // Collect parameter names (Identifier children before body)
+        // Parameters may be stored as IdentifierData or ClosureParamData
         NodeIndex child = n.first_child;
         NodeIndex body = NULL_NODE;
 
         while (child != NULL_NODE) {
             const Node& child_node = output_arena_[child];
             if (child_node.type == NodeType::Identifier) {
-                const std::string& param_name = child_node.as_identifier();
+                // Check if it's IdentifierData or ClosureParamData
+                std::string param_name;
+                if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                    param_name = child_node.as_closure_param().name;
+                } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                    param_name = child_node.as_identifier();
+                } else {
+                    // This is the body (not a parameter)
+                    body = child;
+                    break;
+                }
                 params.insert(param_name);
                 // Define parameter in current scope
                 symbols_.define_variable(param_name, 0xFFFF);
@@ -393,6 +407,135 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
         check_closure_captures(child, params, closure_loc);
         child = output_arena_[child].next_sibling;
     }
+}
+
+bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
+                                                const BuiltinInfo& builtin,
+                                                const std::string& func_name) {
+    Node& call = output_arena_[call_node];
+
+    // Collect all arguments
+    struct ArgInfo {
+        NodeIndex node;
+        std::optional<std::string> name;
+        int target_pos;  // Position in reordered list (-1 = unknown)
+    };
+    std::vector<ArgInfo> args;
+
+    NodeIndex arg = call.first_child;
+    while (arg != NULL_NODE) {
+        const Node& arg_node = output_arena_[arg];
+        std::optional<std::string> arg_name;
+        if (arg_node.type == NodeType::Argument) {
+            arg_name = arg_node.as_arg_name();
+        }
+        args.push_back({arg, arg_name, -1});
+        arg = output_arena_[arg].next_sibling;
+    }
+
+    if (args.empty()) return true;
+
+    // Check for named arguments and determine if reordering is needed
+    bool has_named = false;
+    bool seen_named = false;
+    std::set<std::string> used_params;
+
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i].name.has_value()) {
+            has_named = true;
+            seen_named = true;
+
+            const std::string& name = *args[i].name;
+
+            // Check for duplicate parameter
+            if (used_params.count(name)) {
+                error("E010", "Duplicate named argument '" + name + "' in call to '" +
+                      func_name + "'", output_arena_[args[i].node].location);
+                return false;
+            }
+            used_params.insert(name);
+
+            // Find parameter index
+            int param_idx = builtin.find_param(name);
+            if (param_idx < 0) {
+                error("E011", "Unknown parameter '" + name + "' for function '" +
+                      func_name + "'", output_arena_[args[i].node].location);
+                return false;
+            }
+            args[i].target_pos = param_idx;
+        } else {
+            // Positional argument
+            if (seen_named) {
+                error("E009", "Positional argument cannot follow named argument in call to '" +
+                      func_name + "'", output_arena_[args[i].node].location);
+                return false;
+            }
+            // Positional args fill slots in order
+            args[i].target_pos = static_cast<int>(i);
+        }
+    }
+
+    if (!has_named) {
+        return true;  // No reordering needed
+    }
+
+    // Check that positional args don't conflict with named args
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (!args[i].name.has_value()) {
+            // Check if this positional slot was also filled by a named arg
+            for (std::size_t j = 0; j < args.size(); ++j) {
+                if (args[j].name.has_value() && args[j].target_pos == static_cast<int>(i)) {
+                    error("E012", "Parameter '" + *args[j].name + "' at position " +
+                          std::to_string(i) + " conflicts with positional argument in call to '" +
+                          func_name + "'", output_arena_[args[i].node].location);
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Reorder arguments: create array indexed by target position
+    std::size_t max_pos = 0;
+    for (const auto& a : args) {
+        if (a.target_pos >= 0) {
+            max_pos = std::max(max_pos, static_cast<std::size_t>(a.target_pos));
+        }
+    }
+
+    std::vector<NodeIndex> reordered(max_pos + 1, NULL_NODE);
+    for (const auto& a : args) {
+        if (a.target_pos >= 0) {
+            reordered[a.target_pos] = a.node;
+        }
+    }
+
+    // Clear argument names after reordering (they're now positional)
+    for (auto& a : args) {
+        if (a.name.has_value() && a.node != NULL_NODE) {
+            Node& arg_node = output_arena_[a.node];
+            if (arg_node.type == NodeType::Argument) {
+                arg_node.data = Node::ArgumentData{std::nullopt};
+            }
+        }
+    }
+
+    // Rebuild child list in new order
+    call.first_child = NULL_NODE;
+    NodeIndex prev = NULL_NODE;
+    for (NodeIndex idx : reordered) {
+        if (idx == NULL_NODE) continue;
+
+        output_arena_[idx].next_sibling = NULL_NODE;
+
+        if (prev == NULL_NODE) {
+            call.first_child = idx;
+        } else {
+            output_arena_[prev].next_sibling = idx;
+        }
+        prev = idx;
+    }
+
+    return true;
 }
 
 } // namespace akkado

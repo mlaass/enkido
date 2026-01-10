@@ -35,17 +35,45 @@ true  false  post  pat  seq  timeline  note
 
 Built-in functions are parsed as regular function calls. The semantic analyzer resolves them to VM opcodes. This list is extensible without grammar changes.
 
-See `docs/bytecode_synth_architecture.md` for the complete opcode reference. Common built-ins include:
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| **Oscillators** | | |
+| `sin` | `sin(freq)` | Sine oscillator |
+| `tri` | `tri(freq)` | Triangle oscillator |
+| `saw` | `saw(freq)` | Sawtooth oscillator |
+| `sqr` | `sqr(freq)` | Square oscillator |
+| `ramp` | `ramp(freq)` | Inverted sawtooth |
+| `phasor` | `phasor(freq)` | Phase accumulator (0-1) |
+| `noise` | `noise()` | White noise |
+| **Filters** | | |
+| `lp` | `lp(in, cut, q=0.707)` | SVF lowpass filter |
+| `hp` | `hp(in, cut, q=0.707)` | SVF highpass filter |
+| `bp` | `bp(in, cut, q=0.707)` | SVF bandpass filter |
+| `moog` | `moog(in, cut, res=1.0)` | Moog ladder filter (4-pole) |
+| **Envelopes** | | |
+| `adsr` | `adsr(gate, attack=0.01, decay=0.1)` | ADSR envelope |
+| `ar` | `ar(trig, attack=0.01, release=0.3)` | Attack-release envelope |
+| **Delays** | | |
+| `delay` | `delay(in, time, fb)` | Delay line (time in ms) |
+| **Math** | | |
+| `add`, `sub`, `mul`, `div`, `pow` | `op(a, b)` | Arithmetic (from operators) |
+| `neg`, `abs`, `sqrt`, `log`, `exp` | `f(x)` | Unary math functions |
+| `floor`, `ceil` | `f(x)` | Rounding functions |
+| `min`, `max` | `f(a, b)` | Min/max of two values |
+| `clamp` | `clamp(x, lo, hi)` | Clamp to range |
+| `wrap` | `wrap(x, lo, hi)` | Wrap to range |
+| **Utility** | | |
+| `mtof` | `mtof(note)` | MIDI to frequency |
+| `slew` | `slew(target, rate)` | Slew rate limiter |
+| `sah` | `sah(in, trig)` | Sample and hold |
+| `out` | `out(signal)` or `out(L, R)` | Output to speakers |
+| **Timing** | | |
+| `clock` | `clock()` | Beat phase (0-1) |
+| `lfo` | `lfo(rate, duty=0.5)` | Beat-synced LFO |
+| `trigger` | `trigger(div)` | Beat-division trigger |
+| `euclid` | `euclid(hits, steps, rot=0)` | Euclidean rhythm |
 
-| Category | Functions |
-|----------|-----------|
-| Oscillators | `sin`, `tri`, `saw`, `sqr`, `phasor`, `noise` |
-| Filters | `lp`, `hp`, `bp`, `svflp`, `svfhp`, `svfbp`, `onepole` |
-| Envelopes | `adsr`, `ar`, `perc` |
-| Effects | `delay`, `reverb`, `freeverb`, `chorus`, `flanger` |
-| Math | `add`, `sub`, `mul`, `div`, `pow`, `abs`, `sqrt`, `log`, `exp`, `min`, `max`, `clamp` |
-| Utility | `mtof`, `slew`, `sah`, `out` |
-| Timing | `co`, `beat` |
+Aliases: `sine`→`sin`, `triangle`→`tri`, `sawtooth`→`saw`, `square`→`sqr`, `lowpass`→`lp`, `highpass`→`hp`, `bandpass`→`bp`, `svflp`→`lp`, `svfhp`→`hp`, `svfbp`→`bp`
 
 ### 2.3 Literals
 
@@ -164,13 +192,19 @@ arg_list      = argument { "," argument } ;
 argument      = [ identifier ":" ] pipe_expr ;
 ```
 
-Named arguments use `name: value` syntax. Positional and named can mix, but positional must come first.
+Named arguments use `name: value` syntax. Follows Python conventions:
+- Positional arguments must precede named arguments
+- Named arguments can appear in any order
+- Each parameter can only be specified once
+- Named args allow skipping optional params with defaults
 
 Examples:
 ```
-saw(440)
-lp(%, 1000, 0.7)
-svflp(in: %, cut: 800, q: 0.5)
+saw(440)                           // positional only
+lp(%, 1000, 0.7)                   // positional only
+lp(in: %, cut: 1000)               // named only (q uses default 0.707)
+ar(gate, release: 0.5)             // mixed: 1 positional, 1 named
+svflp(in: %, cut: 800, q: 0.5)     // all named
 ```
 
 ### 3.5 Method Calls
@@ -192,7 +226,8 @@ signal.map(f).filter(g).take(4)
 
 ```ebnf
 closure        = "(" [ param_list ] ")" "->" closure_body ;
-param_list     = identifier { "," identifier } ;
+param_list     = param { "," param } ;
+param          = identifier [ "=" number ] ;
 closure_body   = block | pipe_expr ;
 block          = "{" { statement } [ pipe_expr ] "}" ;
 ```
@@ -215,6 +250,17 @@ block          = "{" { statement } [ pipe_expr ] "}" ;
     y * 2         // this is returned
 }
 ```
+
+### 3.6.1 Closure Default Parameters
+
+Parameters can have default values using `=` syntax:
+
+```
+(x, q=0.707) -> lp(x, 1000, q)
+(sig, attack=0.01, release=0.3) -> ar(sig, attack, release)
+```
+
+Default values must be numeric literals. Required parameters must precede optional ones (same as Python).
 
 ### 3.7 Mini-Notation Literals
 

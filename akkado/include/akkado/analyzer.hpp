@@ -59,6 +59,11 @@ private:
     void validate_arguments(const std::string& func_name, const BuiltinInfo& builtin,
                            std::size_t arg_count, SourceLocation loc);
 
+    // Helper: Reorder named arguments to match builtin signature
+    // Returns true if reordering succeeded, false on error
+    bool reorder_named_arguments(NodeIndex call_node, const BuiltinInfo& builtin,
+                                 const std::string& func_name);
+
     // Helper: Check for variable captures in closure body
     void check_closure_captures(NodeIndex node, const std::set<std::string>& params,
                                 SourceLocation closure_loc);

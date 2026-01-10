@@ -444,7 +444,7 @@ NodeIndex Parser::parse_closure() {
     NodeIndex node = make_node(NodeType::Closure, start_tok);
 
     // Parse parameter list
-    std::vector<std::string> params = parse_param_list();
+    std::vector<ParsedParam> params = parse_param_list();
 
     consume(TokenType::RParen, "Expected ')' after parameters");
     consume(TokenType::Arrow, "Expected '->' after closure parameters");
@@ -455,19 +455,22 @@ NodeIndex Parser::parse_closure() {
         arena_.add_child(node, body);
     }
 
-    // Store params as identifier children (before body)
-    // Actually, let's store them in a different way - as a string list in the node
-    // For simplicity, we'll create identifier nodes for each param
-    // Prepend them before body
+    // Store params as children before body
+    // Use Identifier for simple params, ClosureParamData for params with defaults
     if (!params.empty()) {
-        // We need to restructure - params should be first children, then body
-        // Let's use a convention: params are Identifier nodes, body is the last child
         NodeIndex first_param = NULL_NODE;
         NodeIndex prev_param = NULL_NODE;
 
         for (const auto& param : params) {
             NodeIndex param_node = arena_.alloc(NodeType::Identifier, start_tok.location);
-            arena_[param_node].data = Node::IdentifierData{param};
+
+            if (param.default_value.has_value()) {
+                // Parameter with default value - use ClosureParamData
+                arena_[param_node].data = Node::ClosureParamData{param.name, param.default_value};
+            } else {
+                // Simple parameter - use IdentifierData
+                arena_[param_node].data = Node::IdentifierData{param.name};
+            }
 
             if (first_param == NULL_NODE) {
                 first_param = param_node;
@@ -489,19 +492,40 @@ NodeIndex Parser::parse_closure() {
     return node;
 }
 
-std::vector<std::string> Parser::parse_param_list() {
-    std::vector<std::string> params;
+std::vector<ParsedParam> Parser::parse_param_list() {
+    std::vector<ParsedParam> params;
 
     if (check(TokenType::RParen)) {
         return params;  // Empty params
     }
+
+    bool seen_default = false;
 
     do {
         if (!check(TokenType::Identifier)) {
             error("Expected parameter name");
             break;
         }
-        params.push_back(std::string(advance().lexeme));
+        Token name_tok = advance();
+        std::string name = std::string(name_tok.lexeme);
+
+        std::optional<double> default_value;
+        if (match(TokenType::Equals)) {
+            // Parse default value (must be a number literal)
+            if (!check(TokenType::Number)) {
+                error("Default parameter value must be a number literal");
+                break;
+            }
+            Token num_tok = advance();
+            default_value = std::get<NumericValue>(num_tok.value).value;
+            seen_default = true;
+        } else if (seen_default) {
+            // Required param after optional - error
+            error("Required parameter cannot follow optional parameter");
+            break;
+        }
+
+        params.push_back(ParsedParam{std::move(name), default_value});
     } while (match(TokenType::Comma));
 
     return params;
@@ -575,11 +599,13 @@ NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
 
     // Add left and right as arguments
     NodeIndex left_arg = arena_.alloc(NodeType::Argument, arena_[left].location);
+    arena_[left_arg].data = Node::ArgumentData{std::nullopt};  // positional arg
     arena_.add_child(left_arg, left);
     arena_.add_child(node, left_arg);
 
     if (right != NULL_NODE) {
         NodeIndex right_arg = arena_.alloc(NodeType::Argument, arena_[right].location);
+        arena_[right_arg].data = Node::ArgumentData{std::nullopt};  // positional arg
         arena_.add_child(right_arg, right);
         arena_.add_child(node, right_arg);
     }

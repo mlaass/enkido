@@ -122,6 +122,7 @@ struct Node {
     struct PatternData { PatternType pattern_type; };
     struct PitchData { std::uint8_t midi_note; };
     struct ChordData { std::uint8_t root_midi; std::vector<std::int8_t> intervals; };
+    struct ClosureParamData { std::string name; std::optional<double> default_value; };  // Closure param with optional default
 
     std::variant<
         std::monostate,
@@ -133,7 +134,8 @@ struct Node {
         ArgumentData,
         PatternData,
         PitchData,
-        ChordData
+        ChordData,
+        ClosureParamData
     > data;
 
     // Type-safe accessors
@@ -171,6 +173,10 @@ struct Node {
 
     [[nodiscard]] const ChordData& as_chord() const {
         return std::get<ChordData>(data);
+    }
+
+    [[nodiscard]] const ClosureParamData& as_closure_param() const {
+        return std::get<ClosureParamData>(data);
     }
 };
 
