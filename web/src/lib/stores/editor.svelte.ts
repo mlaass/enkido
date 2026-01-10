@@ -2,7 +2,6 @@
  * Editor state store using Svelte 5 runes
  */
 
-import { compile } from '$lib/compiler/akkado';
 import { audioEngine } from './audio.svelte';
 
 interface EditorState {
@@ -13,7 +12,7 @@ interface EditorState {
 	isEvaluating: boolean;
 }
 
-const DEFAULT_CODE = `// Welcome to Enkido!
+const DEFAULT_CODE = `// Welcome to NKIDO!
 // Press Ctrl+Enter to evaluate
 
 bpm = 120
@@ -54,7 +53,7 @@ function createEditorStore() {
 
 	/**
 	 * Compile and run the current code
-	 * Used by both Ctrl+Enter and Play button
+	 * Compilation happens in the AudioWorklet for atomic loading
 	 */
 	async function evaluate(): Promise<boolean> {
 		if (state.isEvaluating) return false;
@@ -63,24 +62,21 @@ function createEditorStore() {
 		console.log('[Editor] evaluate() called');
 
 		try {
-			// Compile with akkado.wasm
-			console.log('[Editor] Calling compile()...');
-			const result = await compile(state.code);
+			// Ensure audio engine is initialized first
+			if (!audioEngine.isInitialized) {
+				console.log('[Editor] Initializing audio engine first...');
+				await audioEngine.play();
+			}
+
+			// Compile in the worklet - this is atomic with loading
+			console.log('[Editor] Sending source to worklet for compilation...');
+			const result = await audioEngine.compile(state.code);
 			console.log('[Editor] Compile result:', result);
 
-			if (result.success && result.bytecode) {
-				// Ensure audio engine is initialized before loading program
-				if (!audioEngine.isInitialized) {
-					console.log('[Editor] Initializing audio engine first...');
-					await audioEngine.play();
-					// Give the worklet time to initialize
-					await new Promise(resolve => setTimeout(resolve, 500));
-				}
-				// Send bytecode to Cedar VM
-				audioEngine.loadProgram(result.bytecode);
+			if (result.success) {
 				markCompiled();
 				setCompileError(null);
-				console.log('[Editor] Compiled and loaded bytecode:', result.bytecode.length, 'bytes');
+				console.log('[Editor] Compiled and loaded, bytecode size:', result.bytecodeSize);
 
 				// Start playback if not already playing
 				if (!audioEngine.isPlaying) {
@@ -90,7 +86,7 @@ function createEditorStore() {
 				return true;
 			} else {
 				// Show first error
-				const firstError = result.diagnostics.find(d => d.severity === 2);
+				const firstError = result.diagnostics?.find(d => d.severity === 2);
 				const errorMsg = firstError
 					? `${firstError.message} (line ${firstError.line})`
 					: 'Compilation failed';

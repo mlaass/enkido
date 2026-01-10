@@ -53,7 +53,9 @@ class CedarProcessor extends AudioWorkletProcessor {
 				.replace(/registerProcessor\s*\(\s*["']em-bootstrap["'].*?\)\s*\}/g, '}')
 				// Make it think we're not in a worker context that needs special setup
 				.replace(/ENVIRONMENT_IS_PTHREAD\s*=\s*ENVIRONMENT_IS_WORKER/g, 'ENVIRONMENT_IS_PTHREAD=false')
-				.replace(/ENVIRONMENT_IS_WASM_WORKER\s*=\s*true/g, 'ENVIRONMENT_IS_WASM_WORKER=false');
+				.replace(/ENVIRONMENT_IS_WASM_WORKER\s*=\s*true/g, 'ENVIRONMENT_IS_WASM_WORKER=false')
+				// Remove auto-execution in AudioWorklet context (causes spurious fetch errors)
+				.replace(/isWW\|\|=typeof AudioWorkletGlobalScope.*?isWW&&createEnkidoModule\(\);?/g, '');
 
 			// Create a function that returns the module factory
 			const moduleFactory = new Function(patchedCode + '\nreturn createEnkidoModule;')();
@@ -114,6 +116,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 	handleMessage(msg) {
 		switch (msg.type) {
+			case 'compile':
+				this.compileAndLoad(msg.source);
+				break;
+
 			case 'loadProgram':
 				this.loadProgram(msg.bytecode);
 				break;
@@ -134,6 +140,91 @@ class CedarProcessor extends AudioWorkletProcessor {
 				}
 				break;
 		}
+	}
+
+	/**
+	 * Compile source code and load directly into Cedar VM
+	 * Cedar's internal crossfade handles smooth transitions
+	 */
+	compileAndLoad(source) {
+		if (!this.module) {
+			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
+			return;
+		}
+
+		console.log('[CedarProcessor] Compiling source, length:', source.length);
+
+		// Allocate source string in WASM memory
+		const len = this.module.lengthBytesUTF8(source) + 1;
+		const sourcePtr = this.module._enkido_malloc(len);
+		if (sourcePtr === 0) {
+			this.port.postMessage({ type: 'compiled', success: false, diagnostics: [{ severity: 2, message: 'Failed to allocate memory', line: 1, column: 1 }] });
+			return;
+		}
+
+		try {
+			this.module.stringToUTF8(source, sourcePtr, len);
+
+			// Compile
+			const success = this.module._akkado_compile(sourcePtr, source.length);
+
+			if (success) {
+				// Get bytecode pointer and size
+				const bytecodePtr = this.module._akkado_get_bytecode();
+				const bytecodeSize = this.module._akkado_get_bytecode_size();
+
+				console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize);
+
+				// Load program directly - Cedar handles crossfade internally
+				const result = this.module._cedar_load_program(bytecodePtr, bytecodeSize);
+
+				if (result === 0) {
+					console.log('[CedarProcessor] Program loaded successfully');
+					this.port.postMessage({
+						type: 'compiled',
+						success: true,
+						bytecodeSize
+					});
+				} else {
+					console.error('[CedarProcessor] Load failed with code:', result);
+					this.port.postMessage({
+						type: 'compiled',
+						success: false,
+						diagnostics: [{ severity: 2, message: `Load failed with code ${result}`, line: 1, column: 1 }]
+					});
+				}
+			} else {
+				// Extract diagnostics
+				const diagnostics = this.extractDiagnostics();
+				console.log('[CedarProcessor] Compilation failed:', diagnostics);
+				this.port.postMessage({
+					type: 'compiled',
+					success: false,
+					diagnostics
+				});
+			}
+		} finally {
+			this.module._enkido_free(sourcePtr);
+			this.module._akkado_clear_result();
+		}
+	}
+
+	/**
+	 * Extract compilation diagnostics from WASM
+	 */
+	extractDiagnostics() {
+		const count = this.module._akkado_get_diagnostic_count();
+		const diagnostics = [];
+		for (let i = 0; i < count; i++) {
+			const messagePtr = this.module._akkado_get_diagnostic_message(i);
+			diagnostics.push({
+				severity: this.module._akkado_get_diagnostic_severity(i),
+				message: this.module.UTF8ToString(messagePtr),
+				line: this.module._akkado_get_diagnostic_line(i),
+				column: this.module._akkado_get_diagnostic_column(i)
+			});
+		}
+		return diagnostics;
 	}
 
 	loadProgram(bytecodeBuffer) {
@@ -216,6 +307,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 		try {
 			// Process one block with Cedar VM
+			// Cedar handles crossfade internally when programs are swapped
 			this.module._cedar_process_block();
 
 			// Copy output from WASM memory

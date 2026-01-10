@@ -1,4 +1,4 @@
-# **Project Enkido: Technical Specification & PRD**
+# **Project NKIDO: Technical Specification & PRD**
 
 ## **1\. Vision**
 
@@ -83,7 +83,7 @@ struct Instruction {
 
 ## **6\. Live Features: State Preservation**
 
-The "Magic" of Enkido is the decoupling of the **Instruction** (the "What") from the **State** (the "Memory").
+The "Magic" of NKIDO is the decoupling of the **Instruction** (the "What") from the **State** (the "Memory").
 
 ### **Persistent State Pool**
 

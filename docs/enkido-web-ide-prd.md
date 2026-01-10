@@ -1,8 +1,8 @@
-# Enkido Web IDE - Product Requirements Document
+# NKIDO Web IDE - Product Requirements Document
 
 ## Executive Summary
 
-Enkido Web IDE is a browser-based live-coding environment for writing and hot-swapping Akkado programs running in the Cedar synth engine. The IDE emphasizes elegance, minimal footprint, and real-time audio-visual feedback, inspired by [Strudel.cc](https://strudel.cc/) and the Tidal Cycles ecosystem.
+NKIDO Web IDE is a browser-based live-coding environment for writing and hot-swapping Akkado programs running in the Cedar synth engine. The IDE emphasizes elegance, minimal footprint, and real-time audio-visual feedback, inspired by [Strudel.cc](https://strudel.cc/) and the Tidal Cycles ecosystem.
 
 ## Goals
 
@@ -290,7 +290,7 @@ Control types:
 
 ### Structure
 
-Markdown files with embedded Enkido widgets:
+Markdown files with embedded NKIDO widgets:
 
 ```markdown
 # Oscillators
@@ -399,7 +399,7 @@ enkido/
 │   │   │   │   └── settings.svelte.ts # User preferences
 │   │   │   └── docs/
 │   │   │       ├── content/          # Markdown documentation
-│   │   │       └── EnkidoWidget.svelte  # Interactive code blocks
+│   │   │       └── NKIDOWidget.svelte  # Interactive code blocks
 │   │   ├── routes/
 │   │   │   ├── +page.svelte          # Main IDE page
 │   │   │   ├── +layout.svelte        # App shell
@@ -466,7 +466,7 @@ enkido/
 - [ ] Panel position configuration (left/right)
 
 ### Phase 6: Documentation
-- [ ] Markdown renderer with Enkido widgets
+- [ ] Markdown renderer with NKIDO widgets
 - [ ] Auto-generate function reference from opcodes
 - [ ] Example gallery with categories
 - [ ] Standalone docs route (`/docs`)

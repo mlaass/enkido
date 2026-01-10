@@ -1,4 +1,4 @@
-# Enkido Web IDE
+# NKIDO Web IDE
 
 Browser-based live-coding environment for Akkado programs running in the Cedar synth engine.
 

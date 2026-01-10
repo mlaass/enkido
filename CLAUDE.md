@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Enkido** is a high-performance audio synthesis system with three main components:
+**NKIDO** is a high-performance audio synthesis system with three main components:
 
 - **Akkado**: A domain-specific language (DSL) for live-coding musical patterns and modular synthesis, combining Strudel/Tidal-style mini-notation with functional DAG-based audio processing
 - **Cedar**: A graph-based audio synthesis engine with a stack-based bytecode VM, designed for real-time DSP with zero allocations

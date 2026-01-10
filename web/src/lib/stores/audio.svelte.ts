@@ -4,6 +4,19 @@
  * Wraps the Cedar AudioWorklet-based engine with reactive state.
  */
 
+interface Diagnostic {
+	severity: number;
+	message: string;
+	line: number;
+	column: number;
+}
+
+interface CompileResult {
+	success: boolean;
+	bytecodeSize?: number;
+	diagnostics?: Diagnostic[];
+}
+
 interface AudioState {
 	isPlaying: boolean;
 	bpm: number;
@@ -37,6 +50,9 @@ function createAudioEngine() {
 	let analyserNode: AnalyserNode | null = null;
 	let wasmJsCode: string | null = null;
 	let wasmBinary: ArrayBuffer | null = null;
+
+	// Compile result callback (resolved when worklet responds)
+	let compileResolve: ((result: CompileResult) => void) | null = null;
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -111,6 +127,25 @@ function createAudioEngine() {
 				// Set initial BPM after worklet is ready
 				workletNode?.port.postMessage({ type: 'setBpm', bpm: state.bpm });
 				break;
+			case 'compiled':
+				// Compilation result from worklet
+				const result: CompileResult = {
+					success: msg.success as boolean,
+					bytecodeSize: msg.bytecodeSize as number | undefined,
+					diagnostics: msg.diagnostics as Diagnostic[] | undefined
+				};
+				if (result.success) {
+					state.hasProgram = true;
+					console.log('[AudioEngine] Compiled and loaded, bytecode size:', result.bytecodeSize);
+				} else {
+					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
+				}
+				// Resolve pending compile promise
+				if (compileResolve) {
+					compileResolve(result);
+					compileResolve = null;
+				}
+				break;
 			case 'programLoaded':
 				state.hasProgram = true;
 				console.log('[AudioEngine] Program loaded');
@@ -182,7 +217,29 @@ function createAudioEngine() {
 	}
 
 	/**
-	 * Load bytecode into the Cedar VM
+	 * Compile source code in the worklet and load into Cedar VM
+	 * This is the preferred method - compilation happens atomically with loading
+	 */
+	async function compile(source: string): Promise<CompileResult> {
+		if (!workletNode) {
+			return { success: false, diagnostics: [{ severity: 2, message: 'Worklet not initialized', line: 1, column: 1 }] };
+		}
+
+		console.log('[AudioEngine] Sending source for compilation, length:', source.length);
+
+		// Create promise that will be resolved when worklet responds
+		const resultPromise = new Promise<CompileResult>((resolve) => {
+			compileResolve = resolve;
+		});
+
+		// Send source to worklet for compilation
+		workletNode.port.postMessage({ type: 'compile', source });
+
+		return resultPromise;
+	}
+
+	/**
+	 * Load bytecode into the Cedar VM (legacy - prefer compile())
 	 */
 	function loadProgram(bytecode: Uint8Array) {
 		if (!workletNode) {
@@ -256,6 +313,7 @@ function createAudioEngine() {
 		setBpm,
 		setVolume,
 		toggleVisualizations,
+		compile,
 		loadProgram,
 		setParam,
 		getAnalyserNode,
