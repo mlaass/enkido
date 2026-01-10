@@ -12,6 +12,8 @@ interface EditorState {
 	isEvaluating: boolean;
 }
 
+const STORAGE_KEY = 'nkido-editor-code';
+
 const DEFAULT_CODE = `// Welcome to NKIDO!
 // Press Ctrl+Enter to evaluate
 
@@ -21,18 +23,53 @@ bpm = 120
 sin(440) |> out(%, %)
 `;
 
+function loadCode(): string {
+	if (typeof localStorage === 'undefined') return DEFAULT_CODE;
+	try {
+		const stored = localStorage.getItem(STORAGE_KEY);
+		return stored || DEFAULT_CODE;
+	} catch {
+		return DEFAULT_CODE;
+	}
+}
+
+function saveCode(code: string) {
+	if (typeof localStorage === 'undefined') return;
+	try {
+		localStorage.setItem(STORAGE_KEY, code);
+	} catch (e) {
+		console.warn('Failed to save code:', e);
+	}
+}
+
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function debouncedSaveCode(code: string) {
+	if (saveTimeout) clearTimeout(saveTimeout);
+	saveTimeout = setTimeout(() => saveCode(code), 500);
+}
+
 function createEditorStore() {
 	let state = $state<EditorState>({
-		code: DEFAULT_CODE,
+		code: loadCode(),
 		hasUnsavedChanges: false,
 		lastCompileError: null,
 		lastCompileTime: null,
 		isEvaluating: false
 	});
 
+	// Save immediately on page unload
+	if (typeof window !== 'undefined') {
+		window.addEventListener('beforeunload', () => {
+			if (saveTimeout) clearTimeout(saveTimeout);
+			saveCode(state.code);
+		});
+	}
+
 	function setCode(code: string) {
 		state.code = code;
 		state.hasUnsavedChanges = true;
+		debouncedSaveCode(code);
 	}
 
 	function setCompileError(error: string | null) {

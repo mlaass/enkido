@@ -1,7 +1,29 @@
-/* Enkido Web IDE - Global Styles */
+/* NKIDO Web IDE - Global Styles */
 
 :root {
-	/* Colors - Dark theme */
+	/* Typography */
+	--font-mono: 'Fira Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+	--font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+
+	/* Spacing */
+	--spacing-xs: 4px;
+	--spacing-sm: 8px;
+	--spacing-md: 16px;
+	--spacing-lg: 24px;
+	--spacing-xl: 32px;
+
+	/* Sizing */
+	--header-height: 48px;
+	--panel-collapsed-width: 48px;
+
+	/* Transitions */
+	--transition-fast: 150ms ease;
+	--transition-normal: 250ms ease;
+}
+
+/* Dark theme (default) */
+:root,
+:root[data-theme="dark"] {
 	--bg-primary: #0d1117;
 	--bg-secondary: #161b22;
 	--bg-tertiary: #21262d;
@@ -18,26 +40,48 @@
 
 	--border-default: #30363d;
 	--border-muted: #21262d;
+}
 
-	/* Typography */
-	--font-mono: 'Fira Code', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-	--font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+/* Light theme */
+:root[data-theme="light"] {
+	--bg-primary: #ffffff;
+	--bg-secondary: #f6f8fa;
+	--bg-tertiary: #ebeef1;
+	--bg-hover: #d0d7de;
 
-	/* Spacing */
-	--spacing-xs: 4px;
-	--spacing-sm: 8px;
-	--spacing-md: 16px;
-	--spacing-lg: 24px;
-	--spacing-xl: 32px;
+	--text-primary: #1f2328;
+	--text-secondary: #656d76;
+	--text-muted: #8c959f;
 
-	/* Sizing */
-	--header-height: 48px;
-	--panel-width: 280px;
-	--panel-collapsed-width: 48px;
+	--accent-primary: #0969da;
+	--accent-secondary: #1a7f37;
+	--accent-warning: #9a6700;
+	--accent-error: #cf222e;
 
-	/* Transitions */
-	--transition-fast: 150ms ease;
-	--transition-normal: 250ms ease;
+	--border-default: #d0d7de;
+	--border-muted: #ebeef1;
+}
+
+/* System preference (when no data-theme attribute) */
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme]) {
+		--bg-primary: #ffffff;
+		--bg-secondary: #f6f8fa;
+		--bg-tertiary: #ebeef1;
+		--bg-hover: #d0d7de;
+
+		--text-primary: #1f2328;
+		--text-secondary: #656d76;
+		--text-muted: #8c959f;
+
+		--accent-primary: #0969da;
+		--accent-secondary: #1a7f37;
+		--accent-warning: #9a6700;
+		--accent-error: #cf222e;
+
+		--border-default: #d0d7de;
+		--border-muted: #ebeef1;
+	}
 }
 
 /* Reset */

@@ -2,12 +2,18 @@
  * Settings store with localStorage persistence
  */
 
+type TabName = 'controls' | 'settings' | 'docs';
+
 interface Settings {
 	theme: 'dark' | 'light' | 'system';
 	panelPosition: 'left' | 'right';
 	fontSize: number;
 	bufferSize: 128 | 256 | 512 | 1024;
 	sampleRate: 44100 | 48000;
+	panelWidth: number;
+	panelCollapsed: boolean;
+	activeTab: TabName;
+	scrollPositions: Record<string, number>;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -15,7 +21,11 @@ const DEFAULT_SETTINGS: Settings = {
 	panelPosition: 'left',
 	fontSize: 14,
 	bufferSize: 128,
-	sampleRate: 48000
+	sampleRate: 48000,
+	panelWidth: 280,
+	panelCollapsed: false,
+	activeTab: 'controls',
+	scrollPositions: {}
 };
 
 function loadSettings(): Settings {
@@ -69,6 +79,26 @@ function createSettingsStore() {
 		save();
 	}
 
+	function setPanelWidth(width: number) {
+		settings.panelWidth = Math.max(180, width);
+		save();
+	}
+
+	function setPanelCollapsed(collapsed: boolean) {
+		settings.panelCollapsed = collapsed;
+		save();
+	}
+
+	function setActiveTab(tab: TabName) {
+		settings.activeTab = tab;
+		save();
+	}
+
+	function setScrollPosition(tab: string, position: number) {
+		settings.scrollPositions = { ...settings.scrollPositions, [tab]: position };
+		save();
+	}
+
 	function reset() {
 		Object.assign(settings, DEFAULT_SETTINGS);
 		save();
@@ -80,12 +110,20 @@ function createSettingsStore() {
 		get fontSize() { return settings.fontSize; },
 		get bufferSize() { return settings.bufferSize; },
 		get sampleRate() { return settings.sampleRate; },
+		get panelWidth() { return settings.panelWidth; },
+		get panelCollapsed() { return settings.panelCollapsed; },
+		get activeTab() { return settings.activeTab; },
+		get scrollPositions() { return settings.scrollPositions; },
 
 		setTheme,
 		setPanelPosition,
 		setFontSize,
 		setBufferSize,
 		setSampleRate,
+		setPanelWidth,
+		setPanelCollapsed,
+		setActiveTab,
+		setScrollPosition,
 		reset
 	};
 }
