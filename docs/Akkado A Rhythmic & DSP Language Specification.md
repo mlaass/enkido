@@ -42,7 +42,7 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 | `tri` | `tri(freq)` | Triangle oscillator |
 | `saw` | `saw(freq)` | Sawtooth oscillator |
 | `sqr` | `sqr(freq)` | Square oscillator |
-| `ramp` | `ramp(freq)` | Inverted sawtooth |
+| `ramp` | `ramp(freq)` | Ramp oscillator (0→1) |
 | `phasor` | `phasor(freq)` | Phase accumulator (0-1) |
 | `noise` | `noise()` | White noise |
 | **Filters** | | |
@@ -55,6 +55,24 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 | `ar` | `ar(trig, attack=0.01, release=0.3)` | Attack-release envelope |
 | **Delays** | | |
 | `delay` | `delay(in, time, fb)` | Delay line (time in ms) |
+| **Reverbs** | | |
+| `freeverb` | `freeverb(in, room=0.5, damp=0.5)` | Schroeder-Moorer reverb |
+| `dattorro` | `dattorro(in, decay=0.7, predelay=20.0)` | Plate reverb algorithm |
+| `fdn` | `fdn(in, decay=0.8, damp=0.3)` | 4x4 Feedback Delay Network |
+| **Modulation** | | |
+| `chorus` | `chorus(in, rate=0.5, depth=0.5)` | Multi-voice chorus |
+| `flanger` | `flanger(in, rate=1.0, depth=0.7)` | Modulated delay with feedback |
+| `phaser` | `phaser(in, rate=0.5, depth=0.8)` | Cascaded allpass filters |
+| `comb` | `comb(in, time, fb)` | Feedback comb filter |
+| **Distortion** | | |
+| `tanh` | `tanh(in, drive=2.0)` | Tanh saturation |
+| `softclip` | `softclip(in, thresh=0.5)` | Polynomial soft clipping |
+| `bitcrush` | `bitcrush(in, bits=8.0, rate=0.5)` | Bit/sample rate reduction |
+| `fold` | `fold(in, thresh=0.5)` | Wavefolder |
+| **Dynamics** | | |
+| `comp` | `comp(in, thresh=-12.0, ratio=4.0)` | Feedforward compressor |
+| `limiter` | `limiter(in, ceiling=-0.1, release=0.1)` | Brick-wall limiter |
+| `gate` | `gate(in, thresh=-40.0, hyst=6.0)` | Noise gate with hysteresis |
 | **Math** | | |
 | `add`, `sub`, `mul`, `div`, `pow` | `op(a, b)` | Arithmetic (from operators) |
 | `neg`, `abs`, `sqrt`, `log`, `exp` | `f(x)` | Unary math functions |
@@ -64,16 +82,19 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 | `wrap` | `wrap(x, lo, hi)` | Wrap to range |
 | **Utility** | | |
 | `mtof` | `mtof(note)` | MIDI to frequency |
+| `dc` | `dc(offset)` | DC constant generator |
 | `slew` | `slew(target, rate)` | Slew rate limiter |
 | `sah` | `sah(in, trig)` | Sample and hold |
-| `out` | `out(signal)` or `out(L, R)` | Output to speakers |
+| `out` | `out(L, R=L)` | Output to speakers (R defaults to L) |
 | **Timing** | | |
 | `clock` | `clock()` | Beat phase (0-1) |
 | `lfo` | `lfo(rate, duty=0.5)` | Beat-synced LFO |
 | `trigger` | `trigger(div)` | Beat-division trigger |
-| `euclid` | `euclid(hits, steps, rot=0)` | Euclidean rhythm |
+| `euclid` | `euclid(hits, steps, rot=0.0)` | Euclidean rhythm |
+| `seq_step` | `seq_step(speed)` | Step sequencer |
+| `timeline` | `timeline()` | Breakpoint automation |
 
-Aliases: `sine`→`sin`, `triangle`→`tri`, `sawtooth`→`saw`, `square`→`sqr`, `lowpass`→`lp`, `highpass`→`hp`, `bandpass`→`bp`, `svflp`→`lp`, `svfhp`→`hp`, `svfbp`→`bp`
+Aliases: `sine`→`sin`, `triangle`→`tri`, `sawtooth`→`saw`, `square`→`sqr`, `lowpass`→`lp`, `highpass`→`hp`, `bandpass`→`bp`, `svflp`→`lp`, `svfhp`→`hp`, `svfbp`→`bp`, `moogladder`→`moog`, `output`→`out`, `envelope`→`adsr`, `reverb`→`freeverb`, `plate`→`dattorro`, `room`→`fdn`, `distort`→`tanh`, `saturate`→`tanh`, `crush`→`bitcrush`, `wavefold`→`fold`, `compress`→`comp`, `compressor`→`comp`, `limit`→`limiter`, `noisegate`→`gate`
 
 ### 2.3 Literals
 
@@ -349,6 +370,8 @@ The parser produces an AST where all binary operators become function calls:
 ## 6. Mini-Notation Grammar
 
 Mini-notation appears inside pattern strings and has its own sub-grammar.
+
+> **Implementation Note:** The mini-notation grammar below represents the target design. Currently, pattern strings are stored as raw text and parsed at runtime. The internal mini-notation parser is planned but not yet fully implemented.
 
 ### 6.1 Structure
 
