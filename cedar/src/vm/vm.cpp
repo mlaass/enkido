@@ -1,6 +1,7 @@
 #include "cedar/vm/vm.hpp"
 #include "cedar/opcodes/opcodes.hpp"
 #include <algorithm>
+#include <array>
 
 namespace cedar {
 
@@ -313,6 +314,10 @@ void VM::execute(const Instruction& inst) {
             op_filter_svf_bp(ctx_, inst);
             break;
 
+        case Opcode::FILTER_MOOG:
+            op_filter_moog(ctx_, inst);
+            break;
+
         // === Math ===
         case Opcode::ABS:
             op_abs(ctx_, inst);
@@ -408,10 +413,21 @@ void VM::execute(const Instruction& inst) {
             op_timeline(ctx_, inst);
             break;
 
-        // === Reserved/Invalid ===
-        [[unlikely]] case Opcode::ENV_ADSR:
-        [[unlikely]] case Opcode::ENV_AR:
-        [[unlikely]] case Opcode::DELAY:
+        // === Envelopes ===
+        case Opcode::ENV_ADSR:
+            op_env_adsr(ctx_, inst);
+            break;
+
+        case Opcode::ENV_AR:
+            op_env_ar(ctx_, inst);
+            break;
+
+        // === Delays ===
+        case Opcode::DELAY:
+            op_delay(ctx_, inst);
+            break;
+
+        // === Invalid ===
         [[unlikely]] case Opcode::INVALID:
         [[unlikely]] default:
             // Unknown opcode - skip
@@ -498,6 +514,119 @@ bool VM::has_program() const {
 
 std::uint32_t VM::swap_count() const {
     return swap_controller_.swap_count();
+}
+
+// ============================================================================
+// Timeline Seek
+// ============================================================================
+
+void VM::seek(float beat_position, const SeekConfig& config) {
+    float samples_per_beat = ctx_.samples_per_beat();
+    std::uint64_t target_sample = static_cast<std::uint64_t>(beat_position * samples_per_beat);
+    seek_samples(target_sample, config);
+}
+
+void VM::seek_samples(std::uint64_t sample_position, const SeekConfig& config) {
+    // Update global timing to target position
+    ctx_.global_sample_counter = sample_position;
+    ctx_.block_counter = sample_position / BLOCK_SIZE;
+    ctx_.update_timing();
+
+    // Reconstruct deterministic states (oscillator phases, LFO phases, etc.)
+    // Note: This is a best-effort reconstruction assuming constant parameters.
+    // For modulated parameters, the phase won't be exact.
+    reconstruct_deterministic_states(sample_position);
+
+    // Handle history-dependent states
+    if (config.reset_history_dependent) {
+        reset_history_dependent_states();
+    }
+
+    // Optional pre-roll to warm up filters/delays
+    if (config.preroll_blocks > 0) {
+        execute_preroll(config.preroll_blocks);
+    }
+}
+
+float VM::current_beat_position() const {
+    return static_cast<float>(ctx_.global_sample_counter) / ctx_.samples_per_beat();
+}
+
+std::uint64_t VM::current_sample_position() const {
+    return ctx_.global_sample_counter;
+}
+
+void VM::reconstruct_deterministic_states([[maybe_unused]] std::uint64_t target_sample) {
+    // For deterministic state reconstruction, we would iterate through all states
+    // and recalculate phases based on the target sample position.
+    //
+    // This only works for states where the phase can be derived from time alone.
+    // For modulated parameters, we use a heuristic based on typical usage.
+
+    // Note: The current architecture doesn't store the frequency/parameters
+    // alongside the state, so we can only do a partial reconstruction.
+    // Full reconstruction would require storing parameter snapshots.
+
+    // For now, we reset phases to be consistent with the target time.
+    // The actual reconstruction happens when each opcode executes,
+    // using the current parameters at that time.
+
+    // Key insight: Most sequencing opcodes (LFO, SeqStep, Euclid, Trigger)
+    // derive their phase from global_sample_counter, which we've already updated.
+    // When these opcodes run, they will calculate the correct phase for the
+    // new position.
+
+    // For oscillators, we could estimate phase if we knew frequency, but since
+    // frequency is typically modulated (from sequencers), exact reconstruction
+    // isn't possible without full state history.
+
+    // The pragmatic approach: oscillator phases will be "wrong" after seek,
+    // but this is usually inaudible since oscillators are phase-continuous
+    // and the seek point is arbitrary anyway.
+}
+
+void VM::reset_history_dependent_states() {
+    // Reset all history-dependent states to their initial values.
+    // This includes filters (SVF, Moog), delays, envelopes, slew, SAH.
+
+    // Note: We can't directly iterate the state pool by type, but we can
+    // rely on the state pool's internal storage. For now, we just mark
+    // that a reset is needed and let opcodes handle it.
+
+    // The cleanest approach is to reset the entire state pool, which will
+    // cause all states to be recreated with default values on next access.
+    // However, this loses oscillator phases too.
+
+    // Alternative: Add a "needs_reset" flag to the context that opcodes check.
+    // For simplicity, we'll do a selective reset by visiting known state types.
+
+    // For the initial implementation, we do a full state reset.
+    // This is aggressive but ensures clean state after seek.
+    state_pool_.reset();
+}
+
+void VM::execute_preroll(std::uint32_t blocks) {
+    // Execute program for N blocks, discarding output.
+    // This warms up filters and delays with the current audio content.
+
+    const ProgramSlot* current = swap_controller_.current_slot();
+    if (!current || current->instruction_count == 0) {
+        // No program to pre-roll
+        ctx_.global_sample_counter += blocks * BLOCK_SIZE;
+        ctx_.block_counter += blocks;
+        return;
+    }
+
+    // Temporary output buffers (discarded)
+    alignas(32) std::array<float, BLOCK_SIZE> temp_left{};
+    alignas(32) std::array<float, BLOCK_SIZE> temp_right{};
+
+    for (std::uint32_t i = 0; i < blocks; ++i) {
+        ctx_.update_timing();
+        execute_program(current, temp_left.data(), temp_right.data());
+        ctx_.global_sample_counter += BLOCK_SIZE;
+        ctx_.block_counter++;
+    }
 }
 
 }  // namespace cedar

@@ -154,9 +154,12 @@ TEST_CASE("VM oscillators", "[vm][oscillators]") {
 
         const float* result = vm.buffers().get(1);
 
-        // Square wave should only be +1 or -1
+        // Square wave values should be bounded
+        // PolyBLEP anti-aliasing smooths transitions, so values near transitions
+        // can be between -1 and +1
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            CHECK((result[i] == 1.0f || result[i] == -1.0f));
+            CHECK(result[i] >= -1.1f);
+            CHECK(result[i] <= 1.1f);
         }
     }
 }

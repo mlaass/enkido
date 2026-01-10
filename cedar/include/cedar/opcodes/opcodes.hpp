@@ -9,4 +9,6 @@
 #include "utility.hpp"
 #include "oscillators.hpp"
 #include "filters.hpp"
+#include "envelopes.hpp"
+#include "delays.hpp"
 #include "sequencing.hpp"

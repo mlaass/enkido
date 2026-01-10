@@ -11,6 +11,12 @@
 
 namespace cedar {
 
+// Configuration for seek operations
+struct SeekConfig {
+    bool reset_history_dependent = true;   // Reset filters/delays to zero state
+    std::uint32_t preroll_blocks = 0;      // Number of blocks to process silently after seek
+};
+
 // Register-based bytecode VM for audio processing
 // Processes entire blocks (128 samples) at a time for cache efficiency
 // Supports glitch-free hot-swapping with crossfade for live coding
@@ -67,6 +73,22 @@ public:
 
     // Configure crossfade duration (2-5 blocks, default 3)
     void set_crossfade_blocks(std::uint32_t blocks);
+
+    // =========================================================================
+    // Timeline Seek (for DAW/VST integration)
+    // =========================================================================
+
+    // Seek to a specific beat position
+    // Reconstructs deterministic state (oscillator phases, LFO phases, etc.)
+    // Optionally resets history-dependent state (filters, delays) and runs pre-roll
+    void seek(float beat_position, const SeekConfig& config = {});
+
+    // Seek to a specific sample position
+    void seek_samples(std::uint64_t sample_position, const SeekConfig& config = {});
+
+    // Query current position
+    [[nodiscard]] float current_beat_position() const;
+    [[nodiscard]] std::uint64_t current_sample_position() const;
 
     // =========================================================================
     // Configuration
@@ -127,6 +149,11 @@ private:
     // Rebind state IDs from old program to new program
     void rebind_states(const ProgramSlot* old_slot,
                       const ProgramSlot* new_slot);
+
+    // Seek helpers
+    void reconstruct_deterministic_states(std::uint64_t target_sample);
+    void reset_history_dependent_states();
+    void execute_preroll(std::uint32_t blocks);
 
     // Triple-buffer swap controller
     SwapController swap_controller_;

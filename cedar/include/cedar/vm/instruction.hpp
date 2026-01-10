@@ -33,6 +33,7 @@ enum class Opcode : std::uint8_t {
     FILTER_SVF_LP = 33,
     FILTER_SVF_HP = 34,
     FILTER_SVF_BP = 35,
+    FILTER_MOOG = 36,     // 4-pole Moog-style ladder filter with resonance
 
     // Math (40-49)
     ABS = 40,

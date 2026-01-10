@@ -1,13 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <algorithm>
 #include <variant>
 
 namespace cedar {
 
 // Oscillator state - maintains phase for continuity
 struct OscState {
-    float phase = 0.0f;  // 0.0 to 1.0
+    float phase = 0.0f;       // 0.0 to 1.0
+    float prev_phase = 0.0f;  // Previous phase for PolyBLEP discontinuity detection
 };
 
 // SVF (State Variable Filter) state
@@ -43,19 +46,54 @@ struct SAHState {
     float prev_trigger = 0.0f;
 };
 
-// Delay state - placeholder for future implementation
+// Delay state with dynamically allocated ring buffer
+// Note: Uses heap allocation for the buffer, but only when the delay is actually used
 struct DelayState {
-    // Will contain delay line buffer pointer and indices
-    float* buffer = nullptr;
+    // Maximum delay time: 2 seconds at 96kHz = 192000 samples
+    static constexpr std::size_t MAX_DELAY_SAMPLES = 192000;
+
+    // Ring buffer (lazily allocated)
+    std::unique_ptr<float[]> buffer = nullptr;
+    std::size_t buffer_size = 0;    // Actual allocated size
     std::size_t write_pos = 0;
-    std::size_t max_samples = 0;
+
+    // Ensure buffer is allocated with requested size
+    void ensure_buffer(std::size_t samples) {
+        if (!buffer || buffer_size < samples) {
+            std::size_t new_size = std::min(samples, MAX_DELAY_SAMPLES);
+            buffer = std::make_unique<float[]>(new_size);
+            std::fill_n(buffer.get(), new_size, 0.0f);
+            buffer_size = new_size;
+            write_pos = 0;
+        }
+    }
+
+    // Reset buffer to silence (for seek)
+    void reset() {
+        if (buffer && buffer_size > 0) {
+            std::fill_n(buffer.get(), buffer_size, 0.0f);
+            write_pos = 0;
+        }
+    }
 };
 
-// Envelope state - placeholder for future implementation
+// Envelope state for ADSR
 struct EnvState {
     float level = 0.0f;
-    std::uint8_t stage = 0;  // 0=idle, 1=attack, 2=decay, 3=sustain, 4=release
+    std::uint8_t stage = 0;     // 0=idle, 1=attack, 2=decay, 3=sustain, 4=release
     float time_in_stage = 0.0f;
+    float prev_gate = 0.0f;     // For gate edge detection
+    float release_level = 0.0f; // Level when release triggered (for smooth release)
+
+    // Cached exponential coefficients for each stage
+    float attack_coeff = 0.0f;
+    float decay_coeff = 0.0f;
+    float release_coeff = 0.0f;
+
+    // Cached parameters for coefficient invalidation
+    float last_attack = -1.0f;
+    float last_decay = -1.0f;
+    float last_release = -1.0f;
 };
 
 // ============================================================================
@@ -114,6 +152,21 @@ struct TimelineState {
     float loop_length = 0.0f;  // Loop length in beats (0 = no loop)
 };
 
+// Moog-style 4-pole ladder filter state
+struct MoogState {
+    // 4 cascaded 1-pole lowpass stages
+    float stage[4] = {};
+    float delay[4] = {};  // Unit delays for trapezoidal integration
+
+    // Cached parameters for coefficient invalidation
+    float last_freq = -1.0f;
+    float last_res = -1.0f;
+
+    // Cached coefficients
+    float g = 0.0f;  // Cutoff coefficient (tan-based)
+    float k = 0.0f;  // Resonance coefficient (0-4 range)
+};
+
 // Variant holding all possible DSP state types
 // std::monostate represents stateless operations
 using DSPState = std::variant<
@@ -130,7 +183,9 @@ using DSPState = std::variant<
     SeqStepState,
     EuclidState,
     TriggerState,
-    TimelineState
+    TimelineState,
+    // Additional filter states
+    MoogState
 >;
 
 }  // namespace cedar
