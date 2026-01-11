@@ -1,6 +1,7 @@
 ---
 title: Mini-Notation Basics
 category: mini-notation
+order: 1
 keywords: [mini-notation, pattern, sequence, rhythm, pitch, chord, rest, tidal, strudel]
 ---
 

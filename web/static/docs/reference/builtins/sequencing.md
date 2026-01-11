@@ -1,7 +1,7 @@
 ---
 title: Sequencing & Timing
 category: builtins
-subcategory: sequencing
+order: 4
 keywords: [sequencing, timing, lfo, trigger, euclid, euclidean, seq_step, timeline, clock, rhythm, pattern]
 ---
 

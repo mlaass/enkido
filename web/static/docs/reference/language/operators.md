@@ -1,6 +1,7 @@
 ---
 title: Operators
 category: language
+order: 3
 keywords: [operators, precedence, arithmetic, plus, minus, multiply, divide, power, pipe]
 ---
 

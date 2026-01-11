@@ -1,6 +1,7 @@
 ---
 title: Closures
 category: language
+order: 4
 keywords: [closures, functions, lambda, anonymous, arrow, callback]
 ---
 

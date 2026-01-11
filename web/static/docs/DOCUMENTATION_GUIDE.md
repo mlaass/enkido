@@ -1,6 +1,7 @@
 ---
 title: Documentation Guide
 category: concepts
+order: 1
 keywords: [contributing, documentation, guide, standards]
 ---
 

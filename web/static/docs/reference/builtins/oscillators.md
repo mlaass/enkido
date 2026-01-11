@@ -1,7 +1,7 @@
 ---
 title: Oscillators
 category: builtins
-subcategory: oscillators
+order: 1
 keywords: [oscillator, sin, sine, tri, triangle, saw, sawtooth, sqr, square, phasor, ramp, noise, waveform, tone, frequency]
 ---
 

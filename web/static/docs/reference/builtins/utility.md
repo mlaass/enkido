@@ -1,7 +1,7 @@
 ---
 title: Utility
 category: builtins
-subcategory: utility
+order: 11
 keywords: [utility, out, output, mtof, midi, frequency, dc, slew, sah, sample, hold, clock]
 ---
 

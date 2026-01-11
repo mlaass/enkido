@@ -1,7 +1,7 @@
 ---
 title: Envelopes
 category: builtins
-subcategory: envelopes
+order: 3
 keywords: [envelope, adsr, ar, attack, decay, sustain, release, gate, trigger]
 ---
 

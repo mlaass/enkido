@@ -10,6 +10,7 @@
 	let { code }: Props = $props();
 
 	let isPlaying = $state(false);
+	let copied = $state(false);
 
 	async function play() {
 		// Save current editor code
@@ -27,11 +28,29 @@
 		audioEngine.stop();
 		isPlaying = false;
 	}
+
+	async function copyCode() {
+		await navigator.clipboard.writeText(code);
+		copied = true;
+		setTimeout(() => (copied = false), 1500);
+	}
 </script>
 
 <div class="code-widget">
 	<pre><code>{code}</code></pre>
 	<div class="controls">
+		<button class="btn copy" onclick={copyCode} title={copied ? 'Copied!' : 'Copy'}>
+			{#if copied}
+				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+					<polyline points="20 6 9 17 4 12" />
+				</svg>
+			{:else}
+				<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<rect x="9" y="9" width="13" height="13" rx="2" />
+					<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+				</svg>
+			{/if}
+		</button>
 		{#if isPlaying}
 			<button class="btn stop" onclick={stop} title="Stop">
 				<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -57,7 +76,7 @@
 	pre {
 		margin: 0;
 		padding: 8px 10px;
-		padding-right: 36px;
+		padding-right: 58px;
 		font-family: var(--font-mono);
 		font-size: 12px;
 		line-height: 1.4;
@@ -104,5 +123,15 @@
 
 	.btn.stop:hover {
 		background: rgba(248, 81, 73, 0.3);
+	}
+
+	.btn.copy {
+		color: var(--text-muted);
+		background: rgba(128, 128, 128, 0.1);
+	}
+
+	.btn.copy:hover {
+		color: var(--text-secondary);
+		background: rgba(128, 128, 128, 0.2);
 	}
 </style>

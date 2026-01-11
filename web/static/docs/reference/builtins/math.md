@@ -1,7 +1,7 @@
 ---
 title: Math Functions
 category: builtins
-subcategory: math
+order: 10
 keywords: [math, add, sub, mul, div, pow, neg, abs, sqrt, log, exp, floor, ceil, min, max, clamp, wrap]
 ---
 

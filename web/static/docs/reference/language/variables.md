@@ -1,6 +1,7 @@
 ---
 title: Variables & Assignment
 category: language
+order: 2
 keywords: [variables, assignment, let, binding, scope, identifier]
 ---
 

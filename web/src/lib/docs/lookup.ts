@@ -5,7 +5,7 @@
  */
 
 import { docsStore } from '$lib/stores/docs.svelte';
-import { lookupIndex } from './lookup-index';
+import { lookup as lookupIndex } from './manifest';
 
 /**
  * Trigger F1 help for a keyword

@@ -1,6 +1,7 @@
 ---
 title: Pipes & Holes
 category: language
+order: 1
 keywords: [pipe, hole, "|>", "%", signal flow, graph, connection, routing]
 ---
 

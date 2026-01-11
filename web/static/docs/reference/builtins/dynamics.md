@@ -1,7 +1,7 @@
 ---
 title: Dynamics
 category: builtins
-subcategory: dynamics
+order: 9
 keywords: [dynamics, comp, compressor, limiter, gate, noisegate, threshold, ratio, ceiling, compression]
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: Reverbs
 category: builtins
-subcategory: reverbs
+order: 6
 keywords: [reverb, freeverb, dattorro, fdn, room, plate, space, decay, damping, wet, dry]
 ---
 

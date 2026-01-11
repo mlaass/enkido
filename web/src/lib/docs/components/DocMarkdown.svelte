@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { docsStore } from '$lib/stores/docs.svelte';
 	import { renderMarkdown } from '../parser';
+	import { slugToPath } from '../manifest';
 	import DocCodeWidget from './DocCodeWidget.svelte';
 
 	interface Props {
@@ -17,24 +18,13 @@
 	let isLoading = $state(true);
 	let error = $state<string | null>(null);
 
-	// Map slug to file path
-	const SLUG_TO_PATH: Record<string, string> = {
-		'oscillators': 'reference/builtins/oscillators.md',
-		'filters': 'reference/builtins/filters.md',
-		'envelopes': 'reference/builtins/envelopes.md',
-		'utility': 'reference/builtins/utility.md',
-		'pipes': 'reference/language/pipes.md',
-		'01-hello-sine': 'tutorials/01-hello-sine.md',
-		'DOCUMENTATION_GUIDE': 'DOCUMENTATION_GUIDE.md'
-	};
-
 	// Load and render the markdown document
 	async function loadDocument() {
 		isLoading = true;
 		error = null;
 
 		try {
-			const path = SLUG_TO_PATH[slug];
+			const path = slugToPath[slug];
 			if (!path) {
 				htmlContent = `<p class="doc-placeholder">Documentation for <code>${slug}</code> is not yet available.</p>`;
 				codeBlocks = [];

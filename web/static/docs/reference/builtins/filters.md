@@ -1,7 +1,7 @@
 ---
 title: Filters
 category: builtins
-subcategory: filters
+order: 2
 keywords: [filter, lp, lowpass, hp, highpass, bp, bandpass, moog, svf, cutoff, resonance, q]
 ---
 

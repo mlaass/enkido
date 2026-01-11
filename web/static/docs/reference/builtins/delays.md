@@ -1,7 +1,7 @@
 ---
 title: Delays
 category: builtins
-subcategory: delays
+order: 5
 keywords: [delay, echo, feedback, time, fb, effect]
 ---
 

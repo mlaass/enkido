@@ -1,7 +1,7 @@
 ---
 title: Modulation Effects
 category: builtins
-subcategory: modulation
+order: 7
 keywords: [modulation, chorus, flanger, phaser, comb, effect, rate, depth, sweep]
 ---
 
