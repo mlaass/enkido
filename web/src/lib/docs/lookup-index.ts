@@ -4,6 +4,151 @@
 import type { LookupEntry } from './types';
 
 export const lookupIndex: Record<string, LookupEntry> = {
+	"synthesis": {
+		"keyword": "synthesis",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"synth": {
+		"keyword": "synth",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"envelope": {
+		"keyword": "envelope",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"adsr": {
+		"keyword": "adsr",
+		"slug": "envelopes",
+		"category": "builtins",
+		"title": "adsr",
+		"anchor": "adsr"
+	},
+	"ar": {
+		"keyword": "ar",
+		"slug": "envelopes",
+		"category": "builtins",
+		"title": "ar",
+		"anchor": "ar"
+	},
+	"subtractive": {
+		"keyword": "subtractive",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"tutorial": {
+		"keyword": "tutorial",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"voice": {
+		"keyword": "voice",
+		"slug": "03-synthesis",
+		"category": "tutorials",
+		"title": "Building Synth Voices"
+	},
+	"filter": {
+		"keyword": "filter",
+		"slug": "02-filters",
+		"category": "tutorials",
+		"title": "Shaping Sound with Filters"
+	},
+	"lowpass": {
+		"keyword": "lowpass",
+		"slug": "02-filters",
+		"category": "tutorials",
+		"title": "Shaping Sound with Filters"
+	},
+	"highpass": {
+		"keyword": "highpass",
+		"slug": "02-filters",
+		"category": "tutorials",
+		"title": "Shaping Sound with Filters"
+	},
+	"cutoff": {
+		"keyword": "cutoff",
+		"slug": "02-filters",
+		"category": "tutorials",
+		"title": "Shaping Sound with Filters"
+	},
+	"resonance": {
+		"keyword": "resonance",
+		"slug": "02-filters",
+		"category": "tutorials",
+		"title": "Shaping Sound with Filters"
+	},
+	"lp": {
+		"keyword": "lp",
+		"slug": "filters",
+		"category": "builtins",
+		"title": "lp",
+		"anchor": "lp"
+	},
+	"hp": {
+		"keyword": "hp",
+		"slug": "filters",
+		"category": "builtins",
+		"title": "hp",
+		"anchor": "hp"
+	},
+	"moog": {
+		"keyword": "moog",
+		"slug": "filters",
+		"category": "builtins",
+		"title": "moog",
+		"anchor": "moog"
+	},
+	"rhythm": {
+		"keyword": "rhythm",
+		"slug": "04-rhythm",
+		"category": "tutorials",
+		"title": "Rhythm & Patterns"
+	},
+	"pattern": {
+		"keyword": "pattern",
+		"slug": "04-rhythm",
+		"category": "tutorials",
+		"title": "Rhythm & Patterns"
+	},
+	"beat": {
+		"keyword": "beat",
+		"slug": "04-rhythm",
+		"category": "tutorials",
+		"title": "Rhythm & Patterns"
+	},
+	"trigger": {
+		"keyword": "trigger",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "trigger",
+		"anchor": "trigger"
+	},
+	"euclidean": {
+		"keyword": "euclidean",
+		"slug": "04-rhythm",
+		"category": "tutorials",
+		"title": "Rhythm & Patterns"
+	},
+	"sequencer": {
+		"keyword": "sequencer",
+		"slug": "04-rhythm",
+		"category": "tutorials",
+		"title": "Rhythm & Patterns"
+	},
+	"clock": {
+		"keyword": "clock",
+		"slug": "utility",
+		"category": "builtins",
+		"title": "clock",
+		"anchor": "clock"
+	},
 	"getting started": {
 		"keyword": "getting started",
 		"slug": "01-hello-sine",
@@ -40,11 +185,47 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"category": "tutorials",
 		"title": "Hello Sine"
 	},
-	"tutorial": {
-		"keyword": "tutorial",
-		"slug": "01-hello-sine",
-		"category": "tutorials",
-		"title": "Hello Sine"
+	"mini-notation": {
+		"keyword": "mini-notation",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"sequence": {
+		"keyword": "sequence",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"pitch": {
+		"keyword": "pitch",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"chord": {
+		"keyword": "chord",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"rest": {
+		"keyword": "rest",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"tidal": {
+		"keyword": "tidal",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"strudel": {
+		"keyword": "strudel",
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
 	},
 	"pipe": {
 		"keyword": "pipe",
@@ -94,19 +275,203 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"category": "language",
 		"title": "Pipes & Holes"
 	},
-	"lp": {
-		"keyword": "lp",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "lp",
-		"anchor": "lp"
+	"variables": {
+		"keyword": "variables",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
 	},
-	"hp": {
-		"keyword": "hp",
-		"slug": "filters",
+	"assignment": {
+		"keyword": "assignment",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
+	},
+	"let": {
+		"keyword": "let",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
+	},
+	"binding": {
+		"keyword": "binding",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
+	},
+	"scope": {
+		"keyword": "scope",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
+	},
+	"identifier": {
+		"keyword": "identifier",
+		"slug": "variables",
+		"category": "language",
+		"title": "Variables & Assignment"
+	},
+	"closures": {
+		"keyword": "closures",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"functions": {
+		"keyword": "functions",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"lambda": {
+		"keyword": "lambda",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"anonymous": {
+		"keyword": "anonymous",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"arrow": {
+		"keyword": "arrow",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"callback": {
+		"keyword": "callback",
+		"slug": "closures",
+		"category": "language",
+		"title": "Closures"
+	},
+	"operators": {
+		"keyword": "operators",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"precedence": {
+		"keyword": "precedence",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"arithmetic": {
+		"keyword": "arithmetic",
+		"slug": "math",
 		"category": "builtins",
-		"title": "hp",
-		"anchor": "hp"
+		"title": "Arithmetic",
+		"anchor": "arithmetic"
+	},
+	"plus": {
+		"keyword": "plus",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"minus": {
+		"keyword": "minus",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"multiply": {
+		"keyword": "multiply",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"divide": {
+		"keyword": "divide",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"power": {
+		"keyword": "power",
+		"slug": "operators",
+		"category": "language",
+		"title": "Operators"
+	},
+	"lfo": {
+		"keyword": "lfo",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "lfo",
+		"anchor": "lfo"
+	},
+	"euclid": {
+		"keyword": "euclid",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "euclid",
+		"anchor": "euclid"
+	},
+	"seq_step": {
+		"keyword": "seq_step",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "seq_step",
+		"anchor": "seq-step"
+	},
+	"timeline": {
+		"keyword": "timeline",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "timeline",
+		"anchor": "timeline"
+	},
+	"sequencing": {
+		"keyword": "sequencing",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "Sequencing & Timing"
+	},
+	"timing": {
+		"keyword": "timing",
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "Sequencing & Timing"
+	},
+	"delay": {
+		"keyword": "delay",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "delay",
+		"anchor": "delay"
+	},
+	"echo": {
+		"keyword": "echo",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "Delays"
+	},
+	"feedback": {
+		"keyword": "feedback",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "Delays"
+	},
+	"time": {
+		"keyword": "time",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "Delays"
+	},
+	"fb": {
+		"keyword": "fb",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "Delays"
+	},
+	"effect": {
+		"keyword": "effect",
+		"slug": "delays",
+		"category": "builtins",
+		"title": "Delays"
 	},
 	"bp": {
 		"keyword": "bp",
@@ -114,31 +479,6 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"category": "builtins",
 		"title": "bp",
 		"anchor": "bp"
-	},
-	"moog": {
-		"keyword": "moog",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "moog",
-		"anchor": "moog"
-	},
-	"filter": {
-		"keyword": "filter",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "Filters"
-	},
-	"lowpass": {
-		"keyword": "lowpass",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "Filters"
-	},
-	"highpass": {
-		"keyword": "highpass",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "Filters"
 	},
 	"bandpass": {
 		"keyword": "bandpass",
@@ -152,23 +492,75 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"category": "builtins",
 		"title": "Filters"
 	},
-	"cutoff": {
-		"keyword": "cutoff",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "Filters"
-	},
-	"resonance": {
-		"keyword": "resonance",
-		"slug": "filters",
-		"category": "builtins",
-		"title": "Filters"
-	},
 	"q": {
 		"keyword": "q",
 		"slug": "filters",
 		"category": "builtins",
 		"title": "Filters"
+	},
+	"tanh": {
+		"keyword": "tanh",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "tanh",
+		"anchor": "tanh"
+	},
+	"softclip": {
+		"keyword": "softclip",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "softclip",
+		"anchor": "softclip"
+	},
+	"bitcrush": {
+		"keyword": "bitcrush",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "bitcrush",
+		"anchor": "bitcrush"
+	},
+	"fold": {
+		"keyword": "fold",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "fold",
+		"anchor": "fold"
+	},
+	"distortion": {
+		"keyword": "distortion",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
+	},
+	"wavefold": {
+		"keyword": "wavefold",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
+	},
+	"saturate": {
+		"keyword": "saturate",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
+	},
+	"drive": {
+		"keyword": "drive",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
+	},
+	"crush": {
+		"keyword": "crush",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
+	},
+	"lofi": {
+		"keyword": "lofi",
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "Distortion"
 	},
 	"out": {
 		"keyword": "out",
@@ -205,13 +597,6 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"title": "sah",
 		"anchor": "sah"
 	},
-	"clock": {
-		"keyword": "clock",
-		"slug": "utility",
-		"category": "builtins",
-		"title": "clock",
-		"anchor": "clock"
-	},
 	"utility": {
 		"keyword": "utility",
 		"slug": "utility",
@@ -242,26 +627,6 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"category": "builtins",
 		"title": "Utility"
 	},
-	"adsr": {
-		"keyword": "adsr",
-		"slug": "envelopes",
-		"category": "builtins",
-		"title": "adsr",
-		"anchor": "adsr"
-	},
-	"ar": {
-		"keyword": "ar",
-		"slug": "envelopes",
-		"category": "builtins",
-		"title": "ar",
-		"anchor": "ar"
-	},
-	"envelope": {
-		"keyword": "envelope",
-		"slug": "envelopes",
-		"category": "builtins",
-		"title": "Envelopes"
-	},
 	"attack": {
 		"keyword": "attack",
 		"slug": "envelopes",
@@ -288,15 +653,185 @@ export const lookupIndex: Record<string, LookupEntry> = {
 	},
 	"gate": {
 		"keyword": "gate",
-		"slug": "envelopes",
+		"slug": "dynamics",
 		"category": "builtins",
-		"title": "Envelopes"
+		"title": "gate",
+		"anchor": "gate"
 	},
-	"trigger": {
-		"keyword": "trigger",
-		"slug": "envelopes",
+	"chorus": {
+		"keyword": "chorus",
+		"slug": "modulation",
 		"category": "builtins",
-		"title": "Envelopes"
+		"title": "chorus",
+		"anchor": "chorus"
+	},
+	"flanger": {
+		"keyword": "flanger",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "flanger",
+		"anchor": "flanger"
+	},
+	"phaser": {
+		"keyword": "phaser",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "phaser",
+		"anchor": "phaser"
+	},
+	"comb": {
+		"keyword": "comb",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "comb",
+		"anchor": "comb"
+	},
+	"modulation": {
+		"keyword": "modulation",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"rate": {
+		"keyword": "rate",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"depth": {
+		"keyword": "depth",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"sweep": {
+		"keyword": "sweep",
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"unary math": {
+		"keyword": "unary math",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Unary Math",
+		"anchor": "unary-math"
+	},
+	"binary math": {
+		"keyword": "binary math",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Binary Math",
+		"anchor": "binary-math"
+	},
+	"ternary math": {
+		"keyword": "ternary math",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Ternary Math",
+		"anchor": "ternary-math"
+	},
+	"math": {
+		"keyword": "math",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"add": {
+		"keyword": "add",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"sub": {
+		"keyword": "sub",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"mul": {
+		"keyword": "mul",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"div": {
+		"keyword": "div",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"pow": {
+		"keyword": "pow",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"neg": {
+		"keyword": "neg",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"abs": {
+		"keyword": "abs",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"sqrt": {
+		"keyword": "sqrt",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"log": {
+		"keyword": "log",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"exp": {
+		"keyword": "exp",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"floor": {
+		"keyword": "floor",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"ceil": {
+		"keyword": "ceil",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"min": {
+		"keyword": "min",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"max": {
+		"keyword": "max",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"clamp": {
+		"keyword": "clamp",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"wrap": {
+		"keyword": "wrap",
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
 	},
 	"sin": {
 		"keyword": "sin",
@@ -376,6 +911,125 @@ export const lookupIndex: Record<string, LookupEntry> = {
 		"slug": "oscillators",
 		"category": "builtins",
 		"title": "Oscillators"
+	},
+	"comp": {
+		"keyword": "comp",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "comp",
+		"anchor": "comp"
+	},
+	"limiter": {
+		"keyword": "limiter",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "limiter",
+		"anchor": "limiter"
+	},
+	"dynamics": {
+		"keyword": "dynamics",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"compressor": {
+		"keyword": "compressor",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"noisegate": {
+		"keyword": "noisegate",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"threshold": {
+		"keyword": "threshold",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"ratio": {
+		"keyword": "ratio",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"ceiling": {
+		"keyword": "ceiling",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"compression": {
+		"keyword": "compression",
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "Dynamics"
+	},
+	"freeverb": {
+		"keyword": "freeverb",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "freeverb",
+		"anchor": "freeverb"
+	},
+	"dattorro": {
+		"keyword": "dattorro",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "dattorro",
+		"anchor": "dattorro"
+	},
+	"fdn": {
+		"keyword": "fdn",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "fdn",
+		"anchor": "fdn"
+	},
+	"reverb": {
+		"keyword": "reverb",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"room": {
+		"keyword": "room",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"plate": {
+		"keyword": "plate",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"space": {
+		"keyword": "space",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"damping": {
+		"keyword": "damping",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"wet": {
+		"keyword": "wet",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
+	},
+	"dry": {
+		"keyword": "dry",
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "Reverbs"
 	},
 	"contributing": {
 		"keyword": "contributing",
