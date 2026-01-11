@@ -402,6 +402,10 @@ void VM::execute(const Instruction& inst) {
             op_env_ar(ctx_, inst);
             break;
 
+        case Opcode::ENV_FOLLOWER:
+            op_env_follower(ctx_, inst);
+            break;
+
         // === Delays ===
         case Opcode::DELAY:
             op_delay(ctx_, inst);

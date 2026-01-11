@@ -1248,3 +1248,239 @@ TEST_CASE("VM external parameter binding", "[vm][env]") {
         CHECK(buf[BLOCK_SIZE - 1] > buf[0]);
     }
 }
+
+// ============================================================================
+// Envelope Follower Tests
+// ============================================================================
+
+TEST_CASE("VM ENV_FOLLOWER opcode", "[vm][envelopes]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    SECTION("follows constant amplitude signal") {
+        // Create a constant signal at 0.5 amplitude
+        // ENV_FOLLOWER should track this with attack/release times
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 0.5f),      // input signal
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.01f),     // attack = 10ms
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.01f),     // release = 10ms
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)  // follower
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Process multiple blocks to let envelope settle
+        for (int block = 0; block < 50; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // After settling, envelope should be close to 0.5
+        const float* result = vm.buffers().get(3);
+        CHECK_THAT(result[BLOCK_SIZE - 1], WithinAbs(0.5f, 0.01f));
+    }
+
+    SECTION("attack phase rises from zero") {
+        // Start with zero, then jump to 1.0
+        // Envelope should rise gradually based on attack time
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),      // input signal
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.1f),      // attack = 100ms
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.1f),      // release = 100ms
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        const float* result = vm.buffers().get(3);
+
+        // First sample should be near zero (starting state)
+        CHECK(result[0] < 0.1f);
+
+        // Envelope should rise monotonically during attack
+        for (std::size_t i = 1; i < BLOCK_SIZE; ++i) {
+            CHECK(result[i] >= result[i - 1]);
+        }
+
+        // Should not reach full amplitude in one block with 100ms attack
+        CHECK(result[BLOCK_SIZE - 1] < 0.9f);
+    }
+
+    SECTION("release phase falls from peak") {
+        // First build up envelope, then drop input to zero
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.01f),     // fast attack
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.1f),      // slow release = 100ms
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Build up envelope with fast attack
+        for (int block = 0; block < 20; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // Now drop input to zero
+        program[0] = make_const_instruction(Opcode::PUSH_CONST, 0, 0.0f);
+        vm.load_program(program);
+
+        vm.process_block(left.data(), right.data());
+        const float* result = vm.buffers().get(3);
+
+        // First sample should still be high (envelope hasn't released yet)
+        CHECK(result[0] > 0.8f);
+
+        // Envelope should fall monotonically during release
+        for (std::size_t i = 1; i < BLOCK_SIZE; ++i) {
+            CHECK(result[i] <= result[i - 1]);
+        }
+
+        // Should not reach zero in one block with 100ms release
+        CHECK(result[BLOCK_SIZE - 1] > 0.1f);
+    }
+
+    SECTION("tracks oscillating signal") {
+        // Use a sine wave as input - envelope should track the amplitude
+        std::array<Instruction, 6> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 100.0f),    // 100 Hz sine
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 10),       // oscillator
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.001f),    // very fast attack
+            make_const_instruction(Opcode::PUSH_CONST, 3, 0.001f),    // very fast release
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 4, 1, 2, 3, 2)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Process several blocks to let oscillator stabilize
+        for (int block = 0; block < 10; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        const float* result = vm.buffers().get(4);
+
+        // Envelope should be positive and bounded
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK(result[i] >= 0.0f);
+            CHECK(result[i] <= 1.2f);  // Allow some overshoot
+        }
+
+        // With fast attack/release, envelope should track peaks (~1.0 for sine)
+        float max_env = 0.0f;
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            max_env = std::max(max_env, result[i]);
+        }
+        CHECK(max_env > 0.7f);  // Should reach near peak amplitude
+    }
+
+    SECTION("different attack and release times") {
+        // Fast attack, slow release - classic envelope follower behavior
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 0.8f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.001f),    // 1ms attack (fast)
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.5f),      // 500ms release (slow)
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Build up with fast attack
+        for (int block = 0; block < 10; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        // Should reach near target quickly with fast attack
+        const float* result = vm.buffers().get(3);
+        CHECK(result[BLOCK_SIZE - 1] > 0.7f);
+
+        // Now drop input
+        program[0] = make_const_instruction(Opcode::PUSH_CONST, 0, 0.0f);
+        vm.load_program(program);
+
+        vm.process_block(left.data(), right.data());
+        result = vm.buffers().get(3);
+
+        // With slow release, should still be high after one block
+        CHECK(result[BLOCK_SIZE - 1] > 0.6f);
+    }
+
+    SECTION("handles zero input gracefully") {
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 0.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.01f),
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.01f),
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        const float* result = vm.buffers().get(3);
+
+        // Should remain at or near zero
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK(result[i] >= 0.0f);
+            CHECK(result[i] < 0.01f);
+        }
+    }
+
+    SECTION("tracks negative input (absolute value)") {
+        // Envelope follower should track absolute value
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, -0.6f),     // negative input
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.01f),
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.01f),
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Let envelope settle
+        for (int block = 0; block < 50; ++block) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        const float* result = vm.buffers().get(3);
+
+        // Should track absolute value (0.6), not negative
+        CHECK_THAT(result[BLOCK_SIZE - 1], WithinAbs(0.6f, 0.01f));
+        CHECK(result[BLOCK_SIZE - 1] > 0.0f);
+    }
+
+    SECTION("parameter changes update coefficients") {
+        // Start with slow attack
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 0.5f),      // 500ms attack
+            make_const_instruction(Opcode::PUSH_CONST, 2, 0.1f),
+            Instruction::make_ternary(Opcode::ENV_FOLLOWER, 3, 0, 1, 2, 1)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        const float* result = vm.buffers().get(3);
+        float slow_rise = result[BLOCK_SIZE - 1];
+
+        // Reset and try with fast attack
+        vm.reset();
+        program[1] = make_const_instruction(Opcode::PUSH_CONST, 1, 0.001f);  // 1ms attack
+        vm.load_program(program);
+
+        vm.process_block(left.data(), right.data());
+        result = vm.buffers().get(3);
+        float fast_rise = result[BLOCK_SIZE - 1];
+
+        // Fast attack should reach higher value in same time
+        CHECK(fast_rise > slow_rise);
+    }
+}

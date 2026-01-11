@@ -196,6 +196,58 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         // Should compile - no captures
         REQUIRE(result.success);
     }
+
+    SECTION("env_follower builtin with defaults") {
+        auto result = akkado::compile("saw(100) |> env_follower(%)");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.01), PUSH_CONST(0.1), ENV_FOLLOWER
+        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[5];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);  // 100
+        CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
+        CHECK(inst[2].opcode == cedar::Opcode::PUSH_CONST);  // 0.01 (default attack)
+        CHECK(inst[3].opcode == cedar::Opcode::PUSH_CONST);  // 0.1 (default release)
+        CHECK(inst[4].opcode == cedar::Opcode::ENV_FOLLOWER);
+        CHECK(inst[4].inputs[0] == inst[1].out_buffer);  // Follower reads saw output
+        CHECK(inst[4].inputs[1] == inst[2].out_buffer);  // Default attack
+        CHECK(inst[4].inputs[2] == inst[3].out_buffer);  // Default release
+    }
+
+    SECTION("env_follower with explicit attack/release") {
+        auto result = akkado::compile("saw(100) |> env_follower(%, 0.001, 0.5)");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.001), PUSH_CONST(0.5), ENV_FOLLOWER
+        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[5];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);  // 100
+        CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
+        CHECK(inst[2].opcode == cedar::Opcode::PUSH_CONST);  // 0.001 (attack)
+        CHECK(inst[3].opcode == cedar::Opcode::PUSH_CONST);  // 0.5 (release)
+        CHECK(inst[4].opcode == cedar::Opcode::ENV_FOLLOWER);
+        CHECK(inst[4].inputs[0] == inst[1].out_buffer);  // Input signal
+        CHECK(inst[4].inputs[1] == inst[2].out_buffer);  // Attack time
+        CHECK(inst[4].inputs[2] == inst[3].out_buffer);  // Release time
+    }
+
+    SECTION("env_follower alias 'follower' works") {
+        auto result = akkado::compile("saw(100) |> follower(%)");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.01), PUSH_CONST(0.1), ENV_FOLLOWER
+        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+        
+        cedar::Instruction inst[5];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        CHECK(inst[4].opcode == cedar::Opcode::ENV_FOLLOWER);
+    }
 }
 
 TEST_CASE("Akkado version", "[akkado]") {

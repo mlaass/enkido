@@ -59,6 +59,7 @@ enum class Opcode : std::uint8_t {
     // Envelopes (60-69) - reserved
     ENV_ADSR = 60,
     ENV_AR = 61,
+    ENV_FOLLOWER = 62,
 
     // Delays & Reverbs (70-79)
     DELAY = 70,

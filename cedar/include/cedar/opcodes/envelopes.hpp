@@ -127,6 +127,54 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// ENV_FOLLOWER: Envelope follower (amplitude detector)
+// in0: input signal (audio to analyze)
+// in1: attack time (seconds, how fast envelope rises)
+// in2: release time (seconds, how fast envelope falls)
+//
+// Extracts the amplitude envelope from an incoming audio signal.
+// Useful for dynamics processing, sidechain effects, and envelope-following modulation.
+// Uses peak detection with separate attack/release time constants.
+[[gnu::always_inline]]
+inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* attack_buf = ctx.buffers->get(inst.inputs[1]);
+    const float* release_buf = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<EnvState>(inst.state_id);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float attack_time = attack_buf[i];
+        float release_time = release_buf[i];
+
+        // Update coefficients if parameters changed
+        if (attack_time != state.last_attack) {
+            state.last_attack = attack_time;
+            float attack_samples = std::max(0.001f, attack_time) * ctx.sample_rate;
+            state.attack_coeff = 1.0f - std::exp(-1.0f / attack_samples);
+        }
+
+        if (release_time != state.last_release) {
+            state.last_release = release_time;
+            float release_samples = std::max(0.001f, release_time) * ctx.sample_rate;
+            state.release_coeff = 1.0f - std::exp(-1.0f / release_samples);
+        }
+
+        // Envelope follower: track absolute value with attack/release
+        float abs_input = std::abs(input[i]);
+
+        if (abs_input > state.level) {
+            // Attack: signal is rising
+            state.level += state.attack_coeff * (abs_input - state.level);
+        } else {
+            // Release: signal is falling
+            state.level += state.release_coeff * (abs_input - state.level);
+        }
+
+        out[i] = state.level;
+    }
+}
+
 // ENV_AR: Attack-Release envelope (simplified ADSR without decay/sustain)
 // in0: trigger signal (any value >0 triggers attack)
 // in1: attack time (seconds)

@@ -99,6 +99,9 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"ar",      {cedar::Opcode::ENV_AR, 1, 2, true,
                  {"trig", "attack", "release", "", "", ""},
                  {0.01f, 0.3f, NAN}}},
+    {"env_follower", {cedar::Opcode::ENV_FOLLOWER, 1, 2, true,
+                      {"in", "attack", "release", "", "", ""},
+                      {0.01f, 0.1f, NAN}}},  // Fast attack, medium release
 
     // Delays
     {"delay",   {cedar::Opcode::DELAY, 3, 0, true,
@@ -267,6 +270,8 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"output",    "out"},
     {"moogladder", "moog"},
     {"envelope",  "adsr"},
+    {"envfollow", "env_follower"},
+    {"follower",  "env_follower"},
     // SVF aliases with explicit naming
     {"svflp",     "lp"},
     {"svfhp",     "hp"},
