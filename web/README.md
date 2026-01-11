@@ -6,16 +6,16 @@ Browser-based live-coding environment for Akkado programs running in the Cedar s
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Start development server
-npm run dev
+bun run dev
 
 # Build for production
-npm run build
+bun run build
 
 # Preview production build
-npm run preview
+bun run preview
 ```
 
 ## Project Structure
@@ -41,16 +41,14 @@ web/
 
 ## Requirements
 
-- Node.js 18+
-- WASM binaries from parent project (built with Emscripten)
+- Bun (or Node.js 18+)
+- Emscripten (for WASM builds)
 
-## Building WASM Modules
-
-From the project root:
+## Building WASM Module
 
 ```bash
-cmake --preset wasm
-cmake --build build/wasm
-cp build/wasm/akkado/akkado.wasm web/static/wasm/
-cp build/wasm/cedar/cedar.wasm web/static/wasm/
+# From the web/ directory
+bun run build:wasm
 ```
+
+This runs `emcmake cmake` in `wasm/` and automatically copies the output to `static/wasm/`.

@@ -73,6 +73,8 @@ Categories: Oscillators (SIN/TRI/SAW/SQR), Filters (biquad, SVF, Moog, diode lad
 
 ## Build Commands
 
+Requires C++20 compiler (GCC 10+, Clang 10+, MSVC 2019+).
+
 ```bash
 # Configure (debug build with tests)
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
@@ -86,9 +88,13 @@ cmake --build build --target cedar
 # Build only akkado
 cmake --build build --target akkado
 
-# Run tests
+# Run all tests
 ./build/cedar/tests/cedar_tests
 ./build/akkado/tests/akkado_tests
+
+# Run single test (Catch2 pattern matching)
+./build/cedar/tests/cedar_tests "VM executes*"
+./build/akkado/tests/akkado_tests "[parser]"  # Run by tag
 
 # Run CLI tools
 ./build/tools/cedar-cli/cedar-cli --help
@@ -98,6 +104,7 @@ cmake --build build --target akkado
 cmake --preset debug       # Debug build
 cmake --preset release     # Release build
 cmake --preset cedar-only  # Cedar without akkado
+cmake --preset wasm        # WebAssembly build (requires Emscripten)
 
 # Build cedar standalone (from cedar/ directory)
 cmake -B build-cedar cedar/
@@ -142,6 +149,9 @@ bun run build
 
 # Type checking
 bun run check
+
+# Rebuild WASM module (requires Emscripten)
+bun run build:wasm
 ```
 
 ### Web Architecture
