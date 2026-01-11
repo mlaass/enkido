@@ -142,7 +142,7 @@ struct EuclidState {
 
 // Trigger/impulse generator state
 struct TriggerState {
-    float phase = 0.0f;  // Phase within trigger period
+    float phase = 1.0f;  // Start at 1.0 so first trigger fires immediately
 };
 
 // Timeline/breakpoint automation state
@@ -322,19 +322,23 @@ struct SamplerVoice {
     float speed = 1.0f;         // Playback speed (1.0 = original pitch)
     std::uint32_t sample_id = 0; // Which sample is playing
     bool active = false;        // Whether this voice is currently playing
+
+    // Anti-click envelope (micro-fade)
+    std::uint8_t attack_counter = 0;   // Counts up during attack (~5 samples)
+    bool fading_out = false;           // Voice is being faded out (stolen)
+    std::uint8_t fadeout_counter = 0;  // Counts up during fadeout
 };
 
 // Sampler state - polyphonic sample playback
 struct SamplerState {
-    static constexpr std::size_t MAX_VOICES = 16;  // Maximum simultaneous voices
-    
+    static constexpr std::size_t MAX_VOICES = 32;  // Maximum simultaneous voices
+
     SamplerVoice voices[MAX_VOICES] = {};
-    std::size_t next_voice = 0;  // Round-robin voice allocation
-    
+
     // Trigger detection
     float prev_trigger = 0.0f;
-    
-    // Allocate a new voice for playback
+
+    // Allocate a new voice for playback (returns nullptr if all voices busy)
     SamplerVoice* allocate_voice() {
         // Find first inactive voice
         for (std::size_t i = 0; i < MAX_VOICES; ++i) {
@@ -342,11 +346,8 @@ struct SamplerState {
                 return &voices[i];
             }
         }
-        
-        // All voices active - steal oldest (round-robin)
-        SamplerVoice* voice = &voices[next_voice];
-        next_voice = (next_voice + 1) % MAX_VOICES;
-        return voice;
+        // No voice stealing - return nullptr if all busy
+        return nullptr;
     }
 };
 
