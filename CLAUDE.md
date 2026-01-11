@@ -144,6 +144,30 @@ bun run build
 bun run check
 ```
 
+### Web Architecture
+
+**State Management**: Uses Svelte 5 runes with singleton store pattern.
+
+Stores in `src/lib/stores/`:
+- `audio.svelte.ts` - Audio engine, playback, visualization
+- `editor.svelte.ts` - Code state, compile status
+- `settings.svelte.ts` - UI preferences (panel position, font size, audio config)
+- `theme.svelte.ts` - Theme selection, custom themes, CSS variable application
+- `docs.svelte.ts` - Documentation system, F1 help lookup
+
+**Key Components** in `src/lib/components/`:
+- `Transport/` - Play/pause, BPM, volume controls
+- `Editor/` - CodeMirror 6 integration
+- `Panel/` - Resizable sidebar with tabs
+- `Theme/` - Theme selector and color editor
+- `Logo/` - Inline SVG logo component
+
+**Theme System**:
+- CSS variables defined in `app.css`, dynamically set by theme store
+- 7 preset themes (GitHub Dark/Light, Monokai, Dracula, Solarized, Nord, High Contrast)
+- Custom themes stored in localStorage (`enkido-theme` key)
+- All UI elements use CSS variables for consistent theming
+
 ### Documentation System
 
 Documentation lives in `web/static/docs/` as markdown files with YAML frontmatter. The F1 help system uses a pre-built lookup index for instant keyword lookup.

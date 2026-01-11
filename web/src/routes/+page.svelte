@@ -2,6 +2,7 @@
 	import Transport from '$components/Transport/Transport.svelte';
 	import Editor from '$components/Editor/Editor.svelte';
 	import SidePanel from '$components/Panel/SidePanel.svelte';
+	import Logo from '$components/Logo/Logo.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
 	import { settingsStore } from '$stores/settings.svelte';
 
@@ -16,7 +17,7 @@
 <div class="app">
 	<header class="header">
 		<div class="header-left">
-			<span class="logo"><img style="margin-top: 6px; height: 24px;" src="/img/logo.svg" alt="NKIDO" /></span>
+			<span class="logo"><Logo size={24} /></span>
 		</div>
 		<Transport />
 		<div class="header-right">

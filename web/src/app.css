@@ -21,9 +21,8 @@
 	--transition-normal: 250ms ease;
 }
 
-/* Dark theme (default) */
-:root,
-:root[data-theme="dark"] {
+/* Theme colors - defaults set here, overridden by theme store */
+:root {
 	--bg-primary: #0d1117;
 	--bg-secondary: #161b22;
 	--bg-tertiary: #21262d;
@@ -40,48 +39,6 @@
 
 	--border-default: #30363d;
 	--border-muted: #21262d;
-}
-
-/* Light theme */
-:root[data-theme="light"] {
-	--bg-primary: #ffffff;
-	--bg-secondary: #f6f8fa;
-	--bg-tertiary: #ebeef1;
-	--bg-hover: #d0d7de;
-
-	--text-primary: #1f2328;
-	--text-secondary: #656d76;
-	--text-muted: #8c959f;
-
-	--accent-primary: #0969da;
-	--accent-secondary: #1a7f37;
-	--accent-warning: #9a6700;
-	--accent-error: #cf222e;
-
-	--border-default: #d0d7de;
-	--border-muted: #ebeef1;
-}
-
-/* System preference (when no data-theme attribute) */
-@media (prefers-color-scheme: light) {
-	:root:not([data-theme]) {
-		--bg-primary: #ffffff;
-		--bg-secondary: #f6f8fa;
-		--bg-tertiary: #ebeef1;
-		--bg-hover: #d0d7de;
-
-		--text-primary: #1f2328;
-		--text-secondary: #656d76;
-		--text-muted: #8c959f;
-
-		--accent-primary: #0969da;
-		--accent-secondary: #1a7f37;
-		--accent-warning: #9a6700;
-		--accent-error: #cf222e;
-
-		--border-default: #d0d7de;
-		--border-muted: #ebeef1;
-	}
 }
 
 /* Reset */

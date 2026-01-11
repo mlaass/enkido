@@ -5,7 +5,6 @@
 type TabName = 'controls' | 'settings' | 'docs';
 
 interface Settings {
-	theme: 'dark' | 'light' | 'system';
 	panelPosition: 'left' | 'right';
 	fontSize: number;
 	bufferSize: 128 | 256 | 512 | 1024;
@@ -17,7 +16,6 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-	theme: 'dark',
 	panelPosition: 'left',
 	fontSize: 14,
 	bufferSize: 128,
@@ -52,11 +50,6 @@ function createSettingsStore() {
 		} catch (e) {
 			console.warn('Failed to save settings:', e);
 		}
-	}
-
-	function setTheme(theme: Settings['theme']) {
-		settings.theme = theme;
-		save();
 	}
 
 	function setPanelPosition(position: Settings['panelPosition']) {
@@ -105,7 +98,6 @@ function createSettingsStore() {
 	}
 
 	return {
-		get theme() { return settings.theme; },
 		get panelPosition() { return settings.panelPosition; },
 		get fontSize() { return settings.fontSize; },
 		get bufferSize() { return settings.bufferSize; },
@@ -115,7 +107,6 @@ function createSettingsStore() {
 		get activeTab() { return settings.activeTab; },
 		get scrollPositions() { return settings.scrollPositions; },
 
-		setTheme,
 		setPanelPosition,
 		setFontSize,
 		setBufferSize,

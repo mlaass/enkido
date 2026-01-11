@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import DocsPanel from '$lib/docs/components/DocsPanel.svelte';
 	import ResizeHandle from './ResizeHandle.svelte';
+	import ThemeSelector from '$lib/components/Theme/ThemeSelector.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
 	interface Props {
@@ -141,20 +142,7 @@
 					<!-- Appearance -->
 					<div class="setting-group">
 						<span class="setting-label">Theme</span>
-						<div class="segmented-control">
-							<button
-								class:active={settingsStore.theme === 'dark'}
-								onclick={() => settingsStore.setTheme('dark')}
-							>Dark</button>
-							<button
-								class:active={settingsStore.theme === 'light'}
-								onclick={() => settingsStore.setTheme('light')}
-							>Light</button>
-							<button
-								class:active={settingsStore.theme === 'system'}
-								onclick={() => settingsStore.setTheme('system')}
-							>System</button>
-						</div>
+						<ThemeSelector />
 					</div>
 
 					<div class="setting-group">
