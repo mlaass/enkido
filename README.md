@@ -1,5 +1,7 @@
 # NKIDO
 
+[![Build and Deploy](https://github.com/mlaass/enkido/actions/workflows/deploy.yml/badge.svg)](https://github.com/mlaass/enkido/actions/workflows/deploy.yml)
+
 A high-performance audio synthesis system for live coding, combining a domain-specific language with a real-time audio engine.
 
 ## Components
