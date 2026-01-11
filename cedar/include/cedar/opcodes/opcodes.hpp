@@ -11,6 +11,7 @@
 #include "oscillators.hpp"
 #include "filters.hpp"
 #include "envelopes.hpp"
+#include "samplers.hpp"
 #include "delays.hpp"
 #include "sequencing.hpp"
 #include "distortion.hpp"

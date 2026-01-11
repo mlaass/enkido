@@ -74,6 +74,9 @@ CompileResult compile(std::string_view source, std::string_view filename) {
     std::memcpy(result.bytecode.data(), gen.instructions.data(),
                 result.bytecode.size());
 
+    // Copy state initializations for patterns
+    result.state_inits = std::move(gen.state_inits);
+
     result.success = true;
     return result;
 }

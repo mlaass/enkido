@@ -61,6 +61,10 @@ enum class Opcode : std::uint8_t {
     ENV_AR = 61,
     ENV_FOLLOWER = 62,
 
+    // Samplers (63-69)
+    SAMPLE_PLAY = 63,       // One-shot sample playback
+    SAMPLE_PLAY_LOOP = 64,  // Looping sample playback
+
     // Delays & Reverbs (70-79)
     DELAY = 70,
     REVERB_FREEVERB = 71,    // Schroeder-Moorer algorithm
@@ -73,19 +77,26 @@ enum class Opcode : std::uint8_t {
     EFFECT_PHASER = 82,      // Cascaded allpass filters
     EFFECT_COMB = 83,        // Feedback comb filter
 
-    // Effects - Distortion (84-89)
+    // Effects - Distortion (84-89, 96-99)
     DISTORT_TANH = 84,       // Tanh saturation
     DISTORT_SOFT = 85,       // Polynomial soft clipping
     DISTORT_BITCRUSH = 86,   // Bit/sample rate reduction
     DISTORT_FOLD = 87,       // Wavefolder
+    DISTORT_TUBE = 88,       // Asymmetric tube saturation (even harmonics)
+    DISTORT_SMOOTH = 89,     // ADAA alias-free saturation
 
-    // Sequencers & Timing (90-99)
+    // Sequencers & Timing (90-95)
     CLOCK = 90,       // Beat/bar phase output (rate field: 0=beat, 1=bar, 2=cycle)
     LFO = 91,         // Beat-synced LFO (reserved field: shape 0-6)
     SEQ_STEP = 92,    // Step sequencer
     EUCLID = 93,      // Euclidean rhythm trigger generator
     TRIGGER = 94,     // Beat-division impulse generator
     TIMELINE = 95,    // Breakpoint automation
+
+    // Effects - Distortion continued (96-99)
+    DISTORT_TAPE = 96,       // Tape-style saturation with warmth
+    DISTORT_XFMR = 97,       // Transformer saturation (bass emphasis)
+    DISTORT_EXCITE = 98,     // Harmonic exciter (HF enhancement)
 
     // Dynamics (100-109)
     DYNAMICS_COMP = 100,     // Feedforward compressor

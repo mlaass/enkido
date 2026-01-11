@@ -2,6 +2,7 @@
 #include "akkado/builtins.hpp"
 #include "akkado/pattern_eval.hpp"
 #include <cedar/vm/state_pool.hpp>
+#include <cmath>
 #include <cstring>
 
 namespace akkado {
@@ -14,12 +15,15 @@ std::uint16_t BufferAllocator::allocate() {
 }
 
 CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
-                                       std::string_view filename) {
+                                       std::string_view filename,
+                                       SampleRegistry* sample_registry) {
     ast_ = &ast;
     symbols_ = &symbols;
+    sample_registry_ = sample_registry;
     buffers_ = BufferAllocator{};
     instructions_.clear();
     diagnostics_.clear();
+    state_inits_.clear();
     filename_ = std::string(filename);
     path_stack_.clear();
     anonymous_counter_ = 0;
@@ -31,7 +35,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, std::move(diagnostics_), false};
+        return {{}, std::move(diagnostics_), {}, false};
     }
 
     // Visit root (Program node)
@@ -41,7 +45,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     bool success = !has_errors(diagnostics_);
 
-    return {std::move(instructions_), std::move(diagnostics_), success};
+    return {std::move(instructions_), std::move(diagnostics_), std::move(state_inits_), success};
 }
 
 std::uint16_t CodeGenerator::visit(NodeIndex node) {
@@ -506,6 +510,124 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return out;
             }
 
+            // Detect if this is a sample pattern or pitch pattern
+            bool is_sample_pattern = false;
+            for (const auto& event : events.events) {
+                if (event.type == PatternEventType::Sample) {
+                    is_sample_pattern = true;
+                    break;
+                }
+            }
+
+            // Handle sample patterns differently
+            if (is_sample_pattern) {
+                // For sample patterns, we need to:
+                // 1. Generate trigger signal (TRIGGER opcode)
+                // 2. Generate sample ID sequence (SEQ_STEP with sample IDs)
+                // 3. Generate pitch/speed (constant 1.0 for now)
+                // 4. Call SAMPLE_PLAY opcode
+
+                std::uint16_t trigger_buf = buffers_.allocate();
+                std::uint16_t sample_id_buf = buffers_.allocate();
+                std::uint16_t pitch_buf = buffers_.allocate();
+                std::uint16_t output_buf = buffers_.allocate();
+
+                if (trigger_buf == BufferAllocator::BUFFER_UNUSED ||
+                    sample_id_buf == BufferAllocator::BUFFER_UNUSED ||
+                    pitch_buf == BufferAllocator::BUFFER_UNUSED ||
+                    output_buf == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    pop_path();
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+
+                // Emit speed constant
+                std::uint16_t speed_buf = buffers_.allocate();
+                if (speed_buf == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    pop_path();
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+                cedar::Instruction speed_inst{};
+                speed_inst.opcode = cedar::Opcode::PUSH_CONST;
+                speed_inst.out_buffer = speed_buf;
+                speed_inst.inputs[0] = 0xFFFF;
+                speed_inst.inputs[1] = 0xFFFF;
+                speed_inst.inputs[2] = 0xFFFF;
+                float speed = static_cast<float>(events.size());
+                std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
+                emit(speed_inst);
+
+                // Emit TRIGGER for gate signal
+                cedar::Instruction trig_inst{};
+                trig_inst.opcode = cedar::Opcode::TRIGGER;
+                trig_inst.out_buffer = trigger_buf;
+                trig_inst.inputs[0] = speed_buf;
+                trig_inst.inputs[1] = 0xFFFF;
+                trig_inst.inputs[2] = 0xFFFF;
+                trig_inst.state_id = state_id;
+                emit(trig_inst);
+
+                // Emit SEQ_STEP for sample IDs
+                // The state will be initialized via state_inits_
+                std::uint32_t seq_state_id = state_id + 1;
+                cedar::Instruction seq_inst{};
+                seq_inst.opcode = cedar::Opcode::SEQ_STEP;
+                seq_inst.out_buffer = sample_id_buf;
+                seq_inst.inputs[0] = speed_buf;
+                seq_inst.inputs[1] = 0xFFFF;
+                seq_inst.inputs[2] = 0xFFFF;
+                seq_inst.state_id = seq_state_id;
+                emit(seq_inst);
+
+                // Build sample ID sequence and add state initialization
+                StateInitData seq_init;
+                seq_init.state_id = seq_state_id;
+                seq_init.type = StateInitData::Type::SeqStep;
+                seq_init.values.reserve(events.size());
+                for (const auto& event : events.events) {
+                    if (event.type == PatternEventType::Sample) {
+                        std::uint32_t sample_id = 0;
+                        if (sample_registry_) {
+                            sample_id = sample_registry_->get_id(event.sample_name);
+                            if (sample_id == 0) {
+                                error("W001", "Sample '" + event.sample_name + "' not registered in sample bank", n.location);
+                            }
+                        }
+                        seq_init.values.push_back(static_cast<float>(sample_id));
+                    } else {
+                        // Rest or other event type - use sample ID 0 (no sample)
+                        seq_init.values.push_back(0.0f);
+                    }
+                }
+                state_inits_.push_back(std::move(seq_init));
+
+                // Emit constant 1.0 for pitch (original speed)
+                cedar::Instruction pitch_inst{};
+                pitch_inst.opcode = cedar::Opcode::PUSH_CONST;
+                pitch_inst.out_buffer = pitch_buf;
+                pitch_inst.inputs[0] = 0xFFFF;
+                pitch_inst.inputs[1] = 0xFFFF;
+                pitch_inst.inputs[2] = 0xFFFF;
+                float one = 1.0f;
+                std::memcpy(&pitch_inst.state_id, &one, sizeof(float));
+                emit(pitch_inst);
+
+                // Emit SAMPLE_PLAY opcode
+                cedar::Instruction sample_inst{};
+                sample_inst.opcode = cedar::Opcode::SAMPLE_PLAY;
+                sample_inst.out_buffer = output_buf;
+                sample_inst.inputs[0] = trigger_buf;
+                sample_inst.inputs[1] = pitch_buf;
+                sample_inst.inputs[2] = sample_id_buf;
+                sample_inst.state_id = state_id + 2;
+                emit(sample_inst);
+
+                pop_path();
+                node_buffers_[node] = output_buf;
+                return output_buf;
+            }
+
             // Allocate buffers for pattern outputs
             std::uint16_t trigger_buf = buffers_.allocate();
             std::uint16_t pitch_buf = buffers_.allocate();
@@ -555,14 +677,35 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             emit(speed_inst);
 
             // Emit SEQ_STEP for pitch (the state will hold the pitch values)
+            std::uint32_t pitch_seq_state_id = state_id;
             cedar::Instruction seq_inst{};
             seq_inst.opcode = cedar::Opcode::SEQ_STEP;
             seq_inst.out_buffer = pitch_buf;
             seq_inst.inputs[0] = speed_buf;
             seq_inst.inputs[1] = 0xFFFF;
             seq_inst.inputs[2] = 0xFFFF;
-            seq_inst.state_id = state_id;
+            seq_inst.state_id = pitch_seq_state_id;
             emit(seq_inst);
+
+            // Build pitch sequence from pattern events and add state initialization
+            StateInitData pitch_init;
+            pitch_init.state_id = pitch_seq_state_id;
+            pitch_init.type = StateInitData::Type::SeqStep;
+            pitch_init.values.reserve(events.size());
+            for (const auto& event : events.events) {
+                if (event.type == PatternEventType::Pitch) {
+                    // Convert MIDI note to frequency
+                    float freq = 440.0f * std::pow(2.0f, (static_cast<float>(event.midi_note) - 69.0f) / 12.0f);
+                    pitch_init.values.push_back(freq);
+                } else if (event.type == PatternEventType::Rest) {
+                    // For rests, use 0 frequency (will produce silence)
+                    pitch_init.values.push_back(0.0f);
+                } else {
+                    // Other event types (shouldn't happen in note pattern path)
+                    pitch_init.values.push_back(0.0f);
+                }
+            }
+            state_inits_.push_back(std::move(pitch_init));
 
             // Emit TRIGGER for gate signal
             cedar::Instruction trig_inst{};

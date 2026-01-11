@@ -190,6 +190,95 @@ WASM_EXPORT int cedar_set_param_slew(const char* name, float value, float slew_m
 }
 
 // ============================================================================
+// Sample Management API
+// ============================================================================
+
+/**
+ * Load a sample from float audio data
+ * @param name Sample name (null-terminated)
+ * @param audio_data Pointer to interleaved float audio data
+ * @param num_samples Total number of samples (frames * channels)
+ * @param channels Number of channels (1=mono, 2=stereo)
+ * @param sample_rate Sample rate in Hz
+ * @return Sample ID (>0) on success, 0 on failure
+ */
+WASM_EXPORT uint32_t cedar_load_sample(const char* name,
+                                        const float* audio_data,
+                                        uint32_t num_samples,
+                                        uint32_t channels,
+                                        float sample_rate) {
+    if (!g_vm || !name || !audio_data || channels == 0) {
+        return 0;
+    }
+    
+    return g_vm->load_sample(name, audio_data, num_samples, channels, sample_rate);
+}
+
+/**
+ * Load a sample from WAV file data in memory
+ * @param name Sample name (null-terminated)
+ * @param wav_data Pointer to WAV file data
+ * @param wav_size Size of WAV data in bytes
+ * @return Sample ID (>0) on success, 0 on failure
+ */
+WASM_EXPORT uint32_t cedar_load_sample_wav(const char* name,
+                                            const uint8_t* wav_data,
+                                            uint32_t wav_size) {
+    if (!g_vm || !name || !wav_data || wav_size == 0) {
+        return 0;
+    }
+    
+    return g_vm->sample_bank_.load_wav_memory(name, wav_data, wav_size);
+}
+
+/**
+ * Check if a sample exists
+ * @param name Sample name (null-terminated)
+ * @return 1 if sample exists, 0 otherwise
+ */
+WASM_EXPORT int cedar_has_sample(const char* name) {
+    if (!g_vm || !name) {
+        return 0;
+    }
+    
+    return g_vm->sample_bank_.has_sample(name) ? 1 : 0;
+}
+
+/**
+ * Get sample ID by name
+ * @param name Sample name (null-terminated)
+ * @return Sample ID (>0) if found, 0 if not found
+ */
+WASM_EXPORT uint32_t cedar_get_sample_id(const char* name) {
+    if (!g_vm || !name) {
+        return 0;
+    }
+    
+    return g_vm->sample_bank_.get_sample_id(name);
+}
+
+/**
+ * Clear all loaded samples
+ */
+WASM_EXPORT void cedar_clear_samples() {
+    if (g_vm) {
+        g_vm->sample_bank_.clear();
+    }
+}
+
+/**
+ * Get number of loaded samples
+ * @return Number of samples in the bank
+ */
+WASM_EXPORT uint32_t cedar_get_sample_count() {
+    if (!g_vm) {
+        return 0;
+    }
+    
+    return static_cast<uint32_t>(g_vm->sample_bank_.size());
+}
+
+// ============================================================================
 // Akkado Compiler API
 // ============================================================================
 
@@ -272,6 +361,90 @@ WASM_EXPORT uint32_t akkado_get_diagnostic_column(uint32_t index) {
  */
 WASM_EXPORT void akkado_clear_result() {
     g_compile_result = akkado::CompileResult{};
+}
+
+// ============================================================================
+// State Initialization API
+// ============================================================================
+
+/**
+ * Get number of state initializations from compile result
+ */
+WASM_EXPORT uint32_t akkado_get_state_init_count() {
+    return static_cast<uint32_t>(g_compile_result.state_inits.size());
+}
+
+/**
+ * Get state_id for a state initialization
+ * @param index State init index
+ * @return state_id
+ */
+WASM_EXPORT uint32_t akkado_get_state_init_id(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return 0;
+    return g_compile_result.state_inits[index].state_id;
+}
+
+/**
+ * Get type for a state initialization (0=SeqStep, 1=Timeline)
+ * @param index State init index
+ * @return type
+ */
+WASM_EXPORT int akkado_get_state_init_type(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return -1;
+    return static_cast<int>(g_compile_result.state_inits[index].type);
+}
+
+/**
+ * Get values count for a state initialization
+ * @param index State init index
+ * @return Number of values
+ */
+WASM_EXPORT uint32_t akkado_get_state_init_values_count(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return 0;
+    return static_cast<uint32_t>(g_compile_result.state_inits[index].values.size());
+}
+
+/**
+ * Get values pointer for a state initialization
+ * @param index State init index
+ * @return Pointer to float array of values
+ */
+WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return nullptr;
+    return g_compile_result.state_inits[index].values.data();
+}
+
+/**
+ * Apply a state initialization to the VM
+ * @param state_id State ID to initialize
+ * @param type State type (0=SeqStep, 1=Timeline)
+ * @param values Pointer to float array of values
+ * @param count Number of values
+ * @return 1 on success, 0 on failure
+ */
+WASM_EXPORT int cedar_init_seq_step_state(uint32_t state_id, const float* values, uint32_t count) {
+    if (!g_vm || !values) return 0;
+    g_vm->init_seq_step_state(state_id, values, count);
+    return 1;
+}
+
+/**
+ * Apply all state initializations from compile result to the VM
+ * Should be called after cedar_load_program for correct pattern playback
+ * @return Number of states initialized
+ */
+WASM_EXPORT uint32_t cedar_apply_state_inits() {
+    if (!g_vm) return 0;
+
+    uint32_t count = 0;
+    for (const auto& init : g_compile_result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::SeqStep) {
+            g_vm->init_seq_step_state(init.state_id, init.values.data(), init.values.size());
+            count++;
+        }
+        // Timeline state init would go here if needed
+    }
+    return count;
 }
 
 // ============================================================================

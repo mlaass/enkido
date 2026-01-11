@@ -5,6 +5,7 @@
 #include "buffer_pool.hpp"
 #include "state_pool.hpp"
 #include "env_map.hpp"
+#include "sample_bank.hpp"
 #include "swap_controller.hpp"
 #include "crossfade_state.hpp"
 #include <span>
@@ -115,6 +116,28 @@ public:
     [[nodiscard]] bool has_param(const char* name) const;
 
     // =========================================================================
+    // Sample Management
+    // =========================================================================
+
+    // Load a sample into the sample bank
+    // Returns sample ID, or 0 if loading failed
+    std::uint32_t load_sample(const std::string& name,
+                              const float* audio_data,
+                              std::size_t num_samples,
+                              std::uint32_t channels,
+                              float sample_rate);
+
+    // Get sample bank (for direct access)
+    [[nodiscard]] SampleBank& sample_bank() { return sample_bank_; }
+    [[nodiscard]] const SampleBank& sample_bank() const { return sample_bank_; }
+
+    // Initialize a SEQ_STEP state with values
+    // Used by compiler to set up sequence data before program execution
+    void init_seq_step_state(std::uint32_t state_id, const float* values, std::size_t count) {
+        state_pool_.init_seq_step(state_id, values, count);
+    }
+
+    // =========================================================================
     // Query API
     // =========================================================================
 
@@ -170,6 +193,7 @@ private:
     BufferPool buffer_pool_;
     StatePool state_pool_;
     EnvMap env_map_;
+    SampleBank sample_bank_;
     AudioArena audio_arena_;
 };
 

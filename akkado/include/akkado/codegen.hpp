@@ -3,6 +3,7 @@
 #include "ast.hpp"
 #include "diagnostics.hpp"
 #include "symbol_table.hpp"
+#include "sample_registry.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cstdint>
 #include <string>
@@ -10,10 +11,21 @@
 
 namespace akkado {
 
+/// State initialization data for SEQ_STEP and TIMELINE opcodes
+struct StateInitData {
+    std::uint32_t state_id;
+    enum class Type : std::uint8_t {
+        SeqStep,   // Initialize SeqStepState with float values
+        Timeline   // Initialize TimelineState with breakpoints
+    } type;
+    std::vector<float> values;  // For SeqStep: sequence values; for Timeline: [time, value, curve, ...]
+};
+
 /// Result of code generation
 struct CodeGenResult {
     std::vector<cedar::Instruction> instructions;
     std::vector<Diagnostic> diagnostics;
+    std::vector<StateInitData> state_inits;  // State initialization data
     bool success = false;
 };
 
@@ -47,8 +59,10 @@ public:
     /// @param ast The transformed AST (after pipe rewriting)
     /// @param symbols Symbol table from semantic analysis
     /// @param filename Filename for error reporting
+    /// @param sample_registry Optional sample registry for resolving sample names to IDs
     CodeGenResult generate(const Ast& ast, SymbolTable& symbols,
-                          std::string_view filename = "<input>");
+                          std::string_view filename = "<input>",
+                          SampleRegistry* sample_registry = nullptr);
 
 private:
     /// Visit AST node and emit instructions
@@ -71,9 +85,11 @@ private:
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;
+    SampleRegistry* sample_registry_ = nullptr;
     BufferAllocator buffers_;
     std::vector<cedar::Instruction> instructions_;
     std::vector<Diagnostic> diagnostics_;
+    std::vector<StateInitData> state_inits_;  // State initialization data
     std::string filename_;
 
     // Semantic path tracking for state_id generation

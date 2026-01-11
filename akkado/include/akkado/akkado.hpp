@@ -6,6 +6,7 @@
 #include <vector>
 #include <span>
 #include "diagnostics.hpp"
+#include "codegen.hpp"  // For StateInitData
 
 namespace akkado {
 
@@ -23,6 +24,7 @@ struct CompileResult {
     bool success = false;
     std::vector<std::uint8_t> bytecode;
     std::vector<Diagnostic> diagnostics;
+    std::vector<StateInitData> state_inits;  // State initialization data for patterns
 };
 
 /// Compile Akkado source code to Cedar bytecode

@@ -294,6 +294,122 @@ function createAudioEngine() {
 		return data;
 	}
 
+	/**
+	 * Load a sample from float audio data
+	 * @param name Sample name (e.g., "kick", "snare")
+	 * @param audioData Float32Array of interleaved audio samples
+	 * @param channels Number of channels (1=mono, 2=stereo)
+	 * @param sampleRate Sample rate in Hz
+	 */
+	function loadSample(name: string, audioData: Float32Array, channels: number, sampleRate: number) {
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			return;
+		}
+
+		console.log('[AudioEngine] Loading sample:', name, 'samples:', audioData.length, 'channels:', channels);
+
+		// Send audio data to worklet
+		workletNode.port.postMessage({
+			type: 'loadSample',
+			name,
+			audioData,
+			channels,
+			sampleRate
+		});
+	}
+
+	/**
+	 * Load a sample from a WAV file
+	 * @param name Sample name (e.g., "kick", "snare")
+	 * @param file File object or Blob containing WAV data
+	 */
+	async function loadSampleFromFile(name: string, file: File | Blob): Promise<boolean> {
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			return false;
+		}
+
+		try {
+			const arrayBuffer = await file.arrayBuffer();
+			console.log('[AudioEngine] Loading WAV sample:', name, 'size:', arrayBuffer.byteLength);
+
+			// Send WAV data to worklet
+			workletNode.port.postMessage({
+				type: 'loadSampleWav',
+				name,
+				wavData: arrayBuffer
+			});
+
+			return true;
+		} catch (err) {
+			console.error('[AudioEngine] Failed to load sample from file:', err);
+			return false;
+		}
+	}
+
+	/**
+	 * Load a sample from a URL
+	 * @param name Sample name (e.g., "kick", "snare")
+	 * @param url URL to WAV file
+	 */
+	async function loadSampleFromUrl(name: string, url: string): Promise<boolean> {
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			return false;
+		}
+
+		try {
+			console.log('[AudioEngine] Fetching sample from URL:', url);
+			const response = await fetch(url);
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+			}
+
+			const arrayBuffer = await response.arrayBuffer();
+			console.log('[AudioEngine] Loaded sample from URL:', name, 'size:', arrayBuffer.byteLength);
+
+			// Send WAV data to worklet
+			workletNode.port.postMessage({
+				type: 'loadSampleWav',
+				name,
+				wavData: arrayBuffer
+			});
+
+			return true;
+		} catch (err) {
+			console.error('[AudioEngine] Failed to load sample from URL:', err);
+			return false;
+		}
+	}
+
+	/**
+	 * Load multiple samples from URLs (e.g., a drum kit)
+	 * @param samples Array of {name, url} objects
+	 */
+	async function loadSamplePack(samples: Array<{ name: string; url: string }>): Promise<number> {
+		let loaded = 0;
+		for (const sample of samples) {
+			const success = await loadSampleFromUrl(sample.name, sample.url);
+			if (success) loaded++;
+		}
+		console.log('[AudioEngine] Loaded', loaded, 'of', samples.length, 'samples');
+		return loaded;
+	}
+
+	/**
+	 * Clear all loaded samples
+	 */
+	function clearSamples() {
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot clear samples - worklet not initialized');
+			return;
+		}
+
+		workletNode.port.postMessage({ type: 'clearSamples' });
+		console.log('[AudioEngine] Cleared all samples');
+	}
+
 	return {
 		get isPlaying() { return state.isPlaying; },
 		get bpm() { return state.bpm; },
@@ -319,7 +435,12 @@ function createAudioEngine() {
 		getAnalyserNode,
 		getAudioContext,
 		getTimeDomainData,
-		getFrequencyData
+		getFrequencyData,
+		loadSample,
+		loadSampleFromFile,
+		loadSampleFromUrl,
+		loadSamplePack,
+		clearSamples
 	};
 }
 

@@ -139,6 +139,20 @@ class CedarProcessor extends AudioWorkletProcessor {
 					this.module._cedar_reset();
 				}
 				break;
+
+			case 'loadSample':
+				this.loadSample(msg.name, msg.audioData, msg.channels, msg.sampleRate);
+				break;
+
+			case 'loadSampleWav':
+				this.loadSampleWav(msg.name, msg.wavData);
+				break;
+
+			case 'clearSamples':
+				if (this.module) {
+					this.module._cedar_clear_samples();
+				}
+				break;
 		}
 	}
 
@@ -179,6 +193,12 @@ class CedarProcessor extends AudioWorkletProcessor {
 				const result = this.module._cedar_load_program(bytecodePtr, bytecodeSize);
 
 				if (result === 0) {
+					// Apply state initializations for SEQ_STEP patterns
+					const stateInitsApplied = this.module._cedar_apply_state_inits();
+					if (stateInitsApplied > 0) {
+						console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
+					}
+
 					console.log('[CedarProcessor] Program loaded successfully');
 					this.port.postMessage({
 						type: 'compiled',
@@ -288,6 +308,111 @@ class CedarProcessor extends AudioWorkletProcessor {
 			}
 		} finally {
 			this.module._enkido_free(ptr);
+		}
+	}
+
+	loadSample(name, audioData, channels, sampleRate) {
+		if (!this.module) {
+			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
+			return;
+		}
+
+		console.log('[CedarProcessor] Loading sample:', name, 'samples:', audioData.length, 'channels:', channels);
+
+		// Allocate name string
+		const nameLen = this.module.lengthBytesUTF8(name) + 1;
+		const namePtr = this.module._enkido_malloc(nameLen);
+		if (namePtr === 0) {
+			this.port.postMessage({ type: 'error', message: 'Failed to allocate name' });
+			return;
+		}
+
+		// Allocate audio data
+		const audioPtr = this.module._enkido_malloc(audioData.length * 4); // 4 bytes per float
+		if (audioPtr === 0) {
+			this.module._enkido_free(namePtr);
+			this.port.postMessage({ type: 'error', message: 'Failed to allocate audio data' });
+			return;
+		}
+
+		try {
+			this.module.stringToUTF8(name, namePtr, nameLen);
+
+			// Copy audio data to WASM memory
+			if (this.module.HEAPF32) {
+				this.module.HEAPF32.set(audioData, audioPtr / 4);
+			} else {
+				for (let i = 0; i < audioData.length; i++) {
+					this.module.setValue(audioPtr + i * 4, audioData[i], 'float');
+				}
+			}
+
+			// Load sample
+			const sampleId = this.module._cedar_load_sample(namePtr, audioPtr, audioData.length, channels, sampleRate);
+
+			if (sampleId > 0) {
+				console.log('[CedarProcessor] Sample loaded successfully, ID:', sampleId);
+				this.port.postMessage({ type: 'sampleLoaded', name, sampleId });
+			} else {
+				console.error('[CedarProcessor] Failed to load sample');
+				this.port.postMessage({ type: 'error', message: 'Failed to load sample: ' + name });
+			}
+		} finally {
+			this.module._enkido_free(namePtr);
+			this.module._enkido_free(audioPtr);
+		}
+	}
+
+	loadSampleWav(name, wavData) {
+		if (!this.module) {
+			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
+			return;
+		}
+
+		console.log('[CedarProcessor] Loading WAV sample:', name, 'size:', wavData.byteLength);
+
+		// Allocate name string
+		const nameLen = this.module.lengthBytesUTF8(name) + 1;
+		const namePtr = this.module._enkido_malloc(nameLen);
+		if (namePtr === 0) {
+			this.port.postMessage({ type: 'error', message: 'Failed to allocate name' });
+			return;
+		}
+
+		// Allocate WAV data
+		const wavArray = new Uint8Array(wavData);
+		const wavPtr = this.module._enkido_malloc(wavArray.length);
+		if (wavPtr === 0) {
+			this.module._enkido_free(namePtr);
+			this.port.postMessage({ type: 'error', message: 'Failed to allocate WAV data' });
+			return;
+		}
+
+		try {
+			this.module.stringToUTF8(name, namePtr, nameLen);
+
+			// Copy WAV data to WASM memory
+			if (this.module.HEAPU8) {
+				this.module.HEAPU8.set(wavArray, wavPtr);
+			} else {
+				for (let i = 0; i < wavArray.length; i++) {
+					this.module.setValue(wavPtr + i, wavArray[i], 'i8');
+				}
+			}
+
+			// Load sample from WAV
+			const sampleId = this.module._cedar_load_sample_wav(namePtr, wavPtr, wavArray.length);
+
+			if (sampleId > 0) {
+				console.log('[CedarProcessor] WAV sample loaded successfully, ID:', sampleId);
+				this.port.postMessage({ type: 'sampleLoaded', name, sampleId });
+			} else {
+				console.error('[CedarProcessor] Failed to load WAV sample');
+				this.port.postMessage({ type: 'error', message: 'Failed to load WAV sample: ' + name });
+			}
+		} finally {
+			this.module._enkido_free(namePtr);
+			this.module._enkido_free(wavPtr);
 		}
 	}
 

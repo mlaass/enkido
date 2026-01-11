@@ -185,6 +185,50 @@ struct BitcrushState {
     float phase = 0.0f;
 };
 
+// ADAA (Antiderivative Antialiasing) saturation state
+// Used for alias-free tanh saturation without oversampling
+struct SmoothSatState {
+    float x_prev = 0.0f;      // Previous input sample
+    float ad_prev = 0.0f;     // Previous antiderivative value F₁(x_prev)
+};
+
+// Tube saturation state (with oversampling)
+struct TubeState {
+    // 2x oversampling delay lines
+    float os_delay[4] = {};
+    int os_idx = 0;
+};
+
+// Tape saturation state (with oversampling and high-shelf filter)
+struct TapeState {
+    // 2x oversampling delay lines
+    float os_delay[4] = {};
+    int os_idx = 0;
+
+    // High-shelf filter state for warmth control
+    float hs_z1 = 0.0f;
+};
+
+// Transformer saturation state (bass-emphasis saturation)
+struct XfmrState {
+    // 2x oversampling delay lines
+    float os_delay[4] = {};
+    int os_idx = 0;
+
+    // Leaky integrator for bass extraction
+    float integrator = 0.0f;
+};
+
+// Harmonic exciter state
+struct ExciterState {
+    // 2x oversampling delay lines
+    float os_delay[4] = {};
+    int os_idx = 0;
+
+    // High-pass filter state (~3kHz)
+    float hp_z1 = 0.0f;
+};
+
 // ============================================================================
 // Modulation Effect States
 // ============================================================================
@@ -265,6 +309,44 @@ struct PhaserState {
     float allpass_delay[NUM_STAGES] = {};
     float lfo_phase = 0.0f;
     float last_output = 0.0f;
+};
+
+// ============================================================================
+// Sampler States
+// ============================================================================
+
+// Voice for polyphonic sample playback
+struct SamplerVoice {
+    float position = 0.0f;      // Current playback position in samples
+    float speed = 1.0f;         // Playback speed (1.0 = original pitch)
+    std::uint32_t sample_id = 0; // Which sample is playing
+    bool active = false;        // Whether this voice is currently playing
+};
+
+// Sampler state - polyphonic sample playback
+struct SamplerState {
+    static constexpr std::size_t MAX_VOICES = 16;  // Maximum simultaneous voices
+    
+    SamplerVoice voices[MAX_VOICES] = {};
+    std::size_t next_voice = 0;  // Round-robin voice allocation
+    
+    // Trigger detection
+    float prev_trigger = 0.0f;
+    
+    // Allocate a new voice for playback
+    SamplerVoice* allocate_voice() {
+        // Find first inactive voice
+        for (std::size_t i = 0; i < MAX_VOICES; ++i) {
+            if (!voices[i].active) {
+                return &voices[i];
+            }
+        }
+        
+        // All voices active - steal oldest (round-robin)
+        SamplerVoice* voice = &voices[next_voice];
+        next_voice = (next_voice + 1) % MAX_VOICES;
+        return voice;
+    }
 };
 
 // ============================================================================
@@ -485,11 +567,18 @@ using DSPState = std::variant<
     MoogState,
     // Distortion states
     BitcrushState,
+    SmoothSatState,
+    TubeState,
+    TapeState,
+    XfmrState,
+    ExciterState,
     // Modulation states
     CombFilterState,
     FlangerState,
     ChorusState,
     PhaserState,
+    // Sampler states
+    SamplerState,
     // Dynamics states
     CompressorState,
     LimiterState,

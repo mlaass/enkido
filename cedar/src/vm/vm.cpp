@@ -406,6 +406,15 @@ void VM::execute(const Instruction& inst) {
             op_env_follower(ctx_, inst);
             break;
 
+        // === Samplers ===
+        case Opcode::SAMPLE_PLAY:
+            op_sample_play(ctx_, inst, &sample_bank_);
+            break;
+
+        case Opcode::SAMPLE_PLAY_LOOP:
+            op_sample_play_loop(ctx_, inst, &sample_bank_);
+            break;
+
         // === Delays ===
         case Opcode::DELAY:
             op_delay(ctx_, inst);
@@ -456,6 +465,26 @@ void VM::execute(const Instruction& inst) {
 
         case Opcode::DISTORT_FOLD:
             op_distort_fold(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_TUBE:
+            op_distort_tube(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_SMOOTH:
+            op_distort_smooth(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_TAPE:
+            op_distort_tape(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_XFMR:
+            op_distort_xfmr(ctx_, inst);
+            break;
+
+        case Opcode::DISTORT_EXCITE:
+            op_distort_excite(ctx_, inst);
             break;
 
         // === Dynamics ===
@@ -531,6 +560,18 @@ bool VM::set_param(const char* name, float value) {
 
 bool VM::set_param(const char* name, float value, float slew_ms) {
     return env_map_.set_param(name, value, slew_ms);
+}
+
+// ============================================================================
+// Sample Management
+// ============================================================================
+
+std::uint32_t VM::load_sample(const std::string& name,
+                              const float* audio_data,
+                              std::size_t num_samples,
+                              std::uint32_t channels,
+                              float sample_rate) {
+    return sample_bank_.load_sample(name, audio_data, num_samples, channels, sample_rate);
 }
 
 void VM::remove_param(const char* name) {

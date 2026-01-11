@@ -178,6 +178,22 @@ public:
         return fading_states_.size();
     }
 
+    // =========================================================================
+    // State Initialization (for SEQ_STEP and other stateful opcodes)
+    // =========================================================================
+
+    // Initialize a SeqStepState with values
+    // Used by compiler to set up sequence data before program execution
+    void init_seq_step(std::uint32_t state_id, const float* values, std::size_t count) {
+        auto& state = get_or_create<SeqStepState>(state_id);
+        state.num_steps = static_cast<std::uint32_t>(std::min(count, SeqStepState::MAX_STEPS));
+        state.current_step = 0;
+        state.phase = 0.0f;
+        for (std::size_t i = 0; i < state.num_steps; ++i) {
+            state.values[i] = values[i];
+        }
+    }
+
 private:
     std::unordered_map<std::uint32_t, DSPState> states_;
     std::unordered_set<std::uint32_t> touched_;

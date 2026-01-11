@@ -103,6 +103,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                       {"in", "attack", "release", "", "", ""},
                       {0.01f, 0.1f, NAN}}},  // Fast attack, medium release
 
+    // Samplers
+    {"sample",  {cedar::Opcode::SAMPLE_PLAY, 3, 0, true,
+                 {"trig", "pitch", "id", "", "", ""},
+                 {NAN, NAN, NAN}}},  // Trigger, pitch/speed, sample ID
+    {"sample_loop", {cedar::Opcode::SAMPLE_PLAY_LOOP, 3, 0, true,
+                     {"gate", "pitch", "id", "", "", ""},
+                     {NAN, NAN, NAN}}},  // Gate, pitch/speed, sample ID
+
     // Delays
     {"delay",   {cedar::Opcode::DELAY, 3, 0, true,
                  {"in", "time", "fb", "", "", ""},
@@ -146,6 +154,21 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"fold",     {cedar::Opcode::DISTORT_FOLD, 1, 1, false,
                   {"in", "thresh", "", "", "", ""},
                   {0.5f, NAN, NAN}}},  // symmetry in reserved
+    {"tube",     {cedar::Opcode::DISTORT_TUBE, 1, 2, true,
+                  {"in", "drive", "bias", "", "", ""},
+                  {5.0f, 0.1f, NAN}}},  // Default drive=5, bias=0.1 for even harmonics
+    {"smooth",   {cedar::Opcode::DISTORT_SMOOTH, 1, 1, true,
+                  {"in", "drive", "", "", "", ""},
+                  {5.0f, NAN, NAN}}},  // ADAA alias-free saturation
+    {"tape",     {cedar::Opcode::DISTORT_TAPE, 1, 2, true,
+                  {"in", "drive", "warmth", "", "", ""},
+                  {3.0f, 0.3f, NAN}}},  // Default drive=3, warmth=0.3
+    {"xfmr",     {cedar::Opcode::DISTORT_XFMR, 1, 2, true,
+                  {"in", "drive", "bass", "", "", ""},
+                  {3.0f, 5.0f, NAN}}},  // Transformer saturation (bass emphasis)
+    {"excite",   {cedar::Opcode::DISTORT_EXCITE, 1, 2, true,
+                  {"in", "amount", "freq", "", "", ""},
+                  {0.5f, 3000.0f, NAN}}},  // Harmonic exciter
 
     // Dynamics (stateful - envelope followers)
     {"comp",     {cedar::Opcode::DYNAMICS_COMP, 1, 2, true,
@@ -285,6 +308,13 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"saturate",  "tanh"},
     {"crush",     "bitcrush"},
     {"wavefold",  "fold"},
+    {"valve",     "tube"},
+    {"triode",    "tube"},
+    {"adaa",      "smooth"},
+    {"transformer", "xfmr"},
+    {"console",   "xfmr"},
+    {"exciter",   "excite"},
+    {"aural",     "excite"},
     // Dynamics aliases
     {"compress",  "comp"},
     {"compressor", "comp"},
