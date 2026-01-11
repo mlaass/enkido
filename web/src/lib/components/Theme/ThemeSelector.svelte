@@ -2,6 +2,7 @@
 	import type { Theme, ThemeColors } from '$lib/types/theme';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import ThemeColorEditor from './ThemeColorEditor.svelte';
+	import { Palette, Settings } from 'lucide-svelte';
 
 	let showEditor = $state(false);
 	let editingColors = $state<ThemeColors>({ ...themeStore.activeTheme.colors });
@@ -110,10 +111,7 @@
 			onclick={toggleEditor}
 			title={showEditor ? 'Hide color editor' : 'Customize colors'}
 		>
-			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="12" cy="12" r="3" />
-				<path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m15.36-5.36l-4.24 4.24m-4.24 0L2.64 6.64m0 10.72l4.24-4.24m4.24 0l4.24 4.24" />
-			</svg>
+			<Palette size={14} />
 		</button>
 	</div>
 

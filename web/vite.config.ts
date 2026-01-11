@@ -12,5 +12,8 @@ export default defineConfig({
 	},
 	optimizeDeps: {
 		exclude: ['codemirror', '@codemirror/state', '@codemirror/view']
+	},
+	ssr: {
+		noExternal: ['lucide-svelte']
 	}
 });
