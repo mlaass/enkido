@@ -16,7 +16,7 @@ namespace cedar {
 // in0: input signal
 // in1: threshold (dB, -60 to 0)
 // in2: ratio (1.0 to 20.0, where 20 = ~inf:1)
-// reserved: attack (high byte, 0-255 -> 0.1-100ms), release (low byte, 0-255 -> 10-1000ms)
+// rate: attack (high 4 bits, 0-15 -> 0.1-100ms), release (low 4 bits, 0-15 -> 10-1000ms)
 //
 // Classic feedforward compressor with RMS envelope detection.
 // Reduces dynamic range by attenuating signals above threshold.
@@ -29,9 +29,9 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
     const float* ratio = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<CompressorState>(inst.state_id);
 
-    // Decode attack/release times from reserved field
-    float attack_ms = 0.1f + static_cast<float>((inst.reserved >> 8) & 0xFF) * (100.0f - 0.1f) / 255.0f;
-    float release_ms = 10.0f + static_cast<float>(inst.reserved & 0xFF) * (1000.0f - 10.0f) / 255.0f;
+    // Decode attack/release times from rate field (4 bits each)
+    float attack_ms = 0.1f + static_cast<float>((inst.rate >> 4) & 0x0F) * (100.0f - 0.1f) / 15.0f;
+    float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (1000.0f - 10.0f) / 15.0f;
 
     // Update coefficients if parameters changed
     if (attack_ms != state.last_attack || release_ms != state.last_release) {
@@ -81,7 +81,7 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: ceiling (dB, -12 to 0)
 // in2: release (ms, 10-500)
-// reserved low byte: lookahead (0 = off, 1 = 1ms lookahead)
+// rate: lookahead (0 = off, non-zero = 1ms lookahead)
 //
 // True peak limiter that prevents signal from exceeding ceiling.
 // Optional lookahead allows smoother limiting with no overshoot.
@@ -94,7 +94,7 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
     const float* release_ms = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<LimiterState>(inst.state_id);
 
-    bool use_lookahead = (inst.reserved & 0xFF) != 0;
+    bool use_lookahead = inst.rate != 0;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x = input[i];
@@ -145,7 +145,7 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
 // in0: input signal
 // in1: threshold (dB, -80 to 0)
 // in2: range (dB, 0 to -80, how much to attenuate when closed)
-// reserved: attack (high nibble), hold (next nibble), release (low byte)
+// rate: attack (bits 6-7), hold (bits 4-5), release (bits 0-3)
 //
 // Attenuates signal when it falls below threshold.
 // Hysteresis prevents chatter at the threshold.
@@ -158,13 +158,13 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     const float* range_db = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<GateState>(inst.state_id);
 
-    // Decode timing parameters
-    // Attack: 0.1-10ms (high nibble)
-    float attack_ms = 0.1f + static_cast<float>((inst.reserved >> 12) & 0xF) * (10.0f - 0.1f) / 15.0f;
-    // Hold: 0-200ms (next nibble)
-    float hold_ms = static_cast<float>((inst.reserved >> 8) & 0xF) * 200.0f / 15.0f;
-    // Release: 10-500ms (low byte)
-    float release_ms = 10.0f + static_cast<float>(inst.reserved & 0xFF) * (500.0f - 10.0f) / 255.0f;
+    // Decode timing parameters from rate field
+    // Attack: 0.1-10ms (2 bits -> 4 values)
+    float attack_ms = 0.1f + static_cast<float>((inst.rate >> 6) & 0x3) * (10.0f - 0.1f) / 3.0f;
+    // Hold: 0-200ms (2 bits -> 4 values)
+    float hold_ms = static_cast<float>((inst.rate >> 4) & 0x3) * 200.0f / 3.0f;
+    // Release: 10-500ms (4 bits -> 16 values)
+    float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (500.0f - 10.0f) / 15.0f;
 
     // Update coefficients if needed
     if (attack_ms != state.last_attack || release_ms != state.last_release) {

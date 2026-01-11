@@ -17,8 +17,8 @@ namespace cedar {
 // in0: gate signal (>0 = on, triggers on rising edge, releases on falling edge)
 // in1: attack time (seconds)
 // in2: decay time (seconds)
-// reserved field low byte: sustain level (0-255 -> 0.0-1.0)
-// reserved field high byte: release time in tenths of seconds (0-255 -> 0.0-25.5s)
+// in3: sustain level (0.0-1.0)
+// rate field: release time in tenths of seconds (0-255 -> 0.0-25.5s)
 //
 // Stage transitions:
 //   Gate on  -> Attack (from current level to 1.0)
@@ -32,16 +32,18 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
     const float* gate = ctx.buffers->get(inst.inputs[0]);
     const float* attack_buf = ctx.buffers->get(inst.inputs[1]);
     const float* decay_buf = ctx.buffers->get(inst.inputs[2]);
+    const float* sustain_buf = ctx.buffers->get(inst.inputs[3]);
     auto& state = ctx.states->get_or_create<EnvState>(inst.state_id);
 
-    // Extract sustain (0-255 -> 0.0-1.0) and release (0-255 -> 0.0-25.5s) from reserved
-    float sustain = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
-    float release_time = static_cast<float>((inst.reserved >> 8) & 0xFF) * 0.1f;
+    // Release time from rate field (0-255 -> 0.0-25.5s)
+    float release_time = static_cast<float>(inst.rate) * 0.1f;
+    if (release_time < 0.001f) release_time = 0.3f;  // Default if not set
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float current_gate = gate[i];
         float attack_time = attack_buf[i];
         float decay_time = decay_buf[i];
+        float sustain = sustain_buf[i];
 
         // Detect gate edges
         bool gate_on = (current_gate > 0.0f && state.prev_gate <= 0.0f);
@@ -52,13 +54,21 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
         if (gate_on) {
             state.stage = 1;  // attack
             state.time_in_stage = 0.0f;
+            state.release_pending = false;  // Clear any pending release
         }
 
-        // Gate off: start release from current level (from any stage except idle)
+        // Gate off: only release from sustain stage (3)
+        // If in attack/decay, mark release as pending - will release after decay
         if (gate_off && state.stage != 0) {
-            state.stage = 4;  // release
-            state.time_in_stage = 0.0f;
-            state.release_level = state.level;  // Remember level at release start
+            if (state.stage == 3) {
+                // In sustain: release immediately
+                state.stage = 4;  // release
+                state.time_in_stage = 0.0f;
+                state.release_level = state.level;
+            } else if (state.stage == 1 || state.stage == 2) {
+                // In attack or decay: mark release as pending
+                state.release_pending = true;
+            }
         }
 
         // Update coefficients if parameters changed
@@ -107,6 +117,13 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
 
             case 3:  // Sustain (hold at sustain level while gate is on)
                 state.level = sustain;
+                // If release was pending (gate went off during attack/decay), release now
+                if (state.release_pending) {
+                    state.release_pending = false;
+                    state.stage = 4;  // Transition to release
+                    state.time_in_stage = 0.0f;
+                    state.release_level = state.level;
+                }
                 break;
 
             case 4:  // Release (exponential fall toward 0)

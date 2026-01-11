@@ -92,6 +92,7 @@ struct EnvState {
     float time_in_stage = 0.0f;
     float prev_gate = 0.0f;     // For gate edge detection
     float release_level = 0.0f; // Level when release triggered (for smooth release)
+    bool release_pending = false; // True if gate went off during attack/decay
 
     // Cached exponential coefficients for each stage
     float attack_coeff = 0.0f;

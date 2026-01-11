@@ -20,8 +20,9 @@ void SymbolTable::pop_scope() {
 
 bool SymbolTable::define(const Symbol& symbol) {
     auto& current = scopes_.back();
-    auto [_, inserted] = current.try_emplace(symbol.name_hash, symbol);
-    return inserted;
+    bool was_new = current.find(symbol.name_hash) == current.end();
+    current.insert_or_assign(symbol.name_hash, symbol);
+    return was_new;
 }
 
 bool SymbolTable::define_variable(std::string_view name, std::uint16_t buffer_index) {

@@ -9,7 +9,7 @@
 
 namespace cedar {
 
-// LFO shape types (encoded in inst.reserved field)
+// LFO shape types (encoded in inst.rate field)
 enum class LFOShape : std::uint8_t {
     SIN = 0,
     TRI = 1,
@@ -55,7 +55,7 @@ inline void op_clock(ExecutionContext& ctx, const Instruction& inst) {
 // ============================================================================
 // in0: frequency multiplier (cycles per beat, e.g., 1.0 = one cycle per beat)
 // in1: duty cycle (for PWM shape only, 0-1)
-// reserved field: LFOShape (0-6)
+// rate field: LFOShape (0-6)
 [[gnu::always_inline]]
 inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
@@ -63,7 +63,7 @@ inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
     auto& state = ctx.states->get_or_create<LFOState>(inst.state_id);
 
     const float spb = ctx.samples_per_beat();
-    const LFOShape shape = static_cast<LFOShape>(inst.reserved & 0xFF);
+    const LFOShape shape = static_cast<LFOShape>(inst.rate);
 
     // For PWM, get duty cycle buffer
     const float* duty = nullptr;

@@ -2,6 +2,7 @@
 #include "akkado/builtins.hpp"
 #include "akkado/pattern_eval.hpp"
 #include <cedar/vm/state_pool.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -85,6 +86,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[0] = 0xFFFF;
             inst.inputs[1] = 0xFFFF;
             inst.inputs[2] = 0xFFFF;
+            inst.inputs[3] = 0xFFFF;
 
             // Store float value in state_id field (reinterpret cast)
             float value = static_cast<float>(n.as_number());
@@ -109,6 +111,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[0] = 0xFFFF;
             inst.inputs[1] = 0xFFFF;
             inst.inputs[2] = 0xFFFF;
+            inst.inputs[3] = 0xFFFF;
 
             float value = n.as_bool() ? 1.0f : 0.0f;
             std::memcpy(&inst.state_id, &value, sizeof(float));
@@ -133,6 +136,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             push_inst.inputs[0] = 0xFFFF;
             push_inst.inputs[1] = 0xFFFF;
             push_inst.inputs[2] = 0xFFFF;
+            push_inst.inputs[3] = 0xFFFF;
 
             float midi_value = static_cast<float>(n.as_pitch());
             std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
@@ -152,6 +156,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             mtof_inst.inputs[0] = midi_buf;
             mtof_inst.inputs[1] = 0xFFFF;
             mtof_inst.inputs[2] = 0xFFFF;
+            mtof_inst.inputs[3] = 0xFFFF;
             mtof_inst.state_id = 0;
             emit(mtof_inst);
 
@@ -178,6 +183,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             push_inst.inputs[0] = 0xFFFF;
             push_inst.inputs[1] = 0xFFFF;
             push_inst.inputs[2] = 0xFFFF;
+            push_inst.inputs[3] = 0xFFFF;
 
             float midi_value = static_cast<float>(root_midi);
             std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
@@ -195,6 +201,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             mtof_inst.inputs[0] = midi_buf;
             mtof_inst.inputs[1] = 0xFFFF;
             mtof_inst.inputs[2] = 0xFFFF;
+            mtof_inst.inputs[3] = 0xFFFF;
             mtof_inst.state_id = 0;
             emit(mtof_inst);
 
@@ -310,6 +317,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     push_inst.inputs[0] = 0xFFFF;
                     push_inst.inputs[1] = 0xFFFF;
                     push_inst.inputs[2] = 0xFFFF;
+                    push_inst.inputs[3] = 0xFFFF;
 
                     float default_val = builtin->get_default(i);
                     std::memcpy(&push_inst.state_id, &default_val, sizeof(float));
@@ -334,6 +342,32 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[0] = arg_buffers.size() > 0 ? arg_buffers[0] : 0xFFFF;
             inst.inputs[1] = arg_buffers.size() > 1 ? arg_buffers[1] : 0xFFFF;
             inst.inputs[2] = arg_buffers.size() > 2 ? arg_buffers[2] : 0xFFFF;
+            inst.inputs[3] = arg_buffers.size() > 3 ? arg_buffers[3] : 0xFFFF;
+            inst.rate = 0;
+
+            // Special handling for ADSR: pack release time (arg 4) into rate field
+            // Release time in tenths of seconds (0-255 -> 0-25.5s)
+            if (func_name == "adsr" && arg_buffers.size() >= 5) {
+                // Find the release argument value from AST to extract literal
+                NodeIndex adsr_arg = n.first_child;
+                for (std::size_t idx = 0; adsr_arg != NULL_NODE && idx < 5; ++idx) {
+                    if (idx == 4) {
+                        const Node& arg_node = ast_->arena[adsr_arg];
+                        NodeIndex arg_value = (arg_node.type == NodeType::Argument) ?
+                                             arg_node.first_child : adsr_arg;
+                        if (arg_value != NULL_NODE) {
+                            const Node& val_node = ast_->arena[arg_value];
+                            if (val_node.type == NodeType::NumberLit) {
+                                float release_val = static_cast<float>(val_node.as_number());
+                                inst.rate = static_cast<std::uint8_t>(
+                                    std::clamp(release_val / 0.1f, 0.0f, 255.0f));
+                            }
+                        }
+                        break;
+                    }
+                    adsr_arg = ast_->arena[adsr_arg].next_sibling;
+                }
+            }
 
             // Generate state_id from current path (already pushed if stateful)
             if (pushed_path) {
@@ -502,6 +536,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 inst.inputs[0] = 0xFFFF;
                 inst.inputs[1] = 0xFFFF;
                 inst.inputs[2] = 0xFFFF;
+                inst.inputs[3] = 0xFFFF;
                 float zero = 0.0f;
                 std::memcpy(&inst.state_id, &zero, sizeof(float));
                 emit(inst);
@@ -554,6 +589,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 speed_inst.inputs[0] = 0xFFFF;
                 speed_inst.inputs[1] = 0xFFFF;
                 speed_inst.inputs[2] = 0xFFFF;
+                speed_inst.inputs[3] = 0xFFFF;
                 float speed = static_cast<float>(events.size());
                 std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
                 emit(speed_inst);
@@ -565,6 +601,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 trig_inst.inputs[0] = speed_buf;
                 trig_inst.inputs[1] = 0xFFFF;
                 trig_inst.inputs[2] = 0xFFFF;
+                trig_inst.inputs[3] = 0xFFFF;
                 trig_inst.state_id = state_id;
                 emit(trig_inst);
 
@@ -577,6 +614,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 seq_inst.inputs[0] = speed_buf;
                 seq_inst.inputs[1] = 0xFFFF;
                 seq_inst.inputs[2] = 0xFFFF;
+                seq_inst.inputs[3] = 0xFFFF;
                 seq_inst.state_id = seq_state_id;
                 emit(seq_inst);
 
@@ -609,6 +647,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 pitch_inst.inputs[0] = 0xFFFF;
                 pitch_inst.inputs[1] = 0xFFFF;
                 pitch_inst.inputs[2] = 0xFFFF;
+                pitch_inst.inputs[3] = 0xFFFF;
                 float one = 1.0f;
                 std::memcpy(&pitch_inst.state_id, &one, sizeof(float));
                 emit(pitch_inst);
@@ -620,6 +659,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 sample_inst.inputs[0] = trigger_buf;
                 sample_inst.inputs[1] = pitch_buf;
                 sample_inst.inputs[2] = sample_id_buf;
+                sample_inst.inputs[3] = 0xFFFF;
                 sample_inst.state_id = state_id + 2;
                 emit(sample_inst);
 
@@ -655,6 +695,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             clock_inst.inputs[0] = 0xFFFF;
             clock_inst.inputs[1] = 0xFFFF;
             clock_inst.inputs[2] = 0xFFFF;
+            clock_inst.inputs[3] = 0xFFFF;
             clock_inst.state_id = 0;
             emit(clock_inst);
 
@@ -672,6 +713,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             speed_inst.inputs[0] = 0xFFFF;
             speed_inst.inputs[1] = 0xFFFF;
             speed_inst.inputs[2] = 0xFFFF;
+            speed_inst.inputs[3] = 0xFFFF;
             float speed = static_cast<float>(events.size());
             std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
             emit(speed_inst);
@@ -684,6 +726,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             seq_inst.inputs[0] = speed_buf;
             seq_inst.inputs[1] = 0xFFFF;
             seq_inst.inputs[2] = 0xFFFF;
+            seq_inst.inputs[3] = 0xFFFF;
             seq_inst.state_id = pitch_seq_state_id;
             emit(seq_inst);
 
@@ -714,6 +757,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             trig_inst.inputs[0] = speed_buf;
             trig_inst.inputs[1] = 0xFFFF;
             trig_inst.inputs[2] = 0xFFFF;
+            trig_inst.inputs[3] = 0xFFFF;
             trig_inst.state_id = state_id + 1;
             emit(trig_inst);
 
@@ -724,6 +768,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             vel_inst.inputs[0] = 0xFFFF;
             vel_inst.inputs[1] = 0xFFFF;
             vel_inst.inputs[2] = 0xFFFF;
+            vel_inst.inputs[3] = 0xFFFF;
             float one = 1.0f;
             std::memcpy(&vel_inst.state_id, &one, sizeof(float));
             emit(vel_inst);

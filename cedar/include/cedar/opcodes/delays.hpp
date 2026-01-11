@@ -29,7 +29,7 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
     auto& state = ctx.states->get_or_create<DelayState>(inst.state_id);
 
     // Extract wet/dry mix from reserved field (0-255 -> 0.0-1.0)
-    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float mix = static_cast<float>(inst.rate) / 255.0f;
 
     // Calculate maximum delay in samples and ensure buffer is allocated
     float max_delay_ms = 2000.0f;  // 2 second max delay
@@ -91,7 +91,7 @@ inline void op_delay_sync(ExecutionContext& ctx, const Instruction& inst) {
     const float* feedback = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<DelayState>(inst.state_id);
 
-    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float mix = static_cast<float>(inst.rate) / 255.0f;
 
     // Calculate samples per beat
     float samples_per_beat = (60.0f / ctx.bpm) * ctx.sample_rate;

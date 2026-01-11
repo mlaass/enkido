@@ -169,7 +169,7 @@ inline Instruction make_const_instruction(Opcode op, std::uint16_t out, float va
     inst.inputs[0] = BUFFER_UNUSED;
     inst.inputs[1] = BUFFER_UNUSED;
     inst.inputs[2] = BUFFER_UNUSED;
-    inst.reserved = 0;
+    inst.inputs[3] = BUFFER_UNUSED;
     std::memcpy(&inst.state_id, &value, sizeof(float));
     return inst;
 }

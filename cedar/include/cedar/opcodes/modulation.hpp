@@ -16,7 +16,7 @@ namespace cedar {
 // in0: input signal
 // in1: delay time (ms, 0.1-100)
 // in2: feedback (-0.99 to 0.99)
-// reserved low byte: damping (0-255 -> 0.0-1.0)
+// rate: damping (0-255 -> 0.0-1.0)
 //
 // Fundamental building block for many effects. Creates resonances at
 // multiples of the fundamental frequency (1000/delay_ms Hz).
@@ -29,7 +29,7 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
     const float* feedback = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<CombFilterState>(inst.state_id);
 
-    float damp = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float damp = static_cast<float>(inst.rate) / 255.0f;
 
     // Ensure buffer is allocated from arena
     state.ensure_buffer(ctx.arena);
@@ -61,7 +61,7 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: LFO rate (Hz, 0.1-10)
 // in2: depth (0.0-1.0)
-// reserved: feedback (high byte 0-255 -> -0.99 to 0.99), mix (low byte 0-255 -> 0.0-1.0)
+// rate: feedback (high 4 bits 0-15 -> -0.99 to 0.99), mix (low 4 bits 0-15 -> 0.0-1.0)
 //
 // Short modulated delay (0.1-10ms) with feedback. Creates metallic,
 // jet-plane-like sweeping effect. Classic for guitars and synths.
@@ -74,10 +74,10 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<FlangerState>(inst.state_id);
 
-    // Decode reserved parameters
-    float feedback = (static_cast<float>((inst.reserved >> 8) & 0xFF) / 127.5f) - 1.0f;
+    // Decode rate field parameters (4 bits each)
+    float feedback = (static_cast<float>((inst.rate >> 4) & 0x0F) / 7.5f) - 1.0f;
     feedback = std::clamp(feedback, -0.99f, 0.99f);
-    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float mix = static_cast<float>(inst.rate & 0x0F) / 15.0f;
 
     // Ensure buffer is allocated from arena
     state.ensure_buffer(ctx.arena);
@@ -121,7 +121,7 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: LFO rate (Hz, 0.1-5)
 // in2: depth (0.0-1.0)
-// reserved: mix (low byte 0-255 -> 0.0-1.0)
+// rate: mix (0-255 -> 0.0-1.0)
 //
 // Multiple detuned delay lines create a rich, thick sound.
 // Uses 3 voices with slightly offset LFO phases for maximum width.
@@ -134,7 +134,7 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<ChorusState>(inst.state_id);
 
-    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float mix = static_cast<float>(inst.rate) / 255.0f;
 
     // Ensure buffer is allocated from arena
     state.ensure_buffer(ctx.arena);
@@ -187,7 +187,7 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: LFO rate (Hz, 0.1-5)
 // in2: depth (0.0-1.0)
-// reserved: feedback (high byte 0-255 -> 0.0-0.99), stages (low byte, clamped 2-12)
+// rate: feedback (high 4 bits 0-15 -> 0.0-0.99), stages (low 4 bits, clamped 2-12)
 //
 // Cascaded first-order allpass filters with modulated center frequencies.
 // Creates notches that sweep through the spectrum. Classic phaser sound.
@@ -200,9 +200,9 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<PhaserState>(inst.state_id);
 
-    // Decode parameters
-    float feedback = static_cast<float>((inst.reserved >> 8) & 0xFF) / 255.0f * 0.99f;
-    std::size_t num_stages = std::clamp(static_cast<std::size_t>(inst.reserved & 0xFF),
+    // Decode rate field parameters (4 bits each)
+    float feedback = static_cast<float>((inst.rate >> 4) & 0x0F) / 15.0f * 0.99f;
+    std::size_t num_stages = std::clamp(static_cast<std::size_t>(inst.rate & 0x0F),
                                          std::size_t{2}, PhaserState::NUM_STAGES);
 
     constexpr float MIN_FREQ = 200.0f;

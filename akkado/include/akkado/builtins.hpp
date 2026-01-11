@@ -93,9 +93,9 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {1.0f, NAN, NAN}}},
 
     // Envelopes
-    {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 2, true,
-                 {"gate", "attack", "decay", "", "", ""},
-                 {0.01f, 0.1f, NAN}}},  // sustain/release packed in reserved field
+    {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 4, true,
+                 {"gate", "attack", "decay", "sustain", "release", ""},
+                 {0.01f, 0.1f, 0.5f}}},  // sustain default 0.5, release default handled specially
     {"ar",      {cedar::Opcode::ENV_AR, 1, 2, true,
                  {"trig", "attack", "release", "", "", ""},
                  {0.01f, 0.3f, NAN}}},

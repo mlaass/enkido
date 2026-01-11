@@ -176,7 +176,7 @@ std::string format_instruction(const cedar::Instruction& inst, std::size_t index
             if (inst.inputs[0] != cedar::BUFFER_UNUSED) {
                 oss << " rate=buf[" << inst.inputs[0] << "]";
             }
-            oss << " shape=" << (inst.reserved & 0xFF);
+            oss << " shape=" << static_cast<int>(inst.rate);
             break;
 
         case cedar::Opcode::CLOCK:
@@ -185,7 +185,7 @@ std::string format_instruction(const cedar::Instruction& inst, std::size_t index
 
         default:
             // Generic input display
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < 4; ++i) {
                 if (inst.inputs[i] != cedar::BUFFER_UNUSED) {
                     oss << " in" << i << "=buf[" << inst.inputs[i] << "]";
                 }
@@ -234,8 +234,7 @@ std::string format_program_json(std::span<const cedar::Instruction> program) {
         oss << "      \"rate\": " << static_cast<int>(inst.rate) << ",\n";
         oss << "      \"out_buffer\": " << inst.out_buffer << ",\n";
         oss << "      \"inputs\": [" << inst.inputs[0] << ", "
-            << inst.inputs[1] << ", " << inst.inputs[2] << "],\n";
-        oss << "      \"reserved\": " << inst.reserved << ",\n";
+            << inst.inputs[1] << ", " << inst.inputs[2] << ", " << inst.inputs[3] << "],\n";
         oss << "      \"state_id\": " << inst.state_id << "\n";
         oss << "    }";
         if (i < program.size() - 1) oss << ",";

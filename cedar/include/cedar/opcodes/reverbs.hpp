@@ -16,7 +16,7 @@ namespace cedar {
 // in0: input signal
 // in1: room size (0.0-1.0)
 // in2: damping (0.0-1.0)
-// reserved: wet/dry mix (low byte 0-255 -> 0.0-1.0)
+// rate: wet/dry mix (0-255 -> 0.0-1.0)
 //
 // Classic algorithm: 8 parallel lowpass-feedback comb filters summed,
 // then through 4 series allpass filters. Creates lush, dense reverb.
@@ -29,7 +29,7 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     const float* damping = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<FreeverbState>(inst.state_id);
 
-    float mix = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
+    float mix = static_cast<float>(inst.rate) / 255.0f;
 
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
@@ -93,7 +93,7 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: decay (0.0-0.99)
 // in2: pre-delay (ms, 0-100)
-// reserved: damping (low byte 0-255 -> 0.0-1.0), modulation depth (high byte 0-255 -> 0.0-1.0)
+// rate: damping (low 4 bits 0-15 -> 0.0-1.0), modulation depth (high 4 bits 0-15 -> 0.0-1.0)
 //
 // High-quality plate reverb algorithm with modulation for richness.
 // Uses input diffusion network + figure-8 tank topology.
@@ -106,8 +106,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     const float* predelay_ms = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<DattorroState>(inst.state_id);
 
-    float damping = static_cast<float>(inst.reserved & 0xFF) / 255.0f;
-    float mod_depth = static_cast<float>((inst.reserved >> 8) & 0xFF) / 255.0f;
+    float damping = static_cast<float>(inst.rate & 0x0F) / 15.0f;
+    float mod_depth = static_cast<float>((inst.rate >> 4) & 0x0F) / 15.0f;
 
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
@@ -222,7 +222,7 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: decay (0.0-0.99)
 // in2: damping (0.0-1.0)
-// reserved: room size modifier (low byte, scales delay times)
+// rate: room size modifier (0-255 scales delay times, 128 = 1.0x)
 //
 // 4x4 FDN with Hadamard mixing matrix. Provides dense, smooth reverb
 // with controllable decay. Good for realistic room simulation.
@@ -235,7 +235,7 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
     const float* damping = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<FDNState>(inst.state_id);
 
-    float size_mod = 0.5f + static_cast<float>(inst.reserved & 0xFF) / 255.0f;  // 0.5-1.5
+    float size_mod = 0.5f + static_cast<float>(inst.rate) / 255.0f;  // 0.5-1.5
 
     // FDN uses static arrays, no arena allocation needed
     state.ensure_buffers(ctx.arena);

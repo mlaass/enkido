@@ -385,7 +385,7 @@ TEST_CASE("VM LFO opcode", "[vm][sequencing]") {
             Instruction::make_unary(Opcode::LFO, 1, 0, 1)         // LFO with state_id=1
         };
         // Set shape to SIN (0) in reserved field
-        program[1].reserved = static_cast<std::uint16_t>(LFOShape::SIN);
+        program[1].rate = static_cast<std::uint8_t>(LFOShape::SIN);
         vm.load_program(program);
 
         std::array<float, BLOCK_SIZE> left{}, right{};
@@ -407,7 +407,7 @@ TEST_CASE("VM LFO opcode", "[vm][sequencing]") {
             make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
             Instruction::make_unary(Opcode::LFO, 1, 0, 2)
         };
-        program[1].reserved = static_cast<std::uint16_t>(LFOShape::TRI);
+        program[1].rate = static_cast<std::uint8_t>(LFOShape::TRI);
         vm.load_program(program);
 
         std::array<float, BLOCK_SIZE> left{}, right{};
@@ -427,7 +427,7 @@ TEST_CASE("VM LFO opcode", "[vm][sequencing]") {
             make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
             Instruction::make_unary(Opcode::LFO, 1, 0, 3)
         };
-        program[1].reserved = static_cast<std::uint16_t>(LFOShape::SQR);
+        program[1].rate = static_cast<std::uint8_t>(LFOShape::SQR);
         vm.load_program(program);
 
         std::array<float, BLOCK_SIZE> left{}, right{};
@@ -447,7 +447,7 @@ TEST_CASE("VM LFO opcode", "[vm][sequencing]") {
             make_const_instruction(Opcode::PUSH_CONST, 0, 1.0f),
             Instruction::make_unary(Opcode::LFO, 1, 0, 4)
         };
-        program[1].reserved = static_cast<std::uint16_t>(LFOShape::SAW);
+        program[1].rate = static_cast<std::uint8_t>(LFOShape::SAW);
         vm.load_program(program);
 
         std::array<float, BLOCK_SIZE> left{}, right{};
@@ -1209,7 +1209,7 @@ TEST_CASE("VM external parameter binding", "[vm][env]") {
         // Create fallback buffer
         std::array<Instruction, 2> program = {
             make_const_instruction(Opcode::PUSH_CONST, 1, 0.25f),  // fallback = 0.25
-            Instruction{Opcode::ENV_GET, 0, 0, {1, 0xFFFF, 0xFFFF}, 0, fnv1a_hash("Missing")}
+            Instruction{Opcode::ENV_GET, 0, 0, {1, 0xFFFF, 0xFFFF, 0xFFFF}, fnv1a_hash("Missing")}
         };
         vm.load_program_immediate(program);
 
