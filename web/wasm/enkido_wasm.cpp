@@ -8,6 +8,7 @@
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/instruction.hpp>
 #include <akkado/akkado.hpp>
+#include <akkado/sample_registry.hpp>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -228,7 +229,7 @@ WASM_EXPORT uint32_t cedar_load_sample_wav(const char* name,
         return 0;
     }
     
-    return g_vm->sample_bank_.load_wav_memory(name, wav_data, wav_size);
+    return g_vm->sample_bank().load_wav_memory(name, wav_data, wav_size);
 }
 
 /**
@@ -241,7 +242,7 @@ WASM_EXPORT int cedar_has_sample(const char* name) {
         return 0;
     }
     
-    return g_vm->sample_bank_.has_sample(name) ? 1 : 0;
+    return g_vm->sample_bank().has_sample(name) ? 1 : 0;
 }
 
 /**
@@ -254,7 +255,7 @@ WASM_EXPORT uint32_t cedar_get_sample_id(const char* name) {
         return 0;
     }
     
-    return g_vm->sample_bank_.get_sample_id(name);
+    return g_vm->sample_bank().get_sample_id(name);
 }
 
 /**
@@ -262,7 +263,7 @@ WASM_EXPORT uint32_t cedar_get_sample_id(const char* name) {
  */
 WASM_EXPORT void cedar_clear_samples() {
     if (g_vm) {
-        g_vm->sample_bank_.clear();
+        g_vm->sample_bank().clear();
     }
 }
 
@@ -275,7 +276,7 @@ WASM_EXPORT uint32_t cedar_get_sample_count() {
         return 0;
     }
     
-    return static_cast<uint32_t>(g_vm->sample_bank_.size());
+    return static_cast<uint32_t>(g_vm->sample_bank().size());
 }
 
 // ============================================================================
@@ -291,8 +292,16 @@ WASM_EXPORT uint32_t cedar_get_sample_count() {
 WASM_EXPORT int akkado_compile(const char* source, uint32_t source_len) {
     if (!source) return 0;
 
+    // Build sample registry from currently loaded samples
+    akkado::SampleRegistry registry;
+    if (g_vm) {
+        for (const auto& [name, id] : g_vm->sample_bank().get_name_to_id()) {
+            registry.register_sample(name, id);
+        }
+    }
+
     std::string_view src{source, source_len};
-    g_compile_result = akkado::compile(src, "<web>");
+    g_compile_result = akkado::compile(src, "<web>", &registry);
 
     return g_compile_result.success ? 1 : 0;
 }

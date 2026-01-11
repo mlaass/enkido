@@ -10,6 +10,9 @@
 
 namespace akkado {
 
+// Forward declaration
+class SampleRegistry;
+
 /// Akkado version information
 struct Version {
     static constexpr int major = 0;
@@ -30,8 +33,10 @@ struct CompileResult {
 /// Compile Akkado source code to Cedar bytecode
 /// @param source The source code to compile
 /// @param filename Optional filename for error reporting
+/// @param sample_registry Optional sample registry for resolving sample names to IDs
 /// @return Compilation result with bytecode and diagnostics
-CompileResult compile(std::string_view source, std::string_view filename = "<input>");
+CompileResult compile(std::string_view source, std::string_view filename = "<input>",
+                     SampleRegistry* sample_registry = nullptr);
 
 /// Compile from file
 /// @param path Path to the source file

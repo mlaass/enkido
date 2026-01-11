@@ -169,6 +169,11 @@ public:
         return samples_.size();
     }
 
+    /// Get name to ID mapping (for compiler registry sync)
+    [[nodiscard]] const std::unordered_map<std::string, std::uint32_t>& get_name_to_id() const {
+        return name_to_id_;
+    }
+
 private:
     std::unordered_map<std::uint32_t, SampleData> samples_;
     std::unordered_map<std::string, std::uint32_t> name_to_id_;

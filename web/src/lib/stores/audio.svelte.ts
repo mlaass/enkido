@@ -4,6 +4,8 @@
  * Wraps the Cedar AudioWorklet-based engine with reactive state.
  */
 
+import { DEFAULT_DRUM_KIT } from '$lib/audio/default-samples';
+
 interface Diagnostic {
 	severity: number;
 	message: string;
@@ -28,6 +30,8 @@ interface AudioState {
 	currentBar: number;
 	hasProgram: boolean;
 	error: string | null;
+	samplesLoaded: boolean;
+	samplesLoading: boolean;
 }
 
 function createAudioEngine() {
@@ -41,7 +45,9 @@ function createAudioEngine() {
 		currentBeat: 0,
 		currentBar: 0,
 		hasProgram: false,
-		error: null
+		error: null,
+		samplesLoaded: false,
+		samplesLoading: false
 	});
 
 	let audioContext: AudioContext | null = null;
@@ -126,6 +132,8 @@ function createAudioEngine() {
 				console.log('[AudioEngine] Worklet WASM initialized');
 				// Set initial BPM after worklet is ready
 				workletNode?.port.postMessage({ type: 'setBpm', bpm: state.bpm });
+				// Load default samples
+				loadDefaultSamples();
 				break;
 			case 'compiled':
 				// Compilation result from worklet
@@ -398,6 +406,27 @@ function createAudioEngine() {
 	}
 
 	/**
+	 * Load the default 808 drum kit samples
+	 * Called automatically when the audio engine initializes
+	 */
+	async function loadDefaultSamples() {
+		if (state.samplesLoaded || state.samplesLoading) return;
+
+		state.samplesLoading = true;
+		console.log('[AudioEngine] Loading default drum kit...');
+
+		try {
+			const loaded = await loadSamplePack(DEFAULT_DRUM_KIT);
+			state.samplesLoaded = true;
+			console.log('[AudioEngine] Default drum kit loaded:', loaded, 'samples');
+		} catch (err) {
+			console.error('[AudioEngine] Failed to load default samples:', err);
+		} finally {
+			state.samplesLoading = false;
+		}
+	}
+
+	/**
 	 * Clear all loaded samples
 	 */
 	function clearSamples() {
@@ -421,6 +450,8 @@ function createAudioEngine() {
 		get currentBar() { return state.currentBar; },
 		get hasProgram() { return state.hasProgram; },
 		get error() { return state.error; },
+		get samplesLoaded() { return state.samplesLoaded; },
+		get samplesLoading() { return state.samplesLoading; },
 
 		initialize,
 		play,

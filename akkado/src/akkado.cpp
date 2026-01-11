@@ -10,7 +10,8 @@
 
 namespace akkado {
 
-CompileResult compile(std::string_view source, std::string_view filename) {
+CompileResult compile(std::string_view source, std::string_view filename,
+                     SampleRegistry* sample_registry) {
     CompileResult result;
 
     if (source.empty()) {
@@ -59,7 +60,7 @@ CompileResult compile(std::string_view source, std::string_view filename) {
 
     // Phase 4: Code Generation
     CodeGenerator codegen;
-    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename);
+    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry);
     result.diagnostics.insert(result.diagnostics.end(),
                               gen.diagnostics.begin(),
                               gen.diagnostics.end());

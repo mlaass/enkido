@@ -42,6 +42,19 @@ class CedarProcessor extends AudioWorkletProcessor {
 		try {
 			console.log('[CedarProcessor] Initializing from code...');
 
+			// Polyfill crypto for AudioWorklet context (not available in worklets)
+			if (typeof crypto === 'undefined') {
+				globalThis.crypto = {
+					getRandomValues: (array) => {
+						// Simple PRNG for non-cryptographic use in audio context
+						for (let i = 0; i < array.length; i++) {
+							array[i] = Math.floor(Math.random() * 256);
+						}
+						return array;
+					}
+				};
+			}
+
 			// Store the WASM binary for the module to use
 			this.wasmBinary = wasmBinary;
 
