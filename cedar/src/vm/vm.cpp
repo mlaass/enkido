@@ -331,6 +331,14 @@ void VM::execute(const Instruction& inst) {
             op_osc_tri_4x(ctx_, inst);
             break;
 
+        case Opcode::OSC_SQR_PWM_4X:
+            op_osc_sqr_pwm_4x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SAW_PWM_4X:
+            op_osc_saw_pwm_4x(ctx_, inst);
+            break;
+
         // === Filters (SVF only) ===
         [[likely]] case Opcode::FILTER_SVF_LP:
             op_filter_svf_lp(ctx_, inst);

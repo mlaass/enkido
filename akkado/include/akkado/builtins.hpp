@@ -79,6 +79,25 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"freq", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
 
+    // PWM Oscillators (2 inputs: frequency, pwm amount)
+    {"sqr_pwm", {cedar::Opcode::OSC_SQR_PWM, 2, 0, true,
+                 {"freq", "pwm", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"saw_pwm", {cedar::Opcode::OSC_SAW_PWM, 2, 0, true,
+                 {"freq", "pwm", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"sqr_pwm_minblep", {cedar::Opcode::OSC_SQR_PWM_MINBLEP, 2, 0, true,
+                 {"freq", "pwm", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+
+    // 4x Oversampled PWM (explicit, for when auto-detection isn't desired)
+    {"sqr_pwm_4x", {cedar::Opcode::OSC_SQR_PWM_4X, 2, 0, true,
+                 {"freq", "pwm", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"saw_pwm_4x", {cedar::Opcode::OSC_SAW_PWM_4X, 2, 0, true,
+                 {"freq", "pwm", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+
     // Filters (signal, cutoff required; q optional with default 0.707)
     // SVF (State Variable Filter) - stable under modulation
     {"lp",      {cedar::Opcode::FILTER_SVF_LP, 2, 1, true,

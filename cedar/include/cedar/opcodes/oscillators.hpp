@@ -810,4 +810,123 @@ inline void op_osc_tri_4x(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// ============================================================================
+// 4x Oversampled PWM Oscillators - For alias-free FM synthesis with PWM
+// ============================================================================
+
+// SQR_PWM_4X: 4x oversampled PWM square wave
+// Inputs: freq (in0), pwm (in1)
+[[gnu::always_inline]]
+inline void op_osc_sqr_pwm_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+        float pwm_val = pwm[i];
+
+        // Calculate duty cycle from PWM input
+        float duty = 0.5f + std::clamp(pwm_val, -1.0f, 1.0f) * 0.5f;
+        duty = std::clamp(duty, 0.001f, 0.999f);
+
+        float samples[4];
+
+        for (int j = 0; j < 4; ++j) {
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            float value = (state.osc.phase < duty) ? 1.0f : -1.0f;
+
+            if (state.osc.initialized) {
+                // Rising edge at phase = 0
+                value += poly_blep(state.osc.phase, dt);
+
+                // Falling edge at phase = duty
+                float dist_to_fall = state.osc.phase - duty;
+                if (dist_to_fall > 0.5f) dist_to_fall -= 1.0f;
+                if (dist_to_fall < -0.5f) dist_to_fall += 1.0f;
+                value -= poly_blep_distance(dist_to_fall, dt);
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
+// SAW_PWM_4X: 4x oversampled variable-slope sawtooth
+// Inputs: freq (in0), pwm (in1)
+[[gnu::always_inline]]
+inline void op_osc_saw_pwm_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+        float pwm_val = pwm[i];
+
+        // Map PWM to midpoint position
+        float mid = (1.0f + std::clamp(pwm_val, -1.0f, 1.0f)) * 0.5f;
+        mid = std::clamp(mid, 0.01f, 0.99f);
+
+        float samples[4];
+
+        for (int j = 0; j < 4; ++j) {
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            // Piecewise linear waveform
+            float value;
+            if (state.osc.phase < mid) {
+                value = 2.0f * state.osc.phase / mid - 1.0f;
+            } else {
+                value = 1.0f - 2.0f * (state.osc.phase - mid) / (1.0f - mid);
+            }
+
+            if (state.osc.initialized) {
+                // PolyBLAMP at slope discontinuities
+                float blamp = poly_blamp(state.osc.phase, dt);
+                float phase_at_mid = state.osc.phase - mid;
+                if (phase_at_mid < 0.0f) phase_at_mid += 1.0f;
+                blamp -= poly_blamp(phase_at_mid, dt);
+
+                float slope_rise = 2.0f / mid;
+                float slope_fall = -2.0f / (1.0f - mid);
+                float slope_diff = slope_rise - slope_fall;
+
+                value += slope_diff * dt * blamp;
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
 }  // namespace cedar

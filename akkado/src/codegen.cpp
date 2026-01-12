@@ -831,6 +831,8 @@ bool CodeGenerator::is_audio_rate_producer(cedar::Opcode op) {
         case cedar::Opcode::OSC_SQR_PWM:
         case cedar::Opcode::OSC_SAW_PWM:
         case cedar::Opcode::OSC_SQR_PWM_MINBLEP:
+        case cedar::Opcode::OSC_SQR_PWM_4X:
+        case cedar::Opcode::OSC_SAW_PWM_4X:
         case cedar::Opcode::NOISE:
             return true;
         default:
@@ -845,6 +847,8 @@ bool CodeGenerator::is_upgradeable_oscillator(cedar::Opcode op) {
         case cedar::Opcode::OSC_TRI:
         case cedar::Opcode::OSC_SAW:
         case cedar::Opcode::OSC_SQR:
+        case cedar::Opcode::OSC_SQR_PWM:
+        case cedar::Opcode::OSC_SAW_PWM:
             return true;
         default:
             return false;
@@ -858,6 +862,8 @@ cedar::Opcode CodeGenerator::upgrade_for_fm(cedar::Opcode op) {
         case cedar::Opcode::OSC_TRI: return cedar::Opcode::OSC_TRI_4X;
         case cedar::Opcode::OSC_SAW: return cedar::Opcode::OSC_SAW_4X;
         case cedar::Opcode::OSC_SQR: return cedar::Opcode::OSC_SQR_4X;
+        case cedar::Opcode::OSC_SQR_PWM: return cedar::Opcode::OSC_SQR_PWM_4X;
+        case cedar::Opcode::OSC_SAW_PWM: return cedar::Opcode::OSC_SAW_PWM_4X;
         default: return op;  // No upgrade available
     }
 }

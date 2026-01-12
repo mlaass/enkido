@@ -116,6 +116,8 @@ enum class Opcode : std::uint8_t {
     OSC_SQR_4X = 115,        // 4x oversampled square with PolyBLEP
     OSC_TRI_2X = 116,        // 2x oversampled triangle
     OSC_TRI_4X = 117,        // 4x oversampled triangle
+    OSC_SQR_PWM_4X = 118,    // 4x oversampled PWM square
+    OSC_SAW_PWM_4X = 119,    // 4x oversampled variable-slope saw
 
     INVALID = 255
 };

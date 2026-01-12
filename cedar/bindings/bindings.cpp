@@ -52,6 +52,8 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("OSC_SQR_4X", cedar::Opcode::OSC_SQR_4X)
         .value("OSC_TRI_2X", cedar::Opcode::OSC_TRI_2X)
         .value("OSC_TRI_4X", cedar::Opcode::OSC_TRI_4X)
+        .value("OSC_SQR_PWM_4X", cedar::Opcode::OSC_SQR_PWM_4X)
+        .value("OSC_SAW_PWM_4X", cedar::Opcode::OSC_SAW_PWM_4X)
         // Filters
         .value("FILTER_SVF_LP", cedar::Opcode::FILTER_SVF_LP)
         .value("FILTER_SVF_HP", cedar::Opcode::FILTER_SVF_HP)

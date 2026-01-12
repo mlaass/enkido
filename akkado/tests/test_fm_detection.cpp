@@ -22,7 +22,9 @@ static bool is_4x_opcode(cedar::Opcode op) {
     return op == cedar::Opcode::OSC_SIN_4X ||
            op == cedar::Opcode::OSC_TRI_4X ||
            op == cedar::Opcode::OSC_SAW_4X ||
-           op == cedar::Opcode::OSC_SQR_4X;
+           op == cedar::Opcode::OSC_SQR_4X ||
+           op == cedar::Opcode::OSC_SQR_PWM_4X ||
+           op == cedar::Opcode::OSC_SAW_PWM_4X;
 }
 
 // Helper to check if opcode is basic (non-oversampled) oscillator
@@ -132,4 +134,48 @@ TEST_CASE("FM Detection: noise also triggers FM upgrade", "[codegen][fm]") {
     }
     REQUIRE(found_noise);
     REQUIRE(found_4x_sin);
+}
+
+// ============================================================================
+// PWM Oscillator FM Detection Tests
+// ============================================================================
+
+TEST_CASE("FM Detection: sqr_pwm with constant frequency uses basic opcode", "[codegen][fm][pwm]") {
+    auto instructions = compile_to_instructions("sqr_pwm(440, 0.3)");
+
+    bool found_basic = false;
+    for (const auto& inst : instructions) {
+        if (inst.opcode == cedar::Opcode::OSC_SQR_PWM) {
+            found_basic = true;
+        }
+        // Should NOT be upgraded
+        REQUIRE(inst.opcode != cedar::Opcode::OSC_SQR_PWM_4X);
+    }
+    REQUIRE(found_basic);
+}
+
+TEST_CASE("FM Detection: sqr_pwm with FM frequency upgrades to 4x", "[codegen][fm][pwm]") {
+    // sqr_pwm(sin(100) * 500 + 200, 0.3) - FM on frequency input
+    auto instructions = compile_to_instructions("sqr_pwm(sin(100) * 500 + 200, 0.3)");
+
+    bool found_4x = false;
+    for (const auto& inst : instructions) {
+        if (inst.opcode == cedar::Opcode::OSC_SQR_PWM_4X) {
+            found_4x = true;
+        }
+    }
+    REQUIRE(found_4x);
+}
+
+TEST_CASE("FM Detection: saw_pwm with FM frequency upgrades to 4x", "[codegen][fm][pwm]") {
+    // saw_pwm(sin(100) * 500 + 200, 0.5) - FM on frequency input
+    auto instructions = compile_to_instructions("saw_pwm(sin(100) * 500 + 200, 0.5)");
+
+    bool found_4x = false;
+    for (const auto& inst : instructions) {
+        if (inst.opcode == cedar::Opcode::OSC_SAW_PWM_4X) {
+            found_4x = true;
+        }
+    }
+    REQUIRE(found_4x);
 }
