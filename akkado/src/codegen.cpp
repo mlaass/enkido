@@ -377,6 +377,15 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 inst.state_id = 0;
             }
 
+            // FM Detection: Automatically upgrade oscillators to 4x when frequency
+            // input comes from an audio-rate source (another oscillator, noise, etc.)
+            if (is_upgradeable_oscillator(inst.opcode) && !arg_buffers.empty()) {
+                std::uint16_t freq_buffer = arg_buffers[0];
+                if (is_fm_modulated(freq_buffer)) {
+                    inst.opcode = upgrade_for_fm(inst.opcode);
+                }
+            }
+
             emit(inst);
             node_buffers_[node] = out;
             return out;
@@ -798,6 +807,88 @@ void CodeGenerator::error(const std::string& code, const std::string& message,
     diag.filename = filename_;
     diag.location = loc;
     diagnostics_.push_back(std::move(diag));
+}
+
+// FM Detection: Check if opcode produces audio-rate signal
+bool CodeGenerator::is_audio_rate_producer(cedar::Opcode op) {
+    switch (op) {
+        // All oscillators produce audio-rate signals
+        case cedar::Opcode::OSC_SIN:
+        case cedar::Opcode::OSC_SIN_2X:
+        case cedar::Opcode::OSC_SIN_4X:
+        case cedar::Opcode::OSC_TRI:
+        case cedar::Opcode::OSC_TRI_2X:
+        case cedar::Opcode::OSC_TRI_4X:
+        case cedar::Opcode::OSC_SAW:
+        case cedar::Opcode::OSC_SAW_2X:
+        case cedar::Opcode::OSC_SAW_4X:
+        case cedar::Opcode::OSC_SQR:
+        case cedar::Opcode::OSC_SQR_2X:
+        case cedar::Opcode::OSC_SQR_4X:
+        case cedar::Opcode::OSC_RAMP:
+        case cedar::Opcode::OSC_PHASOR:
+        case cedar::Opcode::OSC_SQR_MINBLEP:
+        case cedar::Opcode::OSC_SQR_PWM:
+        case cedar::Opcode::OSC_SAW_PWM:
+        case cedar::Opcode::OSC_SQR_PWM_MINBLEP:
+        case cedar::Opcode::NOISE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// FM Detection: Check if opcode is a basic oscillator that can be upgraded
+bool CodeGenerator::is_upgradeable_oscillator(cedar::Opcode op) {
+    switch (op) {
+        case cedar::Opcode::OSC_SIN:
+        case cedar::Opcode::OSC_TRI:
+        case cedar::Opcode::OSC_SAW:
+        case cedar::Opcode::OSC_SQR:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// FM Detection: Upgrade basic oscillator to 4x oversampled variant
+cedar::Opcode CodeGenerator::upgrade_for_fm(cedar::Opcode op) {
+    switch (op) {
+        case cedar::Opcode::OSC_SIN: return cedar::Opcode::OSC_SIN_4X;
+        case cedar::Opcode::OSC_TRI: return cedar::Opcode::OSC_TRI_4X;
+        case cedar::Opcode::OSC_SAW: return cedar::Opcode::OSC_SAW_4X;
+        case cedar::Opcode::OSC_SQR: return cedar::Opcode::OSC_SQR_4X;
+        default: return op;  // No upgrade available
+    }
+}
+
+// FM Detection: Check if buffer was produced by audio-rate source (recursively traces arithmetic)
+bool CodeGenerator::is_fm_modulated(std::uint16_t freq_buffer) const {
+    for (const auto& inst : instructions_) {
+        if (inst.out_buffer == freq_buffer) {
+            // Direct audio-rate producer
+            if (is_audio_rate_producer(inst.opcode)) {
+                return true;
+            }
+            // Arithmetic on FM source is still FM
+            if (inst.opcode == cedar::Opcode::ADD ||
+                inst.opcode == cedar::Opcode::SUB ||
+                inst.opcode == cedar::Opcode::MUL ||
+                inst.opcode == cedar::Opcode::DIV ||
+                inst.opcode == cedar::Opcode::POW) {
+                // Check if either input traces back to audio-rate source
+                if (inst.inputs[0] != 0xFFFF && is_fm_modulated(inst.inputs[0])) {
+                    return true;
+                }
+                if (inst.inputs[1] != 0xFFFF && is_fm_modulated(inst.inputs[1])) {
+                    return true;
+                }
+            }
+            // Found the producer but it's not audio-rate
+            break;
+        }
+    }
+    return false;
 }
 
 } // namespace akkado

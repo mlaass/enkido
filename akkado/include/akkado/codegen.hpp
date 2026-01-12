@@ -89,6 +89,20 @@ private:
     /// Error helpers
     void error(const std::string& code, const std::string& message, SourceLocation loc);
 
+    /// FM Detection: Automatically upgrade oscillators to 4x when FM is detected
+    /// @param freq_buffer The buffer index containing the frequency input
+    /// @return true if the frequency input traces back to an audio-rate source
+    [[nodiscard]] bool is_fm_modulated(std::uint16_t freq_buffer) const;
+
+    /// Check if opcode produces an audio-rate signal (oscillators, noise)
+    [[nodiscard]] static bool is_audio_rate_producer(cedar::Opcode op);
+
+    /// Check if opcode is a basic oscillator that can be upgraded to 4x
+    [[nodiscard]] static bool is_upgradeable_oscillator(cedar::Opcode op);
+
+    /// Upgrade basic oscillator opcode to 4x oversampled variant
+    [[nodiscard]] static cedar::Opcode upgrade_for_fm(cedar::Opcode op);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;

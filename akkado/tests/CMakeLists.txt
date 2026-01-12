@@ -18,6 +18,7 @@ include(Catch)
 add_executable(akkado_tests
     test_akkado.cpp
     test_diagnostics.cpp
+    test_fm_detection.cpp
     test_lexer.cpp
     test_parser.cpp
     test_mini_notation.cpp
