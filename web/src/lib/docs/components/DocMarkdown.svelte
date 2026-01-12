@@ -8,9 +8,10 @@
 	interface Props {
 		slug: string;
 		anchor?: string | null;
+		fullPage?: boolean;
 	}
 
-	let { slug, anchor = null }: Props = $props();
+	let { slug, anchor = null, fullPage = false }: Props = $props();
 
 	let contentElement: HTMLDivElement;
 	let htmlContent = $state('');
@@ -116,13 +117,15 @@
 	});
 </script>
 
-<div class="doc-container">
-	<button class="back-btn" onclick={goBack}>
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-			<path d="m15 18-6-6 6-6" />
-		</svg>
-		Back
-	</button>
+<div class="doc-container" class:full-page={fullPage}>
+	{#if !fullPage}
+		<button class="back-btn" onclick={goBack}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<path d="m15 18-6-6 6-6" />
+			</svg>
+			Back
+		</button>
+	{/if}
 
 	{#if isLoading}
 		<div class="loading">Loading...</div>
@@ -146,6 +149,28 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--spacing-sm);
+	}
+
+	.doc-container.full-page {
+		max-width: 800px;
+	}
+
+	.doc-container.full-page .doc-content {
+		font-size: 14px;
+	}
+
+	.doc-container.full-page :global(h1) {
+		font-size: 1.75rem;
+		margin-bottom: var(--spacing-lg);
+	}
+
+	.doc-container.full-page :global(h2) {
+		font-size: 1.25rem;
+		margin-top: var(--spacing-xl);
+	}
+
+	.doc-container.full-page :global(h3) {
+		font-size: 1rem;
 	}
 
 	.back-btn {

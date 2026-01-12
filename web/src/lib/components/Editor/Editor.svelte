@@ -8,6 +8,7 @@
 	import { editorStore } from '$stores/editor.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
 	import { triggerF1Help, getWordAtCursor } from '$lib/docs/lookup';
+	import { linterExtensions, updateEditorDiagnostics } from './editor-linter';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -163,7 +164,9 @@
 					if (update.docChanged) {
 						editorStore.setCode(update.state.doc.toString());
 					}
-				})
+				}),
+				// Linter for inline error display
+				...linterExtensions
 			]
 		});
 
@@ -171,6 +174,19 @@
 			state,
 			parent: editorContainer
 		});
+
+		// Initial diagnostics update if any exist
+		if (editorStore.diagnostics.length > 0) {
+			updateEditorDiagnostics(view, editorStore.diagnostics);
+		}
+	});
+
+	// Update diagnostics when they change
+	$effect(() => {
+		const diagnostics = editorStore.diagnostics;
+		if (view) {
+			updateEditorDiagnostics(view, diagnostics);
+		}
 	});
 
 	onDestroy(() => {
@@ -180,6 +196,26 @@
 
 <div class="editor-wrapper">
 	<div class="editor" bind:this={editorContainer}></div>
+	{#if editorStore.diagnostics.length > 0}
+		<div class="error-log">
+			<div class="error-log-header">
+				<span class="error-log-title">
+					Problems ({editorStore.diagnostics.length})
+				</span>
+				<button class="error-log-clear" onclick={() => editorStore.setDiagnostics([])}>
+					Clear
+				</button>
+			</div>
+			<div class="error-log-content">
+				{#each editorStore.diagnostics as diagnostic}
+					<div class="error-log-item" class:error={diagnostic.severity === 2} class:warning={diagnostic.severity === 1}>
+						<span class="error-line">Ln {diagnostic.line}, Col {diagnostic.column}</span>
+						<span class="error-message">{diagnostic.message}</span>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
 	<div class="status-bar">
 		<div class="status-left">
 			{#if editorStore.hasUnsavedChanges}
@@ -192,8 +228,8 @@
 			<span class="hint">Ctrl+Enter to evaluate | F1 for help</span>
 		</div>
 		<div class="status-right">
-			{#if editorStore.lastCompileError}
-				<span class="status-error">{editorStore.lastCompileError}</span>
+			{#if editorStore.diagnostics.length > 0}
+				<span class="status-error">{editorStore.diagnostics.length} error{editorStore.diagnostics.length > 1 ? 's' : ''}</span>
 			{/if}
 		</div>
 	</div>
@@ -267,5 +303,89 @@
 		color: var(--accent-error);
 		font-family: var(--font-mono);
 		font-size: 11px;
+	}
+
+	/* Error Log Panel */
+	.error-log {
+		display: flex;
+		flex-direction: column;
+		max-height: 150px;
+		background-color: var(--bg-secondary);
+		border-top: 1px solid var(--border-muted);
+	}
+
+	.error-log-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--spacing-xs) var(--spacing-md);
+		background-color: var(--bg-tertiary);
+		border-bottom: 1px solid var(--border-muted);
+	}
+
+	.error-log-title {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--accent-error);
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.error-log-clear {
+		font-size: 11px;
+		color: var(--text-muted);
+		padding: 2px 8px;
+		border-radius: 3px;
+		transition: background-color var(--transition-fast), color var(--transition-fast);
+	}
+
+	.error-log-clear:hover {
+		background-color: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.error-log-content {
+		overflow-y: auto;
+		padding: var(--spacing-xs) 0;
+	}
+
+	.error-log-item {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--spacing-md);
+		padding: var(--spacing-xs) var(--spacing-md);
+		font-family: var(--font-mono);
+		font-size: 12px;
+		border-left: 3px solid transparent;
+	}
+
+	.error-log-item:hover {
+		background-color: var(--bg-hover);
+	}
+
+	.error-log-item.error {
+		border-left-color: var(--accent-error);
+	}
+
+	.error-log-item.warning {
+		border-left-color: var(--accent-warning);
+	}
+
+	.error-line {
+		color: var(--text-muted);
+		white-space: nowrap;
+		min-width: 90px;
+	}
+
+	.error-message {
+		color: var(--text-primary);
+	}
+
+	.error-log-item.error .error-message {
+		color: var(--accent-error);
+	}
+
+	.error-log-item.warning .error-message {
+		color: var(--accent-warning);
 	}
 </style>

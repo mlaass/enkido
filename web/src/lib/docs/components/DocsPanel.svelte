@@ -1,9 +1,12 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { docsStore } from '$lib/stores/docs.svelte';
+	import { previews } from '../manifest';
 	import DocSearch from './DocSearch.svelte';
 	import DocNavigation from './DocNavigation.svelte';
 	import DocMarkdown from './DocMarkdown.svelte';
 	import type { DocCategory } from '../types';
+	import { Maximize2 } from 'lucide-svelte';
 
 	const categories: Array<{ id: DocCategory; label: string }> = [
 		{ id: 'builtins', label: 'Builtins' },
@@ -12,11 +15,22 @@
 		{ id: 'concepts', label: 'Concepts' },
 		{ id: 'tutorials', label: 'Tutorials' }
 	];
+
+	function expandToDocs() {
+		if (docsStore.activeSlug) {
+			goto(`/docs/${docsStore.activeCategory}/${docsStore.activeSlug}`);
+		} else {
+			goto(`/docs/${docsStore.activeCategory}`);
+		}
+	}
 </script>
 
 <div class="docs-panel">
 	<div class="docs-header">
 		<DocSearch />
+		<button class="expand-btn" onclick={expandToDocs} title="Open full documentation">
+			<Maximize2 size={14} />
+		</button>
 	</div>
 
 	<div class="docs-categories">
@@ -43,7 +57,12 @@
 							class="result-item"
 							onclick={() => docsStore.setDocument(result.slug, result.anchor)}
 						>
-							<span class="result-title">{result.title}</span>
+							<div class="result-content">
+								<span class="result-title">{result.title}</span>
+								{#if previews[result.slug]}
+									<span class="result-preview">{previews[result.slug]}</span>
+								{/if}
+							</div>
 							<span class="result-category">{result.category}</span>
 						</button>
 					{/each}
@@ -68,8 +87,25 @@
 	}
 
 	.docs-header {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-sm);
 		padding: var(--spacing-sm);
 		border-bottom: 1px solid var(--border-muted);
+	}
+
+	.expand-btn {
+		flex-shrink: 0;
+		padding: 6px;
+		color: var(--text-muted);
+		background: transparent;
+		border-radius: 4px;
+		transition: all var(--transition-fast);
+	}
+
+	.expand-btn:hover {
+		color: var(--text-primary);
+		background: var(--bg-tertiary);
 	}
 
 	.docs-categories {
@@ -122,7 +158,8 @@
 	.result-item {
 		display: flex;
 		justify-content: space-between;
-		align-items: center;
+		align-items: flex-start;
+		gap: var(--spacing-sm);
 		padding: 8px;
 		text-align: left;
 		background: var(--bg-tertiary);
@@ -134,14 +171,31 @@
 		background: var(--bg-hover);
 	}
 
+	.result-content {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
+	}
+
 	.result-title {
 		color: var(--text-primary);
 		font-size: 13px;
 		font-weight: 500;
 	}
 
+	.result-preview {
+		color: var(--text-muted);
+		font-size: 11px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.result-category {
 		color: var(--text-muted);
 		font-size: 11px;
+		flex-shrink: 0;
 	}
 </style>

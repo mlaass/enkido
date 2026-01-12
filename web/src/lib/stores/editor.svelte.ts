@@ -4,12 +4,20 @@
 
 import { audioEngine } from './audio.svelte';
 
+export interface EditorDiagnostic {
+	severity: number;  // 0=Info, 1=Warning, 2=Error
+	message: string;
+	line: number;      // 1-based
+	column: number;    // 1-based
+}
+
 interface EditorState {
 	code: string;
 	hasUnsavedChanges: boolean;
 	lastCompileError: string | null;
 	lastCompileTime: number | null;
 	isEvaluating: boolean;
+	diagnostics: EditorDiagnostic[];
 }
 
 const STORAGE_KEY = 'nkido-editor-code';
@@ -55,7 +63,8 @@ function createEditorStore() {
 		hasUnsavedChanges: false,
 		lastCompileError: null,
 		lastCompileTime: null,
-		isEvaluating: false
+		isEvaluating: false,
+		diagnostics: []
 	});
 
 	// Save immediately on page unload
@@ -74,6 +83,14 @@ function createEditorStore() {
 
 	function setCompileError(error: string | null) {
 		state.lastCompileError = error;
+	}
+
+	function setDiagnostics(diagnostics: EditorDiagnostic[]) {
+		state.diagnostics = diagnostics;
+		// Clear compile error when diagnostics are cleared
+		if (diagnostics.length === 0) {
+			state.lastCompileError = null;
+		}
 	}
 
 	function markCompiled() {
@@ -113,6 +130,7 @@ function createEditorStore() {
 			if (result.success) {
 				markCompiled();
 				setCompileError(null);
+				setDiagnostics([]);  // Clear diagnostics on success
 				console.log('[Editor] Compiled and loaded, bytecode size:', result.bytecodeSize);
 
 				// Start playback if not already playing
@@ -122,8 +140,12 @@ function createEditorStore() {
 
 				return true;
 			} else {
-				// Show first error
-				const firstError = result.diagnostics?.find(d => d.severity === 2);
+				// Store all diagnostics for inline display
+				const diagnostics = result.diagnostics || [];
+				setDiagnostics(diagnostics);
+
+				// Show first error in status bar
+				const firstError = diagnostics.find(d => d.severity === 2);
 				const errorMsg = firstError
 					? `${firstError.message} (line ${firstError.line})`
 					: 'Compilation failed';
@@ -148,9 +170,11 @@ function createEditorStore() {
 		get lastCompileError() { return state.lastCompileError; },
 		get lastCompileTime() { return state.lastCompileTime; },
 		get isEvaluating() { return state.isEvaluating; },
+		get diagnostics() { return state.diagnostics; },
 
 		setCode,
 		setCompileError,
+		setDiagnostics,
 		markCompiled,
 		reset,
 		evaluate

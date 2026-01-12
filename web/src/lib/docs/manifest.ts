@@ -2,6 +2,7 @@
 // Do not edit manually - run: bun run build:docs
 
 export const slugToPath: Record<string, string> = {
+	"05-testing-progression": "tutorials/05-testing-progression.md",
 	"03-synthesis": "tutorials/03-synthesis.md",
 	"02-filters": "tutorials/02-filters.md",
 	"04-rhythm": "tutorials/04-rhythm.md",
@@ -42,6 +43,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "04-rhythm",
 			"title": "Rhythm & Patterns"
+		},
+		{
+			"slug": "05-testing-progression",
+			"title": "Testing Progression"
 		}
 	],
 	"builtins": [
@@ -123,10 +128,35 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 };
 
 export const lookup: Record<string, { slug: string; category: string; title: string; anchor?: string }> = {
-	"synthesis": {
-		"slug": "03-synthesis",
+	"testing": {
+		"slug": "05-testing-progression",
 		"category": "tutorials",
-		"title": "Building Synth Voices"
+		"title": "Testing Progression"
+	},
+	"patterns": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"synthesis": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"triggers": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"envelopes": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"samples": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
 	},
 	"synth": {
 		"slug": "03-synthesis",
@@ -1066,4 +1096,29 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Documentation Guide"
 	}
+};
+
+export const previews: Record<string, string> = {
+	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
+	"03-synthesis": "Now that you know oscillators and filters, let's combine them into complete synthesizer voices with amplitude envelopes.",
+	"02-filters": "Filters are essential tools for sculpting your sounds. They remove or emphasize certain frequencies, transforming raw oscillators into musical...",
+	"04-rhythm": "Music is about time. In this tutorial, you'll learn to create rhythmic patterns, from basic beats to complex polyrhythms.",
+	"01-hello-sine": "Welcome to Akkado! In this tutorial, you'll make your first sound and learn the basics of how the language works.",
+	"basics": "Mini-notation is a compact syntax for describing musical patterns, inspired by TidalCycles and Strudel.",
+	"pipes": "The pipe operator () and hole () are the foundation of Akkado's signal flow model.",
+	"variables": "Variables store values for reuse throughout your patch.",
+	"closures": "Closures are anonymous functions that capture their environment. They're the bridge between patterns and synthesis.",
+	"operators": "Akkado uses operators for arithmetic, signal flow, and more.",
+	"sequencing": "Timing and sequencing functions create rhythmic patterns, triggers, and automation curves synchronized to the global clock.",
+	"delays": "Delay effects create copies of a signal offset in time, enabling echoes, rhythmic effects, and spatial depth.",
+	"filters": "Filters shape the frequency content of signals by attenuating or boosting certain frequencies.",
+	"distortion": "Distortion effects add harmonic content by clipping, saturating, or otherwise mangling signals.",
+	"utility": "Utility functions for common audio tasks like output, MIDI conversion, and signal processing helpers.",
+	"envelopes": "Envelopes shape the amplitude or other parameters of a sound over time. They respond to gates (sustained signals) or triggers (momentary pulses).",
+	"modulation": "Modulation effects use time-varying delays to create movement and spatial interest in sounds.",
+	"math": "Mathematical operations for signal processing and control logic.",
+	"oscillators": "Oscillators are the fundamental sound sources in synthesis. They generate periodic waveforms at specified frequencies.",
+	"dynamics": "Dynamics processors control the volume envelope of signals, reducing dynamic range or removing unwanted quiet sections.",
+	"reverbs": "Reverbs simulate acoustic spaces by creating many delayed, filtered reflections. Different algorithms offer different sonic characteristics.",
+	"DOCUMENTATION_GUIDE": "This guide outlines standards and practices for writing NKIDO documentation."
 };

@@ -1,6 +1,8 @@
 ---
 title: Testing Progression
 description: Systematic test progression from basic synthesis to complex patterns
+order: 5
+category: tutorials
 keywords: [testing, patterns, synthesis, triggers, envelopes, samples]
 ---
 
@@ -36,16 +38,16 @@ Expected: Filtered saw pulsing once per beat (quarter notes)
 ### A4: ADSR Envelope (Positional Args)
 ```akkado
 bpm = 120
-gate = trigger(1)
-saw(110) * adsr(gate, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
+g = trigger(1)
+saw(110) * adsr(g, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
 ```
 Expected: Saw with attack-decay-sustain-release shape
 
 ### A5: ADSR with Named Args
 ```akkado
 bpm = 120
-gate = trigger(1)
-saw(110) * adsr(trig:gate, attack:0.01, decay:0.1, sustain:0.5, release:0.3) |> out(%, %)
+g = trigger(1)
+saw(110) * adsr(gate:g, attack:0.01, decay:0.1, sustain:0.5, release:0.3) |> out(%, %)
 ```
 Expected: Same as A4, tests named argument syntax
 
