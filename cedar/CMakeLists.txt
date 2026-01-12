@@ -48,8 +48,10 @@ target_link_libraries(cedar
 # Enable position-independent code for linking into shared libraries (Python bindings)
 set_target_properties(cedar PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Add bindings
-add_subdirectory(bindings)
+# Add Python bindings (not available for Emscripten/WASM builds)
+if(NOT EMSCRIPTEN)
+    add_subdirectory(bindings)
+endif()
 
 # Alias for use in parent project
 add_library(enkido::cedar ALIAS cedar)
