@@ -15,7 +15,7 @@ jobs:
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 'latest'
+          version: '4.0.11'
           actions-cache-folder: 'emsdk-cache'
 
       - name: Build WASM
