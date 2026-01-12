@@ -4,7 +4,9 @@
 #include "../vm/instruction.hpp"
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
+#include "minblep.hpp"
 #include <cmath>
+#include <algorithm>
 
 namespace cedar {
 
@@ -31,6 +33,26 @@ inline float poly_blep(float t, float dt) {
     } else if (t > 1.0f - dt) {
         // Just before discontinuity (phase near 1)
         t = (t - 1.0f) / dt;
+        return t * t + t + t + 1.0f;
+    }
+    return 0.0f;
+}
+
+// Symmetric PolyBLEP using signed distance to discontinuity
+// This ensures identical treatment of rising and falling edges
+// distance: signed distance to discontinuity (negative = before, positive = after)
+// dt: phase increment (normalized frequency)
+[[gnu::always_inline]]
+inline float poly_blep_distance(float distance, float dt) {
+    if (dt < 1e-8f) return 0.0f;
+
+    if (distance >= 0.0f && distance < dt) {
+        // Just after discontinuity
+        float t = distance / dt;  // [0, 1)
+        return t + t - t * t - 1.0f;
+    } else if (distance < 0.0f && distance > -dt) {
+        // Just before discontinuity
+        float t = distance / dt;  // (-1, 0]
         return t * t + t + t + 1.0f;
     }
     return 0.0f;
@@ -175,9 +197,9 @@ inline void op_osc_sqr(ExecutionContext& ctx, const Instruction& inst) {
             value += poly_blep(state.phase, dt);
 
             // Falling edge at phase = 0.5 (transition from +1 to -1)
-            float phase_half = state.phase + 0.5f;
-            if (phase_half >= 1.0f) phase_half -= 1.0f;
-            value -= poly_blep(phase_half, dt);
+            float t = state.phase + 0.5f;
+            if (t >= 1.0f) t -= 1.0f;
+            value -= poly_blep(t, dt);
         }
 
         out[i] = value;
@@ -246,6 +268,59 @@ inline void op_osc_phasor(ExecutionContext& ctx, const Instruction& inst) {
         } else if (state.phase < 0.0f) {
             state.phase += 1.0f;
         }
+    }
+}
+
+// ============================================================================
+// MinBLEP Oscillators - Perfect harmonic purity for PWM and distortion
+// ============================================================================
+
+// SQR_MINBLEP oscillator: square wave with MinBLEP anti-aliasing
+// Perfect harmonic purity - no even harmonics, ideal for PWM and distortion
+[[gnu::always_inline]]
+inline void op_osc_sqr_minblep(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<MinBLEPOscState>(inst.state_id);
+
+    const auto& minblep_table = get_minblep_table();
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float dt = freq[i] * ctx.inv_sample_rate;
+
+        // Naive square wave based on current phase (PRE-advance value)
+        float naive_value = (state.phase < 0.5f) ? 1.0f : -1.0f;
+
+        // Calculate next phase
+        float next_phase = state.phase + dt;
+
+        // Check for discontinuities and add residual corrections
+        if (state.initialized) {
+            // Rising edge at phase = 0 (wrapping from 1.0 to 0.0)
+            // Step from -1 to +1, amplitude = 2
+            if (next_phase >= 1.0f) {
+                state.add_step(2.0f, 0.0f, minblep_table.data(), MINBLEP_PHASES, MINBLEP_SAMPLES);
+                naive_value = 1.0f;  // Switch to post-transition value
+            }
+
+            // Falling edge at phase = 0.5
+            // Step from +1 to -1, amplitude = -2
+            if (state.phase < 0.5f && next_phase >= 0.5f) {
+                state.add_step(-2.0f, 0.0f, minblep_table.data(), MINBLEP_PHASES, MINBLEP_SAMPLES);
+                naive_value = -1.0f;  // Switch to post-transition value
+            }
+        }
+
+        // Output = naive + residual correction
+        out[i] = naive_value + state.get_and_advance();
+
+        // Advance phase
+        state.phase = next_phase;
+        if (state.phase >= 1.0f) {
+            state.phase -= 1.0f;
+        }
+
+        state.initialized = true;
     }
 }
 

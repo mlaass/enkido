@@ -27,6 +27,7 @@ enum class Opcode : std::uint8_t {
     OSC_SQR = 23,
     OSC_RAMP = 24,
     OSC_PHASOR = 25,
+    OSC_SQR_MINBLEP = 26,  // Square wave with MinBLEP (perfect harmonic purity)
 
     // Filters (30-39)
     // Note: Opcodes 30-32 removed (biquad filters deprecated in favor of SVF)

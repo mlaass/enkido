@@ -31,6 +31,8 @@ endif()
 add_library(cedar STATIC
     src/cedar.cpp
     src/vm/vm.cpp
+    src/opcodes/minblep_table.cpp
+    src/opcodes/minblep_state.cpp
 )
 
 target_include_directories(cedar

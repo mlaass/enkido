@@ -38,6 +38,7 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("OSC_SQR", cedar::Opcode::OSC_SQR)
         .value("OSC_RAMP", cedar::Opcode::OSC_RAMP)
         .value("OSC_PHASOR", cedar::Opcode::OSC_PHASOR)
+        .value("OSC_SQR_MINBLEP", cedar::Opcode::OSC_SQR_MINBLEP)
         // Filters
         .value("FILTER_SVF_LP", cedar::Opcode::FILTER_SVF_LP)
         .value("FILTER_SVF_HP", cedar::Opcode::FILTER_SVF_HP)

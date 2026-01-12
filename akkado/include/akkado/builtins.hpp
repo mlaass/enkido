@@ -75,6 +75,9 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"phasor",  {cedar::Opcode::OSC_PHASOR, 1, 0, true,
                  {"freq", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
+    {"sqr_minblep", {cedar::Opcode::OSC_SQR_MINBLEP, 1, 0, true,
+                 {"freq", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
 
     // Filters (signal, cutoff required; q optional with default 0.707)
     // SVF (State Variable Filter) - stable under modulation

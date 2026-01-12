@@ -16,6 +16,36 @@ struct OscState {
     bool initialized = false; // Skip anti-aliasing on first sample
 };
 
+// MinBLEP oscillator state with residual buffer
+struct MinBLEPOscState {
+    float phase = 0.0f;
+    bool initialized = false;
+    
+    // MinBLEP residual buffer (128 samples should be plenty)
+    static constexpr std::size_t BUFFER_SIZE = 128;
+    float buffer[BUFFER_SIZE] = {};
+    std::size_t write_pos = 0;
+    
+    // Add a step discontinuity to the buffer
+    void add_step(float amplitude, float frac_pos, const float* minblep_table, 
+                  std::size_t table_phases, std::size_t samples_per_phase);
+    
+    // Get current sample's residual and advance
+    float get_and_advance() {
+        float value = buffer[write_pos];
+        buffer[write_pos] = 0.0f;
+        write_pos = (write_pos + 1) % BUFFER_SIZE;
+        return value;
+    }
+    
+    void reset() {
+        std::fill_n(buffer, BUFFER_SIZE, 0.0f);
+        write_pos = 0;
+        phase = 0.0f;
+        initialized = false;
+    }
+};
+
 // SVF (State Variable Filter) state
 struct SVFState {
     float ic1eq = 0.0f;
@@ -561,6 +591,7 @@ struct FDNState {
 using DSPState = std::variant<
     std::monostate,
     OscState,
+    MinBLEPOscState,
     SVFState,
     NoiseState,
     SlewState,

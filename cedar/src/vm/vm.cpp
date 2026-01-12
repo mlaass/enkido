@@ -281,6 +281,10 @@ void VM::execute(const Instruction& inst) {
             op_osc_phasor(ctx_, inst);
             break;
 
+        case Opcode::OSC_SQR_MINBLEP:
+            op_osc_sqr_minblep(ctx_, inst);
+            break;
+
         // === Filters (SVF only) ===
         [[likely]] case Opcode::FILTER_SVF_LP:
             op_filter_svf_lp(ctx_, inst);
