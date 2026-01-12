@@ -426,14 +426,21 @@ WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
 /**
  * Apply a state initialization to the VM
  * @param state_id State ID to initialize
- * @param type State type (0=SeqStep, 1=Timeline)
+ * @param times Pointer to float array of event times (in beats)
  * @param values Pointer to float array of values
- * @param count Number of values
+ * @param velocities Pointer to float array of velocities
+ * @param count Number of events
+ * @param cycle_length Cycle length in beats
  * @return 1 on success, 0 on failure
  */
-WASM_EXPORT int cedar_init_seq_step_state(uint32_t state_id, const float* values, uint32_t count) {
-    if (!g_vm || !values) return 0;
-    g_vm->init_seq_step_state(state_id, values, count);
+WASM_EXPORT int cedar_init_seq_step_state(uint32_t state_id,
+                                           const float* times,
+                                           const float* values,
+                                           const float* velocities,
+                                           uint32_t count,
+                                           float cycle_length) {
+    if (!g_vm || !times || !values || !velocities) return 0;
+    g_vm->init_seq_step_state(state_id, times, values, velocities, count, cycle_length);
     return 1;
 }
 
@@ -448,7 +455,14 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
     uint32_t count = 0;
     for (const auto& init : g_compile_result.state_inits) {
         if (init.type == akkado::StateInitData::Type::SeqStep) {
-            g_vm->init_seq_step_state(init.state_id, init.values.data(), init.values.size());
+            g_vm->init_seq_step_state(
+                init.state_id,
+                init.times.data(),
+                init.values.data(),
+                init.velocities.data(),
+                init.values.size(),
+                init.cycle_length
+            );
             count++;
         }
         // Timeline state init would go here if needed

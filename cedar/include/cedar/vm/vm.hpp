@@ -131,10 +131,12 @@ public:
     [[nodiscard]] SampleBank& sample_bank() { return sample_bank_; }
     [[nodiscard]] const SampleBank& sample_bank() const { return sample_bank_; }
 
-    // Initialize a SEQ_STEP state with values
+    // Initialize a SEQ_STEP state with timed events
     // Used by compiler to set up sequence data before program execution
-    void init_seq_step_state(std::uint32_t state_id, const float* values, std::size_t count) {
-        state_pool_.init_seq_step(state_id, values, count);
+    void init_seq_step_state(std::uint32_t state_id,
+                             const float* times, const float* values, const float* velocities,
+                             std::size_t count, float cycle_length) {
+        state_pool_.init_seq_step(state_id, times, values, velocities, count, cycle_length);
     }
 
     // =========================================================================

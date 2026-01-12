@@ -15,10 +15,17 @@ namespace akkado {
 struct StateInitData {
     std::uint32_t state_id;
     enum class Type : std::uint8_t {
-        SeqStep,   // Initialize SeqStepState with float values
+        SeqStep,   // Initialize SeqStepState with timed events
         Timeline   // Initialize TimelineState with breakpoints
     } type;
-    std::vector<float> values;  // For SeqStep: sequence values; for Timeline: [time, value, curve, ...]
+
+    // For SeqStep: parallel arrays of event data
+    std::vector<float> times;       // Event times in beats
+    std::vector<float> values;      // Values (sample ID, pitch, etc.)
+    std::vector<float> velocities;  // Velocity per event (0.0-1.0)
+    float cycle_length = 4.0f;      // Cycle length in beats
+
+    // For Timeline: [time, value, curve, ...] triplets (existing usage)
 };
 
 /// Result of code generation

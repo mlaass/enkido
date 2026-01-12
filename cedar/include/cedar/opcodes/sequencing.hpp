@@ -134,35 +134,62 @@ inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // ============================================================================
-// SEQ_STEP - Step sequencer
+// SEQ_STEP - Time-based event sequencer
 // ============================================================================
-// in0: speed multiplier (steps per beat, e.g., 4.0 = 16th notes)
-// State contains the sequence values (set via state initialization)
+// out_buffer: value output (sample ID, pitch, etc.)
+// inputs[0]: velocity output buffer
+// inputs[1]: trigger output buffer
+// State contains event times, values, velocities, and cycle_length
 [[gnu::always_inline]]
 inline void op_seq_step(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
-    const float* speed = ctx.buffers->get(inst.inputs[0]);
+    float* out_value = ctx.buffers->get(inst.out_buffer);
+    float* out_velocity = ctx.buffers->get(inst.inputs[0]);
+    float* out_trigger = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<SeqStepState>(inst.state_id);
 
-    if (state.num_steps == 0) {
-        std::fill_n(out, BLOCK_SIZE, 0.0f);
+    if (state.num_events == 0) {
+        std::fill_n(out_value, BLOCK_SIZE, 0.0f);
+        std::fill_n(out_velocity, BLOCK_SIZE, 0.0f);
+        std::fill_n(out_trigger, BLOCK_SIZE, 0.0f);
         return;
     }
 
     const float spb = ctx.samples_per_beat();
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // Calculate samples per step based on speed (steps per beat)
-        float steps_per_sample = speed[i] / spb;
-        state.phase += steps_per_sample;
+        // Current beat position within cycle
+        float beat_pos = std::fmod(
+            static_cast<float>(ctx.global_sample_counter + i) / spb,
+            state.cycle_length
+        );
 
-        // Advance to next step on phase wrap
-        while (state.phase >= 1.0f) {
-            state.phase -= 1.0f;
-            state.current_step = (state.current_step + 1) % state.num_steps;
+        // Detect cycle wrap
+        bool wrapped = (state.last_beat_pos >= 0.0f && beat_pos < state.last_beat_pos);
+        if (wrapped) {
+            state.current_index = 0;
         }
 
-        out[i] = state.values[state.current_step];
+        // Check if we crossed an event time (for trigger)
+        out_trigger[i] = 0.0f;
+        while (state.current_index < state.num_events &&
+               beat_pos >= state.times[state.current_index]) {
+            out_trigger[i] = 1.0f;  // Fire trigger when crossing event time
+            state.current_index++;
+        }
+
+        // Handle wrap: also trigger if we wrapped and crossed first event
+        if (wrapped && state.num_events > 0 && beat_pos >= state.times[0]) {
+            out_trigger[i] = 1.0f;
+        }
+
+        // Output current value and velocity (from current event)
+        std::uint32_t event_index = (state.current_index > 0)
+            ? state.current_index - 1
+            : state.num_events - 1;
+        out_value[i] = state.values[event_index];
+        out_velocity[i] = state.velocities[event_index];
+
+        state.last_beat_pos = beat_pos;
     }
 }
 

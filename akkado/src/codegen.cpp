@@ -557,18 +557,19 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             // Handle sample patterns differently
             if (is_sample_pattern) {
                 // For sample patterns, we need to:
-                // 1. Generate trigger signal (TRIGGER opcode)
-                // 2. Generate sample ID sequence (SEQ_STEP with sample IDs)
-                // 3. Generate pitch/speed (constant 1.0 for now)
-                // 4. Call SAMPLE_PLAY opcode
+                // 1. Generate SEQ_STEP which outputs sample_id, velocity, and trigger
+                // 2. Generate pitch/speed (constant 1.0 for now)
+                // 3. Call SAMPLE_PLAY opcode
 
-                std::uint16_t trigger_buf = buffers_.allocate();
                 std::uint16_t sample_id_buf = buffers_.allocate();
+                std::uint16_t velocity_buf = buffers_.allocate();
+                std::uint16_t trigger_buf = buffers_.allocate();
                 std::uint16_t pitch_buf = buffers_.allocate();
                 std::uint16_t output_buf = buffers_.allocate();
 
-                if (trigger_buf == BufferAllocator::BUFFER_UNUSED ||
-                    sample_id_buf == BufferAllocator::BUFFER_UNUSED ||
+                if (sample_id_buf == BufferAllocator::BUFFER_UNUSED ||
+                    velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+                    trigger_buf == BufferAllocator::BUFFER_UNUSED ||
                     pitch_buf == BufferAllocator::BUFFER_UNUSED ||
                     output_buf == BufferAllocator::BUFFER_UNUSED) {
                     error("E101", "Buffer pool exhausted", n.location);
@@ -576,54 +577,32 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     return BufferAllocator::BUFFER_UNUSED;
                 }
 
-                // Emit speed constant
-                std::uint16_t speed_buf = buffers_.allocate();
-                if (speed_buf == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
-                    pop_path();
-                    return BufferAllocator::BUFFER_UNUSED;
-                }
-                cedar::Instruction speed_inst{};
-                speed_inst.opcode = cedar::Opcode::PUSH_CONST;
-                speed_inst.out_buffer = speed_buf;
-                speed_inst.inputs[0] = 0xFFFF;
-                speed_inst.inputs[1] = 0xFFFF;
-                speed_inst.inputs[2] = 0xFFFF;
-                speed_inst.inputs[3] = 0xFFFF;
-                float speed = static_cast<float>(events.size());
-                std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
-                emit(speed_inst);
-
-                // Emit TRIGGER for gate signal
-                cedar::Instruction trig_inst{};
-                trig_inst.opcode = cedar::Opcode::TRIGGER;
-                trig_inst.out_buffer = trigger_buf;
-                trig_inst.inputs[0] = speed_buf;
-                trig_inst.inputs[1] = 0xFFFF;
-                trig_inst.inputs[2] = 0xFFFF;
-                trig_inst.inputs[3] = 0xFFFF;
-                trig_inst.state_id = state_id;
-                emit(trig_inst);
-
-                // Emit SEQ_STEP for sample IDs
-                // The state will be initialized via state_inits_
-                std::uint32_t seq_state_id = state_id + 1;
+                // Emit SEQ_STEP - outputs sample_id, velocity, and trigger
+                // out_buffer = sample_id, inputs[0] = velocity, inputs[1] = trigger
+                std::uint32_t seq_state_id = state_id;
                 cedar::Instruction seq_inst{};
                 seq_inst.opcode = cedar::Opcode::SEQ_STEP;
                 seq_inst.out_buffer = sample_id_buf;
-                seq_inst.inputs[0] = speed_buf;
-                seq_inst.inputs[1] = 0xFFFF;
+                seq_inst.inputs[0] = velocity_buf;
+                seq_inst.inputs[1] = trigger_buf;
                 seq_inst.inputs[2] = 0xFFFF;
                 seq_inst.inputs[3] = 0xFFFF;
                 seq_inst.state_id = seq_state_id;
                 emit(seq_inst);
 
-                // Build sample ID sequence and add state initialization
+                // Build state initialization with times, values, velocities
                 StateInitData seq_init;
                 seq_init.state_id = seq_state_id;
                 seq_init.type = StateInitData::Type::SeqStep;
+                seq_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
+                seq_init.times.reserve(events.size());
                 seq_init.values.reserve(events.size());
+                seq_init.velocities.reserve(events.size());
+
                 for (const auto& event : events.events) {
+                    // Convert event.time from 0-1 cycle fraction to beats
+                    seq_init.times.push_back(event.time * seq_init.cycle_length);
+
                     if (event.type == PatternEventType::Sample) {
                         std::uint32_t sample_id = 0;
                         if (sample_registry_) {
@@ -637,6 +616,8 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                         // Rest or other event type - use sample ID 0 (no sample)
                         seq_init.values.push_back(0.0f);
                     }
+
+                    seq_init.velocities.push_back(event.velocity);
                 }
                 state_inits_.push_back(std::move(seq_init));
 
@@ -660,7 +641,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 sample_inst.inputs[1] = pitch_buf;
                 sample_inst.inputs[2] = sample_id_buf;
                 sample_inst.inputs[3] = 0xFFFF;
-                sample_inst.state_id = state_id + 2;
+                sample_inst.state_id = state_id + 1;
                 emit(sample_inst);
 
                 pop_path();
@@ -669,73 +650,44 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             }
 
             // Allocate buffers for pattern outputs
-            std::uint16_t trigger_buf = buffers_.allocate();
             std::uint16_t pitch_buf = buffers_.allocate();
             std::uint16_t velocity_buf = buffers_.allocate();
+            std::uint16_t trigger_buf = buffers_.allocate();
 
-            if (trigger_buf == BufferAllocator::BUFFER_UNUSED ||
-                pitch_buf == BufferAllocator::BUFFER_UNUSED ||
-                velocity_buf == BufferAllocator::BUFFER_UNUSED) {
+            if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
+                velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+                trigger_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 pop_path();
                 return BufferAllocator::BUFFER_UNUSED;
             }
 
-            // Emit CLOCK to get bar phase (0-1 over cycle)
-            std::uint16_t clock_buf = buffers_.allocate();
-            if (clock_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                pop_path();
-                return BufferAllocator::BUFFER_UNUSED;
-            }
-            cedar::Instruction clock_inst{};
-            clock_inst.opcode = cedar::Opcode::CLOCK;
-            clock_inst.rate = 1;  // 1 = bar_phase
-            clock_inst.out_buffer = clock_buf;
-            clock_inst.inputs[0] = 0xFFFF;
-            clock_inst.inputs[1] = 0xFFFF;
-            clock_inst.inputs[2] = 0xFFFF;
-            clock_inst.inputs[3] = 0xFFFF;
-            clock_inst.state_id = 0;
-            emit(clock_inst);
-
-            // For simple patterns, use SEQ_STEP to sequence through values
-            // Emit speed = number of events (steps per cycle)
-            std::uint16_t speed_buf = buffers_.allocate();
-            if (speed_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                pop_path();
-                return BufferAllocator::BUFFER_UNUSED;
-            }
-            cedar::Instruction speed_inst{};
-            speed_inst.opcode = cedar::Opcode::PUSH_CONST;
-            speed_inst.out_buffer = speed_buf;
-            speed_inst.inputs[0] = 0xFFFF;
-            speed_inst.inputs[1] = 0xFFFF;
-            speed_inst.inputs[2] = 0xFFFF;
-            speed_inst.inputs[3] = 0xFFFF;
-            float speed = static_cast<float>(events.size());
-            std::memcpy(&speed_inst.state_id, &speed, sizeof(float));
-            emit(speed_inst);
-
-            // Emit SEQ_STEP for pitch (the state will hold the pitch values)
+            // Emit SEQ_STEP - outputs pitch, velocity, and trigger
+            // out_buffer = pitch, inputs[0] = velocity, inputs[1] = trigger
             std::uint32_t pitch_seq_state_id = state_id;
             cedar::Instruction seq_inst{};
             seq_inst.opcode = cedar::Opcode::SEQ_STEP;
             seq_inst.out_buffer = pitch_buf;
-            seq_inst.inputs[0] = speed_buf;
-            seq_inst.inputs[1] = 0xFFFF;
+            seq_inst.inputs[0] = velocity_buf;
+            seq_inst.inputs[1] = trigger_buf;
             seq_inst.inputs[2] = 0xFFFF;
             seq_inst.inputs[3] = 0xFFFF;
             seq_inst.state_id = pitch_seq_state_id;
             emit(seq_inst);
 
-            // Build pitch sequence from pattern events and add state initialization
+            // Build state initialization with times, values (pitches), velocities
             StateInitData pitch_init;
             pitch_init.state_id = pitch_seq_state_id;
             pitch_init.type = StateInitData::Type::SeqStep;
+            pitch_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
+            pitch_init.times.reserve(events.size());
             pitch_init.values.reserve(events.size());
+            pitch_init.velocities.reserve(events.size());
+
             for (const auto& event : events.events) {
+                // Convert event.time from 0-1 cycle fraction to beats
+                pitch_init.times.push_back(event.time * pitch_init.cycle_length);
+
                 if (event.type == PatternEventType::Pitch) {
                     // Convert MIDI note to frequency
                     float freq = 440.0f * std::pow(2.0f, (static_cast<float>(event.midi_note) - 69.0f) / 12.0f);
@@ -747,31 +699,10 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     // Other event types (shouldn't happen in note pattern path)
                     pitch_init.values.push_back(0.0f);
                 }
+
+                pitch_init.velocities.push_back(event.velocity);
             }
             state_inits_.push_back(std::move(pitch_init));
-
-            // Emit TRIGGER for gate signal
-            cedar::Instruction trig_inst{};
-            trig_inst.opcode = cedar::Opcode::TRIGGER;
-            trig_inst.out_buffer = trigger_buf;
-            trig_inst.inputs[0] = speed_buf;
-            trig_inst.inputs[1] = 0xFFFF;
-            trig_inst.inputs[2] = 0xFFFF;
-            trig_inst.inputs[3] = 0xFFFF;
-            trig_inst.state_id = state_id + 1;
-            emit(trig_inst);
-
-            // Emit constant 1.0 for velocity (for now)
-            cedar::Instruction vel_inst{};
-            vel_inst.opcode = cedar::Opcode::PUSH_CONST;
-            vel_inst.out_buffer = velocity_buf;
-            vel_inst.inputs[0] = 0xFFFF;
-            vel_inst.inputs[1] = 0xFFFF;
-            vel_inst.inputs[2] = 0xFFFF;
-            vel_inst.inputs[3] = 0xFFFF;
-            float one = 1.0f;
-            std::memcpy(&vel_inst.state_id, &one, sizeof(float));
-            emit(vel_inst);
 
             std::uint16_t result_buf = pitch_buf;
 
