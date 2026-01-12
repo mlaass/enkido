@@ -13,6 +13,7 @@ namespace cedar {
 struct OscState {
     float phase = 0.0f;       // 0.0 to 1.0
     float prev_phase = 0.0f;  // Previous phase for PolyBLEP discontinuity detection
+    bool initialized = false; // Skip anti-aliasing on first sample
 };
 
 // SVF (State Variable Filter) state

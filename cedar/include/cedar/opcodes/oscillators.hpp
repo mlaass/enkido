@@ -93,18 +93,20 @@ inline void op_osc_tri(ExecutionContext& ctx, const Instruction& inst) {
         // At phase 0.75: 4*0.25-1 = 0
         float value = 4.0f * std::abs(state.phase - 0.5f) - 1.0f;
 
-        // Apply PolyBLAMP correction at slope discontinuities:
-        // Corner at phase = 0 (slope changes from -4 to +4)
-        float blamp = poly_blamp(state.phase, dt);
+        // Apply PolyBLAMP correction at slope discontinuities (skip on first sample)
+        if (state.initialized) {
+            // Corner at phase = 0 (slope changes from -4 to +4)
+            float blamp = poly_blamp(state.phase, dt);
 
-        // Corner at phase = 0.5 (slope changes from +4 to -4)
-        float phase_half = state.phase + 0.5f;
-        if (phase_half >= 1.0f) phase_half -= 1.0f;
-        blamp -= poly_blamp(phase_half, dt);
+            // Corner at phase = 0.5 (slope changes from +4 to -4)
+            float phase_half = state.phase + 0.5f;
+            if (phase_half >= 1.0f) phase_half -= 1.0f;
+            blamp -= poly_blamp(phase_half, dt);
 
-        // Scale by 4*dt (slope magnitude * phase increment)
-        // The factor of 4 comes from the triangle slope magnitude
-        value += 4.0f * dt * blamp;
+            // Scale by 4*dt (slope magnitude * phase increment)
+            // The factor of 4 comes from the triangle slope magnitude
+            value += 4.0f * dt * blamp;
+        }
 
         out[i] = value;
 
@@ -116,6 +118,7 @@ inline void op_osc_tri(ExecutionContext& ctx, const Instruction& inst) {
         } else if (state.phase < 0.0f) {
             state.phase += 1.0f;
         }
+        state.initialized = true;
     }
 }
 
@@ -133,8 +136,10 @@ inline void op_osc_saw(ExecutionContext& ctx, const Instruction& inst) {
         // Naive sawtooth: 2 * phase - 1
         float value = 2.0f * state.phase - 1.0f;
 
-        // Apply PolyBLEP correction at the falling edge (phase wraps from 1 to 0)
-        value -= poly_blep(state.phase, dt);
+        // Apply PolyBLEP correction at the falling edge (skip on first sample)
+        if (state.initialized) {
+            value -= poly_blep(state.phase, dt);
+        }
 
         out[i] = value;
 
@@ -146,6 +151,7 @@ inline void op_osc_saw(ExecutionContext& ctx, const Instruction& inst) {
         } else if (state.phase < 0.0f) {
             state.phase += 1.0f;
         }
+        state.initialized = true;
     }
 }
 
@@ -163,14 +169,16 @@ inline void op_osc_sqr(ExecutionContext& ctx, const Instruction& inst) {
         // Naive square: +1 if phase < 0.5, else -1
         float value = (state.phase < 0.5f) ? 1.0f : -1.0f;
 
-        // Apply PolyBLEP correction at both edges:
-        // Rising edge at phase = 0 (transition from -1 to +1)
-        value += poly_blep(state.phase, dt);
+        // Apply PolyBLEP correction at both edges (skip on first sample)
+        if (state.initialized) {
+            // Rising edge at phase = 0 (transition from -1 to +1)
+            value += poly_blep(state.phase, dt);
 
-        // Falling edge at phase = 0.5 (transition from +1 to -1)
-        float phase_half = state.phase + 0.5f;
-        if (phase_half >= 1.0f) phase_half -= 1.0f;
-        value -= poly_blep(phase_half, dt);
+            // Falling edge at phase = 0.5 (transition from +1 to -1)
+            float phase_half = state.phase + 0.5f;
+            if (phase_half >= 1.0f) phase_half -= 1.0f;
+            value -= poly_blep(phase_half, dt);
+        }
 
         out[i] = value;
 
@@ -182,6 +190,7 @@ inline void op_osc_sqr(ExecutionContext& ctx, const Instruction& inst) {
         } else if (state.phase < 0.0f) {
             state.phase += 1.0f;
         }
+        state.initialized = true;
     }
 }
 
@@ -199,9 +208,10 @@ inline void op_osc_ramp(ExecutionContext& ctx, const Instruction& inst) {
         // Naive ramp (inverted saw): 1 - 2 * phase
         float value = 1.0f - 2.0f * state.phase;
 
-        // Apply PolyBLEP correction at the rising edge (phase wraps from 1 to 0)
-        // Note: opposite sign from saw because slope is opposite
-        value += poly_blep(state.phase, dt);
+        // Apply PolyBLEP correction at the rising edge (skip on first sample)
+        if (state.initialized) {
+            value += poly_blep(state.phase, dt);
+        }
 
         out[i] = value;
 
@@ -213,6 +223,7 @@ inline void op_osc_ramp(ExecutionContext& ctx, const Instruction& inst) {
         } else if (state.phase < 0.0f) {
             state.phase += 1.0f;
         }
+        state.initialized = true;
     }
 }
 

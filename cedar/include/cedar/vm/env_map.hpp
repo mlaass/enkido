@@ -55,11 +55,19 @@ public:
         }
 
         auto& param = params_[static_cast<std::size_t>(index)];
+        bool was_active = param.active.load(std::memory_order_acquire);
+        
         param.target.store(value, std::memory_order_relaxed);
 
         // Calculate slew coefficient from milliseconds
         float coeff = calc_slew_coeff(slew_ms);
         param.slew_coeff = coeff;
+        
+        // If this is a new parameter, initialize current to target to avoid ramping from zero
+        if (!was_active) {
+            param.current = value;
+        }
+        
         param.active.store(true, std::memory_order_release);
 
         return true;
