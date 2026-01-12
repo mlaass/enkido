@@ -1,7 +1,7 @@
 # Cedar tests
 
 # Standalone build: need to fetch Catch2
-if(CMAKE_SOURCE_DIR STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/..")
+if(NOT TARGET Catch2::Catch2WithMain)
     include(FetchContent)
     FetchContent_Declare(
         Catch2
