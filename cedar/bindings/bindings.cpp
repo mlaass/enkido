@@ -39,6 +39,19 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("OSC_RAMP", cedar::Opcode::OSC_RAMP)
         .value("OSC_PHASOR", cedar::Opcode::OSC_PHASOR)
         .value("OSC_SQR_MINBLEP", cedar::Opcode::OSC_SQR_MINBLEP)
+        // PWM Oscillators
+        .value("OSC_SQR_PWM", cedar::Opcode::OSC_SQR_PWM)
+        .value("OSC_SAW_PWM", cedar::Opcode::OSC_SAW_PWM)
+        .value("OSC_SQR_PWM_MINBLEP", cedar::Opcode::OSC_SQR_PWM_MINBLEP)
+        // Oversampled Oscillators
+        .value("OSC_SIN_2X", cedar::Opcode::OSC_SIN_2X)
+        .value("OSC_SIN_4X", cedar::Opcode::OSC_SIN_4X)
+        .value("OSC_SAW_2X", cedar::Opcode::OSC_SAW_2X)
+        .value("OSC_SAW_4X", cedar::Opcode::OSC_SAW_4X)
+        .value("OSC_SQR_2X", cedar::Opcode::OSC_SQR_2X)
+        .value("OSC_SQR_4X", cedar::Opcode::OSC_SQR_4X)
+        .value("OSC_TRI_2X", cedar::Opcode::OSC_TRI_2X)
+        .value("OSC_TRI_4X", cedar::Opcode::OSC_TRI_4X)
         // Filters
         .value("FILTER_SVF_LP", cedar::Opcode::FILTER_SVF_LP)
         .value("FILTER_SVF_HP", cedar::Opcode::FILTER_SVF_HP)

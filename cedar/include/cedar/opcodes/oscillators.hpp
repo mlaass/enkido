@@ -324,4 +324,490 @@ inline void op_osc_sqr_minblep(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// ============================================================================
+// PWM Oscillators - Pulse Width Modulation
+// ============================================================================
+
+// SQR_PWM oscillator: square wave with variable pulse width
+// in0: frequency (Hz)
+// in1: PWM (-1 to +1, where 0 = 50% duty cycle)
+// PWM mapping: duty = 0.5 + pwm * 0.5, so [-1,+1] maps to [0,1]
+[[gnu::always_inline]]
+inline void op_osc_sqr_pwm(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float dt = freq[i] * ctx.inv_sample_rate;
+
+        // Calculate duty cycle from PWM input
+        float duty = 0.5f + std::clamp(pwm[i], -1.0f, 1.0f) * 0.5f;
+        duty = std::clamp(duty, 0.001f, 0.999f);  // Prevent degenerate cases
+
+        // Naive square: +1 if phase < duty, else -1
+        float value = (state.phase < duty) ? 1.0f : -1.0f;
+
+        if (state.initialized) {
+            // Rising edge at phase = 0 (fixed position)
+            value += poly_blep(state.phase, dt);
+
+            // Falling edge at phase = duty (variable position)
+            // Calculate signed distance to falling edge
+            float dist_to_fall = state.phase - duty;
+            if (dist_to_fall > 0.5f) dist_to_fall -= 1.0f;
+            if (dist_to_fall < -0.5f) dist_to_fall += 1.0f;
+            value -= poly_blep_distance(dist_to_fall, dt);
+        }
+
+        out[i] = value;
+
+        // Advance phase
+        state.prev_phase = state.phase;
+        state.phase += dt;
+        if (state.phase >= 1.0f) {
+            state.phase -= 1.0f;
+        } else if (state.phase < 0.0f) {
+            state.phase += 1.0f;
+        }
+        state.initialized = true;
+    }
+}
+
+// SAW_PWM oscillator: variable-slope sawtooth (morphs saw to tri to ramp)
+// in0: frequency (Hz)
+// in1: PWM (-1 to +1)
+// PWM = -1: Rising ramp (standard saw)
+// PWM = 0: Triangle
+// PWM = +1: Falling ramp (inverted saw)
+[[gnu::always_inline]]
+inline void op_osc_saw_pwm(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float dt = freq[i] * ctx.inv_sample_rate;
+
+        // Map PWM to midpoint position: [-1,+1] -> [0.01, 0.99]
+        float mid = (1.0f + std::clamp(pwm[i], -1.0f, 1.0f)) * 0.5f;
+        mid = std::clamp(mid, 0.01f, 0.99f);
+
+        // Piecewise linear waveform:
+        // Phase [0, mid]: rise from -1 to +1
+        // Phase [mid, 1]: fall from +1 to -1
+        float value;
+        if (state.phase < mid) {
+            value = 2.0f * state.phase / mid - 1.0f;
+        } else {
+            value = 1.0f - 2.0f * (state.phase - mid) / (1.0f - mid);
+        }
+
+        if (state.initialized) {
+            // PolyBLAMP at slope discontinuities
+            // Corner at phase = 0 (slope change from falling to rising)
+            float blamp = poly_blamp(state.phase, dt);
+
+            // Corner at phase = mid (slope change from rising to falling)
+            float phase_at_mid = state.phase - mid;
+            if (phase_at_mid < 0.0f) phase_at_mid += 1.0f;
+            blamp -= poly_blamp(phase_at_mid, dt);
+
+            // Scale by slope difference
+            float slope_rise = 2.0f / mid;
+            float slope_fall = -2.0f / (1.0f - mid);
+            float slope_diff = slope_rise - slope_fall;  // Total slope change at corners
+
+            value += slope_diff * dt * blamp;
+        }
+
+        out[i] = value;
+
+        // Advance phase
+        state.prev_phase = state.phase;
+        state.phase += dt;
+        if (state.phase >= 1.0f) {
+            state.phase -= 1.0f;
+        } else if (state.phase < 0.0f) {
+            state.phase += 1.0f;
+        }
+        state.initialized = true;
+    }
+}
+
+// SQR_PWM_MINBLEP oscillator: highest quality PWM square wave
+// Uses MinBLEP for sub-sample accurate edge placement
+[[gnu::always_inline]]
+inline void op_osc_sqr_pwm_minblep(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<MinBLEPOscState>(inst.state_id);
+
+    const auto& minblep_table = get_minblep_table();
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float dt = freq[i] * ctx.inv_sample_rate;
+
+        // Calculate duty cycle from PWM
+        float duty = 0.5f + std::clamp(pwm[i], -1.0f, 1.0f) * 0.5f;
+        duty = std::clamp(duty, 0.001f, 0.999f);
+
+        float naive_value = (state.phase < duty) ? 1.0f : -1.0f;
+        float next_phase = state.phase + dt;
+
+        if (state.initialized) {
+            // Rising edge at phase wrap (0 crossing)
+            if (next_phase >= 1.0f) {
+                float frac = (dt > 1e-8f) ? (next_phase - 1.0f) / dt : 0.0f;
+                state.add_step(2.0f, frac, minblep_table.data(), MINBLEP_PHASES, MINBLEP_SAMPLES);
+                naive_value = 1.0f;
+            }
+
+            // Falling edge at duty crossing
+            if (state.phase < duty && next_phase >= duty) {
+                float frac = (dt > 1e-8f) ? (next_phase - duty) / dt : 0.0f;
+                state.add_step(-2.0f, frac, minblep_table.data(), MINBLEP_PHASES, MINBLEP_SAMPLES);
+                naive_value = -1.0f;
+            }
+        }
+
+        out[i] = naive_value + state.get_and_advance();
+
+        state.phase = next_phase;
+        if (state.phase >= 1.0f) {
+            state.phase -= 1.0f;
+        }
+        state.initialized = true;
+    }
+}
+
+// ============================================================================
+// Oversampled Oscillators - For alias-free FM synthesis
+// ============================================================================
+
+// SIN_2X: 2x oversampled sine oscillator
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_sin_2x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
+
+    float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Interpolate frequency between this sample and next
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[2];
+
+        // Generate 2 samples at 2x rate with interpolated frequency
+        for (int j = 0; j < 2; ++j) {
+            // Linear interpolation: j=0 -> freq_curr, j=1 -> midpoint to next
+            float t = static_cast<float>(j) * 0.5f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_2x;
+
+            samples[j] = std::sin(state.osc.phase * TWO_PI);
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1]);
+    }
+}
+
+// SIN_4X: 4x oversampled sine oscillator
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_sin_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Interpolate frequency between this sample and next
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[4];
+
+        // Generate 4 samples at 4x rate with interpolated frequency
+        for (int j = 0; j < 4; ++j) {
+            // Linear interpolation across the 4 sub-samples
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            samples[j] = std::sin(state.osc.phase * TWO_PI);
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
+// SAW_2X: 2x oversampled sawtooth with PolyBLEP at higher rate
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_saw_2x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
+
+    float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[2];
+
+        for (int j = 0; j < 2; ++j) {
+            float t = static_cast<float>(j) * 0.5f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_2x;
+
+            float value = 2.0f * state.osc.phase - 1.0f;
+
+            if (state.osc.initialized) {
+                value -= poly_blep(state.osc.phase, dt);
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1]);
+    }
+}
+
+// SAW_4X: 4x oversampled sawtooth
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_saw_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[4];
+
+        for (int j = 0; j < 4; ++j) {
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            float value = 2.0f * state.osc.phase - 1.0f;
+
+            if (state.osc.initialized) {
+                value -= poly_blep(state.osc.phase, dt);
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
+// SQR_2X: 2x oversampled square with PolyBLEP
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_sqr_2x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
+
+    float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[2];
+
+        for (int j = 0; j < 2; ++j) {
+            float t = static_cast<float>(j) * 0.5f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_2x;
+
+            float value = (state.osc.phase < 0.5f) ? 1.0f : -1.0f;
+
+            if (state.osc.initialized) {
+                value += poly_blep(state.osc.phase, dt);
+                float phase_half = state.osc.phase + 0.5f;
+                if (phase_half >= 1.0f) phase_half -= 1.0f;
+                value -= poly_blep(phase_half, dt);
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1]);
+    }
+}
+
+// SQR_4X: 4x oversampled square
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_sqr_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[4];
+
+        for (int j = 0; j < 4; ++j) {
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            float value = (state.osc.phase < 0.5f) ? 1.0f : -1.0f;
+
+            if (state.osc.initialized) {
+                value += poly_blep(state.osc.phase, dt);
+                float phase_half = state.osc.phase + 0.5f;
+                if (phase_half >= 1.0f) phase_half -= 1.0f;
+                value -= poly_blep(phase_half, dt);
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
+// TRI_2X: 2x oversampled triangle with PolyBLAMP
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_tri_2x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
+
+    float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[2];
+
+        for (int j = 0; j < 2; ++j) {
+            float t = static_cast<float>(j) * 0.5f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_2x;
+
+            float value = 4.0f * std::abs(state.osc.phase - 0.5f) - 1.0f;
+
+            if (state.osc.initialized) {
+                float blamp = poly_blamp(state.osc.phase, dt);
+                float phase_half = state.osc.phase + 0.5f;
+                if (phase_half >= 1.0f) phase_half -= 1.0f;
+                blamp -= poly_blamp(phase_half, dt);
+                value += 4.0f * dt * blamp;
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1]);
+    }
+}
+
+// TRI_4X: 4x oversampled triangle
+// Interpolates frequency input for true sample-accurate FM
+[[gnu::always_inline]]
+inline void op_osc_tri_4x(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* freq = ctx.buffers->get(inst.inputs[0]);
+    auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
+
+    float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float freq_curr = freq[i];
+        float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
+
+        float samples[4];
+
+        for (int j = 0; j < 4; ++j) {
+            float t = static_cast<float>(j) * 0.25f;
+            float freq_interp = freq_curr + t * (freq_next - freq_curr);
+            float dt = freq_interp * inv_sr_4x;
+
+            float value = 4.0f * std::abs(state.osc.phase - 0.5f) - 1.0f;
+
+            if (state.osc.initialized) {
+                float blamp = poly_blamp(state.osc.phase, dt);
+                float phase_half = state.osc.phase + 0.5f;
+                if (phase_half >= 1.0f) phase_half -= 1.0f;
+                blamp -= poly_blamp(phase_half, dt);
+                value += 4.0f * dt * blamp;
+            }
+
+            samples[j] = value;
+
+            state.osc.prev_phase = state.osc.phase;
+            state.osc.phase += dt;
+            if (state.osc.phase >= 1.0f) state.osc.phase -= 1.0f;
+            else if (state.osc.phase < 0.0f) state.osc.phase += 1.0f;
+            state.osc.initialized = true;
+        }
+
+        out[i] = state.downsample(samples[0], samples[1], samples[2], samples[3]);
+    }
+}
+
 }  // namespace cedar

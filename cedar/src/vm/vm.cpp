@@ -285,6 +285,52 @@ void VM::execute(const Instruction& inst) {
             op_osc_sqr_minblep(ctx_, inst);
             break;
 
+        // === PWM Oscillators ===
+        case Opcode::OSC_SQR_PWM:
+            op_osc_sqr_pwm(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SAW_PWM:
+            op_osc_saw_pwm(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SQR_PWM_MINBLEP:
+            op_osc_sqr_pwm_minblep(ctx_, inst);
+            break;
+
+        // === Oversampled Oscillators ===
+        case Opcode::OSC_SIN_2X:
+            op_osc_sin_2x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SIN_4X:
+            op_osc_sin_4x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SAW_2X:
+            op_osc_saw_2x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SAW_4X:
+            op_osc_saw_4x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SQR_2X:
+            op_osc_sqr_2x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_SQR_4X:
+            op_osc_sqr_4x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_TRI_2X:
+            op_osc_tri_2x(ctx_, inst);
+            break;
+
+        case Opcode::OSC_TRI_4X:
+            op_osc_tri_4x(ctx_, inst);
+            break;
+
         // === Filters (SVF only) ===
         [[likely]] case Opcode::FILTER_SVF_LP:
             op_filter_svf_lp(ctx_, inst);

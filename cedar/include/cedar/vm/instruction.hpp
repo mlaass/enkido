@@ -27,7 +27,10 @@ enum class Opcode : std::uint8_t {
     OSC_SQR = 23,
     OSC_RAMP = 24,
     OSC_PHASOR = 25,
-    OSC_SQR_MINBLEP = 26,  // Square wave with MinBLEP (perfect harmonic purity)
+    OSC_SQR_MINBLEP = 26,      // Square wave with MinBLEP (perfect harmonic purity)
+    OSC_SQR_PWM = 27,          // Square wave with PWM (PolyBLEP)
+    OSC_SAW_PWM = 28,          // Variable-slope saw (morphs saw↔tri↔ramp)
+    OSC_SQR_PWM_MINBLEP = 29,  // Square PWM with MinBLEP (highest quality)
 
     // Filters (30-39)
     // Note: Opcodes 30-32 removed (biquad filters deprecated in favor of SVF)
@@ -103,6 +106,16 @@ enum class Opcode : std::uint8_t {
     DYNAMICS_COMP = 100,     // Feedforward compressor
     DYNAMICS_LIMITER = 101,  // Brick-wall limiter
     DYNAMICS_GATE = 102,     // Noise gate with hysteresis
+
+    // Oversampled Oscillators (110-119) - for alias-free FM synthesis
+    OSC_SIN_2X = 110,        // 2x oversampled sine
+    OSC_SIN_4X = 111,        // 4x oversampled sine
+    OSC_SAW_2X = 112,        // 2x oversampled saw with PolyBLEP
+    OSC_SAW_4X = 113,        // 4x oversampled saw with PolyBLEP
+    OSC_SQR_2X = 114,        // 2x oversampled square with PolyBLEP
+    OSC_SQR_4X = 115,        // 4x oversampled square with PolyBLEP
+    OSC_TRI_2X = 116,        // 2x oversampled triangle
+    OSC_TRI_4X = 117,        // 4x oversampled triangle
 
     INVALID = 255
 };
