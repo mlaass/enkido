@@ -36,3 +36,7 @@ _deps/
 # Bytecode output
 *.cedar
 docs/bytecode_*.md
+
+# Generated WASM
+web/static/wasm/enkido.js
+web/static/wasm/enkido.wasm
