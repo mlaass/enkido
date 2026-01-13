@@ -201,10 +201,10 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
                 continue;
             }
 
-            // Read sample with interpolation
+            // Read sample with looped interpolation (wraps at boundary for seamless loop)
             float sample_value = 0.0f;
             for (std::uint32_t ch = 0; ch < sample->channels; ++ch) {
-                sample_value += sample->get_interpolated(voice.position, ch);
+                sample_value += sample->get_interpolated_looped(voice.position, ch);
             }
             sample_value /= static_cast<float>(sample->channels);
 

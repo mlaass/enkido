@@ -59,6 +59,9 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("FILTER_SVF_HP", cedar::Opcode::FILTER_SVF_HP)
         .value("FILTER_SVF_BP", cedar::Opcode::FILTER_SVF_BP)
         .value("FILTER_MOOG", cedar::Opcode::FILTER_MOOG)
+        // Samplers
+        .value("SAMPLE_PLAY", cedar::Opcode::SAMPLE_PLAY)
+        .value("SAMPLE_PLAY_LOOP", cedar::Opcode::SAMPLE_PLAY_LOOP)
         // Utility
         .value("OUTPUT", cedar::Opcode::OUTPUT)
         .value("NOISE", cedar::Opcode::NOISE)
@@ -136,5 +139,13 @@ PYBIND11_MODULE(cedar_core, m) {
             for (size_t i = 0; i < cedar::BLOCK_SIZE; i++) {
                 dst[i] = r(i);
             }
-        });
+        })
+
+        // Sample loading for sampler opcodes
+        .def("load_sample", [](cedar::VM& vm, const std::string& name, py::array_t<float> data,
+                               std::uint32_t channels, float sample_rate) {
+            auto r = data.unchecked<1>();
+            std::size_t num_samples = r.size();
+            return vm.load_sample(name, r.data(0), num_samples, channels, sample_rate);
+        }, py::arg("name"), py::arg("data"), py::arg("channels") = 1, py::arg("sample_rate") = 48000.0f);
 }

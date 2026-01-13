@@ -43,6 +43,30 @@ struct SampleData {
         return sample0 * (1.0f - frac) + sample1 * frac;
     }
 
+    /// Get sample with linear interpolation, wrapping at loop boundary
+    [[nodiscard]] float get_interpolated_looped(float position, std::uint32_t channel) const {
+        if (frames == 0 || channel >= channels) {
+            return 0.0f;
+        }
+
+        // Wrap position to valid range
+        if (position < 0.0f) {
+            position = std::fmod(position, static_cast<float>(frames)) + static_cast<float>(frames);
+        }
+        if (position >= static_cast<float>(frames)) {
+            position = std::fmod(position, static_cast<float>(frames));
+        }
+
+        std::uint32_t frame0 = static_cast<std::uint32_t>(position);
+        std::uint32_t frame1 = (frame0 + 1) % frames;  // Wrap to start for seamless loop
+
+        float frac = position - static_cast<float>(frame0);
+        float sample0 = get(frame0, channel);
+        float sample1 = get(frame1, channel);
+
+        return sample0 * (1.0f - frac) + sample1 * frac;
+    }
+
     /// Get length in seconds
     [[nodiscard]] float duration_seconds() const {
         return static_cast<float>(frames) / sample_rate;
