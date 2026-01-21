@@ -8,9 +8,31 @@ interpolation quality, sample rate conversion, and loop accuracy.
 import numpy as np
 import matplotlib.pyplot as plt
 import json
+import os
+from scipy.io import wavfile
 import cedar_core as cedar
 from visualize import save_figure
 from utils import linear_to_db, midi_to_freq, freq_to_midi
+
+
+def save_wav(filename: str, data: np.ndarray, sample_rate: int = 48000):
+    """Save audio data to WAV file.
+
+    Args:
+        filename: Output filename (will be placed in output/wav/ directory)
+        data: Audio data (float32, -1.0 to 1.0)
+        sample_rate: Sample rate in Hz
+    """
+    wav_dir = 'output/wav'
+    os.makedirs(wav_dir, exist_ok=True)
+    filepath = os.path.join(wav_dir, filename)
+
+    # Convert to 16-bit PCM
+    data_clipped = np.clip(data, -1.0, 1.0)
+    data_int16 = (data_clipped * 32767).astype(np.int16)
+
+    wavfile.write(filepath, sample_rate, data_int16)
+    print(f"    Saved: {filepath}")
 
 
 class SamplerTestHost:
@@ -759,6 +781,20 @@ def test_loop_accuracy():
         json.dump(results, f, indent=2)
     print(f"  Saved: output/sampler_loop_accuracy.json")
 
+    # Save WAV examples for each pitch ratio
+    print("\n  Saving WAV examples:")
+    for pitch_ratio in pitch_ratios:
+        host = SamplerTestHost(sr)
+        num_cycles = 44
+        sample_length = int(num_cycles * sr / base_freq)
+        t = np.arange(sample_length) / sr
+        sample_data = np.sin(2 * np.pi * base_freq * t).astype(np.float32)
+        host.load_custom_sample("loop_wav", sample_data, sample_rate=sr)
+        sample_id = host.sample_ids["loop_wav"]
+        host.create_sampler_program(sample_id, pitch=pitch_ratio, loop=True)
+        output = host.run_looped(2.0)  # 2 seconds of looped audio
+        save_wav(f"loop_pitch_{pitch_ratio:.1f}x.wav", output, sr)
+
     return results
 
 
@@ -1071,6 +1107,16 @@ def test_sample_perfect_loop():
     save_figure(fig, 'output/sampler_loop_perfect.png')
     print(f"  Saved: output/sampler_loop_perfect.png")
 
+    # Save WAV examples comparing different pitches
+    print("\n  Saving WAV examples:")
+    for pitch in [1.0, 1.5, 2.0]:
+        host = SamplerTestHost(sr)
+        host.load_custom_sample("perfect_loop", sample_data, sample_rate=sr)
+        sample_id = host.sample_ids["perfect_loop"]
+        host.create_sampler_program(sample_id, pitch=pitch, loop=True)
+        output = host.run_looped(2.0)  # 2 seconds
+        save_wav(f"perfect_loop_pitch_{pitch:.1f}x.wav", output, sr)
+
     return results
 
 
@@ -1245,6 +1291,10 @@ def test_sequencer_timing():
     save_figure(fig, 'output/sampler_sequencer_timing.png')
     print(f"  Saved: output/sampler_sequencer_timing.png")
 
+    # Save WAV example
+    print("\n  Saving WAV example:")
+    save_wav("sequencer_timing_8beats.wav", output, sr)
+
     return results
 
 
@@ -1411,6 +1461,10 @@ def test_timing_drift():
     save_figure(fig, 'output/sampler_timing_drift.png')
     print(f"  Saved: output/sampler_timing_drift.png")
 
+    # Save WAV example
+    print("\n  Saving WAV example:")
+    save_wav("timing_drift_64beats.wav", output, sr)
+
     return results
 
 
@@ -1419,7 +1473,9 @@ def test_timing_drift():
 # =============================================================================
 
 if __name__ == "__main__":
-    import os
+    # Change to script directory so all paths work correctly
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
     os.makedirs('output', exist_ok=True)
 
     print("Cedar Sample Player Accuracy Tests")
@@ -1437,4 +1493,4 @@ if __name__ == "__main__":
 
     print()
     print("=" * 60)
-    print("All tests complete. Results saved to output/")
+    print("All tests complete. Results saved to output/ and output/wav/")
