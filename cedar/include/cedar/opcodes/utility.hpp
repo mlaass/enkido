@@ -78,14 +78,17 @@ inline void op_mtof(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // DC: Add DC offset (in0 + constant)
-// Constant stored in state_id field
+// Constant stored across inputs[4] (low 16 bits) and state_id (high 16 bits)
 [[gnu::always_inline]]
 inline void op_dc(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* in = ctx.buffers->get(inst.inputs[0]);
 
+    // Reconstruct 32-bit float from two 16-bit fields (same as PUSH_CONST)
+    std::uint32_t combined = (static_cast<std::uint32_t>(inst.state_id) << 16) |
+                             static_cast<std::uint32_t>(inst.inputs[4]);
     float offset;
-    std::memcpy(&offset, &inst.state_id, sizeof(float));
+    std::memcpy(&offset, &combined, sizeof(float));
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         out[i] = in[i] + offset;
@@ -93,19 +96,34 @@ inline void op_dc(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SLEW: Slew rate limiter (smooths sudden changes)
-// Rate stored in state_id field (samples to reach target)
+// in0: target signal
+// in1: rate (units per second, e.g., rate=10 means 100ms to traverse 0→1)
 [[gnu::always_inline]]
 inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* target = ctx.buffers->get(inst.inputs[0]);
+    const float* rate_buf = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<SlewState>(inst.state_id);
 
-    float rate;
-    std::memcpy(&rate, &inst.state_id, sizeof(float));
-    float coeff = (rate > 0.0f) ? (1.0f / rate) : 1.0f;
+    // Initialize state to first input value (instant startup)
+    if (!state.initialized) {
+        state.current = target[0];
+        state.initialized = true;
+    }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        state.current += (target[i] - state.current) * coeff;
+        float rate = rate_buf[i];
+        // Linear slew rate limiter: limit change to rate units per second
+        float max_delta = (rate > 0.0f) ? rate / ctx.sample_rate : 1e10f;
+        float delta = target[i] - state.current;
+
+        if (std::abs(delta) <= max_delta) {
+            state.current = target[i];
+        } else if (delta > 0.0f) {
+            state.current += max_delta;
+        } else {
+            state.current -= max_delta;
+        }
         out[i] = state.current;
     }
 }

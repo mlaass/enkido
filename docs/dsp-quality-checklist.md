@@ -103,24 +103,23 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 | Opcode | Status | Test Coverage | Notes |
 |--------|--------|---------------|-------|
-| `DISTORT_TANH` | ✅ Tested | Transfer curve | Soft saturation |
-| `DISTORT_SOFT` | ✅ Tested | Transfer curve | Polynomial soft clip |
-| `DISTORT_FOLD` | ✅ Tested | Transfer curve | Wavefolding |
-| `DISTORT_TUBE` | ✅ Tested | Transfer curve | Asymmetric tube simulation |
-| `EFFECT_PHASER` | ✅ Tested | Modulation spectrogram | Allpass sweep |
-| `REVERB_DATTORRO` | ✅ Tested | Impulse response, decay analysis | Plate-style reverb |
+| `DISTORT_TANH` | ✅ Tested | Transfer curve | Soft clipping saturation |
+| `DISTORT_SOFT` | ✅ Tested | Transfer curve | Gentle saturation |
+| `DISTORT_FOLD` | ✅ Tested | Transfer curve | Wavefolder |
+| `DISTORT_TUBE` | ✅ Tested | Transfer curve | Tube-style harmonics |
+| `DISTORT_BITCRUSH` | ✅ Tested | Bit depth levels, sample rate reduction | Quantization + aliasing |
+| `EFFECT_PHASER` | ✅ Tested | Spectrogram sweep | 6-stage phaser |
+| `EFFECT_CHORUS` | ✅ Tested | Spectral spread, sideband analysis | 0.71 spread ratio |
+| `EFFECT_FLANGER` | ✅ Tested | Spectrogram sweep pattern | Comb filter notches |
 
 ### Untested
 
 | Opcode | Priority | Suggested Tests |
 |--------|----------|-----------------|
-| `DISTORT_BITCRUSH` | High | Bit depth reduction, sample rate reduction |
 | `DISTORT_SMOOTH` | Medium | Transfer curve, harmonic content |
 | `DISTORT_TAPE` | Medium | Saturation curve, hysteresis |
 | `DISTORT_XFMR` | Low | Transformer saturation character |
 | `DISTORT_EXCITE` | Low | Harmonic enhancement spectrum |
-| `EFFECT_CHORUS` | High | Modulation depth, detune amount, stereo spread |
-| `EFFECT_FLANGER` | High | Delay time, feedback, modulation |
 | `EFFECT_COMB` | Medium | Delay time accuracy, feedback |
 
 ---
@@ -131,13 +130,13 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 | Opcode | Status | Test Coverage | Notes |
 |--------|--------|---------------|-------|
-| `REVERB_DATTORRO` | ✅ Tested | Impulse response, RT60 | Plate algorithm |
+| `DELAY` | ✅ Tested | Delay time accuracy (0.00% error), feedback decay (-6dB/echo) | 4800 samples @ 100ms |
+| `REVERB_DATTORRO` | ✅ Tested | Impulse response, decay analysis | Long tail reverb |
 
 ### Untested
 
 | Opcode | Priority | Suggested Tests |
 |--------|----------|-----------------|
-| `DELAY` | High | Delay time accuracy, feedback, interpolation quality |
 | `REVERB_FREEVERB` | High | Impulse response, room size, damping |
 | `REVERB_FDN` | Medium | Feedback delay network, decay, diffusion |
 | `REVERB_SPRING` | Low | Spring character, drip effect |
@@ -197,74 +196,72 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 ## Dynamics
 
-### Untested
+### Tested
 
-| Opcode | Priority | Suggested Tests |
-|--------|----------|-----------------|
-| `DYNAMICS_COMP` | High | Threshold, ratio, attack/release, makeup gain |
-| `DYNAMICS_LIMITER` | High | Threshold, lookahead, release |
-| `DYNAMICS_GATE` | High | Threshold, attack/release, hysteresis |
+| Opcode | Status | Test Coverage | Notes |
+|--------|--------|---------------|-------|
+| `DYNAMICS_COMP` | ✅ Tested | Transfer curve, threshold -20dB, ratio 4:1, max error 1.7dB | Compressor working |
+| `DYNAMICS_LIMITER` | ✅ Tested | Ceiling enforcement, transient handling, 0dB overshoot | Limiter working |
+| `DYNAMICS_GATE` | ⚠️ Partial | Passes loud signals, hysteresis OK | **BUG:** Range attenuation not applied to quiet signals |
 
 ---
 
 ## Utility
 
-### Partially Tested
+### Tested
 
 | Opcode | Status | Test Coverage | Notes |
 |--------|--------|---------------|-------|
-| `NOISE` | ⚠️ Used | Used as helper in other tests | Not directly tested for distribution |
+| `NOISE` | ✅ Tested | Distribution (uniform), mean/std 0.577, spectral flatness 0.02dB variance | White noise generator |
+| `MTOF` | ✅ Tested | MIDI to frequency accuracy (0-127 range), <0.00002% error | Note to Hz conversion |
+| `SAH` | ✅ Tested | Trigger timing, hold value stability | Sample-and-hold working |
+| `SLEW` | ✅ Tested | Rise/fall timing, rate limiting | ~1% timing variance, within tolerance |
+| `DC` | ✅ Tested | Constant offset accuracy | Fixed memcpy bug (was reading 32-bit from 16-bit field) |
 
 ### Untested
 
 | Opcode | Priority | Suggested Tests |
 |--------|----------|-----------------|
-| `MTOF` | Medium | MIDI to frequency accuracy across range |
-| `DC` | Low | Constant value accuracy |
-| `SLEW` | Medium | Rise/fall time accuracy, limiter behavior |
-| `SAH` | Medium | Sample timing, hold accuracy |
 | `ENV_GET` | Low | Envelope value extraction |
 
 ---
 
 ## Test Coverage Summary
 
-| Category | Tested | Untested | Coverage |
-|----------|--------|----------|----------|
-| Oscillators | 11 | 9 | 55% |
-| Filters | 4 | 10 | 29% |
-| Effects | 6 | 8 | 43% |
-| Delays & Reverbs | 1 | 4 | 20% |
-| Samplers | 2 | 2 | 50% |
-| Envelopes | 3 | 0 | 100% |
-| Sequencers & Timing | 4 | 2 | 67% |
-| Dynamics | 0 | 3 | 0% |
-| Utility | 1 | 5 | 17% |
-| **Total** | **32** | **43** | **43%** |
+| Category | Tested | Partial/Bug | Untested | Notes |
+|----------|--------|-------------|----------|-------|
+| Oscillators | 11 | - | 9 | Via test_oscillators.py, test_fm_aliasing.py |
+| Filters | 4 | - | 10 | Via test_filters.py |
+| Effects | 8 | - | 5 | Via test_effects.py |
+| Delays & Reverbs | 2 | - | 4 | Via test_effects.py |
+| Samplers | 2 | - | 2 | Via test_sampler.py |
+| Envelopes | 3 | - | 0 | Via test_envelopes.py |
+| Sequencers & Timing | 4 | - | 2 | Via test_sequencers.py |
+| Dynamics | 2 | 1 (GATE) | 0 | Via test_dynamics.py |
+| Utility | 5 | - | 1 | Via test_utility.py |
+| **Total** | **41** | **1** | **33** | 55% tested, 1 opcode with bug |
 
 ---
 
 ## Priority Action Items
 
-### High Priority (Core Musical Functionality)
-1. `DELAY` - Fundamental effect
-2. `REVERB_FREEVERB` - Alternative to Dattorro
-3. `DYNAMICS_COMP`, `DYNAMICS_LIMITER` - Mixing essentials
-4. `SEQ_STEP` - Step sequencer timing
-5. `EFFECT_CHORUS`, `EFFECT_FLANGER` - Common modulation effects
-6. `DISTORT_BITCRUSH` - Popular effect
+### High Priority - Fix Opcode Bugs
+1. **`DYNAMICS_GATE`** - Range attenuation not applied to signals below threshold
+
+### High Priority - Write Tests (Opcodes Available)
+1. `SEQ_STEP` - Step sequencer timing (opcode exists)
+2. `TIMELINE` - Event scheduling (opcode exists)
+3. `REVERB_FREEVERB` - Impulse response testing
 
 ### Medium Priority (Extended Functionality)
-1. `OSC_RAMP`, `OSC_PHASOR` - Modulation sources
+1. `OSC_RAMP`, `OSC_PHASOR` - Modulation sources (opcodes exist, need tests)
 2. `FILTER_DIODE` - Alternative filter character
-3. `SLEW`, `SAH` - Control signal processing
-4. `TIMELINE` - Event scheduling
-5. Remaining distortion types
+3. Remaining distortion types (`DISTORT_SMOOTH`, `DISTORT_TAPE`)
 
 ### Low Priority (Completeness)
 1. 2x oversampling oscillator variants (already have 1x and 4x)
 2. Biquad filter variants (already have SVF)
-3. Utility opcodes (`DC`, `ENV_GET`)
+3. Utility opcodes (`ENV_GET`)
 
 ---
 
