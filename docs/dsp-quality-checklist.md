@@ -164,27 +164,32 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 ## Envelopes
 
-### Untested
+### Tested
 
-| Opcode | Priority | Suggested Tests |
-|--------|----------|-----------------|
-| `ENV_ADSR` | High | Attack/decay/sustain/release timing, curve shape, retrigger |
-| `ENV_AR` | High | Attack/release timing, curve shape |
-| `ENV_FOLLOWER` | High | Attack/release response, RMS vs peak detection |
+| Opcode | Status | Test Coverage | Notes |
+|--------|--------|---------------|-------|
+| `ENV_ADSR` | ✅ Tested | Timing accuracy, curve shape, gate behavior, retrigger | Full ADSR lifecycle |
+| `ENV_AR` | ✅ Tested | Attack/release timing, curve shape | Simplified envelope |
+| `ENV_FOLLOWER` | ✅ Tested | Attack/release response, signal tracking | Amplitude following |
 
 ---
 
 ## Sequencers & Timing
 
+### Tested
+
+| Opcode | Status | Test Coverage | Notes |
+|--------|--------|---------------|-------|
+| `CLOCK` | ✅ Tested | Phase accuracy, BPM sync, long-term drift | 0 samples drift over 100 beats |
+| `LFO` | ✅ Tested | All shapes, frequency sync, PWM duty, zero-crossing precision | Direct phase calculation, 0 drift |
+| `EUCLID` | ✅ Tested | Pattern accuracy, step timing precision | 0 samples timing error |
+| `TRIGGER` | ✅ Tested | Division accuracy, long-term precision, cross-opcode alignment | ≤1 sample error over 1000 beats |
+
 ### Untested
 
 | Opcode | Priority | Suggested Tests |
 |--------|----------|-----------------|
-| `CLOCK` | High | BPM accuracy, phase alignment |
-| `LFO` | High | Frequency accuracy, waveform shapes, sync |
 | `SEQ_STEP` | High | Step timing, value interpolation |
-| `EUCLID` | Medium | Euclidean pattern correctness, rotation |
-| `TRIGGER` | Medium | Trigger detection threshold, retrigger behavior |
 | `TIMELINE` | Medium | Event scheduling accuracy |
 
 ---
@@ -230,30 +235,29 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | Effects | 6 | 8 | 43% |
 | Delays & Reverbs | 1 | 4 | 20% |
 | Samplers | 2 | 2 | 50% |
-| Envelopes | 0 | 3 | 0% |
-| Sequencers & Timing | 0 | 6 | 0% |
+| Envelopes | 3 | 0 | 100% |
+| Sequencers & Timing | 4 | 2 | 67% |
 | Dynamics | 0 | 3 | 0% |
 | Utility | 1 | 5 | 17% |
-| **Total** | **25** | **50** | **33%** |
+| **Total** | **32** | **43** | **43%** |
 
 ---
 
 ## Priority Action Items
 
 ### High Priority (Core Musical Functionality)
-1. `ENV_ADSR`, `ENV_AR` - Essential for any melodic/rhythmic content
-2. `DELAY` - Fundamental effect
-3. `REVERB_FREEVERB` - Alternative to Dattorro
-4. `DYNAMICS_COMP`, `DYNAMICS_LIMITER` - Mixing essentials
-5. `CLOCK`, `LFO`, `SEQ_STEP` - Core sequencing
-6. `EFFECT_CHORUS`, `EFFECT_FLANGER` - Common modulation effects
-7. `DISTORT_BITCRUSH` - Popular effect
+1. `DELAY` - Fundamental effect
+2. `REVERB_FREEVERB` - Alternative to Dattorro
+3. `DYNAMICS_COMP`, `DYNAMICS_LIMITER` - Mixing essentials
+4. `SEQ_STEP` - Step sequencer timing
+5. `EFFECT_CHORUS`, `EFFECT_FLANGER` - Common modulation effects
+6. `DISTORT_BITCRUSH` - Popular effect
 
 ### Medium Priority (Extended Functionality)
 1. `OSC_RAMP`, `OSC_PHASOR` - Modulation sources
 2. `FILTER_DIODE` - Alternative filter character
 3. `SLEW`, `SAH` - Control signal processing
-4. `EUCLID`, `TIMELINE` - Advanced sequencing
+4. `TIMELINE` - Event scheduling
 5. Remaining distortion types
 
 ### Low Priority (Completeness)

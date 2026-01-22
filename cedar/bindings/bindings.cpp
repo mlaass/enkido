@@ -67,6 +67,17 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("NOISE", cedar::Opcode::NOISE)
         .value("MTOF", cedar::Opcode::MTOF)
         .value("ENV_GET", cedar::Opcode::ENV_GET)
+        // Envelopes
+        .value("ENV_ADSR", cedar::Opcode::ENV_ADSR)
+        .value("ENV_AR", cedar::Opcode::ENV_AR)
+        .value("ENV_FOLLOWER", cedar::Opcode::ENV_FOLLOWER)
+        // Sequencers & Timing
+        .value("CLOCK", cedar::Opcode::CLOCK)
+        .value("LFO", cedar::Opcode::LFO)
+        .value("SEQ_STEP", cedar::Opcode::SEQ_STEP)
+        .value("EUCLID", cedar::Opcode::EUCLID)
+        .value("TRIGGER", cedar::Opcode::TRIGGER)
+        .value("TIMELINE", cedar::Opcode::TIMELINE)
         .export_values();
 
     // --- Instruction ---

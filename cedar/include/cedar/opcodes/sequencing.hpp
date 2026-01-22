@@ -72,18 +72,12 @@ inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
     }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // Phase increment: freq_mult cycles per beat
-        float cycles_per_sample = freq_mult[i] / spb;
-        float prev_phase = state.phase;
-        state.phase += cycles_per_sample;
-
-        // Wrap phase
-        if (state.phase >= 1.0f) {
-            state.phase -= std::floor(state.phase);
-        }
+        // Direct phase calculation from global sample counter
+        std::uint64_t sample = ctx.global_sample_counter + i;
+        float cycles = static_cast<float>(sample) * freq_mult[i] / spb;
+        float phase = cycles - std::floor(cycles);  // fmod equivalent for 0-1 range
 
         float value = 0.0f;
-        float phase = state.phase;
 
         switch (shape) {
             case LFOShape::SIN:
@@ -114,7 +108,7 @@ inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
 
             case LFOShape::SAH:
                 // Sample new random value when phase wraps
-                if (phase < prev_phase) {
+                if (phase < state.prev_phase && state.prev_phase > 0.5f) {
                     // Generate deterministic pseudo-random value
                     std::uint32_t h = static_cast<std::uint32_t>(ctx.global_sample_counter + i);
                     h ^= inst.state_id;
@@ -130,6 +124,7 @@ inline void op_lfo(ExecutionContext& ctx, const Instruction& inst) {
         }
 
         out[i] = value;
+        state.prev_phase = phase;
     }
 }
 
@@ -250,28 +245,27 @@ inline void op_euclid(ExecutionContext& ctx, const Instruction& inst) {
         state.last_hits = hits;
         state.last_steps = steps;
         state.last_rotation = rotation;
-        // Reset step on pattern change for consistent behavior
-        state.current_step = 0;
-        state.phase = 0.0f;
+        // Reset prev_step on pattern change for consistent behavior
+        state.prev_step = UINT32_MAX;
     }
 
-    // One bar divided by number of steps
+    // One bar = 4 beats
     const float spb = ctx.samples_per_beat();
-    const float samples_per_step = (spb * 4.0f) / static_cast<float>(steps);  // 1 bar = 4 beats
+    const float samples_per_bar = spb * 4.0f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        state.phase += 1.0f / samples_per_step;
+        // Direct calculation: which step are we in?
+        std::uint64_t sample = ctx.global_sample_counter + i;
+        float bar_phase = std::fmod(static_cast<float>(sample), samples_per_bar) / samples_per_bar;
+        std::uint32_t current_step = static_cast<std::uint32_t>(bar_phase * static_cast<float>(steps)) % steps;
 
-        bool phase_wrapped = false;
-        if (state.phase >= 1.0f) {
-            state.phase -= 1.0f;
-            state.current_step = (state.current_step + 1) % steps;
-            phase_wrapped = true;
-        }
+        // Detect step boundary
+        bool step_changed = (current_step != state.prev_step);
+        state.prev_step = current_step;
 
-        // Trigger on step boundary if this step is a hit
-        bool is_hit = (state.pattern >> state.current_step) & 1;
-        out[i] = (phase_wrapped && is_hit) ? 1.0f : 0.0f;
+        // Trigger if step changed AND this step is a hit
+        bool is_hit = (state.pattern >> current_step) & 1;
+        out[i] = (step_changed && is_hit) ? 1.0f : 0.0f;
     }
 }
 
@@ -289,15 +283,18 @@ inline void op_trigger(ExecutionContext& ctx, const Instruction& inst) {
     const float spb = ctx.samples_per_beat();
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Direct phase calculation from global sample counter
+        std::uint64_t sample = ctx.global_sample_counter + i;
         float samples_per_trigger = spb / division[i];
-        state.phase += 1.0f / samples_per_trigger;
 
-        if (state.phase >= 1.0f) {
-            state.phase -= std::floor(state.phase);
-            out[i] = 1.0f;  // Trigger pulse
-        } else {
-            out[i] = 0.0f;
-        }
+        // Current phase within trigger period
+        float phase = std::fmod(static_cast<float>(sample), samples_per_trigger) / samples_per_trigger;
+
+        // Detect trigger: phase wrapped (current phase < previous phase with significant drop)
+        bool trigger = (phase < state.prev_phase && state.prev_phase > 0.5f);
+
+        out[i] = trigger ? 1.0f : 0.0f;
+        state.prev_phase = phase;
     }
 }
 

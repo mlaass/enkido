@@ -165,7 +165,7 @@ struct EnvState {
 
 // LFO state - beat-synced low frequency oscillator
 struct LFOState {
-    float phase = 0.0f;        // 0.0 to 1.0
+    float prev_phase = 1.0f;   // Previous phase for S&H wrap detection (init to 1.0 to detect first wrap)
     float prev_value = 0.0f;   // For SAH mode (last sampled value)
 };
 
@@ -189,8 +189,7 @@ struct SeqStepState {
 
 // Euclidean rhythm generator state
 struct EuclidState {
-    float phase = 0.0f;              // Phase within current step
-    std::uint32_t current_step = 0;  // Current step in pattern
+    std::uint32_t prev_step = UINT32_MAX;  // Previous step for change detection (UINT32_MAX = uninitialized)
 
     // Precomputed pattern as bitmask (1 = trigger, 0 = rest)
     std::uint32_t pattern = 0;
@@ -203,7 +202,7 @@ struct EuclidState {
 
 // Trigger/impulse generator state
 struct TriggerState {
-    float phase = 0.0f;  // Phase within trigger period
+    float prev_phase = 1.0f;  // Previous phase for wrap detection (init to 1.0 to detect first trigger)
 };
 
 // Timeline/breakpoint automation state
