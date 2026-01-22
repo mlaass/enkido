@@ -23,9 +23,10 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 - **Impulse response**: Decay characteristics match design
 
 ### Envelopes
-- **Timing accuracy**: Attack/decay/release times match within 5%
+- **Timing accuracy**: Attack/decay/release times match within 1% (or ±5 samples)
 - **Curve shape**: Exponential vs linear matches specification
 - **Retrigger behavior**: Handles rapid triggers without glitches
+- **Sample accuracy**: All timing parameters read from buffer inputs for per-sample precision
 
 ### Dynamics
 - **Threshold accuracy**: Compression/gating activates at specified level
@@ -168,8 +169,8 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 | Opcode | Status | Test Coverage | Notes |
 |--------|--------|---------------|-------|
-| `ENV_ADSR` | ✅ Tested | Timing accuracy, curve shape, gate behavior, retrigger | Full ADSR lifecycle |
-| `ENV_AR` | ✅ Tested | Attack/release timing, curve shape | Simplified envelope |
+| `ENV_ADSR` | ✅ Tested | Timing accuracy (<1% error), curve shape, gate behavior, retrigger, sample-accurate release (10ms-500ms) | Full ADSR lifecycle, 5-input format with buffer-based release |
+| `ENV_AR` | ✅ Tested | Attack/release timing (<1% error), curve shape, sample accuracy | Simplified envelope, ±5 samples precision |
 | `ENV_FOLLOWER` | ✅ Tested | Attack/release response, signal tracking | Amplitude following |
 
 ---
