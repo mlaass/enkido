@@ -97,7 +97,9 @@ PYBIND11_MODULE(cedar_core, m) {
         .def_static("make_ternary", &cedar::Instruction::make_ternary,
             py::arg("op"), py::arg("out"), py::arg("in0"), py::arg("in1"), py::arg("in2"), py::arg("state")=0)
         .def_static("make_quaternary", &cedar::Instruction::make_quaternary,
-            py::arg("op"), py::arg("out"), py::arg("in0"), py::arg("in1"), py::arg("in2"), py::arg("in3"), py::arg("state")=0);
+            py::arg("op"), py::arg("out"), py::arg("in0"), py::arg("in1"), py::arg("in2"), py::arg("in3"), py::arg("state")=0)
+        .def_static("make_quinary", &cedar::Instruction::make_quinary,
+            py::arg("op"), py::arg("out"), py::arg("in0"), py::arg("in1"), py::arg("in2"), py::arg("in3"), py::arg("in4"), py::arg("state")=0);
 
     // --- VM ---
     py::class_<cedar::VM>(m, "VM")

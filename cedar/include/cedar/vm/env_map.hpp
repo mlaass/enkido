@@ -20,7 +20,7 @@ struct EnvParam {
 
 // Hash table slot for name -> index mapping
 struct EnvParamSlot {
-    std::atomic<std::uint32_t> name_hash{0};   // FNV-1a hash of parameter name
+    std::atomic<std::uint16_t> name_hash{0};   // Truncated FNV-1a hash of parameter name
     std::atomic<std::uint16_t> param_index{0}; // Index into params array
     std::atomic<bool> occupied{false};
 };
@@ -46,7 +46,8 @@ public:
 
     // Set parameter with custom slew time in milliseconds
     bool set_param(const char* name, float value, float slew_ms) {
-        std::uint32_t hash = fnv1a_hash_runtime(name, std::strlen(name));
+        // Truncate hash to 16 bits to match instruction state_id field
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash_runtime(name, std::strlen(name)) & 0xFFFF);
 
         // Find existing or create new slot
         std::int16_t index = find_or_create_slot(hash);
@@ -75,7 +76,7 @@ public:
 
     // Remove parameter (mark as inactive)
     void remove_param(const char* name) {
-        std::uint32_t hash = fnv1a_hash_runtime(name, std::strlen(name));
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash_runtime(name, std::strlen(name)) & 0xFFFF);
         std::int16_t slot_idx = find_slot(hash);
         if (slot_idx >= 0) {
             std::uint16_t param_idx = hash_table_[static_cast<std::size_t>(slot_idx)]
@@ -88,7 +89,7 @@ public:
 
     // Check if parameter exists
     [[nodiscard]] bool has_param(const char* name) const {
-        std::uint32_t hash = fnv1a_hash_runtime(name, std::strlen(name));
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash_runtime(name, std::strlen(name)) & 0xFFFF);
         return find_slot(hash) >= 0;
     }
 
@@ -96,9 +97,9 @@ public:
     // Audio Thread API (lock-free reads)
     // =========================================================================
 
-    // Get interpolated value for parameter by hash
+    // Get interpolated value for parameter by hash (16-bit truncated)
     // Returns 0.0 if parameter doesn't exist
-    [[nodiscard]] float get(std::uint32_t name_hash) const {
+    [[nodiscard]] float get(std::uint16_t name_hash) const {
         std::int16_t slot_idx = find_slot(name_hash);
         if (slot_idx < 0) {
             return 0.0f;
@@ -113,7 +114,7 @@ public:
     }
 
     // Get raw target value (no interpolation)
-    [[nodiscard]] float get_target(std::uint32_t name_hash) const {
+    [[nodiscard]] float get_target(std::uint16_t name_hash) const {
         std::int16_t slot_idx = find_slot(name_hash);
         if (slot_idx < 0) {
             return 0.0f;
@@ -124,7 +125,7 @@ public:
     }
 
     // Check if parameter exists by hash (for audio thread)
-    [[nodiscard]] bool has_param_hash(std::uint32_t name_hash) const {
+    [[nodiscard]] bool has_param_hash(std::uint16_t name_hash) const {
         std::int16_t slot_idx = find_slot(name_hash);
         if (slot_idx < 0) {
             return false;
@@ -198,8 +199,8 @@ public:
     }
 
 private:
-    // Find slot for parameter hash, returns -1 if not found
-    [[nodiscard]] std::int16_t find_slot(std::uint32_t name_hash) const {
+    // Find slot for parameter hash (16-bit truncated), returns -1 if not found
+    [[nodiscard]] std::int16_t find_slot(std::uint16_t name_hash) const {
         std::size_t start = name_hash % HASH_TABLE_SIZE;
 
         for (std::size_t i = 0; i < HASH_TABLE_SIZE; ++i) {
@@ -217,9 +218,9 @@ private:
         return -1;  // Table full, not found
     }
 
-    // Find or create slot for parameter hash
+    // Find or create slot for parameter hash (16-bit truncated)
     // Returns param index on success, -1 if table full
-    [[nodiscard]] std::int16_t find_or_create_slot(std::uint32_t name_hash) {
+    [[nodiscard]] std::int16_t find_or_create_slot(std::uint16_t name_hash) {
         std::size_t start = name_hash % HASH_TABLE_SIZE;
 
         for (std::size_t i = 0; i < HASH_TABLE_SIZE; ++i) {

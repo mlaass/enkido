@@ -543,9 +543,9 @@ TEST_CASE("VM TRIGGER opcode", "[vm][sequencing]") {
         std::array<float, BLOCK_SIZE> left{}, right{};
 
         // Process one beat worth of samples (24000 samples)
-        // Use ceiling division to ensure we fully cover one beat
+        // Use floor division to avoid counting triggers past the beat boundary
         int trigger_count = 0;
-        int blocks_per_beat = (24000 + BLOCK_SIZE - 1) / BLOCK_SIZE;  // 188 blocks
+        int blocks_per_beat = 24000 / BLOCK_SIZE;  // 187 blocks = 23936 samples
 
         for (int block = 0; block < blocks_per_beat; ++block) {
             vm.process_block(left.data(), right.data());
@@ -570,7 +570,8 @@ TEST_CASE("VM TRIGGER opcode", "[vm][sequencing]") {
         std::array<float, BLOCK_SIZE> left{}, right{};
 
         int trigger_count = 0;
-        int blocks_per_beat = (24000 + BLOCK_SIZE - 1) / BLOCK_SIZE;  // 188 blocks
+        // Use floor division to avoid counting triggers past the beat boundary
+        int blocks_per_beat = 24000 / BLOCK_SIZE;  // 187 blocks = 23936 samples (just under 1 beat)
 
         for (int block = 0; block < blocks_per_beat; ++block) {
             vm.process_block(left.data(), right.data());
@@ -1106,24 +1107,27 @@ TEST_CASE("EnvMap basic operations", "[env_map]") {
         CHECK(env.set_param("Speed", 0.8f));
         CHECK(env.has_param("Speed"));
 
-        std::uint32_t hash = fnv1a_hash("Speed");
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash("Speed") & 0xFFFF);
         CHECK_THAT(env.get_target(hash), WithinAbs(0.8f, 1e-6f));
     }
 
-    SECTION("parameter starts at zero, interpolates to target") {
+    SECTION("new parameter starts at target, subsequent changes interpolate") {
         env.set_param("Volume", 1.0f, 1.0f);  // 1ms slew
-        std::uint32_t hash = fnv1a_hash("Volume");
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash("Volume") & 0xFFFF);
 
-        // Initial current should be 0
-        CHECK_THAT(env.get(hash), WithinAbs(0.0f, 1e-6f));
+        // New parameters start at target value (to avoid ramping from zero)
+        CHECK_THAT(env.get(hash), WithinAbs(1.0f, 1e-6f));
 
-        // After some interpolation steps, should approach target
+        // Change target - now it should interpolate
+        env.set_param("Volume", 0.0f, 1.0f);
+
+        // After some interpolation steps, should approach new target
         for (int i = 0; i < 1000; ++i) {
             env.update_interpolation_sample();
         }
 
         float value = env.get(hash);
-        CHECK(value > 0.5f);  // Should have moved toward 1.0
+        CHECK(value < 0.5f);  // Should have moved toward 0.0
     }
 
     SECTION("remove parameter") {
@@ -1135,7 +1139,7 @@ TEST_CASE("EnvMap basic operations", "[env_map]") {
     }
 
     SECTION("non-existent parameter returns 0") {
-        std::uint32_t hash = fnv1a_hash("NonExistent");
+        std::uint16_t hash = static_cast<std::uint16_t>(fnv1a_hash("NonExistent") & 0xFFFF);
         CHECK_THAT(env.get(hash), WithinAbs(0.0f, 1e-6f));
     }
 
@@ -1146,17 +1150,17 @@ TEST_CASE("EnvMap basic operations", "[env_map]") {
 
         CHECK(env.param_count() == 3);
 
-        CHECK_THAT(env.get_target(fnv1a_hash("Param1")), WithinAbs(0.1f, 1e-6f));
-        CHECK_THAT(env.get_target(fnv1a_hash("Param2")), WithinAbs(0.2f, 1e-6f));
-        CHECK_THAT(env.get_target(fnv1a_hash("Param3")), WithinAbs(0.3f, 1e-6f));
+        CHECK_THAT(env.get_target(static_cast<std::uint16_t>(fnv1a_hash("Param1") & 0xFFFF)), WithinAbs(0.1f, 1e-6f));
+        CHECK_THAT(env.get_target(static_cast<std::uint16_t>(fnv1a_hash("Param2") & 0xFFFF)), WithinAbs(0.2f, 1e-6f));
+        CHECK_THAT(env.get_target(static_cast<std::uint16_t>(fnv1a_hash("Param3") & 0xFFFF)), WithinAbs(0.3f, 1e-6f));
     }
 
     SECTION("update existing parameter") {
         env.set_param("Update", 0.5f);
-        CHECK_THAT(env.get_target(fnv1a_hash("Update")), WithinAbs(0.5f, 1e-6f));
+        CHECK_THAT(env.get_target(static_cast<std::uint16_t>(fnv1a_hash("Update") & 0xFFFF)), WithinAbs(0.5f, 1e-6f));
 
         env.set_param("Update", 0.9f);
-        CHECK_THAT(env.get_target(fnv1a_hash("Update")), WithinAbs(0.9f, 1e-6f));
+        CHECK_THAT(env.get_target(static_cast<std::uint16_t>(fnv1a_hash("Update") & 0xFFFF)), WithinAbs(0.9f, 1e-6f));
 
         // Should still be only one parameter
         CHECK(env.param_count() == 1);
@@ -1209,7 +1213,7 @@ TEST_CASE("VM external parameter binding", "[vm][env]") {
         // Create fallback buffer
         std::array<Instruction, 2> program = {
             make_const_instruction(Opcode::PUSH_CONST, 1, 0.25f),  // fallback = 0.25
-            Instruction{Opcode::ENV_GET, 0, 0, {1, 0xFFFF, 0xFFFF, 0xFFFF}, fnv1a_hash("Missing")}
+            Instruction{Opcode::ENV_GET, 0, 0, {1, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, static_cast<std::uint16_t>(fnv1a_hash("Missing") & 0xFFFF)}
         };
         vm.load_program_immediate(program);
 

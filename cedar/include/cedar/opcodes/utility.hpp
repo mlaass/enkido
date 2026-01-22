@@ -11,14 +11,16 @@
 namespace cedar {
 
 // PUSH_CONST: Fill output buffer with constant value
-// The constant is stored in the state_id field (reinterpreted as float)
+// The constant is stored across inputs[4] and state_id (32 bits total)
 [[gnu::always_inline]]
 inline void op_push_const(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
 
-    // Reinterpret first 4 bytes of state_id as float constant
+    // Reconstruct 32-bit float from inputs[4] (low 16 bits) and state_id (high 16 bits)
+    std::uint32_t combined = (static_cast<std::uint32_t>(inst.state_id) << 16) |
+                             static_cast<std::uint32_t>(inst.inputs[4]);
     float value;
-    std::memcpy(&value, &inst.state_id, sizeof(float));
+    std::memcpy(&value, &combined, sizeof(float));
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         out[i] = value;
@@ -160,8 +162,8 @@ inline void op_env_get(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
-// Helper: Create instruction with float constant in state_id field
-// Note: state_id is 32-bit, same size as float, so this is safe
+// Helper: Create instruction with float constant stored across inputs[4] and state_id
+// The float is split: low 16 bits in inputs[4], high 16 bits in state_id
 inline Instruction make_const_instruction(Opcode op, std::uint16_t out, float value) {
     Instruction inst{};
     inst.opcode = op;
@@ -170,7 +172,11 @@ inline Instruction make_const_instruction(Opcode op, std::uint16_t out, float va
     inst.inputs[1] = BUFFER_UNUSED;
     inst.inputs[2] = BUFFER_UNUSED;
     inst.inputs[3] = BUFFER_UNUSED;
-    std::memcpy(&inst.state_id, &value, sizeof(float));
+    // Split float across inputs[4] and state_id
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(float));
+    inst.inputs[4] = static_cast<std::uint16_t>(bits & 0xFFFF);        // Low 16 bits
+    inst.state_id = static_cast<std::uint16_t>((bits >> 16) & 0xFFFF); // High 16 bits
     return inst;
 }
 

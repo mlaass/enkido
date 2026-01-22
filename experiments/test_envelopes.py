@@ -66,33 +66,37 @@ class EnvelopeTestHost:
         self.vm.set_param("attack", attack)
         self.vm.set_param("decay", decay)
         self.vm.set_param("sustain", sustain)
+        self.vm.set_param("release", release)
 
         # Get params into buffers
         # Buffer 0: gate (will be set externally)
         # Buffer 1: attack
         # Buffer 2: decay
         # Buffer 3: sustain
+        # Buffer 4: release
         # Buffer 10: output
 
+        # Truncate hash to 16-bit for state_id
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack") & 0xFFFF)
         )
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("decay"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("decay") & 0xFFFF)
         )
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 3, cedar.hash("sustain"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 3, cedar.hash("sustain") & 0xFFFF)
+        )
+        self.program.append(
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 4, cedar.hash("release") & 0xFFFF)
         )
 
-        # ENV_ADSR: gate, attack, decay, sustain -> output
-        # Release time is encoded in rate field (0-255 -> 0.0-25.5s)
-        release_rate = min(255, int(release * 10))  # 0.1s resolution
-
-        inst = cedar.Instruction.make_quaternary(
-            cedar.Opcode.ENV_ADSR, 10, 0, 1, 2, 3, state_id
+        # ENV_ADSR: gate, attack, decay, sustain, release -> output
+        # Release time is now sample-accurate from buffer input
+        self.program.append(
+            cedar.Instruction.make_quinary(
+                cedar.Opcode.ENV_ADSR, 10, 0, 1, 2, 3, 4, state_id
+            )
         )
-        inst.rate = release_rate
-        self.program.append(inst)
 
         # Route to output
         self.program.append(
@@ -119,11 +123,12 @@ class EnvelopeTestHost:
         # Buffer 2: release
         # Buffer 10: output
 
+        # Truncate hash to 16-bit for state_id
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack") & 0xFFFF)
         )
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("release"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("release") & 0xFFFF)
         )
 
         # ENV_AR: trigger, attack, release -> output
@@ -157,11 +162,12 @@ class EnvelopeTestHost:
         # Buffer 2: release
         # Buffer 10: output
 
+        # Truncate hash to 16-bit for state_id
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 1, cedar.hash("attack") & 0xFFFF)
         )
         self.program.append(
-            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("release"))
+            cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 2, cedar.hash("release") & 0xFFFF)
         )
 
         # ENV_FOLLOWER: input, attack, release -> output
@@ -270,12 +276,14 @@ def test_adsr_timing():
 
     sr = 48000
 
-    # Test various timing configurations
+    # Test various timing configurations including sub-100ms release times
     test_configs = [
-        {'attack': 0.01, 'decay': 0.05, 'sustain': 0.7, 'release': 0.1, 'name': 'Fast'},
-        {'attack': 0.05, 'decay': 0.1, 'sustain': 0.5, 'release': 0.2, 'name': 'Medium'},
-        {'attack': 0.1, 'decay': 0.2, 'sustain': 0.3, 'release': 0.5, 'name': 'Slow'},
-        {'attack': 0.001, 'decay': 0.01, 'sustain': 0.8, 'release': 0.05, 'name': 'Snappy'},
+        {'attack': 0.01, 'decay': 0.05, 'sustain': 0.7, 'release': 0.01, 'name': 'Fast (10ms R)'},
+        {'attack': 0.02, 'decay': 0.05, 'sustain': 0.6, 'release': 0.02, 'name': 'Fast (20ms R)'},
+        {'attack': 0.01, 'decay': 0.05, 'sustain': 0.7, 'release': 0.05, 'name': 'Fast (50ms R)'},
+        {'attack': 0.05, 'decay': 0.1, 'sustain': 0.5, 'release': 0.1, 'name': 'Medium (100ms R)'},
+        {'attack': 0.05, 'decay': 0.1, 'sustain': 0.5, 'release': 0.2, 'name': 'Medium (200ms R)'},
+        {'attack': 0.1, 'decay': 0.2, 'sustain': 0.3, 'release': 0.5, 'name': 'Slow (500ms R)'},
     ]
 
     results = {
@@ -308,9 +316,13 @@ def test_adsr_timing():
         # Measure attack time (to 99% of peak)
         attack_result = measure_envelope_time(output, 0.99, sr, start_idx=0, direction='rising')
 
-        # Measure decay time (from peak to sustain + 1% of range)
+        # Find actual peak sample (where envelope reaches max or starts falling)
+        # This accounts for the 0.999 threshold in the opcode before transitioning to decay
+        search_end = int((attack + decay + 0.1) * sr)
+        peak_idx = np.argmax(output[:search_end])
+
+        # Measure decay time (from actual peak to sustain + 1% of range)
         decay_target = sustain + 0.01 * (1.0 - sustain)
-        peak_idx = attack_result['sample_index']
         decay_result = measure_envelope_time(output, decay_target, sr, start_idx=peak_idx, direction='falling')
 
         # Measure release time (from sustain to 1% of sustain)
@@ -340,10 +352,17 @@ def test_adsr_timing():
         }
         results['tests'].append(test_result)
 
-        # Print results
-        attack_status = "PASS" if abs(attack_error_pct) < 10 else "FAIL"
-        decay_status = "PASS" if abs(decay_error_pct) < 15 else "FAIL"
-        release_status = "PASS" if abs(release_error_pct) < 10 else "FAIL"
+        # Print results - require <1% error or ±5 samples (whichever is larger)
+        attack_samples = attack * sr
+        decay_samples = decay * sr
+        release_samples = release * sr
+        attack_tolerance = max(1.0, 5 / attack_samples * 100) if attack_samples > 0 else 1.0
+        decay_tolerance = max(1.0, 5 / decay_samples * 100) if decay_samples > 0 else 1.0
+        release_tolerance = max(1.0, 5 / release_samples * 100) if release_samples > 0 else 1.0
+
+        attack_status = "PASS" if abs(attack_error_pct) < attack_tolerance else "FAIL"
+        decay_status = "PASS" if abs(decay_error_pct) < decay_tolerance else "FAIL"
+        release_status = "PASS" if abs(release_error_pct) < release_tolerance else "FAIL"
 
         print(f"\n  {name} ADSR (A={attack*1000:.0f}ms, D={decay*1000:.0f}ms, S={sustain:.1f}, R={release*1000:.0f}ms):")
         print(f"    Attack:  expected={attack*1000:.1f}ms, measured={attack_result['time_ms']:.1f}ms, error={attack_error_pct:.1f}% [{attack_status}]")
@@ -1093,8 +1112,8 @@ def test_sample_accurate_timing():
         error_samples = peak_sample - expected_samples if peak_sample >= 0 else float('nan')
         error_percent = (error_samples / expected_samples * 100) if expected_samples > 0 else 0
 
-        # Pass criteria: within 10% or 5 samples, whichever is larger
-        tolerance_samples = max(5, int(expected_samples * 0.1))
+        # Pass criteria: within 1% or ±5 samples, whichever is larger
+        tolerance_samples = max(5, int(expected_samples * 0.01))
         passed = abs(error_samples) <= tolerance_samples if peak_sample >= 0 else False
         status = "PASS" if passed else "FAIL"
 
@@ -1121,7 +1140,10 @@ def test_sample_accurate_timing():
         attack_sec = attack_ms / 1000.0
         release = 0.1
 
-        expected_peak_sample = int(attack_sec * sr)
+        # The opcode transitions from attack to release when level >= 0.999
+        # With exponential curve: level = 1 - exp(-4.6 * t / attack_samples)
+        # Time to reach 0.999: t ≈ 1.5 * attack_samples (since ln(0.001)/-4.6 ≈ 1.5)
+        expected_peak_sample = int(attack_sec * sr * 1.5)
 
         # Single trigger at sample 100
         trigger_offset = 100
@@ -1137,7 +1159,8 @@ def test_sample_accurate_timing():
         measured_attack_samples = peak_sample - trigger_offset
 
         error_samples = measured_attack_samples - expected_peak_sample
-        tolerance_samples = max(5, int(expected_peak_sample * 0.1))
+        # Pass criteria: within 1% or ±5 samples, whichever is larger
+        tolerance_samples = max(5, int(expected_peak_sample * 0.01))
         passed = abs(error_samples) <= tolerance_samples
         status = "PASS" if passed else "FAIL"
 
