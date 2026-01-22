@@ -202,7 +202,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 |--------|--------|---------------|-------|
 | `DYNAMICS_COMP` | ✅ Tested | Transfer curve, threshold -20dB, ratio 4:1, max error 1.7dB | Compressor working |
 | `DYNAMICS_LIMITER` | ✅ Tested | Ceiling enforcement, transient handling, 0dB overshoot | Limiter working |
-| `DYNAMICS_GATE` | ⚠️ Partial | Passes loud signals, hysteresis OK | **BUG:** Range attenuation not applied to quiet signals |
+| `DYNAMICS_GATE` | ✅ Tested | Passes loud signals, hysteresis OK, attenuation speed verified | Fast 5ms gate close, full attenuation within 200ms |
 
 ---
 
@@ -215,7 +215,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | `NOISE` | ✅ Tested | Distribution (uniform), mean/std 0.577, spectral flatness 0.02dB variance | White noise generator |
 | `MTOF` | ✅ Tested | MIDI to frequency accuracy (0-127 range), <0.00002% error | Note to Hz conversion |
 | `SAH` | ✅ Tested | Trigger timing, hold value stability | Sample-and-hold working |
-| `SLEW` | ✅ Tested | Rise/fall timing, rate limiting | ~1% timing variance, within tolerance |
+| `SLEW` | ✅ Tested | Rise/fall timing, rate limiting | <0.1% timing error, sample-accurate |
 | `DC` | ✅ Tested | Constant offset accuracy | Fixed memcpy bug (was reading 32-bit from 16-bit field) |
 
 ### Untested
@@ -237,16 +237,13 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | Samplers | 2 | - | 2 | Via test_sampler.py |
 | Envelopes | 3 | - | 0 | Via test_envelopes.py |
 | Sequencers & Timing | 4 | - | 2 | Via test_sequencers.py |
-| Dynamics | 2 | 1 (GATE) | 0 | Via test_dynamics.py |
+| Dynamics | 3 | - | 0 | Via test_dynamics.py |
 | Utility | 5 | - | 1 | Via test_utility.py |
-| **Total** | **41** | **1** | **33** | 55% tested, 1 opcode with bug |
+| **Total** | **42** | **-** | **33** | 56% tested |
 
 ---
 
 ## Priority Action Items
-
-### High Priority - Fix Opcode Bugs
-1. **`DYNAMICS_GATE`** - Range attenuation not applied to signals below threshold
 
 ### High Priority - Write Tests (Opcodes Available)
 1. `SEQ_STEP` - Step sequencer timing (opcode exists)

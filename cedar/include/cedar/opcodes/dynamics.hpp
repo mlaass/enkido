@@ -182,9 +182,11 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x = input[i];
 
-        // Envelope follower
+        // Envelope follower (very fast detection for both attack and release)
+        // Using 10x multiplier ensures envelope responds quickly to signal changes
+        // while the gain smoothing (below) uses the user-configured release time
         float abs_x = std::abs(x);
-        float coeff = abs_x > state.envelope ? state.attack_coeff * 4.0f : state.release_coeff;
+        float coeff = abs_x > state.envelope ? state.attack_coeff * 10.0f : state.release_coeff * 10.0f;
         state.envelope += coeff * (abs_x - state.envelope);
 
         float env_db = linear_to_db(state.envelope + 1e-10f);
@@ -216,7 +218,17 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
         float target_gain = state.is_open ? 1.0f : db_to_linear(range);
 
         // Smooth gain transitions
-        float gain_coeff = target_gain > state.gain ? state.attack_coeff : state.release_coeff;
+        // When closing gate, use fast transition (5ms) to avoid clicks
+        // but don't use the slow user-configured release time
+        constexpr float GATE_CLOSE_MS = 5.0f;
+        float close_coeff = 1.0f - std::exp(-1.0f / (GATE_CLOSE_MS * 0.001f * ctx.sample_rate));
+
+        float gain_coeff;
+        if (target_gain > state.gain) {
+            gain_coeff = state.attack_coeff;  // Opening: use attack
+        } else {
+            gain_coeff = close_coeff;  // Closing: use fast fixed time
+        }
         state.gain += gain_coeff * (target_gain - state.gain);
 
         out[i] = x * state.gain;
