@@ -38,7 +38,7 @@ jobs:
         uses: nwtgck/actions-netlify@v3
         with:
           publish-dir: './web/build'
-          production-deploy: false
+          production-deploy: true
           deploy-message: "Dev: ${{ github.sha }}"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
