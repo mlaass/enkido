@@ -356,6 +356,18 @@ void VM::execute(const Instruction& inst) {
             op_filter_moog(ctx_, inst);
             break;
 
+        case Opcode::FILTER_DIODE:
+            op_filter_diode(ctx_, inst);
+            break;
+
+        case Opcode::FILTER_FORMANT:
+            op_filter_formant(ctx_, inst);
+            break;
+
+        case Opcode::FILTER_SALLENKEY:
+            op_filter_sallenkey(ctx_, inst);
+            break;
+
         // === Math ===
         case Opcode::ABS:
             op_abs(ctx_, inst);

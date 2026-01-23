@@ -201,4 +201,334 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// ============================================================================
+// Diode Ladder Filter (TB-303 Acid)
+// ============================================================================
+
+// Diode nonlinearity: hyperbolic sine approximation
+// True diode: I = I_s * (exp(V / V_t) - 1), but sinh provides symmetric behavior
+[[gnu::always_inline]]
+inline float diode_sinh(float x) {
+    // Fast sinh approximation for |x| < 4
+    // sinh(x) = x + x^3/6 + x^5/120 for small x
+    // For larger values, use (exp(x) - exp(-x)) / 2
+    if (x > 4.0f) return 27.29f + 0.5f * std::exp(x);  // exp(4)/2 ≈ 27.29
+    if (x < -4.0f) return -27.29f - 0.5f * std::exp(-x);
+
+    float x2 = x * x;
+    return x * (1.0f + x2 * (0.166667f + x2 * 0.00833333f));
+}
+
+// Derivative of sinh for Newton-Raphson
+[[gnu::always_inline]]
+inline float diode_cosh(float x) {
+    // cosh(x) = 1 + x^2/2 + x^4/24
+    if (std::abs(x) > 4.0f) return 0.5f * (std::exp(std::abs(x)));
+
+    float x2 = x * x;
+    return 1.0f + x2 * (0.5f + x2 * 0.0416667f);
+}
+
+// FILTER_DIODE: ZDF 4-pole diode ladder filter
+// in0: input signal
+// in1: cutoff frequency (Hz)
+// in2: resonance (0.0-4.0, self-oscillates at ~3.5+)
+//
+// Based on the Roland TB-303 filter topology with diode nonlinearity.
+// Uses Newton-Raphson iteration for implicit integration.
+// The diode nonlinearity creates the characteristic "squelchy" acid sound.
+[[gnu::always_inline]]
+inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* freq = ctx.buffers->get(inst.inputs[1]);
+    const float* res = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<DiodeState>(inst.state_id);
+
+    // Thermal voltage scaling (affects diode curve sharpness)
+    constexpr float VT = 0.026f;  // ~26mV at room temperature
+    constexpr float VT_INV = 1.0f / VT;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float cutoff = freq[i];
+        float resonance = res[i];
+
+        // Update coefficients if parameters changed
+        if (cutoff != state.last_freq || resonance != state.last_res) {
+            state.last_freq = cutoff;
+            state.last_res = resonance;
+
+            // Frequency warping - clamp to safe range
+            float f = std::clamp(cutoff / ctx.sample_rate, 0.0f, 0.45f);
+
+            // g coefficient using tan for frequency warping
+            state.g = std::tan(PI * f);
+
+            // Resonance: diode ladder has different feedback topology
+            // Range 0-4, self-oscillates around 3.5
+            state.k = std::clamp(resonance, 0.0f, 4.0f);
+        }
+
+        // Get feedback from output with diode nonlinearity
+        // The diode creates exponential response at extremes
+        float fb_voltage = state.cap[3] * VT_INV;
+        float feedback = state.k * diode_sinh(fb_voltage) * VT;
+
+        // Input with feedback
+        float x = input[i] - feedback;
+
+        // Apply soft saturation at input (prevents harsh clipping)
+        x = std::tanh(x * 0.5f) * 2.0f;
+
+        // Calculate G for trapezoidal integration
+        float G = state.g / (1.0f + state.g);
+
+        // Process 4 cascaded stages with diode nonlinearity
+        // Each stage: v_out = G * (v_in + v_cap) / (1 + G) using Newton-Raphson
+        for (int j = 0; j < 4; ++j) {
+            float v_in = (j == 0) ? x : state.cap[j - 1];
+
+            // Diode-coupled stage: the coupling is nonlinear
+            // Approximate with one Newton-Raphson iteration
+            float v_est = state.cap[j];
+            float v_diff = v_in - v_est;
+
+            // Nonlinear transfer through diode
+            float diode_v = v_diff * VT_INV;
+            float i_diode = diode_sinh(diode_v);
+            float di_diode = diode_cosh(diode_v) * VT_INV;
+
+            // Newton-Raphson update: v_new = v_old - f(v)/f'(v)
+            // f(v) = v - G * i_diode - (1-G) * v_cap
+            float f_v = v_est - G * i_diode * VT - (1.0f - G) * state.cap[j];
+            float df_v = 1.0f + G * di_diode * VT;
+
+            float v_new = v_est - f_v / df_v;
+
+            // Clamp to prevent blowup
+            state.cap[j] = clamp_audio(v_new);
+        }
+
+        // Output is the 4-pole lowpass
+        out[i] = state.cap[3];
+    }
+}
+
+// ============================================================================
+// Formant (Vowel) Filter
+// ============================================================================
+
+// Vowel formant table (F1, F2, F3 in Hz)
+// Based on average male voice formants
+struct VowelFormants {
+    float f1, f2, f3;
+    float g1, g2, g3;  // Relative gains
+};
+
+constexpr VowelFormants VOWEL_TABLE[5] = {
+    {650.0f, 1100.0f, 2860.0f, 1.0f, 0.5f, 0.25f},   // A (as in "father")
+    {300.0f, 2300.0f, 3000.0f, 1.0f, 0.4f, 0.2f},    // I (as in "feet")
+    {300.0f, 870.0f, 2240.0f, 1.0f, 0.6f, 0.3f},     // U (as in "boot")
+    {400.0f, 2000.0f, 2550.0f, 1.0f, 0.45f, 0.25f},  // E (as in "bed")
+    {400.0f, 800.0f, 2600.0f, 1.0f, 0.5f, 0.2f}      // O (as in "bought")
+};
+
+// FILTER_FORMANT: 3-band parallel vowel morphing filter
+// in0: input signal
+// in1: vowel_a (0-4, selects first vowel: A/I/U/E/O)
+// in2: vowel_b (0-4, selects second vowel)
+// in3: morph (0-1, interpolates between vowel_a and vowel_b)
+// in4: q (resonance/bandwidth, 1-20)
+//
+// Creates vocal-like filter sweeps by morphing between vowel formants.
+// Uses 3 parallel Chamberlin SVF bandpass filters.
+[[gnu::always_inline]]
+inline void op_filter_formant(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* vowel_a = ctx.buffers->get(inst.inputs[1]);
+    const float* vowel_b = ctx.buffers->get(inst.inputs[2]);
+    const float* morph = ctx.buffers->get(inst.inputs[3]);
+    const float* q_in = ctx.buffers->get(inst.inputs[4]);
+    auto& state = ctx.states->get_or_create<FormantState>(inst.state_id);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float va = std::clamp(vowel_a[i], 0.0f, 4.0f);
+        float vb = std::clamp(vowel_b[i], 0.0f, 4.0f);
+        float m = std::clamp(morph[i], 0.0f, 1.0f);
+        float q = std::clamp(q_in[i], 1.0f, 20.0f);
+
+        // Check if we need to recalculate formant targets
+        if (va != state.last_vowel_a || vb != state.last_vowel_b ||
+            m != state.last_morph || q != state.last_q) {
+
+            state.last_vowel_a = va;
+            state.last_vowel_b = vb;
+            state.last_morph = m;
+            state.last_q = q;
+
+            // Interpolate between vowel indices (with fractional support)
+            int idx_a = static_cast<int>(va);
+            int idx_b = static_cast<int>(vb);
+            float frac_a = va - static_cast<float>(idx_a);
+            float frac_b = vb - static_cast<float>(idx_b);
+
+            idx_a = std::min(idx_a, 4);
+            idx_b = std::min(idx_b, 4);
+            int idx_a2 = std::min(idx_a + 1, 4);
+            int idx_b2 = std::min(idx_b + 1, 4);
+
+            // Get formants for vowel A (with fractional interpolation)
+            float f1_a = VOWEL_TABLE[idx_a].f1 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].f1 * frac_a;
+            float f2_a = VOWEL_TABLE[idx_a].f2 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].f2 * frac_a;
+            float f3_a = VOWEL_TABLE[idx_a].f3 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].f3 * frac_a;
+            float g1_a = VOWEL_TABLE[idx_a].g1 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].g1 * frac_a;
+            float g2_a = VOWEL_TABLE[idx_a].g2 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].g2 * frac_a;
+            float g3_a = VOWEL_TABLE[idx_a].g3 * (1.0f - frac_a) + VOWEL_TABLE[idx_a2].g3 * frac_a;
+
+            // Get formants for vowel B
+            float f1_b = VOWEL_TABLE[idx_b].f1 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].f1 * frac_b;
+            float f2_b = VOWEL_TABLE[idx_b].f2 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].f2 * frac_b;
+            float f3_b = VOWEL_TABLE[idx_b].f3 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].f3 * frac_b;
+            float g1_b = VOWEL_TABLE[idx_b].g1 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].g1 * frac_b;
+            float g2_b = VOWEL_TABLE[idx_b].g2 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].g2 * frac_b;
+            float g3_b = VOWEL_TABLE[idx_b].g3 * (1.0f - frac_b) + VOWEL_TABLE[idx_b2].g3 * frac_b;
+
+            // Morph between A and B
+            state.f1 = f1_a * (1.0f - m) + f1_b * m;
+            state.f2 = f2_a * (1.0f - m) + f2_b * m;
+            state.f3 = f3_a * (1.0f - m) + f3_b * m;
+            state.g1 = g1_a * (1.0f - m) + g1_b * m;
+            state.g2 = g2_a * (1.0f - m) + g2_b * m;
+            state.g3 = g3_a * (1.0f - m) + g3_b * m;
+        }
+
+        float x = input[i];
+
+        // Chamberlin SVF coefficients
+        // f_coef = 2 * sin(pi * freq / sample_rate)
+        float f1_coef = 2.0f * std::sin(PI * state.f1 / ctx.sample_rate);
+        float f2_coef = 2.0f * std::sin(PI * state.f2 / ctx.sample_rate);
+        float f3_coef = 2.0f * std::sin(PI * state.f3 / ctx.sample_rate);
+        float q_coef = 1.0f / q;
+
+        // Bandpass 1 (F1 - first formant)
+        float hp1 = x - state.bp1_z1 * q_coef - state.bp1_z2;
+        float bp1 = state.bp1_z1 + f1_coef * hp1;
+        float lp1 = state.bp1_z2 + f1_coef * state.bp1_z1;
+        state.bp1_z1 = clamp_audio(bp1);
+        state.bp1_z2 = clamp_audio(lp1);
+
+        // Bandpass 2 (F2 - second formant)
+        float hp2 = x - state.bp2_z1 * q_coef - state.bp2_z2;
+        float bp2 = state.bp2_z1 + f2_coef * hp2;
+        float lp2 = state.bp2_z2 + f2_coef * state.bp2_z1;
+        state.bp2_z1 = clamp_audio(bp2);
+        state.bp2_z2 = clamp_audio(lp2);
+
+        // Bandpass 3 (F3 - third formant)
+        float hp3 = x - state.bp3_z1 * q_coef - state.bp3_z2;
+        float bp3 = state.bp3_z1 + f3_coef * hp3;
+        float lp3 = state.bp3_z2 + f3_coef * state.bp3_z1;
+        state.bp3_z1 = clamp_audio(bp3);
+        state.bp3_z2 = clamp_audio(lp3);
+
+        // Sum bandpasses with formant gains
+        out[i] = bp1 * state.g1 + bp2 * state.g2 + bp3 * state.g3;
+    }
+}
+
+// ============================================================================
+// Sallen-Key Filter (MS-20 Style)
+// ============================================================================
+
+// Diode clipper function for feedback path
+[[gnu::always_inline]]
+inline float diode_clip(float x, float& state) {
+    // Asymmetric soft diode clipping
+    // Positive: gentle soft knee
+    // Negative: sharper knee (like silicon diode)
+    constexpr float THRESHOLD = 0.7f;
+
+    float clipped;
+    if (x > THRESHOLD) {
+        clipped = THRESHOLD + std::tanh((x - THRESHOLD) * 2.0f) * 0.3f;
+    } else if (x < -THRESHOLD) {
+        // Sharper negative clipping
+        clipped = -THRESHOLD + std::tanh((x + THRESHOLD) * 3.0f) * 0.2f;
+    } else {
+        clipped = x;
+    }
+
+    // Slight hysteresis for character
+    state = state * 0.1f + clipped * 0.9f;
+    return state;
+}
+
+// FILTER_SALLENKEY: MS-20 style 12dB/oct filter with diode feedback
+// in0: input signal
+// in1: cutoff frequency (Hz)
+// in2: resonance (0.0-4.0, aggressive self-oscillation)
+// in3: mode (0.0 = lowpass, 1.0 = highpass)
+//
+// Based on the Korg MS-20 filter topology with diode clipping in the
+// feedback path. Creates aggressive, fuzzy resonance character.
+[[gnu::always_inline]]
+inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* input = ctx.buffers->get(inst.inputs[0]);
+    const float* freq = ctx.buffers->get(inst.inputs[1]);
+    const float* res = ctx.buffers->get(inst.inputs[2]);
+    const float* mode_in = ctx.buffers->get(inst.inputs[3]);
+    auto& state = ctx.states->get_or_create<SallenkeyState>(inst.state_id);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float cutoff = freq[i];
+        float resonance = res[i];
+        float mode = mode_in[i];
+
+        // Update coefficients if needed
+        if (cutoff != state.last_freq || resonance != state.last_res) {
+            state.last_freq = cutoff;
+            state.last_res = resonance;
+
+            // Frequency warping
+            float f = std::clamp(cutoff / ctx.sample_rate, 0.0f, 0.45f);
+            state.g = std::tan(PI * f);
+
+            // Resonance - MS-20 has very aggressive feedback
+            state.k = std::clamp(resonance, 0.0f, 4.0f);
+        }
+
+        // Get feedback with diode clipping (the MS-20 "scream")
+        float fb = state.cap2 * state.k;
+        fb = diode_clip(fb, state.diode_state);
+
+        // Input with feedback
+        float x = input[i] - fb;
+
+        // Sallen-Key topology: 2-pole filter
+        // Using trapezoidal integration for stability
+        float G = state.g / (1.0f + state.g);
+
+        // First stage
+        float v1 = G * (x - state.cap1) + state.cap1;
+
+        // Second stage with resonance boost
+        float v2 = G * (v1 - state.cap2) + state.cap2;
+
+        // Update capacitor states
+        state.cap1 = clamp_audio(2.0f * v1 - state.cap1);
+        state.cap2 = clamp_audio(2.0f * v2 - state.cap2);
+
+        // Mode selection: 0 = lowpass, 1 = highpass
+        float lp = v2;
+        float hp = x - v1 * (1.0f + state.k * 0.5f) - v2;
+
+        // Crossfade between LP and HP based on mode
+        float m = std::clamp(mode, 0.0f, 1.0f);
+        out[i] = lp * (1.0f - m) + hp * m;
+    }
+}
+
 }  // namespace cedar

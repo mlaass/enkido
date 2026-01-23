@@ -105,47 +105,61 @@ inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) 
 }
 
 // ============================================================================
-// DISTORT_FOLD: Wavefolder
+// DISTORT_FOLD: Wavefolder with ADAA (Antiderivative Antialiasing)
 // ============================================================================
 // in0: input signal
-// in1: threshold (0.1-2.0, lower = more folding)
+// in1: drive (1.0-10.0, fold intensity)
 // in2: symmetry (0.0-1.0, 0.5 = symmetric, other = asymmetric harmonics)
 //
-// Folds the waveform back when it exceeds the threshold, creating
-// complex harmonics. Classic West Coast synthesis technique.
+// Alias-free sine wavefolder using first-order ADAA.
+// Classic West Coast synthesis technique with mathematical anti-aliasing.
+// f(x) = sin(drive * x)
+// F₁(x) = -cos(drive * x) / drive  (antiderivative)
+// ADAA: y[n] = (F₁(x[n]) - F₁(x[n-1])) / (x[n] - x[n-1])
 
 [[gnu::always_inline]]
 inline void op_distort_fold(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* input = ctx.buffers->get(inst.inputs[0]);
-    const float* threshold = ctx.buffers->get(inst.inputs[1]);
+    const float* drive_in = ctx.buffers->get(inst.inputs[1]);
     const float* symmetry = ctx.buffers->get(inst.inputs[2]);
+    auto& state = ctx.states->get_or_create<FoldADAAState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float t = std::clamp(threshold[i], 0.1f, 2.0f);
+        float drive = std::clamp(drive_in[i], 1.0f, 10.0f);
         float sym = std::clamp(symmetry[i], 0.0f, 1.0f);
 
-        // Apply asymmetry bias
-        float x = input[i] + (sym - 0.5f) * t;
+        // Apply asymmetry bias (shifts the fold point)
+        float x = input[i] + (sym - 0.5f) * 0.5f;
 
-        // Wavefold: reflect at boundaries
-        // Use modular arithmetic for multiple folds
-        float folded = x / t;
+        // Scale by drive
+        float x_scaled = x * drive;
 
-        // Map to 0-4 range, then fold
-        folded = std::fmod(folded + 1.0f, 4.0f);
-        if (folded < 0.0f) folded += 4.0f;
+        // Antiderivative of sin(x) is -cos(x)
+        // For sin(drive * x), antiderivative is -cos(drive * x) / drive
+        float ad = -std::cos(x_scaled) / drive;
 
-        // Triangular fold pattern: 0->1, 1->2->0, 2->3->-1, 3->4->0
-        if (folded > 3.0f) {
-            folded = folded - 4.0f;
-        } else if (folded > 2.0f) {
-            folded = -(folded - 2.0f);
-        } else if (folded > 1.0f) {
-            folded = 2.0f - folded;
+        // ADAA formula: y[n] = (F₁(x[n]) - F₁(x[n-1])) / (x[n] - x[n-1])
+        float diff = x_scaled - state.x_prev;
+        float y;
+
+        if (std::abs(diff) < 1e-5f) {
+            // When samples are very close, use Taylor expansion fallback
+            // sin(x) ≈ x - x³/6 near the singularity point
+            // Actually just evaluate the function at the midpoint
+            float mid = (x_scaled + state.x_prev) * 0.5f;
+            y = std::sin(mid);
+        } else {
+            // Normal ADAA calculation
+            y = (ad - state.ad_prev) / (diff / drive);
         }
 
-        out[i] = folded * t;
+        // Update state for next sample
+        state.x_prev = x_scaled;
+        state.ad_prev = ad;
+
+        // Output with soft limiting
+        out[i] = std::clamp(y, -1.0f, 1.0f);
     }
 }
 

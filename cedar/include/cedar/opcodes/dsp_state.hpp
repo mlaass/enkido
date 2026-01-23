@@ -94,6 +94,7 @@ struct NoiseState {
 // Slew rate limiter state
 struct SlewState {
     float current = 0.0f;
+    bool initialized = false;
 };
 
 // Sample and hold state
@@ -234,6 +235,63 @@ struct MoogState {
     // Cached coefficients
     float g = 0.0f;  // Cutoff coefficient (tan-based)
     float k = 0.0f;  // Resonance coefficient (0-4 range)
+};
+
+// ZDF Diode ladder filter state (TB-303 acid)
+struct DiodeState {
+    // 4 capacitor states for cascade stages
+    float cap[4] = {};
+
+    // Cached parameters for coefficient invalidation
+    float last_freq = -1.0f;
+    float last_res = -1.0f;
+
+    // Cached coefficients
+    float g = 0.0f;  // Cutoff coefficient
+    float k = 0.0f;  // Resonance coefficient (0-4)
+};
+
+// Formant (vowel) filter state - 3 parallel bandpass filters
+struct FormantState {
+    // 3 Chamberlin SVF bandpass filter states (2 integrators each)
+    float bp1_z1 = 0.0f, bp1_z2 = 0.0f;
+    float bp2_z1 = 0.0f, bp2_z2 = 0.0f;
+    float bp3_z1 = 0.0f, bp3_z2 = 0.0f;
+
+    // Cached parameters for coefficient invalidation
+    float last_morph = -1.0f;
+    float last_vowel_a = -1.0f;
+    float last_vowel_b = -1.0f;
+    float last_q = -1.0f;
+
+    // Cached target frequencies (interpolated between vowels)
+    float f1 = 650.0f, f2 = 1100.0f, f3 = 2860.0f;
+    // Cached gains per formant
+    float g1 = 1.0f, g2 = 0.5f, g3 = 0.25f;
+};
+
+// Sallen-Key (MS-20 style) filter state
+struct SallenkeyState {
+    // 2 capacitor states
+    float cap1 = 0.0f;
+    float cap2 = 0.0f;
+
+    // Diode clipper state in feedback path
+    float diode_state = 0.0f;
+
+    // Cached parameters
+    float last_freq = -1.0f;
+    float last_res = -1.0f;
+
+    // Cached coefficients
+    float g = 0.0f;
+    float k = 0.0f;
+};
+
+// ADAA wavefolder state
+struct FoldADAAState {
+    float x_prev = 0.0f;    // Previous input sample
+    float ad_prev = 0.0f;   // Previous antiderivative value
 };
 
 // ============================================================================
@@ -439,8 +497,8 @@ struct LimiterState {
 // Gate state
 struct GateState {
     float envelope = 0.0f;
-    float gain = 0.0f;
-    bool is_open = false;
+    float gain = 1.0f;   // Start at unity (gate open by default)
+    bool is_open = true; // Match initial gain state
     float hold_counter = 0.0f;
 
     // Cached coefficients
@@ -630,6 +688,9 @@ using DSPState = std::variant<
     TimelineState,
     // Filter states
     MoogState,
+    DiodeState,
+    FormantState,
+    SallenkeyState,
     // Distortion states
     BitcrushState,
     SmoothSatState,
@@ -637,6 +698,7 @@ using DSPState = std::variant<
     TapeState,
     XfmrState,
     ExciterState,
+    FoldADAAState,
     // Modulation states
     CombFilterState,
     FlangerState,

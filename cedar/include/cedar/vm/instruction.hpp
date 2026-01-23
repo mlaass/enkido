@@ -37,7 +37,10 @@ enum class Opcode : std::uint8_t {
     FILTER_SVF_LP = 33,
     FILTER_SVF_HP = 34,
     FILTER_SVF_BP = 35,
-    FILTER_MOOG = 36,     // 4-pole Moog-style ladder filter with resonance
+    FILTER_MOOG = 36,       // 4-pole Moog-style ladder filter with resonance
+    FILTER_DIODE = 37,      // ZDF diode ladder filter (TB-303 acid)
+    FILTER_FORMANT = 38,    // 3-band vowel morphing filter
+    FILTER_SALLENKEY = 39,  // MS-20 style filter with diode feedback
 
     // Math (40-49)
     ABS = 40,

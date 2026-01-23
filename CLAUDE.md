@@ -193,6 +193,18 @@ This generates `src/lib/docs/lookup-index.ts` which maps keywords to documentati
 - Frontmatter `keywords` arrays
 - H2 headings in builtin docs (for function-level anchors)
 
+## Python Experiments
+
+The `experiments/` directory contains Python scripts for testing Cedar opcodes. Always use `uv run python` to run scripts:
+
+```bash
+cd experiments
+uv run python test_filters.py
+uv run python test_effects.py
+```
+
+The Python bindings (`cedar_core`) are built to `experiments/cedar_core.cpython-*.so` by the `cedar_core` CMake target.
+
 ## Implementation Notes
 
 ### Thread Safety

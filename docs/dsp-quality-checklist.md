@@ -80,7 +80,13 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | `FILTER_SVF_BP` | ✅ Tested | Frequency response, resonance sweep | State-variable bandpass |
 | `FILTER_MOOG` | ✅ Tested | Resonance sweep, self-oscillation | Classic ladder character |
 
-*All implemented filter opcodes have been tested.*
+### Untested
+
+| Opcode | Priority | Suggested Tests |
+|--------|----------|-----------------|
+| `FILTER_DIODE` | High | Self-oscillation, resonance character, diode nonlinearity |
+| `FILTER_FORMANT` | High | Vowel accuracy, morph smoothness, formant frequencies |
+| `FILTER_SALLENKEY` | Medium | Mode switching, diode clipping, aggressive resonance |
 
 ---
 
@@ -92,7 +98,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 |--------|--------|---------------|-------|
 | `DISTORT_TANH` | ✅ Tested | Transfer curve | Soft clipping saturation |
 | `DISTORT_SOFT` | ✅ Tested | Transfer curve | Gentle saturation |
-| `DISTORT_FOLD` | ✅ Tested | Transfer curve | Wavefolder |
+| `DISTORT_FOLD` | ⚠️ Updated | Transfer curve (old), needs ADAA testing | Sine wavefolder with ADAA antialiasing |
 | `DISTORT_TUBE` | ✅ Tested | Transfer curve | Tube-style harmonics |
 | `DISTORT_BITCRUSH` | ✅ Tested | Bit depth levels, sample rate reduction | Quantization + aliasing |
 | `EFFECT_PHASER` | ✅ Tested | Spectrogram sweep | 6-stage phaser |
@@ -211,8 +217,8 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | Category | Tested | Partial/Bug | Untested | Notes |
 |----------|--------|-------------|----------|-------|
 | Oscillators | 11 | - | 9 | Via test_oscillators.py, test_fm_aliasing.py |
-| Filters | 4 | - | 0 | Via test_filters.py |
-| Effects | 8 | - | 5 | Via test_effects.py |
+| Filters | 4 | - | 3 | Via test_filters.py; new: DIODE, FORMANT, SALLENKEY |
+| Effects | 7 | 1 | 5 | Via test_effects.py; DISTORT_FOLD updated to ADAA |
 | Delays & Reverbs | 2 | - | 2 | Via test_effects.py |
 | Samplers | 2 | - | 0 | Via test_sampler.py |
 | Envelopes | 3 | - | 0 | Via test_envelopes.py |
@@ -258,7 +264,6 @@ These opcodes are not yet implemented but may be added in the future.
 | `FILTER_BIQUAD_PEAK` | Peaking EQ |
 | `FILTER_BIQUAD_LSHELF` | Low shelf EQ |
 | `FILTER_BIQUAD_HSHELF` | High shelf EQ |
-| `FILTER_DIODE` | Diode ladder filter |
 | `FILTER_COMB` | Comb filter (feedforward) |
 | `FILTER_ALLPASS` | Allpass filter |
 
