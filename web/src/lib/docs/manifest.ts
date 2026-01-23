@@ -982,24 +982,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Math Functions"
 	},
-	"phasor": {
-		"slug": "oscillators",
-		"category": "builtins",
-		"title": "phasor",
-		"anchor": "phasor"
-	},
-	"ramp": {
-		"slug": "oscillators",
-		"category": "builtins",
-		"title": "ramp",
-		"anchor": "ramp"
-	},
-	"noise": {
-		"slug": "oscillators",
-		"category": "builtins",
-		"title": "noise",
-		"anchor": "noise"
-	},
 	"tri": {
 		"slug": "oscillators",
 		"category": "builtins",
@@ -1026,6 +1008,21 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Oscillators"
 	},
 	"square": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
+	"phasor": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
+	"ramp": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
+	"noise": {
 		"slug": "oscillators",
 		"category": "builtins",
 		"title": "Oscillators"
@@ -1181,7 +1178,7 @@ export const previews: Record<string, string> = {
 	"envelopes": "Envelopes shape the amplitude or other parameters of a sound over time. They respond to gates (sustained signals) or triggers (momentary pulses).",
 	"modulation": "Modulation effects use time-varying delays to create movement and spatial interest in sounds.",
 	"math": "Mathematical operations for signal processing and control logic.",
-	"oscillators": "Oscillators are the fundamental sound sources in synthesis. They generate periodic waveforms at specified frequencies.",
+	"oscillators": "Oscillators are the fundamental sound sources in synthesis. The  function is the unified interface for all oscillator types.",
 	"dynamics": "Dynamics processors control the volume envelope of signals, reducing dynamic range or removing unwanted quiet sections.",
 	"reverbs": "Reverbs simulate acoustic spaces by creating many delayed, filtered reflections. Different algorithms offer different sonic characteristics.",
 	"DOCUMENTATION_GUIDE": "This guide outlines standards and practices for writing NKIDO documentation."

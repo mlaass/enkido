@@ -61,7 +61,7 @@ osc("sin", 55) * ar(trigger(4), 0.001, 0.2) |> out(%, %)
 
 ```akk
 // Hi-hat
-noise() |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
+osc("noise") |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
 ```
 
 ```akk

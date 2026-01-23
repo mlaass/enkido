@@ -75,7 +75,7 @@ osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(%, %)
 
 ```akk
 // Hi-hat on 8th notes
-noise() |> hp(%, 8000) * ar(trigger(2), 0.001, 0.05) |> out(%, %)
+osc("noise") |> hp(%, 8000) * ar(trigger(2), 0.001, 0.05) |> out(%, %)
 ```
 
 ```akk
@@ -106,7 +106,7 @@ osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%, %)
 
 ```akk
 // West African bell
-noise() |> hp(%, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(%, %)
+osc("noise") |> hp(%, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(%, %)
 ```
 
 ```akk

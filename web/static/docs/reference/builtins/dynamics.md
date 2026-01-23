@@ -35,7 +35,7 @@ osc("saw", 55) * ar(trigger(4)) |> comp(%, -20, 10) |> out(%, %)
 
 ```akk
 // Gentle leveling
-noise() * ar(trigger(1)) |> comp(%, -6, 2) |> out(%, %)
+osc("noise") * ar(trigger(1)) |> comp(%, -6, 2) |> out(%, %)
 ```
 
 Related: [limiter](#limiter), [gate](#gate)
@@ -86,12 +86,12 @@ Cuts the signal when it falls below the threshold, useful for removing noise dur
 
 ```akk
 // Basic noise gate
-(osc("saw", 110) + noise() * 0.1) * ar(trigger(2)) |> gate(%, -30, 6) |> out(%, %)
+(osc("saw", 110) + osc("noise") * 0.1) * ar(trigger(2)) |> gate(%, -30, 6) |> out(%, %)
 ```
 
 ```akk
 // Tight gate for percussive sounds
-noise() * ar(trigger(8), 0.001, 0.05) |> gate(%, -20, 10) |> out(%, %)
+osc("noise") * ar(trigger(8), 0.001, 0.05) |> gate(%, -20, 10) |> out(%, %)
 ```
 
 Related: [comp](#comp)

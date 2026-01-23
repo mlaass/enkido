@@ -61,7 +61,7 @@ sin(mtof(69)) |> out(%, %)
 
 ```akk
 // Chromatic scale using modulation
-sin(mtof(48 + phasor(2) * 12)) |> out(%, %)
+sin(mtof(48 + osc("phasor", 2) * 12)) |> out(%, %)
 ```
 
 ---
@@ -119,12 +119,12 @@ Samples the input signal each time the trigger fires and holds that value until 
 
 ```akk
 // Random pitches
-sin(mtof(48 + sah(noise() * 24, trigger(4)))) |> out(%, %)
+sin(mtof(48 + sah(osc("noise") * 24, trigger(4)))) |> out(%, %)
 ```
 
 ```akk
 // Stepped filter
-saw(110) |> lp(%, 200 + sah(noise() * 2000, trigger(2))) |> out(%, %)
+saw(110) |> lp(%, 200 + sah(osc("noise") * 2000, trigger(2))) |> out(%, %)
 ```
 
 ---

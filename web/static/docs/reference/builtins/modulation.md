@@ -95,7 +95,7 @@ osc("sqr", 220) |> phaser(%, 2, 0.5) |> out(%, %)
 
 ```akk
 // Slow deep sweep
-noise() |> lp(%, 2000) |> phaser(%, 0.1, 0.9) |> out(%, %)
+osc("noise") |> lp(%, 2000) |> phaser(%, 0.1, 0.9) |> out(%, %)
 ```
 
 Related: [flanger](#flanger), [chorus](#chorus)
@@ -116,7 +116,7 @@ A comb filter creates a series of peaks and notches at harmonics of the delay fr
 
 ```akk
 // Tuned resonator at ~220 Hz
-noise() |> comb(%, 1/220, 0.95) |> out(%, %)
+osc("noise") |> comb(%, 1/220, 0.95) |> out(%, %)
 ```
 
 ```akk
@@ -126,7 +126,7 @@ osc("saw", 110) |> comb(%, 0.01, 0.7) |> out(%, %)
 
 ```akk
 // Karplus-Strong style pluck
-noise() * ar(trigger(4), 0.001, 0.01) |> comb(%, 1/440, 0.99) |> out(%, %)
+osc("noise") * ar(trigger(4), 0.001, 0.01) |> comb(%, 1/440, 0.99) |> out(%, %)
 ```
 
 Related: [flanger](#flanger), [delay](#../delays#delay)

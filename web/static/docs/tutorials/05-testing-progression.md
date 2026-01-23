@@ -82,7 +82,7 @@ Expected: Squared envelope shape (sharper attack feel)
 ### A10: Bandpass Filter
 ```akkado
 bpm = 120
-noise() |> bp(%, 1000, 4) * ar(trigger(4), 0.001, 0.05) |> out(%, %)
+osc("noise") |> bp(%, 1000, 4) * ar(trigger(4), 0.001, 0.05) |> out(%, %)
 ```
 Expected: Filtered noise bursts (hi-hat-like)
 
@@ -275,7 +275,7 @@ Expected: 808-style synthesized kick
 ### F2: Synthesized Snare
 ```akkado
 bpm = 120
-snare = noise() |> bp(%, 1000, 2) * ar(trigger(2), 0.001, 0.1) * 0.5
+snare = osc("noise") |> bp(%, 1000, 2) * ar(trigger(2), 0.001, 0.1) * 0.5
 snare |> out(%, %)
 ```
 Expected: Filtered noise snare on beats 2 and 4
@@ -284,8 +284,8 @@ Expected: Filtered noise snare on beats 2 and 4
 ```akkado
 bpm = 120
 kick = osc("sin", 55 * (1 + ar(trigger(1), 0.001, 0.02) * 2)) * ar(trigger(1), 0.005, 0.2)
-snare = noise() |> bp(%, 1000, 2) * ar(euclid(2, 8, 4), 0.001, 0.1) * 0.5
-hat = noise() |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.2
+snare = osc("noise") |> bp(%, 1000, 2) * ar(euclid(2, 8, 4), 0.001, 0.1) * 0.5
+hat = osc("noise") |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.2
 kick + snare + hat |> out(%, %)
 ```
 Expected: Layered drum kit

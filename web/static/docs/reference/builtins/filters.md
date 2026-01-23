@@ -63,7 +63,7 @@ osc("saw", 110) |> hp(%, 200) |> out(%, %)
 
 ```akk
 // Hi-hat from noise
-noise() |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
+osc("noise") |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
 ```
 
 Related: [lp](#lp), [bp](#bp)
@@ -124,7 +124,7 @@ osc("saw", 110) |> moog(%, 100 + osc("sin", 0.5) * 1000, 3.5) |> out(%, %)
 
 ```akk
 // Self-oscillating filter (use as oscillator)
-noise() * 0.01 |> moog(%, 440, 3.9) |> out(%, %)
+osc("noise") * 0.01 |> moog(%, 440, 3.9) |> out(%, %)
 ```
 
 Related: [lp](#lp)

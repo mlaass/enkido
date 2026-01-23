@@ -32,7 +32,7 @@ Combine different trigger rates for drum patterns:
 ```akk
 // Simple kick and hi-hat
 kick = osc("sin", 55) * ar(trigger(1), 0.005, 0.15)
-hat = noise() |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.3
+hat = osc("noise") |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.3
 
 kick + hat |> out(%, %)
 ```
@@ -54,7 +54,7 @@ Classic Euclidean patterns:
 ```akk
 // Layered Euclidean rhythms
 kick = osc("sin", 55) * ar(euclid(4, 16), 0.005, 0.15)
-perc = noise() |> bp(%, 2000, 4) * ar(euclid(5, 16), 0.001, 0.05) * 0.4
+perc = osc("noise") |> bp(%, 2000, 4) * ar(euclid(5, 16), 0.001, 0.05) * 0.4
 
 kick + perc |> out(%, %)
 ```
@@ -113,15 +113,15 @@ kick = osc("sin", 55 * (1 + ar(trigger(1), 0.001, 0.02) * 2))
     * ar(trigger(1), 0.005, 0.2)
 
 // Snare
-snare = noise() |> bp(%, 1000, 2)
+snare = osc("noise") |> bp(%, 1000, 2)
     * ar(euclid(2, 8, 4), 0.001, 0.1) * 0.5
 
 // Hi-hat
-hat = noise() |> hp(%, 8000)
+hat = osc("noise") |> hp(%, 8000)
     * ar(trigger(4), 0.001, 0.03) * 0.2
 
 // Ride
-ride = noise() |> bp(%, 6000, 8)
+ride = osc("noise") |> bp(%, 6000, 8)
     * ar(euclid(3, 8), 0.001, 0.1) * 0.15
 
 kick + snare + hat + ride |> out(%, %)
@@ -134,7 +134,7 @@ Create tension with conflicting rhythms:
 ```akk
 // 3 against 4
 bass = osc("saw", 55) * ar(euclid(3, 12), 0.01, 0.15) |> lp(%, 400)
-perc = noise() |> hp(%, 4000) * ar(euclid(4, 12), 0.001, 0.05) * 0.3
+perc = osc("noise") |> hp(%, 4000) * ar(euclid(4, 12), 0.001, 0.05) * 0.3
 
 bass + perc |> out(%, %)
 ```

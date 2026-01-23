@@ -105,7 +105,7 @@ Great for hi-hats and making sounds thinner:
 
 ```akk
 // Hi-hat from filtered noise
-noise() |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
+osc("noise") |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
 ```
 
 ## The Moog Filter
@@ -119,7 +119,7 @@ osc("saw", 55) |> moog(%, 400, 2) |> out(%, %)
 
 ```akk
 // Self-oscillating filter - acts as an oscillator!
-noise() * 0.01 |> moog(%, 440, 3.9) |> out(%, %)
+osc("noise") * 0.01 |> moog(%, 440, 3.9) |> out(%, %)
 ```
 
 ## Chaining Filters

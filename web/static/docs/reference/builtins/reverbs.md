@@ -35,7 +35,7 @@ osc("saw", 110) * ar(trigger(1)) |> freeverb(%, 0.9, 0.3) |> out(%, %)
 
 ```akk
 // Damped small room
-noise() * ar(trigger(4), 0.001, 0.05) |> freeverb(%, 0.2, 0.8) |> out(%, %)
+osc("noise") * ar(trigger(4), 0.001, 0.05) |> freeverb(%, 0.2, 0.8) |> out(%, %)
 ```
 
 Related: [dattorro](#dattorro), [fdn](#fdn)
@@ -91,7 +91,7 @@ osc("saw", 55) * ar(trigger(0.5)) |> fdn(%, 0.9, 0.4) |> out(%, %)
 
 ```akk
 // Tight room
-noise() * ar(trigger(8), 0.001, 0.02) |> fdn(%, 0.4, 0.6) |> out(%, %)
+osc("noise") * ar(trigger(8), 0.001, 0.02) |> fdn(%, 0.4, 0.6) |> out(%, %)
 ```
 
 Related: [freeverb](#freeverb), [dattorro](#dattorro)
