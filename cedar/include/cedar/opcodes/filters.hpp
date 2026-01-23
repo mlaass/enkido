@@ -229,10 +229,18 @@ inline float diode_cosh(float x) {
     return 1.0f + x2 * (0.5f + x2 * 0.0416667f);
 }
 
+// Default constants for diode ladder filter (used when inputs provide 0 or negative values)
+// VT: Thermal voltage - affects diode curve sharpness (real diode ~0.026V)
+// FB_GAIN: Feedback multiplier to compensate for VT attenuation in feedback path
+constexpr float DIODE_VT_DEFAULT = 0.026f;
+constexpr float DIODE_FB_GAIN_DEFAULT = 10.0f;
+
 // FILTER_DIODE: ZDF 4-pole diode ladder filter
 // in0: input signal
 // in1: cutoff frequency (Hz)
 // in2: resonance (0.0-4.0, self-oscillates at ~3.5+)
+// in3: vt - thermal voltage (affects diode curve sharpness, default 0.026)
+// in4: fb_gain - feedback gain multiplier (compensates VT attenuation, default 10.0)
 //
 // Based on the Roland TB-303 filter topology with diode nonlinearity.
 // Uses Newton-Raphson iteration for implicit integration.
@@ -243,15 +251,18 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* res = ctx.buffers->get(inst.inputs[2]);
+    const float* vt_in = ctx.buffers->get(inst.inputs[3]);
+    const float* fb_gain_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<DiodeState>(inst.state_id);
-
-    // Thermal voltage scaling (affects diode curve sharpness)
-    constexpr float VT = 0.026f;  // ~26mV at room temperature
-    constexpr float VT_INV = 1.0f / VT;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
+
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float vt = vt_in[i] > 0.0f ? vt_in[i] : DIODE_VT_DEFAULT;
+        float vt_inv = 1.0f / vt;
+        float fb_gain = fb_gain_in[i] > 0.0f ? fb_gain_in[i] : DIODE_FB_GAIN_DEFAULT;
 
         // Update coefficients if parameters changed
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -271,8 +282,9 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
 
         // Get feedback from output with diode nonlinearity
         // The diode creates exponential response at extremes
-        float fb_voltage = state.cap[3] * VT_INV;
-        float feedback = state.k * diode_sinh(fb_voltage) * VT;
+        // fb_gain compensates for VT attenuation to enable proper self-oscillation
+        float fb_voltage = state.cap[3] * vt_inv;
+        float feedback = state.k * diode_sinh(fb_voltage) * vt * fb_gain;
 
         // Input with feedback
         float x = input[i] - feedback;
@@ -294,14 +306,14 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
             float v_diff = v_in - v_est;
 
             // Nonlinear transfer through diode
-            float diode_v = v_diff * VT_INV;
+            float diode_v = v_diff * vt_inv;
             float i_diode = diode_sinh(diode_v);
-            float di_diode = diode_cosh(diode_v) * VT_INV;
+            float di_diode = diode_cosh(diode_v) * vt_inv;
 
             // Newton-Raphson update: v_new = v_old - f(v)/f'(v)
             // f(v) = v - G * i_diode - (1-G) * v_cap
-            float f_v = v_est - G * i_diode * VT - (1.0f - G) * state.cap[j];
-            float df_v = 1.0f + G * di_diode * VT;
+            float f_v = v_est - G * i_diode * vt - (1.0f - G) * state.cap[j];
+            float df_v = 1.0f + G * di_diode * vt;
 
             float v_new = v_est - f_v / df_v;
 
