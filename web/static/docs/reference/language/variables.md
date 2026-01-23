@@ -18,7 +18,7 @@ Use `=` to bind a value to a name:
 freq = 440
 
 // Use it in oscillators
-sin(freq) |> out(%, %)
+osc("sin", freq) |> out(%, %)
 ```
 
 ## Signal Variables
@@ -27,7 +27,7 @@ Variables can store entire signal chains:
 
 ```akk
 // Store an oscillator
-osc = saw(110) |> lp(%, 800)
+osc = osc("saw", 110) |> lp(%, 800)
 
 // Use it multiple times
 osc |> out(%, %)
@@ -39,12 +39,12 @@ Variables make complex patches readable:
 
 ```akk
 // Define components
-lfo_mod = sin(0.5) * 500
+lfo_mod = osc("sin", 0.5) * 500
 base_freq = 110
 filter_cutoff = 400 + lfo_mod
 
 // Build the patch
-saw(base_freq) |> lp(%, filter_cutoff) |> out(%, %)
+osc("saw", base_freq) |> lp(%, filter_cutoff) |> out(%, %)
 ```
 
 ## Naming Rules
@@ -57,8 +57,8 @@ saw(base_freq) |> lp(%, filter_cutoff) |> out(%, %)
 ```akk
 // Valid names
 freq = 440
-my_osc = sin(220)
-bass1 = saw(55)
+my_osc = osc("sin", 220)
+bass1 = osc("saw", 55)
 _internal = 0.5
 
 // Invalid names

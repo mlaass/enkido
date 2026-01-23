@@ -21,7 +21,7 @@ Returns the current position in the clock cycle. Use with other timing functions
 
 ```akk
 // Use clock for tempo-synced effects
-saw(110) |> delay(%, clock() / 4, 0.4) |> out(%, %)
+osc("saw", 110) |> delay(%, clock() / 4, 0.4) |> out(%, %)
 ```
 
 Related: [trigger](#trigger), [lfo](#lfo)
@@ -41,17 +41,17 @@ A low-frequency oscillator for modulation. The duty parameter controls the pulse
 
 ```akk
 // Vibrato
-sin(220 + lfo(5) * 10) |> out(%, %)
+osc("sin", 220 + lfo(5) * 10) |> out(%, %)
 ```
 
 ```akk
 // Tremolo
-saw(220) * (0.5 + lfo(4) * 0.5) |> out(%, %)
+osc("saw", 220) * (0.5 + lfo(4) * 0.5) |> out(%, %)
 ```
 
 ```akk
 // Filter sweep
-saw(110) |> lp(%, 500 + lfo(0.2) * 1500) |> out(%, %)
+osc("saw", 110) |> lp(%, 500 + lfo(0.2) * 1500) |> out(%, %)
 ```
 
 Related: [clock](#clock), [trigger](#trigger)
@@ -70,7 +70,7 @@ Generates short impulses at regular intervals. A div of 4 means 4 triggers per b
 
 ```akk
 // Kick drum on quarter notes
-sin(55) * ar(trigger(1), 0.01, 0.2) |> out(%, %)
+osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(%, %)
 ```
 
 ```akk
@@ -80,7 +80,7 @@ noise() |> hp(%, 8000) * ar(trigger(2), 0.001, 0.05) |> out(%, %)
 
 ```akk
 // Fast arpeggio triggers
-saw(mtof(48 + seq_step(1) * 12)) * ar(trigger(8)) |> out(%, %)
+osc("saw", mtof(48 + seq_step(1) * 12)) * ar(trigger(8)) |> out(%, %)
 ```
 
 Related: [euclid](#euclid), [lfo](#lfo)
@@ -101,7 +101,7 @@ Creates rhythms by distributing hits as evenly as possible across steps. Classic
 
 ```akk
 // Tresillo pattern
-sin(55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%, %)
+osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%, %)
 ```
 
 ```akk
@@ -111,7 +111,7 @@ noise() |> hp(%, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(%, %)
 
 ```akk
 // Rotated pattern
-saw(110) * ar(euclid(5, 16, 2)) |> lp(%, 800) |> out(%, %)
+osc("saw", 110) * ar(euclid(5, 16, 2)) |> lp(%, 800) |> out(%, %)
 ```
 
 Related: [trigger](#trigger), [seq_step](#seq_step)
@@ -130,12 +130,12 @@ Returns the current step position as an integer, useful for indexing into arrays
 
 ```akk
 // 4-note pattern
-saw(mtof(48 + seq_step(2) * 3)) * ar(trigger(2)) |> out(%, %)
+osc("saw", mtof(48 + seq_step(2) * 3)) * ar(trigger(2)) |> out(%, %)
 ```
 
 ```akk
 // Fast arpeggio
-tri(mtof(36 + seq_step(8) * 7)) * ar(trigger(8)) |> out(%, %)
+osc("tri", mtof(36 + seq_step(8) * 7)) * ar(trigger(8)) |> out(%, %)
 ```
 
 Related: [trigger](#trigger), [euclid](#euclid), [timeline](#timeline)
@@ -154,7 +154,7 @@ Creates smooth automation curves between breakpoints. Used for complex parameter
 
 ```akk
 // Volume automation
-saw(220) * timeline() |> out(%, %)
+osc("saw", 220) * timeline() |> out(%, %)
 ```
 
 Related: [lfo](#lfo), [seq_step](#seq_step)

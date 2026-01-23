@@ -2,124 +2,50 @@
 title: Oscillators
 category: builtins
 order: 1
-keywords: [oscillator, sin, sine, tri, triangle, saw, sawtooth, sqr, square, phasor, ramp, noise, waveform, tone, frequency]
+keywords: [oscillator, osc, sin, sine, tri, triangle, saw, sawtooth, sqr, square, phasor, ramp, noise, waveform, tone, frequency]
 ---
 
 # Oscillators
 
 Oscillators are the fundamental sound sources in synthesis. They generate periodic waveforms at specified frequencies.
 
-## sin
+## osc
 
-**Sine Oscillator** - Generates a pure sine wave.
-
-| Param | Type   | Description |
-|-------|--------|-------------|
-| freq  | signal | Frequency in Hz |
-
-Aliases: `sine`
-
-The sine wave is the purest tone, containing only the fundamental frequency with no harmonics. Useful for sub-bass, FM synthesis, and LFOs.
-
-```akk
-// Concert A (440 Hz)
-sin(440) |> out(%, %)
-```
-
-```akk
-// Vibrato using FM
-sin(440 + sin(5) * 10) |> out(%, %)
-```
-
-```akk
-// Sub-bass with envelope
-sin(55) * ar(trigger(4), 0.01, 0.3) |> out(%, %)
-```
-
-Related: [tri](#tri), [saw](#saw), [sqr](#sqr)
-
----
-
-## tri
-
-**Triangle Oscillator** - Generates a triangle wave.
+**Generic Oscillator** - Generates a waveform of the specified type.
 
 | Param | Type   | Description |
 |-------|--------|-------------|
+| type  | string | Waveform type: `"sin"`, `"tri"`, `"saw"`, `"sqr"` |
 | freq  | signal | Frequency in Hz |
 
-Aliases: `triangle`
-
-Triangle waves have odd harmonics that roll off at -12dB/octave, giving a softer, mellower tone than sawtooth or square waves.
+The primary oscillator function. Use this for all waveform types, especially for sine waves since `sin()` is now a pure math function.
 
 ```akk
-// Mellow lead sound
-tri(330) |> out(%, %)
+// Sine wave (440 Hz)
+osc("sin", 440) |> out(%, %)
 ```
 
 ```akk
-// Filtered triangle bass
-tri(110) |> lp(%, 800) |> out(%, %)
-```
-
-Related: [sin](#sin), [saw](#saw), [sqr](#sqr)
-
----
-
-## saw
-
-**Sawtooth Oscillator** - Generates a sawtooth wave.
-
-| Param | Type   | Description |
-|-------|--------|-------------|
-| freq  | signal | Frequency in Hz |
-
-Aliases: `sawtooth`
-
-Sawtooth waves contain all harmonics, making them rich and buzzy. They're the foundation of many classic synth sounds.
-
-```akk
-// Classic synth lead
-saw(440) |> out(%, %)
+// Sawtooth wave
+osc("saw", 220) |> out(%, %)
 ```
 
 ```akk
-// Detuned supersaw
-saw(440) + saw(442) + saw(438) |> out(%, %) * 0.3
+// Triangle wave
+osc("tri", 110) |> out(%, %)
 ```
 
 ```akk
-// Filtered pad
-saw(220) |> lp(%, 1000, 2) |> out(%, %)
-```
-
-Related: [sin](#sin), [tri](#tri), [sqr](#sqr)
-
----
-
-## sqr
-
-**Square Oscillator** - Generates a square wave.
-
-| Param | Type   | Description |
-|-------|--------|-------------|
-| freq  | signal | Frequency in Hz |
-
-Aliases: `square`
-
-Square waves have only odd harmonics, producing a hollow, woody tone. Great for basses and retro sounds.
-
-```akk
-// 8-bit style sound
-sqr(440) * 0.3 |> out(%, %)
+// Square wave
+osc("sqr", 110) * 0.3 |> out(%, %)
 ```
 
 ```akk
-// Octave bass
-sqr(110) + sqr(55) * 0.5 |> out(%, %) * 0.3
+// FM synthesis
+osc("sin", 440 + osc("sin", 5) * 10) |> out(%, %)
 ```
 
-Related: [sin](#sin), [tri](#tri), [saw](#saw)
+Related: [phasor](#phasor), [noise](#noise), [Math Functions](math)
 
 ---
 
@@ -140,7 +66,12 @@ phasor(2) |> out(%, %)
 
 ```akk
 // FM using phasor as modulator
-sin(440 + phasor(5) * 100) |> out(%, %)
+osc("sin", 440 + phasor(5) * 100) |> out(%, %)
+```
+
+```akk
+// Create a sine from phasor using math sin()
+sin(phasor(440) * 2 * 3.14159) |> out(%, %)
 ```
 
 Related: [ramp](#ramp), [lfo](#lfo)
@@ -185,7 +116,7 @@ noise() |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%, %)
 
 ```akk
 // Noise sweep
-noise() |> lp(%, 200 + sin(0.5) * 1000) |> out(%, %)
+noise() |> lp(%, 200 + osc("sin", 0.5) * 1000) |> out(%, %)
 ```
 
 Related: [lp](#lp), [hp](#hp)

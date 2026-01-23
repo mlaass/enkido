@@ -25,12 +25,12 @@ Reduces the level of signals that exceed the threshold. Higher ratios create mor
 
 ```akk
 // Basic compression
-saw(110) * ar(trigger(2)) |> comp(%, -12, 4) |> out(%, %)
+osc("saw", 110) * ar(trigger(2)) |> comp(%, -12, 4) |> out(%, %)
 ```
 
 ```akk
 // Heavy compression (limiting-like)
-saw(55) * ar(trigger(4)) |> comp(%, -20, 10) |> out(%, %)
+osc("saw", 55) * ar(trigger(4)) |> comp(%, -20, 10) |> out(%, %)
 ```
 
 ```akk
@@ -58,12 +58,12 @@ A limiter is an extreme compressor (infinite ratio) that prevents the signal fro
 
 ```akk
 // Master limiter
-saw(110) * 2 |> limiter(%, -0.1, 0.1) |> out(%, %)
+osc("saw", 110) * 2 |> limiter(%, -0.1, 0.1) |> out(%, %)
 ```
 
 ```akk
 // Aggressive limiting for loudness
-saw(55) * ar(trigger(4)) * 3 |> limiter(%, -1, 0.05) |> out(%, %)
+osc("saw", 55) * ar(trigger(4)) * 3 |> limiter(%, -1, 0.05) |> out(%, %)
 ```
 
 Related: [comp](#comp)
@@ -86,7 +86,7 @@ Cuts the signal when it falls below the threshold, useful for removing noise dur
 
 ```akk
 // Basic noise gate
-(saw(110) + noise() * 0.1) * ar(trigger(2)) |> gate(%, -30, 6) |> out(%, %)
+(osc("saw", 110) + noise() * 0.1) * ar(trigger(2)) |> gate(%, -30, 6) |> out(%, %)
 ```
 
 ```akk

@@ -26,7 +26,7 @@ Space-separated notes play in sequence over one cycle:
 
 ```akk
 // Four notes per cycle
-pat("c4 e4 g4 c5") |> ((f) -> sin(f) * ar(trigger(4))) |> out(%, %)
+pat("c4 e4 g4 c5") |> ((f) -> osc("sin", f) * ar(trigger(4))) |> out(%, %)
 ```
 
 ## Rests
@@ -96,7 +96,7 @@ pat("c4*4 e4")
 Basic pattern playback:
 
 ```akk
-pat("c4 e4 g4") |> ((f) -> sin(f)) |> out(%, %)
+pat("c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(%, %)
 ```
 
 ### seq()
@@ -120,21 +120,21 @@ note("c4")
 ```akk
 // Simple melody
 pat("c4 e4 g4 e4") |> ((f) ->
-    saw(f) |> lp(%, 1500) * ar(trigger(4))
+    osc("saw", f) |> lp(%, 1500) * ar(trigger(4))
 ) |> out(%, %)
 ```
 
 ```akk
 // Chord progression
 pat("c3:maj e3:min a3:min g3:maj") |> ((f) ->
-    saw(f) |> lp(%, 800) * ar(trigger(1), 0.1, 0.5)
+    osc("saw", f) |> lp(%, 800) * ar(trigger(1), 0.1, 0.5)
 ) |> out(%, %)
 ```
 
 ```akk
 // Rhythmic pattern with rests
 pat("c4 ~ e4 ~ g4 ~ e4 ~") |> ((f) ->
-    tri(f) * ar(trigger(8), 0.01, 0.1)
+    osc("tri", f) * ar(trigger(8), 0.01, 0.1)
 ) |> out(%, %)
 ```
 

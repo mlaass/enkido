@@ -305,6 +305,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "tutorials",
 		"title": "Hello Sine"
 	},
+	"osc": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "osc",
+		"anchor": "osc"
+	},
 	"mini-notation": {
 		"slug": "basics",
 		"category": "mini-notation",
@@ -567,11 +573,11 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Filters"
 	},
-	"tanh": {
+	"saturate": {
 		"slug": "distortion",
 		"category": "builtins",
-		"title": "tanh",
-		"anchor": "tanh"
+		"title": "saturate",
+		"anchor": "saturate"
 	},
 	"softclip": {
 		"slug": "distortion",
@@ -627,11 +633,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Distortion"
 	},
 	"wavefold": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "Distortion"
-	},
-	"saturate": {
 		"slug": "distortion",
 		"category": "builtins",
 		"title": "Distortion"
@@ -824,6 +825,18 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Ternary Math",
 		"anchor": "ternary-math"
 	},
+	"trigonometric functions": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Trigonometric Functions",
+		"anchor": "trigonometric-functions"
+	},
+	"hyperbolic functions": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Hyperbolic Functions",
+		"anchor": "hyperbolic-functions"
+	},
 	"math": {
 		"slug": "math",
 		"category": "builtins",
@@ -910,28 +923,64 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Math Functions"
 	},
 	"sin": {
-		"slug": "oscillators",
+		"slug": "math",
 		"category": "builtins",
-		"title": "sin",
-		"anchor": "sin"
+		"title": "Math Functions"
 	},
-	"tri": {
-		"slug": "oscillators",
+	"cos": {
+		"slug": "math",
 		"category": "builtins",
-		"title": "tri",
-		"anchor": "tri"
+		"title": "Math Functions"
 	},
-	"saw": {
-		"slug": "oscillators",
+	"tan": {
+		"slug": "math",
 		"category": "builtins",
-		"title": "saw",
-		"anchor": "saw"
+		"title": "Math Functions"
 	},
-	"sqr": {
-		"slug": "oscillators",
+	"asin": {
+		"slug": "math",
 		"category": "builtins",
-		"title": "sqr",
-		"anchor": "sqr"
+		"title": "Math Functions"
+	},
+	"acos": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"atan": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"atan2": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"sinh": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"cosh": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"tanh": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"trigonometry": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
+	},
+	"hyperbolic": {
+		"slug": "math",
+		"category": "builtins",
+		"title": "Math Functions"
 	},
 	"phasor": {
 		"slug": "oscillators",
@@ -951,12 +1000,27 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "noise",
 		"anchor": "noise"
 	},
+	"tri": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
 	"triangle": {
 		"slug": "oscillators",
 		"category": "builtins",
 		"title": "Oscillators"
 	},
+	"saw": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
 	"sawtooth": {
+		"slug": "oscillators",
+		"category": "builtins",
+		"title": "Oscillators"
+	},
+	"sqr": {
 		"slug": "oscillators",
 		"category": "builtins",
 		"title": "Oscillators"

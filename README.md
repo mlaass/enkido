@@ -45,15 +45,15 @@ bun run dev
 
 ## Example
 
-```
+```akkado
 // Simple oscillator patch
-sin(440) |> out
+osc("sin", 440) |> out(%, %)
 
 // Pattern-based sequence with filter
-note("c4 e4 g4 c5") |> saw(%) |> lpf(1000, 0.7) |> out
+note("c4 e4 g4 c5") |> osc("saw", %) |> lp(%, 1000, 0.7) |> out(%, %)
 
 // Chord with envelope
-'c4:maj' |> tri(%) |> adsr(0.01, 0.2, 0.5, 0.3) |> out
+'c4:maj' |> osc("tri", %) |> adsr(trigger(1), 0.01, 0.2) |> out(%, %)
 ```
 
 ## Architecture

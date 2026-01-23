@@ -25,17 +25,17 @@ A state-variable lowpass filter. Higher Q values add resonance at the cutoff fre
 
 ```akk
 // Basic lowpass at 800 Hz
-saw(220) |> lp(%, 800) |> out(%, %)
+osc("saw", 220) |> lp(%, 800) |> out(%, %)
 ```
 
 ```akk
 // Envelope-controlled filter sweep
-saw(110) |> lp(%, 200 + ar(trigger(4)) * 2000) |> out(%, %)
+osc("saw", 110) |> lp(%, 200 + ar(trigger(4)) * 2000) |> out(%, %)
 ```
 
 ```akk
 // Resonant filter
-saw(110) |> lp(%, 500, 8) |> out(%, %)
+osc("saw", 110) |> lp(%, 500, 8) |> out(%, %)
 ```
 
 Related: [hp](#hp), [bp](#bp), [moog](#moog)
@@ -58,7 +58,7 @@ Removes low frequencies. Useful for thinning out sounds or creating transitions.
 
 ```akk
 // Remove sub frequencies
-saw(110) |> hp(%, 200) |> out(%, %)
+osc("saw", 110) |> hp(%, 200) |> out(%, %)
 ```
 
 ```akk
@@ -86,12 +86,12 @@ Isolates a band of frequencies. Higher Q values create a narrower, more resonant
 
 ```akk
 // Telephone effect
-saw(220) |> bp(%, 1000, 4) |> out(%, %)
+osc("saw", 220) |> bp(%, 1000, 4) |> out(%, %)
 ```
 
 ```akk
 // Vocal formant
-saw(110) |> bp(%, 500, 10) |> out(%, %)
+osc("saw", 110) |> bp(%, 500, 10) |> out(%, %)
 ```
 
 Related: [lp](#lp), [hp](#hp)
@@ -114,12 +114,12 @@ The legendary Moog ladder filter with its characteristic warm, creamy sound. At 
 
 ```akk
 // Classic Moog bass
-saw(55) |> moog(%, 400, 2) |> out(%, %)
+osc("saw", 55) |> moog(%, 400, 2) |> out(%, %)
 ```
 
 ```akk
 // Filter sweep with high resonance
-saw(110) |> moog(%, 100 + sin(0.5) * 1000, 3.5) |> out(%, %)
+osc("saw", 110) |> moog(%, 100 + osc("sin", 0.5) * 1000, 3.5) |> out(%, %)
 ```
 
 ```akk

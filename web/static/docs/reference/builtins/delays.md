@@ -23,17 +23,17 @@ A simple delay line with feedback. Use short times (< 50ms) for comb filtering e
 
 ```akk
 // Simple echo at quarter note (120 BPM = 0.5s)
-saw(220) |> delay(%, 0.5, 0.4) |> out(%, %)
+osc("saw", 220) |> delay(%, 0.5, 0.4) |> out(%, %)
 ```
 
 ```akk
 // Slapback delay for thickening
-saw(110) |> delay(%, 0.08, 0.3) * 0.5 + % |> out(%, %)
+osc("saw", 110) |> delay(%, 0.08, 0.3) * 0.5 + % |> out(%, %)
 ```
 
 ```akk
 // Ping-pong style stereo delay
-saw(110) |> (delay(%, 0.3, 0.5), delay(%, 0.45, 0.5)) |> out(%, %)
+osc("saw", 110) |> (delay(%, 0.3, 0.5), delay(%, 0.45, 0.5)) |> out(%, %)
 ```
 
 Related: [freeverb](#../reverbs#freeverb), [comb](#../modulation#comb)

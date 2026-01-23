@@ -2,7 +2,7 @@
 title: Hello Sine
 order: 1
 category: tutorials
-keywords: [getting started, first sound, sine, oscillator, output, beginner, tutorial]
+keywords: [getting started, first sound, sine, oscillator, output, beginner, tutorial, osc]
 ---
 
 # Your First Sound
@@ -14,7 +14,7 @@ Welcome to Akkado! In this tutorial, you'll make your first sound and learn the 
 Every Akkado program is a signal flow graph. Let's start with the simplest possible patch - a sine wave sent to the output.
 
 ```akk
-sin(440) |> out(%, %)
+osc("sin", 440) |> out(%, %)
 ```
 
 Click **Run** above to hear a 440 Hz sine wave (concert A).
@@ -23,7 +23,7 @@ Click **Run** above to hear a 440 Hz sine wave (concert A).
 
 Let's break down what each part means:
 
-- `sin(440)` - Creates a sine wave oscillator at 440 Hz
+- `osc("sin", 440)` - Creates a sine wave oscillator at 440 Hz
 - `|>` - The **pipe** operator, connecting nodes in the signal flow
 - `%` - The **hole**, representing the signal from the left side of the pipe
 - `out(%, %)` - Sends the signal to both left and right speakers
@@ -34,12 +34,12 @@ Try different frequencies by changing the number:
 
 ```akk
 // Lower octave (220 Hz)
-sin(220) |> out(%, %)
+osc("sin", 220) |> out(%, %)
 ```
 
 ```akk
 // Higher octave (880 Hz)
-sin(880) |> out(%, %)
+osc("sin", 880) |> out(%, %)
 ```
 
 ## Adding More Oscillators
@@ -48,29 +48,31 @@ You can combine multiple oscillators with math operators:
 
 ```akk
 // Two detuned oscillators for a fatter sound
-sin(440) + sin(442) |> out(%, %) * 0.5
+osc("sin", 440) + osc("sin", 442) |> out(%, %) * 0.5
 ```
 
 The `* 0.5` at the end reduces the volume so it doesn't clip.
 
 ## Different Waveforms
 
-Besides sine waves, Akkado has other oscillator types:
+Akkado has several oscillator types, all accessible through `osc()`:
 
 ```akk
 // Sawtooth - rich and buzzy
-saw(220) |> out(%, %)
+osc("saw", 220) |> out(%, %)
 ```
 
 ```akk
 // Triangle - softer than sawtooth
-tri(220) |> out(%, %)
+osc("tri", 220) |> out(%, %)
 ```
 
 ```akk
 // Square - hollow and punchy
-sqr(220) * 0.3 |> out(%, %)
+osc("sqr", 220) * 0.3 |> out(%, %)
 ```
+
+**Tip:** The `osc()` function is the standard way to create all oscillator types. Just change the first argument to select the waveform.
 
 ## Next Steps
 

@@ -24,17 +24,17 @@ Every Akkado patch needs an `out()` to produce sound. Pass one signal for mono, 
 
 ```akk
 // Mono output (same signal to both speakers)
-sin(440) |> out(%, %)
+osc("sin", 440) |> out(%, %)
 ```
 
 ```akk
 // Stereo output (different signals)
-sin(440) |> out(%, sin(442))
+osc("sin", 440) |> out(%, osc("sin", 442))
 ```
 
 ```akk
 // Panned signal
-sin(440) * 0.7 |> out(%, % * 0.3)
+osc("sin", 440) * 0.7 |> out(%, % * 0.3)
 ```
 
 ---
@@ -78,7 +78,7 @@ Outputs a constant value. Useful for mixing with signals or providing a static p
 
 ```akk
 // Use as constant multiplier
-sin(440) * dc(0.5) |> out(%, %)
+osc("sin", 440) * dc(0.5) |> out(%, %)
 ```
 
 ---
@@ -96,12 +96,12 @@ Limits how fast a signal can change, creating smooth transitions. Great for port
 
 ```akk
 // Portamento effect (smooth pitch changes)
-sin(slew(mtof(48 + sqr(2) * 12), 10)) |> out(%, %)
+sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(%, %)
 ```
 
 ```akk
 // Smooth filter sweep
-saw(110) |> lp(%, slew(200 + sqr(0.5) * 2000, 5)) |> out(%, %)
+saw(110) |> lp(%, slew(200 + osc("sqr", 0.5) * 2000, 5)) |> out(%, %)
 ```
 
 ---

@@ -14,7 +14,7 @@ Now that you know oscillators and filters, let's combine them into complete synt
 A raw oscillator plays constantly:
 
 ```akk
-saw(220) |> out(%, %)
+osc("saw", 220) |> out(%, %)
 ```
 
 For musical notes, we need the sound to start and stop - that's what envelopes do.
@@ -32,7 +32,7 @@ Multiply your oscillator by the envelope:
 
 ```akk
 // Plucky synth - envelope controls volume
-saw(220) * ar(trigger(2)) |> out(%, %)
+osc("saw", 220) * ar(trigger(2)) |> out(%, %)
 ```
 
 ## Shaping the Envelope
@@ -41,12 +41,12 @@ The `ar` function takes attack and release times:
 
 ```akk
 // Fast attack, short release - percussive
-saw(220) * ar(trigger(4), 0.001, 0.1) |> out(%, %)
+osc("saw", 220) * ar(trigger(4), 0.001, 0.1) |> out(%, %)
 ```
 
 ```akk
 // Slow attack, long release - pad-like
-saw(220) * ar(trigger(1), 0.3, 1.0) |> out(%, %)
+osc("saw", 220) * ar(trigger(1), 0.3, 1.0) |> out(%, %)
 ```
 
 ## A Complete Synth Voice
@@ -55,7 +55,7 @@ Combine oscillator, filter, and envelope:
 
 ```akk
 // Classic subtractive synth
-saw(110)
+osc("saw", 110)
     |> lp(%, 800)
     * ar(trigger(2), 0.01, 0.3)
     |> out(%, %)
@@ -67,7 +67,7 @@ Make the filter open and close with each note:
 
 ```akk
 // Filter follows its own envelope
-saw(110)
+osc("saw", 110)
     |> lp(%, 200 + ar(trigger(2), 0.01, 0.2) * 2000)
     * ar(trigger(2), 0.01, 0.5)
     |> out(%, %)
@@ -79,7 +79,7 @@ Combine multiple oscillators for richer sounds:
 
 ```akk
 // Two detuned saws
-(saw(110) + saw(110.5)) * 0.5
+(osc("saw", 110) + osc("saw", 110.5)) * 0.5
     |> lp(%, 1000)
     * ar(trigger(2))
     |> out(%, %)
@@ -87,7 +87,7 @@ Combine multiple oscillators for richer sounds:
 
 ```akk
 // Octave layering
-(saw(110) + saw(220) * 0.5) * 0.5
+(osc("saw", 110) + osc("saw", 220) * 0.5) * 0.5
     |> moog(%, 600, 2)
     * ar(trigger(2))
     |> out(%, %)
@@ -99,7 +99,7 @@ Layer a sine wave an octave below for weight:
 
 ```akk
 // Main oscillator plus sub
-osc = saw(110) + sin(55) * 0.5
+osc = osc("saw", 110) + osc("sin", 55) * 0.5
 osc |> lp(%, 800) * ar(trigger(2)) |> out(%, %)
 ```
 
@@ -109,7 +109,7 @@ For more control, use `adsr` with attack, decay, sustain, and release:
 
 ```akk
 // Sustained pad with ADSR
-saw(220) * adsr(trigger(0.5), 0.1, 0.2) |> out(%, %)
+osc("saw", 220) * adsr(trigger(0.5), 0.1, 0.2) |> out(%, %)
 ```
 
 ## Building a Bass Patch
@@ -122,10 +122,10 @@ bass_freq = 55
 filter_env = ar(trigger(2), 0.01, 0.15)
 amp_env = ar(trigger(2), 0.005, 0.3)
 
-saw(bass_freq)
+osc("saw", bass_freq)
     |> moog(%, 200 + filter_env * 1500, 2)
     * amp_env
-    |> tanh(%, 2)
+    |> saturate(%, 2)
     |> out(%, %)
 ```
 
@@ -136,7 +136,7 @@ A bright, cutting lead sound:
 ```akk
 // Screaming lead
 lead_freq = 440
-(saw(lead_freq) + sqr(lead_freq) * 0.3)
+(osc("saw", lead_freq) + osc("sqr", lead_freq) * 0.3)
     |> lp(%, 2000 + ar(trigger(4)) * 3000, 4)
     * ar(trigger(4), 0.01, 0.2)
     |> out(%, %)
@@ -148,7 +148,7 @@ Keep your patches organized:
 
 ```akk
 // Define the voice
-synth = saw(220) |> lp(%, 800) * ar(trigger(2))
+synth = osc("saw", 220) |> lp(%, 800) * ar(trigger(2))
 
 // Use it
 synth |> out(%, %)

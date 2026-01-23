@@ -17,21 +17,21 @@ Work through each level in order. Report back which levels work, fail, or have i
 ### A1: Basic Oscillator
 ```akkado
 bpm = 120
-sin(440) |> out(%, %)
+osc("sin", 440) |> out(%, %)
 ```
 Expected: Continuous 440Hz sine tone
 
 ### A2: AR Envelope with Trigger
 ```akkado
 bpm = 120
-sin(220) * ar(trigger(2), 0.01, 0.3) |> out(%, %)
+osc("sin", 220) * ar(trigger(2), 0.01, 0.3) |> out(%, %)
 ```
 Expected: Sine tone pulsing twice per beat (8th notes)
 
 ### A3: Saw with Lowpass Filter
 ```akkado
 bpm = 120
-saw(110) |> lp(%, 800) * ar(trigger(1), 0.01, 0.3) |> out(%, %)
+osc("saw", 110) |> lp(%, 800) * ar(trigger(1), 0.01, 0.3) |> out(%, %)
 ```
 Expected: Filtered saw pulsing once per beat (quarter notes)
 
@@ -39,7 +39,7 @@ Expected: Filtered saw pulsing once per beat (quarter notes)
 ```akkado
 bpm = 120
 g = trigger(1)
-saw(110) * adsr(g, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
+osc("saw", 110) * adsr(g, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
 ```
 Expected: Saw with attack-decay-sustain-release shape
 
@@ -47,35 +47,35 @@ Expected: Saw with attack-decay-sustain-release shape
 ```akkado
 bpm = 120
 g = trigger(1)
-saw(110) * adsr(gate:g, attack:0.01, decay:0.1, sustain:0.5, release:0.3) |> out(%, %)
+osc("saw", 110) * adsr(gate:g, attack:0.01, decay:0.1, sustain:0.5, release:0.3) |> out(%, %)
 ```
 Expected: Same as A4, tests named argument syntax
 
 ### A6: Euclidean Rhythm (3 in 8)
 ```akkado
 bpm = 120
-sin(110) * ar(euclid(3, 8), 0.001, 0.1) |> out(%, %)
+osc("sin", 110) * ar(euclid(3, 8), 0.001, 0.1) |> out(%, %)
 ```
 Expected: 3 hits spread evenly across 8 steps
 
 ### A7: Euclidean with Rotation
 ```akkado
 bpm = 120
-sin(110) * ar(euclid(3, 8, 2), 0.001, 0.1) |> out(%, %)
+osc("sin", 110) * ar(euclid(3, 8, 2), 0.001, 0.1) |> out(%, %)
 ```
 Expected: Same pattern as A6, rotated by 2 steps
 
 ### A8: Triangle Oscillator
 ```akkado
 bpm = 120
-tri(110) * ar(trigger(4), 0.001, 0.1) |> out(%, %)
+osc("tri", 110) * ar(trigger(4), 0.001, 0.1) |> out(%, %)
 ```
 Expected: Triangle wave pulsing on 16th notes
 
 ### A9: Power/Exponential Shaping
 ```akkado
 bpm = 120
-(sin(110) * ar(trigger(2), 0.01, 0.2)) ^ 2.0 |> out(%, %)
+(osc("sin", 110) * ar(trigger(2), 0.01, 0.2)) ^ 2.0 |> out(%, %)
 ```
 Expected: Squared envelope shape (sharper attack feel)
 
@@ -179,7 +179,7 @@ Expected: Sequence of 4 frequencies
 ```akkado
 bpm = 120
 pat("c4 e4 g4 c5", (t) ->
-    saw(440) * ar(t, 0.01, 0.2)
+    osc("saw", 440) * ar(t, 0.01, 0.2)
 ) |> out(%, %)
 ```
 Expected: Saw at fixed 440Hz, triggered 4 times per bar
@@ -188,7 +188,7 @@ Expected: Saw at fixed 440Hz, triggered 4 times per bar
 ```akkado
 bpm = 120
 pat("c4 e4 g4 c5", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.2)
+    osc("saw", p) * ar(t, 0.01, 0.2)
 ) |> out(%, %)
 ```
 Expected: Saw using pitch from pattern (c4, e4, g4, c5)
@@ -197,7 +197,7 @@ Expected: Saw using pitch from pattern (c4, e4, g4, c5)
 ```akkado
 bpm = 120
 pat("c4 e4 g4 c5", (t, v, p) ->
-    saw(p) |> lp(%, 1500) * ar(t, 0.01, 0.2)
+    osc("saw", p) |> lp(%, 1500) * ar(t, 0.01, 0.2)
 ) |> out(%, %)
 ```
 Expected: Filtered saw, 4 notes
@@ -206,7 +206,7 @@ Expected: Filtered saw, 4 notes
 ```akkado
 bpm = 120
 pat("c4 ~ e4 ~", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.2)
+    osc("saw", p) * ar(t, 0.01, 0.2)
 ) |> out(%, %)
 ```
 Expected: c4, silence, e4, silence (rests produce freq 0)
@@ -215,7 +215,7 @@ Expected: c4, silence, e4, silence (rests produce freq 0)
 ```akkado
 bpm = 120
 pat("c4 e4 g4 c5", (t, v, p) ->
-    saw(p) * adsr(t, 0.01, 0.1, 0.5, 0.3)
+    osc("saw", p) * adsr(t, 0.01, 0.1, 0.5, 0.3)
 ) |> out(%, %)
 ```
 Expected: Notes with ADSR shape
@@ -224,7 +224,7 @@ Expected: Notes with ADSR shape
 ```akkado
 bpm = 120
 pat("c3 e3 g3 c4", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.3)
+    osc("saw", p) * ar(t, 0.01, 0.3)
 ) |> lp(%, 800) |> out(%, %)
 ```
 Expected: Closure output piped through lowpass filter
@@ -237,7 +237,7 @@ Expected: Closure output piped through lowpass filter
 ```akkado
 bpm = 120
 pat("[c4 e4] g4", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.1)
+    osc("saw", p) * ar(t, 0.01, 0.1)
 ) |> out(%, %)
 ```
 Expected: c4+e4 in first half (faster), g4 in second half
@@ -246,7 +246,7 @@ Expected: c4+e4 in first half (faster), g4 in second half
 ```akkado
 bpm = 120
 pat("[c4 e4 g4]*2", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.1)
+    osc("saw", p) * ar(t, 0.01, 0.1)
 ) |> out(%, %)
 ```
 Expected: Pattern plays twice as fast (6 notes per bar)
@@ -255,7 +255,7 @@ Expected: Pattern plays twice as fast (6 notes per bar)
 ```akkado
 bpm = 120
 pat("c4 e4 g4 c5/2", (t, v, p) ->
-    saw(p) * ar(t, 0.01, 0.2)
+    osc("saw", p) * ar(t, 0.01, 0.2)
 ) |> out(%, %)
 ```
 Expected: Pattern spread over 2 bars
@@ -267,7 +267,7 @@ Expected: Pattern spread over 2 bars
 ### F1: Synthesized Kick Drum
 ```akkado
 bpm = 120
-kick = sin(55 * (1 + ar(trigger(1), 0.001, 0.02) * 2)) * ar(trigger(1), 0.005, 0.2)
+kick = osc("sin", 55 * (1 + ar(trigger(1), 0.001, 0.02) * 2)) * ar(trigger(1), 0.005, 0.2)
 kick |> out(%, %)
 ```
 Expected: 808-style synthesized kick
@@ -283,7 +283,7 @@ Expected: Filtered noise snare on beats 2 and 4
 ### F3: Full Drum Kit
 ```akkado
 bpm = 120
-kick = sin(55 * (1 + ar(trigger(1), 0.001, 0.02) * 2)) * ar(trigger(1), 0.005, 0.2)
+kick = osc("sin", 55 * (1 + ar(trigger(1), 0.001, 0.02) * 2)) * ar(trigger(1), 0.005, 0.2)
 snare = noise() |> bp(%, 1000, 2) * ar(euclid(2, 8, 4), 0.001, 0.1) * 0.5
 hat = noise() |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.2
 kick + snare + hat |> out(%, %)
@@ -294,7 +294,7 @@ Expected: Layered drum kit
 ```akkado
 bpm = 120
 pat("c4 d4 e4 g4 e4 d4 c4 ~", (t, v, p) ->
-    tri(p) * adsr(t, 0.01, 0.05, 0.3, 0.2)
+    osc("tri", p) * adsr(t, 0.01, 0.05, 0.3, 0.2)
 ) |> lp(%, 2000) |> out(%, %)
 ```
 Expected: Melodic sequence with triangle wave
@@ -303,7 +303,7 @@ Expected: Melodic sequence with triangle wave
 ```akkado
 bpm = 120
 pat("[~ ~ bd ~]*2", (t, v, p) ->
-    tri(110) * adsr(t, 0.001, 0.05, 0.15, 0.5) ^ 2.2
+    osc("tri", 110) * adsr(t, 0.001, 0.05, 0.15, 0.5) ^ 2.2
 ) |> bp(%, 2000) |> out(%, %)
 ```
 Expected: Pattern triggers synthesized drum with shaped envelope
@@ -312,7 +312,7 @@ Expected: Pattern triggers synthesized drum with shaped envelope
 ```akkado
 bpm = 120
 snare = pat("[~ ~ bd ~ ~ bd bd ~ ~ ~ bd ~ ~ ~ bd ~]*0.5", (t, v, p) ->
-    tri(110) * adsr(t, 0.0004, 0.05, 0.15, 0.5) ^ 2.2
+    osc("tri", 110) * adsr(t, 0.0004, 0.05, 0.15, 0.5) ^ 2.2
 ) |> bp(%, 2000)
 snare |> out(%, %)
 ```

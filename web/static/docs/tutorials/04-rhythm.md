@@ -22,7 +22,7 @@ Use triggers to control envelopes:
 
 ```akk
 // Kick on quarter notes
-sin(55) * ar(trigger(1), 0.01, 0.2) |> out(%, %)
+osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(%, %)
 ```
 
 ## Building a Basic Beat
@@ -31,7 +31,7 @@ Combine different trigger rates for drum patterns:
 
 ```akk
 // Simple kick and hi-hat
-kick = sin(55) * ar(trigger(1), 0.005, 0.15)
+kick = osc("sin", 55) * ar(trigger(1), 0.005, 0.15)
 hat = noise() |> hp(%, 8000) * ar(trigger(4), 0.001, 0.03) * 0.3
 
 kick + hat |> out(%, %)
@@ -43,7 +43,7 @@ The `euclid` function creates mathematically interesting patterns by distributin
 
 ```akk
 // Tresillo (3 hits over 8 steps)
-sin(55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%, %)
+osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%, %)
 ```
 
 Classic Euclidean patterns:
@@ -53,7 +53,7 @@ Classic Euclidean patterns:
 
 ```akk
 // Layered Euclidean rhythms
-kick = sin(55) * ar(euclid(4, 16), 0.005, 0.15)
+kick = osc("sin", 55) * ar(euclid(4, 16), 0.005, 0.15)
 perc = noise() |> bp(%, 2000, 4) * ar(euclid(5, 16), 0.001, 0.05) * 0.4
 
 kick + perc |> out(%, %)
@@ -65,7 +65,7 @@ Rotate patterns to shift the accent:
 
 ```akk
 // Rotated pattern - different feel, same hits
-sin(55) * ar(euclid(3, 8, 1), 0.01, 0.15) |> out(%, %)
+osc("sin", 55) * ar(euclid(3, 8, 1), 0.01, 0.15) |> out(%, %)
 ```
 
 ## Step Sequencing
@@ -75,7 +75,7 @@ Use `seq_step` to create melodic patterns:
 ```akk
 // 4-note pattern
 freq = mtof(48 + seq_step(2) * 5)
-saw(freq) * ar(trigger(2)) |> lp(%, 800) |> out(%, %)
+osc("saw", freq) * ar(trigger(2)) |> lp(%, 800) |> out(%, %)
 ```
 
 ## Combining Rhythm and Melody
@@ -87,7 +87,7 @@ Build a complete sequence:
 notes = 36 + seq_step(2) * 7  // MIDI notes
 freq = mtof(notes)
 
-saw(freq)
+osc("saw", freq)
     |> moog(%, 400 + ar(trigger(2)) * 800, 2)
     * ar(trigger(2), 0.01, 0.2)
     |> out(%, %)
@@ -99,7 +99,7 @@ Add subtle motion with LFOs:
 
 ```akk
 // Rhythmic with filter movement
-saw(110)
+osc("saw", 110)
     |> lp(%, 500 + lfo(0.25) * 1000)
     * ar(trigger(4))
     |> out(%, %)
@@ -109,7 +109,7 @@ saw(110)
 
 ```akk
 // Kick drum
-kick = sin(55 * (1 + ar(trigger(1), 0.001, 0.02) * 2))
+kick = osc("sin", 55 * (1 + ar(trigger(1), 0.001, 0.02) * 2))
     * ar(trigger(1), 0.005, 0.2)
 
 // Snare
@@ -133,7 +133,7 @@ Create tension with conflicting rhythms:
 
 ```akk
 // 3 against 4
-bass = saw(55) * ar(euclid(3, 12), 0.01, 0.15) |> lp(%, 400)
+bass = osc("saw", 55) * ar(euclid(3, 12), 0.01, 0.15) |> lp(%, 400)
 perc = noise() |> hp(%, 4000) * ar(euclid(4, 12), 0.001, 0.05) * 0.3
 
 bass + perc |> out(%, %)
@@ -146,7 +146,7 @@ For melodic sequences, use mini-notation:
 ```akk
 // Melodic pattern
 pat("c3 e3 g3 c4") |> ((f) ->
-    saw(f) |> lp(%, 800) * ar(trigger(4))
+    osc("saw", f) |> lp(%, 800) * ar(trigger(4))
 ) |> out(%, %)
 ```
 

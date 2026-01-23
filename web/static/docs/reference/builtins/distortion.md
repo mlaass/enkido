@@ -2,42 +2,44 @@
 title: Distortion
 category: builtins
 order: 8
-keywords: [distortion, tanh, softclip, bitcrush, fold, wavefold, saturate, drive, crush, lofi, tube, valve, smooth, adaa, tape, warmth, xfmr, transformer, excite, exciter, harmonics]
+keywords: [distortion, saturate, softclip, bitcrush, fold, wavefold, drive, crush, lofi, tube, valve, smooth, adaa, tape, warmth, xfmr, transformer, excite, exciter, harmonics]
 ---
 
 # Distortion
 
 Distortion effects add harmonic content by clipping, saturating, or otherwise mangling signals.
 
-## tanh
+## saturate
 
-**Tanh Saturation** - Smooth hyperbolic tangent waveshaping.
+**Tanh Saturation** - Smooth hyperbolic tangent waveshaping with drive control.
 
 | Param | Type   | Default | Description |
 |-------|--------|---------|-------------|
 | in    | signal | -       | Input signal |
 | drive | number | 2.0     | Drive amount (1-10+) |
 
-Aliases: `distort`, `saturate`
+Aliases: `distort`
 
 Warm, tube-like saturation that adds odd harmonics while preventing harsh clipping. Higher drive values increase saturation intensity.
 
+**Note:** For pure math `tanh(x)` (hyperbolic tangent), see [Math Functions](math#tanh). The `saturate()` function wraps `tanh` with drive control for convenient distortion.
+
 ```akk
 // Warm overdrive
-saw(110) |> tanh(%, 3) |> out(%, %)
+osc("saw", 110) |> saturate(%, 3) |> out(%, %)
 ```
 
 ```akk
 // Heavy saturation on bass
-saw(55) |> tanh(%, 8) |> lp(%, 400) |> out(%, %)
+osc("saw", 55) |> saturate(%, 8) |> lp(%, 400) |> out(%, %)
 ```
 
 ```akk
 // Subtle warming
-sin(220) |> tanh(%, 1.5) |> out(%, %)
+osc("sin", 220) |> saturate(%, 1.5) |> out(%, %)
 ```
 
-Related: [softclip](#softclip), [fold](#fold)
+Related: [softclip](#softclip), [fold](#fold), [tanh (math)](math#tanh)
 
 ---
 
@@ -54,15 +56,15 @@ Softer than hard clipping, rounds off peaks smoothly. Lower threshold values cre
 
 ```akk
 // Gentle compression-like softclip
-saw(220) |> softclip(%, 0.7) |> out(%, %)
+osc("saw", 220) |> softclip(%, 0.7) |> out(%, %)
 ```
 
 ```akk
 // Aggressive softclip
-sqr(110) |> softclip(%, 0.2) |> out(%, %)
+osc("sqr", 110) |> softclip(%, 0.2) |> out(%, %)
 ```
 
-Related: [tanh](#tanh)
+Related: [saturate](#saturate)
 
 ---
 
@@ -82,17 +84,17 @@ Creates lo-fi digital artifacts by quantizing amplitude and reducing sample rate
 
 ```akk
 // Classic 8-bit sound
-saw(220) |> bitcrush(%, 8, 0.5) |> out(%, %)
+osc("saw", 220) |> bitcrush(%, 8, 0.5) |> out(%, %)
 ```
 
 ```akk
 // Extreme lo-fi
-saw(110) |> bitcrush(%, 4, 0.2) |> out(%, %)
+osc("saw", 110) |> bitcrush(%, 4, 0.2) |> out(%, %)
 ```
 
 ```akk
 // Subtle grit
-saw(440) |> bitcrush(%, 12, 0.8) |> out(%, %)
+osc("saw", 440) |> bitcrush(%, 12, 0.8) |> out(%, %)
 ```
 
 Related: [fold](#fold)
@@ -114,20 +116,20 @@ Classic West Coast synthesis technique. When the signal exceeds the threshold, i
 
 ```akk
 // Basic wavefold
-sin(110) * 2 |> fold(%, 0.5) |> out(%, %)
+osc("sin", 110) * 2 |> fold(%, 0.5) |> out(%, %)
 ```
 
 ```akk
 // Animated wavefolding
-sin(110) * (1.5 + sin(0.2)) |> fold(%, 0.4) |> out(%, %)
+osc("sin", 110) * (1.5 + osc("sin", 0.2)) |> fold(%, 0.4) |> out(%, %)
 ```
 
 ```akk
 // Aggressive folding
-tri(55) * 4 |> fold(%, 0.3) |> lp(%, 2000) |> out(%, %)
+osc("tri", 55) * 4 |> fold(%, 0.3) |> lp(%, 2000) |> out(%, %)
 ```
 
-Related: [tanh](#tanh), [softclip](#softclip)
+Related: [saturate](#saturate), [softclip](#softclip)
 
 ---
 
@@ -147,20 +149,20 @@ Emulates triode tube saturation with an asymmetric transfer function. Unlike sym
 
 ```akk
 // Warm vintage drive
-saw(110) |> tube(%, 5, 0.1) |> out(%, %)
+osc("saw", 110) |> tube(%, 5, 0.1) |> out(%, %)
 ```
 
 ```akk
 // Aggressive tube distortion
-saw(55) |> tube(%, 15, 0.2) |> lp(%, 800) |> out(%, %)
+osc("saw", 55) |> tube(%, 15, 0.2) |> lp(%, 800) |> out(%, %)
 ```
 
 ```akk
 // Subtle 2nd harmonic enhancement
-sin(220) |> tube(%, 2, 0.15) |> out(%, %)
+osc("sin", 220) |> tube(%, 2, 0.15) |> out(%, %)
 ```
 
-Related: [tanh](#tanh), [tape](#tape)
+Related: [saturate](#saturate), [tape](#tape)
 
 ---
 
@@ -179,20 +181,20 @@ High-quality tanh saturation with built-in antialiasing. Uses the ADAA (Antideri
 
 ```akk
 // Clean master bus saturation
-saw(220) |> smooth(%, 3) |> out(%, %)
+osc("saw", 220) |> smooth(%, 3) |> out(%, %)
 ```
 
 ```akk
 // Heavy saturation without harshness
-sqr(440) |> smooth(%, 10) |> out(%, %)
+osc("sqr", 440) |> smooth(%, 10) |> out(%, %)
 ```
 
 ```akk
 // High-frequency content stays clean
-saw(880) |> smooth(%, 8) |> out(%, %)
+osc("saw", 880) |> smooth(%, 8) |> out(%, %)
 ```
 
-Related: [tanh](#tanh), [tube](#tube)
+Related: [saturate](#saturate), [tube](#tube)
 
 ---
 
@@ -210,20 +212,20 @@ Emulates magnetic tape characteristics: a wide linear region, soft compression a
 
 ```akk
 // Tape-style glue
-saw(110) |> tape(%, 4, 0.4) |> out(%, %)
+osc("saw", 110) |> tape(%, 4, 0.4) |> out(%, %)
 ```
 
 ```akk
 // Lo-fi tape warmth
-sqr(220) |> tape(%, 6, 0.8) |> out(%, %)
+osc("sqr", 220) |> tape(%, 6, 0.8) |> out(%, %)
 ```
 
 ```akk
 // Subtle tape coloration
-sin(440) |> tape(%, 2, 0.2) |> out(%, %)
+osc("sin", 440) |> tape(%, 2, 0.2) |> out(%, %)
 ```
 
-Related: [tube](#tube), [tanh](#tanh)
+Related: [tube](#tube), [saturate](#saturate)
 
 ---
 
@@ -243,17 +245,17 @@ Emulates transformer/console saturation where bass frequencies saturate more hea
 
 ```akk
 // Punchy bass
-saw(55) |> xfmr(%, 4, 8) |> out(%, %)
+osc("saw", 55) |> xfmr(%, 4, 8) |> out(%, %)
 ```
 
 ```akk
 // Console warmth on synths
-saw(220) |> xfmr(%, 3, 4) |> out(%, %)
+osc("saw", 220) |> xfmr(%, 3, 4) |> out(%, %)
 ```
 
 ```akk
 // Thick transformer saturation
-sqr(110) |> xfmr(%, 5, 6) |> lp(%, 2000) |> out(%, %)
+osc("sqr", 110) |> xfmr(%, 5, 6) |> lp(%, 2000) |> out(%, %)
 ```
 
 Related: [tube](#tube), [tape](#tape)
@@ -276,17 +278,17 @@ Adds harmonic content to frequencies above the corner frequency only, similar to
 
 ```akk
 // Add presence to synths
-saw(220) |> excite(%, 0.5, 3000) |> out(%, %)
+osc("saw", 220) |> excite(%, 0.5, 3000) |> out(%, %)
 ```
 
 ```akk
 // Brighten with higher corner
-tri(440) |> excite(%, 0.7, 5000) |> out(%, %)
+osc("tri", 440) |> excite(%, 0.7, 5000) |> out(%, %)
 ```
 
 ```akk
 // Subtle air and sparkle
-sin(110) |> excite(%, 0.3, 4000) |> out(%, %)
+osc("sin", 110) |> excite(%, 0.3, 4000) |> out(%, %)
 ```
 
-Related: [tube](#tube), [tanh](#tanh)
+Related: [tube](#tube), [saturate](#saturate)

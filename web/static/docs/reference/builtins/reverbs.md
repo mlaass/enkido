@@ -25,12 +25,12 @@ A classic reverb algorithm with a smooth, natural sound. Higher room values crea
 
 ```akk
 // Medium room reverb
-saw(220) * ar(trigger(2)) |> freeverb(%, 0.5, 0.5) |> out(%, %)
+osc("saw", 220) * ar(trigger(2)) |> freeverb(%, 0.5, 0.5) |> out(%, %)
 ```
 
 ```akk
 // Large hall
-saw(110) * ar(trigger(1)) |> freeverb(%, 0.9, 0.3) |> out(%, %)
+osc("saw", 110) * ar(trigger(1)) |> freeverb(%, 0.9, 0.3) |> out(%, %)
 ```
 
 ```akk
@@ -58,12 +58,12 @@ The Dattorro plate reverb produces lush, shimmering tails perfect for vocals and
 
 ```akk
 // Lush plate reverb
-saw(220) * ar(trigger(2)) |> dattorro(%, 0.8, 30) |> out(%, %)
+osc("saw", 220) * ar(trigger(2)) |> dattorro(%, 0.8, 30) |> out(%, %)
 ```
 
 ```akk
 // Short bright plate
-tri(440) * ar(trigger(4)) |> dattorro(%, 0.5, 10) |> out(%, %)
+osc("tri", 440) * ar(trigger(4)) |> dattorro(%, 0.5, 10) |> out(%, %)
 ```
 
 Related: [freeverb](#freeverb), [fdn](#fdn)
@@ -86,7 +86,7 @@ A matrix-based reverb using multiple delay lines with cross-feedback. Creates de
 
 ```akk
 // Dense ambient reverb
-saw(55) * ar(trigger(0.5)) |> fdn(%, 0.9, 0.4) |> out(%, %)
+osc("saw", 55) * ar(trigger(0.5)) |> fdn(%, 0.9, 0.4) |> out(%, %)
 ```
 
 ```akk
