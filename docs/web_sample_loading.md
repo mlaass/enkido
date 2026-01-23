@@ -4,6 +4,27 @@
 
 The Enkido web interface supports loading audio samples for use with the sampler system. Samples can be loaded from files, URLs, or programmatically generated.
 
+## Sample Loading Architecture
+
+Samples are loaded **at runtime**, not at compile time. The compile and load phases are separated:
+
+### Compile Flow
+
+```
+1. compile(source)          → Returns {success, requiredSamples: ["bd", "sd", ...]}
+2. ensureSampleLoaded(name) → Loads sample if not already loaded
+3. loadCompiledProgram()    → Resolves sample IDs and loads program
+```
+
+The `compile()` function handles all three steps automatically. If any required sample cannot be loaded, compilation returns an error.
+
+### Lazy Background Preloading
+
+Default samples are preloaded in the background when the audio engine initializes. This means:
+- Compilation doesn't block waiting for sample downloads
+- If a required sample is still loading, `compile()` waits for it
+- Unknown samples (not in default kit) cause a runtime error
+
 ## API Methods
 
 ### audioEngine.loadSampleFromFile()

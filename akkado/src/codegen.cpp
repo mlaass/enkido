@@ -25,6 +25,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     instructions_.clear();
     diagnostics_.clear();
     state_inits_.clear();
+    required_samples_.clear();
     filename_ = std::string(filename);
     path_stack_.clear();
     anonymous_counter_ = 0;
@@ -36,7 +37,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, std::move(diagnostics_), {}, false};
+        return {{}, std::move(diagnostics_), {}, {}, false};
     }
 
     // Visit root (Program node)
@@ -46,7 +47,11 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     bool success = !has_errors(diagnostics_);
 
-    return {std::move(instructions_), std::move(diagnostics_), std::move(state_inits_), success};
+    // Convert required_samples set to vector
+    std::vector<std::string> required_samples_vec(required_samples_.begin(), required_samples_.end());
+
+    return {std::move(instructions_), std::move(diagnostics_), std::move(state_inits_),
+            std::move(required_samples_vec), success};
 }
 
 std::uint16_t CodeGenerator::visit(NodeIndex node) {
@@ -613,16 +618,22 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     seq_init.times.push_back(event.time * seq_init.cycle_length);
 
                     if (event.type == PatternEventType::Sample) {
+                        // Collect sample name for runtime loading
+                        if (!event.sample_name.empty()) {
+                            required_samples_.insert(event.sample_name);
+                        }
+                        // Store sample name for deferred resolution
+                        seq_init.sample_names.push_back(event.sample_name);
+
+                        // Try to resolve ID if registry available, otherwise use 0 (resolved at runtime)
                         std::uint32_t sample_id = 0;
                         if (sample_registry_) {
                             sample_id = sample_registry_->get_id(event.sample_name);
-                            if (sample_id == 0) {
-                                error("W001", "Sample '" + event.sample_name + "' not registered in sample bank", n.location);
-                            }
                         }
                         seq_init.values.push_back(static_cast<float>(sample_id));
                     } else {
                         // Rest or other event type - use sample ID 0 (no sample)
+                        seq_init.sample_names.push_back("");  // Empty for non-sample events
                         seq_init.values.push_back(0.0f);
                     }
 

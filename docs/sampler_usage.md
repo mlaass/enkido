@@ -6,6 +6,30 @@ The Cedar sampler system provides polyphonic sample playback with pitch control,
 
 ## Architecture
 
+### Sample Loading Architecture
+
+Samples are a **runtime resource**, not a compile-time concern. The compilation
+and sample loading phases are cleanly separated:
+
+#### Compilation Phase
+- Akkado parses mini-notation patterns and collects sample names
+- Sample names are stored in `CompileResult.required_samples`
+- No validation occurs - unknown samples don't cause compile errors
+- Bytecode is generated with placeholder sample IDs (0)
+
+#### Runtime Phase
+1. After compilation, the runtime receives the list of required samples
+2. Runtime loads any missing samples from the sample bank/URLs
+3. If a sample cannot be loaded, a **runtime error** is reported
+4. Once all samples are loaded, `akkado_resolve_sample_ids()` maps names to IDs
+5. Program is loaded and state inits are applied with resolved IDs
+
+#### Why This Design?
+- Compilation is fast (no I/O blocking)
+- Samples can come from various sources (files, URLs, user uploads)
+- Clear separation of concerns: compiler handles code, runtime handles resources
+- Better error messages: "Sample 'foo.wav' failed to load" vs cryptic compile errors
+
 ### Cedar VM Layer
 - **`SampleBank`** - Manages loaded audio samples
 - **`SamplerState`** - Handles polyphonic voice allocation (up to 16 voices)
@@ -13,7 +37,7 @@ The Cedar sampler system provides polyphonic sample playback with pitch control,
 - **`SAMPLE_PLAY_LOOP`** - Looping sample playback opcode
 
 ### Akkado Compiler Layer
-- **`SampleRegistry`** - Compile-time name→ID resolution
+- **`SampleRegistry`** - Optional compile-time name→ID resolution (for optimization)
 - **Mini-notation integration** - Automatic sample pattern detection
 - **Builtins** - `sample()` and `sample_loop()` functions
 

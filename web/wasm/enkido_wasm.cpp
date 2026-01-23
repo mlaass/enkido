@@ -285,6 +285,7 @@ WASM_EXPORT uint32_t cedar_get_sample_count() {
 
 /**
  * Compile Akkado source code to Cedar bytecode
+ * Samples are resolved at runtime, not compile time.
  * @param source Source code (null-terminated)
  * @param source_len Length of source string
  * @return 1 on success, 0 on error
@@ -292,16 +293,9 @@ WASM_EXPORT uint32_t cedar_get_sample_count() {
 WASM_EXPORT int akkado_compile(const char* source, uint32_t source_len) {
     if (!source) return 0;
 
-    // Build sample registry from currently loaded samples
-    akkado::SampleRegistry registry;
-    if (g_vm) {
-        for (const auto& [name, id] : g_vm->sample_bank().get_name_to_id()) {
-            registry.register_sample(name, id);
-        }
-    }
-
+    // No sample registry needed - samples are resolved at runtime
     std::string_view src{source, source_len};
-    g_compile_result = akkado::compile(src, "<web>", &registry);
+    g_compile_result = akkado::compile(src, "<web>", nullptr);
 
     return g_compile_result.success ? 1 : 0;
 }
@@ -370,6 +364,47 @@ WASM_EXPORT uint32_t akkado_get_diagnostic_column(uint32_t index) {
  */
 WASM_EXPORT void akkado_clear_result() {
     g_compile_result = akkado::CompileResult{};
+}
+
+// ============================================================================
+// Required Samples API
+// ============================================================================
+
+/**
+ * Get number of required samples from compile result
+ * @return Number of unique sample names used in the compiled code
+ */
+WASM_EXPORT uint32_t akkado_get_required_samples_count() {
+    return static_cast<uint32_t>(g_compile_result.required_samples.size());
+}
+
+/**
+ * Get required sample name by index
+ * @param index Sample index (0 to count-1)
+ * @return Pointer to null-terminated sample name, or nullptr if index out of range
+ */
+WASM_EXPORT const char* akkado_get_required_sample(uint32_t index) {
+    if (index >= g_compile_result.required_samples.size()) return nullptr;
+    return g_compile_result.required_samples[index].c_str();
+}
+
+/**
+ * Resolve sample IDs in state_inits using currently loaded samples.
+ * Call this AFTER loading required samples, BEFORE cedar_apply_state_inits().
+ * This maps sample names to IDs in the sample bank.
+ */
+WASM_EXPORT void akkado_resolve_sample_ids() {
+    if (!g_vm) return;
+
+    for (auto& init : g_compile_result.state_inits) {
+        for (size_t i = 0; i < init.sample_names.size(); ++i) {
+            const auto& name = init.sample_names[i];
+            if (!name.empty()) {
+                auto id = g_vm->sample_bank().get_sample_id(name);
+                init.values[i] = static_cast<float>(id);
+            }
+        }
+    }
 }
 
 // ============================================================================

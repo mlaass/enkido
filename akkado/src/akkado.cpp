@@ -78,6 +78,9 @@ CompileResult compile(std::string_view source, std::string_view filename,
     // Copy state initializations for patterns
     result.state_inits = std::move(gen.state_inits);
 
+    // Copy required sample names for runtime loading
+    result.required_samples = std::move(gen.required_samples);
+
     result.success = true;
     return result;
 }

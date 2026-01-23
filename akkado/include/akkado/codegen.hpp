@@ -6,6 +6,7 @@
 #include "sample_registry.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,7 @@ struct StateInitData {
     std::vector<float> times;       // Event times in beats
     std::vector<float> values;      // Values (sample ID, pitch, etc.)
     std::vector<float> velocities;  // Velocity per event (0.0-1.0)
+    std::vector<std::string> sample_names;  // Sample names (for deferred resolution)
     float cycle_length = 4.0f;      // Cycle length in beats
 
     // For Timeline: [time, value, curve, ...] triplets (existing usage)
@@ -33,6 +35,7 @@ struct CodeGenResult {
     std::vector<cedar::Instruction> instructions;
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data
+    std::vector<std::string> required_samples;  // Unique sample names used
     bool success = false;
 };
 
@@ -119,6 +122,9 @@ private:
 
     // Track call counts per stateful function for unique state_ids
     std::unordered_map<std::string, std::uint32_t> call_counters_;
+
+    // Track unique sample names used (for runtime loading)
+    std::set<std::string> required_samples_;
 
     // Map from AST node index to output buffer index
     std::unordered_map<NodeIndex, std::uint16_t> node_buffers_;

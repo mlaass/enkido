@@ -17,6 +17,7 @@ interface CompileResult {
 	success: boolean;
 	bytecodeSize?: number;
 	diagnostics?: Diagnostic[];
+	requiredSamples?: string[];
 }
 
 interface AudioState {
@@ -59,6 +60,11 @@ function createAudioEngine() {
 
 	// Compile result callback (resolved when worklet responds)
 	let compileResolve: ((result: CompileResult) => void) | null = null;
+
+	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
+	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
+	// Track loaded sample names
+	const loadedSamples = new Set<string>();
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -135,16 +141,21 @@ function createAudioEngine() {
 				// Load default samples
 				loadDefaultSamples();
 				break;
-			case 'compiled':
+			case 'compiled': {
 				// Compilation result from worklet
 				const result: CompileResult = {
 					success: msg.success as boolean,
 					bytecodeSize: msg.bytecodeSize as number | undefined,
-					diagnostics: msg.diagnostics as Diagnostic[] | undefined
+					diagnostics: msg.diagnostics as Diagnostic[] | undefined,
+					requiredSamples: msg.requiredSamples as string[] | undefined
 				};
 				if (result.success) {
-					state.hasProgram = true;
-					console.log('[AudioEngine] Compiled and loaded, bytecode size:', result.bytecodeSize);
+					console.log(
+						'[AudioEngine] Compiled successfully, bytecode size:',
+						result.bytecodeSize,
+						'required samples:',
+						result.requiredSamples
+					);
 				} else {
 					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
 				}
@@ -154,10 +165,18 @@ function createAudioEngine() {
 					compileResolve = null;
 				}
 				break;
+			}
 			case 'programLoaded':
 				state.hasProgram = true;
 				console.log('[AudioEngine] Program loaded');
 				break;
+			case 'sampleLoaded': {
+				const name = msg.name as string;
+				loadedSamples.add(name);
+				sampleLoadState.set(name, 'loaded');
+				console.log('[AudioEngine] Sample loaded:', name);
+				break;
+			}
 			case 'error':
 				state.error = String(msg.message);
 				console.error('[AudioEngine] Worklet error:', msg.message);
@@ -225,25 +244,127 @@ function createAudioEngine() {
 	}
 
 	/**
+	 * Ensure a sample is loaded (waits if loading, loads if pending/unknown)
+	 * @returns true if sample is loaded, false if loading failed or unknown
+	 */
+	async function ensureSampleLoaded(name: string): Promise<boolean> {
+		// Already loaded?
+		if (loadedSamples.has(name)) {
+			return true;
+		}
+
+		const currentState = sampleLoadState.get(name);
+
+		// Already loaded (check state too)
+		if (currentState === 'loaded') {
+			return true;
+		}
+
+		// Failed previously
+		if (currentState === 'error') {
+			return false;
+		}
+
+		// Currently loading - wait for it
+		if (currentState === 'loading') {
+			return new Promise((resolve) => {
+				const check = setInterval(() => {
+					const s = sampleLoadState.get(name);
+					if (s === 'loaded') {
+						clearInterval(check);
+						resolve(true);
+					}
+					if (s === 'error') {
+						clearInterval(check);
+						resolve(false);
+					}
+				}, 50);
+				// Timeout after 30 seconds
+				setTimeout(() => {
+					clearInterval(check);
+					resolve(false);
+				}, 30000);
+			});
+		}
+
+		// Try to find in default kit
+		const defaultSample = DEFAULT_DRUM_KIT.find((s) => s.name === name);
+		if (defaultSample) {
+			sampleLoadState.set(name, 'loading');
+			try {
+				const success = await loadSampleFromUrl(name, defaultSample.url);
+				if (success) {
+					sampleLoadState.set(name, 'loaded');
+					loadedSamples.add(name);
+					return true;
+				} else {
+					sampleLoadState.set(name, 'error');
+					return false;
+				}
+			} catch {
+				sampleLoadState.set(name, 'error');
+				return false;
+			}
+		}
+
+		// Unknown sample - not in default kit
+		return false;
+	}
+
+	/**
 	 * Compile source code in the worklet and load into Cedar VM
-	 * This is the preferred method - compilation happens atomically with loading
+	 * This handles the full compile -> load samples -> load program flow
 	 */
 	async function compile(source: string): Promise<CompileResult> {
 		if (!workletNode) {
-			return { success: false, diagnostics: [{ severity: 2, message: 'Worklet not initialized', line: 1, column: 1 }] };
+			return {
+				success: false,
+				diagnostics: [{ severity: 2, message: 'Worklet not initialized', line: 1, column: 1 }]
+			};
 		}
 
 		console.log('[AudioEngine] Sending source for compilation, length:', source.length);
 
-		// Create promise that will be resolved when worklet responds
-		const resultPromise = new Promise<CompileResult>((resolve) => {
+		// Step 1: Compile (fast, no sample loading)
+		const compilePromise = new Promise<CompileResult>((resolve) => {
 			compileResolve = resolve;
 		});
 
-		// Send source to worklet for compilation
 		workletNode.port.postMessage({ type: 'compile', source });
+		const compileResult = await compilePromise;
 
-		return resultPromise;
+		if (!compileResult.success) {
+			return compileResult;
+		}
+
+		// Step 2: Load any required samples that aren't loaded yet
+		const requiredSamples = compileResult.requiredSamples || [];
+		const missingSamples: string[] = [];
+
+		for (const name of requiredSamples) {
+			const loaded = await ensureSampleLoaded(name);
+			if (!loaded) {
+				missingSamples.push(name);
+			}
+		}
+
+		// If any samples couldn't be loaded, report as error
+		if (missingSamples.length > 0) {
+			return {
+				success: false,
+				diagnostics: missingSamples.map((name) => ({
+					severity: 2,
+					message: `Sample '${name}' not found or failed to load`,
+					line: 1,
+					column: 1
+				}))
+			};
+		}
+
+		// Step 3: Load the compiled program (samples are ready)
+		workletNode.port.postMessage({ type: 'loadCompiledProgram' });
+
+		return compileResult;
 	}
 
 	/**
@@ -406,24 +527,49 @@ function createAudioEngine() {
 	}
 
 	/**
-	 * Load the default 808 drum kit samples
+	 * Start background preloading of default samples (non-blocking)
 	 * Called automatically when the audio engine initializes
+	 * Samples will be loaded lazily - compile() will wait for required samples
 	 */
-	async function loadDefaultSamples() {
+	function loadDefaultSamples() {
 		if (state.samplesLoaded || state.samplesLoading) return;
 
 		state.samplesLoading = true;
-		console.log('[AudioEngine] Loading default drum kit...');
+		console.log('[AudioEngine] Starting background sample preload...');
 
-		try {
-			const loaded = await loadSamplePack(DEFAULT_DRUM_KIT);
-			state.samplesLoaded = true;
-			console.log('[AudioEngine] Default drum kit loaded:', loaded, 'samples');
-		} catch (err) {
-			console.error('[AudioEngine] Failed to load default samples:', err);
-		} finally {
-			state.samplesLoading = false;
+		// Mark all samples as pending
+		for (const sample of DEFAULT_DRUM_KIT) {
+			if (!sampleLoadState.has(sample.name)) {
+				sampleLoadState.set(sample.name, 'pending');
+			}
 		}
+
+		// Load samples one at a time in background (non-blocking)
+		(async () => {
+			let loaded = 0;
+			for (const sample of DEFAULT_DRUM_KIT) {
+				if (sampleLoadState.get(sample.name) === 'pending') {
+					sampleLoadState.set(sample.name, 'loading');
+					try {
+						const success = await loadSampleFromUrl(sample.name, sample.url);
+						if (success) {
+							sampleLoadState.set(sample.name, 'loaded');
+							loadedSamples.add(sample.name);
+							loaded++;
+						} else {
+							sampleLoadState.set(sample.name, 'error');
+						}
+					} catch {
+						sampleLoadState.set(sample.name, 'error');
+					}
+				} else if (sampleLoadState.get(sample.name) === 'loaded') {
+					loaded++;
+				}
+			}
+			state.samplesLoaded = true;
+			state.samplesLoading = false;
+			console.log('[AudioEngine] Background preload complete:', loaded, 'samples');
+		})();
 	}
 
 	/**

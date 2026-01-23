@@ -130,7 +130,11 @@ class CedarProcessor extends AudioWorkletProcessor {
 	handleMessage(msg) {
 		switch (msg.type) {
 			case 'compile':
-				this.compileAndLoad(msg.source);
+				this.compile(msg.source);
+				break;
+
+			case 'loadCompiledProgram':
+				this.loadCompiledProgram();
 				break;
 
 			case 'loadProgram':
@@ -170,10 +174,26 @@ class CedarProcessor extends AudioWorkletProcessor {
 	}
 
 	/**
-	 * Compile source code and load directly into Cedar VM
-	 * Cedar's internal crossfade handles smooth transitions
+	 * Get required sample names from the compile result
+	 * @returns {string[]} Array of sample names used in the compiled code
 	 */
-	compileAndLoad(source) {
+	getRequiredSamples() {
+		const count = this.module._akkado_get_required_samples_count();
+		const samples = [];
+		for (let i = 0; i < count; i++) {
+			const ptr = this.module._akkado_get_required_sample(i);
+			if (ptr) {
+				samples.push(this.module.UTF8ToString(ptr));
+			}
+		}
+		return samples;
+	}
+
+	/**
+	 * Compile source code (does not load into VM)
+	 * Returns required samples so runtime can load them before calling loadCompiledProgram
+	 */
+	compile(source) {
 		if (!this.module) {
 			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
 			return;
@@ -196,36 +216,18 @@ class CedarProcessor extends AudioWorkletProcessor {
 			const success = this.module._akkado_compile(sourcePtr, source.length);
 
 			if (success) {
-				// Get bytecode pointer and size
-				const bytecodePtr = this.module._akkado_get_bytecode();
 				const bytecodeSize = this.module._akkado_get_bytecode_size();
+				const requiredSamples = this.getRequiredSamples();
 
-				console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize);
+				console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
+					'required samples:', requiredSamples);
 
-				// Load program directly - Cedar handles crossfade internally
-				const result = this.module._cedar_load_program(bytecodePtr, bytecodeSize);
-
-				if (result === 0) {
-					// Apply state initializations for SEQ_STEP patterns
-					const stateInitsApplied = this.module._cedar_apply_state_inits();
-					if (stateInitsApplied > 0) {
-						console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
-					}
-
-					console.log('[CedarProcessor] Program loaded successfully');
-					this.port.postMessage({
-						type: 'compiled',
-						success: true,
-						bytecodeSize
-					});
-				} else {
-					console.error('[CedarProcessor] Load failed with code:', result);
-					this.port.postMessage({
-						type: 'compiled',
-						success: false,
-						diagnostics: [{ severity: 2, message: `Load failed with code ${result}`, line: 1, column: 1 }]
-					});
-				}
+				this.port.postMessage({
+					type: 'compiled',
+					success: true,
+					bytecodeSize,
+					requiredSamples
+				});
 			} else {
 				// Extract diagnostics
 				const diagnostics = this.extractDiagnostics();
@@ -235,11 +237,51 @@ class CedarProcessor extends AudioWorkletProcessor {
 					success: false,
 					diagnostics
 				});
+				// Clear result on failure
+				this.module._akkado_clear_result();
 			}
 		} finally {
 			this.module._enkido_free(sourcePtr);
-			this.module._akkado_clear_result();
+			// Note: don't clear result on success - we need it for loadCompiledProgram
 		}
+	}
+
+	/**
+	 * Load the compiled program after samples are ready
+	 * Call this after compile() succeeds and required samples are loaded
+	 */
+	loadCompiledProgram() {
+		if (!this.module) {
+			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
+			return;
+		}
+
+		// Resolve sample IDs now that samples are loaded
+		this.module._akkado_resolve_sample_ids();
+
+		// Get bytecode pointer and size
+		const bytecodePtr = this.module._akkado_get_bytecode();
+		const bytecodeSize = this.module._akkado_get_bytecode_size();
+
+		// Load program - Cedar handles crossfade internally
+		const result = this.module._cedar_load_program(bytecodePtr, bytecodeSize);
+
+		if (result === 0) {
+			// Apply state initializations for SEQ_STEP patterns (now with resolved IDs)
+			const stateInitsApplied = this.module._cedar_apply_state_inits();
+			if (stateInitsApplied > 0) {
+				console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
+			}
+
+			console.log('[CedarProcessor] Program loaded successfully');
+			this.port.postMessage({ type: 'programLoaded' });
+		} else {
+			console.error('[CedarProcessor] Load failed with code:', result);
+			this.port.postMessage({ type: 'error', message: `Load failed with code ${result}` });
+		}
+
+		// Clear compile result
+		this.module._akkado_clear_result();
 	}
 
 	/**

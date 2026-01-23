@@ -12,6 +12,7 @@ void print_usage(const char* program) {
               << "  -o, --output <file>  Output bytecode file (default: <input>.cedar)\n"
               << "  --json               Output diagnostics as JSON (for LSP/tooling)\n"
               << "  --check              Check syntax only, don't generate bytecode\n"
+              << "  --samples            List required samples\n"
               << std::endl;
 }
 
@@ -29,6 +30,7 @@ int main(int argc, char* argv[]) {
     std::string output_file;
     bool json_output = false;
     bool check_only = false;
+    bool list_samples = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -50,6 +52,11 @@ int main(int argc, char* argv[]) {
 
         if (arg == "--check") {
             check_only = true;
+            continue;
+        }
+
+        if (arg == "--samples") {
+            list_samples = true;
             continue;
         }
 
@@ -104,6 +111,23 @@ int main(int argc, char* argv[]) {
 
     if (!result.success) {
         return EXIT_FAILURE;
+    }
+
+    // List required samples
+    if (list_samples && !result.required_samples.empty()) {
+        if (json_output) {
+            std::cout << "{\"required_samples\":[";
+            for (size_t i = 0; i < result.required_samples.size(); ++i) {
+                if (i > 0) std::cout << ",";
+                std::cout << "\"" << result.required_samples[i] << "\"";
+            }
+            std::cout << "]}\n";
+        } else {
+            std::cout << "Required samples:\n";
+            for (const auto& name : result.required_samples) {
+                std::cout << "  " << name << "\n";
+            }
+        }
     }
 
     // Write bytecode
