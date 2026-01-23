@@ -106,6 +106,13 @@ private:
     /// Upgrade basic oscillator opcode to 4x oversampled variant
     [[nodiscard]] static cedar::Opcode upgrade_for_fm(cedar::Opcode op);
 
+    /// Handle osc() function calls - Strudel-style oscillator selection
+    /// Resolves string type parameter at compile time to the appropriate opcode.
+    /// @param node The Call node
+    /// @param n The Node reference
+    /// @return Output buffer index
+    std::uint16_t handle_osc_call(NodeIndex node, const Node& n);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;

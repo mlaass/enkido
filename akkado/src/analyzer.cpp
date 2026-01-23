@@ -241,18 +241,34 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         if (!sym) {
             error("E004", "Unknown function: '" + func_name + "'", n.location);
         } else if (sym->kind == SymbolKind::Builtin) {
-            // Reorder named arguments if any
-            reorder_named_arguments(node, sym->builtin, func_name);
+            // Special handling for osc() - validation happens in codegen
+            // because argument count depends on the type string
+            if (func_name == "osc") {
+                // Basic validation: at least 2 args (type + freq)
+                std::size_t arg_count = 0;
+                NodeIndex arg = output_arena_[node].first_child;
+                while (arg != NULL_NODE) {
+                    arg_count++;
+                    arg = output_arena_[arg].next_sibling;
+                }
+                if (arg_count < 2) {
+                    error("E006", "Function 'osc' expects at least 2 arguments: "
+                          "osc(type, freq) or osc(type, freq, pwm)", n.location);
+                }
+            } else {
+                // Reorder named arguments if any
+                reorder_named_arguments(node, sym->builtin, func_name);
 
-            // Count arguments (children of the Call node)
-            std::size_t arg_count = 0;
-            NodeIndex arg = output_arena_[node].first_child;
-            while (arg != NULL_NODE) {
-                arg_count++;
-                arg = output_arena_[arg].next_sibling;
+                // Count arguments (children of the Call node)
+                std::size_t arg_count = 0;
+                NodeIndex arg = output_arena_[node].first_child;
+                while (arg != NULL_NODE) {
+                    arg_count++;
+                    arg = output_arena_[arg].next_sibling;
+                }
+
+                validate_arguments(func_name, sym->builtin, arg_count, n.location);
             }
-
-            validate_arguments(func_name, sym->builtin, arg_count, n.location);
         }
     }
 

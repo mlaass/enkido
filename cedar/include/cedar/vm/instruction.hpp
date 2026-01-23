@@ -122,6 +122,20 @@ enum class Opcode : std::uint8_t {
     OSC_SQR_PWM_4X = 118,    // 4x oversampled PWM square
     OSC_SAW_PWM_4X = 119,    // 4x oversampled variable-slope saw
 
+    // Trigonometric Math (120-129) - pure mathematical functions
+    MATH_SIN = 120,          // sin(x) - radians, NOT oscillator
+    MATH_COS = 121,          // cos(x)
+    MATH_TAN = 122,          // tan(x)
+    MATH_ASIN = 123,         // asin(x)
+    MATH_ACOS = 124,         // acos(x)
+    MATH_ATAN = 125,         // atan(x)
+    MATH_ATAN2 = 126,        // atan2(y, x) - binary
+
+    // Hyperbolic Math (130-139)
+    MATH_SINH = 130,         // sinh(x)
+    MATH_COSH = 131,         // cosh(x)
+    MATH_TANH = 132,         // tanh(x) - pure math, also useful as waveshaper
+
     INVALID = 255
 };
 

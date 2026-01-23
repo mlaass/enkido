@@ -409,6 +409,48 @@ void VM::execute(const Instruction& inst) {
             op_ceil(ctx_, inst);
             break;
 
+        // === Trigonometric Math ===
+        case Opcode::MATH_SIN:
+            op_math_sin(ctx_, inst);
+            break;
+
+        case Opcode::MATH_COS:
+            op_math_cos(ctx_, inst);
+            break;
+
+        case Opcode::MATH_TAN:
+            op_math_tan(ctx_, inst);
+            break;
+
+        case Opcode::MATH_ASIN:
+            op_math_asin(ctx_, inst);
+            break;
+
+        case Opcode::MATH_ACOS:
+            op_math_acos(ctx_, inst);
+            break;
+
+        case Opcode::MATH_ATAN:
+            op_math_atan(ctx_, inst);
+            break;
+
+        case Opcode::MATH_ATAN2:
+            op_math_atan2(ctx_, inst);
+            break;
+
+        // === Hyperbolic Math ===
+        case Opcode::MATH_SINH:
+            op_math_sinh(ctx_, inst);
+            break;
+
+        case Opcode::MATH_COSH:
+            op_math_cosh(ctx_, inst);
+            break;
+
+        case Opcode::MATH_TANH:
+            op_math_tanh(ctx_, inst);
+            break;
+
         // === Utility ===
         [[likely]] case Opcode::OUTPUT:
             op_output(ctx_, inst);

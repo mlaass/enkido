@@ -55,11 +55,21 @@ struct BuiltinInfo {
 
 /// Static mapping of Akkado function names to Cedar opcodes
 /// Used by semantic analyzer to resolve function calls
+///
+/// NOTE: The `osc(type, freq)` function is handled specially by codegen.
+/// It resolves the string type ("sin", "sine", "saw", etc.) at compile-time
+/// to the appropriate OSC_* opcode. See codegen.cpp for the implementation.
 inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS = {
-    // Oscillators (1 input: frequency, stateful for phase)
-    {"sin",     {cedar::Opcode::OSC_SIN,    1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN}}},
+    // Strudel-style unified oscillator function: osc(type, freq) or osc(type, freq, pwm)
+    // Type is resolved at compile-time from a string literal.
+    // Examples: osc("sin", 440), osc("saw", freq), osc("sqr_pwm", freq, 0.5)
+    // The opcode here is a placeholder - actual opcode is determined by type string in codegen.
+    {"osc",     {cedar::Opcode::OSC_SIN, 2, 1, true,
+                 {"type", "freq", "pwm", "", "", ""},
+                 {NAN, NAN, NAN}}},  // pwm optional for PWM oscillators
+
+    // Basic Oscillators - kept for backwards compatibility and direct access
+    // For Strudel-style syntax, use osc("type", freq) instead
     {"tri",     {cedar::Opcode::OSC_TRI,    1, 0, true,
                  {"freq", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
@@ -76,6 +86,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"freq", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
     {"sqr_minblep", {cedar::Opcode::OSC_SQR_MINBLEP, 1, 0, true,
+                 {"freq", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    // Sine oscillator renamed to avoid conflict with sin() math function
+    {"sine_osc", {cedar::Opcode::OSC_SIN,   1, 0, true,
                  {"freq", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
 
@@ -164,7 +178,8 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {NAN, NAN, NAN}}},  // damping in reserved
 
     // Distortion
-    {"tanh",     {cedar::Opcode::DISTORT_TANH, 1, 1, false,
+    // Note: tanh(x) is now a pure math function. Use saturate(in, drive) for distortion.
+    {"saturate", {cedar::Opcode::DISTORT_TANH, 1, 1, false,
                   {"in", "drive", "", "", "", ""},
                   {2.0f, NAN, NAN}}},  // Default drive = 2x
     {"softclip", {cedar::Opcode::DISTORT_SOFT, 1, 1, false,
@@ -243,6 +258,44 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"x", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},
 
+    // Math - Trigonometric (radians)
+    // NOTE: sin(x) is the mathematical sine function, NOT a sine oscillator!
+    // Use osc("sin", freq) for a sine wave oscillator.
+    {"sin",     {cedar::Opcode::MATH_SIN,  1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"cos",     {cedar::Opcode::MATH_COS,  1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"tan",     {cedar::Opcode::MATH_TAN,  1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"asin",    {cedar::Opcode::MATH_ASIN, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"acos",    {cedar::Opcode::MATH_ACOS, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"atan",    {cedar::Opcode::MATH_ATAN, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"atan2",   {cedar::Opcode::MATH_ATAN2, 2, 0, false,
+                 {"y", "x", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+
+    // Math - Hyperbolic
+    {"sinh",    {cedar::Opcode::MATH_SINH, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    {"cosh",    {cedar::Opcode::MATH_COSH, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+    // Pure mathematical tanh - useful for waveshaping: tanh(signal * drive)
+    // For convenience distortion with drive parameter, use the tanh effect
+    {"tanh",    {cedar::Opcode::MATH_TANH, 1, 0, false,
+                 {"x", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},
+
     // Math binary (2 inputs)
     {"min",     {cedar::Opcode::MIN, 2, 0, false,
                  {"a", "b", "", "", "", ""},
@@ -305,10 +358,13 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
 /// Alias mappings for convenience syntax
 /// e.g., "sine" -> "sin", "lowpass" -> "lp"
 inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIASES = {
-    {"sine",      "sin"},
+    // Oscillator aliases - now use osc() function with type string
+    // e.g., osc("sine", 440) or osc("triangle", freq)
     {"triangle",  "tri"},
     {"sawtooth",  "saw"},
     {"square",    "sqr"},
+    // Note: "sine" no longer aliases to oscillator - use osc("sine", freq)
+    // sin(x) is now the mathematical sine function
     {"lowpass",   "lp"},
     {"highpass",  "hp"},
     {"bandpass",  "bp"},
@@ -326,8 +382,9 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"plate",     "dattorro"},
     {"room",      "fdn"},
     // Distortion aliases
-    {"distort",   "tanh"},
-    {"saturate",  "tanh"},
+    // Note: tanh(x) is now a pure math function
+    // Use saturate(in, drive) for the saturation effect
+    {"distort",   "saturate"},
     {"crush",     "bitcrush"},
     {"wavefold",  "fold"},
     {"valve",     "tube"},

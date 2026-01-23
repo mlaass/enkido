@@ -5,8 +5,63 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <optional>
 
 namespace akkado {
+
+// ============================================================================
+// Oscillator Type Resolution for osc() Function
+// ============================================================================
+// Maps string type names to Cedar oscillator opcodes.
+// Supports both short and long names (e.g., "sin" and "sine").
+
+struct OscTypeMapping {
+    cedar::Opcode opcode;
+    bool requires_pwm;  // true if this oscillator needs a pwm parameter
+};
+
+static std::optional<OscTypeMapping> resolve_osc_type(std::string_view type_name) {
+    // Basic oscillators (1 arg: freq)
+    if (type_name == "sin" || type_name == "sine") {
+        return OscTypeMapping{cedar::Opcode::OSC_SIN, false};
+    }
+    if (type_name == "tri" || type_name == "triangle") {
+        return OscTypeMapping{cedar::Opcode::OSC_TRI, false};
+    }
+    if (type_name == "saw" || type_name == "sawtooth") {
+        return OscTypeMapping{cedar::Opcode::OSC_SAW, false};
+    }
+    if (type_name == "sqr" || type_name == "square") {
+        return OscTypeMapping{cedar::Opcode::OSC_SQR, false};
+    }
+    if (type_name == "ramp") {
+        return OscTypeMapping{cedar::Opcode::OSC_RAMP, false};
+    }
+    if (type_name == "phasor") {
+        return OscTypeMapping{cedar::Opcode::OSC_PHASOR, false};
+    }
+    if (type_name == "noise" || type_name == "white") {
+        return OscTypeMapping{cedar::Opcode::NOISE, false};
+    }
+
+    // PWM oscillators (2 args: freq, pwm) - use osc("sqr_pwm", freq, pwm)
+    if (type_name == "sqr_pwm" || type_name == "pulse") {
+        return OscTypeMapping{cedar::Opcode::OSC_SQR_PWM, true};
+    }
+    if (type_name == "saw_pwm" || type_name == "var_saw") {
+        return OscTypeMapping{cedar::Opcode::OSC_SAW_PWM, true};
+    }
+
+    // MinBLEP variants
+    if (type_name == "sqr_minblep") {
+        return OscTypeMapping{cedar::Opcode::OSC_SQR_MINBLEP, false};
+    }
+    if (type_name == "sqr_pwm_minblep") {
+        return OscTypeMapping{cedar::Opcode::OSC_SQR_PWM_MINBLEP, true};
+    }
+
+    return std::nullopt;
+}
 
 std::uint16_t BufferAllocator::allocate() {
     if (next_ >= MAX_BUFFERS) {
@@ -268,6 +323,16 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
         case NodeType::Call: {
             // Function name is stored in the node's data, not as a child
             const std::string& func_name = n.as_identifier();
+
+            // ================================================================
+            // Special handling for osc() - Strudel-style oscillator selection
+            // ================================================================
+            // osc(type, freq) or osc(type, freq, pwm) where type is a string literal
+            // Resolves the type string at compile-time to the appropriate opcode.
+            if (func_name == "osc") {
+                return handle_osc_call(node, n);
+            }
+
             const BuiltinInfo* builtin = lookup_builtin(func_name);
 
             if (!builtin) {
@@ -783,6 +848,107 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             error("E199", "Unsupported node type", n.location);
             return BufferAllocator::BUFFER_UNUSED;
     }
+}
+
+// ============================================================================
+// osc() Function Handler
+// ============================================================================
+// Handles osc(type, freq) and osc(type, freq, pwm) calls.
+// The type must be a string literal that is resolved at compile time.
+std::uint16_t CodeGenerator::handle_osc_call(NodeIndex node, const Node& n) {
+    // Get arguments: first should be string literal (type), rest are signal args
+    std::vector<NodeIndex> args;
+    NodeIndex arg = n.first_child;
+    while (arg != NULL_NODE) {
+        const Node& arg_node = ast_->arena[arg];
+        NodeIndex arg_value = arg;
+        if (arg_node.type == NodeType::Argument) {
+            arg_value = arg_node.first_child;
+        }
+        args.push_back(arg_value);
+        arg = ast_->arena[arg].next_sibling;
+    }
+
+    if (args.empty()) {
+        error("E116", "osc() requires at least 2 arguments: osc(type, freq)", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // First argument must be a string literal
+    const Node& type_node = ast_->arena[args[0]];
+    if (type_node.type != NodeType::StringLit) {
+        error("E117", "osc() first argument must be a string literal (e.g., \"sin\", \"saw\")",
+              type_node.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    std::string type_name = type_node.as_string();
+    auto osc_type = resolve_osc_type(type_name);
+
+    if (!osc_type) {
+        error("E118", "Unknown oscillator type: \"" + type_name +
+              "\". Valid types: sin/sine, tri/triangle, saw/sawtooth, sqr/square, "
+              "ramp, phasor, noise, sqr_pwm/pulse, saw_pwm, sqr_minblep",
+              type_node.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Check argument count based on oscillator type
+    std::size_t required_args = osc_type->requires_pwm ? 3 : 2;  // type + freq [+ pwm]
+    if (args.size() < required_args) {
+        std::string expected = osc_type->requires_pwm
+            ? "osc(\"" + type_name + "\", freq, pwm)"
+            : "osc(\"" + type_name + "\", freq)";
+        error("E119", "osc(\"" + type_name + "\") requires " + std::to_string(required_args) +
+              " arguments: " + expected, n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Push path for state ID
+    std::uint32_t count = call_counters_["osc"]++;
+    std::string unique_name = "osc#" + std::to_string(count);
+    push_path(unique_name);
+
+    // Visit signal arguments (skip the type string)
+    std::vector<std::uint16_t> arg_buffers;
+    for (std::size_t i = 1; i < args.size() && i < required_args; ++i) {
+        std::uint16_t buf = visit(args[i]);
+        arg_buffers.push_back(buf);
+    }
+
+    // Allocate output buffer
+    std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        pop_path();
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Build instruction
+    cedar::Instruction inst{};
+    inst.opcode = osc_type->opcode;
+    inst.out_buffer = out;
+    inst.inputs[0] = arg_buffers.size() > 0 ? arg_buffers[0] : 0xFFFF;
+    inst.inputs[1] = arg_buffers.size() > 1 ? arg_buffers[1] : 0xFFFF;
+    inst.inputs[2] = 0xFFFF;
+    inst.inputs[3] = 0xFFFF;
+    inst.rate = 0;
+    inst.state_id = compute_state_id();
+
+    // FM Detection: Automatically upgrade oscillators to 4x when frequency
+    // input comes from an audio-rate source
+    if (is_upgradeable_oscillator(inst.opcode) && !arg_buffers.empty()) {
+        std::uint16_t freq_buffer = arg_buffers[0];
+        if (is_fm_modulated(freq_buffer)) {
+            inst.opcode = upgrade_for_fm(inst.opcode);
+        }
+    }
+
+    pop_path();
+
+    emit(inst);
+    node_buffers_[node] = out;
+    return out;
 }
 
 void CodeGenerator::emit(const cedar::Instruction& inst) {

@@ -131,4 +131,125 @@ inline void op_ceil(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// ============================================================================
+// Trigonometric Functions (radians)
+// ============================================================================
+
+// MATH_SIN: out = sin(in0) - NOT an oscillator, pure trig function
+[[gnu::always_inline]]
+inline void op_math_sin(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::sin(a[i]);
+    }
+}
+
+// MATH_COS: out = cos(in0)
+[[gnu::always_inline]]
+inline void op_math_cos(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::cos(a[i]);
+    }
+}
+
+// MATH_TAN: out = tan(in0)
+[[gnu::always_inline]]
+inline void op_math_tan(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::tan(a[i]);
+    }
+}
+
+// MATH_ASIN: out = asin(in0)
+[[gnu::always_inline]]
+inline void op_math_asin(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::asin(std::clamp(a[i], -1.0f, 1.0f));  // Clamp to valid domain
+    }
+}
+
+// MATH_ACOS: out = acos(in0)
+[[gnu::always_inline]]
+inline void op_math_acos(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::acos(std::clamp(a[i], -1.0f, 1.0f));  // Clamp to valid domain
+    }
+}
+
+// MATH_ATAN: out = atan(in0)
+[[gnu::always_inline]]
+inline void op_math_atan(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::atan(a[i]);
+    }
+}
+
+// MATH_ATAN2: out = atan2(in0, in1) where in0=y, in1=x
+[[gnu::always_inline]]
+inline void op_math_atan2(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* y = ctx.buffers->get(inst.inputs[0]);
+    const float* x = ctx.buffers->get(inst.inputs[1]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::atan2(y[i], x[i]);
+    }
+}
+
+// ============================================================================
+// Hyperbolic Functions
+// ============================================================================
+
+// MATH_SINH: out = sinh(in0)
+[[gnu::always_inline]]
+inline void op_math_sinh(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::sinh(std::clamp(a[i], -87.0f, 87.0f));  // Avoid overflow
+    }
+}
+
+// MATH_COSH: out = cosh(in0)
+[[gnu::always_inline]]
+inline void op_math_cosh(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::cosh(std::clamp(a[i], -87.0f, 87.0f));  // Avoid overflow
+    }
+}
+
+// MATH_TANH: out = tanh(in0) - pure hyperbolic tangent
+// Unlike DISTORT_TANH which has a drive parameter, this is the raw math function.
+// Useful for waveshaping: tanh(signal * drive) where drive is computed separately.
+[[gnu::always_inline]]
+inline void op_math_tanh(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = std::tanh(a[i]);
+    }
+}
+
 }  // namespace cedar
