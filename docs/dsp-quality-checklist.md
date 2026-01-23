@@ -80,20 +80,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | `FILTER_SVF_BP` | ✅ Tested | Frequency response, resonance sweep | State-variable bandpass |
 | `FILTER_MOOG` | ✅ Tested | Resonance sweep, self-oscillation | Classic ladder character |
 
-### Untested
-
-| Opcode | Priority | Suggested Tests |
-|--------|----------|-----------------|
-| `FILTER_BIQUAD_LP` | High | Standard biquad lowpass response |
-| `FILTER_BIQUAD_HP` | High | Standard biquad highpass response |
-| `FILTER_BIQUAD_BP` | High | Standard biquad bandpass response |
-| `FILTER_BIQUAD_NOTCH` | Medium | Notch depth and width |
-| `FILTER_BIQUAD_PEAK` | Medium | Peak gain and Q |
-| `FILTER_BIQUAD_LSHELF` | Medium | Low shelf frequency and gain |
-| `FILTER_BIQUAD_HSHELF` | Medium | High shelf frequency and gain |
-| `FILTER_DIODE` | Medium | Diode ladder character, self-oscillation |
-| `FILTER_COMB` | Medium | Delay time, feedback, resonance |
-| `FILTER_ALLPASS` | Low | Phase response, group delay |
+*All implemented filter opcodes have been tested.*
 
 ---
 
@@ -139,8 +126,6 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 |--------|----------|-----------------|
 | `REVERB_FREEVERB` | High | Impulse response, room size, damping |
 | `REVERB_FDN` | Medium | Feedback delay network, decay, diffusion |
-| `REVERB_SPRING` | Low | Spring character, drip effect |
-| `REVERB_SHIMMER` | Low | Pitch shifting quality, modulation |
 
 ---
 
@@ -153,12 +138,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | `SAMPLE_PLAY` | ✅ Tested | Pitch accuracy, interpolation, timing | One-shot playback |
 | `SAMPLE_PLAY_LOOP` | ✅ Tested | Loop discontinuity, timing drift | Looping mode |
 
-### Untested
-
-| Opcode | Priority | Suggested Tests |
-|--------|----------|-----------------|
-| `SAMPLE_GRANULAR` | High | Grain size, overlap, pitch/time independence |
-| `SAMPLE_KARPLUS` | Medium | Excitation, damping, pitch tracking |
+*All implemented sampler opcodes have been tested.*
 
 ---
 
@@ -231,15 +211,15 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | Category | Tested | Partial/Bug | Untested | Notes |
 |----------|--------|-------------|----------|-------|
 | Oscillators | 11 | - | 9 | Via test_oscillators.py, test_fm_aliasing.py |
-| Filters | 4 | - | 10 | Via test_filters.py |
+| Filters | 4 | - | 0 | Via test_filters.py |
 | Effects | 8 | - | 5 | Via test_effects.py |
-| Delays & Reverbs | 2 | - | 4 | Via test_effects.py |
-| Samplers | 2 | - | 2 | Via test_sampler.py |
+| Delays & Reverbs | 2 | - | 2 | Via test_effects.py |
+| Samplers | 2 | - | 0 | Via test_sampler.py |
 | Envelopes | 3 | - | 0 | Via test_envelopes.py |
 | Sequencers & Timing | 4 | - | 2 | Via test_sequencers.py |
 | Dynamics | 3 | - | 0 | Via test_dynamics.py |
 | Utility | 5 | - | 1 | Via test_utility.py |
-| **Total** | **42** | **-** | **33** | 56% tested |
+| **Total** | **42** | **-** | **19** | 69% tested |
 
 ---
 
@@ -252,13 +232,55 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 
 ### Medium Priority (Extended Functionality)
 1. `OSC_RAMP`, `OSC_PHASOR` - Modulation sources (opcodes exist, need tests)
-2. `FILTER_DIODE` - Alternative filter character
-3. Remaining distortion types (`DISTORT_SMOOTH`, `DISTORT_TAPE`)
+2. `REVERB_FDN` - Feedback delay network testing
+3. Remaining distortion types (`DISTORT_SMOOTH`, `DISTORT_TAPE`, `DISTORT_XFMR`, `DISTORT_EXCITE`)
+4. `EFFECT_COMB` - Comb filter testing
 
 ### Low Priority (Completeness)
 1. 2x oversampling oscillator variants (already have 1x and 4x)
-2. Biquad filter variants (already have SVF)
+2. 4x oversampling variants for SAW, SQR, TRI
 3. Utility opcodes (`ENV_GET`)
+
+---
+
+## Not Implemented / Planned
+
+These opcodes are not yet implemented but may be added in the future.
+
+### Filters
+
+| Opcode | Notes |
+|--------|-------|
+| `FILTER_BIQUAD_LP` | Standard biquad lowpass (deprecated in favor of SVF) |
+| `FILTER_BIQUAD_HP` | Standard biquad highpass |
+| `FILTER_BIQUAD_BP` | Standard biquad bandpass |
+| `FILTER_BIQUAD_NOTCH` | Notch filter |
+| `FILTER_BIQUAD_PEAK` | Peaking EQ |
+| `FILTER_BIQUAD_LSHELF` | Low shelf EQ |
+| `FILTER_BIQUAD_HSHELF` | High shelf EQ |
+| `FILTER_DIODE` | Diode ladder filter |
+| `FILTER_COMB` | Comb filter (feedforward) |
+| `FILTER_ALLPASS` | Allpass filter |
+
+### Reverbs
+
+| Opcode | Notes |
+|--------|-------|
+| `REVERB_SPRING` | Spring reverb emulation |
+| `REVERB_SHIMMER` | Pitch-shifted reverb |
+
+### Samplers
+
+| Opcode | Notes |
+|--------|-------|
+| `SAMPLE_GRANULAR` | Granular synthesis |
+| `SAMPLE_KARPLUS` | Karplus-Strong string synthesis |
+
+### Synths
+
+| Opcode | Notes |
+|--------|-------|
+| `SMOOCH` | Wavetable oscillator with mip-mapped anti-aliasing and Hermite interpolation. See [PRD](smooch_wavetable_synth_prd.md) |
 
 ---
 
