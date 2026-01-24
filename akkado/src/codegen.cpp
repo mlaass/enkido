@@ -697,7 +697,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
                 // Build state initialization with times, values, velocities
                 StateInitData seq_init;
-                seq_init.state_id = seq_state_id;
+                seq_init.state_id = static_cast<std::uint16_t>(seq_state_id);  // Match Instruction::state_id
                 seq_init.type = StateInitData::Type::SeqStep;
                 seq_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
                 seq_init.times.reserve(events.size());
@@ -787,7 +787,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
             // Build state initialization with times, values (pitches), velocities
             StateInitData pitch_init;
-            pitch_init.state_id = pitch_seq_state_id;
+            pitch_init.state_id = static_cast<std::uint16_t>(pitch_seq_state_id);  // Match Instruction::state_id
             pitch_init.type = StateInitData::Type::SeqStep;
             pitch_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
             pitch_init.times.reserve(events.size());

@@ -421,9 +421,9 @@ WASM_EXPORT uint32_t akkado_get_state_init_count() {
 /**
  * Get state_id for a state initialization
  * @param index State init index
- * @return state_id
+ * @return state_id (16-bit, matches Instruction::state_id)
  */
-WASM_EXPORT uint32_t akkado_get_state_init_id(uint32_t index) {
+WASM_EXPORT uint16_t akkado_get_state_init_id(uint32_t index) {
     if (index >= g_compile_result.state_inits.size()) return 0;
     return g_compile_result.state_inits[index].state_id;
 }
@@ -460,7 +460,7 @@ WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
 
 /**
  * Apply a state initialization to the VM
- * @param state_id State ID to initialize
+ * @param state_id State ID to initialize (16-bit, matches Instruction::state_id)
  * @param times Pointer to float array of event times (in beats)
  * @param values Pointer to float array of values
  * @param velocities Pointer to float array of velocities
@@ -468,7 +468,7 @@ WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
  * @param cycle_length Cycle length in beats
  * @return 1 on success, 0 on failure
  */
-WASM_EXPORT int cedar_init_seq_step_state(uint32_t state_id,
+WASM_EXPORT int cedar_init_seq_step_state(uint16_t state_id,
                                            const float* times,
                                            const float* values,
                                            const float* velocities,

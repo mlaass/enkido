@@ -45,7 +45,7 @@ public:
     // Get or create state for a given semantic ID
     // Template type T must be one of the DSPState variant alternatives
     template<typename T>
-    [[nodiscard]] T& get_or_create(std::uint32_t state_id) {
+    [[nodiscard]] T& get_or_create(std::uint16_t state_id) {
         touched_.insert(state_id);
 
         auto it = states_.find(state_id);
@@ -63,18 +63,18 @@ public:
 
     // Get existing state (assumes it exists and is correct type)
     template<typename T>
-    [[nodiscard]] T& get(std::uint32_t state_id) {
+    [[nodiscard]] T& get(std::uint16_t state_id) {
         touched_.insert(state_id);
         return std::get<T>(states_.at(state_id));
     }
 
     // Check if state exists
-    [[nodiscard]] bool exists(std::uint32_t state_id) const {
+    [[nodiscard]] bool exists(std::uint16_t state_id) const {
         return states_.find(state_id) != states_.end();
     }
 
     // Mark state as touched (for GC tracking)
-    void touch(std::uint32_t state_id) {
+    void touch(std::uint16_t state_id) {
         touched_.insert(state_id);
     }
 
@@ -148,7 +148,7 @@ public:
     }
 
     // Get fade gain for a state (1.0 if active, 0.0-1.0 if fading, 0.0 if not found)
-    [[nodiscard]] float get_fade_gain(std::uint32_t state_id) const {
+    [[nodiscard]] float get_fade_gain(std::uint16_t state_id) const {
         // Check if it's an active state
         if (states_.find(state_id) != states_.end()) {
             return 1.0f;
@@ -163,7 +163,7 @@ public:
 
     // Get fading state if it exists (for reading orphaned state data)
     template<typename T>
-    [[nodiscard]] const T* get_fading(std::uint32_t state_id) const {
+    [[nodiscard]] const T* get_fading(std::uint16_t state_id) const {
         auto it = fading_states_.find(state_id);
         if (it != fading_states_.end()) {
             if (std::holds_alternative<T>(it->second.state)) {
@@ -184,7 +184,7 @@ public:
 
     // Initialize a SeqStepState with timed events
     // Used by compiler to set up sequence data before program execution
-    void init_seq_step(std::uint32_t state_id,
+    void init_seq_step(std::uint16_t state_id,
                        const float* times, const float* values, const float* velocities,
                        std::size_t count, float cycle_length) {
         auto& state = get_or_create<SeqStepState>(state_id);
@@ -200,9 +200,9 @@ public:
     }
 
 private:
-    std::unordered_map<std::uint32_t, DSPState> states_;
-    std::unordered_set<std::uint32_t> touched_;
-    std::unordered_map<std::uint32_t, FadingState> fading_states_;
+    std::unordered_map<std::uint16_t, DSPState> states_;
+    std::unordered_set<std::uint16_t> touched_;
+    std::unordered_map<std::uint16_t, FadingState> fading_states_;
     std::uint32_t fade_blocks_ = 3;  // Default: match crossfade duration
 };
 

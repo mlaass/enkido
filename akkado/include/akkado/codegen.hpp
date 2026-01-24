@@ -14,7 +14,7 @@ namespace akkado {
 
 /// State initialization data for SEQ_STEP and TIMELINE opcodes
 struct StateInitData {
-    std::uint32_t state_id;
+    std::uint16_t state_id;  // Must match Instruction::state_id (16-bit)
     enum class Type : std::uint8_t {
         SeqStep,   // Initialize SeqStepState with timed events
         Timeline   // Initialize TimelineState with breakpoints

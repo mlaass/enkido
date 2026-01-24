@@ -46,7 +46,7 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
 
     // Set of semantic IDs in this program (for GC and change detection)
     // Using fixed array instead of set to avoid allocations
-    std::array<std::uint32_t, MAX_STATES> state_ids{};
+    std::array<std::uint16_t, MAX_STATES> state_ids{};
     std::uint32_t state_id_count = 0;
 
     // Slot state (atomic for thread-safe ownership transfer)
@@ -114,7 +114,7 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
     }
 
     // Check if state ID exists in this program
-    [[nodiscard]] bool has_state_id(std::uint32_t id) const noexcept {
+    [[nodiscard]] bool has_state_id(std::uint16_t id) const noexcept {
         for (std::uint32_t i = 0; i < state_id_count; ++i) {
             if (state_ids[i] == id) {
                 return true;
@@ -129,7 +129,7 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
     }
 
     // Get span of state IDs
-    [[nodiscard]] std::span<const std::uint32_t> get_state_ids() const noexcept {
+    [[nodiscard]] std::span<const std::uint16_t> get_state_ids() const noexcept {
         return {state_ids.data(), state_id_count};
     }
 };
