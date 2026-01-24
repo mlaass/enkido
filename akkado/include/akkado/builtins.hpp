@@ -127,6 +127,18 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"moog",    {cedar::Opcode::FILTER_MOOG, 2, 1, true,
                  {"in", "cut", "res", "", "", ""},
                  {1.0f, NAN, NAN}}},
+    // Diode ladder filter (TB-303 acid) - 5 inputs: in, cut, res, vt, fb_gain
+    {"diode",   {cedar::Opcode::FILTER_DIODE, 2, 3, true,
+                 {"in", "cut", "res", "vt", "fb_gain", ""},
+                 {1.0f, 0.026f, 10.0f}}},  // res=1.0, vt=0.026, fb_gain=10.0
+    // Formant filter (vowel morphing) - 5 inputs: in, vowel_a, vowel_b, morph, q
+    {"formant", {cedar::Opcode::FILTER_FORMANT, 2, 3, true,
+                 {"in", "vowel_a", "vowel_b", "morph", "q", ""},
+                 {0.0f, 0.5f, 10.0f}}},  // vowel_b=0, morph=0.5, q=10.0
+    // Sallen-Key filter (MS-20 style) - 4 inputs: in, cut, res, mode
+    {"sallenkey", {cedar::Opcode::FILTER_SALLENKEY, 2, 2, true,
+                   {"in", "cut", "res", "mode", "", ""},
+                   {1.0f, 0.0f, NAN}}},  // res=1.0, mode=0.0 (LP)
 
     // Envelopes
     {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 4, true,
@@ -377,6 +389,13 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"svflp",     "lp"},
     {"svfhp",     "hp"},
     {"svfbp",     "bp"},
+    // SquelchEngine filter aliases
+    {"diodeladder", "diode"},
+    {"tb303",       "diode"},
+    {"acid",        "diode"},
+    {"vowel",       "formant"},
+    {"sk",          "sallenkey"},
+    {"ms20",        "sallenkey"},
     // Reverb aliases
     {"reverb",    "freeverb"},
     {"plate",     "dattorro"},
