@@ -205,7 +205,64 @@ uv run python test_effects.py
 
 The Python bindings (`cedar_core`) are built to `experiments/cedar_core.cpython-*.so` by the `cedar_core` CMake target.
 
+### Creating Opcode Experiments
+
+**Purpose**: Experiments evaluate whether DSP algorithm implementations are correct. They require human feedback (listening to WAV files) and may reveal bugs that need fixing in the C++ implementation.
+
+**Critical Guidelines**:
+
+1. **Tests verify expected behavior** - Design tests based on documented/expected algorithm behavior, NOT observed behavior
+2. **Never adjust tests to fit data** - If a test fails, investigate the implementation, don't change the test to pass
+3. **Always output WAV files** - Human ears are the ultimate judge of audio quality. Save WAV files for every test:
+   ```python
+   scipy.io.wavfile.write(f"output/{test_name}.wav", sr, output)
+   print(f"  Saved output/{test_name}.wav - [describe what to listen for]")
+   ```
+4. **Report pass/fail clearly** - Use ✓/✗/⚠ symbols and explain what the expected vs actual behavior is
+5. **Document acceptance criteria** - Each test should have clear, measurable criteria in the docstring
+
+**Test Structure**:
+```python
+def test_filter_something():
+    """
+    Test FILTER_SOMETHING for [behavior].
+
+    Expected behavior (per implementation):
+    - [specific measurable criterion 1]
+    - [specific measurable criterion 2]
+
+    If this test fails, check the implementation in cedar/include/cedar/opcodes/filters.hpp
+    """
+    # ... test code ...
+
+    # Save WAV for human evaluation
+    scipy.io.wavfile.write(wav_path, sr, output)
+    print(f"  Saved {wav_path} - Listen for [specific thing]")
+
+    # Report results with clear pass/fail
+    if meets_criteria:
+        print(f"  ✓ PASS: [what passed]")
+    else:
+        print(f"  ✗ FAIL: [what failed] - Check implementation")
+```
+
+**When a test fails**:
+1. Do NOT modify the test to make it pass
+2. Investigate the C++ implementation
+3. Discuss with user whether the algorithm needs fixing
+4. If the expected behavior was wrong, update both test AND documentation
+
+**Update checklist**: After adding tests, update `docs/dsp-quality-checklist.md` to reflect test coverage.
+
 ## Implementation Notes
+
+### Effect Parameters
+- Effects (chorus, flanger, phaser, reverbs) output 100% wet signal. Users mix dry/wet manually if needed:
+  ```akkado
+  dry = osc("saw", 220)
+  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(%, %)  // 30% dry, 70% wet
+  ```
+- Never use bit-packing tricks for parameters. Use the 5 input slots and extended params properly.
 
 ### Thread Safety
 - Triple-buffer approach: compiler writes to "Next", audio reads from "Current"

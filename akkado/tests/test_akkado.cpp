@@ -12,6 +12,16 @@ static float decode_const_float(const cedar::Instruction& inst) {
     return value;
 }
 
+// Helper to check if a diagnostic with a specific code exists
+static bool has_diagnostic_code(const std::vector<akkado::Diagnostic>& diagnostics, const std::string& code) {
+    for (const auto& d : diagnostics) {
+        if (d.code == code) {
+            return true;
+        }
+    }
+    return false;
+}
+
 TEST_CASE("Akkado compilation", "[akkado]") {
     SECTION("empty source produces error") {
         auto result = akkado::compile("");
@@ -166,7 +176,16 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].severity == akkado::Severity::Error);
+
+        // Find an error diagnostic (skip stdlib warnings)
+        bool found_error = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.severity == akkado::Severity::Error) {
+                found_error = true;
+                break;
+            }
+        }
+        CHECK(found_error);
     }
 
     SECTION("hole outside pipe produces error") {
@@ -189,7 +208,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         // Should fail - captures 'y'
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].code == "E008");
+        CHECK(has_diagnostic_code(result.diagnostics, "E008"));
     }
 
     SECTION("closure with multiple params") {
@@ -359,7 +378,7 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].code == "E121");
+        CHECK(has_diagnostic_code(result.diagnostics, "E121"));
     }
 
     SECTION("match with non-literal scrutinee fails") {
@@ -503,7 +522,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].code == "E008");
+        CHECK(has_diagnostic_code(result.diagnostics, "E008"));
     }
 
     SECTION("function can call other user functions") {
@@ -533,7 +552,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].code == "E006");
+        CHECK(has_diagnostic_code(result.diagnostics, "E006"));
     }
 
     SECTION("too many arguments produces error") {
@@ -544,7 +563,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE_FALSE(result.success);
         REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(result.diagnostics[0].code == "E007");
+        CHECK(has_diagnostic_code(result.diagnostics, "E007"));
     }
 }
 
@@ -665,5 +684,218 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
             }
         }
         CHECK(found_excite);
+    }
+}
+
+// Helper to find an instruction with a specific opcode in bytecode
+static bool find_opcode(const std::vector<std::uint8_t>& bytecode, cedar::Opcode target) {
+    cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(
+        const_cast<std::uint8_t*>(bytecode.data()));
+    size_t num_inst = bytecode.size() / sizeof(cedar::Instruction);
+    for (size_t i = 0; i < num_inst; ++i) {
+        if (inst[i].opcode == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
+    SECTION("stdlib osc() with sin type") {
+        auto result = akkado::compile(R"(osc("sin", 440))");
+
+        REQUIRE(result.success);
+        // stdlib osc() produces: PUSH_CONST(freq), PUSH_CONST(pwm default), OSC_SIN
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+    }
+
+    SECTION("stdlib osc() with saw type") {
+        auto result = akkado::compile(R"(osc("saw", 440))");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+    }
+
+    SECTION("stdlib osc() with sqr type") {
+        auto result = akkado::compile(R"(osc("sqr", 440))");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SQR));
+    }
+
+    SECTION("stdlib osc() with tri type") {
+        auto result = akkado::compile(R"(osc("tri", 440))");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+    }
+
+    SECTION("stdlib osc() with alternate names (sine, sawtooth, square, triangle)") {
+        // Test "sine" alias
+        {
+            auto result = akkado::compile(R"(osc("sine", 440))");
+            REQUIRE(result.success);
+            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+        }
+
+        // Test "sawtooth" alias
+        {
+            auto result = akkado::compile(R"(osc("sawtooth", 440))");
+            REQUIRE(result.success);
+            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        }
+
+        // Test "square" alias
+        {
+            auto result = akkado::compile(R"(osc("square", 440))");
+            REQUIRE(result.success);
+            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SQR));
+        }
+
+        // Test "triangle" alias
+        {
+            auto result = akkado::compile(R"(osc("triangle", 440))");
+            REQUIRE(result.success);
+            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+        }
+    }
+
+    SECTION("stdlib osc() with noise type") {
+        auto result = akkado::compile(R"(osc("noise", 0))");
+
+        REQUIRE(result.success);
+        // Should have: PUSH_CONST, NOISE
+        // Note: noise() ignores frequency but osc() still passes it through the match
+        REQUIRE(result.bytecode.size() >= 1 * sizeof(cedar::Instruction));
+
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        bool found_noise = false;
+        for (size_t i = 0; i < num_inst; ++i) {
+            if (inst[i].opcode == cedar::Opcode::NOISE) {
+                found_noise = true;
+                break;
+            }
+        }
+        CHECK(found_noise);
+    }
+
+    SECTION("stdlib osc() with pwm oscillators") {
+        // Test sqr_pwm
+        {
+            auto result = akkado::compile(R"(osc("sqr_pwm", 440, 0.25))");
+            REQUIRE(result.success);
+
+            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+            size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+
+            bool found_pwm = false;
+            for (size_t i = 0; i < num_inst; ++i) {
+                if (inst[i].opcode == cedar::Opcode::OSC_SQR_PWM) {
+                    found_pwm = true;
+                    break;
+                }
+            }
+            CHECK(found_pwm);
+        }
+
+        // Test "pulse" alias for sqr_pwm
+        {
+            auto result = akkado::compile(R"(osc("pulse", 440, 0.3))");
+            REQUIRE(result.success);
+
+            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+            size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+
+            bool found_pwm = false;
+            for (size_t i = 0; i < num_inst; ++i) {
+                if (inst[i].opcode == cedar::Opcode::OSC_SQR_PWM) {
+                    found_pwm = true;
+                    break;
+                }
+            }
+            CHECK(found_pwm);
+        }
+    }
+
+    SECTION("stdlib osc() with unknown type falls back to sin") {
+        auto result = akkado::compile(R"(osc("unknown_type", 440))");
+
+        REQUIRE(result.success);
+        // Should fall back to sin via the wildcard match
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+    }
+
+    SECTION("user can shadow stdlib osc()") {
+        // Define a custom osc() that always returns a saw
+        auto result = akkado::compile(R"(
+            fn osc(type, freq, pwm = 0.5) -> saw(freq)
+            osc("sin", 440)
+        )");
+
+        REQUIRE(result.success);
+        // User's osc() should produce OSC_SAW (not OSC_SIN!)
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        // And should NOT produce OSC_SIN
+        CHECK_FALSE(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+    }
+
+    SECTION("stdlib osc() works in pipe chain") {
+        auto result = akkado::compile(R"(osc("saw", 440) |> lp(%, 1000, 0.7) |> out(%, %))");
+
+        REQUIRE(result.success);
+        // Should have OSC_SAW, FILTER_SVF_LP, and OUTPUT
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("diagnostic line numbers are correct (not offset by stdlib)") {
+        // Error should be reported on line 1, not line 20+ due to stdlib
+        auto result = akkado::compile("undefined_identifier");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+
+        // Find the first error diagnostic (skip warnings like stdlib redefinition)
+        const akkado::Diagnostic* error_diag = nullptr;
+        for (const auto& d : result.diagnostics) {
+            if (d.severity == akkado::Severity::Error) {
+                error_diag = &d;
+                break;
+            }
+        }
+        REQUIRE(error_diag != nullptr);
+
+        // Check the error diagnostic reports line 1 (user code)
+        CHECK(error_diag->location.line == 1);
+        // Filename should be the user's filename, not <stdlib>
+        CHECK(error_diag->filename != "<stdlib>");
+    }
+
+    SECTION("diagnostic line numbers correct for multi-line user code") {
+        auto result = akkado::compile(R"(
+            x = 42
+            y = 100
+            undefined_func(x)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+
+        // Find the first error diagnostic (skip warnings)
+        const akkado::Diagnostic* error_diag = nullptr;
+        for (const auto& d : result.diagnostics) {
+            if (d.severity == akkado::Severity::Error) {
+                error_diag = &d;
+                break;
+            }
+        }
+        REQUIRE(error_diag != nullptr);
+
+        // Error should be on line 4 (the undefined_func call)
+        // Lines: 1=empty, 2=x=42, 3=y=100, 4=undefined_func
+        CHECK(error_diag->location.line == 4);
     }
 }

@@ -341,19 +341,22 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             // Function name is stored in the node's data, not as a child
             const std::string& func_name = n.as_identifier();
 
+            // Check user-defined functions FIRST (allows stdlib osc to work)
+            // This enables the stdlib osc() to be defined in user-space and
+            // also allows users to shadow stdlib definitions.
+            auto sym = symbols_->lookup(func_name);
+            if (sym && sym->kind == SymbolKind::UserFunction) {
+                return handle_user_function_call(node, n, sym->user_function);
+            }
+
             // ================================================================
-            // Special handling for osc() - Strudel-style oscillator selection
+            // Fallback: Special handling for osc() - Strudel-style oscillator selection
             // ================================================================
+            // This is kept as fallback in case stdlib isn't loaded or for direct calls.
             // osc(type, freq) or osc(type, freq, pwm) where type is a string literal
             // Resolves the type string at compile-time to the appropriate opcode.
             if (func_name == "osc") {
                 return handle_osc_call(node, n);
-            }
-
-            // Check if it's a user-defined function
-            auto sym = symbols_->lookup(func_name);
-            if (sym && sym->kind == SymbolKind::UserFunction) {
-                return handle_user_function_call(node, n, sym->user_function);
             }
 
             const BuiltinInfo* builtin = lookup_builtin(func_name);

@@ -158,6 +158,174 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "tutorials",
 		"title": "Testing Progression"
 	},
+	"filters": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"moog": {
+		"slug": "filters",
+		"category": "builtins",
+		"title": "moog",
+		"anchor": "moog"
+	},
+	"diode": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"sallenkey": {
+		"slug": "filters",
+		"category": "builtins",
+		"title": "sallenkey",
+		"anchor": "sallenkey"
+	},
+	"formant": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"distortion": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"saturate": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "saturate",
+		"anchor": "saturate"
+	},
+	"bitcrush": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "bitcrush",
+		"anchor": "bitcrush"
+	},
+	"fold": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "fold",
+		"anchor": "fold"
+	},
+	"tube": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "tube",
+		"anchor": "tube"
+	},
+	"tape": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "tape",
+		"anchor": "tape"
+	},
+	"xfmr": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "xfmr",
+		"anchor": "xfmr"
+	},
+	"excite": {
+		"slug": "distortion",
+		"category": "builtins",
+		"title": "excite",
+		"anchor": "excite"
+	},
+	"chorus": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "chorus",
+		"anchor": "chorus"
+	},
+	"flanger": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "flanger",
+		"anchor": "flanger"
+	},
+	"phaser": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "phaser",
+		"anchor": "phaser"
+	},
+	"comb": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "comb",
+		"anchor": "comb"
+	},
+	"reverb": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
+	"freeverb": {
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "freeverb",
+		"anchor": "freeverb"
+	},
+	"dattorro": {
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "dattorro",
+		"anchor": "dattorro"
+	},
+	"fdn": {
+		"slug": "reverbs",
+		"category": "builtins",
+		"title": "fdn",
+		"anchor": "fdn"
+	},
+	"delay": {
+		"slug": "delays",
+		"category": "builtins",
+		"title": "delay",
+		"anchor": "delay"
+	},
+	"comp": {
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "comp",
+		"anchor": "comp"
+	},
+	"limiter": {
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "limiter",
+		"anchor": "limiter"
+	},
+	"gate": {
+		"slug": "dynamics",
+		"category": "builtins",
+		"title": "gate",
+		"anchor": "gate"
+	},
+	"slew": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "slew",
+		"anchor": "slew"
+	},
+	"sah": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "sah",
+		"anchor": "sah"
+	},
+	"lfo": {
+		"slug": "sequencing",
+		"category": "builtins",
+		"title": "lfo",
+		"anchor": "lfo"
+	},
+	"env_follower": {
+		"slug": "05-testing-progression",
+		"category": "tutorials",
+		"title": "Testing Progression"
+	},
 	"synth": {
 		"slug": "03-synthesis",
 		"category": "tutorials",
@@ -231,12 +399,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "hp",
 		"anchor": "hp"
-	},
-	"moog": {
-		"slug": "filters",
-		"category": "builtins",
-		"title": "moog",
-		"anchor": "moog"
 	},
 	"rhythm": {
 		"slug": "04-rhythm",
@@ -487,12 +649,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Operators"
 	},
-	"lfo": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "lfo",
-		"anchor": "lfo"
-	},
 	"euclid": {
 		"slug": "sequencing",
 		"category": "builtins",
@@ -520,12 +676,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "sequencing",
 		"category": "builtins",
 		"title": "Sequencing & Timing"
-	},
-	"delay": {
-		"slug": "delays",
-		"category": "builtins",
-		"title": "delay",
-		"anchor": "delay"
 	},
 	"echo": {
 		"slug": "delays",
@@ -573,64 +723,17 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Filters"
 	},
-	"saturate": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "saturate",
-		"anchor": "saturate"
-	},
 	"softclip": {
 		"slug": "distortion",
 		"category": "builtins",
 		"title": "softclip",
 		"anchor": "softclip"
 	},
-	"bitcrush": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "bitcrush",
-		"anchor": "bitcrush"
-	},
-	"fold": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "fold",
-		"anchor": "fold"
-	},
-	"tube": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "tube",
-		"anchor": "tube"
-	},
 	"smooth": {
 		"slug": "distortion",
 		"category": "builtins",
 		"title": "smooth",
 		"anchor": "smooth"
-	},
-	"tape": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "tape",
-		"anchor": "tape"
-	},
-	"xfmr": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "xfmr",
-		"anchor": "xfmr"
-	},
-	"excite": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "excite",
-		"anchor": "excite"
-	},
-	"distortion": {
-		"slug": "distortion",
-		"category": "builtins",
-		"title": "Distortion"
 	},
 	"wavefold": {
 		"slug": "distortion",
@@ -700,18 +803,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "dc",
 		"anchor": "dc"
 	},
-	"slew": {
-		"slug": "utility",
-		"category": "builtins",
-		"title": "slew",
-		"anchor": "slew"
-	},
-	"sah": {
-		"slug": "utility",
-		"category": "builtins",
-		"title": "sah",
-		"anchor": "sah"
-	},
 	"utility": {
 		"slug": "utility",
 		"category": "builtins",
@@ -756,36 +847,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "envelopes",
 		"category": "builtins",
 		"title": "Envelopes"
-	},
-	"gate": {
-		"slug": "dynamics",
-		"category": "builtins",
-		"title": "gate",
-		"anchor": "gate"
-	},
-	"chorus": {
-		"slug": "modulation",
-		"category": "builtins",
-		"title": "chorus",
-		"anchor": "chorus"
-	},
-	"flanger": {
-		"slug": "modulation",
-		"category": "builtins",
-		"title": "flanger",
-		"anchor": "flanger"
-	},
-	"phaser": {
-		"slug": "modulation",
-		"category": "builtins",
-		"title": "phaser",
-		"anchor": "phaser"
-	},
-	"comb": {
-		"slug": "modulation",
-		"category": "builtins",
-		"title": "comb",
-		"anchor": "comb"
 	},
 	"modulation": {
 		"slug": "modulation",
@@ -1037,18 +1098,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Oscillators"
 	},
-	"comp": {
-		"slug": "dynamics",
-		"category": "builtins",
-		"title": "comp",
-		"anchor": "comp"
-	},
-	"limiter": {
-		"slug": "dynamics",
-		"category": "builtins",
-		"title": "limiter",
-		"anchor": "limiter"
-	},
 	"dynamics": {
 		"slug": "dynamics",
 		"category": "builtins",
@@ -1083,29 +1132,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "dynamics",
 		"category": "builtins",
 		"title": "Dynamics"
-	},
-	"freeverb": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "freeverb",
-		"anchor": "freeverb"
-	},
-	"dattorro": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "dattorro",
-		"anchor": "dattorro"
-	},
-	"fdn": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "fdn",
-		"anchor": "fdn"
-	},
-	"reverb": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "Reverbs"
 	},
 	"room": {
 		"slug": "reverbs",
