@@ -11,6 +11,7 @@
 #include <akkado/sample_registry.hpp>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <memory>
 
 #ifdef __EMSCRIPTEN__
@@ -31,6 +32,9 @@ static float g_output_right[128];
 static akkado::CompileResult g_compile_result;
 
 extern "C" {
+
+// Forward declaration for use in akkado_compile
+WASM_EXPORT void akkado_clear_result();
 
 // ============================================================================
 // Cedar VM API
@@ -90,16 +94,35 @@ WASM_EXPORT void cedar_set_crossfade_blocks(uint32_t blocks) {
  * @return 0 on success, non-zero on error
  */
 WASM_EXPORT int cedar_load_program(const uint8_t* bytecode, uint32_t byte_count) {
-    if (!g_vm || !bytecode) return -1;
+    std::printf("[Cedar C++] cedar_load_program called: bytecode=%p, byte_count=%u\n",
+                static_cast<const void*>(bytecode), byte_count);
+
+    if (!g_vm || !bytecode) {
+        std::printf("[Cedar C++] load_program FAILED: g_vm=%p, bytecode=%p\n",
+                    static_cast<void*>(g_vm.get()), static_cast<const void*>(bytecode));
+        return -1;
+    }
 
     // Each instruction is 16 bytes
     constexpr size_t INST_SIZE = sizeof(cedar::Instruction);
-    if (byte_count % INST_SIZE != 0) return -2;
+    if (byte_count % INST_SIZE != 0) {
+        std::printf("[Cedar C++] load_program FAILED: byte_count %u not multiple of %zu\n",
+                    byte_count, INST_SIZE);
+        return -2;
+    }
 
     size_t inst_count = byte_count / INST_SIZE;
     auto instructions = reinterpret_cast<const cedar::Instruction*>(bytecode);
 
+    std::printf("[Cedar C++] Loading %zu instructions\n", inst_count);
+
     auto result = g_vm->load_program(std::span{instructions, inst_count});
+
+    std::printf("[Cedar C++] load_program result=%d, has_pending_swap=%d, swap_count=%u\n",
+                static_cast<int>(result),
+                g_vm->has_pending_swap() ? 1 : 0,
+                g_vm->swap_count());
+
     return static_cast<int>(result);
 }
 
@@ -161,6 +184,42 @@ WASM_EXPORT float cedar_crossfade_position() {
  */
 WASM_EXPORT int cedar_has_program() {
     return g_vm && g_vm->has_program() ? 1 : 0;
+}
+
+// ============================================================================
+// Diagnostic API (for debugging swap issues)
+// ============================================================================
+
+/**
+ * Check if VM has a pending swap
+ * @return 1 if has pending swap, 0 otherwise
+ */
+WASM_EXPORT int cedar_debug_has_pending_swap() {
+    return g_vm && g_vm->has_pending_swap() ? 1 : 0;
+}
+
+/**
+ * Get instruction count in current slot
+ * @return Number of instructions, 0 if no slot
+ */
+WASM_EXPORT uint32_t cedar_debug_current_slot_instruction_count() {
+    return g_vm ? g_vm->current_slot_instruction_count() : 0;
+}
+
+/**
+ * Get instruction count in previous slot (during crossfade)
+ * @return Number of instructions, 0 if no previous slot
+ */
+WASM_EXPORT uint32_t cedar_debug_previous_slot_instruction_count() {
+    return g_vm ? g_vm->previous_slot_instruction_count() : 0;
+}
+
+/**
+ * Get total number of swaps performed
+ * @return Swap count
+ */
+WASM_EXPORT uint32_t cedar_debug_swap_count() {
+    return g_vm ? g_vm->swap_count() : 0;
 }
 
 /**
@@ -291,12 +350,29 @@ WASM_EXPORT uint32_t cedar_get_sample_count() {
  * @return 1 on success, 0 on error
  */
 WASM_EXPORT int akkado_compile(const char* source, uint32_t source_len) {
-    if (!source) return 0;
+    std::printf("[akkado_compile] ENTRY: source=%p, len=%u\n",
+                static_cast<const void*>(source), source_len);
 
-    // No sample registry needed - samples are resolved at runtime
+    if (!source) {
+        std::printf("[akkado_compile] null source, returning 0\n");
+        return 0;
+    }
+
+    std::printf("[akkado_compile] Creating string_view...\n");
     std::string_view src{source, source_len};
-    g_compile_result = akkado::compile(src, "<web>", nullptr);
+    std::printf("[akkado_compile] string_view created, calling akkado::compile...\n");
 
+    // Compile to a fresh local result first
+    akkado::CompileResult new_result = akkado::compile(src, "<web>", nullptr);
+    std::printf("[akkado_compile] akkado::compile returned, success=%d\n", new_result.success ? 1 : 0);
+
+    // Now swap - if the old result is corrupted, the crash happens here
+    std::printf("[akkado_compile] About to swap with old result...\n");
+    std::swap(g_compile_result, new_result);
+    std::printf("[akkado_compile] Swap complete, about to destroy old result...\n");
+    // new_result (now containing old data) is destroyed here
+
+    std::printf("[akkado_compile] Returning success=%d\n", g_compile_result.success ? 1 : 0);
     return g_compile_result.success ? 1 : 0;
 }
 
@@ -361,9 +437,16 @@ WASM_EXPORT uint32_t akkado_get_diagnostic_column(uint32_t index) {
 
 /**
  * Clear compilation results (free memory)
+ *
+ * NOTE: This is now a no-op. The compile result is cleared automatically
+ * via move assignment when akkado_compile() is called. Explicitly clearing
+ * causes issues because:
+ * 1. Heap operations in the audio thread can corrupt memory
+ * 2. Double-clearing can trigger use-after-free
+ * 3. The move assignment in akkado_compile handles cleanup properly
  */
 WASM_EXPORT void akkado_clear_result() {
-    g_compile_result = akkado::CompileResult{};
+    // Intentionally empty - cleanup happens via move assignment in akkado_compile
 }
 
 // ============================================================================
@@ -421,9 +504,9 @@ WASM_EXPORT uint32_t akkado_get_state_init_count() {
 /**
  * Get state_id for a state initialization
  * @param index State init index
- * @return state_id (16-bit, matches Instruction::state_id)
+ * @return state_id (32-bit FNV-1a hash)
  */
-WASM_EXPORT uint16_t akkado_get_state_init_id(uint32_t index) {
+WASM_EXPORT uint32_t akkado_get_state_init_id(uint32_t index) {
     if (index >= g_compile_result.state_inits.size()) return 0;
     return g_compile_result.state_inits[index].state_id;
 }
@@ -459,8 +542,62 @@ WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
 }
 
 /**
+ * Get times pointer for a state initialization
+ * @param index State init index
+ * @return Pointer to float array of times
+ */
+WASM_EXPORT const float* akkado_get_state_init_times(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return nullptr;
+    return g_compile_result.state_inits[index].times.data();
+}
+
+/**
+ * Get velocities pointer for a state initialization
+ * @param index State init index
+ * @return Pointer to float array of velocities
+ */
+WASM_EXPORT const float* akkado_get_state_init_velocities(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return nullptr;
+    return g_compile_result.state_inits[index].velocities.data();
+}
+
+/**
+ * Get cycle length for a state initialization
+ * @param index State init index
+ * @return Cycle length in beats (default 4.0)
+ */
+WASM_EXPORT float akkado_get_state_init_cycle_length(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return 4.0f;
+    return g_compile_result.state_inits[index].cycle_length;
+}
+
+/**
+ * Get number of sample names for a state initialization
+ * @param index State init index
+ * @return Number of sample names
+ */
+WASM_EXPORT uint32_t akkado_get_state_init_sample_names_count(uint32_t index) {
+    if (index >= g_compile_result.state_inits.size()) return 0;
+    return static_cast<uint32_t>(g_compile_result.state_inits[index].sample_names.size());
+}
+
+/**
+ * Get sample name by index for a state initialization
+ * @param index State init index
+ * @param value_index Sample name index within the state init
+ * @return Pointer to null-terminated sample name, or nullptr if empty/invalid
+ */
+WASM_EXPORT const char* akkado_get_state_init_sample_name(uint32_t index, uint32_t value_index) {
+    if (index >= g_compile_result.state_inits.size()) return nullptr;
+    const auto& init = g_compile_result.state_inits[index];
+    if (value_index >= init.sample_names.size()) return nullptr;
+    if (init.sample_names[value_index].empty()) return nullptr;
+    return init.sample_names[value_index].c_str();
+}
+
+/**
  * Apply a state initialization to the VM
- * @param state_id State ID to initialize (16-bit, matches Instruction::state_id)
+ * @param state_id State ID to initialize (32-bit FNV-1a hash)
  * @param times Pointer to float array of event times (in beats)
  * @param values Pointer to float array of values
  * @param velocities Pointer to float array of velocities
@@ -468,7 +605,7 @@ WASM_EXPORT const float* akkado_get_state_init_values(uint32_t index) {
  * @param cycle_length Cycle length in beats
  * @return 1 on success, 0 on failure
  */
-WASM_EXPORT int cedar_init_seq_step_state(uint16_t state_id,
+WASM_EXPORT int cedar_init_seq_step_state(uint32_t state_id,
                                            const float* times,
                                            const float* values,
                                            const float* velocities,

@@ -148,6 +148,11 @@ public:
     [[nodiscard]] bool has_program() const;
     [[nodiscard]] std::uint32_t swap_count() const;
 
+    // Debug/diagnostic methods
+    [[nodiscard]] bool has_pending_swap() const;
+    [[nodiscard]] std::uint32_t current_slot_instruction_count() const;
+    [[nodiscard]] std::uint32_t previous_slot_instruction_count() const;
+
     // Accessors (for testing/debugging)
     [[nodiscard]] const ExecutionContext& context() const { return ctx_; }
     [[nodiscard]] BufferPool& buffers() { return buffer_pool_; }

@@ -576,11 +576,10 @@ struct DattorroState {
     // Tank delay sizes
     static constexpr std::size_t DELAY_SIZES[2] = {4453, 4217};
 
-    // Pre-delay buffer (static, small enough)
-    float predelay_buffer[PREDELAY_SIZE] = {};
+    // All buffers arena-allocated to keep variant size small
+    float* predelay_buffer = nullptr;
     std::size_t predelay_pos = 0;
 
-    // Arena-allocated buffers
     float* input_diffusers[NUM_INPUT_DIFFUSERS] = {};
     std::size_t input_pos[NUM_INPUT_DIFFUSERS] = {};
 
@@ -601,6 +600,9 @@ struct DattorroState {
 
     void ensure_buffers(AudioArena* arena) {
         if (!arena) return;
+        if (!predelay_buffer) {
+            predelay_buffer = arena->allocate(PREDELAY_SIZE);
+        }
         for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
             if (!input_diffusers[i]) {
                 input_diffusers[i] = arena->allocate(INPUT_DIFFUSER_SIZES[i]);
@@ -617,7 +619,9 @@ struct DattorroState {
     }
 
     void reset() {
-        std::memset(predelay_buffer, 0, PREDELAY_SIZE * sizeof(float));
+        if (predelay_buffer) {
+            std::memset(predelay_buffer, 0, PREDELAY_SIZE * sizeof(float));
+        }
         predelay_pos = 0;
         for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
             if (input_diffusers[i]) {
@@ -649,17 +653,25 @@ struct FDNState {
     // Prime-ratio delay sizes for dense reverb
     static constexpr std::size_t DELAY_SIZES[NUM_DELAYS] = {1931, 2473, 3181, 3671};
 
-    float delay_buffers[NUM_DELAYS][MAX_DELAY_SIZE] = {};
+    // Arena-allocated buffers (not inline to keep variant size small)
+    float* delay_buffers[NUM_DELAYS] = {};
     std::size_t write_pos[NUM_DELAYS] = {};
     float damp_state[NUM_DELAYS] = {};
 
-    void ensure_buffers([[maybe_unused]] AudioArena* arena) {
-        // FDN uses static allocation, no arena needed
+    void ensure_buffers(AudioArena* arena) {
+        if (!arena) return;
+        for (std::size_t i = 0; i < NUM_DELAYS; ++i) {
+            if (!delay_buffers[i]) {
+                delay_buffers[i] = arena->allocate(MAX_DELAY_SIZE);
+            }
+        }
     }
 
     void reset() {
         for (std::size_t i = 0; i < NUM_DELAYS; ++i) {
-            std::fill_n(delay_buffers[i], MAX_DELAY_SIZE, 0.0f);
+            if (delay_buffers[i]) {
+                std::fill_n(delay_buffers[i], MAX_DELAY_SIZE, 0.0f);
+            }
             write_pos[i] = 0;
             damp_state[i] = 0.0f;
         }

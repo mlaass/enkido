@@ -42,6 +42,7 @@ if(EMSCRIPTEN)
 
     # Build exported functions list
     set(ENKIDO_EXPORTED_FUNCTIONS
+        # Cedar VM
         _cedar_init
         _cedar_destroy
         _cedar_set_sample_rate
@@ -57,6 +58,17 @@ if(EMSCRIPTEN)
         _cedar_has_program
         _cedar_set_param
         _cedar_set_param_slew
+        # Sample management
+        _cedar_load_sample
+        _cedar_load_sample_wav
+        _cedar_has_sample
+        _cedar_get_sample_id
+        _cedar_clear_samples
+        _cedar_get_sample_count
+        # State initialization
+        _cedar_init_seq_step_state
+        _cedar_apply_state_inits
+        # Akkado compiler
         _akkado_compile
         _akkado_get_bytecode
         _akkado_get_bytecode_size
@@ -66,6 +78,17 @@ if(EMSCRIPTEN)
         _akkado_get_diagnostic_line
         _akkado_get_diagnostic_column
         _akkado_clear_result
+        # Required samples
+        _akkado_get_required_samples_count
+        _akkado_get_required_sample
+        _akkado_resolve_sample_ids
+        # State init accessors
+        _akkado_get_state_init_count
+        _akkado_get_state_init_id
+        _akkado_get_state_init_type
+        _akkado_get_state_init_values_count
+        _akkado_get_state_init_values
+        # Utility
         _enkido_get_block_size
         _enkido_malloc
         _enkido_free
@@ -77,16 +100,12 @@ if(EMSCRIPTEN)
         "-sEXPORTED_FUNCTIONS=[${ENKIDO_EXPORTED_FUNCTIONS_STR}]"
 
         # Export runtime functions for memory access
-        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,getValue,setValue,UTF8ToString,stringToUTF8,lengthBytesUTF8"
+        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,getValue,setValue,UTF8ToString,stringToUTF8,lengthBytesUTF8,wasmMemory"
 
         # Memory settings
-        -sINITIAL_MEMORY=33554432  # 32MB initial
+        -sINITIAL_MEMORY=67108864   # 64MB initial
         -sALLOW_MEMORY_GROWTH=1
-        -sMAXIMUM_MEMORY=134217728  # 128MB max
-
-        # Optimization
-        -O3
-        -flto
+        -sMAXIMUM_MEMORY=536870912  # 512MB max
 
         # No filesystem needed
         -sNO_FILESYSTEM=1
@@ -104,6 +123,22 @@ if(EMSCRIPTEN)
         # Uncomment for single-file distribution:
         # -sSINGLE_FILE=1
     )
+
+    # Build-type specific options
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_link_options(enkido_wasm PRIVATE
+            -O1
+            -g
+            -gsource-map
+            # Keep assertions off to avoid pthread environment checks
+            -sASSERTIONS=0
+        )
+    else()
+        target_link_options(enkido_wasm PRIVATE
+            -O3
+            -flto
+        )
+    endif()
 
     # Copy output to static directory
     add_custom_command(TARGET enkido_wasm POST_BUILD

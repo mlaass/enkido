@@ -2,6 +2,7 @@
 #include "cedar/opcodes/opcodes.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdio>
 
 namespace cedar {
 
@@ -90,10 +91,18 @@ void VM::process_block(float* output_left, float* output_right) {
 void VM::handle_swap() {
     // Handle crossfade completion
     if (crossfade_state_.is_completing()) {
+        std::printf("[VM] Crossfade completing - BEFORE release: has_program=%d swap_count=%u\n",
+                    swap_controller_.has_program() ? 1 : 0, swap_controller_.swap_count());
         swap_controller_.release_previous();
+        std::printf("[VM] AFTER release_previous: has_program=%d swap_count=%u\n",
+                    swap_controller_.has_program() ? 1 : 0, swap_controller_.swap_count());
         crossfade_state_.complete();
+        std::printf("[VM] AFTER complete: has_program=%d swap_count=%u\n",
+                    swap_controller_.has_program() ? 1 : 0, swap_controller_.swap_count());
         // Move orphaned states to fading pool
         state_pool_.gc_sweep();
+        std::printf("[VM] AFTER gc_sweep: has_program=%d swap_count=%u\n",
+                    swap_controller_.has_program() ? 1 : 0, swap_controller_.swap_count());
     }
 
     // Advance fade-out for orphaned states (every block)
@@ -111,15 +120,24 @@ void VM::handle_swap() {
         return;
     }
 
+    std::printf("[VM] handle_swap: pending=1, crossfading=%d\n",
+                crossfade_state_.is_active() ? 1 : 0);
+
     // Get old slot before swap
     const ProgramSlot* old_slot = swap_controller_.current_slot();
+    std::printf("[VM] old_slot instruction_count=%u\n",
+                old_slot ? old_slot->instruction_count : 0);
 
     // Execute the swap
     if (!swap_controller_.execute_swap()) {
+        std::printf("[VM] execute_swap returned false!\n");
         return;  // Swap failed
     }
 
     const ProgramSlot* new_slot = swap_controller_.current_slot();
+    std::printf("[VM] swap executed: new_slot instruction_count=%u, swap_count=%u\n",
+                new_slot ? new_slot->instruction_count : 0,
+                swap_controller_.swap_count());
 
     // Rebind states from old to new program
     rebind_states(old_slot, new_slot);
@@ -127,10 +145,13 @@ void VM::handle_swap() {
     // Determine if crossfade is needed
     if (old_slot && old_slot->instruction_count > 0 &&
         requires_crossfade(old_slot, new_slot)) {
+        std::printf("[VM] Starting crossfade, duration=%u blocks\n",
+                    crossfade_config_.duration_blocks);
         crossfade_state_.begin(crossfade_config_.duration_blocks);
     } else {
         // No crossfade needed - immediately release previous slot
         // This prevents slot starvation when doing rapid non-structural changes
+        std::printf("[VM] No crossfade needed, releasing previous slot immediately\n");
         swap_controller_.release_previous();
     }
 }
@@ -712,6 +733,20 @@ bool VM::has_program() const {
 
 std::uint32_t VM::swap_count() const {
     return swap_controller_.swap_count();
+}
+
+bool VM::has_pending_swap() const {
+    return swap_controller_.has_pending_swap();
+}
+
+std::uint32_t VM::current_slot_instruction_count() const {
+    const auto* slot = swap_controller_.current_slot();
+    return slot ? slot->instruction_count : 0;
+}
+
+std::uint32_t VM::previous_slot_instruction_count() const {
+    const auto* slot = swap_controller_.previous_slot();
+    return slot ? slot->instruction_count : 0;
 }
 
 // ============================================================================

@@ -15,6 +15,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 		this.outputLeftPtr = 0;
 		this.outputRightPtr = 0;
 		this.blockSize = 128;
+		this.pendingProgram = null; // Pre-extracted compile result for loadCompiledProgram()
 
 		// Queue messages until module is ready
 		this.messageQueue = [];
@@ -58,17 +59,27 @@ class CedarProcessor extends AudioWorkletProcessor {
 			// Store the WASM binary for the module to use
 			this.wasmBinary = wasmBinary;
 
-			// Patch the Emscripten code to:
-			// 1. Remove the registerProcessor call that conflicts with our processor
-			// 2. Prevent it from thinking it's in a pthread/worker context that needs bootstrap
+			// Patch the Emscripten code to work in AudioWorklet context
+			// Must handle both DEBUG and RELEASE build output formats
 			let patchedCode = jsCode
-				// Remove the em-bootstrap processor registration
+				// === RELEASE BUILD patterns ===
+				// Remove the em-bootstrap processor registration (release format: inside block)
 				.replace(/registerProcessor\s*\(\s*["']em-bootstrap["'].*?\)\s*\}/g, '}')
-				// Make it think we're not in a worker context that needs special setup
+				// Remove auto-execution in AudioWorklet context (release format)
+				.replace(/isWW\s*\|\|=\s*typeof AudioWorkletGlobalScope.*?isWW\s*&&\s*createEnkidoModule\s*\(\s*\)\s*;?/gs, '')
+
+				// === DEBUG BUILD patterns ===
+				// Disable AudioWorklet detection (debug format)
+				.replace(/ENVIRONMENT_IS_AUDIO_WORKLET\s*=\s*typeof AudioWorkletGlobalScope\s*!==?\s*["']undefined["']/g,
+					'ENVIRONMENT_IS_AUDIO_WORKLET=false')
+				// Remove em-bootstrap registerProcessor call (debug format: standalone statement)
+				.replace(/registerProcessor\s*\(\s*["']em-bootstrap["'][^;]*;/g, '/* em-bootstrap removed */')
+				// Neutralize conditional WASM_WORKER assignment from AudioWorklet check
+				.replace(/if\s*\(\s*ENVIRONMENT_IS_AUDIO_WORKLET\s*\)\s*ENVIRONMENT_IS_WASM_WORKER\s*=\s*true;?/g, '')
+
+				// === COMMON patterns (both builds) ===
 				.replace(/ENVIRONMENT_IS_PTHREAD\s*=\s*ENVIRONMENT_IS_WORKER/g, 'ENVIRONMENT_IS_PTHREAD=false')
-				.replace(/ENVIRONMENT_IS_WASM_WORKER\s*=\s*true/g, 'ENVIRONMENT_IS_WASM_WORKER=false')
-				// Remove auto-execution in AudioWorklet context (causes spurious fetch errors)
-				.replace(/isWW\|\|=typeof AudioWorkletGlobalScope.*?isWW&&createEnkidoModule\(\);?/g, '');
+				.replace(/ENVIRONMENT_IS_WASM_WORKER\s*=\s*true/g, 'ENVIRONMENT_IS_WASM_WORKER=false');
 
 			// Create a function that returns the module factory
 			const moduleFactory = new Function(patchedCode + '\nreturn createEnkidoModule;')();
@@ -81,20 +92,8 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 			// Create the module with custom options
 			this.module = await moduleFactory({
-				// Provide custom WASM instantiation to avoid fetch
-				instantiateWasm: (imports, successCallback) => {
-					console.log('[CedarProcessor] Custom instantiateWasm called');
-					WebAssembly.instantiate(wasmBinary, imports)
-						.then(result => {
-							console.log('[CedarProcessor] WASM instantiated successfully');
-							successCallback(result.instance, result.module);
-						})
-						.catch(err => {
-							console.error('[CedarProcessor] WASM instantiation failed:', err);
-						});
-					return {}; // Return empty exports, will be filled by callback
-				},
-				// Add print handlers for debugging
+				// Provide WASM binary directly - bypasses all fetch/streaming logic
+				wasmBinary: wasmBinary,
 				print: (text) => console.log('[WASM]', text),
 				printErr: (text) => console.error('[WASM Error]', text)
 			});
@@ -190,65 +189,253 @@ class CedarProcessor extends AudioWorkletProcessor {
 	}
 
 	/**
-	 * Compile source code (does not load into VM)
-	 * Returns required samples so runtime can load them before calling loadCompiledProgram
+	 * Extract a float array from WASM memory, making a copy.
+	 * Always creates fresh heap views to handle memory growth safely.
 	 */
-	compile(source) {
-		if (!this.module) {
-			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
-			return;
+	extractFloatArray(ptr, count) {
+		if (!ptr || count === 0) {
+			return new Float32Array(count);
 		}
 
-		console.log('[CedarProcessor] Compiling source, length:', source.length);
-
-		// Allocate source string in WASM memory
-		const len = this.module.lengthBytesUTF8(source) + 1;
-		const sourcePtr = this.module._enkido_malloc(len);
-		if (sourcePtr === 0) {
-			this.port.postMessage({ type: 'compiled', success: false, diagnostics: [{ severity: 2, message: 'Failed to allocate memory', line: 1, column: 1 }] });
-			return;
-		}
-
-		try {
-			this.module.stringToUTF8(source, sourcePtr, len);
-
-			// Compile
-			const success = this.module._akkado_compile(sourcePtr, source.length);
-
-			if (success) {
-				const bytecodeSize = this.module._akkado_get_bytecode_size();
-				const requiredSamples = this.getRequiredSamples();
-
-				console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
-					'required samples:', requiredSamples);
-
-				this.port.postMessage({
-					type: 'compiled',
-					success: true,
-					bytecodeSize,
-					requiredSamples
-				});
-			} else {
-				// Extract diagnostics
-				const diagnostics = this.extractDiagnostics();
-				console.log('[CedarProcessor] Compilation failed:', diagnostics);
-				this.port.postMessage({
-					type: 'compiled',
-					success: false,
-					diagnostics
-				});
-				// Clear result on failure
-				this.module._akkado_clear_result();
+		const result = new Float32Array(count);
+		if (this.module.wasmMemory) {
+			// Always get fresh heap view - stale views cause corruption after memory growth
+			const heap = new Float32Array(this.module.wasmMemory.buffer);
+			const floatIdx = ptr / 4;
+			for (let i = 0; i < count; i++) {
+				result[i] = heap[floatIdx + i];
 			}
-		} finally {
-			this.module._enkido_free(sourcePtr);
-			// Note: don't clear result on success - we need it for loadCompiledProgram
+		} else if (this.module.HEAPF32) {
+			const floatIdx = ptr / 4;
+			for (let i = 0; i < count; i++) {
+				result[i] = this.module.HEAPF32[floatIdx + i];
+			}
+		} else if (this.module.getValue) {
+			for (let i = 0; i < count; i++) {
+				result[i] = this.module.getValue(ptr + i * 4, 'float');
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * Write a byte array to WASM memory.
+	 * Always creates fresh heap views to handle memory growth safely.
+	 */
+	writeByteArray(ptr, data) {
+		if (this.module.wasmMemory) {
+			// Always get fresh heap view - stale views cause corruption after memory growth
+			const heap = new Uint8Array(this.module.wasmMemory.buffer);
+			heap.set(data, ptr);
+		} else if (this.module.HEAPU8) {
+			this.module.HEAPU8.set(data, ptr);
+		} else if (this.module.setValue) {
+			for (let i = 0; i < data.length; i++) {
+				this.module.setValue(ptr + i, data[i], 'i8');
+			}
 		}
 	}
 
 	/**
-	 * Load the compiled program after samples are ready
-	 * Call this after compile() succeeds and required samples are loaded
+	 * Write a float array to WASM memory.
+	 * Always creates fresh heap views to handle memory growth safely.
+	 */
+	writeFloatArray(ptr, data) {
+		if (this.module.wasmMemory) {
+			// Always get fresh heap view - stale views cause corruption after memory growth
+			const heap = new Float32Array(this.module.wasmMemory.buffer);
+			heap.set(data, ptr / 4);
+		} else if (this.module.HEAPF32) {
+			this.module.HEAPF32.set(data, ptr / 4);
+		} else if (this.module.setValue) {
+			for (let i = 0; i < data.length; i++) {
+				this.module.setValue(ptr + i * 4, data[i], 'float');
+			}
+		}
+	}
+
+	/**
+	 * Extract all state initialization data from compile result into JS objects.
+	 * Must be called immediately after compilation, before any memory growth.
+	 */
+	extractStateInits() {
+		const count = this.module._akkado_get_state_init_count();
+		const stateInits = [];
+
+		for (let i = 0; i < count; i++) {
+			const stateId = this.module._akkado_get_state_init_id(i);
+			const type = this.module._akkado_get_state_init_type(i);
+			const valuesCount = this.module._akkado_get_state_init_values_count(i);
+			const cycleLength = this.module._akkado_get_state_init_cycle_length(i);
+
+			// Extract times array
+			const timesPtr = this.module._akkado_get_state_init_times(i);
+			const times = this.extractFloatArray(timesPtr, valuesCount);
+
+			// Extract values array
+			const valuesPtr = this.module._akkado_get_state_init_values(i);
+			const values = this.extractFloatArray(valuesPtr, valuesCount);
+
+			// Extract velocities array
+			const velocitiesPtr = this.module._akkado_get_state_init_velocities(i);
+			const velocities = this.extractFloatArray(velocitiesPtr, valuesCount);
+
+			// Extract sample names (for later resolution)
+			const sampleNamesCount = this.module._akkado_get_state_init_sample_names_count(i);
+			const sampleNames = [];
+			for (let j = 0; j < sampleNamesCount; j++) {
+				const namePtr = this.module._akkado_get_state_init_sample_name(i, j);
+				sampleNames.push(namePtr ? this.module.UTF8ToString(namePtr) : null);
+			}
+
+			stateInits.push({
+				stateId,
+				type,
+				times,
+				values,
+				velocities,
+				sampleNames,
+				cycleLength
+			});
+		}
+
+		return stateInits;
+	}
+
+	/**
+	 * Get sample ID by name (helper for resolving sample names in state inits)
+	 */
+	getSampleId(name) {
+		const nameLen = this.module.lengthBytesUTF8(name) + 1;
+		const namePtr = this.module._enkido_malloc(nameLen);
+		if (!namePtr) return 0;
+
+		try {
+			this.module.stringToUTF8(name, namePtr, nameLen);
+			return this.module._cedar_get_sample_id(namePtr);
+		} finally {
+			this.module._enkido_free(namePtr);
+		}
+	}
+
+	/**
+	 * Compile source code (does not load into VM)
+	 * Returns required samples so runtime can load them before calling loadCompiledProgram
+	 */
+	compile(source) {
+		console.log('[CedarProcessor] compile() ENTRY');
+
+		// CRITICAL: Always send 'compiled' response to prevent main thread hang
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'compiled',
+				success: false,
+				diagnostics: [{ severity: 2, message: 'Module not initialized', line: 1, column: 1 }]
+			});
+			return;
+		}
+
+		try {
+			// Clear any previous compile result and pending program
+			console.log('[CedarProcessor] Before _akkado_clear_result');
+			this.module._akkado_clear_result();
+			console.log('[CedarProcessor] After _akkado_clear_result');
+			this.pendingProgram = null;
+
+			// Get actual UTF-8 byte length (not JS string length which counts UTF-16 code units)
+			const utf8ByteLen = this.module.lengthBytesUTF8(source);
+			const allocLen = utf8ByteLen + 1; // +1 for null terminator
+
+			console.log('[CedarProcessor] Compiling source, utf8 bytes:', utf8ByteLen);
+
+			// Allocate source string in WASM memory
+			const sourcePtr = this.module._enkido_malloc(allocLen);
+			if (sourcePtr === 0) {
+				this.port.postMessage({ type: 'compiled', success: false, diagnostics: [{ severity: 2, message: 'Failed to allocate memory', line: 1, column: 1 }] });
+				return;
+			}
+
+			try {
+				this.module.stringToUTF8(source, sourcePtr, allocLen);
+
+				// Compile - pass actual UTF-8 byte length, not JS string length
+				const success = this.module._akkado_compile(sourcePtr, utf8ByteLen);
+
+				if (success) {
+					// Extract ALL data immediately, before any memory growth can happen
+
+					// Extract bytecode as Uint8Array using fresh heap view
+					const bytecodePtr = this.module._akkado_get_bytecode();
+					const bytecodeSize = this.module._akkado_get_bytecode_size();
+					const bytecode = new Uint8Array(bytecodeSize);
+					if (this.module.wasmMemory) {
+						// Always get fresh heap view - stale views cause corruption after memory growth
+						const heap = new Uint8Array(this.module.wasmMemory.buffer);
+						for (let i = 0; i < bytecodeSize; i++) {
+							bytecode[i] = heap[bytecodePtr + i];
+						}
+					} else if (this.module.HEAPU8) {
+						for (let i = 0; i < bytecodeSize; i++) {
+							bytecode[i] = this.module.HEAPU8[bytecodePtr + i];
+						}
+					} else if (this.module.getValue) {
+						for (let i = 0; i < bytecodeSize; i++) {
+							bytecode[i] = this.module.getValue(bytecodePtr + i, 'i8') & 0xFF;
+						}
+					}
+
+					// Extract required sample names
+					const requiredSamples = this.getRequiredSamples();
+
+					// Extract all state initialization data
+					const stateInits = this.extractStateInits();
+
+					// CRITICAL: Clear the compile result NOW, before returning
+					// This ensures we don't have stale pointers when memory grows
+					this.module._akkado_clear_result();
+
+					// Store extracted data for loadCompiledProgram()
+					this.pendingProgram = { bytecode, stateInits, requiredSamples };
+
+					console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
+						'required samples:', requiredSamples, 'state inits:', stateInits.length);
+
+					this.port.postMessage({
+						type: 'compiled',
+						success: true,
+						bytecodeSize,
+						requiredSamples
+					});
+				} else {
+					// Extract diagnostics
+					const diagnostics = this.extractDiagnostics();
+					console.log('[CedarProcessor] Compilation failed:', diagnostics);
+					this.port.postMessage({
+						type: 'compiled',
+						success: false,
+						diagnostics
+					});
+					// Clear result on failure
+					this.module._akkado_clear_result();
+				}
+			} finally {
+				this.module._enkido_free(sourcePtr);
+			}
+		} catch (err) {
+			// CRITICAL: Catch any exception and send error response
+			// Without this, the Promise in audio.svelte.ts hangs forever
+			console.error('[CedarProcessor] Compile error:', err);
+			this.port.postMessage({
+				type: 'compiled',
+				success: false,
+				diagnostics: [{ severity: 2, message: 'Internal error: ' + String(err), line: 1, column: 1 }]
+			});
+		}
+	}
+
+	/**
+	 * Load the compiled program after samples are ready.
+	 * Uses pre-extracted data from compile() - no WASM compile result access needed.
 	 */
 	loadCompiledProgram() {
 		if (!this.module) {
@@ -256,32 +443,110 @@ class CedarProcessor extends AudioWorkletProcessor {
 			return;
 		}
 
-		// Resolve sample IDs now that samples are loaded
-		this.module._akkado_resolve_sample_ids();
+		if (!this.pendingProgram) {
+			this.port.postMessage({ type: 'error', message: 'No pending program to load' });
+			return;
+		}
 
-		// Get bytecode pointer and size
-		const bytecodePtr = this.module._akkado_get_bytecode();
-		const bytecodeSize = this.module._akkado_get_bytecode_size();
+		const { bytecode, stateInits } = this.pendingProgram;
 
-		// Load program - Cedar handles crossfade internally
-		const result = this.module._cedar_load_program(bytecodePtr, bytecodeSize);
+		console.log('[CedarProcessor] Loading program, bytecode size:', bytecode.length,
+			'state inits:', stateInits.length);
 
-		if (result === 0) {
-			// Apply state initializations for SEQ_STEP patterns (now with resolved IDs)
-			const stateInitsApplied = this.module._cedar_apply_state_inits();
+		// Allocate and copy bytecode to WASM memory
+		let bytecodePtr = this.module._enkido_malloc(bytecode.length);
+		if (bytecodePtr === 0) {
+			this.port.postMessage({ type: 'error', message: 'Failed to allocate bytecode' });
+			return;
+		}
+
+		try {
+			this.writeByteArray(bytecodePtr, bytecode);
+
+			// Load program into Cedar VM
+			const result = this.module._cedar_load_program(bytecodePtr, bytecode.length);
+
+			if (result === 1) {
+				// SlotBusy - all slots occupied (crossfade in progress)
+				// Keep pendingProgram for retry - DO NOT clear it here
+				console.warn('[CedarProcessor] Slot busy - VM is crossfading');
+				this.module._enkido_free(bytecodePtr);
+				bytecodePtr = 0; // Prevent double-free in finally
+				this.port.postMessage({ type: 'error', message: 'VM busy - crossfade in progress, try again' });
+				return;
+			}
+
+			if (result !== 0) {
+				console.error('[CedarProcessor] Load failed with code:', result);
+				this.pendingProgram = null; // Clear on permanent error
+				this.port.postMessage({ type: 'error', message: `Load failed with code ${result}` });
+				return;
+			}
+
+			// Apply state initializations using pre-extracted JS data
+			let stateInitsApplied = 0;
+			for (const init of stateInits) {
+				if (init.type !== 0) continue; // Only SeqStep (type 0) for now
+
+				// Resolve sample names to IDs
+				const resolvedValues = new Float32Array(init.values);
+				for (let i = 0; i < init.sampleNames.length; i++) {
+					const name = init.sampleNames[i];
+					if (name) {
+						const sampleId = this.getSampleId(name);
+						resolvedValues[i] = sampleId;
+					}
+				}
+
+				// Allocate arrays in WASM memory
+				const count = init.values.length;
+				const timesPtr = this.module._enkido_malloc(count * 4);
+				const valuesPtr = this.module._enkido_malloc(count * 4);
+				const velocitiesPtr = this.module._enkido_malloc(count * 4);
+
+				if (timesPtr && valuesPtr && velocitiesPtr) {
+					this.writeFloatArray(timesPtr, init.times);
+					this.writeFloatArray(valuesPtr, resolvedValues);
+					this.writeFloatArray(velocitiesPtr, init.velocities);
+
+					this.module._cedar_init_seq_step_state(
+						init.stateId,
+						timesPtr,
+						valuesPtr,
+						velocitiesPtr,
+						count,
+						init.cycleLength
+					);
+
+					stateInitsApplied++;
+				}
+
+				// Free allocated memory
+				if (timesPtr) this.module._enkido_free(timesPtr);
+				if (valuesPtr) this.module._enkido_free(valuesPtr);
+				if (velocitiesPtr) this.module._enkido_free(velocitiesPtr);
+			}
+
 			if (stateInitsApplied > 0) {
 				console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
 			}
 
-			console.log('[CedarProcessor] Program loaded successfully');
+			// Diagnostic logging after load
+			const hasPendingSwap = this.module._cedar_debug_has_pending_swap?.() ?? 'N/A';
+			const swapCount = this.module._cedar_debug_swap_count?.() ?? 'N/A';
+			const currentInst = this.module._cedar_debug_current_slot_instruction_count?.() ?? 'N/A';
+			console.log(`[CedarProcessor] Program loaded successfully: pendingSwap=${hasPendingSwap} swapCount=${swapCount} instructions=${currentInst}`);
+			this.pendingProgram = null; // Clear only on success
 			this.port.postMessage({ type: 'programLoaded' });
-		} else {
-			console.error('[CedarProcessor] Load failed with code:', result);
-			this.port.postMessage({ type: 'error', message: `Load failed with code ${result}` });
-		}
 
-		// Clear compile result
-		this.module._akkado_clear_result();
+		} finally {
+			// Guard against double-free (bytecodePtr set to 0 on SlotBusy)
+			if (bytecodePtr) {
+				this.module._enkido_free(bytecodePtr);
+			}
+			// Note: pendingProgram is cleared on success, NOT here
+			// This preserves it for retry on SlotBusy
+		}
 	}
 
 	/**
@@ -319,16 +584,8 @@ class CedarProcessor extends AudioWorkletProcessor {
 		}
 
 		try {
-			// Copy bytecode to WASM memory using setValue (HEAPU8 may not be exposed)
-			if (this.module.HEAPU8) {
-				this.module.HEAPU8.set(bytecode, ptr);
-			} else if (this.module.setValue) {
-				for (let i = 0; i < bytecode.length; i++) {
-					this.module.setValue(ptr + i, bytecode[i], 'i8');
-				}
-			} else {
-				throw new Error('No way to write to WASM memory');
-			}
+			// Copy bytecode to WASM memory using fresh heap view
+			this.writeByteArray(ptr, bytecode);
 
 			// Load program into Cedar VM
 			const result = this.module._cedar_load_program(ptr, bytecode.length);
@@ -393,14 +650,8 @@ class CedarProcessor extends AudioWorkletProcessor {
 		try {
 			this.module.stringToUTF8(name, namePtr, nameLen);
 
-			// Copy audio data to WASM memory
-			if (this.module.HEAPF32) {
-				this.module.HEAPF32.set(audioData, audioPtr / 4);
-			} else {
-				for (let i = 0; i < audioData.length; i++) {
-					this.module.setValue(audioPtr + i * 4, audioData[i], 'float');
-				}
-			}
+			// Copy audio data to WASM memory using fresh heap view
+			this.writeFloatArray(audioPtr, audioData);
 
 			// Load sample
 			const sampleId = this.module._cedar_load_sample(namePtr, audioPtr, audioData.length, channels, sampleRate);
@@ -446,14 +697,8 @@ class CedarProcessor extends AudioWorkletProcessor {
 		try {
 			this.module.stringToUTF8(name, namePtr, nameLen);
 
-			// Copy WAV data to WASM memory
-			if (this.module.HEAPU8) {
-				this.module.HEAPU8.set(wavArray, wavPtr);
-			} else {
-				for (let i = 0; i < wavArray.length; i++) {
-					this.module.setValue(wavPtr + i, wavArray[i], 'i8');
-				}
-			}
+			// Copy WAV data to WASM memory using fresh heap view
+			this.writeByteArray(wavPtr, wavArray);
 
 			// Load sample from WAV
 			const sampleId = this.module._cedar_load_sample_wav(namePtr, wavPtr, wavArray.length);
@@ -486,6 +731,17 @@ class CedarProcessor extends AudioWorkletProcessor {
 		}
 
 		try {
+			// Periodic diagnostic logging (every 1000 blocks = ~2.7s at 48kHz)
+			this.blockCount = (this.blockCount || 0) + 1;
+			if (this.blockCount % 1000 === 0) {
+				const hasProgram = this.module._cedar_has_program();
+				const isCrossfading = this.module._cedar_is_crossfading();
+				const hasPendingSwap = this.module._cedar_debug_has_pending_swap?.() ?? 'N/A';
+				const swapCount = this.module._cedar_debug_swap_count?.() ?? 'N/A';
+				const currentInst = this.module._cedar_debug_current_slot_instruction_count?.() ?? 'N/A';
+				console.log(`[CedarProcessor] block=${this.blockCount} hasProgram=${hasProgram} crossfading=${isCrossfading} pendingSwap=${hasPendingSwap} swaps=${swapCount} instructions=${currentInst}`);
+			}
+
 			// Process one block with Cedar VM
 			// Cedar handles crossfade internally when programs are swapped
 			this.module._cedar_process_block();
@@ -495,7 +751,14 @@ class CedarProcessor extends AudioWorkletProcessor {
 			const leftFloatIdx = this.outputLeftPtr / 4;
 			const rightFloatIdx = this.outputRightPtr / 4;
 
-			if (this.module.HEAPF32) {
+			if (this.module.wasmMemory) {
+				// Always get fresh heap view - stale views cause corruption after memory growth
+				const heap = new Float32Array(this.module.wasmMemory.buffer);
+				for (let i = 0; i < this.blockSize && i < outLeft.length; i++) {
+					outLeft[i] = heap[leftFloatIdx + i] || 0;
+					outRight[i] = heap[rightFloatIdx + i] || 0;
+				}
+			} else if (this.module.HEAPF32) {
 				for (let i = 0; i < this.blockSize && i < outLeft.length; i++) {
 					outLeft[i] = this.module.HEAPF32[leftFloatIdx + i] || 0;
 					outRight[i] = this.module.HEAPF32[rightFloatIdx + i] || 0;

@@ -256,7 +256,6 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
 
     float size_mod = 0.5f + static_cast<float>(inst.rate) / 255.0f;  // 0.5-1.5
 
-    // FDN uses static arrays, no arena allocation needed
     state.ensure_buffers(ctx.arena);
 
     // Hadamard matrix coefficients (normalized 4x4)

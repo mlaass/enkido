@@ -2,8 +2,7 @@
 
 #include "../dsp/constants.hpp"
 #include "../opcodes/dsp_state.hpp"
-#include <unordered_map>
-#include <unordered_set>
+#include <array>
 #include <cstdint>
 
 namespace cedar {
@@ -36,85 +35,110 @@ inline std::uint32_t fnv1a_hash_runtime(const char* str, std::size_t len) noexce
     return hash;
 }
 
+// Fixed-size entry for open-addressing hash table
+struct StateEntry {
+    std::uint32_t key = 0;
+    DSPState state;
+    bool occupied = false;
+};
+
+struct FadingEntry {
+    std::uint32_t key = 0;
+    FadingState fading;
+    bool occupied = false;
+};
+
 // Persistent state pool for DSP blocks
 // Uses semantic ID (FNV-1a 32-bit hash) for lookup to support hot-swapping
+// Fixed-size open-addressing hash table - ZERO runtime allocations
 class StatePool {
 public:
-    StatePool() = default;
+    StatePool() {
+        clear_all();
+    }
 
     // Get or create state for a given semantic ID
     // Template type T must be one of the DSPState variant alternatives
     template<typename T>
     [[nodiscard]] T& get_or_create(std::uint32_t state_id) {
-        touched_.insert(state_id);
+        std::size_t idx = find_or_insert_slot(state_id);
+        touched_[idx] = true;
 
-        auto it = states_.find(state_id);
-        if (it == states_.end()) {
-            auto [new_it, _] = states_.emplace(state_id, T{});
-            return std::get<T>(new_it->second);
+        auto& entry = states_[idx];
+        if (!entry.occupied) {
+            entry.key = state_id;
+            entry.state.template emplace<T>();
+            entry.occupied = true;
+            ++state_count_;
+            return std::get<T>(entry.state);
         }
 
-        // If state exists but is wrong type, replace it safely using emplace
-        // Direct assignment can corrupt variant metadata with mismatched types
-        if (!std::holds_alternative<T>(it->second)) {
-            it->second.template emplace<T>();
+        // If state exists but is wrong type, replace it safely
+        if (!std::holds_alternative<T>(entry.state)) {
+            entry.state.template emplace<T>();
         }
-        return std::get<T>(it->second);
+        return std::get<T>(entry.state);
     }
 
     // Get existing state (assumes it exists and is correct type)
     template<typename T>
     [[nodiscard]] T& get(std::uint32_t state_id) {
-        touched_.insert(state_id);
-        return std::get<T>(states_.at(state_id));
+        std::size_t idx = find_slot(state_id);
+        touched_[idx] = true;
+        return std::get<T>(states_[idx].state);
     }
 
     // Check if state exists
     [[nodiscard]] bool exists(std::uint32_t state_id) const {
-        return states_.find(state_id) != states_.end();
+        return find_slot(state_id) != INVALID_SLOT;
     }
 
     // Mark state as touched (for GC tracking)
     void touch(std::uint32_t state_id) {
-        touched_.insert(state_id);
+        std::size_t idx = find_slot(state_id);
+        if (idx != INVALID_SLOT) {
+            touched_[idx] = true;
+        }
     }
 
     // Clear touched set (call at start of program execution)
     void begin_frame() {
-        touched_.clear();
+        touched_.fill(false);
     }
 
     // Garbage collect: move untouched states to fading pool
     // Call after hot-swap to begin fade-out of orphaned states
     void gc_sweep() {
-        for (auto it = states_.begin(); it != states_.end();) {
-            if (touched_.find(it->first) == touched_.end()) {
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (states_[i].occupied && !touched_[i]) {
                 // Move to fading pool instead of immediate deletion
                 if (fade_blocks_ > 0) {
-                    FadingState fs;
-                    fs.state = std::move(it->second);
-                    fs.blocks_remaining = fade_blocks_;
-                    fs.fade_gain = 1.0f;
-                    fs.fade_decrement = 1.0f / static_cast<float>(fade_blocks_);
-                    fading_states_.emplace(it->first, std::move(fs));
+                    std::size_t fading_idx = find_or_insert_fading_slot(states_[i].key);
+                    auto& fe = fading_states_[fading_idx];
+                    fe.key = states_[i].key;
+                    fe.fading.state = std::move(states_[i].state);
+                    fe.fading.blocks_remaining = fade_blocks_;
+                    fe.fading.fade_gain = 1.0f;
+                    fe.fading.fade_decrement = 1.0f / static_cast<float>(fade_blocks_);
+                    fe.occupied = true;
                 }
-                it = states_.erase(it);
-            } else {
-                ++it;
+                // Clear the state slot
+                states_[i].occupied = false;
+                states_[i].key = 0;
+                states_[i].state = std::monostate{};
+                --state_count_;
             }
         }
     }
 
     // Reset all states (full program change)
     void reset() {
-        states_.clear();
-        touched_.clear();
-        fading_states_.clear();
+        clear_all();
     }
 
     // Get number of active states
     [[nodiscard]] std::size_t size() const {
-        return states_.size();
+        return state_count_;
     }
 
     // =========================================================================
@@ -128,22 +152,25 @@ public:
 
     // Advance all fading states by one block
     void advance_fading() {
-        for (auto& [id, fs] : fading_states_) {
-            if (fs.blocks_remaining > 0) {
-                fs.blocks_remaining--;
-                fs.fade_gain -= fs.fade_decrement;
-                if (fs.fade_gain < 0.0f) fs.fade_gain = 0.0f;
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (fading_states_[i].occupied) {
+                auto& fs = fading_states_[i].fading;
+                if (fs.blocks_remaining > 0) {
+                    fs.blocks_remaining--;
+                    fs.fade_gain -= fs.fade_decrement;
+                    if (fs.fade_gain < 0.0f) fs.fade_gain = 0.0f;
+                }
             }
         }
     }
 
     // Remove states that have finished fading
     void gc_fading() {
-        for (auto it = fading_states_.begin(); it != fading_states_.end();) {
-            if (it->second.blocks_remaining == 0) {
-                it = fading_states_.erase(it);
-            } else {
-                ++it;
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (fading_states_[i].occupied && fading_states_[i].fading.blocks_remaining == 0) {
+                fading_states_[i].occupied = false;
+                fading_states_[i].key = 0;
+                fading_states_[i].fading = FadingState{};
             }
         }
     }
@@ -151,13 +178,13 @@ public:
     // Get fade gain for a state (1.0 if active, 0.0-1.0 if fading, 0.0 if not found)
     [[nodiscard]] float get_fade_gain(std::uint32_t state_id) const {
         // Check if it's an active state
-        if (states_.find(state_id) != states_.end()) {
+        if (find_slot(state_id) != INVALID_SLOT) {
             return 1.0f;
         }
         // Check if it's a fading state
-        auto it = fading_states_.find(state_id);
-        if (it != fading_states_.end()) {
-            return it->second.fade_gain;
+        std::size_t fading_idx = find_fading_slot(state_id);
+        if (fading_idx != INVALID_SLOT) {
+            return fading_states_[fading_idx].fading.fade_gain;
         }
         return 0.0f;
     }
@@ -165,10 +192,10 @@ public:
     // Get fading state if it exists (for reading orphaned state data)
     template<typename T>
     [[nodiscard]] const T* get_fading(std::uint32_t state_id) const {
-        auto it = fading_states_.find(state_id);
-        if (it != fading_states_.end()) {
-            if (std::holds_alternative<T>(it->second.state)) {
-                return &std::get<T>(it->second.state);
+        std::size_t idx = find_fading_slot(state_id);
+        if (idx != INVALID_SLOT) {
+            if (std::holds_alternative<T>(fading_states_[idx].fading.state)) {
+                return &std::get<T>(fading_states_[idx].fading.state);
             }
         }
         return nullptr;
@@ -176,7 +203,11 @@ public:
 
     // Get number of fading states
     [[nodiscard]] std::size_t fading_count() const {
-        return fading_states_.size();
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (fading_states_[i].occupied) ++count;
+        }
+        return count;
     }
 
     // =========================================================================
@@ -201,9 +232,91 @@ public:
     }
 
 private:
-    std::unordered_map<std::uint32_t, DSPState> states_;
-    std::unordered_set<std::uint32_t> touched_;
-    std::unordered_map<std::uint32_t, FadingState> fading_states_;
+    static constexpr std::size_t INVALID_SLOT = ~std::size_t{0};
+
+    // Open-addressing hash table lookup (linear probing)
+    // Returns slot index if found, INVALID_SLOT otherwise
+    [[nodiscard]] std::size_t find_slot(std::uint32_t key) const {
+        std::size_t start = key % MAX_STATES;
+        std::size_t idx = start;
+        do {
+            if (!states_[idx].occupied) {
+                return INVALID_SLOT;  // Empty slot, key not found
+            }
+            if (states_[idx].key == key) {
+                return idx;  // Found
+            }
+            idx = (idx + 1) % MAX_STATES;
+        } while (idx != start);
+        return INVALID_SLOT;  // Table full, key not found
+    }
+
+    // Find existing slot or first empty slot for insertion
+    [[nodiscard]] std::size_t find_or_insert_slot(std::uint32_t key) {
+        std::size_t start = key % MAX_STATES;
+        std::size_t idx = start;
+        std::size_t first_empty = INVALID_SLOT;
+        do {
+            if (!states_[idx].occupied) {
+                if (first_empty == INVALID_SLOT) {
+                    first_empty = idx;
+                }
+                // Continue searching in case key exists later (due to deletions)
+            } else if (states_[idx].key == key) {
+                return idx;  // Found existing
+            }
+            idx = (idx + 1) % MAX_STATES;
+        } while (idx != start);
+        // Key not found, return first empty slot
+        return first_empty != INVALID_SLOT ? first_empty : 0;  // Fallback to 0 if somehow full
+    }
+
+    // Same for fading states
+    [[nodiscard]] std::size_t find_fading_slot(std::uint32_t key) const {
+        std::size_t start = key % MAX_STATES;
+        std::size_t idx = start;
+        do {
+            if (!fading_states_[idx].occupied) {
+                return INVALID_SLOT;
+            }
+            if (fading_states_[idx].key == key) {
+                return idx;
+            }
+            idx = (idx + 1) % MAX_STATES;
+        } while (idx != start);
+        return INVALID_SLOT;
+    }
+
+    [[nodiscard]] std::size_t find_or_insert_fading_slot(std::uint32_t key) {
+        std::size_t start = key % MAX_STATES;
+        std::size_t idx = start;
+        std::size_t first_empty = INVALID_SLOT;
+        do {
+            if (!fading_states_[idx].occupied) {
+                if (first_empty == INVALID_SLOT) {
+                    first_empty = idx;
+                }
+            } else if (fading_states_[idx].key == key) {
+                return idx;
+            }
+            idx = (idx + 1) % MAX_STATES;
+        } while (idx != start);
+        return first_empty != INVALID_SLOT ? first_empty : 0;
+    }
+
+    void clear_all() {
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            states_[i] = StateEntry{};
+            fading_states_[i] = FadingEntry{};
+            touched_[i] = false;
+        }
+        state_count_ = 0;
+    }
+
+    std::array<StateEntry, MAX_STATES> states_;
+    std::array<FadingEntry, MAX_STATES> fading_states_;
+    std::array<bool, MAX_STATES> touched_;
+    std::size_t state_count_ = 0;
     std::uint32_t fade_blocks_ = 3;  // Default: match crossfade duration
 };
 

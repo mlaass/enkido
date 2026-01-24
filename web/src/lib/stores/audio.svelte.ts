@@ -65,6 +65,8 @@ function createAudioEngine() {
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
 	// Track loaded sample names
 	const loadedSamples = new Set<string>();
+	// Pending sample load promises (for waiting on worklet confirmation)
+	const pendingSampleLoads = new Map<string, { resolve: (success: boolean) => void }>();
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -175,12 +177,31 @@ function createAudioEngine() {
 				loadedSamples.add(name);
 				sampleLoadState.set(name, 'loaded');
 				console.log('[AudioEngine] Sample loaded:', name);
+				// Resolve any pending load promise
+				const pending = pendingSampleLoads.get(name);
+				if (pending) {
+					pending.resolve(true);
+					pendingSampleLoads.delete(name);
+				}
 				break;
 			}
-			case 'error':
-				state.error = String(msg.message);
-				console.error('[AudioEngine] Worklet error:', msg.message);
+			case 'error': {
+				const errorMsg = String(msg.message);
+				state.error = errorMsg;
+				console.error('[AudioEngine] Worklet error:', errorMsg);
+				// Check if this is a sample load error and resolve pending promise
+				const sampleMatch = errorMsg.match(/Failed to load.*sample:\s*(\w+)/i);
+				if (sampleMatch) {
+					const sampleName = sampleMatch[1];
+					const pending = pendingSampleLoads.get(sampleName);
+					if (pending) {
+						pending.resolve(false);
+						pendingSampleLoads.delete(sampleName);
+					}
+					sampleLoadState.set(sampleName, 'error');
+				}
 				break;
+			}
 		}
 	}
 
@@ -293,14 +314,12 @@ function createAudioEngine() {
 			sampleLoadState.set(name, 'loading');
 			try {
 				const success = await loadSampleFromUrl(name, defaultSample.url);
-				if (success) {
-					sampleLoadState.set(name, 'loaded');
-					loadedSamples.add(name);
-					return true;
-				} else {
+				// Note: loadSampleFromUrl now waits for worklet confirmation
+				// The 'sampleLoaded' handler will set state to 'loaded'
+				if (!success) {
 					sampleLoadState.set(name, 'error');
-					return false;
 				}
+				return success;
 			} catch {
 				sampleLoadState.set(name, 'error');
 				return false;
@@ -328,6 +347,16 @@ function createAudioEngine() {
 		// Step 1: Compile (fast, no sample loading)
 		const compilePromise = new Promise<CompileResult>((resolve) => {
 			compileResolve = resolve;
+			// Timeout after 5 seconds to prevent main thread hang if worklet crashes
+			setTimeout(() => {
+				if (compileResolve === resolve) {
+					compileResolve = null;
+					resolve({
+						success: false,
+						diagnostics: [{ severity: 2, message: 'Compilation timeout - worklet may have crashed', line: 1, column: 1 }]
+					});
+				}
+			}, 5000);
 		});
 
 		workletNode.port.postMessage({ type: 'compile', source });
@@ -361,10 +390,57 @@ function createAudioEngine() {
 			};
 		}
 
-		// Step 3: Load the compiled program (samples are ready)
-		workletNode.port.postMessage({ type: 'loadCompiledProgram' });
+		// Step 3: Load the compiled program with retry on SlotBusy
+		const maxRetries = 5;
+		const retryDelayMs = 20; // ~7.5 blocks (crossfade is typically 3-4 blocks)
+		const node = workletNode; // Capture for closure (TypeScript null-check)
 
-		return compileResult;
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			const loadResult = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+				const timeout = setTimeout(() => resolve({ success: false, error: 'Load timeout' }), 1000);
+
+				const handler = (event: MessageEvent) => {
+					if (event.data.type === 'programLoaded') {
+						clearTimeout(timeout);
+						node.port.removeEventListener('message', handler);
+						resolve({ success: true });
+					} else if (event.data.type === 'error' && event.data.message?.includes('busy')) {
+						clearTimeout(timeout);
+						node.port.removeEventListener('message', handler);
+						resolve({ success: false, error: 'SlotBusy' });
+					} else if (event.data.type === 'error') {
+						clearTimeout(timeout);
+						node.port.removeEventListener('message', handler);
+						resolve({ success: false, error: event.data.message });
+					}
+				};
+				node.port.addEventListener('message', handler);
+				node.port.postMessage({ type: 'loadCompiledProgram' });
+			});
+
+			if (loadResult.success) {
+				return compileResult;
+			}
+
+			if (loadResult.error === 'SlotBusy' && attempt < maxRetries - 1) {
+				console.log(`[AudioEngine] Slot busy, retrying load (attempt ${attempt + 2}/${maxRetries})...`);
+				await new Promise((r) => setTimeout(r, retryDelayMs));
+				continue;
+			}
+
+			// Non-retryable error or exhausted retries
+			console.error('[AudioEngine] Load failed:', loadResult.error);
+			return {
+				success: false,
+				diagnostics: [{ severity: 2, message: loadResult.error || 'Load failed', line: 1, column: 1 }]
+			};
+		}
+
+		// Should not reach here, but just in case
+		return {
+			success: false,
+			diagnostics: [{ severity: 2, message: 'Load failed after retries', line: 1, column: 1 }]
+		};
 	}
 
 	/**
@@ -498,6 +574,19 @@ function createAudioEngine() {
 			const arrayBuffer = await response.arrayBuffer();
 			console.log('[AudioEngine] Loaded sample from URL:', name, 'size:', arrayBuffer.byteLength);
 
+			// Create a promise that will be resolved when worklet confirms load
+			const loadPromise = new Promise<boolean>((resolve) => {
+				pendingSampleLoads.set(name, { resolve });
+				// Timeout after 10 seconds
+				setTimeout(() => {
+					if (pendingSampleLoads.has(name)) {
+						console.error('[AudioEngine] Sample load timeout:', name);
+						pendingSampleLoads.delete(name);
+						resolve(false);
+					}
+				}, 10000);
+			});
+
 			// Send WAV data to worklet
 			workletNode.port.postMessage({
 				type: 'loadSampleWav',
@@ -505,7 +594,8 @@ function createAudioEngine() {
 				wavData: arrayBuffer
 			});
 
-			return true;
+			// Wait for worklet to confirm sample is loaded
+			return await loadPromise;
 		} catch (err) {
 			console.error('[AudioEngine] Failed to load sample from URL:', err);
 			return false;
