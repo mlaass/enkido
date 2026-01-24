@@ -40,6 +40,9 @@ private:
     // Returns the index of the rewritten node in the new arena
     NodeIndex rewrite_pipes(NodeIndex node);
 
+    // Pass 2.5: Update function body nodes to point to transformed AST
+    void update_function_body_nodes();
+
     // Pass 3: Resolve function calls and validate
     void resolve_and_validate(NodeIndex node);
 

@@ -12,6 +12,8 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
     {"true",     TokenType::True},
     {"false",    TokenType::False},
     {"post",     TokenType::Post},
+    {"match",    TokenType::Match},
+    {"fn",       TokenType::Fn},
     {"pat",      TokenType::Pat},
     {"seq",      TokenType::Seq},
     {"timeline", TokenType::Timeline},

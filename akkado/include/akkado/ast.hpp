@@ -53,6 +53,11 @@ enum class NodeType : std::uint8_t {
     Assignment,     // x = expr
     PostStmt,       // post(closure)
     Block,          // { statements... expr }
+    FunctionDef,    // fn name(params) -> body
+
+    // Expressions (advanced)
+    MatchExpr,      // match(expr) { arm, arm, ... }
+    MatchArm,       // pattern: body
 
     // Program
     Program,        // Root node containing statements
@@ -86,6 +91,9 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::Assignment:     return "Assignment";
         case NodeType::PostStmt:    return "PostStmt";
         case NodeType::Block:       return "Block";
+        case NodeType::FunctionDef: return "FunctionDef";
+        case NodeType::MatchExpr:   return "MatchExpr";
+        case NodeType::MatchArm:    return "MatchArm";
         case NodeType::Program:     return "Program";
     }
     return "Unknown";
@@ -180,6 +188,17 @@ struct Node {
         float value;
     };
 
+    // Data for function definitions (fn name(params) -> body)
+    struct FunctionDefData {
+        std::string name;
+        std::size_t param_count;  // Number of Identifier children before body
+    };
+
+    // Data for match arms (pattern: body)
+    struct MatchArmData {
+        bool is_wildcard;  // true for `_` pattern
+    };
+
     std::variant<
         std::monostate,
         NumberData,
@@ -194,7 +213,9 @@ struct Node {
         ClosureParamData,
         MiniAtomData,
         MiniEuclideanData,
-        MiniModifierData
+        MiniModifierData,
+        FunctionDefData,
+        MatchArmData
     > data;
 
     // Type-safe accessors
@@ -248,6 +269,14 @@ struct Node {
 
     [[nodiscard]] const MiniModifierData& as_mini_modifier() const {
         return std::get<MiniModifierData>(data);
+    }
+
+    [[nodiscard]] const FunctionDefData& as_function_def() const {
+        return std::get<FunctionDefData>(data);
+    }
+
+    [[nodiscard]] const MatchArmData& as_match_arm() const {
+        return std::get<MatchArmData>(data);
     }
 };
 

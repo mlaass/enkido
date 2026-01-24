@@ -113,6 +113,14 @@ private:
     /// @return Output buffer index
     std::uint16_t handle_osc_call(NodeIndex node, const Node& n);
 
+    /// Handle user-defined function calls - inline expansion
+    /// @param node The Call node
+    /// @param n The Node reference
+    /// @param func The user function info from symbol table
+    /// @return Output buffer index
+    std::uint16_t handle_user_function_call(NodeIndex node, const Node& n,
+                                            const UserFunctionInfo& func);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;
@@ -135,6 +143,10 @@ private:
 
     // Map from AST node index to output buffer index
     std::unordered_map<NodeIndex, std::uint16_t> node_buffers_;
+
+    // Map from parameter name hash to literal AST node (for inline match resolution)
+    // Only populated during user function calls when the argument is a literal
+    std::unordered_map<std::uint32_t, NodeIndex> param_literals_;
 };
 
 } // namespace akkado

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "builtins.hpp"
+#include "ast.hpp"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -9,6 +10,20 @@
 #include <vector>
 
 namespace akkado {
+
+/// Information about a user-defined function parameter
+struct FunctionParamInfo {
+    std::string name;
+    std::optional<double> default_value;
+};
+
+/// Information about a user-defined function
+struct UserFunctionInfo {
+    std::string name;
+    std::vector<FunctionParamInfo> params;
+    NodeIndex body_node;  // Index of function body in AST
+    NodeIndex def_node;   // Index of FunctionDef node (for inlining)
+};
 
 // Forward-declare hash function (same as Cedar's FNV-1a)
 inline std::uint32_t fnv1a_hash(std::string_view str) noexcept {
@@ -22,9 +37,10 @@ inline std::uint32_t fnv1a_hash(std::string_view str) noexcept {
 
 /// Symbol kinds
 enum class SymbolKind : std::uint8_t {
-    Variable,   // User-defined variable
-    Builtin,    // Built-in function
-    Parameter,  // Closure parameter
+    Variable,       // User-defined variable
+    Builtin,        // Built-in function
+    Parameter,      // Closure parameter
+    UserFunction,   // User-defined function (fn)
 };
 
 /// Symbol entry in the symbol table
@@ -36,6 +52,9 @@ struct Symbol {
 
     // Only valid if kind == Builtin
     BuiltinInfo builtin;
+
+    // Only valid if kind == UserFunction
+    UserFunctionInfo user_function;
 };
 
 /// Scoped symbol table with lexical scoping
@@ -62,6 +81,9 @@ public:
     /// Define a closure parameter
     bool define_parameter(std::string_view name, std::uint16_t buffer_index);
 
+    /// Define a user function
+    bool define_function(const UserFunctionInfo& func_info);
+
     /// Lookup a symbol by name (searches all scopes, innermost first)
     [[nodiscard]] std::optional<Symbol> lookup(std::string_view name) const;
 
@@ -70,6 +92,9 @@ public:
 
     /// Check if a name is defined in the current scope only
     [[nodiscard]] bool is_defined_in_current_scope(std::string_view name) const;
+
+    /// Update function body/def node indices after AST transformation
+    void update_function_nodes(const std::unordered_map<NodeIndex, NodeIndex>& node_map);
 
 private:
     /// Each scope is a hash map from name_hash to Symbol

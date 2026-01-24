@@ -171,6 +171,11 @@ NodeIndex Parser::parse_program() {
 // Statement parsing
 
 NodeIndex Parser::parse_statement() {
+    // Check for function definition
+    if (match(TokenType::Fn)) {
+        return parse_fn_def();
+    }
+
     // Check for post statement
     if (match(TokenType::Post)) {
         return parse_post_stmt();
@@ -291,6 +296,8 @@ NodeIndex Parser::parse_prefix() {
         case TokenType::Timeline:
         case TokenType::Note:
             return parse_mini_literal();
+        case TokenType::Match:
+            return parse_match_expr();
         default:
             error("Expected expression");
             return NULL_NODE;
@@ -783,6 +790,138 @@ NodeIndex Parser::parse_mini_literal() {
     }
 
     consume(TokenType::RParen, "Expected ')' after pattern arguments");
+    return node;
+}
+
+// Match expression parsing
+// match(expr) { pattern: body, pattern: body, ... }
+NodeIndex Parser::parse_match_expr() {
+    Token match_tok = advance();  // consume 'match' token
+
+    consume(TokenType::LParen, "Expected '(' after 'match'");
+
+    // Parse the scrutinee expression
+    NodeIndex scrutinee = parse_expression();
+    if (scrutinee == NULL_NODE) {
+        error("Expected expression in match");
+        return NULL_NODE;
+    }
+
+    consume(TokenType::RParen, "Expected ')' after match expression");
+    consume(TokenType::LBrace, "Expected '{' after match expression");
+
+    NodeIndex node = make_node(NodeType::MatchExpr, match_tok);
+    arena_.add_child(node, scrutinee);
+
+    // Parse match arms
+    while (!check(TokenType::RBrace) && !is_at_end()) {
+        Token pattern_tok = current();
+
+        // Parse pattern: string, number, bool, or _ (wildcard)
+        NodeIndex pattern = NULL_NODE;
+        bool is_wildcard = false;
+
+        if (check(TokenType::String)) {
+            pattern = parse_string();
+        } else if (check(TokenType::Number)) {
+            pattern = parse_number();
+        } else if (check(TokenType::True) || check(TokenType::False)) {
+            pattern = parse_bool();
+        } else if (check(TokenType::Underscore)) {
+            advance();  // consume '_'
+            is_wildcard = true;
+            // Create an Identifier node with "_" as a placeholder
+            pattern = make_node(NodeType::Identifier, pattern_tok);
+            arena_[pattern].data = Node::IdentifierData{"_"};
+        } else {
+            error("Expected pattern (string, number, bool, or '_')");
+            synchronize();
+            continue;
+        }
+
+        consume(TokenType::Colon, "Expected ':' after pattern");
+
+        // Parse arm body - can be a block or an expression
+        NodeIndex body = NULL_NODE;
+        if (check(TokenType::LBrace)) {
+            body = parse_block();
+        } else {
+            body = parse_expression();
+        }
+
+        // Create MatchArm node
+        NodeIndex arm = make_node(NodeType::MatchArm, pattern_tok);
+        arena_[arm].data = Node::MatchArmData{is_wildcard};
+        arena_.add_child(arm, pattern);
+        if (body != NULL_NODE) {
+            arena_.add_child(arm, body);
+        }
+
+        arena_.add_child(node, arm);
+
+        // Allow optional comma between arms (but not required)
+        match(TokenType::Comma);
+    }
+
+    consume(TokenType::RBrace, "Expected '}' after match arms");
+
+    return node;
+}
+
+// Function definition parsing
+// fn name(params) -> body
+// fn name(params) -> { block }
+NodeIndex Parser::parse_fn_def() {
+    Token fn_tok = previous();  // 'fn' was already consumed
+
+    if (!check(TokenType::Identifier)) {
+        error("Expected function name after 'fn'");
+        return NULL_NODE;
+    }
+
+    Token name_tok = advance();
+
+    consume(TokenType::LParen, "Expected '(' after function name");
+
+    // Parse parameter list (reuse closure param parsing)
+    std::vector<ParsedParam> params = parse_param_list();
+
+    consume(TokenType::RParen, "Expected ')' after parameters");
+    consume(TokenType::Arrow, "Expected '->' after function parameters");
+
+    // Parse body
+    NodeIndex body = NULL_NODE;
+    if (check(TokenType::LBrace)) {
+        body = parse_block();
+    } else {
+        body = parse_expression();
+    }
+
+    // Create FunctionDef node
+    NodeIndex node = make_node(NodeType::FunctionDef, fn_tok);
+    arena_[node].data = Node::FunctionDefData{
+        std::string(name_tok.lexeme),
+        params.size()
+    };
+
+    // Add parameters as Identifier children (using ClosureParamData for those with defaults)
+    for (const auto& param : params) {
+        NodeIndex param_node = arena_.alloc(NodeType::Identifier, name_tok.location);
+
+        if (param.default_value.has_value()) {
+            arena_[param_node].data = Node::ClosureParamData{param.name, param.default_value};
+        } else {
+            arena_[param_node].data = Node::IdentifierData{param.name};
+        }
+
+        arena_.add_child(node, param_node);
+    }
+
+    // Add body as last child
+    if (body != NULL_NODE) {
+        arena_.add_child(node, body);
+    }
+
     return node;
 }
 

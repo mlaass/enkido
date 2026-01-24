@@ -85,6 +85,7 @@ private:
     NodeIndex parse_grouping();
     NodeIndex parse_closure();
     NodeIndex parse_mini_literal();
+    NodeIndex parse_match_expr();
 
     // Infix parsers
     NodeIndex parse_binary(NodeIndex left, const Token& op);
@@ -105,6 +106,7 @@ private:
     NodeIndex parse_statement();
     NodeIndex parse_assignment(const Token& name_token);
     NodeIndex parse_post_stmt();
+    NodeIndex parse_fn_def();
 
     // Program parsing
     NodeIndex parse_program();

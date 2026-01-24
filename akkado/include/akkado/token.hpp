@@ -25,6 +25,8 @@ enum class TokenType : std::uint8_t {
     True,           // true
     False,          // false
     Post,           // post
+    Match,          // match
+    Fn,             // fn
 
     // Pattern types (used with mini-notation)
     Pat,            // pat(...)
@@ -89,6 +91,8 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::True:         return "True";
         case TokenType::False:        return "False";
         case TokenType::Post:         return "Post";
+        case TokenType::Match:        return "Match";
+        case TokenType::Fn:           return "Fn";
         case TokenType::Pat:          return "Pat";
         case TokenType::Seq:          return "Seq";
         case TokenType::Timeline:     return "Timeline";

@@ -3,6 +3,15 @@
 #include <cedar/vm/instruction.hpp>
 #include <cstring>
 
+// Helper to decode float from PUSH_CONST instruction
+// Float is split across inputs[4] (low 16 bits) and state_id (high 16 bits)
+static float decode_const_float(const cedar::Instruction& inst) {
+    std::uint32_t bits = (static_cast<std::uint32_t>(inst.state_id) << 16) | inst.inputs[4];
+    float value;
+    std::memcpy(&value, &bits, sizeof(float));
+    return value;
+}
+
 TEST_CASE("Akkado compilation", "[akkado]") {
     SECTION("empty source produces error") {
         auto result = akkado::compile("");
@@ -29,10 +38,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         cedar::Instruction inst;
         std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
-
-        float value;
-        std::memcpy(&value, &inst.state_id, sizeof(float));
-        CHECK(value == 42.0f);
+        CHECK(decode_const_float(inst) == 42.0f);
     }
 
     SECTION("simple oscillator") {
@@ -62,9 +68,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         // PUSH_CONST should push MIDI note 69 (A4)
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
-        float midi_note;
-        std::memcpy(&midi_note, &inst[0].state_id, sizeof(float));
-        CHECK(midi_note == 69.0f);
+        CHECK(decode_const_float(inst[0]) == 69.0f);
 
         // MTOF converts MIDI to frequency
         CHECK(inst[1].opcode == cedar::Opcode::MTOF);
@@ -87,9 +91,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         // PUSH_CONST should push MIDI note 60 (C4 - root of chord)
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
-        float midi_note;
-        std::memcpy(&midi_note, &inst[0].state_id, sizeof(float));
-        CHECK(midi_note == 60.0f);
+        CHECK(decode_const_float(inst[0]) == 60.0f);
 
         CHECK(inst[1].opcode == cedar::Opcode::MTOF);
         CHECK(inst[2].opcode == cedar::Opcode::OSC_SAW);
@@ -255,4 +257,413 @@ TEST_CASE("Akkado version", "[akkado]") {
     CHECK(akkado::Version::minor == 1);
     CHECK(akkado::Version::patch == 0);
     CHECK(akkado::Version::string() == "0.1.0");
+}
+
+TEST_CASE("Akkado match expressions", "[akkado][match]") {
+    SECTION("match resolves string pattern at compile time") {
+        auto result = akkado::compile(R"(
+            match("sin") {
+                "sin": 440
+                "saw": 880
+                _: 220
+            }
+        )");
+
+        REQUIRE(result.success);
+        // Should compile to just PUSH_CONST(440)
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+    }
+
+    SECTION("match resolves to second pattern") {
+        auto result = akkado::compile(R"(
+            match("saw") {
+                "sin": 440
+                "saw": 880
+                _: 220
+            }
+        )");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+    }
+
+    SECTION("match uses wildcard when no pattern matches") {
+        auto result = akkado::compile(R"(
+            match("unknown") {
+                "sin": 440
+                "saw": 880
+                _: 220
+            }
+        )");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+    }
+
+    SECTION("match with number scrutinee") {
+        auto result = akkado::compile(R"(
+            match(2) {
+                1: 100
+                2: 200
+                3: 300
+            }
+        )");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+    }
+
+    SECTION("match with expression body compiles correctly") {
+        auto result = akkado::compile(R"(
+            match("saw") {
+                "sin": saw(440)
+                "saw": saw(880)
+                _: saw(220)
+            }
+        )");
+
+        REQUIRE(result.success);
+        // Should have: PUSH_CONST(880), OSC_SAW
+        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[2];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
+    }
+
+    SECTION("match without matching pattern and no wildcard fails") {
+        auto result = akkado::compile(R"(
+            match("unknown") {
+                "sin": 1
+                "saw": 2
+            }
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        CHECK(result.diagnostics[0].code == "E121");
+    }
+
+    SECTION("match with non-literal scrutinee fails") {
+        // Note: This fails because string assignments aren't supported AND
+        // because match scrutinee must be a literal
+        auto result = akkado::compile(R"(
+            x = "sin"
+            match(x) {
+                "sin": 1
+                _: 0
+            }
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        // Check that E120 is among the diagnostics (may not be first due to E199 for string assign)
+        bool has_e120 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E120") has_e120 = true;
+        }
+        CHECK(has_e120);
+    }
+}
+
+TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
+    SECTION("simple function definition and call") {
+        auto result = akkado::compile(R"(
+            fn double(x) -> x * 2
+            double(100)
+        )");
+
+        REQUIRE(result.success);
+        // Should have: PUSH_CONST(100), PUSH_CONST(2), MUL
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[2].opcode == cedar::Opcode::MUL);
+    }
+
+    SECTION("function with multiple parameters") {
+        auto result = akkado::compile(R"(
+            fn add3(a, b, c) -> a + b + c
+            add3(1, 2, 3)
+        )");
+
+        REQUIRE(result.success);
+        // Should inline the function body
+        REQUIRE(result.bytecode.size() >= 3 * sizeof(cedar::Instruction));
+    }
+
+    SECTION("function with default parameter - using default") {
+        auto result = akkado::compile(R"(
+            fn osc_freq(freq, mult = 1.0) -> freq * mult
+            osc_freq(440)
+        )");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(440), PUSH_CONST(1.0), MUL
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[2].opcode == cedar::Opcode::MUL);
+    }
+
+    SECTION("function with default parameter - overriding default") {
+        auto result = akkado::compile(R"(
+            fn osc_freq(freq, mult = 1.0) -> freq * mult
+            osc_freq(440, 2.0)
+        )");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(440), PUSH_CONST(2.0), MUL
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[2].opcode == cedar::Opcode::MUL);
+    }
+
+    SECTION("function calling builtin") {
+        auto result = akkado::compile(R"(
+            fn my_saw(freq) -> saw(freq)
+            my_saw(440)
+        )");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(440), OSC_SAW
+        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[2];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
+    }
+
+    SECTION("function with match expression") {
+        auto result = akkado::compile(R"(
+            fn my_osc(type, freq) -> match(type) {
+                "sin": saw(freq)
+                "saw": saw(freq)
+                _: saw(freq)
+            }
+            my_osc("saw", 440)
+        )");
+
+        REQUIRE(result.success);
+        // Should compile the matching branch only
+        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+    }
+
+    SECTION("nested function calls") {
+        auto result = akkado::compile(R"(
+            fn double(x) -> x * 2
+            fn quadruple(x) -> double(double(x))
+            quadruple(100)
+        )");
+
+        REQUIRE(result.success);
+        // PUSH_CONST(100), PUSH_CONST(2), MUL, PUSH_CONST(2), MUL
+        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+    }
+
+    SECTION("function cannot capture outer variables") {
+        auto result = akkado::compile(R"(
+            y = 10
+            fn bad(x) -> x + y
+            bad(5)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        CHECK(result.diagnostics[0].code == "E008");
+    }
+
+    SECTION("function can call other user functions") {
+        auto result = akkado::compile(R"(
+            fn double(x) -> x * 2
+            fn use_double(x) -> double(x) + 1
+            use_double(10)
+        )");
+
+        REQUIRE(result.success);
+    }
+
+    SECTION("calling undefined function produces error") {
+        auto result = akkado::compile(R"(
+            undefined_fn(42)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+    }
+
+    SECTION("too few arguments produces error") {
+        auto result = akkado::compile(R"(
+            fn add2(a, b) -> a + b
+            add2(1)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        CHECK(result.diagnostics[0].code == "E006");
+    }
+
+    SECTION("too many arguments produces error") {
+        auto result = akkado::compile(R"(
+            fn double(x) -> x * 2
+            double(1, 2, 3)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        REQUIRE(result.diagnostics.size() >= 1);
+        CHECK(result.diagnostics[0].code == "E007");
+    }
+}
+
+TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
+    SECTION("moog filter with defaults") {
+        // moog(in, cutoff, res) - should work with just required args
+        auto result = akkado::compile("saw(110) |> moog(%, 400, 2)");
+
+        REQUIRE(result.success);
+        // Expected: PUSH_CONST(110), OSC_SAW, PUSH_CONST(400), PUSH_CONST(2),
+        //           PUSH_CONST(4.0), PUSH_CONST(0.5), FILTER_MOOG
+        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[7];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[6].opcode == cedar::Opcode::FILTER_MOOG);
+        // Defaults should be filled in as PUSH_CONST
+        CHECK(decode_const_float(inst[4]) == 4.0f);
+        CHECK(decode_const_float(inst[5]) == 0.5f);
+    }
+
+    SECTION("moog filter with optional params overridden") {
+        // moog(in, cutoff, res, max_res, input_scale)
+        auto result = akkado::compile("saw(110) |> moog(%, 400, 2, 3.5, 0.8)");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[7];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[6].opcode == cedar::Opcode::FILTER_MOOG);
+        CHECK(decode_const_float(inst[4]) == 3.5f);
+        CHECK(decode_const_float(inst[5]) == 0.8f);
+    }
+
+    SECTION("freeverb with defaults") {
+        auto result = akkado::compile("saw(220) |> freeverb(%, 0.5, 0.5)");
+
+        REQUIRE(result.success);
+        // Expected: PUSH_CONST(220), OSC_SAW, PUSH_CONST(0.5), PUSH_CONST(0.5),
+        //           PUSH_CONST(0.28), PUSH_CONST(0.7), REVERB_FREEVERB
+        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[7];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[6].opcode == cedar::Opcode::REVERB_FREEVERB);
+        CHECK(decode_const_float(inst[4]) == 0.28f);
+        CHECK(decode_const_float(inst[5]) == 0.7f);
+    }
+
+    SECTION("freeverb with optional params overridden") {
+        auto result = akkado::compile("saw(220) |> freeverb(%, 0.5, 0.5, 0.35, 0.8)");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[7];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[6].opcode == cedar::Opcode::REVERB_FREEVERB);
+        CHECK(decode_const_float(inst[4]) == 0.35f);
+        CHECK(decode_const_float(inst[5]) == 0.8f);
+    }
+
+    SECTION("flanger with optional delay range") {
+        auto result = akkado::compile("saw(110) |> flanger(%, 0.5, 0.7, 0.05, 5.0)");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[7];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[6].opcode == cedar::Opcode::EFFECT_FLANGER);
+        CHECK(decode_const_float(inst[4]) == 0.05f);
+        CHECK(decode_const_float(inst[5]) == 5.0f);
+    }
+
+    SECTION("gate with optional hysteresis and close_time") {
+        auto result = akkado::compile("saw(110) |> gate(%, -30, 8, 10)");
+
+        REQUIRE(result.success);
+        // Expected: PUSH_CONST(110), OSC_SAW, PUSH_CONST(-30), PUSH_CONST(8),
+        //           PUSH_CONST(10), DYNAMICS_GATE
+        // Note: gate has 3 required + 2 optional params but range default would be added
+
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        // Find DYNAMICS_GATE instruction
+        bool found_gate = false;
+        for (size_t i = 0; i < num_inst; ++i) {
+            if (inst[i].opcode == cedar::Opcode::DYNAMICS_GATE) {
+                found_gate = true;
+                break;
+            }
+        }
+        CHECK(found_gate);
+    }
+
+    SECTION("excite with harmonic mix") {
+        auto result = akkado::compile("saw(220) |> excite(%, 0.5, 3000, 0.2, 0.8)");
+
+        REQUIRE(result.success);
+
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        // Find DISTORT_EXCITE instruction
+        bool found_excite = false;
+        for (size_t i = 0; i < num_inst; ++i) {
+            if (inst[i].opcode == cedar::Opcode::DISTORT_EXCITE) {
+                found_excite = true;
+                break;
+            }
+        }
+        CHECK(found_excite);
+    }
 }

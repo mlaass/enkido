@@ -43,6 +43,16 @@ bool SymbolTable::define_parameter(std::string_view name, std::uint16_t buffer_i
     return define(sym);
 }
 
+bool SymbolTable::define_function(const UserFunctionInfo& func_info) {
+    Symbol sym{};
+    sym.kind = SymbolKind::UserFunction;
+    sym.name_hash = fnv1a_hash(func_info.name);
+    sym.name = func_info.name;
+    sym.buffer_index = 0xFFFF;  // Not applicable for functions
+    sym.user_function = func_info;
+    return define(sym);
+}
+
 std::optional<Symbol> SymbolTable::lookup(std::string_view name) const {
     return lookup(fnv1a_hash(name));
 }
@@ -62,6 +72,26 @@ bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
     if (scopes_.empty()) return false;
     auto hash = fnv1a_hash(name);
     return scopes_.back().find(hash) != scopes_.back().end();
+}
+
+void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
+    // Iterate through all scopes and update UserFunction entries
+    for (auto& scope : scopes_) {
+        for (auto& [hash, sym] : scope) {
+            if (sym.kind == SymbolKind::UserFunction) {
+                // Update body_node
+                auto body_it = node_map.find(sym.user_function.body_node);
+                if (body_it != node_map.end()) {
+                    sym.user_function.body_node = body_it->second;
+                }
+                // Update def_node
+                auto def_it = node_map.find(sym.user_function.def_node);
+                if (def_it != node_map.end()) {
+                    sym.user_function.def_node = def_it->second;
+                }
+            }
+        }
+    }
 }
 
 void SymbolTable::register_builtins() {

@@ -9,6 +9,15 @@
 
 namespace akkado {
 
+// Helper to properly encode a float constant in a PUSH_CONST instruction.
+// The float is split across inputs[4] (low 16 bits) and state_id (high 16 bits).
+static void encode_const_value(cedar::Instruction& inst, float value) {
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(float));
+    inst.inputs[4] = static_cast<std::uint16_t>(bits & 0xFFFF);        // Low 16 bits
+    inst.state_id = static_cast<std::uint16_t>((bits >> 16) & 0xFFFF); // High 16 bits
+}
+
 // ============================================================================
 // Oscillator Type Resolution for osc() Function
 // ============================================================================
@@ -132,6 +141,14 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             return last_buffer;
         }
 
+        case NodeType::StringLit: {
+            // String literals are compile-time only (used for match patterns, osc type, etc.)
+            // They don't have a runtime representation - return BUFFER_UNUSED.
+            // The actual string value is accessed via as_string() during compile-time resolution.
+            node_buffers_[node] = BufferAllocator::BUFFER_UNUSED;
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
         case NodeType::NumberLit: {
             // Emit PUSH_CONST
             std::uint16_t out = buffers_.allocate();
@@ -148,9 +165,9 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[2] = 0xFFFF;
             inst.inputs[3] = 0xFFFF;
 
-            // Store float value in state_id field (reinterpret cast)
+            // Encode float value (split across inputs[4] and state_id)
             float value = static_cast<float>(n.as_number());
-            std::memcpy(&inst.state_id, &value, sizeof(float));
+            encode_const_value(inst, value);
 
             emit(inst);
             node_buffers_[node] = out;
@@ -174,7 +191,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[3] = 0xFFFF;
 
             float value = n.as_bool() ? 1.0f : 0.0f;
-            std::memcpy(&inst.state_id, &value, sizeof(float));
+            encode_const_value(inst, value);
 
             emit(inst);
             node_buffers_[node] = out;
@@ -199,7 +216,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             push_inst.inputs[3] = 0xFFFF;
 
             float midi_value = static_cast<float>(n.as_pitch());
-            std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
+            encode_const_value(push_inst, midi_value);
             emit(push_inst);
 
             // Allocate output buffer for frequency
@@ -246,7 +263,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             push_inst.inputs[3] = 0xFFFF;
 
             float midi_value = static_cast<float>(root_midi);
-            std::memcpy(&push_inst.state_id, &midi_value, sizeof(float));
+            encode_const_value(push_inst, midi_value);
             emit(push_inst);
 
             std::uint16_t freq_buf = buffers_.allocate();
@@ -333,6 +350,12 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return handle_osc_call(node, n);
             }
 
+            // Check if it's a user-defined function
+            auto sym = symbols_->lookup(func_name);
+            if (sym && sym->kind == SymbolKind::UserFunction) {
+                return handle_user_function_call(node, n, sym->user_function);
+            }
+
             const BuiltinInfo* builtin = lookup_builtin(func_name);
 
             if (!builtin) {
@@ -390,7 +413,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     push_inst.inputs[3] = 0xFFFF;
 
                     float default_val = builtin->get_default(i);
-                    std::memcpy(&push_inst.state_id, &default_val, sizeof(float));
+                    encode_const_value(push_inst, default_val);
                     emit(push_inst);
 
                     arg_buffers.push_back(default_buf);
@@ -413,6 +436,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             inst.inputs[1] = arg_buffers.size() > 1 ? arg_buffers[1] : 0xFFFF;
             inst.inputs[2] = arg_buffers.size() > 2 ? arg_buffers[2] : 0xFFFF;
             inst.inputs[3] = arg_buffers.size() > 3 ? arg_buffers[3] : 0xFFFF;
+            inst.inputs[4] = arg_buffers.size() > 4 ? arg_buffers[4] : 0xFFFF;
             inst.rate = 0;
 
             // Special handling for ADSR: pack release time (arg 4) into rate field
@@ -616,8 +640,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 inst.inputs[1] = 0xFFFF;
                 inst.inputs[2] = 0xFFFF;
                 inst.inputs[3] = 0xFFFF;
-                float zero = 0.0f;
-                std::memcpy(&inst.state_id, &zero, sizeof(float));
+                encode_const_value(inst, 0.0f);
                 emit(inst);
                 pop_path();
                 node_buffers_[node] = out;
@@ -714,8 +737,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 pitch_inst.inputs[1] = 0xFFFF;
                 pitch_inst.inputs[2] = 0xFFFF;
                 pitch_inst.inputs[3] = 0xFFFF;
-                float one = 1.0f;
-                std::memcpy(&pitch_inst.state_id, &one, sizeof(float));
+                encode_const_value(pitch_inst, 1.0f);
                 emit(pitch_inst);
 
                 // Emit SAMPLE_PLAY opcode
@@ -844,10 +866,226 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             error("E115", "Post statements not supported in MVP", n.location);
             return BufferAllocator::BUFFER_UNUSED;
 
+        case NodeType::FunctionDef:
+            // Function definitions don't generate code directly
+            // They're registered in the symbol table for inline expansion
+            return BufferAllocator::BUFFER_UNUSED;
+
+        case NodeType::MatchExpr: {
+            // Compile-time match resolution
+            // First child is scrutinee, remaining children are MatchArm nodes
+
+            NodeIndex scrutinee = n.first_child;
+            if (scrutinee == NULL_NODE) {
+                error("E120", "Match expression has no scrutinee", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Save the original scrutinee node to iterate over arms
+            NodeIndex original_scrutinee = scrutinee;
+            const Node* scrutinee_ptr = &ast_->arena[scrutinee];
+
+            // If scrutinee is an Identifier, check if it maps to a literal argument
+            if (scrutinee_ptr->type == NodeType::Identifier) {
+                std::string param_name;
+                if (std::holds_alternative<Node::ClosureParamData>(scrutinee_ptr->data)) {
+                    param_name = scrutinee_ptr->as_closure_param().name;
+                } else if (std::holds_alternative<Node::IdentifierData>(scrutinee_ptr->data)) {
+                    param_name = scrutinee_ptr->as_identifier();
+                }
+
+                if (!param_name.empty()) {
+                    std::uint32_t param_hash = fnv1a_hash(param_name);
+                    auto it = param_literals_.find(param_hash);
+                    if (it != param_literals_.end()) {
+                        // Use the literal argument instead for value matching
+                        scrutinee_ptr = &ast_->arena[it->second];
+                    }
+                }
+            }
+
+            // Get scrutinee value for matching
+            std::string scrutinee_key;
+            if (scrutinee_ptr->type == NodeType::StringLit) {
+                scrutinee_key = "s:" + scrutinee_ptr->as_string();
+            } else if (scrutinee_ptr->type == NodeType::NumberLit) {
+                scrutinee_key = "n:" + std::to_string(scrutinee_ptr->as_number());
+            } else if (scrutinee_ptr->type == NodeType::BoolLit) {
+                scrutinee_key = "b:" + std::to_string(scrutinee_ptr->as_bool());
+            } else {
+                error("E120", "Match scrutinee must be a compile-time literal", scrutinee_ptr->location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Find matching arm - use original_scrutinee for traversing AST
+            NodeIndex arm = ast_->arena[original_scrutinee].next_sibling;
+            NodeIndex default_body = NULL_NODE;
+
+            while (arm != NULL_NODE) {
+                const Node& arm_node = ast_->arena[arm];
+                if (arm_node.type == NodeType::MatchArm) {
+                    const auto& arm_data = arm_node.as_match_arm();
+
+                    // Get pattern (first child) and body (second child)
+                    NodeIndex pattern = arm_node.first_child;
+                    NodeIndex body = (pattern != NULL_NODE) ?
+                                    ast_->arena[pattern].next_sibling : NULL_NODE;
+
+                    if (arm_data.is_wildcard) {
+                        // Wildcard - remember as default
+                        default_body = body;
+                    } else if (pattern != NULL_NODE) {
+                        // Check if pattern matches scrutinee
+                        const Node& pattern_node = ast_->arena[pattern];
+                        std::string pattern_key;
+
+                        if (pattern_node.type == NodeType::StringLit) {
+                            pattern_key = "s:" + pattern_node.as_string();
+                        } else if (pattern_node.type == NodeType::NumberLit) {
+                            pattern_key = "n:" + std::to_string(pattern_node.as_number());
+                        } else if (pattern_node.type == NodeType::BoolLit) {
+                            pattern_key = "b:" + std::to_string(pattern_node.as_bool());
+                        }
+
+                        if (pattern_key == scrutinee_key) {
+                            // Match found - compile only this body
+                            if (body != NULL_NODE) {
+                                std::uint16_t result = visit(body);
+                                node_buffers_[node] = result;
+                                return result;
+                            }
+                        }
+                    }
+                }
+                arm = ast_->arena[arm].next_sibling;
+            }
+
+            // No match found - use default if available
+            if (default_body != NULL_NODE) {
+                std::uint16_t result = visit(default_body);
+                node_buffers_[node] = result;
+                return result;
+            }
+
+            error("E121", "No matching pattern in match expression", n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        case NodeType::MatchArm:
+            // MatchArm nodes are handled by MatchExpr, not visited directly
+            error("E122", "Match arm visited outside of match expression", n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+
         default:
             error("E199", "Unsupported node type", n.location);
             return BufferAllocator::BUFFER_UNUSED;
     }
+}
+
+// ============================================================================
+// User Function Call Handler (Inline Expansion)
+// ============================================================================
+// Inlines user-defined function bodies at call sites.
+std::uint16_t CodeGenerator::handle_user_function_call(
+    NodeIndex node, const Node& n, const UserFunctionInfo& func) {
+
+    // Collect call arguments
+    std::vector<NodeIndex> args;
+    NodeIndex arg = n.first_child;
+    while (arg != NULL_NODE) {
+        const Node& arg_node = ast_->arena[arg];
+        NodeIndex arg_value = arg;
+        if (arg_node.type == NodeType::Argument) {
+            arg_value = arg_node.first_child;
+        }
+        args.push_back(arg_value);
+        arg = ast_->arena[arg].next_sibling;
+    }
+
+    // Save param_literals for this scope
+    auto saved_param_literals = std::move(param_literals_);
+    param_literals_.clear();
+
+    // IMPORTANT: Visit arguments BEFORE pushing scope to evaluate them in caller's context
+    // This allows nested function calls like double(double(x)) to work correctly.
+    std::vector<std::uint16_t> param_bufs;
+    for (std::size_t i = 0; i < func.params.size(); ++i) {
+        std::uint16_t param_buf;
+
+        if (i < args.size()) {
+            // Check if the argument is a literal - record for match resolution
+            const Node& arg_node = ast_->arena[args[i]];
+            if (arg_node.type == NodeType::StringLit ||
+                arg_node.type == NodeType::NumberLit ||
+                arg_node.type == NodeType::BoolLit) {
+                std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
+                param_literals_[param_hash] = args[i];
+            }
+
+            // Visit argument in caller's scope
+            param_buf = visit(args[i]);
+        } else if (func.params[i].default_value.has_value()) {
+            // Use default value
+            param_buf = buffers_.allocate();
+            if (param_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                param_literals_ = std::move(saved_param_literals);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            cedar::Instruction push_inst{};
+            push_inst.opcode = cedar::Opcode::PUSH_CONST;
+            push_inst.out_buffer = param_buf;
+            push_inst.inputs[0] = 0xFFFF;
+            push_inst.inputs[1] = 0xFFFF;
+            push_inst.inputs[2] = 0xFFFF;
+            push_inst.inputs[3] = 0xFFFF;
+
+            float default_val = static_cast<float>(*func.params[i].default_value);
+            encode_const_value(push_inst, default_val);
+            emit(push_inst);
+        } else {
+            // Missing required argument - should have been caught by analyzer
+            error("E105", "Missing required argument for parameter '" +
+                  func.params[i].name + "'", n.location);
+            param_literals_ = std::move(saved_param_literals);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        param_bufs.push_back(param_buf);
+    }
+
+    // NOW push scope for function parameters and bind them
+    symbols_->push_scope();
+    for (std::size_t i = 0; i < func.params.size(); ++i) {
+        symbols_->define_variable(func.params[i].name, param_bufs[i]);
+    }
+
+    // Save node_buffers_ state before visiting body.
+    // This is necessary because function bodies are shared AST nodes that may be
+    // visited multiple times with different parameter bindings.
+    auto saved_node_buffers = std::move(node_buffers_);
+    node_buffers_.clear();
+
+    // Visit function body (inline expansion)
+    std::uint16_t result = BufferAllocator::BUFFER_UNUSED;
+    if (func.body_node != NULL_NODE) {
+        result = visit(func.body_node);
+    }
+
+    // Restore node_buffers_ (keep new entries but restore old ones)
+    for (auto& [k, v] : saved_node_buffers) {
+        if (node_buffers_.find(k) == node_buffers_.end()) {
+            node_buffers_[k] = v;
+        }
+    }
+
+    // Pop scope and restore param_literals
+    symbols_->pop_scope();
+    param_literals_ = std::move(saved_param_literals);
+
+    node_buffers_[node] = result;
+    return result;
 }
 
 // ============================================================================

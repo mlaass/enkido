@@ -22,6 +22,9 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
     // Pass 2: Rewrite pipes (builds new AST)
     NodeIndex new_root = rewrite_pipes(ast.root);
 
+    // Pass 2.5: Update function body nodes to point to transformed AST
+    update_function_body_nodes();
+
     // Pass 3: Resolve and validate function calls
     resolve_and_validate(new_root);
 
@@ -53,12 +56,54 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         symbols_.define_variable(name, 0xFFFF);
     }
 
+    if (n.type == NodeType::FunctionDef) {
+        // Register the user-defined function
+        const auto& fn_data = n.as_function_def();
+
+        if (symbols_.is_defined_in_current_scope(fn_data.name)) {
+            warning("Function '" + fn_data.name + "' redefined", n.location);
+        }
+
+        // Collect parameters from Identifier children (before body)
+        UserFunctionInfo func_info;
+        func_info.name = fn_data.name;
+        func_info.def_node = node;
+
+        NodeIndex child = n.first_child;
+        std::size_t param_idx = 0;
+        while (child != NULL_NODE && param_idx < fn_data.param_count) {
+            const Node& child_node = (*input_ast_).arena[child];
+            FunctionParamInfo param;
+            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                const auto& cp = child_node.as_closure_param();
+                param.name = cp.name;
+                param.default_value = cp.default_value;
+            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                param.name = child_node.as_identifier();
+                param.default_value = std::nullopt;
+            }
+            func_info.params.push_back(std::move(param));
+            param_idx++;
+            child = (*input_ast_).arena[child].next_sibling;
+        }
+
+        // Body is the next child after params
+        func_info.body_node = child;
+
+        symbols_.define_function(func_info);
+    }
+
     // Recurse to children
     NodeIndex child = n.first_child;
     while (child != NULL_NODE) {
         collect_definitions(child);
         child = (*input_ast_).arena[child].next_sibling;
     }
+}
+
+void SemanticAnalyzer::update_function_body_nodes() {
+    // Update all user function definitions to point to the transformed AST
+    symbols_.update_function_nodes(node_map_);
 }
 
 NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
@@ -240,6 +285,36 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         auto sym = symbols_.lookup(func_name);
         if (!sym) {
             error("E004", "Unknown function: '" + func_name + "'", n.location);
+        } else if (sym->kind == SymbolKind::UserFunction) {
+            // Validate user function call
+            const auto& fn = sym->user_function;
+
+            // Count arguments
+            std::size_t arg_count = 0;
+            NodeIndex arg = output_arena_[node].first_child;
+            while (arg != NULL_NODE) {
+                arg_count++;
+                arg = output_arena_[arg].next_sibling;
+            }
+
+            // Count required args (params without defaults)
+            std::size_t min_args = 0;
+            for (const auto& param : fn.params) {
+                if (!param.default_value.has_value()) {
+                    min_args++;
+                }
+            }
+            std::size_t max_args = fn.params.size();
+
+            if (arg_count < min_args) {
+                error("E006", "Function '" + func_name + "' expects at least " +
+                      std::to_string(min_args) + " argument(s), got " +
+                      std::to_string(arg_count), n.location);
+            } else if (arg_count > max_args) {
+                error("E007", "Function '" + func_name + "' expects at most " +
+                      std::to_string(max_args) + " argument(s), got " +
+                      std::to_string(arg_count), n.location);
+            }
         } else if (sym->kind == SymbolKind::Builtin) {
             // Special handling for osc() - validation happens in codegen
             // because argument count depends on the type string
@@ -272,9 +347,116 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         }
     }
 
+    if (n.type == NodeType::MatchExpr) {
+        // Validate match expression
+        // First child is scrutinee, remaining children are MatchArm nodes
+        // NOTE: Literal scrutinee check is done in codegen (after inline expansion)
+
+        NodeIndex scrutinee = n.first_child;
+
+        // Check for duplicate patterns and unreachable code
+        std::set<std::string> seen_patterns;
+        bool seen_wildcard = false;
+        NodeIndex arm = (scrutinee != NULL_NODE) ? output_arena_[scrutinee].next_sibling : NULL_NODE;
+
+        while (arm != NULL_NODE) {
+            const Node& arm_node = output_arena_[arm];
+            if (arm_node.type == NodeType::MatchArm) {
+                const auto& arm_data = arm_node.as_match_arm();
+
+                if (seen_wildcard) {
+                    warning("Unreachable pattern after wildcard '_'", arm_node.location);
+                }
+
+                if (arm_data.is_wildcard) {
+                    seen_wildcard = true;
+                } else {
+                    // Get pattern value for duplicate check
+                    NodeIndex pattern = arm_node.first_child;
+                    if (pattern != NULL_NODE) {
+                        const Node& pattern_node = output_arena_[pattern];
+                        std::string pattern_key;
+
+                        if (pattern_node.type == NodeType::StringLit) {
+                            pattern_key = "s:" + pattern_node.as_string();
+                        } else if (pattern_node.type == NodeType::NumberLit) {
+                            pattern_key = "n:" + std::to_string(pattern_node.as_number());
+                        } else if (pattern_node.type == NodeType::BoolLit) {
+                            pattern_key = "b:" + std::to_string(pattern_node.as_bool());
+                        }
+
+                        if (!pattern_key.empty()) {
+                            if (seen_patterns.count(pattern_key)) {
+                                warning("Duplicate pattern in match expression", pattern_node.location);
+                            }
+                            seen_patterns.insert(pattern_key);
+                        }
+                    }
+                }
+            }
+            arm = output_arena_[arm].next_sibling;
+        }
+    }
+
+    if (n.type == NodeType::FunctionDef) {
+        // Validate function definition: check no outer variable captures
+        const auto& fn_data = n.as_function_def();
+        std::set<std::string> params;
+
+        // Push a new scope for function parameters
+        symbols_.push_scope();
+
+        // Collect parameter names
+        NodeIndex child = n.first_child;
+        std::size_t param_idx = 0;
+
+        while (child != NULL_NODE && param_idx < fn_data.param_count) {
+            const Node& child_node = output_arena_[child];
+            std::string param_name;
+            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                param_name = child_node.as_closure_param().name;
+            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                param_name = child_node.as_identifier();
+            }
+            if (!param_name.empty()) {
+                params.insert(param_name);
+                symbols_.define_variable(param_name, 0xFFFF);
+            }
+            param_idx++;
+            child = output_arena_[child].next_sibling;
+        }
+
+        // Check body for captured variables (body is after params)
+        NodeIndex body = child;
+        if (body != NULL_NODE) {
+            check_closure_captures(body, params, n.location);
+        }
+
+        // Recurse to children while params are in scope
+        child = n.first_child;
+        while (child != NULL_NODE) {
+            resolve_and_validate(child);
+            child = output_arena_[child].next_sibling;
+        }
+
+        // Pop scope
+        symbols_.pop_scope();
+
+        return;  // Already recursed
+    }
+
     if (n.type == NodeType::Identifier) {
         // Check if identifier is defined
-        const std::string& name = n.as_identifier();
+        // Note: Identifier nodes may use IdentifierData or ClosureParamData (for params with defaults)
+        std::string name;
+        if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
+            name = n.as_closure_param().name;
+        } else if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+            name = n.as_identifier();
+        } else {
+            // Shouldn't happen - unknown data type for Identifier node
+            return;
+        }
         auto sym = symbols_.lookup(name);
         if (!sym) {
             error("E005", "Undefined identifier: '" + name + "'", n.location);
@@ -336,6 +518,18 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         return;  // Already recursed, don't do it again below
     }
 
+    // Special handling for MatchArm: skip pattern, only validate body
+    if (n.type == NodeType::MatchArm) {
+        NodeIndex pattern = n.first_child;
+        if (pattern != NULL_NODE) {
+            NodeIndex body = output_arena_[pattern].next_sibling;
+            if (body != NULL_NODE) {
+                resolve_and_validate(body);
+            }
+        }
+        return;
+    }
+
     // Recurse to children
     NodeIndex child = n.first_child;
     while (child != NULL_NODE) {
@@ -394,23 +588,44 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
 
     const Node& n = output_arena_[node];
 
+    // Skip match arm patterns - they are not variable references
+    if (n.type == NodeType::MatchArm) {
+        // Only check the body (second child), not the pattern (first child)
+        NodeIndex pattern = n.first_child;
+        if (pattern != NULL_NODE) {
+            NodeIndex body = output_arena_[pattern].next_sibling;
+            if (body != NULL_NODE) {
+                check_closure_captures(body, params, closure_loc);
+            }
+        }
+        return;
+    }
+
     if (n.type == NodeType::Identifier) {
-        const std::string& name = n.as_identifier();
+        // Get name - may be IdentifierData or ClosureParamData (for params with defaults)
+        std::string name;
+        if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
+            name = n.as_closure_param().name;
+        } else if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+            name = n.as_identifier();
+        } else {
+            return;  // Unknown data type
+        }
 
         // Check if it's a parameter
         if (params.find(name) != params.end()) {
             return;  // OK - parameter reference
         }
 
-        // Check if it's a builtin
+        // Check if it's a builtin or user function
         auto sym = symbols_.lookup(name);
-        if (sym && sym->kind == SymbolKind::Builtin) {
-            return;  // OK - builtin function
+        if (sym && (sym->kind == SymbolKind::Builtin || sym->kind == SymbolKind::UserFunction)) {
+            return;  // OK - builtin or user function
         }
 
-        // It's a captured variable - not allowed in simple closures
+        // It's a captured variable - not allowed in simple closures/functions
         error("E008", "Closure captures variable '" + name +
-              "' - simple closures can only use parameters and builtins", n.location);
+              "' - closures and functions can only use parameters and functions", n.location);
         return;
     }
 

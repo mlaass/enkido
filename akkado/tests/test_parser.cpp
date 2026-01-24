@@ -585,3 +585,191 @@ TEST_CASE("Parser method calls", "[parser]") {
         CHECK(ast.arena[method2].as_identifier() == "bar");
     }
 }
+
+TEST_CASE("Parser match expressions", "[parser]") {
+    SECTION("simple match with string patterns") {
+        auto ast = parse_ok("match(\"sin\") { \"sin\": 1, \"saw\": 2, _: 0 }");
+        NodeIndex match = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[match].type == NodeType::MatchExpr);
+
+        // First child is scrutinee
+        NodeIndex scrutinee = ast.arena[match].first_child;
+        REQUIRE(ast.arena[scrutinee].type == NodeType::StringLit);
+        CHECK(ast.arena[scrutinee].as_string() == "sin");
+
+        // Should have 3 arms
+        std::size_t arm_count = 0;
+        NodeIndex arm = ast.arena[scrutinee].next_sibling;
+        while (arm != NULL_NODE) {
+            REQUIRE(ast.arena[arm].type == NodeType::MatchArm);
+            arm_count++;
+            arm = ast.arena[arm].next_sibling;
+        }
+        CHECK(arm_count == 3);
+    }
+
+    SECTION("match with number patterns") {
+        auto ast = parse_ok(R"(
+            match(1) {
+                1: "one"
+                2: "two"
+                _: "other"
+            }
+        )");
+        NodeIndex match = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[match].type == NodeType::MatchExpr);
+
+        NodeIndex scrutinee = ast.arena[match].first_child;
+        REQUIRE(ast.arena[scrutinee].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[scrutinee].as_number(), WithinRel(1.0));
+    }
+
+    SECTION("match with block body") {
+        auto ast = parse_ok(R"(
+            match("x") {
+                "x": { y = 1
+                       y + 2 }
+                _: 0
+            }
+        )");
+        NodeIndex match = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[match].type == NodeType::MatchExpr);
+
+        // First arm's body should be a block
+        NodeIndex scrutinee = ast.arena[match].first_child;
+        NodeIndex arm = ast.arena[scrutinee].next_sibling;
+        NodeIndex pattern = ast.arena[arm].first_child;
+        NodeIndex body = ast.arena[pattern].next_sibling;
+        CHECK(ast.arena[body].type == NodeType::Block);
+    }
+
+    SECTION("match with wildcard") {
+        auto ast = parse_ok(R"(
+            match("unknown") {
+                _: 42
+            }
+        )");
+        NodeIndex match = ast.arena[ast.root].first_child;
+        NodeIndex scrutinee = ast.arena[match].first_child;
+        NodeIndex arm = ast.arena[scrutinee].next_sibling;
+
+        REQUIRE(ast.arena[arm].type == NodeType::MatchArm);
+        CHECK(ast.arena[arm].as_match_arm().is_wildcard == true);
+    }
+
+    SECTION("match non-wildcard pattern") {
+        auto ast = parse_ok(R"(
+            match("test") {
+                "test": 1
+            }
+        )");
+        NodeIndex match = ast.arena[ast.root].first_child;
+        NodeIndex scrutinee = ast.arena[match].first_child;
+        NodeIndex arm = ast.arena[scrutinee].next_sibling;
+
+        REQUIRE(ast.arena[arm].type == NodeType::MatchArm);
+        CHECK(ast.arena[arm].as_match_arm().is_wildcard == false);
+    }
+}
+
+TEST_CASE("Parser function definitions", "[parser]") {
+    SECTION("simple function") {
+        auto ast = parse_ok("fn double(x) -> x * 2");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        const auto& fn_data = ast.arena[fn].as_function_def();
+        CHECK(fn_data.name == "double");
+        CHECK(fn_data.param_count == 1);
+
+        // Check param
+        NodeIndex param = ast.arena[fn].first_child;
+        REQUIRE(ast.arena[param].type == NodeType::Identifier);
+        CHECK(ast.arena[param].as_identifier() == "x");
+
+        // Check body
+        NodeIndex body = ast.arena[param].next_sibling;
+        REQUIRE(ast.arena[body].type == NodeType::Call);
+        CHECK(ast.arena[body].as_identifier() == "mul");
+    }
+
+    SECTION("function with multiple parameters") {
+        auto ast = parse_ok("fn add3(a, b, c) -> a + b + c");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        const auto& fn_data = ast.arena[fn].as_function_def();
+        CHECK(fn_data.name == "add3");
+        CHECK(fn_data.param_count == 3);
+    }
+
+    SECTION("function with default parameter") {
+        auto ast = parse_ok("fn osc(type, freq, pwm = 0.5) -> freq");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        const auto& fn_data = ast.arena[fn].as_function_def();
+        CHECK(fn_data.name == "osc");
+        CHECK(fn_data.param_count == 3);
+
+        // Check third param has default
+        NodeIndex param1 = ast.arena[fn].first_child;
+        NodeIndex param2 = ast.arena[param1].next_sibling;
+        NodeIndex param3 = ast.arena[param2].next_sibling;
+
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[param3].data));
+        const auto& param3_data = ast.arena[param3].as_closure_param();
+        CHECK(param3_data.name == "pwm");
+        REQUIRE(param3_data.default_value.has_value());
+        CHECK_THAT(*param3_data.default_value, WithinRel(0.5));
+    }
+
+    SECTION("function with block body") {
+        auto ast = parse_ok(R"(
+            fn complex(x) -> {
+                y = x * 2
+                y + 1
+            }
+        )");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        NodeIndex param = ast.arena[fn].first_child;
+        NodeIndex body = ast.arena[param].next_sibling;
+        CHECK(ast.arena[body].type == NodeType::Block);
+    }
+
+    SECTION("function with match in body") {
+        auto ast = parse_ok(R"(
+            fn select(type) -> match(type) {
+                "a": 1
+                "b": 2
+                _: 0
+            }
+        )");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        NodeIndex param = ast.arena[fn].first_child;
+        NodeIndex body = ast.arena[param].next_sibling;
+        CHECK(ast.arena[body].type == NodeType::MatchExpr);
+    }
+
+    SECTION("multiple function definitions") {
+        auto ast = parse_ok(R"(
+            fn foo(x) -> x
+            fn bar(y) -> y * 2
+        )");
+        NodeIndex root = ast.root;
+        CHECK(ast.arena.child_count(root) == 2);
+
+        NodeIndex fn1 = ast.arena[root].first_child;
+        NodeIndex fn2 = ast.arena[fn1].next_sibling;
+
+        REQUIRE(ast.arena[fn1].type == NodeType::FunctionDef);
+        REQUIRE(ast.arena[fn2].type == NodeType::FunctionDef);
+
+        CHECK(ast.arena[fn1].as_function_def().name == "foo");
+        CHECK(ast.arena[fn2].as_function_def().name == "bar");
+    }
+}
