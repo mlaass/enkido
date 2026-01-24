@@ -126,10 +126,16 @@ inline float soft_clip(float x) {
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
+// Default constants for Moog ladder filter
+constexpr float MOOG_MAX_RESONANCE_DEFAULT = 4.0f;
+constexpr float MOOG_INPUT_SCALE_DEFAULT = 0.5f;
+
 // FILTER_MOOG: 4-pole (24dB/oct) Moog-style ladder filter
 // in0: input signal
 // in1: cutoff frequency (Hz)
-// in2: resonance (0.0-4.0, self-oscillates at ~4.0)
+// in2: resonance (0.0-max_resonance, self-oscillates at ~4.0)
+// in3: max_resonance - self-oscillation threshold (default 4.0)
+// in4: input_scale - preamp drive/saturation (default 0.5)
 //
 // Based on the Huovilainen improved model for digital Moog filters
 // Features nonlinear saturation in the feedback path for analog character
@@ -139,11 +145,17 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* res = ctx.buffers->get(inst.inputs[2]);
+    const float* max_res_in = ctx.buffers->get(inst.inputs[3]);
+    const float* input_scale_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<MoogState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
+
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float max_resonance = max_res_in[i] > 0.0f ? max_res_in[i] : MOOG_MAX_RESONANCE_DEFAULT;
+        float input_scale = input_scale_in[i] > 0.0f ? input_scale_in[i] : MOOG_INPUT_SCALE_DEFAULT;
 
         // Update coefficients if parameters changed
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -158,8 +170,8 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
             // This provides better frequency accuracy at high cutoffs
             state.g = std::tan(PI * f);
 
-            // Resonance coefficient (0-4 range, self-oscillates near 4)
-            state.k = std::clamp(resonance, 0.0f, 4.0f);
+            // Resonance coefficient (0 to max_resonance range, self-oscillates near 4)
+            state.k = std::clamp(resonance, 0.0f, max_resonance);
         }
 
         // Get feedback from last stage output with nonlinear saturation
@@ -170,7 +182,7 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
         float x = input[i] - feedback;
 
         // Soft clip the input to prevent harsh clipping at high input levels
-        x = soft_clip(x * 0.5f) * 2.0f;
+        x = soft_clip(x * input_scale) * (1.0f / input_scale);
 
         // Calculate single-pole lowpass coefficient for trapezoidal integration
         // G = g / (1 + g) for each stage
@@ -454,20 +466,26 @@ inline void op_filter_formant(ExecutionContext& ctx, const Instruction& inst) {
 // Sallen-Key Filter (MS-20 Style)
 // ============================================================================
 
-// Diode clipper function for feedback path
+// Default constants for Sallen-Key filter
+constexpr float SALLENKEY_CLIP_THRESHOLD_DEFAULT = 0.7f;
+constexpr float SALLENKEY_CLIP_POS_SLOPE_DEFAULT = 2.0f;
+constexpr float SALLENKEY_CLIP_NEG_SLOPE_DEFAULT = 3.0f;
+
+// Diode clipper function for feedback path (parameterized)
 [[gnu::always_inline]]
-inline float diode_clip(float x, float& state) {
+inline float diode_clip(float x, float& state, float threshold) {
     // Asymmetric soft diode clipping
     // Positive: gentle soft knee
     // Negative: sharper knee (like silicon diode)
-    constexpr float THRESHOLD = 0.7f;
+    constexpr float POS_SLOPE = SALLENKEY_CLIP_POS_SLOPE_DEFAULT;
+    constexpr float NEG_SLOPE = SALLENKEY_CLIP_NEG_SLOPE_DEFAULT;
 
     float clipped;
-    if (x > THRESHOLD) {
-        clipped = THRESHOLD + std::tanh((x - THRESHOLD) * 2.0f) * 0.3f;
-    } else if (x < -THRESHOLD) {
+    if (x > threshold) {
+        clipped = threshold + std::tanh((x - threshold) * POS_SLOPE) * 0.3f;
+    } else if (x < -threshold) {
         // Sharper negative clipping
-        clipped = -THRESHOLD + std::tanh((x + THRESHOLD) * 3.0f) * 0.2f;
+        clipped = -threshold + std::tanh((x + threshold) * NEG_SLOPE) * 0.2f;
     } else {
         clipped = x;
     }
@@ -482,6 +500,7 @@ inline float diode_clip(float x, float& state) {
 // in1: cutoff frequency (Hz)
 // in2: resonance (0.0-4.0, aggressive self-oscillation)
 // in3: mode (0.0 = lowpass, 1.0 = highpass)
+// in4: clip_threshold - feedback clipping point (default 0.7)
 //
 // Based on the Korg MS-20 filter topology with diode clipping in the
 // feedback path. Creates aggressive, fuzzy resonance character.
@@ -492,12 +511,16 @@ inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) 
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* res = ctx.buffers->get(inst.inputs[2]);
     const float* mode_in = ctx.buffers->get(inst.inputs[3]);
+    const float* clip_threshold_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<SallenkeyState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
         float mode = mode_in[i];
+
+        // Runtime tunable parameter (use default if zero/negative)
+        float clip_threshold = clip_threshold_in[i] > 0.0f ? clip_threshold_in[i] : SALLENKEY_CLIP_THRESHOLD_DEFAULT;
 
         // Update coefficients if needed
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -514,7 +537,7 @@ inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) 
 
         // Get feedback with diode clipping (the MS-20 "scream")
         float fb = state.cap2 * state.k;
-        fb = diode_clip(fb, state.diode_state);
+        fb = diode_clip(fb, state.diode_state, clip_threshold);
 
         // Input with feedback
         float x = input[i] - fb;

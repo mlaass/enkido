@@ -133,7 +133,7 @@ public:
 
     // Initialize a SEQ_STEP state with timed events
     // Used by compiler to set up sequence data before program execution
-    void init_seq_step_state(std::uint16_t state_id,
+    void init_seq_step_state(std::uint32_t state_id,
                              const float* times, const float* values, const float* velocities,
                              std::size_t count, float cycle_length) {
         state_pool_.init_seq_step(state_id, times, values, velocities, count, cycle_length);

@@ -4,11 +4,10 @@
 #include <cstring>
 
 // Helper to decode float from PUSH_CONST instruction
-// Float is split across inputs[4] (low 16 bits) and state_id (high 16 bits)
+// Float is stored directly in state_id (32 bits)
 static float decode_const_float(const cedar::Instruction& inst) {
-    std::uint32_t bits = (static_cast<std::uint32_t>(inst.state_id) << 16) | inst.inputs[4];
     float value;
-    std::memcpy(&value, &bits, sizeof(float));
+    std::memcpy(&value, &inst.state_id, sizeof(float));
     return value;
 }
 

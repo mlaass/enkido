@@ -78,11 +78,14 @@ Related: [comp](#comp)
 |--------|--------|---------|-------------|
 | in     | signal | -       | Input signal |
 | thresh | number | -40.0   | Threshold in dB |
-| hyst   | number | 6.0     | Hysteresis in dB |
+| hyst   | number | 6.0     | Hysteresis in dB (open/close difference) |
+| close_time | number | 5.0 | Fade-out time (ms) |
 
 Aliases: `noisegate`
 
-Cuts the signal when it falls below the threshold, useful for removing noise during quiet passages. Hysteresis prevents chattering at the threshold.
+Cuts the signal when it falls below the threshold, useful for removing noise during quiet passages. Hysteresis prevents chattering at the threshold by requiring the signal to drop further below the threshold before the gate closes.
+
+The `close_time` parameter controls how quickly the gate fades out when closing, preventing abrupt cuts.
 
 ```akk
 // Basic noise gate
@@ -92,6 +95,11 @@ Cuts the signal when it falls below the threshold, useful for removing noise dur
 ```akk
 // Tight gate for percussive sounds
 osc("noise") * ar(trigger(8), 0.001, 0.05) |> gate(%, -20, 10) |> out(%, %)
+```
+
+```akk
+// Slow fade-out gate
+osc("saw", 110) * ar(trigger(2)) |> gate(%, -30, 6, 20) |> out(%, %)
 ```
 
 Related: [comp](#comp)

@@ -10,12 +10,18 @@
 
 namespace cedar {
 
+// Default constants for Freeverb
+constexpr float FREEVERB_ROOM_SCALE_DEFAULT = 0.28f;
+constexpr float FREEVERB_ROOM_OFFSET_DEFAULT = 0.7f;
+
 // ============================================================================
 // REVERB_FREEVERB: Schroeder-Moorer Reverb (Freeverb Algorithm)
 // ============================================================================
 // in0: input signal
 // in1: room size (0.0-1.0)
 // in2: damping (0.0-1.0)
+// in3: room_scale - density factor (default 0.28)
+// in4: room_offset - decay baseline (default 0.7)
 // rate: wet/dry mix (0-255 -> 0.0-1.0)
 //
 // Classic algorithm: 8 parallel lowpass-feedback comb filters summed,
@@ -27,6 +33,8 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* room_size = ctx.buffers->get(inst.inputs[1]);
     const float* damping = ctx.buffers->get(inst.inputs[2]);
+    const float* room_scale_in = ctx.buffers->get(inst.inputs[3]);
+    const float* room_offset_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<FreeverbState>(inst.state_id);
 
     float mix = static_cast<float>(inst.rate) / 255.0f;
@@ -34,17 +42,17 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
-    // Scale factor for feedback based on room size
-    constexpr float SCALE_ROOM = 0.28f;
-    constexpr float OFFSET_ROOM = 0.7f;
-
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x = input[i];
         float room = std::clamp(room_size[i], 0.0f, 1.0f);
         float damp = std::clamp(damping[i], 0.0f, 1.0f);
 
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float room_scale = room_scale_in[i] > 0.0f ? room_scale_in[i] : FREEVERB_ROOM_SCALE_DEFAULT;
+        float room_offset = room_offset_in[i] > 0.0f ? room_offset_in[i] : FREEVERB_ROOM_OFFSET_DEFAULT;
+
         // Feedback coefficient from room size
-        float feedback = room * SCALE_ROOM + OFFSET_ROOM;
+        float feedback = room * room_scale + room_offset;
 
         // Sum output from all 8 comb filters in parallel
         float comb_sum = 0.0f;
@@ -87,12 +95,19 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// Default constants for Dattorro reverb
+constexpr float DATTORRO_INPUT_DIFFUSION_DEFAULT = 0.75f;
+constexpr float DATTORRO_DECAY_DIFFUSION_DEFAULT = 0.625f;
+constexpr float DATTORRO_LFO_RATE_DEFAULT = 0.5f;
+
 // ============================================================================
 // REVERB_DATTORRO: Dattorro Plate Reverb
 // ============================================================================
 // in0: input signal
 // in1: decay (0.0-0.99)
 // in2: pre-delay (ms, 0-100)
+// in3: input_diffusion - input smoothing (default 0.75)
+// in4: decay_diffusion - tail smoothing (default 0.625)
 // rate: damping (low 4 bits 0-15 -> 0.0-1.0), modulation depth (high 4 bits 0-15 -> 0.0-1.0)
 //
 // High-quality plate reverb algorithm with modulation for richness.
@@ -104,6 +119,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* decay = ctx.buffers->get(inst.inputs[1]);
     const float* predelay_ms = ctx.buffers->get(inst.inputs[2]);
+    const float* input_diffusion_in = ctx.buffers->get(inst.inputs[3]);
+    const float* decay_diffusion_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<DattorroState>(inst.state_id);
 
     float damping = static_cast<float>(inst.rate & 0x0F) / 15.0f;
@@ -112,15 +129,17 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
-    constexpr float INPUT_DIFFUSION = 0.75f;
-    constexpr float DECAY_DIFFUSION = 0.625f;
-
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x = input[i];
         float dec = std::clamp(decay[i], 0.0f, 0.99f);
         float pre_ms = std::clamp(predelay_ms[i], 0.0f, 100.0f);
+
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float input_diffusion = input_diffusion_in[i] > 0.0f ? input_diffusion_in[i] : DATTORRO_INPUT_DIFFUSION_DEFAULT;
+        float decay_diffusion = decay_diffusion_in[i] > 0.0f ? decay_diffusion_in[i] : DATTORRO_DECAY_DIFFUSION_DEFAULT;
+        float lfo_rate = DATTORRO_LFO_RATE_DEFAULT;  // Fixed at default
 
         // Pre-delay
         float predelay_samples = pre_ms * 0.001f * ctx.sample_rate;
@@ -137,14 +156,14 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
             std::size_t size = DattorroState::INPUT_DIFFUSER_SIZES[d];
 
             float delayed = buffer[state.input_pos[d]];
-            float output = delayed - INPUT_DIFFUSION * x;
-            buffer[state.input_pos[d]] = x + INPUT_DIFFUSION * output;
+            float output = delayed - input_diffusion * x;
+            buffer[state.input_pos[d]] = x + input_diffusion * output;
             state.input_pos[d] = (state.input_pos[d] + 1) % size;
             x = output;
         }
 
         // Update modulation LFO
-        state.mod_phase += 0.5f * inv_sample_rate;  // 0.5 Hz
+        state.mod_phase += lfo_rate * inv_sample_rate;
         if (state.mod_phase >= 1.0f) state.mod_phase -= 1.0f;
 
         // Tank processing (figure-8 topology)
@@ -161,8 +180,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
             float* buffer = state.decay_diffusers[0];
             std::size_t size = DattorroState::DECAY_DIFFUSER_SIZES[0];
             float delayed = buffer[state.decay_pos[0]];
-            float output = delayed - DECAY_DIFFUSION * left_in;
-            buffer[state.decay_pos[0]] = left_in + DECAY_DIFFUSION * output;
+            float output = delayed - decay_diffusion * left_in;
+            buffer[state.decay_pos[0]] = left_in + decay_diffusion * output;
             state.decay_pos[0] = (state.decay_pos[0] + 1) % size;
             left_in = output;
 
@@ -189,8 +208,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
             float* buffer = state.decay_diffusers[1];
             std::size_t size = DattorroState::DECAY_DIFFUSER_SIZES[1];
             float delayed = buffer[state.decay_pos[1]];
-            float output = delayed - DECAY_DIFFUSION * right_in;
-            buffer[state.decay_pos[1]] = right_in + DECAY_DIFFUSION * output;
+            float output = delayed - decay_diffusion * right_in;
+            buffer[state.decay_pos[1]] = right_in + decay_diffusion * output;
             state.decay_pos[1] = (state.decay_pos[1] + 1) % size;
             right_in = output;
 

@@ -273,12 +273,18 @@ inline void op_distort_smooth(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// Default constants for tape saturation
+constexpr float TAPE_SOFT_THRESHOLD_DEFAULT = 0.5f;
+constexpr float TAPE_WARMTH_SCALE_DEFAULT = 0.7f;
+
 // ============================================================================
 // DISTORT_TAPE: Tape-Style Saturation
 // ============================================================================
 // in0: input signal
 // in1: drive (1-10, tape saturation amount)
 // in2: warmth (0-1, high frequency rolloff)
+// in3: soft_threshold - saturation onset (default 0.5)
+// in4: warmth_scale - HF rolloff amount (default 0.7)
 //
 // Emulates magnetic tape saturation characteristics:
 // - Soft, symmetric compression with wide linear region
@@ -291,6 +297,8 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* warmth = ctx.buffers->get(inst.inputs[2]);
+    const float* soft_threshold_in = ctx.buffers->get(inst.inputs[3]);
+    const float* warmth_scale_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<TapeState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
@@ -298,24 +306,28 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
         float w = std::clamp(warmth[i], 0.0f, 1.0f);
         float x = input[i];
 
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float soft_threshold = soft_threshold_in[i] > 0.0f ? soft_threshold_in[i] : TAPE_SOFT_THRESHOLD_DEFAULT;
+        float warmth_scale = warmth_scale_in[i] > 0.0f ? warmth_scale_in[i] : TAPE_WARMTH_SCALE_DEFAULT;
+
         // 2x oversampling
         state.os_delay[state.os_idx] = x;
         float x0 = x;
         float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
 
-        auto tape_core = [d](float s) {
+        auto tape_core = [d, soft_threshold](float s) {
             float driven = s * d;
             float abs_d = std::abs(driven);
 
             // Tape-style soft saturation with wide linear region
             // Uses smooth polynomial knee transitioning to tanh limiting
             float y;
-            if (abs_d < 0.5f) {
+            if (abs_d < soft_threshold) {
                 // Linear region (unity gain below threshold)
                 y = driven;
             } else if (abs_d < 2.0f) {
                 // Soft knee: polynomial transition
-                float t = (abs_d - 0.5f) / 1.5f;  // 0 to 1 in transition region
+                float t = (abs_d - soft_threshold) / (2.0f - soft_threshold);  // 0 to 1 in transition region
                 float knee = 1.0f - t * t * 0.3f;  // Gentle compression curve
                 y = driven * knee;
             } else {
@@ -335,7 +347,7 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
         // High-shelf filter for warmth (subtle HF rolloff)
         // One-pole lowpass on the difference signal
         float hf = y - state.hs_z1;
-        state.hs_z1 = state.hs_z1 + hf * (1.0f - w * 0.7f);
+        state.hs_z1 = state.hs_z1 + hf * (1.0f - w * warmth_scale);
         y = state.hs_z1 + hf * (1.0f - w);
 
         out[i] = std::clamp(y, -1.0f, 1.0f);
@@ -343,12 +355,16 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// Default constants for transformer saturation
+constexpr float XFMR_BASS_FREQ_DEFAULT = 60.0f;
+
 // ============================================================================
 // DISTORT_XFMR: Transformer Saturation
 // ============================================================================
 // in0: input signal
 // in1: drive (1-10, overall saturation)
 // in2: bass saturation (1-10, low frequency saturation emphasis)
+// in3: bass_freq - bass extraction cutoff in Hz (default 60)
 //
 // Emulates transformer saturation where bass frequencies saturate
 // more heavily than highs (magnetic core saturation).
@@ -360,24 +376,29 @@ inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* bass_sat = ctx.buffers->get(inst.inputs[2]);
+    const float* bass_freq_in = ctx.buffers->get(inst.inputs[3]);
     auto& state = ctx.states->get_or_create<XfmrState>(inst.state_id);
-
-    // Leaky integrator coefficient (~60Hz @ 48kHz)
-    constexpr float LP_COEFF = 0.992f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 10.0f);
         float bs = std::clamp(bass_sat[i], 1.0f, 10.0f);
         float x = input[i];
 
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float bass_freq = bass_freq_in[i] > 0.0f ? bass_freq_in[i] : XFMR_BASS_FREQ_DEFAULT;
+
+        // Leaky integrator coefficient from frequency
+        // coeff = exp(-2 * pi * freq / sample_rate) ≈ 1 - (2 * pi * freq / sample_rate) for small freqs
+        float lp_coeff = std::exp(-6.283185f * bass_freq / ctx.sample_rate);
+
         // 2x oversampling
         state.os_delay[state.os_idx] = x;
         float x0 = x;
         float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
 
-        auto xfmr_core = [d, bs, &state, LP_COEFF](float s) {
+        auto xfmr_core = [d, bs, &state, lp_coeff](float s) {
             // Extract bass via leaky integrator
-            state.integrator = state.integrator * LP_COEFF + s * (1.0f - LP_COEFF);
+            state.integrator = state.integrator * lp_coeff + s * (1.0f - lp_coeff);
             float bass = state.integrator;
             float highs = s - bass;
 
@@ -406,12 +427,18 @@ inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// Default constants for harmonic exciter
+constexpr float EXCITE_HARMONIC_ODD_DEFAULT = 0.4f;
+constexpr float EXCITE_HARMONIC_EVEN_DEFAULT = 0.6f;
+
 // ============================================================================
 // DISTORT_EXCITE: Harmonic Exciter
 // ============================================================================
 // in0: input signal
 // in1: amount (0-1, exciter intensity)
 // in2: frequency (1000-10000 Hz, high-pass corner for harmonics)
+// in3: harmonic_odd - odd harmonic mix (default 0.4)
+// in4: harmonic_even - even harmonic mix (default 0.6)
 //
 // Adds controlled harmonic content to high frequencies only.
 // Similar to Aphex Aural Exciter - creates presence and sparkle
@@ -423,6 +450,8 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* amount = ctx.buffers->get(inst.inputs[1]);
     const float* freq = ctx.buffers->get(inst.inputs[2]);
+    const float* harmonic_odd_in = ctx.buffers->get(inst.inputs[3]);
+    const float* harmonic_even_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<ExciterState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
@@ -430,16 +459,20 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
         float f = std::clamp(freq[i], 1000.0f, 10000.0f);
         float x = input[i];
 
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float harmonic_odd = harmonic_odd_in[i] > 0.0f ? harmonic_odd_in[i] : EXCITE_HARMONIC_ODD_DEFAULT;
+        float harmonic_even = harmonic_even_in[i] > 0.0f ? harmonic_even_in[i] : EXCITE_HARMONIC_EVEN_DEFAULT;
+
         // High-pass filter coefficient (one-pole)
         // coeff = exp(-2 * pi * freq / sample_rate)
-        float coeff = std::exp(-6.283185f * f / 48000.0f);
+        float coeff = std::exp(-6.283185f * f / ctx.sample_rate);
 
         // 2x oversampling for harmonic generation
         state.os_delay[state.os_idx] = x;
         float x0 = x;
         float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
 
-        auto excite_core = [amt, coeff, &state](float s) {
+        auto excite_core = [amt, coeff, harmonic_odd, harmonic_even, &state](float s) {
             // High-pass filter to extract high frequencies
             float hp = s - state.hp_z1;
             state.hp_z1 = state.hp_z1 + hp * (1.0f - coeff);
@@ -451,7 +484,7 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
             float even = hp * std::abs(hp);
 
             // Mix harmonics (2nd harmonic emphasis for musicality)
-            float harmonics = odd * 0.4f + even * 0.6f;
+            float harmonics = odd * harmonic_odd + even * harmonic_even;
 
             // Return original + harmonics
             return s + harmonics * amt * 1.5f;

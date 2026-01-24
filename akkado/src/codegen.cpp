@@ -10,12 +10,10 @@
 namespace akkado {
 
 // Helper to properly encode a float constant in a PUSH_CONST instruction.
-// The float is split across inputs[4] (low 16 bits) and state_id (high 16 bits).
+// The float is stored directly in state_id (32 bits).
 static void encode_const_value(cedar::Instruction& inst, float value) {
-    std::uint32_t bits;
-    std::memcpy(&bits, &value, sizeof(float));
-    inst.inputs[4] = static_cast<std::uint16_t>(bits & 0xFFFF);        // Low 16 bits
-    inst.state_id = static_cast<std::uint16_t>((bits >> 16) & 0xFFFF); // High 16 bits
+    std::memcpy(&inst.state_id, &value, sizeof(float));
+    inst.inputs[4] = cedar::BUFFER_UNUSED;
 }
 
 // ============================================================================
@@ -697,7 +695,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
                 // Build state initialization with times, values, velocities
                 StateInitData seq_init;
-                seq_init.state_id = static_cast<std::uint16_t>(seq_state_id);  // Match Instruction::state_id
+                seq_init.state_id = seq_state_id;
                 seq_init.type = StateInitData::Type::SeqStep;
                 seq_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
                 seq_init.times.reserve(events.size());
@@ -787,7 +785,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
             // Build state initialization with times, values (pitches), velocities
             StateInitData pitch_init;
-            pitch_init.state_id = static_cast<std::uint16_t>(pitch_seq_state_id);  // Match Instruction::state_id
+            pitch_init.state_id = pitch_seq_state_id;
             pitch_init.type = StateInitData::Type::SeqStep;
             pitch_init.cycle_length = 4.0f;  // 4 beats per cycle (1 bar in 4/4)
             pitch_init.times.reserve(events.size());

@@ -30,9 +30,9 @@ public:
     // =========================================================================
 
     // Acquire a slot for writing new program
-    // Returns nullptr if no slot available (should not happen with triple buffer)
+    // Returns nullptr if no slot available (all slots Active/Fading/Loading)
     [[nodiscard]] ProgramSlot* acquire_write_slot() noexcept {
-        // Find an empty slot
+        // First pass: look for Empty slot (preferred)
         for (auto& slot : slots_) {
             auto expected = ProgramSlot::State::Empty;
             if (slot.state.compare_exchange_strong(expected, ProgramSlot::State::Loading,
@@ -40,7 +40,21 @@ public:
                 return &slot;
             }
         }
-        return nullptr;  // All slots busy (should not happen)
+
+        // Second pass: replace a Ready slot (supersede pending swap)
+        // This allows rapid recompiles - latest version wins
+        // Safe because Ready slots haven't started executing yet
+        for (auto& slot : slots_) {
+            auto expected = ProgramSlot::State::Ready;
+            if (slot.state.compare_exchange_strong(expected, ProgramSlot::State::Loading,
+                    std::memory_order_acq_rel)) {
+                // Clear swap_pending since we're replacing the ready slot
+                swap_pending_.store(false, std::memory_order_release);
+                return &slot;
+            }
+        }
+
+        return nullptr;  // All slots truly busy (Active/Fading/Loading)
     }
 
     // Submit written slot as ready for swap

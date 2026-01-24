@@ -13,7 +13,7 @@ namespace akkado {
 constexpr std::size_t MAX_BUILTIN_PARAMS = 6;
 
 /// Maximum number of optional parameters with defaults
-constexpr std::size_t MAX_BUILTIN_DEFAULTS = 3;
+constexpr std::size_t MAX_BUILTIN_DEFAULTS = 5;
 
 /// Metadata for a built-in function
 struct BuiltinInfo {
@@ -124,9 +124,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN}}},
     // Moog ladder filter (4-pole with resonance)
-    {"moog",    {cedar::Opcode::FILTER_MOOG, 2, 1, true,
-                 {"in", "cut", "res", "", "", ""},
-                 {1.0f, NAN, NAN}}},
+    // Optional: max_resonance (self-oscillation threshold), input_scale (preamp drive)
+    {"moog",    {cedar::Opcode::FILTER_MOOG, 2, 3, true,
+                 {"in", "cut", "res", "max_res", "input_scale", ""},
+                 {1.0f, 4.0f, 0.5f, NAN, NAN}}},
     // Diode ladder filter (TB-303 acid) - 5 inputs: in, cut, res, vt, fb_gain
     {"diode",   {cedar::Opcode::FILTER_DIODE, 2, 3, true,
                  {"in", "cut", "res", "vt", "fb_gain", ""},
@@ -135,10 +136,11 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"formant", {cedar::Opcode::FILTER_FORMANT, 2, 3, true,
                  {"in", "vowel_a", "vowel_b", "morph", "q", ""},
                  {0.0f, 0.5f, 10.0f}}},  // vowel_b=0, morph=0.5, q=10.0
-    // Sallen-Key filter (MS-20 style) - 4 inputs: in, cut, res, mode
-    {"sallenkey", {cedar::Opcode::FILTER_SALLENKEY, 2, 2, true,
-                   {"in", "cut", "res", "mode", "", ""},
-                   {1.0f, 0.0f, NAN}}},  // res=1.0, mode=0.0 (LP)
+    // Sallen-Key filter (MS-20 style) - 5 inputs: in, cut, res, mode, clip_threshold
+    // Optional: clip_threshold (feedback clipping point)
+    {"sallenkey", {cedar::Opcode::FILTER_SALLENKEY, 2, 3, true,
+                   {"in", "cut", "res", "mode", "clip_thresh", ""},
+                   {1.0f, 0.0f, 0.7f, NAN, NAN}}},  // res=1.0, mode=0.0 (LP), clip=0.7
 
     // Envelopes
     {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 4, true,
@@ -165,26 +167,31 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN}}},  // mix packed in reserved field
 
     // Reverbs (stateful - large delay networks)
-    {"freeverb", {cedar::Opcode::REVERB_FREEVERB, 1, 2, true,
-                  {"in", "room", "damp", "", "", ""},
-                  {0.5f, 0.5f, NAN}}},  // mix packed in reserved
-    {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 2, true,
-                  {"in", "decay", "predelay", "", "", ""},
-                  {0.7f, 20.0f, NAN}}},  // damping + mod in reserved
+    // freeverb: room_scale (density factor), room_offset (decay baseline)
+    {"freeverb", {cedar::Opcode::REVERB_FREEVERB, 1, 4, true,
+                  {"in", "room", "damp", "room_scale", "room_offset", ""},
+                  {0.5f, 0.5f, 0.28f, 0.7f, NAN}}},  // mix packed in reserved
+    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing)
+    {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 4, true,
+                  {"in", "decay", "predelay", "in_diff", "dec_diff", ""},
+                  {0.7f, 20.0f, 0.75f, 0.625f, NAN}}},  // damping + mod in reserved
     {"fdn",      {cedar::Opcode::REVERB_FDN, 1, 2, true,
                   {"in", "decay", "damp", "", "", ""},
                   {0.8f, 0.3f, NAN}}},  // size_mod in reserved
 
     // Modulation Effects (stateful - delay lines with LFOs)
-    {"chorus",   {cedar::Opcode::EFFECT_CHORUS, 1, 2, true,
-                  {"in", "rate", "depth", "", "", ""},
-                  {0.5f, 0.5f, NAN}}},  // mix in reserved
-    {"flanger",  {cedar::Opcode::EFFECT_FLANGER, 1, 2, true,
-                  {"in", "rate", "depth", "", "", ""},
-                  {1.0f, 0.7f, NAN}}},  // feedback + mix in reserved
-    {"phaser",   {cedar::Opcode::EFFECT_PHASER, 1, 2, true,
-                  {"in", "rate", "depth", "", "", ""},
-                  {0.5f, 0.8f, NAN}}},  // feedback + stages in reserved
+    // chorus: base_delay (ms), depth_range (ms)
+    {"chorus",   {cedar::Opcode::EFFECT_CHORUS, 1, 4, true,
+                  {"in", "rate", "depth", "base_delay", "depth_range", ""},
+                  {0.5f, 0.5f, 20.0f, 10.0f, NAN}}},  // mix in reserved
+    // flanger: min_delay (ms), max_delay (ms)
+    {"flanger",  {cedar::Opcode::EFFECT_FLANGER, 1, 4, true,
+                  {"in", "rate", "depth", "min_delay", "max_delay", ""},
+                  {1.0f, 0.7f, 0.1f, 10.0f, NAN}}},  // feedback + mix in reserved
+    // phaser: min_freq (Hz), max_freq (Hz)
+    {"phaser",   {cedar::Opcode::EFFECT_PHASER, 1, 4, true,
+                  {"in", "rate", "depth", "min_freq", "max_freq", ""},
+                  {0.5f, 0.8f, 200.0f, 4000.0f, NAN}}},  // feedback + stages in reserved
     {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 0, true,
                   {"in", "time", "fb", "", "", ""},
                   {NAN, NAN, NAN}}},  // damping in reserved
@@ -209,15 +216,18 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"smooth",   {cedar::Opcode::DISTORT_SMOOTH, 1, 1, true,
                   {"in", "drive", "", "", "", ""},
                   {5.0f, NAN, NAN}}},  // ADAA alias-free saturation
-    {"tape",     {cedar::Opcode::DISTORT_TAPE, 1, 2, true,
-                  {"in", "drive", "warmth", "", "", ""},
-                  {3.0f, 0.3f, NAN}}},  // Default drive=3, warmth=0.3
-    {"xfmr",     {cedar::Opcode::DISTORT_XFMR, 1, 2, true,
-                  {"in", "drive", "bass", "", "", ""},
-                  {3.0f, 5.0f, NAN}}},  // Transformer saturation (bass emphasis)
-    {"excite",   {cedar::Opcode::DISTORT_EXCITE, 1, 2, true,
-                  {"in", "amount", "freq", "", "", ""},
-                  {0.5f, 3000.0f, NAN}}},  // Harmonic exciter
+    // tape: soft_threshold (saturation onset), warmth_scale (HF rolloff amount)
+    {"tape",     {cedar::Opcode::DISTORT_TAPE, 1, 4, true,
+                  {"in", "drive", "warmth", "soft_thresh", "warmth_scale", ""},
+                  {3.0f, 0.3f, 0.5f, 0.7f, NAN}}},
+    // xfmr: bass_freq (bass extraction cutoff Hz)
+    {"xfmr",     {cedar::Opcode::DISTORT_XFMR, 1, 3, true,
+                  {"in", "drive", "bass", "bass_freq", "", ""},
+                  {3.0f, 5.0f, 60.0f, NAN, NAN}}},
+    // excite: harmonic_odd (odd harmonic mix), harmonic_even (even harmonic mix)
+    {"excite",   {cedar::Opcode::DISTORT_EXCITE, 1, 4, true,
+                  {"in", "amount", "freq", "harm_odd", "harm_even", ""},
+                  {0.5f, 3000.0f, 0.4f, 0.6f, NAN}}},
 
     // Dynamics (stateful - envelope followers)
     {"comp",     {cedar::Opcode::DYNAMICS_COMP, 1, 2, true,
@@ -226,9 +236,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"limiter",  {cedar::Opcode::DYNAMICS_LIMITER, 1, 2, true,
                   {"in", "ceiling", "release", "", "", ""},
                   {-0.1f, 0.1f, NAN}}},  // lookahead in state
-    {"gate",     {cedar::Opcode::DYNAMICS_GATE, 1, 2, true,
-                  {"in", "thresh", "hyst", "", "", ""},
-                  {-40.0f, 6.0f, NAN}}},  // attack/release in reserved
+    // gate: hysteresis (dB open/close diff), close_time (ms fade-out)
+    {"gate",     {cedar::Opcode::DYNAMICS_GATE, 1, 4, true,
+                  {"in", "thresh", "range", "hyst", "close_time", ""},
+                  {-40.0f, -40.0f, 6.0f, 5.0f, NAN}}},  // attack/release in reserved
 
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false,

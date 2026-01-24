@@ -107,6 +107,8 @@ Related: [lp](#lp), [hp](#hp)
 | in    | signal | -       | Input signal |
 | cut   | signal | -       | Cutoff frequency in Hz |
 | res   | number | 1.0     | Resonance (0-4, self-oscillates near 4) |
+| max_res | number | 4.0   | Maximum resonance / self-oscillation threshold |
+| input_scale | number | 0.5 | Input preamp drive (higher = more saturation) |
 
 Aliases: `moogladder`
 
@@ -127,4 +129,44 @@ osc("saw", 110) |> moog(%, 100 + osc("sin", 0.5) * 1000, 3.5) |> out(%, %)
 osc("noise") * 0.01 |> moog(%, 440, 3.9) |> out(%, %)
 ```
 
+```akk
+// Hot input with more saturation
+osc("saw", 110) |> moog(%, 800, 2, 4.0, 0.8) |> out(%, %)
+```
+
 Related: [lp](#lp)
+
+---
+
+## sallenkey
+
+**Sallen-Key Filter** - MS-20 style filter with aggressive resonance.
+
+| Param | Type   | Default | Description |
+|-------|--------|---------|-------------|
+| in    | signal | -       | Input signal |
+| cut   | signal | -       | Cutoff frequency in Hz |
+| res   | number | 1.0     | Resonance (0-4, very aggressive) |
+| mode  | number | 0.0     | Filter mode (0.0 = lowpass, 1.0 = highpass) |
+| clip_thresh | number | 0.7 | Feedback clipping threshold |
+
+Aliases: `sk`, `ms20`
+
+Based on the Korg MS-20 filter topology with diode clipping in the feedback path. Creates the characteristic aggressive, screaming resonance.
+
+```akk
+// Classic MS-20 bass
+osc("saw", 55) |> sallenkey(%, 600, 3) |> out(%, %)
+```
+
+```akk
+// Screaming resonance
+osc("saw", 110) |> sallenkey(%, 400 + osc("sin", 0.2) * 800, 3.8) |> out(%, %)
+```
+
+```akk
+// Highpass mode
+osc("saw", 110) |> sallenkey(%, 500, 2, 1.0) |> out(%, %)
+```
+
+Related: [moog](#moog), [diode](#diode)

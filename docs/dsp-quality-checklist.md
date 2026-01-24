@@ -79,14 +79,11 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | `FILTER_SVF_HP` | ✅ Tested | Frequency response, resonance sweep | State-variable highpass |
 | `FILTER_SVF_BP` | ✅ Tested | Frequency response, resonance sweep | State-variable bandpass |
 | `FILTER_MOOG` | ✅ Tested | Resonance sweep, self-oscillation | Classic ladder character |
+| `FILTER_DIODE` | ✅ Tested | Frequency response, resonance sweep, self-oscillation, Moog comparison | ZDF diode ladder (TB-303 style) |
+| `FILTER_FORMANT` | ✅ Tested | Vowel accuracy (A/I/U/E/O), morph smoothness spectrogram | 3-band parallel vowel filter |
+| `FILTER_SALLENKEY` | ✅ Tested | LP/HP modes, self-oscillation, diode character analysis | MS-20 style with diode feedback |
 
-### Untested
-
-| Opcode | Priority | Suggested Tests |
-|--------|----------|-----------------|
-| `FILTER_DIODE` | High | Self-oscillation, resonance character, diode nonlinearity |
-| `FILTER_FORMANT` | High | Vowel accuracy, morph smoothness, formant frequencies |
-| `FILTER_SALLENKEY` | Medium | Mode switching, diode clipping, aggressive resonance |
+*All implemented filter opcodes are now tested.*
 
 ---
 
@@ -98,7 +95,7 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 |--------|--------|---------------|-------|
 | `DISTORT_TANH` | ✅ Tested | Transfer curve | Soft clipping saturation |
 | `DISTORT_SOFT` | ✅ Tested | Transfer curve | Gentle saturation |
-| `DISTORT_FOLD` | ⚠️ Updated | Transfer curve (old), needs ADAA testing | Sine wavefolder with ADAA antialiasing |
+| `DISTORT_FOLD` | ✅ Tested | Transfer curve, ADAA aliasing analysis, symmetry effect, continuity | Sine wavefolder with ADAA antialiasing |
 | `DISTORT_TUBE` | ✅ Tested | Transfer curve | Tube-style harmonics |
 | `DISTORT_BITCRUSH` | ✅ Tested | Bit depth levels, sample rate reduction | Quantization + aliasing |
 | `EFFECT_PHASER` | ✅ Tested | Spectrogram sweep | 6-stage phaser |
@@ -217,15 +214,15 @@ This document tracks the quality verification status of Cedar DSP opcodes. Each 
 | Category | Tested | Partial/Bug | Untested | Notes |
 |----------|--------|-------------|----------|-------|
 | Oscillators | 11 | - | 9 | Via test_oscillators.py, test_fm_aliasing.py |
-| Filters | 4 | - | 3 | Via test_filters.py; new: DIODE, FORMANT, SALLENKEY |
-| Effects | 7 | 1 | 5 | Via test_effects.py; DISTORT_FOLD updated to ADAA |
+| Filters | 7 | - | 0 | Via test_filters.py; all filters now tested |
+| Effects | 8 | - | 5 | Via test_effects.py; DISTORT_FOLD ADAA tested |
 | Delays & Reverbs | 2 | - | 2 | Via test_effects.py |
 | Samplers | 2 | - | 0 | Via test_sampler.py |
 | Envelopes | 3 | - | 0 | Via test_envelopes.py |
 | Sequencers & Timing | 4 | - | 2 | Via test_sequencers.py |
 | Dynamics | 3 | - | 0 | Via test_dynamics.py |
 | Utility | 5 | - | 1 | Via test_utility.py |
-| **Total** | **42** | **-** | **19** | 69% tested |
+| **Total** | **45** | **-** | **16** | 74% tested |
 
 ---
 

@@ -18,10 +18,12 @@ Reverbs simulate acoustic spaces by creating many delayed, filtered reflections.
 | in    | signal | -       | Input signal |
 | room  | number | 0.5     | Room size (0-1) |
 | damp  | number | 0.5     | High frequency damping (0-1) |
+| room_scale | number | 0.28 | Density factor (affects comb filter feedback) |
+| room_offset | number | 0.7 | Decay baseline offset |
 
 Aliases: `reverb`
 
-A classic reverb algorithm with a smooth, natural sound. Higher room values create larger spaces with longer decay.
+A classic reverb algorithm with a smooth, natural sound. Higher room values create larger spaces with longer decay. The advanced `room_scale` and `room_offset` parameters let you tune the reverb character.
 
 ```akk
 // Medium room reverb
@@ -38,6 +40,11 @@ osc("saw", 110) * ar(trigger(1)) |> freeverb(%, 0.9, 0.3) |> out(%, %)
 osc("noise") * ar(trigger(4), 0.001, 0.05) |> freeverb(%, 0.2, 0.8) |> out(%, %)
 ```
 
+```akk
+// Custom room character (more density, longer baseline decay)
+osc("saw", 220) * ar(trigger(2)) |> freeverb(%, 0.5, 0.5, 0.35, 0.8) |> out(%, %)
+```
+
 Related: [dattorro](#dattorro), [fdn](#fdn)
 
 ---
@@ -51,10 +58,12 @@ Related: [dattorro](#dattorro), [fdn](#fdn)
 | in    | signal | -       | Input signal |
 | decay | number | 0.7     | Decay time (0-1) |
 | predelay | number | 20.0  | Predelay in milliseconds |
+| in_diff | number | 0.75  | Input diffusion (smears input transients) |
+| dec_diff | number | 0.625 | Decay diffusion (smooths reverb tail) |
 
 Aliases: `plate`
 
-The Dattorro plate reverb produces lush, shimmering tails perfect for vocals and synth pads. The predelay separates the dry signal from the reverb onset.
+The Dattorro plate reverb produces lush, shimmering tails perfect for vocals and synth pads. The predelay separates the dry signal from the reverb onset. The diffusion parameters control how quickly transients are smeared.
 
 ```akk
 // Lush plate reverb
@@ -64,6 +73,11 @@ osc("saw", 220) * ar(trigger(2)) |> dattorro(%, 0.8, 30) |> out(%, %)
 ```akk
 // Short bright plate
 osc("tri", 440) * ar(trigger(4)) |> dattorro(%, 0.5, 10) |> out(%, %)
+```
+
+```akk
+// High diffusion for pad-like washes
+osc("saw", 220) * ar(trigger(2)) |> dattorro(%, 0.9, 50, 0.9, 0.8) |> out(%, %)
 ```
 
 Related: [freeverb](#freeverb), [fdn](#fdn)

@@ -139,12 +139,18 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
     }
 }
 
+// Default constants for noise gate
+constexpr float GATE_HYSTERESIS_DEFAULT = 6.0f;    // dB
+constexpr float GATE_CLOSE_TIME_DEFAULT = 5.0f;    // ms
+
 // ============================================================================
 // DYNAMICS_GATE: Noise Gate with Hysteresis
 // ============================================================================
 // in0: input signal
 // in1: threshold (dB, -80 to 0)
 // in2: range (dB, 0 to -80, how much to attenuate when closed)
+// in3: hysteresis - open/close difference in dB (default 6)
+// in4: close_time - fade-out time in ms (default 5)
 // rate: attack (bits 6-7), hold (bits 4-5), release (bits 0-3)
 //
 // Attenuates signal when it falls below threshold.
@@ -156,6 +162,8 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const float* threshold_db = ctx.buffers->get(inst.inputs[1]);
     const float* range_db = ctx.buffers->get(inst.inputs[2]);
+    const float* hysteresis_in = ctx.buffers->get(inst.inputs[3]);
+    const float* close_time_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<GateState>(inst.state_id);
 
     // Decode timing parameters from rate field
@@ -176,11 +184,12 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
 
     float hold_samples = hold_ms * 0.001f * ctx.sample_rate;
 
-    // Hysteresis: 6dB difference between open and close thresholds
-    constexpr float HYSTERESIS_DB = 6.0f;
-
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x = input[i];
+
+        // Runtime tunable parameters (use defaults if zero/negative)
+        float hysteresis_db = hysteresis_in[i] > 0.0f ? hysteresis_in[i] : GATE_HYSTERESIS_DEFAULT;
+        float close_time_ms = close_time_in[i] > 0.0f ? close_time_in[i] : GATE_CLOSE_TIME_DEFAULT;
 
         // Envelope follower (very fast detection for both attack and release)
         // Using 10x multiplier ensures envelope responds quickly to signal changes
@@ -196,7 +205,7 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
         // Gate state machine with hysteresis
         if (state.is_open) {
             // Gate is open - check if we should close
-            if (env_db < thresh - HYSTERESIS_DB) {
+            if (env_db < thresh - hysteresis_db) {
                 // Start hold period
                 state.hold_counter += 1.0f;
                 if (state.hold_counter > hold_samples) {
@@ -218,10 +227,9 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
         float target_gain = state.is_open ? 1.0f : db_to_linear(range);
 
         // Smooth gain transitions
-        // When closing gate, use fast transition (5ms) to avoid clicks
+        // When closing gate, use fast transition to avoid clicks
         // but don't use the slow user-configured release time
-        constexpr float GATE_CLOSE_MS = 5.0f;
-        float close_coeff = 1.0f - std::exp(-1.0f / (GATE_CLOSE_MS * 0.001f * ctx.sample_rate));
+        float close_coeff = 1.0f - std::exp(-1.0f / (close_time_ms * 0.001f * ctx.sample_rate));
 
         float gain_coeff;
         if (target_gain > state.gain) {

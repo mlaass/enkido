@@ -139,42 +139,43 @@ enum class Opcode : std::uint8_t {
     INVALID = 255
 };
 
-// 128-bit (16 byte) fixed-width instruction for fast decoding
-// Layout: [opcode:8][rate:8][out:16][in0:16][in1:16][in2:16][in3:16][in4:16][state_id:16]
+// 160-bit (20 byte) fixed-width instruction for fast decoding
+// Layout: [opcode:8][rate:8][out:16][in0:16][in1:16][in2:16][in3:16][in4:16][state_id:32]
 // Note: rate field also used for extra packed parameters (e.g., LFO shape)
-struct alignas(16) Instruction {
+// State ID uses full 32-bit FNV-1a hash to avoid collisions (birthday paradox at 256 states with 16-bit)
+struct alignas(4) Instruction {
     Opcode opcode;              // Operation to perform
     std::uint8_t rate;          // 0=audio-rate, 1=control-rate, or packed params
     std::uint16_t out_buffer;   // Output buffer index
     std::uint16_t inputs[5];    // Input buffer indices (0xFFFF = unused)
-    std::uint16_t state_id;     // Semantic hash for state lookup (16-bit truncated)
+    std::uint32_t state_id;     // Semantic hash for state lookup (full 32-bit FNV-1a)
 
     // Convenience constructors
-    static Instruction make_nullary(Opcode op, std::uint16_t out, std::uint16_t state = 0) {
+    static Instruction make_nullary(Opcode op, std::uint16_t out, std::uint32_t state = 0) {
         return {op, 0, out, {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, state};
     }
 
-    static Instruction make_unary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t state = 0) {
+    static Instruction make_unary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint32_t state = 0) {
         return {op, 0, out, {in0, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, state};
     }
 
-    static Instruction make_binary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t state = 0) {
+    static Instruction make_binary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint32_t state = 0) {
         return {op, 0, out, {in0, in1, 0xFFFF, 0xFFFF, 0xFFFF}, state};
     }
 
-    static Instruction make_ternary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint16_t state = 0) {
+    static Instruction make_ternary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint32_t state = 0) {
         return {op, 0, out, {in0, in1, in2, 0xFFFF, 0xFFFF}, state};
     }
 
-    static Instruction make_quaternary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint16_t in3, std::uint16_t state = 0) {
+    static Instruction make_quaternary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint16_t in3, std::uint32_t state = 0) {
         return {op, 0, out, {in0, in1, in2, in3, 0xFFFF}, state};
     }
 
-    static Instruction make_quinary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint16_t in3, std::uint16_t in4, std::uint16_t state = 0) {
+    static Instruction make_quinary(Opcode op, std::uint16_t out, std::uint16_t in0, std::uint16_t in1, std::uint16_t in2, std::uint16_t in3, std::uint16_t in4, std::uint32_t state = 0) {
         return {op, 0, out, {in0, in1, in2, in3, in4}, state};
     }
 };
 
-static_assert(sizeof(Instruction) == 16, "Instruction must be 16 bytes (128-bit)");
+static_assert(sizeof(Instruction) == 20, "Instruction must be 20 bytes (160-bit)");
 
 }  // namespace cedar
