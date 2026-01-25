@@ -145,6 +145,30 @@ private:
     /// @return Output buffer index
     std::uint16_t handle_chord_call(NodeIndex node, const Node& n);
 
+    /// Handle MiniLiteral (pattern) nodes - pat("c4 e4 g4"), etc.
+    std::uint16_t handle_mini_literal(NodeIndex node, const Node& n);
+
+    /// Handle sample patterns (bd, sn, etc.)
+    std::uint16_t handle_sample_pattern(NodeIndex node, const Node& n,
+                                        const struct PatternEventStream& events,
+                                        std::uint32_t state_id);
+
+    /// Handle pitch patterns (c4 e4 g4, etc.)
+    std::uint16_t handle_pitch_pattern(NodeIndex node, const Node& n,
+                                        const struct PatternEventStream& events,
+                                        std::uint32_t state_id,
+                                        NodeIndex closure_node);
+
+    /// Handle single chord expansion
+    std::uint16_t handle_single_chord(NodeIndex node, const Node& n,
+                                      const struct ChordInfo& chord,
+                                      const std::string& chord_str);
+
+    /// Handle chord progression (multiple chords)
+    std::uint16_t handle_chord_progression(NodeIndex node, const Node& n,
+                                           const std::vector<struct ChordInfo>& chords,
+                                           const std::string& chord_str);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;

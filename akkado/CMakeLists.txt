@@ -46,6 +46,8 @@ add_library(akkado STATIC
     src/symbol_table.cpp
     src/analyzer.cpp
     src/codegen.cpp
+    src/codegen_arrays.cpp
+    src/codegen_patterns.cpp
     src/chord_parser.cpp
 )
 

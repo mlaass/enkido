@@ -5,9 +5,4 @@
 
 #include "helpers.hpp"
 #include "literals.hpp"
-
-// Future headers (to be created as refactoring progresses):
-// #include "expressions.hpp"
-// #include "calls.hpp"
-// #include "patterns.hpp"
-// #include "control.hpp"
+#include "arrays.hpp"
