@@ -213,6 +213,41 @@ private:
 
     /// Handle sum(array) call - reduce array by addition
     std::uint16_t handle_sum_call(NodeIndex node, const Node& n);
+
+    /// Handle fold(array, fn, init) call - reduce array with binary function
+    std::uint16_t handle_fold_call(NodeIndex node, const Node& n);
+
+    /// Handle zipWith(a, b, fn) call - combine arrays element-wise with function
+    std::uint16_t handle_zipWith_call(NodeIndex node, const Node& n);
+
+    /// Handle zip(a, b) call - interleave two arrays
+    std::uint16_t handle_zip_call(NodeIndex node, const Node& n);
+
+    /// Handle take(n, array) call - take first n elements
+    std::uint16_t handle_take_call(NodeIndex node, const Node& n);
+
+    /// Handle drop(n, array) call - drop first n elements
+    std::uint16_t handle_drop_call(NodeIndex node, const Node& n);
+
+    /// Handle reverse(array) call - reverse array order
+    std::uint16_t handle_reverse_call(NodeIndex node, const Node& n);
+
+    /// Handle range(start, end) call - generate integer array
+    std::uint16_t handle_range_call(NodeIndex node, const Node& n);
+
+    /// Handle repeat(value, n) call - repeat value n times
+    std::uint16_t handle_repeat_call(NodeIndex node, const Node& n);
+
+    /// Apply a binary function reference to two buffer arguments
+    /// @param ref The function reference containing closure/body info
+    /// @param arg_buf1 The first argument buffer
+    /// @param arg_buf2 The second argument buffer
+    /// @param loc Source location for error reporting
+    /// @return Output buffer from the function body
+    std::uint16_t apply_binary_function_ref(const FunctionRef& ref,
+                                            std::uint16_t arg_buf1,
+                                            std::uint16_t arg_buf2,
+                                            SourceLocation loc);
 };
 
 } // namespace akkado
