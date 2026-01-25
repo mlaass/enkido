@@ -497,6 +497,271 @@ TEST_CASE("Codegen: Buffer allocation", "[codegen][buffers]") {
 // Integration Tests
 // =============================================================================
 
+// =============================================================================
+// Conditionals and Logic Tests
+// =============================================================================
+
+TEST_CASE("Codegen: Comparison operators - function syntax", "[codegen][conditionals]") {
+    SECTION("gt() greater than") {
+        auto result = akkado::compile("gt(10, 5)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GT);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("lt() less than") {
+        auto result = akkado::compile("lt(5, 10)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_LT);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("gte() greater or equal") {
+        auto result = akkado::compile("gte(5, 5)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GTE);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("lte() less or equal") {
+        auto result = akkado::compile("lte(5, 5)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_LTE);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("eq() equality") {
+        auto result = akkado::compile("eq(5, 5)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_EQ);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("neq() not equal") {
+        auto result = akkado::compile("neq(5, 10)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_NEQ);
+        REQUIRE(cmp != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Logic operators - function syntax", "[codegen][conditionals]") {
+    SECTION("band() logical AND") {
+        auto result = akkado::compile("band(1, 1)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_AND);
+        REQUIRE(logic != nullptr);
+    }
+
+    SECTION("bor() logical OR") {
+        auto result = akkado::compile("bor(1, 0)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_OR);
+        REQUIRE(logic != nullptr);
+    }
+
+    SECTION("bnot() logical NOT") {
+        auto result = akkado::compile("bnot(0)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_NOT);
+        REQUIRE(logic != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Select function", "[codegen][conditionals]") {
+    SECTION("select() ternary") {
+        auto result = akkado::compile("select(1, 100, 50)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* sel = find_instruction(insts, cedar::Opcode::SELECT);
+        REQUIRE(sel != nullptr);
+    }
+
+    SECTION("select() with expressions") {
+        auto result = akkado::compile("select(gt(10, 5), 100, 50)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GT);
+        auto* sel = find_instruction(insts, cedar::Opcode::SELECT);
+        REQUIRE(cmp != nullptr);
+        REQUIRE(sel != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Comparison operators - infix syntax", "[codegen][conditionals]") {
+    SECTION("> greater than") {
+        auto result = akkado::compile("10 > 5");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GT);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("< less than") {
+        auto result = akkado::compile("5 < 10");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_LT);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION(">= greater or equal") {
+        auto result = akkado::compile("5 >= 5");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GTE);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("<= less or equal") {
+        auto result = akkado::compile("5 <= 5");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_LTE);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("== equality") {
+        auto result = akkado::compile("5 == 5");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_EQ);
+        REQUIRE(cmp != nullptr);
+    }
+
+    SECTION("!= not equal") {
+        auto result = akkado::compile("5 != 10");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_NEQ);
+        REQUIRE(cmp != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Logic operators - infix syntax", "[codegen][conditionals]") {
+    SECTION("&& logical AND") {
+        auto result = akkado::compile("1 && 1");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_AND);
+        REQUIRE(logic != nullptr);
+    }
+
+    SECTION("|| logical OR") {
+        auto result = akkado::compile("1 || 0");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_OR);
+        REQUIRE(logic != nullptr);
+    }
+
+    SECTION("! prefix NOT") {
+        auto result = akkado::compile("!1");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_NOT);
+        REQUIRE(logic != nullptr);
+    }
+
+    SECTION("! with expression") {
+        auto result = akkado::compile("!(5 > 10)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GT);
+        auto* logic = find_instruction(insts, cedar::Opcode::LOGIC_NOT);
+        REQUIRE(cmp != nullptr);
+        REQUIRE(logic != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Operator precedence", "[codegen][conditionals]") {
+    SECTION("&& binds tighter than ||") {
+        // 1 || 0 && 0 should be parsed as 1 || (0 && 0) = 1
+        auto result = akkado::compile("1 || 0 && 0");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Should have LOGIC_AND before LOGIC_OR in execution order
+        auto* logic_and = find_instruction(insts, cedar::Opcode::LOGIC_AND);
+        auto* logic_or = find_instruction(insts, cedar::Opcode::LOGIC_OR);
+        REQUIRE(logic_and != nullptr);
+        REQUIRE(logic_or != nullptr);
+    }
+
+    SECTION("Comparison binds tighter than logic") {
+        // 5 > 3 && 2 < 4 should be parsed as (5 > 3) && (2 < 4)
+        auto result = akkado::compile("5 > 3 && 2 < 4");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp_gt = find_instruction(insts, cedar::Opcode::CMP_GT);
+        auto* cmp_lt = find_instruction(insts, cedar::Opcode::CMP_LT);
+        auto* logic_and = find_instruction(insts, cedar::Opcode::LOGIC_AND);
+        REQUIRE(cmp_gt != nullptr);
+        REQUIRE(cmp_lt != nullptr);
+        REQUIRE(logic_and != nullptr);
+    }
+
+    SECTION("Arithmetic binds tighter than comparison") {
+        // 2 + 3 > 4 should be parsed as (2 + 3) > 4
+        auto result = akkado::compile("2 + 3 > 4");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* add = find_instruction(insts, cedar::Opcode::ADD);
+        auto* cmp_gt = find_instruction(insts, cedar::Opcode::CMP_GT);
+        REQUIRE(add != nullptr);
+        REQUIRE(cmp_gt != nullptr);
+    }
+
+    SECTION("Grouping overrides precedence") {
+        // (1 || 0) && 0 should evaluate || first
+        auto result = akkado::compile("(1 || 0) && 0");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* logic_and = find_instruction(insts, cedar::Opcode::LOGIC_AND);
+        auto* logic_or = find_instruction(insts, cedar::Opcode::LOGIC_OR);
+        REQUIRE(logic_and != nullptr);
+        REQUIRE(logic_or != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: Complex conditional expressions", "[codegen][conditionals]") {
+    SECTION("Chained comparisons with logic") {
+        auto result = akkado::compile("(5 > 3) && (10 < 20) || (1 == 1)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::CMP_GT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::CMP_LT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::CMP_EQ) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::LOGIC_AND) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::LOGIC_OR) == 1);
+    }
+
+    SECTION("Select with comparison condition") {
+        auto result = akkado::compile("select(10 > 5, 100, 50)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* cmp = find_instruction(insts, cedar::Opcode::CMP_GT);
+        auto* sel = find_instruction(insts, cedar::Opcode::SELECT);
+        REQUIRE(cmp != nullptr);
+        REQUIRE(sel != nullptr);
+    }
+
+    SECTION("Double negation") {
+        auto result = akkado::compile("!!1");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::LOGIC_NOT) == 2);
+    }
+}
+
 TEST_CASE("Codegen: Complex expressions", "[codegen][integration]") {
     SECTION("map with sum") {
         auto result = akkado::compile("sum(map([1, 2, 3], (x) -> x * 2))");

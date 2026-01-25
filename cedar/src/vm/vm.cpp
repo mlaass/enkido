@@ -633,6 +633,47 @@ void VM::execute(const Instruction& inst) {
             op_dynamics_gate(ctx_, inst);
             break;
 
+        // === Logic & Conditionals ===
+        case Opcode::SELECT:
+            op_select(ctx_, inst);
+            break;
+
+        case Opcode::CMP_GT:
+            op_cmp_gt(ctx_, inst);
+            break;
+
+        case Opcode::CMP_LT:
+            op_cmp_lt(ctx_, inst);
+            break;
+
+        case Opcode::CMP_GTE:
+            op_cmp_gte(ctx_, inst);
+            break;
+
+        case Opcode::CMP_LTE:
+            op_cmp_lte(ctx_, inst);
+            break;
+
+        case Opcode::CMP_EQ:
+            op_cmp_eq(ctx_, inst);
+            break;
+
+        case Opcode::CMP_NEQ:
+            op_cmp_neq(ctx_, inst);
+            break;
+
+        case Opcode::LOGIC_AND:
+            op_logic_and(ctx_, inst);
+            break;
+
+        case Opcode::LOGIC_OR:
+            op_logic_or(ctx_, inst);
+            break;
+
+        case Opcode::LOGIC_NOT:
+            op_logic_not(ctx_, inst);
+            break;
+
         // === Invalid ===
         [[unlikely]] case Opcode::INVALID:
         [[unlikely]] default:

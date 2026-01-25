@@ -116,19 +116,35 @@ void Parser::synchronize() {
 
 Precedence Parser::get_precedence(TokenType type) const {
     switch (type) {
-        case TokenType::Pipe:     return Precedence::Pipe;
+        case TokenType::Pipe:         return Precedence::Pipe;
+        case TokenType::OrOr:         return Precedence::Or;
+        case TokenType::AndAnd:       return Precedence::And;
+        case TokenType::EqualEqual:
+        case TokenType::BangEqual:    return Precedence::Equality;
+        case TokenType::Less:
+        case TokenType::Greater:
+        case TokenType::LessEqual:
+        case TokenType::GreaterEqual: return Precedence::Comparison;
         case TokenType::Plus:
-        case TokenType::Minus:    return Precedence::Addition;
+        case TokenType::Minus:        return Precedence::Addition;
         case TokenType::Star:
-        case TokenType::Slash:    return Precedence::Multiplication;
-        case TokenType::Caret:    return Precedence::Power;
-        default:                  return Precedence::None;
+        case TokenType::Slash:        return Precedence::Multiplication;
+        case TokenType::Caret:        return Precedence::Power;
+        default:                      return Precedence::None;
     }
 }
 
 bool Parser::is_infix_operator(TokenType type) const {
     switch (type) {
         case TokenType::Pipe:
+        case TokenType::OrOr:
+        case TokenType::AndAnd:
+        case TokenType::EqualEqual:
+        case TokenType::BangEqual:
+        case TokenType::Less:
+        case TokenType::Greater:
+        case TokenType::LessEqual:
+        case TokenType::GreaterEqual:
         case TokenType::Plus:
         case TokenType::Minus:
         case TokenType::Star:
@@ -337,6 +353,8 @@ NodeIndex Parser::parse_prefix() {
             return parse_mini_literal();
         case TokenType::Match:
             return parse_match_expr();
+        case TokenType::Bang:
+            return parse_unary_not();
         default:
             error("Expected expression");
             return NULL_NODE;
@@ -352,6 +370,14 @@ NodeIndex Parser::parse_infix(NodeIndex left, const Token& op) {
         case TokenType::Star:
         case TokenType::Slash:
         case TokenType::Caret:
+        case TokenType::OrOr:
+        case TokenType::AndAnd:
+        case TokenType::EqualEqual:
+        case TokenType::BangEqual:
+        case TokenType::Less:
+        case TokenType::Greater:
+        case TokenType::LessEqual:
+        case TokenType::GreaterEqual:
             return parse_binary(left, op);
         default:
             error("Unknown infix operator");
@@ -403,6 +429,25 @@ NodeIndex Parser::parse_string() {
 NodeIndex Parser::parse_hole() {
     Token tok = advance();
     return make_node(NodeType::Hole, tok);
+}
+
+NodeIndex Parser::parse_unary_not() {
+    Token bang_tok = advance();  // consume '!'
+
+    // Parse operand at Unary precedence (high, to bind tightly)
+    NodeIndex operand = parse_precedence(Precedence::Unary);
+
+    // Desugar to bnot(operand)
+    NodeIndex node = make_node(NodeType::Call, bang_tok);
+    arena_[node].data = Node::IdentifierData{"bnot"};
+
+    // Add operand as argument
+    NodeIndex arg = arena_.alloc(NodeType::Argument, arena_[operand].location);
+    arena_[arg].data = Node::ArgumentData{std::nullopt};  // positional arg
+    arena_.add_child(arg, operand);
+    arena_.add_child(node, arg);
+
+    return node;
 }
 
 NodeIndex Parser::parse_array() {
@@ -632,14 +677,22 @@ NodeIndex Parser::parse_block() {
 // Binary operator parsing
 
 NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
-    // Determine the operator
-    BinOp binop;
+    // Determine the function name for the operator
+    const char* func_name = nullptr;
     switch (op.type) {
-        case TokenType::Plus:  binop = BinOp::Add; break;
-        case TokenType::Minus: binop = BinOp::Sub; break;
-        case TokenType::Star:  binop = BinOp::Mul; break;
-        case TokenType::Slash: binop = BinOp::Div; break;
-        case TokenType::Caret: binop = BinOp::Pow; break;
+        case TokenType::Plus:         func_name = "add"; break;
+        case TokenType::Minus:        func_name = "sub"; break;
+        case TokenType::Star:         func_name = "mul"; break;
+        case TokenType::Slash:        func_name = "div"; break;
+        case TokenType::Caret:        func_name = "pow"; break;
+        case TokenType::OrOr:         func_name = "bor"; break;
+        case TokenType::AndAnd:       func_name = "band"; break;
+        case TokenType::EqualEqual:   func_name = "eq"; break;
+        case TokenType::BangEqual:    func_name = "neq"; break;
+        case TokenType::Less:         func_name = "lt"; break;
+        case TokenType::Greater:      func_name = "gt"; break;
+        case TokenType::LessEqual:    func_name = "lte"; break;
+        case TokenType::GreaterEqual: func_name = "gte"; break;
         default:
             error("Unknown binary operator");
             return left;
@@ -659,12 +712,11 @@ NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
 
     NodeIndex right = parse_precedence(next_prec);
 
-    // Create binary op node (will be desugared to Call in later phase)
-    // Or we can desugar now to Call node
+    // Create binary op node desugared to Call
     NodeIndex node = make_node(NodeType::Call, op);
 
     // Set function name based on operator
-    arena_[node].data = Node::IdentifierData{binop_function_name(binop)};
+    arena_[node].data = Node::IdentifierData{func_name};
 
     // Add left and right as arguments
     NodeIndex left_arg = arena_.alloc(NodeType::Argument, arena_[left].location);

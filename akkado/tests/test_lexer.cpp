@@ -59,6 +59,29 @@ TEST_CASE("Lexer basic tokens", "[lexer]") {
         CHECK(tokens[11].type == TokenType::LessEqual);
         CHECK(tokens[12].type == TokenType::GreaterEqual);
     }
+
+    SECTION("logical operators") {
+        auto [tokens, diags] = lex("&& || !");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 4);  // 3 tokens + Eof
+
+        CHECK(tokens[0].type == TokenType::AndAnd);
+        CHECK(tokens[1].type == TokenType::OrOr);
+        CHECK(tokens[2].type == TokenType::Bang);
+    }
+
+    SECTION("logical operators in expressions") {
+        auto [tokens, diags] = lex("a && b || !c");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 7);  // a && b || ! c + Eof
+
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[1].type == TokenType::AndAnd);
+        CHECK(tokens[2].type == TokenType::Identifier);
+        CHECK(tokens[3].type == TokenType::OrOr);
+        CHECK(tokens[4].type == TokenType::Bang);
+        CHECK(tokens[5].type == TokenType::Identifier);
+    }
 }
 
 TEST_CASE("Lexer numbers", "[lexer]") {

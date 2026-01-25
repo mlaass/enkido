@@ -228,8 +228,18 @@ Token Lexer::lex_token() {
             if (match('>')) {
                 return make_token(TokenType::Pipe);
             }
-            // Single | could be used in mini-notation for choice
-            return make_error_token("Expected '>' after '|' for pipe operator");
+            if (match('|')) {
+                return make_token(TokenType::OrOr);
+            }
+            // Single | could be bitwise OR (future) or error
+            return make_error_token("Expected '>' or '|' after '|'");
+
+        case '&':
+            if (match('&')) {
+                return make_token(TokenType::AndAnd);
+            }
+            // Single & could be bitwise AND (future) or error
+            return make_error_token("Expected '&' after '&'");
 
         case '=':
             if (match('=')) {

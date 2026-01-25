@@ -136,6 +136,18 @@ enum class Opcode : std::uint8_t {
     MATH_COSH = 131,         // cosh(x)
     MATH_TANH = 132,         // tanh(x) - pure math, also useful as waveshaper
 
+    // Logic & Conditionals (140-149)
+    SELECT = 140,            // out = (cond > 0) ? a : b (signal mux)
+    CMP_GT = 141,            // out = (a > b) ? 1.0 : 0.0
+    CMP_LT = 142,            // out = (a < b) ? 1.0 : 0.0
+    CMP_GTE = 143,           // out = (a >= b) ? 1.0 : 0.0
+    CMP_LTE = 144,           // out = (a <= b) ? 1.0 : 0.0
+    CMP_EQ = 145,            // out = (|a - b| < epsilon) ? 1.0 : 0.0
+    CMP_NEQ = 146,           // out = (|a - b| >= epsilon) ? 1.0 : 0.0
+    LOGIC_AND = 147,         // out = ((a > 0) && (b > 0)) ? 1.0 : 0.0
+    LOGIC_OR = 148,          // out = ((a > 0) || (b > 0)) ? 1.0 : 0.0
+    LOGIC_NOT = 149,         // out = (a > 0) ? 0.0 : 1.0
+
     INVALID = 255
 };
 

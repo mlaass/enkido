@@ -45,13 +45,17 @@ enum class TokenType : std::uint8_t {
     Equals,         // =
     Arrow,          // ->
 
-    // Comparison (for potential future use)
+    // Comparison
     Less,           // <
     Greater,        // >
     LessEqual,      // <=
     GreaterEqual,   // >=
     EqualEqual,     // ==
     BangEqual,      // !=
+
+    // Logic
+    AndAnd,         // &&
+    OrOr,           // ||
 
     // Delimiters
     LParen,         // (
@@ -112,6 +116,8 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::GreaterEqual: return "GreaterEqual";
         case TokenType::EqualEqual:   return "EqualEqual";
         case TokenType::BangEqual:    return "BangEqual";
+        case TokenType::AndAnd:       return "AndAnd";
+        case TokenType::OrOr:         return "OrOr";
         case TokenType::LParen:       return "LParen";
         case TokenType::RParen:       return "RParen";
         case TokenType::LBracket:     return "LBracket";

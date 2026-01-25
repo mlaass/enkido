@@ -12,9 +12,14 @@ namespace akkado {
 enum class Precedence : std::uint8_t {
     None = 0,
     Pipe,           // |>
+    Or,             // ||
+    And,            // &&
+    Equality,       // == !=
+    Comparison,     // < > <= >=
     Addition,       // + -
     Multiplication, // * /
     Power,          // ^
+    Unary,          // ! (prefix)
     Method,         // .method()
     Call,           // f()
     Primary,        // literals, identifiers
@@ -82,6 +87,7 @@ private:
     NodeIndex parse_string();
     NodeIndex parse_identifier_or_call();
     NodeIndex parse_hole();
+    NodeIndex parse_unary_not();
     NodeIndex parse_array();
     NodeIndex parse_grouping();
     NodeIndex parse_closure();

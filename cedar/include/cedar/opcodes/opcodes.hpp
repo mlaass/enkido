@@ -18,3 +18,4 @@
 #include "modulation.hpp"
 #include "dynamics.hpp"
 #include "reverbs.hpp"
+#include "logic.hpp"
