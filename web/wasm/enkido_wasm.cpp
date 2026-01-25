@@ -8,11 +8,14 @@
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/instruction.hpp>
 #include <akkado/akkado.hpp>
+#include <akkado/builtins.hpp>
 #include <akkado/sample_registry.hpp>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <memory>
+#include <string>
+#include <sstream>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
@@ -668,6 +671,110 @@ WASM_EXPORT void* enkido_malloc(uint32_t size) {
  */
 WASM_EXPORT void enkido_free(void* ptr) {
     std::free(ptr);
+}
+
+// ============================================================================
+// Akkado Builtins Metadata API
+// ============================================================================
+
+// Static buffer for JSON output (avoids allocation issues)
+static std::string g_builtins_json;
+
+/**
+ * Helper to escape a string for JSON
+ */
+static std::string escape_json_string(std::string_view sv) {
+    std::string result;
+    result.reserve(sv.size());
+    for (char c : sv) {
+        switch (c) {
+            case '"': result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default: result += c; break;
+        }
+    }
+    return result;
+}
+
+/**
+ * Get all builtin function metadata as JSON string
+ * Returns pointer to null-terminated JSON string
+ *
+ * JSON format:
+ * {
+ *   "functions": {
+ *     "lp": {
+ *       "params": [
+ *         {"name": "in", "required": true},
+ *         {"name": "cut", "required": true},
+ *         {"name": "q", "required": false, "default": 0.707}
+ *       ],
+ *       "description": "State-variable lowpass filter"
+ *     },
+ *     ...
+ *   },
+ *   "aliases": {
+ *     "lowpass": "lp",
+ *     ...
+ *   },
+ *   "keywords": ["fn", "pat", "seq", "timeline", "note", "true", "false", "match", "post"]
+ * }
+ */
+WASM_EXPORT const char* akkado_get_builtins_json() {
+    // Build JSON only once (lazy initialization)
+    if (!g_builtins_json.empty()) {
+        return g_builtins_json.c_str();
+    }
+
+    std::ostringstream json;
+    json << "{\"functions\":{";
+
+    bool first_func = true;
+    for (const auto& [name, info] : akkado::BUILTIN_FUNCTIONS) {
+        if (!first_func) json << ",";
+        first_func = false;
+
+        json << "\"" << escape_json_string(name) << "\":{";
+        json << "\"params\":[";
+
+        bool first_param = true;
+        for (std::size_t i = 0; i < akkado::MAX_BUILTIN_PARAMS; ++i) {
+            if (info.param_names[i].empty()) break;
+
+            if (!first_param) json << ",";
+            first_param = false;
+
+            json << "{\"name\":\"" << escape_json_string(info.param_names[i]) << "\"";
+
+            bool is_required = i < info.input_count;
+            json << ",\"required\":" << (is_required ? "true" : "false");
+
+            if (!is_required && info.has_default(i)) {
+                float def = info.get_default(i);
+                json << ",\"default\":" << def;
+            }
+            json << "}";
+        }
+
+        json << "],\"description\":\"" << escape_json_string(info.description) << "\"}";
+    }
+
+    json << "},\"aliases\":{";
+
+    bool first_alias = true;
+    for (const auto& [alias, canonical] : akkado::BUILTIN_ALIASES) {
+        if (!first_alias) json << ",";
+        first_alias = false;
+        json << "\"" << escape_json_string(alias) << "\":\"" << escape_json_string(canonical) << "\"";
+    }
+
+    json << "},\"keywords\":[\"fn\",\"pat\",\"seq\",\"timeline\",\"note\",\"true\",\"false\",\"match\",\"post\"]}";
+
+    g_builtins_json = json.str();
+    return g_builtins_json.c_str();
 }
 
 } // extern "C"

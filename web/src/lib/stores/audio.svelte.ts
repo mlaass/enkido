@@ -20,6 +20,26 @@ interface CompileResult {
 	requiredSamples?: string[];
 }
 
+// Builtins metadata from the compiler
+interface BuiltinParam {
+	name: string;
+	required: boolean;
+	default?: number;
+}
+
+interface BuiltinInfo {
+	params: BuiltinParam[];
+	description: string;
+}
+
+interface BuiltinsData {
+	functions: Record<string, BuiltinInfo>;
+	aliases: Record<string, string>;
+	keywords: string[];
+}
+
+export type { BuiltinsData, BuiltinInfo, BuiltinParam };
+
 interface AudioState {
 	isPlaying: boolean;
 	bpm: number;
@@ -60,6 +80,10 @@ function createAudioEngine() {
 
 	// Compile result callback (resolved when worklet responds)
 	let compileResolve: ((result: CompileResult) => void) | null = null;
+
+	// Builtins metadata cache
+	let builtinsCache: BuiltinsData | null = null;
+	let builtinsResolve: ((data: BuiltinsData | null) => void) | null = null;
 
 	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
@@ -199,6 +223,17 @@ function createAudioEngine() {
 						pendingSampleLoads.delete(sampleName);
 					}
 					sampleLoadState.set(sampleName, 'error');
+				}
+				break;
+			}
+			case 'builtins': {
+				if (msg.success && msg.data) {
+					builtinsCache = msg.data as BuiltinsData;
+					console.log('[AudioEngine] Received builtins metadata');
+				}
+				if (builtinsResolve) {
+					builtinsResolve(builtinsCache);
+					builtinsResolve = null;
 				}
 				break;
 			}
@@ -675,6 +710,40 @@ function createAudioEngine() {
 		console.log('[AudioEngine] Cleared all samples');
 	}
 
+	/**
+	 * Get builtin function metadata for autocomplete
+	 * Returns cached data if available, otherwise fetches from worklet
+	 */
+	async function getBuiltins(): Promise<BuiltinsData | null> {
+		// Return cache if available
+		if (builtinsCache) {
+			return builtinsCache;
+		}
+
+		// Need to initialize first
+		if (!state.isInitialized) {
+			await initialize();
+		}
+
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot get builtins - worklet not initialized');
+			return null;
+		}
+
+		// Request builtins from worklet
+		return new Promise((resolve) => {
+			builtinsResolve = resolve;
+			// Timeout after 2 seconds
+			setTimeout(() => {
+				if (builtinsResolve === resolve) {
+					builtinsResolve = null;
+					resolve(null);
+				}
+			}, 2000);
+			workletNode!.port.postMessage({ type: 'getBuiltins' });
+		});
+	}
+
 	return {
 		get isPlaying() { return state.isPlaying; },
 		get bpm() { return state.bpm; },
@@ -707,7 +776,8 @@ function createAudioEngine() {
 		loadSampleFromFile,
 		loadSampleFromUrl,
 		loadSamplePack,
-		clearSamples
+		clearSamples,
+		getBuiltins
 	};
 }
 

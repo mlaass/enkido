@@ -9,6 +9,8 @@
 	import { audioEngine } from '$stores/audio.svelte';
 	import { triggerF1Help, getWordAtCursor } from '$lib/docs/lookup';
 	import { linterExtensions, updateEditorDiagnostics } from './editor-linter';
+	import { akkadoCompletions } from '$lib/editor/akkado-completions';
+	import { signatureHelp } from '$lib/editor/signature-help';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -136,7 +138,11 @@
 				syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
 				bracketMatching(),
 				closeBrackets(),
-				autocompletion(),
+				autocompletion({
+					override: [akkadoCompletions],
+					activateOnTyping: true
+				}),
+				signatureHelp(),
 				rectangularSelection(),
 				crosshairCursor(),
 				highlightActiveLine(),
