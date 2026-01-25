@@ -14,46 +14,53 @@ using namespace akkado;
 TEST_CASE("SymbolTable scope management", "[symbol_table]") {
     SymbolTable table;
 
-    SECTION("initial scope depth is 0") {
-        CHECK(table.scope_depth() == 0);
+    // Note: SymbolTable starts with 1 scope (global scope containing builtins)
+    SECTION("initial scope depth is 1 (global scope)") {
+        CHECK(table.scope_depth() == 1);
     }
 
     SECTION("push_scope increases depth") {
-        table.push_scope();
-        CHECK(table.scope_depth() == 1);
+        std::size_t initial = table.scope_depth();
 
         table.push_scope();
-        CHECK(table.scope_depth() == 2);
+        CHECK(table.scope_depth() == initial + 1);
 
         table.push_scope();
-        CHECK(table.scope_depth() == 3);
+        CHECK(table.scope_depth() == initial + 2);
+
+        table.push_scope();
+        CHECK(table.scope_depth() == initial + 3);
     }
 
     SECTION("pop_scope decreases depth") {
+        std::size_t initial = table.scope_depth();
+
         table.push_scope();
         table.push_scope();
         table.push_scope();
-        REQUIRE(table.scope_depth() == 3);
+        REQUIRE(table.scope_depth() == initial + 3);
 
         table.pop_scope();
-        CHECK(table.scope_depth() == 2);
+        CHECK(table.scope_depth() == initial + 2);
 
         table.pop_scope();
-        CHECK(table.scope_depth() == 1);
+        CHECK(table.scope_depth() == initial + 1);
 
         table.pop_scope();
-        CHECK(table.scope_depth() == 0);
+        CHECK(table.scope_depth() == initial);
     }
 
     SECTION("push and pop sequence") {
+        std::size_t initial = table.scope_depth();
+
         for (int i = 0; i < 10; ++i) {
             table.push_scope();
-            CHECK(table.scope_depth() == static_cast<std::size_t>(i + 1));
+            CHECK(table.scope_depth() == initial + static_cast<std::size_t>(i + 1));
         }
 
         for (int i = 9; i >= 0; --i) {
             table.pop_scope();
-            CHECK(table.scope_depth() == static_cast<std::size_t>(i));
+            CHECK(table.scope_depth() == initial + static_cast<std::size_t>(i));
         }
     }
 }
@@ -177,8 +184,9 @@ TEST_CASE("SymbolTable user functions", "[symbol_table]") {
     SECTION("define_function creates function symbol") {
         UserFunctionInfo func_info;
         func_info.name = "myFunc";
-        func_info.param_count = 2;
+        func_info.params = {{"a", std::nullopt}, {"b", std::nullopt}};  // 2 params
         func_info.body_node = 42;
+        func_info.def_node = 40;
 
         bool ok = table.define_function(func_info);
         CHECK(ok);
@@ -186,32 +194,36 @@ TEST_CASE("SymbolTable user functions", "[symbol_table]") {
         auto sym = table.lookup("myFunc");
         REQUIRE(sym.has_value());
         CHECK(sym->kind == SymbolKind::UserFunction);
-        CHECK(sym->user_function.param_count == 2);
+        CHECK(sym->user_function.params.size() == 2);
         CHECK(sym->user_function.body_node == 42);
     }
 
     SECTION("function shadowing in nested scope") {
         UserFunctionInfo outer_func;
         outer_func.name = "func";
-        outer_func.param_count = 1;
+        outer_func.params = {{"x", std::nullopt}};  // 1 param
+        outer_func.body_node = 1;
+        outer_func.def_node = 0;
         table.define_function(outer_func);
 
         table.push_scope();
 
         UserFunctionInfo inner_func;
         inner_func.name = "func";
-        inner_func.param_count = 3;
+        inner_func.params = {{"a", std::nullopt}, {"b", std::nullopt}, {"c", std::nullopt}};  // 3 params
+        inner_func.body_node = 11;
+        inner_func.def_node = 10;
         table.define_function(inner_func);
 
         auto sym = table.lookup("func");
         REQUIRE(sym.has_value());
-        CHECK(sym->user_function.param_count == 3);  // Inner
+        CHECK(sym->user_function.params.size() == 3);  // Inner
 
         table.pop_scope();
 
         sym = table.lookup("func");
         REQUIRE(sym.has_value());
-        CHECK(sym->user_function.param_count == 1);  // Outer
+        CHECK(sym->user_function.params.size() == 1);  // Outer
     }
 }
 
@@ -223,12 +235,14 @@ TEST_CASE("SymbolTable edge cases", "[symbol_table][edge]") {
     SymbolTable table;
 
     SECTION("100 nested scopes") {
+        std::size_t initial = table.scope_depth();
+
         for (int i = 0; i < 100; ++i) {
             table.push_scope();
             table.define_variable("level_" + std::to_string(i), static_cast<std::uint16_t>(i));
         }
 
-        CHECK(table.scope_depth() == 100);
+        CHECK(table.scope_depth() == initial + 100);
 
         // All symbols should be accessible
         for (int i = 0; i < 100; ++i) {
@@ -242,7 +256,7 @@ TEST_CASE("SymbolTable edge cases", "[symbol_table][edge]") {
             table.pop_scope();
         }
 
-        CHECK(table.scope_depth() == 0);
+        CHECK(table.scope_depth() == initial);
 
         // Nested scope symbols should be gone
         for (int i = 0; i < 100; ++i) {
@@ -369,6 +383,7 @@ TEST_CASE("SymbolTable FNV-1a hash", "[symbol_table]") {
 TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
     SECTION("simulate compiler with many scopes and symbols") {
         SymbolTable table;
+        std::size_t initial = table.scope_depth();
 
         // Simulate 100 functions
         for (int fn = 0; fn < 100; ++fn) {
@@ -397,7 +412,7 @@ TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
             table.pop_scope();
         }
 
-        CHECK(table.scope_depth() == 0);
+        CHECK(table.scope_depth() == initial);
     }
 
     SECTION("repeated push/pop cycles") {

@@ -24,14 +24,14 @@ TEST_CASE("BufferAllocator basic operations", "[buffer_allocator]") {
     SECTION("count tracks allocations") {
         CHECK(alloc.count() == 0);
 
-        alloc.allocate();
+        (void)alloc.allocate();
         CHECK(alloc.count() == 1);
 
-        alloc.allocate();
+        (void)alloc.allocate();
         CHECK(alloc.count() == 2);
 
         for (int i = 0; i < 10; ++i) {
-            alloc.allocate();
+            (void)alloc.allocate();
         }
         CHECK(alloc.count() == 12);
     }
@@ -41,7 +41,7 @@ TEST_CASE("BufferAllocator basic operations", "[buffer_allocator]") {
 
         // Allocate some
         for (int i = 0; i < 100; ++i) {
-            alloc.allocate();
+            (void)alloc.allocate();
         }
 
         CHECK(alloc.has_available());
@@ -83,7 +83,7 @@ TEST_CASE("BufferAllocator edge cases", "[buffer_allocator][edge]") {
     SECTION("next allocation after MAX_BUFFERS returns BUFFER_UNUSED") {
         // Fill up
         for (int i = 0; i < BufferAllocator::MAX_BUFFERS; ++i) {
-            alloc.allocate();
+            (void)alloc.allocate();
         }
 
         // Next should fail
@@ -94,7 +94,7 @@ TEST_CASE("BufferAllocator edge cases", "[buffer_allocator][edge]") {
     SECTION("multiple overflow allocations return BUFFER_UNUSED") {
         // Fill up
         for (int i = 0; i < BufferAllocator::MAX_BUFFERS; ++i) {
-            alloc.allocate();
+            (void)alloc.allocate();
         }
 
         // Multiple overflow attempts
@@ -114,24 +114,24 @@ TEST_CASE("BufferAllocator edge cases", "[buffer_allocator][edge]") {
 
     SECTION("allocate at boundary") {
         // Allocate MAX_BUFFERS - 1
-        for (int i = 0; i < MAX_BUFFERS - 1; ++i) {
-            alloc.allocate();
+        for (int i = 0; i < BufferAllocator::MAX_BUFFERS - 1; ++i) {
+            (void)alloc.allocate();
         }
 
         CHECK(alloc.has_available());
 
         // Allocate the last one
         std::uint16_t last = alloc.allocate();
-        CHECK(last == MAX_BUFFERS - 1);
+        CHECK(last == BufferAllocator::MAX_BUFFERS - 1);
         CHECK_FALSE(alloc.has_available());
     }
 
     SECTION("BUFFER_UNUSED constant value") {
-        CHECK(BUFFER_UNUSED == 0xFFFF);
+        CHECK(BufferAllocator::BUFFER_UNUSED == 0xFFFF);
     }
 
     SECTION("MAX_BUFFERS constant value") {
-        CHECK(MAX_BUFFERS == 256);
+        CHECK(BufferAllocator::MAX_BUFFERS == 256);
     }
 }
 
@@ -159,7 +159,7 @@ TEST_CASE("BufferAllocator stress test", "[buffer_allocator][stress]") {
         // Create multiple allocators and verify they all produce same sequence
         std::vector<BufferAllocator> allocators(10);
 
-        for (int i = 0; i < MAX_BUFFERS; ++i) {
+        for (int i = 0; i < BufferAllocator::MAX_BUFFERS; ++i) {
             std::uint16_t expected = allocators[0].allocate();
 
             for (std::size_t a = 1; a < allocators.size(); ++a) {
@@ -229,11 +229,11 @@ TEST_CASE("BufferAllocator in codegen context", "[buffer_allocator]") {
         // Simulate a program that needs too many buffers
         bool exhausted = false;
 
-        for (int i = 0; i < MAX_BUFFERS + 10; ++i) {
+        for (int i = 0; i < BufferAllocator::MAX_BUFFERS + 10; ++i) {
             std::uint16_t idx = alloc.allocate();
-            if (idx == BUFFER_UNUSED) {
+            if (idx == BufferAllocator::BUFFER_UNUSED) {
                 exhausted = true;
-                CHECK(i == MAX_BUFFERS);
+                CHECK(i == BufferAllocator::MAX_BUFFERS);
                 break;
             }
         }
