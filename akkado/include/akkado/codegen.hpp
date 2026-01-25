@@ -128,6 +128,23 @@ private:
     std::uint16_t handle_user_function_call(NodeIndex node, const Node& n,
                                             const UserFunctionInfo& func);
 
+    /// Handle pattern variable reference
+    /// Emits SEQ_STEP code for the stored pattern.
+    /// @param name The pattern variable name (for path tracking)
+    /// @param pattern_node The MiniLiteral node index
+    /// @param loc Source location for error reporting
+    /// @return Output buffer index (pitch or sample_id)
+    std::uint16_t handle_pattern_reference(const std::string& name, NodeIndex pattern_node,
+                                           SourceLocation loc);
+
+    /// Handle chord() function calls - Strudel-compatible chord expansion
+    /// chord("Am") -> array of MIDI notes
+    /// chord("Am C7 F") -> pattern of chord arrays
+    /// @param node The Call node
+    /// @param n The Node reference
+    /// @return Output buffer index
+    std::uint16_t handle_chord_call(NodeIndex node, const Node& n);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;
@@ -154,6 +171,48 @@ private:
     // Map from parameter name hash to literal AST node (for inline match resolution)
     // Only populated during user function calls when the argument is a literal
     std::unordered_map<std::uint32_t, NodeIndex> param_literals_;
+
+    // ============================================================================
+    // Multi-buffer support for polyphonic arrays (map/sum)
+    // ============================================================================
+    // Track nodes that produce multiple buffers (arrays/chords for polyphony)
+    std::unordered_map<NodeIndex, std::vector<std::uint16_t>> multi_buffers_;
+
+    /// Register a node as producing multiple buffers
+    /// @return First buffer index (for compatibility with single-buffer code)
+    std::uint16_t register_multi_buffer(NodeIndex node, std::vector<std::uint16_t> buffers);
+
+    /// Check if a node produces multiple buffers
+    [[nodiscard]] bool is_multi_buffer(NodeIndex node) const;
+
+    /// Get all buffers produced by a multi-buffer node
+    [[nodiscard]] std::vector<std::uint16_t> get_multi_buffers(NodeIndex node) const;
+
+    /// Apply a lambda expression to a single buffer value
+    /// Creates a temporary scope, binds the parameter, generates body code
+    /// @param lambda_node The Closure node containing parameter and body
+    /// @param arg_buf The buffer to bind to the lambda parameter
+    /// @return Output buffer from the lambda body
+    std::uint16_t apply_lambda(NodeIndex lambda_node, std::uint16_t arg_buf);
+
+    /// Resolve a function argument (can be inline lambda, lambda variable, or fn name)
+    /// @param func_node The node that should resolve to a function
+    /// @return FunctionRef if valid, nullopt otherwise
+    std::optional<FunctionRef> resolve_function_arg(NodeIndex func_node);
+
+    /// Apply a resolved function reference with captures
+    /// @param ref The function reference containing closure/body info and captures
+    /// @param arg_buf The buffer to bind to the function's first parameter
+    /// @param loc Source location for error reporting
+    /// @return Output buffer from the function body
+    std::uint16_t apply_function_ref(const FunctionRef& ref, std::uint16_t arg_buf,
+                                      SourceLocation loc);
+
+    /// Handle map(array, fn) call - apply function to each element
+    std::uint16_t handle_map_call(NodeIndex node, const Node& n);
+
+    /// Handle sum(array) call - reduce array by addition
+    std::uint16_t handle_sum_call(NodeIndex node, const Node& n);
 };
 
 } // namespace akkado

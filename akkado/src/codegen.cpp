@@ -1,5 +1,6 @@
 #include "akkado/codegen.hpp"
 #include "akkado/builtins.hpp"
+#include "akkado/chord_parser.hpp"
 #include "akkado/pattern_eval.hpp"
 #include <cedar/vm/state_pool.hpp>
 #include <algorithm>
@@ -93,6 +94,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     anonymous_counter_ = 0;
     node_buffers_.clear();
     call_counters_.clear();
+    multi_buffers_.clear();
 
     // Start with "main" path
     push_path("main");
@@ -285,9 +287,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
         }
 
         case NodeType::ArrayLit: {
-            // Arrays: for now, emit first element as the value
-            // Full array expansion will be implemented in a future phase
-            // This allows basic code to run while we build out array semantics
+            // Arrays: emit all elements as multi-buffer for polyphony support
             NodeIndex first_elem = n.first_child;
             if (first_elem == NULL_NODE) {
                 // Empty array - emit 0
@@ -309,8 +309,23 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return out;
             }
 
-            // Visit first element
-            std::uint16_t first_buf = visit(first_elem);
+            // Visit all elements and collect buffers
+            std::vector<std::uint16_t> element_buffers;
+            NodeIndex elem = first_elem;
+            while (elem != NULL_NODE) {
+                std::uint16_t elem_buf = visit(elem);
+                element_buffers.push_back(elem_buf);
+                elem = ast_->arena[elem].next_sibling;
+            }
+
+            if (element_buffers.size() == 1) {
+                // Single element - return directly
+                node_buffers_[node] = element_buffers[0];
+                return element_buffers[0];
+            }
+
+            // Multi-element array - register as multi-buffer
+            std::uint16_t first_buf = register_multi_buffer(node, std::move(element_buffers));
             node_buffers_[node] = first_buf;
             return first_buf;
         }
@@ -346,6 +361,32 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return sym->buffer_index;
             }
 
+            if (sym->kind == SymbolKind::Pattern) {
+                // Pattern variable - emit SEQ_STEP for this pattern
+                // Use the stored pattern_node to generate code
+                return handle_pattern_reference(name, sym->pattern.pattern_node, n.location);
+            }
+
+            if (sym->kind == SymbolKind::Array) {
+                // Array variable - visit the source node to generate array code
+                std::uint16_t first_buf = visit(sym->array.source_node);
+
+                // Propagate multi-buffer association from source to this identifier
+                if (is_multi_buffer(sym->array.source_node)) {
+                    auto buffers = get_multi_buffers(sym->array.source_node);
+                    register_multi_buffer(node, buffers);
+                }
+
+                node_buffers_[node] = first_buf;
+                return first_buf;
+            }
+
+            if (sym->kind == SymbolKind::FunctionValue || sym->kind == SymbolKind::UserFunction) {
+                // Function values are handled specially in map() and other HOFs
+                // Return BUFFER_UNUSED since functions don't have runtime values
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
             // Builtins without args? Shouldn't happen for identifiers
             error("E103", "Cannot use builtin as value: '" + name + "'", n.location);
             return BufferAllocator::BUFFER_UNUSED;
@@ -363,6 +404,15 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
             const std::string& var_name = n.as_identifier();
 
+            // Check if this is a pattern assignment
+            auto sym = symbols_->lookup(var_name);
+            if (sym && sym->kind == SymbolKind::Pattern) {
+                // Pattern assignments don't emit code here - the pattern is
+                // evaluated when the variable is referenced
+                node_buffers_[node] = BufferAllocator::BUFFER_UNUSED;
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
             // Push variable name onto path for semantic IDs
             push_path(var_name);
 
@@ -372,7 +422,6 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             pop_path();
 
             // Update symbol table with the buffer index
-            auto sym = symbols_->lookup(var_name);
             if (sym && (sym->kind == SymbolKind::Variable || sym->kind == SymbolKind::Parameter)) {
                 // Re-define with correct buffer index
                 symbols_->define_variable(var_name, value_buffer);
@@ -410,6 +459,79 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             // len(arr) returns the number of elements in an array literal
             if (func_name == "len") {
                 return handle_len_call(node, n);
+            }
+
+            // ================================================================
+            // Special handling for chord() - Strudel-compatible chord expansion
+            // ================================================================
+            // chord("Am") -> array of MIDI notes, chord("Am C7 F") -> pattern of chord arrays
+            if (func_name == "chord") {
+                return handle_chord_call(node, n);
+            }
+
+            // ================================================================
+            // Special handling for map() - apply function to each array element
+            // ================================================================
+            if (func_name == "map") {
+                return handle_map_call(node, n);
+            }
+
+            // ================================================================
+            // Special handling for sum() - reduce array by addition
+            // ================================================================
+            if (func_name == "sum") {
+                return handle_sum_call(node, n);
+            }
+
+            // ================================================================
+            // Special handling for mtof() - propagate multi-buffers
+            // ================================================================
+            if (func_name == "mtof") {
+                NodeIndex arg = n.first_child;
+                if (arg == NULL_NODE) {
+                    error("E135", "mtof() requires 1 argument", n.location);
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+
+                const Node& arg_node = ast_->arena[arg];
+                NodeIndex midi_node = (arg_node.type == NodeType::Argument) ?
+                                      arg_node.first_child : arg;
+
+                // Visit to populate multi_buffers_ map
+                (void)visit(midi_node);
+
+                // Check if input is multi-buffer (e.g., from chord())
+                if (is_multi_buffer(midi_node)) {
+                    auto midi_buffers = get_multi_buffers(midi_node);
+                    std::vector<std::uint16_t> freq_buffers;
+                    freq_buffers.reserve(midi_buffers.size());
+
+                    for (std::uint16_t mb : midi_buffers) {
+                        std::uint16_t freq_buf = buffers_.allocate();
+                        if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
+                            error("E101", "Buffer pool exhausted", n.location);
+                            return BufferAllocator::BUFFER_UNUSED;
+                        }
+
+                        cedar::Instruction mtof_inst{};
+                        mtof_inst.opcode = cedar::Opcode::MTOF;
+                        mtof_inst.out_buffer = freq_buf;
+                        mtof_inst.inputs[0] = mb;
+                        mtof_inst.inputs[1] = 0xFFFF;
+                        mtof_inst.inputs[2] = 0xFFFF;
+                        mtof_inst.inputs[3] = 0xFFFF;
+                        mtof_inst.state_id = 0;
+                        emit(mtof_inst);
+
+                        freq_buffers.push_back(freq_buf);
+                    }
+
+                    std::uint16_t first_buf = register_multi_buffer(node, std::move(freq_buffers));
+                    node_buffers_[node] = first_buf;
+                    return first_buf;
+                }
+
+                // Single buffer case - fall through to normal handling
             }
 
             const BuiltinInfo* builtin = lookup_builtin(func_name);
@@ -1245,6 +1367,182 @@ std::uint16_t CodeGenerator::handle_osc_call(NodeIndex node, const Node& n) {
     return out;
 }
 
+// Handle pattern variable reference - emits SEQ_STEP code for the stored pattern
+std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
+                                                       NodeIndex pattern_node,
+                                                       SourceLocation loc) {
+    if (pattern_node == NULL_NODE) {
+        error("E123", "Pattern variable '" + name + "' has invalid pattern node", loc);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& pattern_n = ast_->arena[pattern_node];
+    if (pattern_n.type != NodeType::MiniLiteral) {
+        error("E124", "Pattern variable '" + name + "' does not refer to a pattern", loc);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Push path for semantic ID using the variable name
+    push_path(name);
+    std::uint32_t state_id = compute_state_id();
+
+    // Get the MiniPattern child from the MiniLiteral node
+    NodeIndex mini_pattern = pattern_n.first_child;
+    if (mini_pattern == NULL_NODE) {
+        error("E114", "Pattern has no parsed content", loc);
+        pop_path();
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Evaluate pattern to get events
+    PatternEventStream events = evaluate_pattern(mini_pattern, ast_->arena, 0);
+
+    if (events.empty()) {
+        // Empty pattern - return constant 0
+        std::uint16_t out = buffers_.allocate();
+        if (out == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", loc);
+            pop_path();
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+        cedar::Instruction inst{};
+        inst.opcode = cedar::Opcode::PUSH_CONST;
+        inst.out_buffer = out;
+        inst.inputs[0] = 0xFFFF;
+        inst.inputs[1] = 0xFFFF;
+        inst.inputs[2] = 0xFFFF;
+        inst.inputs[3] = 0xFFFF;
+        encode_const_value(inst, 0.0f);
+        emit(inst);
+        pop_path();
+        return out;
+    }
+
+    // Detect if this is a sample pattern or pitch pattern
+    bool is_sample_pattern = false;
+    for (const auto& event : events.events) {
+        if (event.type == PatternEventType::Sample) {
+            is_sample_pattern = true;
+            break;
+        }
+    }
+
+    // Handle sample patterns
+    if (is_sample_pattern) {
+        std::uint16_t sample_id_buf = buffers_.allocate();
+        std::uint16_t velocity_buf = buffers_.allocate();
+        std::uint16_t trigger_buf = buffers_.allocate();
+
+        if (sample_id_buf == BufferAllocator::BUFFER_UNUSED ||
+            velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+            trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", loc);
+            pop_path();
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        // Emit SEQ_STEP
+        cedar::Instruction seq_inst{};
+        seq_inst.opcode = cedar::Opcode::SEQ_STEP;
+        seq_inst.out_buffer = sample_id_buf;
+        seq_inst.inputs[0] = velocity_buf;
+        seq_inst.inputs[1] = trigger_buf;
+        seq_inst.inputs[2] = 0xFFFF;
+        seq_inst.inputs[3] = 0xFFFF;
+        seq_inst.state_id = state_id;
+        emit(seq_inst);
+
+        // Build state initialization
+        StateInitData seq_init;
+        seq_init.state_id = state_id;
+        seq_init.type = StateInitData::Type::SeqStep;
+        seq_init.cycle_length = 4.0f;
+        seq_init.times.reserve(events.size());
+        seq_init.values.reserve(events.size());
+        seq_init.velocities.reserve(events.size());
+
+        for (const auto& event : events.events) {
+            seq_init.times.push_back(event.time * seq_init.cycle_length);
+
+            if (event.type == PatternEventType::Sample) {
+                if (!event.sample_name.empty()) {
+                    required_samples_.insert(event.sample_name);
+                }
+                seq_init.sample_names.push_back(event.sample_name);
+
+                std::uint32_t sample_id = 0;
+                if (sample_registry_) {
+                    sample_id = sample_registry_->get_id(event.sample_name);
+                }
+                seq_init.values.push_back(static_cast<float>(sample_id));
+            } else {
+                seq_init.sample_names.push_back("");
+                seq_init.values.push_back(0.0f);
+            }
+
+            seq_init.velocities.push_back(event.velocity);
+        }
+        state_inits_.push_back(std::move(seq_init));
+
+        pop_path();
+        // Return sample_id_buf - caller can access trigger_buf and velocity_buf
+        // through the SEQ_STEP instruction's inputs
+        return sample_id_buf;
+    }
+
+    // Handle pitch patterns
+    std::uint16_t pitch_buf = buffers_.allocate();
+    std::uint16_t velocity_buf = buffers_.allocate();
+    std::uint16_t trigger_buf = buffers_.allocate();
+
+    if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
+        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", loc);
+        pop_path();
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Emit SEQ_STEP
+    cedar::Instruction seq_inst{};
+    seq_inst.opcode = cedar::Opcode::SEQ_STEP;
+    seq_inst.out_buffer = pitch_buf;
+    seq_inst.inputs[0] = velocity_buf;
+    seq_inst.inputs[1] = trigger_buf;
+    seq_inst.inputs[2] = 0xFFFF;
+    seq_inst.inputs[3] = 0xFFFF;
+    seq_inst.state_id = state_id;
+    emit(seq_inst);
+
+    // Build state initialization
+    StateInitData pitch_init;
+    pitch_init.state_id = state_id;
+    pitch_init.type = StateInitData::Type::SeqStep;
+    pitch_init.cycle_length = 4.0f;
+    pitch_init.times.reserve(events.size());
+    pitch_init.values.reserve(events.size());
+    pitch_init.velocities.reserve(events.size());
+
+    for (const auto& event : events.events) {
+        pitch_init.times.push_back(event.time * pitch_init.cycle_length);
+
+        if (event.type == PatternEventType::Pitch) {
+            float freq = 440.0f * std::pow(2.0f, (static_cast<float>(event.midi_note) - 69.0f) / 12.0f);
+            pitch_init.values.push_back(freq);
+        } else if (event.type == PatternEventType::Rest) {
+            pitch_init.values.push_back(0.0f);
+        } else {
+            pitch_init.values.push_back(0.0f);
+        }
+
+        pitch_init.velocities.push_back(event.velocity);
+    }
+    state_inits_.push_back(std::move(pitch_init));
+
+    pop_path();
+    return pitch_buf;
+}
+
 // Handles len(arr) calls - returns compile-time array length
 std::uint16_t CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
     // Get the argument
@@ -1280,10 +1578,15 @@ std::uint16_t CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
         }
     } else if (arr.type == NodeType::Identifier) {
         // Look up the symbol to see if it's a known array
-        // For now, error - we'd need more sophisticated tracking
-        error("E121", "len() currently only supports array literals, not variables",
-              arr.location);
-        return BufferAllocator::BUFFER_UNUSED;
+        const std::string& name = arr.as_identifier();
+        auto sym = symbols_->lookup(name);
+        if (sym && sym->kind == SymbolKind::Array) {
+            length = sym->array.element_count;
+        } else {
+            error("E141", "len() requires an array, but '" + name + "' is not an array",
+                  arr.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
     } else {
         error("E122", "len() argument must be an array", arr.location);
         return BufferAllocator::BUFFER_UNUSED;
@@ -1310,6 +1613,171 @@ std::uint16_t CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
 
     node_buffers_[node] = out;
     return out;
+}
+
+// Handles chord(str) calls - Strudel-compatible chord expansion
+std::uint16_t CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
+    // Get the argument
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) {
+        error("E125", "chord() requires exactly 1 argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Unwrap Argument node if present
+    const Node& arg_node = ast_->arena[arg];
+    NodeIndex str_node = arg;
+    if (arg_node.type == NodeType::Argument) {
+        str_node = arg_node.first_child;
+    }
+
+    if (str_node == NULL_NODE) {
+        error("E125", "chord() requires a string argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& str_n = ast_->arena[str_node];
+
+    // Must be a string literal
+    if (str_n.type != NodeType::StringLit) {
+        error("E126", "chord() argument must be a string literal (e.g., \"Am\", \"C7 F G\")",
+              str_n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    std::string chord_str = str_n.as_string();
+
+    // Parse chord pattern
+    auto chords = parse_chord_pattern(chord_str);
+    if (chords.empty()) {
+        error("E127", "Invalid chord symbol: \"" + chord_str + "\"", str_n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    if (chords.size() == 1) {
+        // Single chord -> expand to array of MIDI notes as multi-buffer
+        auto notes = expand_chord(chords[0], 4);
+
+        if (notes.empty()) {
+            error("E128", "Chord expansion failed for: \"" + chord_str + "\"", str_n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        // Create multi-buffer with all chord notes as MIDI values
+        std::vector<std::uint16_t> note_buffers;
+        note_buffers.reserve(notes.size());
+
+        for (int midi : notes) {
+            std::uint16_t midi_buf = buffers_.allocate();
+            if (midi_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            cedar::Instruction push_inst{};
+            push_inst.opcode = cedar::Opcode::PUSH_CONST;
+            push_inst.out_buffer = midi_buf;
+            push_inst.inputs[0] = 0xFFFF;
+            push_inst.inputs[1] = 0xFFFF;
+            push_inst.inputs[2] = 0xFFFF;
+            push_inst.inputs[3] = 0xFFFF;
+            encode_const_value(push_inst, static_cast<float>(midi));
+            emit(push_inst);
+
+            note_buffers.push_back(midi_buf);
+        }
+
+        // Register as multi-buffer and return first buffer for compatibility
+        std::uint16_t first_buf = register_multi_buffer(node, std::move(note_buffers));
+        node_buffers_[node] = first_buf;
+        return first_buf;
+    } else {
+        // Multiple chords -> create parallel SEQ_STEPs for each voice
+        // This enables polyphonic chord progressions with map()/sum()
+
+        // Find max voices across all chords
+        std::size_t max_voices = 0;
+        for (const auto& chord : chords) {
+            auto notes = expand_chord(chord, 4);
+            max_voices = std::max(max_voices, notes.size());
+        }
+
+        if (max_voices == 0) {
+            error("E128", "Chord expansion failed for: \"" + chord_str + "\"", str_n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        push_path("chord#" + std::to_string(call_counters_["chord"]++));
+
+        std::vector<std::uint16_t> voice_buffers;
+        voice_buffers.reserve(max_voices);
+
+        float step = 4.0f / static_cast<float>(chords.size());  // 4 beats per cycle
+
+        for (std::size_t voice = 0; voice < max_voices; ++voice) {
+            push_path("voice" + std::to_string(voice));
+            std::uint32_t state_id = compute_state_id();
+
+            std::uint16_t pitch_buf = buffers_.allocate();
+            std::uint16_t velocity_buf = buffers_.allocate();
+            std::uint16_t trigger_buf = buffers_.allocate();
+
+            if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
+                velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+                trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                pop_path();
+                pop_path();
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            // Emit SEQ_STEP for this voice
+            cedar::Instruction seq_inst{};
+            seq_inst.opcode = cedar::Opcode::SEQ_STEP;
+            seq_inst.out_buffer = pitch_buf;
+            seq_inst.inputs[0] = velocity_buf;
+            seq_inst.inputs[1] = trigger_buf;
+            seq_inst.inputs[2] = 0xFFFF;
+            seq_inst.inputs[3] = 0xFFFF;
+            seq_inst.state_id = state_id;
+            emit(seq_inst);
+
+            // Build state initialization for this voice
+            StateInitData voice_init;
+            voice_init.state_id = state_id;
+            voice_init.type = StateInitData::Type::SeqStep;
+            voice_init.cycle_length = 4.0f;
+            voice_init.times.reserve(chords.size());
+            voice_init.values.reserve(chords.size());
+            voice_init.velocities.reserve(chords.size());
+
+            for (std::size_t i = 0; i < chords.size(); ++i) {
+                voice_init.times.push_back(step * static_cast<float>(i));
+
+                auto notes = expand_chord(chords[i], 4);
+                int midi = 0;
+                if (voice < notes.size()) {
+                    midi = notes[voice];
+                } else if (!notes.empty()) {
+                    // Pad with root note if fewer notes in this chord
+                    midi = notes[0];
+                }
+                voice_init.values.push_back(static_cast<float>(midi));
+                voice_init.velocities.push_back(1.0f);
+            }
+            state_inits_.push_back(std::move(voice_init));
+
+            voice_buffers.push_back(pitch_buf);
+            pop_path();
+        }
+
+        pop_path();
+
+        // Register as multi-buffer for polyphonic output
+        std::uint16_t first_buf = register_multi_buffer(node, std::move(voice_buffers));
+        node_buffers_[node] = first_buf;
+        return first_buf;
+    }
 }
 
 void CodeGenerator::emit(const cedar::Instruction& inst) {
@@ -1433,6 +1901,379 @@ bool CodeGenerator::is_fm_modulated(std::uint16_t freq_buffer) const {
         }
     }
     return false;
+}
+
+// ============================================================================
+// Multi-buffer support for polyphonic arrays (map/sum)
+// ============================================================================
+
+std::uint16_t CodeGenerator::register_multi_buffer(NodeIndex node, std::vector<std::uint16_t> buffers) {
+    if (buffers.empty()) {
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    multi_buffers_[node] = std::move(buffers);
+
+    // Return first buffer for compatibility with single-buffer code paths
+    return multi_buffers_[node][0];
+}
+
+bool CodeGenerator::is_multi_buffer(NodeIndex node) const {
+    auto it = multi_buffers_.find(node);
+    return it != multi_buffers_.end() && it->second.size() > 1;
+}
+
+std::vector<std::uint16_t> CodeGenerator::get_multi_buffers(NodeIndex node) const {
+    auto it = multi_buffers_.find(node);
+    if (it != multi_buffers_.end()) {
+        return it->second;
+    }
+
+    // If not a multi-buffer but has a single buffer, return it as a vector
+    auto buf_it = node_buffers_.find(node);
+    if (buf_it != node_buffers_.end() && buf_it->second != BufferAllocator::BUFFER_UNUSED) {
+        return {buf_it->second};
+    }
+
+    return {};
+}
+
+std::uint16_t CodeGenerator::apply_lambda(NodeIndex lambda_node, std::uint16_t arg_buf) {
+    const Node& lambda = ast_->arena[lambda_node];
+
+    if (lambda.type != NodeType::Closure) {
+        error("E130", "map() second argument must be a lambda (fn => expr)", lambda.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Parse lambda structure: first children are parameters, last child is body
+    std::vector<std::string> param_names;
+    NodeIndex child = lambda.first_child;
+    NodeIndex body = NULL_NODE;
+
+    while (child != NULL_NODE) {
+        const Node& child_node = ast_->arena[child];
+        if (child_node.type == NodeType::Identifier) {
+            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                param_names.push_back(child_node.as_closure_param().name);
+            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                param_names.push_back(child_node.as_identifier());
+            } else {
+                body = child;
+                break;
+            }
+        } else {
+            body = child;
+            break;
+        }
+        child = ast_->arena[child].next_sibling;
+    }
+
+    if (body == NULL_NODE) {
+        error("E131", "Lambda has no body", lambda.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    if (param_names.empty()) {
+        error("E132", "Lambda must have at least one parameter", lambda.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Push scope and bind parameter
+    symbols_->push_scope();
+    symbols_->define_variable(param_names[0], arg_buf);
+
+    // Save and clear node_buffers_ for fresh body evaluation
+    auto saved_node_buffers = std::move(node_buffers_);
+    node_buffers_.clear();
+
+    // Generate code for body
+    std::uint16_t result = visit(body);
+
+    // Restore node_buffers_
+    node_buffers_ = std::move(saved_node_buffers);
+
+    // Pop scope
+    symbols_->pop_scope();
+
+    return result;
+}
+
+std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_node) {
+    const Node& n = ast_->arena[func_node];
+
+    if (n.type == NodeType::Closure) {
+        // Build FunctionRef from inline lambda
+        FunctionRef ref{};
+        ref.closure_node = func_node;
+        ref.is_user_function = false;
+
+        // Extract parameters
+        NodeIndex child = n.first_child;
+        while (child != NULL_NODE) {
+            const Node& child_node = ast_->arena[child];
+            if (child_node.type == NodeType::Identifier) {
+                FunctionParamInfo param;
+                if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                    param.name = child_node.as_closure_param().name;
+                    param.default_value = child_node.as_closure_param().default_value;
+                } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                    param.name = child_node.as_identifier();
+                    param.default_value = std::nullopt;
+                } else {
+                    break;  // Body
+                }
+                ref.params.push_back(std::move(param));
+            } else {
+                break;  // Body
+            }
+            child = ast_->arena[child].next_sibling;
+        }
+
+        // Collect captures from closure body by scanning for identifiers
+        // that are not parameters and not builtins/functions
+        // (Captures will be resolved at apply time)
+        return ref;
+    }
+
+    if (n.type == NodeType::Identifier) {
+        std::string name;
+        if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+            name = n.as_identifier();
+        } else {
+            return std::nullopt;
+        }
+
+        auto sym = symbols_->lookup(name);
+        if (!sym) {
+            return std::nullopt;
+        }
+
+        if (sym->kind == SymbolKind::FunctionValue) {
+            // Return the stored FunctionRef
+            return sym->function_ref;
+        }
+
+        if (sym->kind == SymbolKind::UserFunction) {
+            // Convert UserFunction to FunctionRef
+            FunctionRef ref{};
+            ref.is_user_function = true;
+            ref.user_function_name = sym->name;
+            ref.params = sym->user_function.params;
+            ref.closure_node = sym->user_function.body_node;
+            return ref;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref, std::uint16_t arg_buf,
+                                                  SourceLocation loc) {
+    if (ref.params.empty()) {
+        error("E132", "Function must have at least one parameter", loc);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Push scope for function execution
+    symbols_->push_scope();
+
+    // Bind captures first (read-only, from enclosing scope)
+    for (const auto& capture : ref.captures) {
+        symbols_->define_variable(capture.name, capture.buffer_index);
+    }
+
+    // Bind the parameter to the argument buffer
+    symbols_->define_variable(ref.params[0].name, arg_buf);
+
+    // Save and clear node_buffers_ for fresh body evaluation
+    auto saved_node_buffers = std::move(node_buffers_);
+    node_buffers_.clear();
+
+    // Generate code for body
+    std::uint16_t result = BufferAllocator::BUFFER_UNUSED;
+
+    if (ref.is_user_function) {
+        // User function - body_node is the function body
+        if (ref.closure_node != NULL_NODE) {
+            result = visit(ref.closure_node);
+        }
+    } else {
+        // Lambda - find body (last child after params)
+        const Node& closure = ast_->arena[ref.closure_node];
+        NodeIndex child = closure.first_child;
+        NodeIndex body = NULL_NODE;
+
+        // Skip parameters to find body
+        while (child != NULL_NODE) {
+            const Node& child_node = ast_->arena[child];
+            if (child_node.type == NodeType::Identifier) {
+                if (std::holds_alternative<Node::ClosureParamData>(child_node.data) ||
+                    std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                    child = child_node.next_sibling;
+                    continue;
+                }
+            }
+            body = child;
+            break;
+        }
+
+        if (body != NULL_NODE) {
+            result = visit(body);
+        }
+    }
+
+    // Restore node_buffers_
+    node_buffers_ = std::move(saved_node_buffers);
+
+    // Pop scope
+    symbols_->pop_scope();
+
+    return result;
+}
+
+std::uint16_t CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
+    // map(array, fn) - apply fn to each element of array
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) {
+        error("E133", "map() requires 2 arguments: map(array, fn)", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // First argument: array
+    const Node& first_arg_node = ast_->arena[arg];
+    NodeIndex array_node = (first_arg_node.type == NodeType::Argument) ?
+                           first_arg_node.first_child : arg;
+
+    // Second argument: function (lambda, lambda variable, or fn name)
+    NodeIndex second_arg = ast_->arena[arg].next_sibling;
+    if (second_arg == NULL_NODE) {
+        error("E133", "map() requires 2 arguments: map(array, fn)", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& second_arg_node = ast_->arena[second_arg];
+    NodeIndex func_node = (second_arg_node.type == NodeType::Argument) ?
+                          second_arg_node.first_child : second_arg;
+
+    // Resolve the function argument (can be inline lambda, variable, or fn name)
+    auto func_ref = resolve_function_arg(func_node);
+    if (!func_ref) {
+        error("E130", "map() second argument must be a function", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Visit array argument (this may populate multi_buffers_)
+    std::uint16_t array_buf = visit(array_node);
+
+    // Check if this is a multi-buffer source
+    if (!is_multi_buffer(array_node)) {
+        // Single value - just apply function once
+        push_path("map#" + std::to_string(call_counters_["map"]++));
+        push_path("elem0");
+        std::uint16_t result = apply_function_ref(*func_ref, array_buf, n.location);
+        pop_path();
+        pop_path();
+        node_buffers_[node] = result;
+        return result;
+    }
+
+    // Multi-buffer: apply function to each element
+    auto element_buffers = get_multi_buffers(array_node);
+    std::vector<std::uint16_t> result_buffers;
+
+    push_path("map#" + std::to_string(call_counters_["map"]++));
+
+    for (std::size_t i = 0; i < element_buffers.size(); ++i) {
+        push_path("elem" + std::to_string(i));
+        std::uint16_t result = apply_function_ref(*func_ref, element_buffers[i], n.location);
+        result_buffers.push_back(result);
+        pop_path();
+    }
+
+    pop_path();
+
+    // Register result as multi-buffer
+    std::uint16_t first_buf = register_multi_buffer(node, std::move(result_buffers));
+    node_buffers_[node] = first_buf;
+    return first_buf;
+}
+
+std::uint16_t CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
+    // sum(array) - reduce array by addition
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) {
+        error("E134", "sum() requires 1 argument: sum(array)", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Get array argument
+    const Node& arg_node = ast_->arena[arg];
+    NodeIndex array_node = (arg_node.type == NodeType::Argument) ?
+                           arg_node.first_child : arg;
+
+    // Visit array argument
+    std::uint16_t array_buf = visit(array_node);
+
+    // Check if this is a multi-buffer source
+    if (!is_multi_buffer(array_node)) {
+        // Single value - return as-is
+        node_buffers_[node] = array_buf;
+        return array_buf;
+    }
+
+    // Multi-buffer: chain ADD operations
+    auto buffers = get_multi_buffers(array_node);
+
+    if (buffers.empty()) {
+        // Empty array - return zero
+        std::uint16_t zero = buffers_.allocate();
+        if (zero == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+        cedar::Instruction inst{};
+        inst.opcode = cedar::Opcode::PUSH_CONST;
+        inst.out_buffer = zero;
+        inst.inputs[0] = 0xFFFF;
+        inst.inputs[1] = 0xFFFF;
+        inst.inputs[2] = 0xFFFF;
+        inst.inputs[3] = 0xFFFF;
+        encode_const_value(inst, 0.0f);
+        emit(inst);
+        node_buffers_[node] = zero;
+        return zero;
+    }
+
+    if (buffers.size() == 1) {
+        node_buffers_[node] = buffers[0];
+        return buffers[0];
+    }
+
+    // Chain ADD: ((a + b) + c) + d
+    std::uint16_t result = buffers[0];
+    for (std::size_t i = 1; i < buffers.size(); ++i) {
+        std::uint16_t sum_buf = buffers_.allocate();
+        if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        cedar::Instruction add_inst{};
+        add_inst.opcode = cedar::Opcode::ADD;
+        add_inst.out_buffer = sum_buf;
+        add_inst.inputs[0] = result;
+        add_inst.inputs[1] = buffers[i];
+        add_inst.inputs[2] = 0xFFFF;
+        add_inst.inputs[3] = 0xFFFF;
+        add_inst.state_id = 0;
+        emit(add_inst);
+
+        result = sum_buf;
+    }
+
+    node_buffers_[node] = result;
+    return result;
 }
 
 } // namespace akkado
