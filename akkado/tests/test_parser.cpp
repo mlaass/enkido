@@ -672,6 +672,197 @@ TEST_CASE("Parser match expressions", "[parser]") {
     }
 }
 
+TEST_CASE("Parser arrays", "[parser][array]") {
+    SECTION("empty array") {
+        auto ast = parse_ok("[]");
+        NodeIndex child = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[child].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(child) == 0);
+    }
+
+    SECTION("single element array") {
+        auto ast = parse_ok("[42]");
+        NodeIndex arr = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(arr) == 1);
+
+        NodeIndex elem = ast.arena[arr].first_child;
+        REQUIRE(ast.arena[elem].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[elem].as_number(), WithinRel(42.0));
+    }
+
+    SECTION("multiple element array") {
+        auto ast = parse_ok("[1, 2, 3]");
+        NodeIndex arr = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(arr) == 3);
+    }
+
+    SECTION("array with mixed types") {
+        auto ast = parse_ok("[1, \"hello\", true]");
+        NodeIndex arr = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(arr) == 3);
+
+        NodeIndex elem1 = ast.arena[arr].first_child;
+        NodeIndex elem2 = ast.arena[elem1].next_sibling;
+        NodeIndex elem3 = ast.arena[elem2].next_sibling;
+
+        CHECK(ast.arena[elem1].type == NodeType::NumberLit);
+        CHECK(ast.arena[elem2].type == NodeType::StringLit);
+        CHECK(ast.arena[elem3].type == NodeType::BoolLit);
+    }
+
+    SECTION("array with expressions") {
+        auto ast = parse_ok("[1 + 2, foo(x)]");
+        NodeIndex arr = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(arr) == 2);
+
+        NodeIndex elem1 = ast.arena[arr].first_child;
+        NodeIndex elem2 = ast.arena[elem1].next_sibling;
+
+        REQUIRE(ast.arena[elem1].type == NodeType::Call);
+        CHECK(ast.arena[elem1].as_identifier() == "add");
+
+        REQUIRE(ast.arena[elem2].type == NodeType::Call);
+        CHECK(ast.arena[elem2].as_identifier() == "foo");
+    }
+
+    SECTION("nested arrays") {
+        auto ast = parse_ok("[[1, 2], [3, 4]]");
+        NodeIndex outer = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[outer].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(outer) == 2);
+
+        NodeIndex inner1 = ast.arena[outer].first_child;
+        NodeIndex inner2 = ast.arena[inner1].next_sibling;
+
+        REQUIRE(ast.arena[inner1].type == NodeType::ArrayLit);
+        REQUIRE(ast.arena[inner2].type == NodeType::ArrayLit);
+        CHECK(ast.arena.child_count(inner1) == 2);
+        CHECK(ast.arena.child_count(inner2) == 2);
+    }
+
+    SECTION("array assignment") {
+        auto ast = parse_ok("arr = [1, 2, 3]");
+        NodeIndex assign = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[assign].type == NodeType::Assignment);
+        CHECK(ast.arena[assign].as_identifier() == "arr");
+
+        NodeIndex value = ast.arena[assign].first_child;
+        REQUIRE(ast.arena[value].type == NodeType::ArrayLit);
+    }
+
+    SECTION("array as function argument") {
+        auto ast = parse_ok("foo([1, 2, 3])");
+        NodeIndex call = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[call].type == NodeType::Call);
+
+        NodeIndex arg = ast.arena[call].first_child;
+        REQUIRE(ast.arena[arg].type == NodeType::Argument);
+
+        NodeIndex arr = ast.arena[arg].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+    }
+
+    SECTION("array in pipe") {
+        auto ast = parse_ok("[1, 2, 3] |> foo(%)");
+        NodeIndex pipe = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
+
+        NodeIndex arr = ast.arena[pipe].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+    }
+
+    SECTION("array indexing with number") {
+        auto ast = parse_ok("arr[0]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+        CHECK(ast.arena.child_count(index) == 2);
+
+        NodeIndex arr = ast.arena[index].first_child;
+        NodeIndex idx_expr = ast.arena[arr].next_sibling;
+
+        REQUIRE(ast.arena[arr].type == NodeType::Identifier);
+        CHECK(ast.arena[arr].as_identifier() == "arr");
+
+        REQUIRE(ast.arena[idx_expr].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[idx_expr].as_number(), WithinRel(0.0));
+    }
+
+    SECTION("array indexing with variable") {
+        auto ast = parse_ok("arr[i]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+
+        NodeIndex arr = ast.arena[index].first_child;
+        NodeIndex idx_expr = ast.arena[arr].next_sibling;
+
+        REQUIRE(ast.arena[idx_expr].type == NodeType::Identifier);
+        CHECK(ast.arena[idx_expr].as_identifier() == "i");
+    }
+
+    SECTION("array indexing with expression") {
+        auto ast = parse_ok("arr[i + 1]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+
+        NodeIndex arr = ast.arena[index].first_child;
+        NodeIndex idx_expr = ast.arena[arr].next_sibling;
+
+        REQUIRE(ast.arena[idx_expr].type == NodeType::Call);
+        CHECK(ast.arena[idx_expr].as_identifier() == "add");
+    }
+
+    SECTION("chained indexing") {
+        auto ast = parse_ok("arr[0][1]");
+        NodeIndex outer = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[outer].type == NodeType::Index);
+
+        NodeIndex inner = ast.arena[outer].first_child;
+        REQUIRE(ast.arena[inner].type == NodeType::Index);
+    }
+
+    SECTION("indexing on array literal") {
+        auto ast = parse_ok("[1, 2, 3][0]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+
+        NodeIndex arr = ast.arena[index].first_child;
+        REQUIRE(ast.arena[arr].type == NodeType::ArrayLit);
+    }
+
+    SECTION("indexing on function call") {
+        auto ast = parse_ok("foo()[0]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+
+        NodeIndex call = ast.arena[index].first_child;
+        REQUIRE(ast.arena[call].type == NodeType::Call);
+        CHECK(ast.arena[call].as_identifier() == "foo");
+    }
+
+    SECTION("method call on indexed value") {
+        auto ast = parse_ok("arr[0].foo()");
+        NodeIndex method = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[method].type == NodeType::MethodCall);
+        CHECK(ast.arena[method].as_identifier() == "foo");
+
+        NodeIndex index = ast.arena[method].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+    }
+
+    SECTION("indexing after method call") {
+        auto ast = parse_ok("foo.bar()[0]");
+        NodeIndex index = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[index].type == NodeType::Index);
+
+        NodeIndex method = ast.arena[index].first_child;
+        REQUIRE(ast.arena[method].type == NodeType::MethodCall);
+    }
+}
+
 TEST_CASE("Parser function definitions", "[parser]") {
     SECTION("simple function") {
         auto ast = parse_ok("fn double(x) -> x * 2");

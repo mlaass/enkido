@@ -898,3 +898,98 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
         CHECK(error_diag->location.line == 4);
     }
 }
+
+TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
+    SECTION("array literal compiles (uses first element)") {
+        auto result = akkado::compile("[1, 2, 3]");
+
+        REQUIRE(result.success);
+        // Should emit first element (1) as PUSH_CONST
+        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 1.0f);
+    }
+
+    SECTION("empty array compiles to zero") {
+        auto result = akkado::compile("[]");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 0.0f);
+    }
+
+    SECTION("len() of array literal") {
+        auto result = akkado::compile("len([1, 2, 3])");
+
+        REQUIRE(result.success);
+        // Should emit 3 as PUSH_CONST
+        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 3.0f);
+    }
+
+    SECTION("len() of empty array") {
+        auto result = akkado::compile("len([])");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 0.0f);
+    }
+
+    SECTION("len() of single element array") {
+        auto result = akkado::compile("len([42])");
+
+        REQUIRE(result.success);
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 1.0f);
+    }
+
+    SECTION("len() in expression") {
+        auto result = akkado::compile("len([1, 2, 3, 4, 5]) + 10");
+
+        REQUIRE(result.success);
+        // Should emit: PUSH_CONST(5), PUSH_CONST(10), ADD
+        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+
+        cedar::Instruction inst[3];
+        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+
+        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst[0]) == 5.0f);
+        CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst[1]) == 10.0f);
+        CHECK(inst[2].opcode == cedar::Opcode::ADD);
+    }
+
+    SECTION("array as function argument") {
+        // For now, this just passes first element
+        auto result = akkado::compile("saw([440, 880, 1320])");
+
+        REQUIRE(result.success);
+        // Should compile using first element (440)
+    }
+
+    SECTION("array indexing compiles") {
+        // For now, indexing just returns the array (first element)
+        auto result = akkado::compile("[1, 2, 3][0]");
+
+        REQUIRE(result.success);
+    }
+}

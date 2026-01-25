@@ -284,6 +284,53 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             return freq_buf;
         }
 
+        case NodeType::ArrayLit: {
+            // Arrays: for now, emit first element as the value
+            // Full array expansion will be implemented in a future phase
+            // This allows basic code to run while we build out array semantics
+            NodeIndex first_elem = n.first_child;
+            if (first_elem == NULL_NODE) {
+                // Empty array - emit 0
+                std::uint16_t out = buffers_.allocate();
+                if (out == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    return BufferAllocator::BUFFER_UNUSED;
+                }
+                cedar::Instruction inst{};
+                inst.opcode = cedar::Opcode::PUSH_CONST;
+                inst.out_buffer = out;
+                inst.inputs[0] = 0xFFFF;
+                inst.inputs[1] = 0xFFFF;
+                inst.inputs[2] = 0xFFFF;
+                inst.inputs[3] = 0xFFFF;
+                encode_const_value(inst, 0.0f);
+                emit(inst);
+                node_buffers_[node] = out;
+                return out;
+            }
+
+            // Visit first element
+            std::uint16_t first_buf = visit(first_elem);
+            node_buffers_[node] = first_buf;
+            return first_buf;
+        }
+
+        case NodeType::Index: {
+            // Array indexing: arr[i]
+            // For now, just return the array (first element) since we don't
+            // have runtime array support yet
+            NodeIndex arr = n.first_child;
+            if (arr == NULL_NODE) {
+                error("E111", "Invalid index expression", n.location);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            std::uint16_t arr_buf = visit(arr);
+            // TODO: Implement actual indexing when we have runtime arrays
+            node_buffers_[node] = arr_buf;
+            return arr_buf;
+        }
+
         case NodeType::Identifier: {
             const std::string& name = n.as_identifier();
             auto sym = symbols_->lookup(name);
@@ -355,6 +402,14 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             // Resolves the type string at compile-time to the appropriate opcode.
             if (func_name == "osc") {
                 return handle_osc_call(node, n);
+            }
+
+            // ================================================================
+            // Special handling for len() - compile-time array length
+            // ================================================================
+            // len(arr) returns the number of elements in an array literal
+            if (func_name == "len") {
+                return handle_len_call(node, n);
             }
 
             const BuiltinInfo* builtin = lookup_builtin(func_name);
@@ -1186,6 +1241,73 @@ std::uint16_t CodeGenerator::handle_osc_call(NodeIndex node, const Node& n) {
     pop_path();
 
     emit(inst);
+    node_buffers_[node] = out;
+    return out;
+}
+
+// Handles len(arr) calls - returns compile-time array length
+std::uint16_t CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
+    // Get the argument
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) {
+        error("E120", "len() requires exactly 1 argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Unwrap Argument node if present
+    const Node& arg_node = ast_->arena[arg];
+    NodeIndex arr_node = arg;
+    if (arg_node.type == NodeType::Argument) {
+        arr_node = arg_node.first_child;
+    }
+
+    if (arr_node == NULL_NODE) {
+        error("E120", "len() requires an array argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& arr = ast_->arena[arr_node];
+
+    // Count elements based on node type
+    std::size_t length = 0;
+
+    if (arr.type == NodeType::ArrayLit) {
+        // Count children of array literal
+        NodeIndex elem = arr.first_child;
+        while (elem != NULL_NODE) {
+            length++;
+            elem = ast_->arena[elem].next_sibling;
+        }
+    } else if (arr.type == NodeType::Identifier) {
+        // Look up the symbol to see if it's a known array
+        // For now, error - we'd need more sophisticated tracking
+        error("E121", "len() currently only supports array literals, not variables",
+              arr.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    } else {
+        error("E122", "len() argument must be an array", arr.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Emit the length as a constant
+    std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    cedar::Instruction inst{};
+    inst.opcode = cedar::Opcode::PUSH_CONST;
+    inst.out_buffer = out;
+    inst.inputs[0] = 0xFFFF;
+    inst.inputs[1] = 0xFFFF;
+    inst.inputs[2] = 0xFFFF;
+    inst.inputs[3] = 0xFFFF;
+
+    float len_value = static_cast<float>(length);
+    encode_const_value(inst, len_value);
+    emit(inst);
+
     node_buffers_[node] = out;
     return out;
 }

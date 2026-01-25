@@ -21,6 +21,7 @@ enum class NodeType : std::uint8_t {
     StringLit,      // "..." or '...' or `...`
     PitchLit,       // 'c4', 'f#3', 'Bb5' (MIDI note)
     ChordLit,       // 'c4:maj', 'a3:min7' (chord)
+    ArrayLit,       // [a, b, c] - array literal
 
     // Identifiers
     Identifier,     // Variable or function name
@@ -30,6 +31,7 @@ enum class NodeType : std::uint8_t {
     BinaryOp,       // Desugared to Call (add, sub, mul, div, pow)
     Call,           // Function call: f(a, b, c)
     MethodCall,     // Method call: x.f(a, b)
+    Index,          // Array indexing: arr[i]
     Pipe,           // a |> b (let-binding rewrite)
     Closure,        // (params) -> body
 
@@ -71,11 +73,13 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::StringLit:   return "StringLit";
         case NodeType::PitchLit:    return "PitchLit";
         case NodeType::ChordLit:    return "ChordLit";
+        case NodeType::ArrayLit:    return "ArrayLit";
         case NodeType::Identifier:  return "Identifier";
         case NodeType::Hole:        return "Hole";
         case NodeType::BinaryOp:    return "BinaryOp";
         case NodeType::Call:        return "Call";
         case NodeType::MethodCall:  return "MethodCall";
+        case NodeType::Index:       return "Index";
         case NodeType::Pipe:        return "Pipe";
         case NodeType::Closure:     return "Closure";
         case NodeType::Argument:    return "Argument";

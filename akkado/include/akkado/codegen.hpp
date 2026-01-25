@@ -113,6 +113,13 @@ private:
     /// @return Output buffer index
     std::uint16_t handle_osc_call(NodeIndex node, const Node& n);
 
+    /// Handle len() function calls - compile-time array length
+    /// Returns the number of elements in an array literal.
+    /// @param node The Call node
+    /// @param n The Node reference
+    /// @return Output buffer index with constant length value
+    std::uint16_t handle_len_call(NodeIndex node, const Node& n);
+
     /// Handle user-defined function calls - inline expansion
     /// @param node The Call node
     /// @param n The Node reference

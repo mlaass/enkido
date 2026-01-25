@@ -236,16 +236,47 @@ NodeIndex Parser::parse_expression() {
     return parse_precedence(Precedence::Pipe);
 }
 
+// Check if a node can be followed by an index operation `[...]`.
+// Returns false for expression types that shouldn't be indexed (match, blocks).
+// This prevents `match(...){...}` at end of function body from consuming
+// subsequent array literals as index operations.
+bool Parser::is_indexable(NodeIndex node) const {
+    if (node == NULL_NODE) return false;
+    const Node& n = arena_[node];
+    switch (n.type) {
+        case NodeType::Identifier:
+        case NodeType::Call:
+        case NodeType::MethodCall:
+        case NodeType::Index:
+        case NodeType::ArrayLit:
+        case NodeType::StringLit:  // Allow "str"[0] for string indexing
+            return true;
+        default:
+            return false;
+    }
+}
+
 NodeIndex Parser::parse_precedence(Precedence prec) {
     NodeIndex left = parse_prefix();
     if (left == NULL_NODE) {
         return NULL_NODE;
     }
 
-    // Handle method calls (highest precedence, can chain)
-    while (check(TokenType::Dot) && prec <= Precedence::Method) {
-        advance();  // consume '.'
-        left = parse_method_call(left);
+    // Handle postfix operations (highest precedence, can chain)
+    // Method calls (.method()) work at any precedence level.
+    // Indexing ([expr]) only after "indexable" expressions to avoid
+    // consuming array literals at statement level after match/block expressions.
+    while (prec <= Precedence::Method) {
+        if (check(TokenType::Dot)) {
+            advance();  // consume '.'
+            left = parse_method_call(left);
+        } else if (check(TokenType::LBracket) && is_indexable(left)) {
+            // Only allow indexing after identifiers, calls, other indexes, arrays, etc.
+            // Not after match expressions or blocks
+            left = parse_index(left);
+        } else {
+            break;
+        }
     }
 
     // Handle binary operators
@@ -262,10 +293,16 @@ NodeIndex Parser::parse_precedence(Precedence prec) {
         Token op = advance();
         left = parse_infix(left, op);
 
-        // After binary op, check for method calls again
-        while (check(TokenType::Dot) && prec <= Precedence::Method) {
-            advance();  // consume '.'
-            left = parse_method_call(left);
+        // After binary op, check for postfix ops again
+        while (prec <= Precedence::Method) {
+            if (check(TokenType::Dot)) {
+                advance();  // consume '.'
+                left = parse_method_call(left);
+            } else if (check(TokenType::LBracket) && is_indexable(left)) {
+                left = parse_index(left);
+            } else {
+                break;
+            }
         }
     }
 
@@ -291,6 +328,8 @@ NodeIndex Parser::parse_prefix() {
             return parse_hole();
         case TokenType::LParen:
             return parse_grouping();
+        case TokenType::LBracket:
+            return parse_array();
         case TokenType::Pat:
         case TokenType::Seq:
         case TokenType::Timeline:
@@ -364,6 +403,28 @@ NodeIndex Parser::parse_string() {
 NodeIndex Parser::parse_hole() {
     Token tok = advance();
     return make_node(NodeType::Hole, tok);
+}
+
+NodeIndex Parser::parse_array() {
+    Token bracket = advance();  // consume '['
+    NodeIndex node = make_node(NodeType::ArrayLit, bracket);
+
+    // Empty array
+    if (check(TokenType::RBracket)) {
+        advance();  // consume ']'
+        return node;
+    }
+
+    // Parse elements
+    do {
+        NodeIndex elem = parse_expression();
+        if (elem != NULL_NODE) {
+            arena_.add_child(node, elem);
+        }
+    } while (match(TokenType::Comma));
+
+    consume(TokenType::RBracket, "Expected ']' after array elements");
+    return node;
 }
 
 NodeIndex Parser::parse_identifier_or_call() {
@@ -666,6 +727,25 @@ NodeIndex Parser::parse_method_call(NodeIndex left) {
     }
 
     consume(TokenType::RParen, "Expected ')' after arguments");
+
+    return node;
+}
+
+// Index parsing (for arr[i] syntax)
+NodeIndex Parser::parse_index(NodeIndex left) {
+    Token bracket = advance();  // consume '['
+    NodeIndex node = make_node(NodeType::Index, bracket);
+
+    // Add the array/receiver as first child
+    arena_.add_child(node, left);
+
+    // Parse the index expression
+    NodeIndex index_expr = parse_expression();
+    if (index_expr != NULL_NODE) {
+        arena_.add_child(node, index_expr);
+    }
+
+    consume(TokenType::RBracket, "Expected ']' after index");
 
     return node;
 }

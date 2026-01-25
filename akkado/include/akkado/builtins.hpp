@@ -376,6 +376,11 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"timeline", {cedar::Opcode::TIMELINE, 0, 0, true,
                  {"", "", "", "", "", ""},
                  {NAN, NAN, NAN}}},   // Breakpoint automation
+
+    // Compile-time array functions (handled specially by codegen)
+    {"len",     {cedar::Opcode::PUSH_CONST, 1, 0, false,
+                 {"arr", "", "", "", "", ""},
+                 {NAN, NAN, NAN}}},   // Array length (compile-time)
 };
 
 /// Alias mappings for convenience syntax

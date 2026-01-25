@@ -82,6 +82,7 @@ private:
     NodeIndex parse_string();
     NodeIndex parse_identifier_or_call();
     NodeIndex parse_hole();
+    NodeIndex parse_array();
     NodeIndex parse_grouping();
     NodeIndex parse_closure();
     NodeIndex parse_mini_literal();
@@ -91,6 +92,7 @@ private:
     NodeIndex parse_binary(NodeIndex left, const Token& op);
     NodeIndex parse_pipe(NodeIndex left);
     NodeIndex parse_method_call(NodeIndex left);
+    NodeIndex parse_index(NodeIndex left);
 
     // Function call helpers
     NodeIndex parse_call(const Token& name_token);
@@ -114,6 +116,7 @@ private:
     // Precedence helpers
     [[nodiscard]] Precedence get_precedence(TokenType type) const;
     [[nodiscard]] bool is_infix_operator(TokenType type) const;
+    [[nodiscard]] bool is_indexable(NodeIndex node) const;
 
     // Make nodes
     NodeIndex make_node(NodeType type);
