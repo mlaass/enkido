@@ -161,6 +161,18 @@ chord_type    = "maj" | "min" | "dom7" | "maj7" | "min7" | "dim" | "aug" | "sus2
 
 Examples: `'c4:maj'`, `'a3:min7'`
 
+**Array Literals:**
+```ebnf
+array_literal = "[" [ pipe_expr { "," pipe_expr } ] "]" ;
+```
+
+Examples:
+- `[]` — empty array
+- `[1, 2, 3]` — numeric array
+- `[c4, e4, g4]` — pitch array (variables)
+- `[220, 330, 440]` — frequency array
+- `[osc("sin", 220), osc("saw", 330)]` — expression array
+
 ### 2.4 Operators and Delimiters
 
 **Operators** (in precedence order, highest first):
@@ -224,6 +236,7 @@ atom = number
      | string
      | pitch_literal
      | chord_literal
+     | array_literal
      | identifier
      | hole
      | function_call
@@ -270,6 +283,16 @@ Examples:
 p.map(hz -> osc("saw", hz))
 signal.map(f).filter(g).take(4)
 %.map(x -> x * 0.5)
+```
+
+**Note:** Method call syntax is parsed but not yet fully implemented in the compiler. Use function syntax instead:
+
+```
+// Method syntax (parsed but not implemented):
+// [1, 2, 3].map(x -> x * 2)
+
+// Use function syntax instead:
+map([1, 2, 3], x -> x * 2)
 ```
 
 ### 3.6 Closures
@@ -319,7 +342,7 @@ mini_literal = pattern_kw "(" string [ "," closure ] ")" ;
 pattern_kw   = "pat" | "seq" | "timeline" | "note" ;
 ```
 
-The string contains mini-notation (see Section 5). The optional closure receives event data.
+The string contains mini-notation (see Section 9). The optional closure receives event data.
 
 Examples:
 ```
@@ -418,11 +441,105 @@ filtered(noise(), cut: 500)   // named argument
 voice(440) |> reverb(%)       // in a pipe chain
 ```
 
-## 6. Match Expressions
+## 6. Arrays
+
+Arrays are ordered collections of values that are expanded at compile-time. They enable polyphonic synthesis and parallel signal processing without runtime overhead.
+
+### 6.1 Array Literals
+
+```ebnf
+array_literal = "[" [ pipe_expr { "," pipe_expr } ] "]" ;
+```
+
+Arrays can contain any expression type:
+
+```
+[]                                    // empty array
+[1, 2, 3]                             // numeric array
+[220, 330, 440]                       // frequency array
+[osc("sin", 220), osc("saw", 330)]    // expression array
+[[1, 2], [3, 4]]                      // nested arrays
+```
+
+### 6.2 Array Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `map` | `map(array, fn)` | Apply unary function to each element |
+| `sum` | `sum(array)` | Sum all elements |
+| `fold` | `fold(array, fn, init)` | Reduce with binary function and initial value |
+| `zipWith` | `zipWith(a, b, fn)` | Combine two arrays element-wise with binary function |
+| `zip` | `zip(a, b)` | Interleave two arrays: `[a0, b0, a1, b1, ...]` |
+| `take` | `take(n, array)` | First n elements (n must be literal) |
+| `drop` | `drop(n, array)` | Remove first n elements (n must be literal) |
+| `reverse` | `reverse(array)` | Reverse order |
+| `range` | `range(start, end)` | Generate `[start, start+1, ..., end-1]` (literals only) |
+| `repeat` | `repeat(value, n)` | Repeat value n times (n must be literal) |
+| `len` | `len(array)` | Array length (compile-time only) |
+| `chord` | `chord(symbol)` | Generate array of MIDI notes from chord symbol |
+
+Examples:
+
+```
+map([220, 330, 440], f -> saw(f))           // three parallel oscillators
+sum([1, 2, 3])                              // 6
+fold([1, 2, 3], (a, b) -> a + b, 0)         // 6
+zipWith([1, 2], [3, 4], (a, b) -> a * b)    // [3, 8]
+zip([1, 2], [3, 4])                         // [1, 3, 2, 4]
+take(2, [1, 2, 3, 4])                       // [1, 2]
+drop(2, [1, 2, 3, 4])                       // [3, 4]
+reverse([1, 2, 3])                          // [3, 2, 1]
+range(0, 4)                                 // [0, 1, 2, 3]
+repeat(440, 3)                              // [440, 440, 440]
+len([1, 2, 3])                              // 3
+chord("Am")                                 // MIDI notes for A minor chord
+```
+
+### 6.3 Compile-Time Expansion
+
+Arrays are expanded at compile-time into parallel DAG nodes. There is no runtime dynamic indexing — all array operations must be resolvable at compile time.
+
+This enables efficient polyphonic synthesis:
+
+```
+// Three parallel oscillators, summed together
+[220, 330, 440] |> map(%, f -> saw(f)) |> sum(%) |> out(%, %)
+```
+
+The compiler expands this into:
+
+```
+// Conceptually equivalent to:
+temp1 = saw(220)
+temp2 = saw(330)
+temp3 = saw(440)
+add(temp1, add(temp2, temp3)) |> out(%, %)
+```
+
+**Constraints:**
+- `take` and `drop` require literal `n` values
+- `range` requires literal start and end values
+- `repeat` requires literal `n` value
+- `len` returns a compile-time constant
+
+### 6.4 Polyphony Pattern
+
+A common pattern for polyphonic synthesis:
+
+```
+fn poly(freqs, voice_fn) -> {
+    sum(map(freqs, voice_fn)) / len(freqs)
+}
+
+// Usage:
+poly([220, 330, 440], f -> saw(f) |> lp(%, 1000)) |> out(%, %)
+```
+
+## 7. Match Expressions
 
 Match expressions provide pattern matching and conditional branching. Akkado supports two forms: **scrutinee matching** and **guard-only conditionals**.
 
-### 6.1 Scrutinee Form
+### 7.1 Scrutinee Form
 
 ```ebnf
 match_expr = "match" "(" expr ")" "{" { match_arm } "}" ;
@@ -448,7 +565,7 @@ fn waveform(type) -> match(type) {
 - Boolean literals: `true`, `false`
 - Wildcard: `_` (matches anything, must be last)
 
-### 6.2 Guards
+### 7.2 Guards
 
 Guards add conditions to pattern arms using `&&`:
 
@@ -466,7 +583,7 @@ fn velocity_voice(note, vel) -> match(note) {
 - Same pattern can appear multiple times with different guards
 - Guards are evaluated at runtime
 
-### 6.3 Guard-Only Form
+### 7.3 Guard-Only Form
 
 When no scrutinee is needed, use the guard-only form:
 
@@ -487,7 +604,7 @@ match {
 }
 ```
 
-### 6.4 Compile-Time vs Runtime Matching
+### 7.4 Compile-Time vs Runtime Matching
 
 **Compile-time matching** (only winning branch emitted):
 - Scrutinee is a compile-time constant (literal or parameter with literal argument)
@@ -517,7 +634,7 @@ match(gate) {
 // Emits all branches + nested select() calls
 ```
 
-### 6.5 Missing Wildcard Warning
+### 7.5 Missing Wildcard Warning
 
 If the `_` arm is missing in a runtime match, the compiler emits a warning and defaults to `0.0`:
 
@@ -525,7 +642,7 @@ If the `_` arm is missing in a runtime match, the compiler emits a warning and d
 match { x > 0.5: 1 }  // Warning: W001 - Missing default '_' arm
 ```
 
-## 7. Operator Desugaring
+## 8. Operator Desugaring
 
 The parser produces an AST where all binary operators become function calls:
 
@@ -556,19 +673,19 @@ The parser produces an AST where all binary operators become function calls:
 - Works with audio-rate signals for sample-by-sample conditional processing
 - Use `select(cond, a, b)` for ternary conditional: returns `a` if `cond != 0`, else `b`
 
-## 8. Mini-Notation Grammar
+## 9. Mini-Notation Grammar
 
 Mini-notation appears inside pattern strings and has its own sub-grammar.
 
 
-### 8.1 Structure
+### 9.1 Structure
 
 ```ebnf
 mini_content = { mini_element } ;
 mini_element = mini_atom [ modifier ] ;
 ```
 
-### 8.2 Atoms
+### 9.2 Atoms
 
 ```ebnf
 mini_atom = pitch_token
@@ -592,7 +709,7 @@ rest         = "~" | "_" ;
 
 Examples: `c`, `c4`, `f#`, `Bb3`
 
-### 8.3 Groupings
+### 9.3 Groupings
 
 ```ebnf
 group      = "[" mini_content "]" ;
@@ -604,7 +721,7 @@ polyrhythm = "[" mini_atom { "," mini_atom } "]" ;
 - `<a b c>` — sequence: one event per cycle, rotating
 - `[a, b, c]` — polyrhythm: all events play simultaneously
 
-### 8.4 Modifiers
+### 9.4 Modifiers
 
 ```ebnf
 modifier = speed_mod | length_mod | weight_mod | repeat_mod | chance_mod ;
@@ -625,7 +742,7 @@ chance_mod = "?" [ number ] ;
 | `!n` | Repeat n times | `c4!3` |
 | `?n` | Chance (0-1) | `c4?0.5` |
 
-### 8.5 Euclidean Rhythms
+### 9.5 Euclidean Rhythms
 
 ```ebnf
 euclidean = mini_atom "(" number "," number [ "," number ] ")" ;
@@ -636,7 +753,7 @@ euclidean = mini_atom "(" number "," number [ "," number ] ")" ;
 
 Example: `bd(3,8)` — 3 kicks over 8 steps
 
-### 8.6 Choice
+### 9.6 Choice
 
 ```ebnf
 choice = mini_atom { "|" mini_atom } ;
@@ -644,24 +761,24 @@ choice = mini_atom { "|" mini_atom } ;
 
 Random selection each cycle: `bd | sd | hh`
 
-## 9. Clock System
+## 10. Clock System
 
-### 9.1 Timing
+### 10.1 Timing
 
 - **BPM:** Beats per minute (set via `bpm = 120`)
 - **Cycle:** 1 cycle = 4 beats by default
 - **Cycle Duration:** `T = (60 / BPM) * 4` seconds
 
-### 9.2 Built-in Timing Signals
+### 10.2 Built-in Timing Signals
 
 | Identifier | Description |
 |------------|-------------|
 | `co` | Cycle offset: 0→1 ramp over one cycle |
 | `beat(n)` | Phasor completing every n beats |
 
-## 10. Chord Expansion
+## 11. Chord Expansion
 
-Chord literals and inline chords expand to frequency arrays:
+Chord literals and inline chords expand to frequency arrays (see Section 6 for array operations):
 
 ```
 'c4:maj'   -> [261.6, 329.6, 392.0]  // C, E, G in Hz
@@ -671,12 +788,13 @@ Chord literals and inline chords expand to frequency arrays:
 When passed to a UGen expecting a scalar:
 1. The UGen is duplicated for each frequency
 2. Outputs are summed by default
-3. Use `.map()` for custom per-voice processing:
+3. Use `map()` for custom per-voice processing:
    ```
-   p.map(hz -> osc("saw", hz) |> lp(%, 1000))
+   freqs = 'c4:maj'
+   map(freqs, hz -> osc("saw", hz) |> lp(%, 1000))
    ```
 
-## 11. Complete Example
+## 12. Complete Example
 
 ```
 bpm = 120
@@ -692,7 +810,7 @@ pad = seq("c3e3g3b3:4 g3b3d4:4 a3c4e4:4 f3a3c4:4", (t, v, p) -> {
 
 **Note:** The example above uses `osc("saw", hz)` for oscillators. The `osc()` function is the standard interface for all waveform types: `osc("sin", freq)`, `osc("saw", freq)`, `osc("tri", freq)`, and `osc("sqr", freq)`. Note that `sin(x)` is a pure trigonometric math function.
 
-## 12. Grammar Summary (Complete EBNF)
+## 13. Grammar Summary (Complete EBNF)
 
 ```ebnf
 (* Program *)
@@ -719,9 +837,10 @@ method_expr = primary { "." identifier "(" [ arg_list ] ")" } ;
 primary     = atom | "(" pipe_expr ")" ;
 
 (* Atoms *)
-atom = number | bool_literal | string | pitch_literal | chord_literal
+atom = number | bool_literal | string | pitch_literal | chord_literal | array_literal
      | identifier | hole | function_call | closure | mini_literal | match_expr ;
 hole = "%" ;
+array_literal = "[" [ pipe_expr { "," pipe_expr } ] "]" ;
 
 (* Functions and Methods *)
 function_call = identifier "(" [ arg_list ] ")" ;
@@ -754,11 +873,11 @@ letter       = "a"..."z" | "A"..."Z" | "_" ;
 digit        = "0"..."9" ;
 ```
 
-## 13. Compiler Implementation Notes
+## 14. Compiler Implementation Notes
 
 This section provides guidance for implementing the Akkado compiler. See `docs/initial_prd.md` for the full technical specification.
 
-### 13.1 Lexer: String Interning
+### 14.1 Lexer: String Interning
 
 Use **string interning** to convert identifiers and keywords into unique `uint32_t` IDs. This allows the parser to perform integer comparisons instead of string comparisons.
 
@@ -769,7 +888,7 @@ Use **string interning** to convert identifiers and keywords into unique `uint32
 
 Use **FNV-1a** hashing for fast, non-cryptographic identifier hashing.
 
-### 13.2 Parser: Data-Oriented AST
+### 14.2 Parser: Data-Oriented AST
 
 Store the AST in a **contiguous arena** (`std::vector<Node>`) rather than heap-allocating individual nodes:
 
@@ -787,7 +906,7 @@ struct Node {
 };
 ```
 
-### 13.3 Semantic ID Path Tracking (Hot-Swap)
+### 14.3 Semantic ID Path Tracking (Hot-Swap)
 
 For live-coding state preservation, maintain a **path stack** during AST construction. Each node receives a stable **semantic ID** derived from its path:
 
@@ -800,7 +919,7 @@ When code is updated:
 2. Re-bind matching IDs to existing state in the StatePool
 3. Apply micro-crossfade (5-10ms) for structural changes
 
-### 13.4 DAG Construction
+### 14.4 DAG Construction
 
 After parsing, flatten the AST into a **Directed Acyclic Graph** representing signal flow:
 
@@ -808,7 +927,7 @@ After parsing, flatten the AST into a **Directed Acyclic Graph** representing si
 2. All buffer dependencies must be satisfied before a node executes
 3. Result: linear array of bytecode instructions
 
-### 13.5 Bytecode Format
+### 14.5 Bytecode Format
 
 Each instruction is **128 bits (16 bytes)** for fast decoding:
 
@@ -818,7 +937,7 @@ Each instruction is **128 bits (16 bytes)** for fast decoding:
 
 See `cedar/include/cedar/vm/instruction.hpp` for the current implementation.
 
-### 13.6 Threading Model
+### 14.6 Threading Model
 
 - **Triple buffer**: Compiler writes to "Next", audio thread reads from "Current"
 - **Atomic pointer swap** at block boundaries
