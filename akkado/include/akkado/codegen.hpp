@@ -95,23 +95,9 @@ private:
     /// FM Detection: Automatically upgrade oscillators to 4x when FM is detected
     /// @param freq_buffer The buffer index containing the frequency input
     /// @return true if the frequency input traces back to an audio-rate source
+    /// Note: is_audio_rate_producer, is_upgradeable_oscillator, upgrade_for_fm
+    /// are inline helpers in akkado/codegen/fm_detection.hpp
     [[nodiscard]] bool is_fm_modulated(std::uint16_t freq_buffer) const;
-
-    /// Check if opcode produces an audio-rate signal (oscillators, noise)
-    [[nodiscard]] static bool is_audio_rate_producer(cedar::Opcode op);
-
-    /// Check if opcode is a basic oscillator that can be upgraded to 4x
-    [[nodiscard]] static bool is_upgradeable_oscillator(cedar::Opcode op);
-
-    /// Upgrade basic oscillator opcode to 4x oversampled variant
-    [[nodiscard]] static cedar::Opcode upgrade_for_fm(cedar::Opcode op);
-
-    /// Handle osc() function calls - Strudel-style oscillator selection
-    /// Resolves string type parameter at compile time to the appropriate opcode.
-    /// @param node The Call node
-    /// @param n The Node reference
-    /// @return Output buffer index
-    std::uint16_t handle_osc_call(NodeIndex node, const Node& n);
 
     /// Handle len() function calls - compile-time array length
     /// Returns the number of elements in an array literal.
@@ -127,6 +113,18 @@ private:
     /// @return Output buffer index
     std::uint16_t handle_user_function_call(NodeIndex node, const Node& n,
                                             const UserFunctionInfo& func);
+
+    /// Handle Closure nodes - allocate buffers for parameters and generate body
+    /// @param node The Closure node
+    /// @param n The Node reference
+    /// @return Output buffer index
+    std::uint16_t handle_closure(NodeIndex node, const Node& n);
+
+    /// Handle MatchExpr nodes - compile-time match resolution
+    /// @param node The MatchExpr node
+    /// @param n The Node reference
+    /// @return Output buffer index
+    std::uint16_t handle_match_expr(NodeIndex node, const Node& n);
 
     /// Handle pattern variable reference
     /// Emits SEQ_STEP code for the stored pattern.

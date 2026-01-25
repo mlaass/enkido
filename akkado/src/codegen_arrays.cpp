@@ -625,4 +625,76 @@ std::uint16_t CodeGenerator::handle_repeat_call(NodeIndex node, const Node& n) {
     return first_buf;
 }
 
+// Handles len(arr) calls - returns compile-time array length
+std::uint16_t CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
+    // Get the argument
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) {
+        error("E120", "len() requires exactly 1 argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Unwrap Argument node if present
+    const Node& arg_node = ast_->arena[arg];
+    NodeIndex arr_node = arg;
+    if (arg_node.type == NodeType::Argument) {
+        arr_node = arg_node.first_child;
+    }
+
+    if (arr_node == NULL_NODE) {
+        error("E120", "len() requires an array argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& arr = ast_->arena[arr_node];
+
+    // Count elements based on node type
+    std::size_t length = 0;
+
+    if (arr.type == NodeType::ArrayLit) {
+        // Count children of array literal
+        NodeIndex elem = arr.first_child;
+        while (elem != NULL_NODE) {
+            length++;
+            elem = ast_->arena[elem].next_sibling;
+        }
+    } else if (arr.type == NodeType::Identifier) {
+        // Look up the symbol to see if it's a known array
+        const std::string& name = arr.as_identifier();
+        auto sym = symbols_->lookup(name);
+        if (sym && sym->kind == SymbolKind::Array) {
+            length = sym->array.element_count;
+        } else {
+            error("E141", "len() requires an array, but '" + name + "' is not an array",
+                  arr.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+    } else {
+        error("E122", "len() argument must be an array", arr.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Emit the length as a constant
+    std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    cedar::Instruction inst{};
+    inst.opcode = cedar::Opcode::PUSH_CONST;
+    inst.out_buffer = out;
+    inst.inputs[0] = 0xFFFF;
+    inst.inputs[1] = 0xFFFF;
+    inst.inputs[2] = 0xFFFF;
+    inst.inputs[3] = 0xFFFF;
+
+    float len_value = static_cast<float>(length);
+    encode_const_value(inst, len_value);
+    emit(inst);
+
+    node_buffers_[node] = out;
+    return out;
+}
+
 } // namespace akkado
