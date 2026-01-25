@@ -28,7 +28,7 @@ digit      = "0"..."9" ;
 
 **Reserved Keywords:**
 ```
-true  false  post  pat  seq  timeline  note
+true  false  post  pat  seq  timeline  note  fn  match
 ```
 
 **Built-in Functions** (resolved at semantic analysis, not parsing):
@@ -80,6 +80,15 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 | `min`, `max` | `f(a, b)` | Min/max of two values |
 | `clamp` | `clamp(x, lo, hi)` | Clamp to range |
 | `wrap` | `wrap(x, lo, hi)` | Wrap to range |
+| **Comparison** | | |
+| `gt`, `lt` | `gt(a, b)`, `lt(a, b)` | Greater than, less than (from `>`, `<`) |
+| `gte`, `lte` | `gte(a, b)`, `lte(a, b)` | Greater/less or equal (from `>=`, `<=`) |
+| `eq`, `neq` | `eq(a, b)`, `neq(a, b)` | Equal, not equal (from `==`, `!=`) |
+| **Logic** | | |
+| `band`, `bor` | `band(a, b)`, `bor(a, b)` | Logical AND, OR (from `&&`, `\|\|`) |
+| `bnot` | `bnot(a)` | Logical NOT (from `!`) |
+| **Conditionals** | | |
+| `select` | `select(cond, a, b)` | Ternary: if cond != 0 then a else b |
 | **Trigonometric** | | |
 | `sin`, `cos`, `tan` | `f(x)` | Trig functions (radians) |
 | `asin`, `acos`, `atan` | `f(x)` | Inverse trig functions |
@@ -158,14 +167,19 @@ Examples: `'c4:maj'`, `'a3:min7'`
 | Token | Name | Desugars To |
 |-------|------|-------------|
 | `.` | Method call | (special syntax) |
+| `!` | Logical NOT | `bnot(a)` |
 | `^` | Power | `pow(a, b)` |
 | `*` `/` | Multiply, Divide | `mul(a, b)`, `div(a, b)` |
 | `+` `-` | Add, Subtract | `add(a, b)`, `sub(a, b)` |
-| `|>` | Pipe | (signal flow) |
+| `>` `<` `>=` `<=` | Comparison | `gt(a, b)`, `lt(a, b)`, `gte(a, b)`, `lte(a, b)` |
+| `==` `!=` | Equality | `eq(a, b)`, `neq(a, b)` |
+| `&&` | Logical AND | `band(a, b)` |
+| `\|\|` | Logical OR | `bor(a, b)` |
+| `\|>` | Pipe | (signal flow) |
 
 **Other Tokens:**
 ```
-(  )  [  ]  {  }  ,  :  %  ->  =
+(  )  [  ]  {  }  ,  :  %  ->  =  _
 ```
 
 ## 3. Grammar
@@ -173,10 +187,11 @@ Examples: `'c4:maj'`, `'a3:min7'`
 ### 3.1 Program Structure
 
 ```ebnf
-program    = { statement } ;
-statement  = assignment | post_stmt | pipe_expr ;
-assignment = identifier "=" pipe_expr ;
-post_stmt  = "post" "(" closure ")" ;
+program      = { statement } ;
+statement    = assignment | function_def | post_stmt | pipe_expr ;
+assignment   = identifier "=" pipe_expr ;
+function_def = "fn" identifier "(" [ param_list ] ")" "->" function_body ;
+post_stmt    = "post" "(" closure ")" ;
 ```
 
 Statements are separated by newlines or simply sequenced. No semicolons.
@@ -186,10 +201,15 @@ Statements are separated by newlines or simply sequenced. No semicolons.
 From lowest to highest precedence:
 
 ```ebnf
-pipe_expr   = add_expr { "|>" add_expr } ;
+pipe_expr   = or_expr { "|>" or_expr } ;
+or_expr     = and_expr { "||" and_expr } ;
+and_expr    = eq_expr { "&&" eq_expr } ;
+eq_expr     = cmp_expr { ( "==" | "!=" ) cmp_expr } ;
+cmp_expr    = add_expr { ( ">" | "<" | ">=" | "<=" ) add_expr } ;
 add_expr    = mul_expr { ( "+" | "-" ) mul_expr } ;
 mul_expr    = pow_expr { ( "*" | "/" ) pow_expr } ;
-pow_expr    = method_expr { "^" method_expr } ;
+pow_expr    = unary_expr { "^" unary_expr } ;
+unary_expr  = [ "!" ] method_expr ;
 method_expr = primary { "." identifier "(" [ arg_list ] ")" } ;
 primary     = atom | "(" pipe_expr ")" ;
 ```
@@ -208,7 +228,8 @@ atom = number
      | hole
      | function_call
      | closure
-     | mini_literal ;
+     | mini_literal
+     | match_expr ;
 
 hole = "%" ;
 ```
@@ -358,7 +379,153 @@ p.map(hz -> osc("saw", hz) |> lp(%, 1000))
 ((x) -> x * 2) |> apply(%, 42)
 ```
 
-## 5. Operator Desugaring
+## 5. User-Defined Functions
+
+### 5.1 Function Definition
+
+```ebnf
+function_def = "fn" identifier "(" [ param_list ] ")" "->" function_body ;
+param_list   = param { "," param } ;
+param        = identifier [ "=" literal ] ;
+function_body = block | pipe_expr ;
+```
+
+User-defined functions use the `fn` keyword:
+
+```
+fn double(x) -> x * 2
+fn filtered(sig, cut=1000) -> lp(sig, cut)
+fn voice(freq) -> {
+    osc = saw(freq)
+    lp(osc, 800)
+}
+```
+
+**Rules:**
+- Functions must be defined before use (no forward declarations)
+- Parameters can have default values (numeric literals only)
+- Required parameters must precede optional ones
+- Functions cannot capture outer scope variables (no closures over state)
+- The body follows the same rules as closure bodies
+
+### 5.2 Function Calls
+
+User-defined functions are called like built-in functions:
+
+```
+double(21)                    // returns 42
+filtered(noise(), cut: 500)   // named argument
+voice(440) |> reverb(%)       // in a pipe chain
+```
+
+## 6. Match Expressions
+
+Match expressions provide pattern matching and conditional branching. Akkado supports two forms: **scrutinee matching** and **guard-only conditionals**.
+
+### 6.1 Scrutinee Form
+
+```ebnf
+match_expr = "match" "(" expr ")" "{" { match_arm } "}" ;
+match_arm  = pattern [ "&&" guard ] ":" body "," ;
+pattern    = literal | "_" ;
+guard      = expr ;
+```
+
+Match against a value with literal patterns:
+
+```
+fn waveform(type) -> match(type) {
+    "sin": osc("sin", 440),
+    "saw": osc("saw", 440),
+    "tri": osc("tri", 440),
+    _: osc("sqr", 440)
+}
+```
+
+**Pattern types:**
+- String literals: `"sin"`, `"kick"`
+- Number literals: `0`, `1`, `3.14`
+- Boolean literals: `true`, `false`
+- Wildcard: `_` (matches anything, must be last)
+
+### 6.2 Guards
+
+Guards add conditions to pattern arms using `&&`:
+
+```
+fn velocity_voice(note, vel) -> match(note) {
+    'c4' && vel > 0.8: loud_osc('c4'),
+    'c4' && vel > 0.5: medium_osc('c4'),
+    'c4': quiet_osc('c4'),
+    _: osc("sin", mtof(note)) * vel
+}
+```
+
+**Semantics:**
+- Pattern is checked first, then guard expression
+- Same pattern can appear multiple times with different guards
+- Guards are evaluated at runtime
+
+### 6.3 Guard-Only Form
+
+When no scrutinee is needed, use the guard-only form:
+
+```ebnf
+match_expr = "match" "{" { guard_arm } "}" ;
+guard_arm  = guard ":" body "," | "_" ":" body "," ;
+```
+
+This is like a multi-way if-else:
+
+```
+x = saw(1)
+match {
+    x > 0.8: loud(),
+    x > 0.5: medium(),
+    x > 0.2: quiet(),
+    _: silent()
+}
+```
+
+### 6.4 Compile-Time vs Runtime Matching
+
+**Compile-time matching** (only winning branch emitted):
+- Scrutinee is a compile-time constant (literal or parameter with literal argument)
+- All patterns are literals
+- All guards (if present) are compile-time constants
+
+```
+fn pick(mode) -> match(mode) {
+    "a": 1,
+    "b": 2,
+    _: 0
+}
+pick("a")  // Only emits: 1
+```
+
+**Runtime matching** (all branches computed, `select()` chain emitted):
+- Scrutinee is a signal or runtime value
+- Guards reference runtime values
+
+```
+gate = saw(1)
+match(gate) {
+    0: silence(),
+    1: osc("sin", 440),
+    _: osc("saw", 220)
+}
+// Emits all branches + nested select() calls
+```
+
+### 6.5 Missing Wildcard Warning
+
+If the `_` arm is missing in a runtime match, the compiler emits a warning and defaults to `0.0`:
+
+```
+match { x > 0.5: 1 }  // Warning: W001 - Missing default '_' arm
+```
+
+## 7. Operator Desugaring
 
 The parser produces an AST where all binary operators become function calls:
 
@@ -369,25 +536,39 @@ The parser produces an AST where all binary operators become function calls:
 | `a * b` | `mul(a, b)` |
 | `a / b` | `div(a, b)` |
 | `a ^ b` | `pow(a, b)` |
+| `a > b` | `gt(a, b)` |
+| `a < b` | `lt(a, b)` |
+| `a >= b` | `gte(a, b)` |
+| `a <= b` | `lte(a, b)` |
+| `a == b` | `eq(a, b)` |
+| `a != b` | `neq(a, b)` |
+| `a && b` | `band(a, b)` |
+| `a \|\| b` | `bor(a, b)` |
+| `!a` | `bnot(a)` |
 
 **Negation:** There is no unary minus operator. Use these patterns:
 - `x * -1` — lexer produces `-1` as a single negative number literal
 - `x * neg(y)` — explicit negation function
 - `neg(x)` desugars to `sub(0, x)` in semantic analysis
 
-## 6. Mini-Notation Grammar
+**Logical Operators:**
+- All comparison/logic operators return `1.0` for true, `0.0` for false
+- Works with audio-rate signals for sample-by-sample conditional processing
+- Use `select(cond, a, b)` for ternary conditional: returns `a` if `cond != 0`, else `b`
+
+## 8. Mini-Notation Grammar
 
 Mini-notation appears inside pattern strings and has its own sub-grammar.
 
 
-### 6.1 Structure
+### 8.1 Structure
 
 ```ebnf
 mini_content = { mini_element } ;
 mini_element = mini_atom [ modifier ] ;
 ```
 
-### 6.2 Atoms
+### 8.2 Atoms
 
 ```ebnf
 mini_atom = pitch_token
@@ -411,7 +592,7 @@ rest         = "~" | "_" ;
 
 Examples: `c`, `c4`, `f#`, `Bb3`
 
-### 6.3 Groupings
+### 8.3 Groupings
 
 ```ebnf
 group      = "[" mini_content "]" ;
@@ -423,7 +604,7 @@ polyrhythm = "[" mini_atom { "," mini_atom } "]" ;
 - `<a b c>` — sequence: one event per cycle, rotating
 - `[a, b, c]` — polyrhythm: all events play simultaneously
 
-### 6.4 Modifiers
+### 8.4 Modifiers
 
 ```ebnf
 modifier = speed_mod | length_mod | weight_mod | repeat_mod | chance_mod ;
@@ -444,7 +625,7 @@ chance_mod = "?" [ number ] ;
 | `!n` | Repeat n times | `c4!3` |
 | `?n` | Chance (0-1) | `c4?0.5` |
 
-### 6.5 Euclidean Rhythms
+### 8.5 Euclidean Rhythms
 
 ```ebnf
 euclidean = mini_atom "(" number "," number [ "," number ] ")" ;
@@ -455,7 +636,7 @@ euclidean = mini_atom "(" number "," number [ "," number ] ")" ;
 
 Example: `bd(3,8)` — 3 kicks over 8 steps
 
-### 6.6 Choice
+### 8.6 Choice
 
 ```ebnf
 choice = mini_atom { "|" mini_atom } ;
@@ -463,22 +644,22 @@ choice = mini_atom { "|" mini_atom } ;
 
 Random selection each cycle: `bd | sd | hh`
 
-## 7. Clock System
+## 9. Clock System
 
-### 7.1 Timing
+### 9.1 Timing
 
 - **BPM:** Beats per minute (set via `bpm = 120`)
 - **Cycle:** 1 cycle = 4 beats by default
 - **Cycle Duration:** `T = (60 / BPM) * 4` seconds
 
-### 7.2 Built-in Timing Signals
+### 9.2 Built-in Timing Signals
 
 | Identifier | Description |
 |------------|-------------|
 | `co` | Cycle offset: 0→1 ramp over one cycle |
 | `beat(n)` | Phasor completing every n beats |
 
-## 8. Chord Expansion
+## 10. Chord Expansion
 
 Chord literals and inline chords expand to frequency arrays:
 
@@ -495,7 +676,7 @@ When passed to a UGen expecting a scalar:
    p.map(hz -> osc("saw", hz) |> lp(%, 1000))
    ```
 
-## 9. Complete Example
+## 11. Complete Example
 
 ```
 bpm = 120
@@ -511,26 +692,35 @@ pad = seq("c3e3g3b3:4 g3b3d4:4 a3c4e4:4 f3a3c4:4", (t, v, p) -> {
 
 **Note:** The example above uses `osc("saw", hz)` for oscillators. The `osc()` function is the standard interface for all waveform types: `osc("sin", freq)`, `osc("saw", freq)`, `osc("tri", freq)`, and `osc("sqr", freq)`. Note that `sin(x)` is a pure trigonometric math function.
 
-## 10. Grammar Summary (Complete EBNF)
+## 12. Grammar Summary (Complete EBNF)
 
 ```ebnf
 (* Program *)
 program     = { statement } ;
-statement   = assignment | post_stmt | pipe_expr ;
+statement   = assignment | function_def | post_stmt | pipe_expr ;
 assignment  = identifier "=" pipe_expr ;
 post_stmt   = "post" "(" closure ")" ;
 
+(* User-Defined Functions *)
+function_def  = "fn" identifier "(" [ param_list ] ")" "->" function_body ;
+function_body = block | pipe_expr ;
+
 (* Expressions - lowest to highest precedence *)
-pipe_expr   = add_expr { "|>" add_expr } ;
+pipe_expr   = or_expr { "|>" or_expr } ;
+or_expr     = and_expr { "||" and_expr } ;
+and_expr    = eq_expr { "&&" eq_expr } ;
+eq_expr     = cmp_expr { ( "==" | "!=" ) cmp_expr } ;
+cmp_expr    = add_expr { ( ">" | "<" | ">=" | "<=" ) add_expr } ;
 add_expr    = mul_expr { ( "+" | "-" ) mul_expr } ;
 mul_expr    = pow_expr { ( "*" | "/" ) pow_expr } ;
-pow_expr    = method_expr { "^" method_expr } ;
+pow_expr    = unary_expr { "^" unary_expr } ;
+unary_expr  = [ "!" ] method_expr ;
 method_expr = primary { "." identifier "(" [ arg_list ] ")" } ;
 primary     = atom | "(" pipe_expr ")" ;
 
 (* Atoms *)
 atom = number | bool_literal | string | pitch_literal | chord_literal
-     | identifier | hole | function_call | closure | mini_literal ;
+     | identifier | hole | function_call | closure | mini_literal | match_expr ;
 hole = "%" ;
 
 (* Functions and Methods *)
@@ -540,9 +730,16 @@ argument      = [ identifier ":" ] pipe_expr ;
 
 (* Closures *)
 closure      = "(" [ param_list ] ")" "->" closure_body ;
-param_list   = identifier { "," identifier } ;
+param_list   = param { "," param } ;
+param        = identifier [ "=" literal ] ;
 closure_body = block | pipe_expr ;
 block        = "{" { statement } [ pipe_expr ] "}" ;
+
+(* Match Expressions *)
+match_expr      = "match" [ "(" pipe_expr ")" ] "{" { match_arm } "}" ;
+match_arm       = ( pattern [ "&&" guard ] | guard | "_" ) ":" pipe_expr [ "," ] ;
+pattern         = string | number | bool_literal ;
+guard           = pipe_expr ;
 
 (* Patterns *)
 mini_literal = pattern_kw "(" string [ "," closure ] ")" ;
@@ -557,11 +754,11 @@ letter       = "a"..."z" | "A"..."Z" | "_" ;
 digit        = "0"..."9" ;
 ```
 
-## 11. Compiler Implementation Notes
+## 13. Compiler Implementation Notes
 
 This section provides guidance for implementing the Akkado compiler. See `docs/initial_prd.md` for the full technical specification.
 
-### 11.1 Lexer: String Interning
+### 13.1 Lexer: String Interning
 
 Use **string interning** to convert identifiers and keywords into unique `uint32_t` IDs. This allows the parser to perform integer comparisons instead of string comparisons.
 
@@ -572,7 +769,7 @@ Use **string interning** to convert identifiers and keywords into unique `uint32
 
 Use **FNV-1a** hashing for fast, non-cryptographic identifier hashing.
 
-### 11.2 Parser: Data-Oriented AST
+### 13.2 Parser: Data-Oriented AST
 
 Store the AST in a **contiguous arena** (`std::vector<Node>`) rather than heap-allocating individual nodes:
 
@@ -590,7 +787,7 @@ struct Node {
 };
 ```
 
-### 11.3 Semantic ID Path Tracking (Hot-Swap)
+### 13.3 Semantic ID Path Tracking (Hot-Swap)
 
 For live-coding state preservation, maintain a **path stack** during AST construction. Each node receives a stable **semantic ID** derived from its path:
 
@@ -603,7 +800,7 @@ When code is updated:
 2. Re-bind matching IDs to existing state in the StatePool
 3. Apply micro-crossfade (5-10ms) for structural changes
 
-### 11.4 DAG Construction
+### 13.4 DAG Construction
 
 After parsing, flatten the AST into a **Directed Acyclic Graph** representing signal flow:
 
@@ -611,7 +808,7 @@ After parsing, flatten the AST into a **Directed Acyclic Graph** representing si
 2. All buffer dependencies must be satisfied before a node executes
 3. Result: linear array of bytecode instructions
 
-### 11.5 Bytecode Format
+### 13.5 Bytecode Format
 
 Each instruction is **128 bits (16 bytes)** for fast decoding:
 
@@ -621,7 +818,7 @@ Each instruction is **128 bits (16 bytes)** for fast decoding:
 
 See `cedar/include/cedar/vm/instruction.hpp` for the current implementation.
 
-### 11.6 Threading Model
+### 13.6 Threading Model
 
 - **Triple buffer**: Compiler writes to "Next", audio thread reads from "Current"
 - **Atomic pointer swap** at block boundaries

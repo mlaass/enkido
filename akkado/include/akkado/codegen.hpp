@@ -92,6 +92,19 @@ private:
     /// Error helpers
     void error(const std::string& code, const std::string& message, SourceLocation loc);
 
+    /// Warning helper - emits a warning diagnostic but does not stop compilation
+    void warn(const std::string& code, const std::string& message, SourceLocation loc);
+
+    /// Check if a match expression can be resolved at compile time
+    /// Returns true if scrutinee (if present) is const and all patterns/guards are const
+    [[nodiscard]] bool is_compile_time_match(NodeIndex node, const Node& n) const;
+
+    /// Handle compile-time match - evaluate patterns and guards, emit only winning branch
+    std::uint16_t handle_compile_time_match(NodeIndex node, const Node& n);
+
+    /// Handle runtime match - emit all branches and build nested select chain
+    std::uint16_t handle_runtime_match(NodeIndex node, const Node& n);
+
     /// FM Detection: Automatically upgrade oscillators to 4x when FM is detected
     /// @param freq_buffer The buffer index containing the frequency input
     /// @return true if the frequency input traces back to an audio-rate source

@@ -926,52 +926,98 @@ NodeIndex Parser::parse_mini_literal() {
 }
 
 // Match expression parsing
-// match(expr) { pattern: body, pattern: body, ... }
+// Two forms supported:
+//   match(expr) { pattern: body, pattern && guard: body, ... }  -- scrutinee form
+//   match { guard: body, guard: body, ... }                     -- guard-only form
 NodeIndex Parser::parse_match_expr() {
     Token match_tok = advance();  // consume 'match' token
 
-    consume(TokenType::LParen, "Expected '(' after 'match'");
+    NodeIndex node = make_node(NodeType::MatchExpr, match_tok);
+    bool has_scrutinee = false;
 
-    // Parse the scrutinee expression
-    NodeIndex scrutinee = parse_expression();
-    if (scrutinee == NULL_NODE) {
-        error("Expected expression in match");
-        return NULL_NODE;
+    // Detect form: match(expr) vs match { }
+    if (check(TokenType::LParen)) {
+        has_scrutinee = true;
+        advance();  // consume '('
+
+        // Parse the scrutinee expression
+        NodeIndex scrutinee = parse_expression();
+        if (scrutinee == NULL_NODE) {
+            error("Expected expression in match");
+            return NULL_NODE;
+        }
+
+        arena_.add_child(node, scrutinee);
+        consume(TokenType::RParen, "Expected ')' after match expression");
     }
 
-    consume(TokenType::RParen, "Expected ')' after match expression");
-    consume(TokenType::LBrace, "Expected '{' after match expression");
-
-    NodeIndex node = make_node(NodeType::MatchExpr, match_tok);
-    arena_.add_child(node, scrutinee);
+    arena_[node].data = Node::MatchExprData{has_scrutinee};
+    consume(TokenType::LBrace, "Expected '{' after match");
 
     // Parse match arms
     while (!check(TokenType::RBrace) && !is_at_end()) {
-        Token pattern_tok = current();
+        Token arm_tok = current();
 
-        // Parse pattern: string, number, bool, or _ (wildcard)
         NodeIndex pattern = NULL_NODE;
+        NodeIndex guard = NULL_NODE;
         bool is_wildcard = false;
+        bool has_guard = false;
 
-        if (check(TokenType::String)) {
-            pattern = parse_string();
-        } else if (check(TokenType::Number)) {
-            pattern = parse_number();
-        } else if (check(TokenType::True) || check(TokenType::False)) {
-            pattern = parse_bool();
-        } else if (check(TokenType::Underscore)) {
-            advance();  // consume '_'
-            is_wildcard = true;
-            // Create an Identifier node with "_" as a placeholder
-            pattern = make_node(NodeType::Identifier, pattern_tok);
-            arena_[pattern].data = Node::IdentifierData{"_"};
+        if (has_scrutinee) {
+            // Scrutinee form: parse pattern, then optional && guard
+            // Pattern: string, number, bool, or _ (wildcard)
+            if (check(TokenType::String)) {
+                pattern = parse_string();
+            } else if (check(TokenType::Number)) {
+                pattern = parse_number();
+            } else if (check(TokenType::True) || check(TokenType::False)) {
+                pattern = parse_bool();
+            } else if (check(TokenType::Underscore)) {
+                advance();  // consume '_'
+                is_wildcard = true;
+                // Create an Identifier node with "_" as a placeholder
+                pattern = make_node(NodeType::Identifier, arm_tok);
+                arena_[pattern].data = Node::IdentifierData{"_"};
+            } else {
+                error("Expected pattern (string, number, bool, or '_')");
+                synchronize();
+                continue;
+            }
+
+            // Check for optional guard: pattern && guard
+            if (check(TokenType::AndAnd)) {
+                advance();  // consume '&&'
+                has_guard = true;
+                // Parse guard at higher precedence than && to avoid consuming subsequent &&
+                guard = parse_precedence(Precedence::Or);
+                if (guard == NULL_NODE) {
+                    error("Expected guard expression after '&&'");
+                }
+            }
         } else {
-            error("Expected pattern (string, number, bool, or '_')");
-            synchronize();
-            continue;
+            // Guard-only form: parse condition expression directly
+            // Wildcard is just '_'
+            if (check(TokenType::Underscore)) {
+                advance();  // consume '_'
+                is_wildcard = true;
+                pattern = make_node(NodeType::Identifier, arm_tok);
+                arena_[pattern].data = Node::IdentifierData{"_"};
+            } else {
+                // The "pattern" is actually the guard expression
+                has_guard = true;
+                guard = parse_precedence(Precedence::Or);
+                if (guard == NULL_NODE) {
+                    error("Expected condition expression in guard-only match");
+                    synchronize();
+                    continue;
+                }
+                // Create a placeholder pattern (true) since this is guard-only
+                pattern = make_node(NodeType::BoolLit, arm_tok);
+                arena_[pattern].data = Node::BoolData{true};
+            }
         }
 
-        consume(TokenType::Colon, "Expected ':' after pattern");
+        consume(TokenType::Colon, "Expected ':' after pattern/guard");
 
         // Parse arm body - can be a block or an expression
         NodeIndex body = NULL_NODE;
@@ -982,8 +1028,8 @@ NodeIndex Parser::parse_match_expr() {
         }
 
         // Create MatchArm node
-        NodeIndex arm = make_node(NodeType::MatchArm, pattern_tok);
-        arena_[arm].data = Node::MatchArmData{is_wildcard};
+        NodeIndex arm = make_node(NodeType::MatchArm, arm_tok);
+        arena_[arm].data = Node::MatchArmData{is_wildcard, has_guard, guard};
         arena_.add_child(arm, pattern);
         if (body != NULL_NODE) {
             arena_.add_child(arm, body);

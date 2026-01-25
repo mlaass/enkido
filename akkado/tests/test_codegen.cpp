@@ -451,8 +451,189 @@ TEST_CASE("Codegen: User functions", "[codegen][functions]") {
 // =============================================================================
 // Match Expression Tests
 // =============================================================================
-// NOTE: Match expression tests disabled due to pre-existing infinite loop bug
-// in compile-time match resolution. Needs to be fixed in analyzer/codegen.
+
+TEST_CASE("Codegen: Match expressions - compile-time", "[codegen][match]") {
+    SECTION("basic string pattern match") {
+        auto result = akkado::compile(R"(
+            fn choose(x) -> match(x) {
+                "a": 1,
+                "b": 2,
+                _: 0
+            }
+            choose("a")
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Should emit just the winning branch: 1
+        CHECK(count_instructions(insts, cedar::Opcode::PUSH_CONST) >= 1);
+        // Should NOT have any SELECT opcodes for compile-time match
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) == 0);
+    }
+
+    SECTION("match with wildcard default") {
+        auto result = akkado::compile(R"(
+            fn choose(x) -> match(x) {
+                "known": 100,
+                _: 42
+            }
+            choose("unknown")
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Should emit just the default branch: 42
+        REQUIRE(insts.size() >= 1);
+    }
+
+    SECTION("match with number patterns") {
+        auto result = akkado::compile(R"(
+            fn pick(x) -> match(x) {
+                1: 10,
+                2: 20,
+                _: 0
+            }
+            pick(2)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) == 0);
+    }
+
+    SECTION("match with bool patterns") {
+        auto result = akkado::compile(R"(
+            fn toggle(x) -> match(x) {
+                true: 1,
+                false: 0,
+                _: -1
+            }
+            toggle(true)
+        )");
+        REQUIRE(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Match expressions - with guards", "[codegen][match]") {
+    SECTION("compile-time guard with literal") {
+        auto result = akkado::compile(R"(
+            fn test(x) -> match(x) {
+                "a" && true: 100,
+                "a": 50,
+                _: 0
+            }
+            test("a")
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Guard true passes, should emit 100
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) == 0);
+    }
+
+    SECTION("compile-time guard with false literal skips arm") {
+        auto result = akkado::compile(R"(
+            fn test(x) -> match(x) {
+                "a" && false: 100,
+                "a": 50,
+                _: 0
+            }
+            test("a")
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Guard false fails, should fall through to "a": 50
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) == 0);
+    }
+}
+
+TEST_CASE("Codegen: Match expressions - runtime", "[codegen][match]") {
+    SECTION("runtime scrutinee produces select chain") {
+        auto result = akkado::compile(R"(
+            x = saw(1)
+            match(x) {
+                0: 10,
+                1: 20,
+                _: 30
+            }
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Runtime match should use SELECT opcodes
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) >= 1);
+        // Should have CMP_EQ for pattern comparisons
+        CHECK(count_instructions(insts, cedar::Opcode::CMP_EQ) >= 1);
+    }
+
+    SECTION("runtime match with guards uses LOGIC_AND") {
+        auto result = akkado::compile(R"(
+            x = saw(1)
+            y = tri(1)
+            match(x) {
+                0 && y > 0.5: 100,
+                0: 50,
+                _: 0
+            }
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Should have LOGIC_AND for guard combination
+        CHECK(count_instructions(insts, cedar::Opcode::LOGIC_AND) >= 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) >= 1);
+    }
+}
+
+TEST_CASE("Codegen: Match expressions - guard-only form", "[codegen][match]") {
+    SECTION("simple guard-only match") {
+        auto result = akkado::compile(R"(
+            x = saw(1)
+            match {
+                x > 0.5: 100,
+                x > 0: 50,
+                _: 0
+            }
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Should have comparisons and selects
+        CHECK(count_instructions(insts, cedar::Opcode::CMP_GT) >= 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) >= 1);
+    }
+
+    SECTION("guard-only match with multiple conditions") {
+        auto result = akkado::compile(R"(
+            a = saw(1)
+            b = tri(1)
+            match {
+                a > 0.5 && b < 0.5: 1,
+                a > 0.5: 2,
+                b > 0.5: 3,
+                _: 0
+            }
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::SELECT) >= 1);
+    }
+}
+
+TEST_CASE("Codegen: Match expressions - warnings", "[codegen][match]") {
+    SECTION("missing wildcard arm produces warning") {
+        auto result = akkado::compile(R"(
+            x = saw(1)
+            match {
+                x > 0.5: 100
+            }
+        )");
+        REQUIRE(result.success);  // Should still compile
+        // Check for warning in diagnostics
+        bool has_warning = false;
+        for (const auto& diag : result.diagnostics) {
+            if (diag.severity == akkado::Severity::Warning &&
+                diag.code == "W001") {
+                has_warning = true;
+                break;
+            }
+        }
+        CHECK(has_warning);
+    }
+}
 
 // =============================================================================
 // Pattern Tests (MiniLiteral)

@@ -665,6 +665,17 @@ void CodeGenerator::error(const std::string& code, const std::string& message,
     diagnostics_.push_back(std::move(diag));
 }
 
+void CodeGenerator::warn(const std::string& code, const std::string& message,
+                         SourceLocation loc) {
+    Diagnostic diag;
+    diag.severity = Severity::Warning;
+    diag.code = code;
+    diag.message = message;
+    diag.filename = filename_;
+    diag.location = loc;
+    diagnostics_.push_back(std::move(diag));
+}
+
 // FM Detection: Check if buffer was produced by audio-rate source (recursively traces arithmetic)
 // Note: is_audio_rate_producer, is_upgradeable_oscillator, upgrade_for_fm are inline helpers
 // in akkado/codegen/fm_detection.hpp

@@ -378,25 +378,33 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
         CHECK(has_diagnostic_code(result.diagnostics, "E121"));
     }
 
-    SECTION("match with non-literal scrutinee fails") {
-        // Note: This fails because string assignments aren't supported AND
-        // because match scrutinee must be a literal
+    SECTION("match with non-literal scrutinee uses runtime select") {
+        // Non-literal scrutinee now triggers runtime match evaluation
+        // using nested SELECT opcodes instead of compile-time pattern matching
         auto result = akkado::compile(R"(
-            x = "sin"
+            x = saw(1)
             match(x) {
-                "sin": 1
-                _: 0
+                0: 10,
+                1: 20,
+                _: 30
             }
         )");
 
-        REQUIRE_FALSE(result.success);
-        REQUIRE(result.diagnostics.size() >= 1);
-        // Check that E120 is among the diagnostics (may not be first due to E199 for string assign)
-        bool has_e120 = false;
-        for (const auto& d : result.diagnostics) {
-            if (d.code == "E120") has_e120 = true;
+        REQUIRE(result.success);
+        // Runtime match produces SELECT opcodes
+        std::vector<cedar::Instruction> insts;
+        size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        insts.resize(count);
+        std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+
+        bool has_select = false;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::SELECT) {
+                has_select = true;
+                break;
+            }
         }
-        CHECK(has_e120);
+        CHECK(has_select);
     }
 }
 

@@ -228,6 +228,18 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
     // Clone this node
     NodeIndex dst_idx = clone_node(src_idx);
 
+    // Handle MatchArm guard_node specially - it's not a child but stored in data
+    if (src.type == NodeType::MatchArm) {
+        const auto& arm_data = src.as_match_arm();
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            // Clone the guard expression
+            NodeIndex cloned_guard = clone_subtree(arm_data.guard_node);
+            // Update the MatchArmData in the cloned node
+            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[dst_idx].data);
+            dst_data.guard_node = cloned_guard;
+        }
+    }
+
     // Clone children
     NodeIndex src_child = src.first_child;
     NodeIndex prev_dst_child = NULL_NODE;
@@ -281,6 +293,18 @@ NodeIndex SemanticAnalyzer::substitute_holes(NodeIndex node, NodeIndex replaceme
 
     // For other nodes, clone and recurse on children
     NodeIndex new_node = clone_node(node);
+
+    // Handle MatchArm guard_node specially - it's not a child but stored in data
+    if (n.type == NodeType::MatchArm) {
+        const auto& arm_data = n.as_match_arm();
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            // Substitute holes in the guard expression
+            NodeIndex new_guard = substitute_holes(arm_data.guard_node, replacement);
+            // Update the MatchArmData in the new node
+            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[new_node].data);
+            dst_data.guard_node = new_guard;
+        }
+    }
 
     NodeIndex src_child = n.first_child;
     NodeIndex prev_dst_child = NULL_NODE;
@@ -401,15 +425,24 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
 
     if (n.type == NodeType::MatchExpr) {
         // Validate match expression
-        // First child is scrutinee, remaining children are MatchArm nodes
         // NOTE: Literal scrutinee check is done in codegen (after inline expansion)
 
-        NodeIndex scrutinee = n.first_child;
+        // Check if this is a scrutinee form or guard-only form
+        bool has_scrutinee = false;
+        if (std::holds_alternative<Node::MatchExprData>(n.data)) {
+            has_scrutinee = n.as_match_expr().has_scrutinee;
+        }
+
+        // Determine first arm based on whether scrutinee exists
+        NodeIndex first_arm = n.first_child;
+        if (has_scrutinee && first_arm != NULL_NODE) {
+            first_arm = output_arena_[first_arm].next_sibling;
+        }
 
         // Check for duplicate patterns and unreachable code
         std::set<std::string> seen_patterns;
         bool seen_wildcard = false;
-        NodeIndex arm = (scrutinee != NULL_NODE) ? output_arena_[scrutinee].next_sibling : NULL_NODE;
+        NodeIndex arm = first_arm;
 
         while (arm != NULL_NODE) {
             const Node& arm_node = output_arena_[arm];
@@ -422,8 +455,9 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
 
                 if (arm_data.is_wildcard) {
                     seen_wildcard = true;
-                } else {
-                    // Get pattern value for duplicate check
+                } else if (!arm_data.has_guard) {
+                    // Only check for duplicates on arms without guards
+                    // Guards make the same pattern semantically different
                     NodeIndex pattern = arm_node.first_child;
                     if (pattern != NULL_NODE) {
                         const Node& pattern_node = output_arena_[pattern];
@@ -572,8 +606,16 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         return;  // Already recursed, don't do it again below
     }
 
-    // Special handling for MatchArm: skip pattern, only validate body
+    // Special handling for MatchArm: skip pattern, validate guard and body
     if (n.type == NodeType::MatchArm) {
+        const auto& arm_data = n.as_match_arm();
+
+        // Validate guard expression if present
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            resolve_and_validate(arm_data.guard_node);
+        }
+
+        // Validate body
         NodeIndex pattern = n.first_child;
         if (pattern != NULL_NODE) {
             NodeIndex body = output_arena_[pattern].next_sibling;
@@ -644,6 +686,13 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
 
     // Skip match arm patterns - they are not variable references
     if (n.type == NodeType::MatchArm) {
+        const auto& arm_data = n.as_match_arm();
+
+        // Check guard expression if present
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            check_closure_captures(arm_data.guard_node, params, closure_loc);
+        }
+
         // Only check the body (second child), not the pattern (first child)
         NodeIndex pattern = n.first_child;
         if (pattern != NULL_NODE) {

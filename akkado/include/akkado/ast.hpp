@@ -205,9 +205,16 @@ struct Node {
         std::size_t param_count;  // Number of Identifier children before body
     };
 
-    // Data for match arms (pattern: body)
+    // Data for match arms (pattern: body, or pattern && guard: body)
     struct MatchArmData {
-        bool is_wildcard;  // true for `_` pattern
+        bool is_wildcard;      // true for `_` pattern
+        bool has_guard;        // true if `&&` guard follows pattern
+        NodeIndex guard_node;  // Guard expression (NULL_NODE if no guard)
+    };
+
+    // Data for match expressions (track scrutinee vs guard-only form)
+    struct MatchExprData {
+        bool has_scrutinee;  // false for guard-only `match { ... }`
     };
 
     std::variant<
@@ -227,7 +234,8 @@ struct Node {
         MiniModifierData,
         MiniPolymeterData,
         FunctionDefData,
-        MatchArmData
+        MatchArmData,
+        MatchExprData
     > data;
 
     // Type-safe accessors
@@ -293,6 +301,10 @@ struct Node {
 
     [[nodiscard]] const MatchArmData& as_match_arm() const {
         return std::get<MatchArmData>(data);
+    }
+
+    [[nodiscard]] const MatchExprData& as_match_expr() const {
+        return std::get<MatchExprData>(data);
     }
 };
 
