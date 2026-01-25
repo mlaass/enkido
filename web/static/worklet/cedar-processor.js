@@ -169,6 +169,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 					this.module._cedar_clear_samples();
 				}
 				break;
+
+			case 'getBuiltins':
+				this.getBuiltins();
+				break;
 		}
 	}
 
@@ -713,6 +717,48 @@ class CedarProcessor extends AudioWorkletProcessor {
 		} finally {
 			this.module._enkido_free(namePtr);
 			this.module._enkido_free(wavPtr);
+		}
+	}
+
+	/**
+	 * Get all builtin function metadata as JSON
+	 * Sends back to main thread for autocomplete
+	 */
+	getBuiltins() {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'builtins',
+				success: false,
+				error: 'Module not initialized'
+			});
+			return;
+		}
+
+		try {
+			const jsonPtr = this.module._akkado_get_builtins_json();
+			if (!jsonPtr) {
+				this.port.postMessage({
+					type: 'builtins',
+					success: false,
+					error: 'Failed to get builtins JSON'
+				});
+				return;
+			}
+
+			const jsonStr = this.module.UTF8ToString(jsonPtr);
+			const data = JSON.parse(jsonStr);
+
+			this.port.postMessage({
+				type: 'builtins',
+				success: true,
+				data
+			});
+		} catch (err) {
+			this.port.postMessage({
+				type: 'builtins',
+				success: false,
+				error: String(err)
+			});
 		}
 	}
 

@@ -122,6 +122,18 @@ TEST_CASE("Mini lexer basic tokens", "[mini_lexer]") {
         }
         CHECK(found_number);
     }
+
+    SECTION("polymeter tokens") {
+        auto [tokens, diags] = lex_mini("{bd sd}%5");
+        REQUIRE(diags.empty());
+        CHECK(tokens[0].type == MiniTokenType::LBrace);
+        CHECK(tokens[1].type == MiniTokenType::SampleToken);
+        CHECK(tokens[2].type == MiniTokenType::SampleToken);
+        CHECK(tokens[3].type == MiniTokenType::RBrace);
+        CHECK(tokens[4].type == MiniTokenType::Percent);
+        CHECK(tokens[5].type == MiniTokenType::Number);
+        CHECK_THAT(tokens[5].as_number(), WithinRel(5.0, 0.001));
+    }
 }
 
 // ============================================================================
@@ -257,6 +269,35 @@ TEST_CASE("Mini parser basic patterns", "[mini_parser]") {
         NodeIndex choice = arena[root].first_child;
         CHECK(arena[choice].type == NodeType::MiniChoice);
         CHECK(arena.child_count(choice) == 3);
+    }
+
+    SECTION("polymeter basic") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("{bd sd hh}", arena);
+        REQUIRE(diags.empty());
+        NodeIndex poly = arena[root].first_child;
+        CHECK(arena[poly].type == NodeType::MiniPolymeter);
+        CHECK(arena.child_count(poly) == 3);
+        CHECK(arena[poly].as_mini_polymeter().step_count == 0);
+    }
+
+    SECTION("polymeter with step count") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("{bd sd}%5", arena);
+        REQUIRE(diags.empty());
+        NodeIndex poly = arena[root].first_child;
+        CHECK(arena[poly].type == NodeType::MiniPolymeter);
+        CHECK(arena.child_count(poly) == 2);
+        CHECK(arena[poly].as_mini_polymeter().step_count == 5);
+    }
+
+    SECTION("nested polymeter") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("a {b c} d", arena);
+        REQUIRE(diags.empty());
+        CHECK(arena.child_count(root) == 3);
+        NodeIndex second = arena[arena[root].first_child].next_sibling;
+        CHECK(arena[second].type == NodeType::MiniPolymeter);
     }
 }
 
@@ -400,5 +441,59 @@ TEST_CASE("Pattern evaluation", "[pattern_eval]") {
         CHECK(events.events[0].type == PatternEventType::Sample);
         CHECK(events.events[0].sample_name == "bd");
         CHECK(events.events[1].sample_name == "sd");
+    }
+
+    SECTION("polymeter basic") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("{bd sd hh}", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 3);
+        // 3 children = 3 steps at 0.0, 0.333, 0.666
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.333f, 0.01f));
+        CHECK_THAT(events.events[2].time, WithinRel(0.666f, 0.01f));
+        CHECK(events.events[0].sample_name == "bd");
+        CHECK(events.events[1].sample_name == "sd");
+        CHECK(events.events[2].sample_name == "hh");
+    }
+
+    SECTION("polymeter with step count") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("{bd sd}%5", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 5);
+        // 5 steps over 2 children: bd at 0, 2, 4; sd at 1, 3
+        // Times: 0.0, 0.2, 0.4, 0.6, 0.8
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK(events.events[0].sample_name == "bd");
+        CHECK_THAT(events.events[1].time, WithinRel(0.2f, 0.01f));
+        CHECK(events.events[1].sample_name == "sd");
+        CHECK_THAT(events.events[2].time, WithinRel(0.4f, 0.01f));
+        CHECK(events.events[2].sample_name == "bd");
+        CHECK_THAT(events.events[3].time, WithinRel(0.6f, 0.01f));
+        CHECK(events.events[3].sample_name == "sd");
+        CHECK_THAT(events.events[4].time, WithinRel(0.8f, 0.01f));
+        CHECK(events.events[4].sample_name == "bd");
+    }
+
+    SECTION("polymeter single vs subdivision single") {
+        // For a standalone pattern, {a b c} and [a b c] should produce same timing
+        AstArena arena;
+        auto [root_sub, diags1] = parse_mini("[bd sd hh]", arena);
+        REQUIRE(diags1.empty());
+        auto [root_poly, diags2] = parse_mini("{bd sd hh}", arena);
+        REQUIRE(diags2.empty());
+
+        PatternEventStream events_sub = evaluate_pattern(root_sub, arena, 0);
+        PatternEventStream events_poly = evaluate_pattern(root_poly, arena, 0);
+
+        REQUIRE(events_sub.size() == events_poly.size());
+        for (std::size_t i = 0; i < events_sub.size(); ++i) {
+            CHECK_THAT(events_sub.events[i].time, WithinRel(events_poly.events[i].time, 0.01f));
+        }
     }
 }

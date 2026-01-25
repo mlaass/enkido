@@ -146,14 +146,15 @@ bool MiniLexer::looks_like_pitch() const {
         pos++;
     }
 
-    // Must be followed by: end, whitespace, modifier, bracket, angle, paren, comma, pipe, colon (for chord)
+    // Must be followed by: end, whitespace, modifier, bracket, angle, paren, brace, comma, pipe, colon (for chord), percent
     if (pos >= pattern_.size()) return true;
 
     char next = pattern_[pos];
     return is_whitespace(next) ||
-           next == '*' || next == '/' || next == '@' || next == '!' || next == '?' ||
+           next == '*' || next == '/' || next == '@' || next == '!' || next == '?' || next == '%' ||
            next == '[' || next == ']' || next == '<' || next == '>' ||
-           next == '(' || next == ')' || next == ',' || next == '|' || next == ':';
+           next == '(' || next == ')' || next == '{' || next == '}' ||
+           next == ',' || next == '|' || next == ':';
 }
 
 std::uint8_t MiniLexer::parse_pitch_to_midi(char note, int accidental, int octave) const {
@@ -218,6 +219,8 @@ MiniToken MiniLexer::lex_token() {
         case '>': return make_token(MiniTokenType::RAngle);
         case '(': return make_token(MiniTokenType::LParen);
         case ')': return make_token(MiniTokenType::RParen);
+        case '{': return make_token(MiniTokenType::LBrace);
+        case '}': return make_token(MiniTokenType::RBrace);
         case ',': return make_token(MiniTokenType::Comma);
 
         // Modifiers
@@ -227,6 +230,7 @@ MiniToken MiniLexer::lex_token() {
         case '@': return make_token(MiniTokenType::At);
         case '!': return make_token(MiniTokenType::Bang);
         case '?': return make_token(MiniTokenType::Question);
+        case '%': return make_token(MiniTokenType::Percent);
 
         // Choice
         case '|': return make_token(MiniTokenType::Pipe);

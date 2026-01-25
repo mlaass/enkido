@@ -48,12 +48,64 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
     if (n.type == NodeType::Assignment) {
         // Variable name is stored in the node's data (as IdentifierData)
         const std::string& name = n.as_identifier();
-        // We'll allocate actual buffers during code generation
-        // For now, use a placeholder buffer index
+        // Check if RHS is a pattern expression (MiniLiteral)
+        NodeIndex rhs = n.first_child;
+
+        // Immutability check: error if variable already defined in current scope
         if (symbols_.is_defined_in_current_scope(name)) {
-            warning("Variable '" + name + "' redefined", n.location);
+            error("E150", "Cannot reassign immutable variable '" + name + "'", n.location);
+            // Continue processing to collect all errors
         }
-        symbols_.define_variable(name, 0xFFFF);
+
+        if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::MiniLiteral) {
+            // Pattern assignment
+            PatternInfo pat_info{};
+            pat_info.pattern_node = rhs;  // Will be updated after AST transform
+            pat_info.is_sample_pattern = false;
+            symbols_.define_pattern(name, pat_info);
+        } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::ArrayLit) {
+            // Array assignment - count elements and register as Array symbol
+            ArrayInfo arr_info{};
+            arr_info.source_node = rhs;
+            arr_info.element_count = 0;
+            NodeIndex elem = (*input_ast_).arena[rhs].first_child;
+            while (elem != NULL_NODE) {
+                arr_info.element_count++;
+                elem = (*input_ast_).arena[elem].next_sibling;
+            }
+            symbols_.define_array(name, arr_info);
+        } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::Closure) {
+            // Lambda assignment - register as FunctionValue
+            FunctionRef func_ref{};
+            func_ref.closure_node = rhs;
+            func_ref.is_user_function = false;
+            // Extract parameters from closure
+            NodeIndex child = (*input_ast_).arena[rhs].first_child;
+            while (child != NULL_NODE) {
+                const Node& child_node = (*input_ast_).arena[child];
+                if (child_node.type == NodeType::Identifier) {
+                    FunctionParamInfo param;
+                    if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+                        const auto& cp = child_node.as_closure_param();
+                        param.name = cp.name;
+                        param.default_value = cp.default_value;
+                    } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+                        param.name = child_node.as_identifier();
+                        param.default_value = std::nullopt;
+                    } else {
+                        break;  // Not a parameter, must be body
+                    }
+                    func_ref.params.push_back(std::move(param));
+                } else {
+                    break;  // Body node
+                }
+                child = (*input_ast_).arena[child].next_sibling;
+            }
+            symbols_.define_function_value(name, func_ref);
+        } else {
+            // Regular variable assignment
+            symbols_.define_variable(name, 0xFFFF);
+        }
     }
 
     if (n.type == NodeType::FunctionDef) {
@@ -461,6 +513,8 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         if (!sym) {
             error("E005", "Undefined identifier: '" + name + "'", n.location);
         }
+        // FunctionValue and UserFunction can be used as values
+        // (already allowed by symbol table lookup)
     }
 
     if (n.type == NodeType::Closure) {
@@ -617,15 +671,23 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
             return;  // OK - parameter reference
         }
 
-        // Check if it's a builtin or user function
+        // Check if it's a builtin, user function, or function value
         auto sym = symbols_.lookup(name);
-        if (sym && (sym->kind == SymbolKind::Builtin || sym->kind == SymbolKind::UserFunction)) {
-            return;  // OK - builtin or user function
+        if (sym && (sym->kind == SymbolKind::Builtin ||
+                    sym->kind == SymbolKind::UserFunction ||
+                    sym->kind == SymbolKind::FunctionValue)) {
+            return;  // OK - builtin, user function, or function value
         }
 
-        // It's a captured variable - not allowed in simple closures/functions
-        error("E008", "Closure captures variable '" + name +
-              "' - closures and functions can only use parameters and functions", n.location);
+        // It's a captured variable - allowed for closures (read-only capture)
+        // Variables are immutable, so read-only capture is safe
+        if (sym && (sym->kind == SymbolKind::Variable ||
+                    sym->kind == SymbolKind::Parameter ||
+                    sym->kind == SymbolKind::Array)) {
+            return;  // OK - captured variable (will be bound at codegen time)
+        }
+
+        // Unknown identifier - will be caught elsewhere
         return;
     }
 

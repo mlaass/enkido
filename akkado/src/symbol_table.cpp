@@ -53,6 +53,36 @@ bool SymbolTable::define_function(const UserFunctionInfo& func_info) {
     return define(sym);
 }
 
+bool SymbolTable::define_pattern(std::string_view name, const PatternInfo& pattern_info) {
+    Symbol sym{};
+    sym.kind = SymbolKind::Pattern;
+    sym.name_hash = fnv1a_hash(name);
+    sym.name = std::string(name);
+    sym.buffer_index = 0xFFFF;  // Patterns don't have a single buffer
+    sym.pattern = pattern_info;
+    return define(sym);
+}
+
+bool SymbolTable::define_array(std::string_view name, const ArrayInfo& array_info) {
+    Symbol sym{};
+    sym.kind = SymbolKind::Array;
+    sym.name_hash = fnv1a_hash(name);
+    sym.name = std::string(name);
+    sym.buffer_index = 0xFFFF;  // Arrays use array.buffer_indices instead
+    sym.array = array_info;
+    return define(sym);
+}
+
+bool SymbolTable::define_function_value(std::string_view name, const FunctionRef& func_ref) {
+    Symbol sym{};
+    sym.kind = SymbolKind::FunctionValue;
+    sym.name_hash = fnv1a_hash(name);
+    sym.name = std::string(name);
+    sym.buffer_index = 0xFFFF;  // Function values don't have a buffer
+    sym.function_ref = func_ref;
+    return define(sym);
+}
+
 std::optional<Symbol> SymbolTable::lookup(std::string_view name) const {
     return lookup(fnv1a_hash(name));
 }
@@ -75,7 +105,7 @@ bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
 }
 
 void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
-    // Iterate through all scopes and update UserFunction entries
+    // Iterate through all scopes and update UserFunction and Pattern entries
     for (auto& scope : scopes_) {
         for (auto& [hash, sym] : scope) {
             if (sym.kind == SymbolKind::UserFunction) {
@@ -88,6 +118,12 @@ void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, Node
                 auto def_it = node_map.find(sym.user_function.def_node);
                 if (def_it != node_map.end()) {
                     sym.user_function.def_node = def_it->second;
+                }
+            } else if (sym.kind == SymbolKind::Pattern) {
+                // Update pattern_node
+                auto pat_it = node_map.find(sym.pattern.pattern_node);
+                if (pat_it != node_map.end()) {
+                    sym.pattern.pattern_node = pat_it->second;
                 }
             }
         }

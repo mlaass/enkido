@@ -25,6 +25,7 @@ add_executable(akkado_tests
     test_ast_arena.cpp
     test_buffer_allocator.cpp
     test_symbol_table.cpp
+    test_chord.cpp
 )
 
 target_link_libraries(akkado_tests

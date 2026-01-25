@@ -16,11 +16,12 @@ namespace akkado {
 ///
 /// Grammar (simplified):
 ///   pattern    = { element }
-///   element    = atom [ modifiers ] | group | sequence | polyrhythm
+///   element    = atom [ modifiers ] | group | sequence | polyrhythm | polymeter
 ///   atom       = pitch | sample | rest | euclidean
 ///   group      = "[" pattern "]"
 ///   sequence   = "<" pattern ">"
 ///   polyrhythm = "[" atom { "," atom } "]"
+///   polymeter  = "{" pattern "}" [ "%" number ]
 ///   euclidean  = atom "(" number "," number [ "," number ] ")"
 ///   modifiers  = { "*" number | "/" number | ":" number | "@" number | "!" number | "?" number }
 ///   choice     = element { "|" element }
@@ -70,6 +71,7 @@ private:
     // Grouping parsers
     NodeIndex parse_group();        // [a b c] or [a, b, c]
     NodeIndex parse_sequence();     // <a b c>
+    NodeIndex parse_polymeter();    // {a b c} or {a b}%n
 
     // Modifier parsing
     NodeIndex parse_modifiers(NodeIndex atom);

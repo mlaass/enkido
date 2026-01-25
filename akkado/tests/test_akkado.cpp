@@ -201,13 +201,11 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         REQUIRE(result.success);
     }
 
-    SECTION("closure with captured variable produces error") {
+    SECTION("closure with captured variable compiles (read-only capture)") {
         auto result = akkado::compile("y = 440\n(x) -> saw(y)");
 
-        // Should fail - captures 'y'
-        REQUIRE_FALSE(result.success);
-        REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(has_diagnostic_code(result.diagnostics, "E008"));
+        // Should succeed - captures are now allowed (read-only)
+        REQUIRE(result.success);
     }
 
     SECTION("closure with multiple params") {
@@ -512,16 +510,17 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
         REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
     }
 
-    SECTION("function cannot capture outer variables") {
+    SECTION("function can capture outer variables (read-only)") {
         auto result = akkado::compile(R"(
             y = 10
-            fn bad(x) -> x + y
-            bad(5)
+            fn add_y(x) -> x + y
+            add_y(5)
         )");
 
-        REQUIRE_FALSE(result.success);
-        REQUIRE(result.diagnostics.size() >= 1);
-        CHECK(has_diagnostic_code(result.diagnostics, "E008"));
+        // Captures are now allowed since variables are immutable
+        REQUIRE(result.success);
+        // Should have ADD instruction
+        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
     }
 
     SECTION("function can call other user functions") {
@@ -961,6 +960,18 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         CHECK(decode_const_float(inst) == 1.0f);
     }
 
+    SECTION("len() in pipe expression") {
+        auto result = akkado::compile("[1, 2, 3] |> len(%)");
+
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+
+        cedar::Instruction inst;
+        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(inst) == 3.0f);
+    }
+
     SECTION("len() in expression") {
         auto result = akkado::compile("len([1, 2, 3, 4, 5]) + 10");
 
@@ -991,5 +1002,233 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         auto result = akkado::compile("[1, 2, 3][0]");
 
         REQUIRE(result.success);
+    }
+}
+
+TEST_CASE("Pattern variables", "[akkado][pattern]") {
+    SECTION("pattern variable assignment") {
+        auto result = akkado::compile(R"(
+            drums = pat("bd sd")
+            drums
+        )");
+
+        REQUIRE(result.success);
+        // Should have SEQ_STEP instruction
+        bool has_seq_step = false;
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
+        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        for (std::size_t i = 0; i < count; ++i) {
+            if (insts[i].opcode == cedar::Opcode::SEQ_STEP) {
+                has_seq_step = true;
+                break;
+            }
+        }
+        CHECK(has_seq_step);
+    }
+
+    SECTION("pattern variable reuse") {
+        // Using the same pattern variable multiple times should work
+        auto result = akkado::compile(R"(
+            melody = pat("c4 e4 g4")
+            melody
+        )");
+
+        REQUIRE(result.success);
+    }
+
+    SECTION("multiple pattern variables") {
+        auto result = akkado::compile(R"(
+            drums = pat("bd sd")
+            bass = pat("c2 e2 g2")
+            drums
+        )");
+
+        REQUIRE(result.success);
+    }
+
+    SECTION("pitch pattern variable") {
+        auto result = akkado::compile(R"(
+            notes = pat("c4 e4 g4")
+            notes
+        )");
+
+        REQUIRE(result.success);
+        // Should have SEQ_STEP for pitch pattern
+        bool has_seq_step = false;
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
+        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        for (std::size_t i = 0; i < count; ++i) {
+            if (insts[i].opcode == cedar::Opcode::SEQ_STEP) {
+                has_seq_step = true;
+                break;
+            }
+        }
+        CHECK(has_seq_step);
+    }
+
+    SECTION("sample pattern in state_inits") {
+        auto result = akkado::compile(R"(
+            drums = pat("bd sd hh")
+            drums
+        )");
+
+        REQUIRE(result.success);
+        // Should have state initialization data for the pattern
+        REQUIRE(result.state_inits.size() >= 1);
+        CHECK(result.state_inits[0].type == akkado::StateInitData::Type::SeqStep);
+        CHECK(result.state_inits[0].times.size() == 3);
+        CHECK(result.state_inits[0].values.size() == 3);
+    }
+}
+
+TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
+    SECTION("len() on array variable") {
+        auto result = akkado::compile(R"(
+            arr = [1, 2, 3, 4]
+            len(arr)
+        )");
+
+        REQUIRE(result.success);
+        // Should emit PUSH_CONST(4)
+        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+
+        // Find the last PUSH_CONST (the len result)
+        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        // Last instruction should be PUSH_CONST(4)
+        CHECK(insts[count - 1].opcode == cedar::Opcode::PUSH_CONST);
+        CHECK(decode_const_float(insts[count - 1]) == 4.0f);
+    }
+
+    SECTION("map() on array variable") {
+        auto result = akkado::compile(R"(
+            freqs = [440, 880]
+            map(freqs, (f) -> f * 2)
+        )");
+
+        REQUIRE(result.success);
+        // Should have MUL instructions for the mapping
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+    }
+
+    SECTION("lambda as variable") {
+        auto result = akkado::compile(R"(
+            double = (x) -> x * 2
+            map([1, 2], double)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+    }
+
+    SECTION("fn used in map()") {
+        auto result = akkado::compile(R"(
+            fn triple(x) -> x * 3
+            map([10], triple)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+    }
+
+    SECTION("closure captures variable") {
+        auto result = akkado::compile(R"(
+            mult = 2
+            f = (x) -> x * mult
+            map([10], f)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+    }
+
+    SECTION("variable reassignment produces error") {
+        auto result = akkado::compile(R"(
+            x = 1
+            x = 2
+        )");
+
+        REQUIRE_FALSE(result.success);
+        CHECK(has_diagnostic_code(result.diagnostics, "E150"));
+    }
+
+    SECTION("array variable reassignment produces error") {
+        auto result = akkado::compile(R"(
+            arr = [1, 2, 3]
+            arr = [4, 5, 6]
+        )");
+
+        REQUIRE_FALSE(result.success);
+        CHECK(has_diagnostic_code(result.diagnostics, "E150"));
+    }
+
+    SECTION("lambda variable reassignment produces error") {
+        auto result = akkado::compile(R"(
+            f = (x) -> x * 2
+            f = (x) -> x * 3
+        )");
+
+        REQUIRE_FALSE(result.success);
+        CHECK(has_diagnostic_code(result.diagnostics, "E150"));
+    }
+
+    SECTION("len() on non-array variable produces error") {
+        auto result = akkado::compile(R"(
+            x = 42
+            len(x)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        CHECK(has_diagnostic_code(result.diagnostics, "E141"));
+    }
+
+    SECTION("map() with non-function second argument produces error") {
+        auto result = akkado::compile(R"(
+            map([1, 2], 42)
+        )");
+
+        REQUIRE_FALSE(result.success);
+        CHECK(has_diagnostic_code(result.diagnostics, "E130"));
+    }
+
+    SECTION("array variable in expression") {
+        auto result = akkado::compile(R"(
+            freqs = [440, 550, 660]
+            len(freqs) + 1
+        )");
+
+        REQUIRE(result.success);
+        // Should have: PUSH_CONST(3), PUSH_CONST(1), ADD
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+
+        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
+        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        // Check structure: two PUSH_CONST followed by ADD
+        bool found_structure = false;
+        for (std::size_t i = 0; i + 2 < count; ++i) {
+            if (insts[i].opcode == cedar::Opcode::PUSH_CONST &&
+                decode_const_float(insts[i]) == 3.0f &&
+                insts[i + 1].opcode == cedar::Opcode::PUSH_CONST &&
+                decode_const_float(insts[i + 1]) == 1.0f &&
+                insts[i + 2].opcode == cedar::Opcode::ADD) {
+                found_structure = true;
+                break;
+            }
+        }
+        CHECK(found_structure);
+    }
+
+    SECTION("map with sum for polyphony") {
+        auto result = akkado::compile(R"(
+            freqs = [440, 550, 660]
+            map(freqs, (f) -> f * 2) |> sum(%)
+        )");
+
+        REQUIRE(result.success);
+        // Should have MUL and ADD instructions
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
     }
 }

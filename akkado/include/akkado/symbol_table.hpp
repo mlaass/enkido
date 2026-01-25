@@ -37,10 +37,41 @@ inline std::uint32_t fnv1a_hash(std::string_view str) noexcept {
 
 /// Symbol kinds
 enum class SymbolKind : std::uint8_t {
-    Variable,       // User-defined variable
+    Variable,       // User-defined variable (scalar)
     Builtin,        // Built-in function
     Parameter,      // Closure parameter
     UserFunction,   // User-defined function (fn)
+    Pattern,        // Pattern variable (pat(), seq(), etc.)
+    Array,          // Array value
+    FunctionValue,  // Function as value (lambda or fn reference)
+};
+
+/// Information about a pattern variable
+struct PatternInfo {
+    NodeIndex pattern_node;        // Index of MiniLiteral node in transformed AST
+    bool is_sample_pattern;        // true if pattern contains samples (not pitches)
+};
+
+/// Information about an array variable
+struct ArrayInfo {
+    std::vector<std::uint16_t> buffer_indices;  // Populated during codegen
+    NodeIndex source_node;                       // Original ArrayLit node
+    std::size_t element_count;                   // Cached length
+};
+
+/// Information about a captured variable (read-only closure capture)
+struct CaptureInfo {
+    std::string name;
+    std::uint16_t buffer_index;
+};
+
+/// Information about a function value (lambda or fn reference)
+struct FunctionRef {
+    NodeIndex closure_node;                      // Points to Closure or FunctionDef body
+    std::vector<FunctionParamInfo> params;       // Parameter info
+    std::vector<CaptureInfo> captures;           // Captured variables (read-only)
+    bool is_user_function;                       // true if from `fn`
+    std::string user_function_name;              // For user functions
 };
 
 /// Symbol entry in the symbol table
@@ -55,6 +86,15 @@ struct Symbol {
 
     // Only valid if kind == UserFunction
     UserFunctionInfo user_function;
+
+    // Only valid if kind == Pattern
+    PatternInfo pattern;
+
+    // Only valid if kind == Array
+    ArrayInfo array;
+
+    // Only valid if kind == FunctionValue
+    FunctionRef function_ref;
 };
 
 /// Scoped symbol table with lexical scoping
@@ -83,6 +123,15 @@ public:
 
     /// Define a user function
     bool define_function(const UserFunctionInfo& func_info);
+
+    /// Define a pattern variable
+    bool define_pattern(std::string_view name, const PatternInfo& pattern_info);
+
+    /// Define an array variable
+    bool define_array(std::string_view name, const ArrayInfo& array_info);
+
+    /// Define a function value (lambda or fn reference)
+    bool define_function_value(std::string_view name, const FunctionRef& func_ref);
 
     /// Lookup a symbol by name (searches all scopes, innermost first)
     [[nodiscard]] std::optional<Symbol> lookup(std::string_view name) const;

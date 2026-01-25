@@ -47,6 +47,7 @@ enum class NodeType : std::uint8_t {
     MiniGroup,      // [a b c] - subdivision (elements share parent time span)
     MiniSequence,   // <a b c> - alternating sequence (one per cycle, rotating)
     MiniPolyrhythm, // [a, b, c] - polyrhythm (all elements simultaneously)
+    MiniPolymeter,  // {a b c} or {a b}%n - polymeter (LCM alignment)
     MiniChoice,     // a | b | c - random choice each cycle
     MiniEuclidean,  // x(k,n,r) - euclidean rhythm
     MiniModified,   // Atom with modifier (speed, weight, etc.)
@@ -89,6 +90,7 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::MiniGroup:      return "MiniGroup";
         case NodeType::MiniSequence:   return "MiniSequence";
         case NodeType::MiniPolyrhythm: return "MiniPolyrhythm";
+        case NodeType::MiniPolymeter:  return "MiniPolymeter";
         case NodeType::MiniChoice:     return "MiniChoice";
         case NodeType::MiniEuclidean:  return "MiniEuclidean";
         case NodeType::MiniModified:   return "MiniModified";
@@ -192,6 +194,11 @@ struct Node {
         float value;
     };
 
+    // Data for mini-notation polymeter
+    struct MiniPolymeterData {
+        std::uint8_t step_count;  // 0 means use child count
+    };
+
     // Data for function definitions (fn name(params) -> body)
     struct FunctionDefData {
         std::string name;
@@ -218,6 +225,7 @@ struct Node {
         MiniAtomData,
         MiniEuclideanData,
         MiniModifierData,
+        MiniPolymeterData,
         FunctionDefData,
         MatchArmData
     > data;
@@ -273,6 +281,10 @@ struct Node {
 
     [[nodiscard]] const MiniModifierData& as_mini_modifier() const {
         return std::get<MiniModifierData>(data);
+    }
+
+    [[nodiscard]] const MiniPolymeterData& as_mini_polymeter() const {
+        return std::get<MiniPolymeterData>(data);
     }
 
     [[nodiscard]] const FunctionDefData& as_function_def() const {

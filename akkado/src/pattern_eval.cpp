@@ -91,6 +91,9 @@ void PatternEvaluator::eval_node(NodeIndex node, const PatternEvalContext& ctx,
         case NodeType::MiniPolyrhythm:
             eval_polyrhythm(node, ctx, stream);
             break;
+        case NodeType::MiniPolymeter:
+            eval_polymeter(node, ctx, stream);
+            break;
         case NodeType::MiniChoice:
             eval_choice(node, ctx, stream);
             break;
@@ -189,6 +192,44 @@ void PatternEvaluator::eval_polyrhythm(NodeIndex node, const PatternEvalContext&
     while (child != NULL_NODE) {
         eval_node(child, ctx.inherit(), stream);
         child = arena_[child].next_sibling;
+    }
+}
+
+void PatternEvaluator::eval_polymeter(NodeIndex node, const PatternEvalContext& ctx,
+                                       PatternEventStream& stream) {
+    // MiniPolymeter divides parent duration into N steps
+    // Unlike subdivision ([a b c]) which fits children into the parent duration,
+    // polymeter plays each child at a step position, cycling through children
+    // if step_count > child_count
+    const Node& n = arena_[node];
+    const auto& poly_data = n.as_mini_polymeter();
+
+    std::size_t child_count = count_children(node);
+    if (child_count == 0) return;
+
+    // Determine number of steps:
+    // - If %n specified, use n steps
+    // - Otherwise, use child count (each child = 1 step)
+    std::size_t steps = poly_data.step_count > 0
+        ? static_cast<std::size_t>(poly_data.step_count)
+        : child_count;
+
+    // Each step gets an equal division of the parent duration
+    float step_duration = ctx.duration / static_cast<float>(steps);
+
+    for (std::size_t i = 0; i < steps; ++i) {
+        PatternEvalContext step_ctx{
+            .start_time = ctx.start_time + step_duration * static_cast<float>(i),
+            .duration = step_duration,
+            .velocity = ctx.velocity,
+            .chance = ctx.chance
+        };
+
+        // Wrap around if more steps than children (for %n syntax)
+        NodeIndex child = get_child(node, i % child_count);
+        if (child != NULL_NODE) {
+            eval_node(child, step_ctx, stream);
+        }
     }
 }
 

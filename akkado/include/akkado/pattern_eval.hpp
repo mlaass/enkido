@@ -49,6 +49,10 @@ private:
     void eval_polyrhythm(NodeIndex node, const PatternEvalContext& ctx,
                          PatternEventStream& stream);
 
+    /// Evaluate a MiniPolymeter node (LCM alignment)
+    void eval_polymeter(NodeIndex node, const PatternEvalContext& ctx,
+                        PatternEventStream& stream);
+
     /// Evaluate a MiniChoice node (random selection)
     void eval_choice(NodeIndex node, const PatternEvalContext& ctx,
                      PatternEventStream& stream);

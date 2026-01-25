@@ -418,3 +418,73 @@ Edge cases where valid mini-notation could also be a valid string:
 - Strudel code examples work with minimal modification
 - Live-coding workflow supports expressive chord/pattern manipulation
 - No performance regression in audio path
+
+## 8. Deferred to Object System Revamp
+
+The following features require method chaining and are deferred until the object system is revamped to ensure coherent design across all types (patterns, arrays, chords, audio signals).
+
+### Method Chaining (Deferred)
+
+**Time Manipulation**:
+- `.slow(n)` - stretch pattern over n cycles
+- `.fast(n)` - compress pattern to 1/n cycles
+- `.fastGap(n)` - fast with gaps
+- `.cpm(n)` - cycles per minute
+
+**Time Offset**:
+- `.early(n)` - shift events earlier
+- `.late(n)` - shift events later
+- `.ribbon(n)` - continuous offset
+
+**Reordering**:
+- `.rev()` - reverse event order
+- `.palindrome()` - forward then backward
+- `.iter(n)` - rotate pattern
+- `.iterBack(n)` - rotate backward
+- `.ply(n)` - repeat each event
+
+**Segmentation**:
+- `.segment(n)` - sample pattern at n points
+- `.compress(start, end)` - time range
+- `.zoom(start, end)` - focus on range
+- `.linger(n)` - repeat first n
+- `.swing(n)` - swing timing
+- `.swingBy(amount, division)` - configurable swing
+
+**Scope**:
+- `.inside(n, fn)` - apply fn inside n cycles
+- `.outside(n, fn)` - apply fn outside n cycles
+
+### Note Properties (Deferred)
+
+- `.velocity(pattern)` - per-note velocity
+- `.bend(pattern)` - pitch bend
+- `.aftertouch(pattern)` - channel pressure
+- `.dur(pattern)` - note duration
+
+### Voicing (Deferred)
+
+- `.anchor(note)` - voicing center of gravity
+- `.mode("below" | "above" | "duck" | "root")` - voicing mode
+- Voice leading algorithms
+- Custom voicing dictionaries via `addVoicings(name, map)`
+
+### String-as-Pattern (Deferred)
+
+```akkado
+// Deferred: auto-parsing strings as patterns
+"bd sd".slow(2)  // Would require method chaining
+
+// Current: explicit pat() function
+pat("bd sd")     // Works now
+```
+
+### Rationale
+
+Method chaining should be designed holistically to work consistently across:
+- Patterns: `pat("bd sd").slow(2)`
+- Arrays: `[1, 2, 3].map(x => x * 2)`
+- Chords: `chord("Am").anchor("c5")`
+- Audio signals: potentially `osc("saw", 440).lpf(1000)`
+
+Adding method chaining piecemeal would create inconsistent APIs. Better to defer until the object model is designed to support uniform method dispatch across all value types.

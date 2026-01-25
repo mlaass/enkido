@@ -27,6 +27,8 @@ enum class MiniTokenType : std::uint8_t {
     RAngle,         // >
     LParen,         // (
     RParen,         // )
+    LBrace,         // { (polymeter)
+    RBrace,         // } (polymeter)
     Comma,          // ,
 
     // Modifiers
@@ -36,6 +38,7 @@ enum class MiniTokenType : std::uint8_t {
     At,             // @n (weight)
     Bang,           // !n (repeat)
     Question,       // ?n (chance)
+    Percent,        // %n (polymeter step count)
 
     // Choice operator
     Pipe,           // | (random choice)
@@ -58,6 +61,8 @@ constexpr std::string_view mini_token_type_name(MiniTokenType type) {
         case MiniTokenType::RAngle:      return "RAngle";
         case MiniTokenType::LParen:      return "LParen";
         case MiniTokenType::RParen:      return "RParen";
+        case MiniTokenType::LBrace:      return "LBrace";
+        case MiniTokenType::RBrace:      return "RBrace";
         case MiniTokenType::Comma:       return "Comma";
         case MiniTokenType::Star:        return "Star";
         case MiniTokenType::Slash:       return "Slash";
@@ -65,6 +70,7 @@ constexpr std::string_view mini_token_type_name(MiniTokenType type) {
         case MiniTokenType::At:          return "At";
         case MiniTokenType::Bang:        return "Bang";
         case MiniTokenType::Question:    return "Question";
+        case MiniTokenType::Percent:     return "Percent";
         case MiniTokenType::Pipe:        return "Pipe";
         case MiniTokenType::Error:       return "Error";
     }

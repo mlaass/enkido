@@ -164,7 +164,8 @@ bool MiniParser::is_atom_start() const {
            type == MiniTokenType::SampleToken ||
            type == MiniTokenType::Rest ||
            type == MiniTokenType::LBracket ||
-           type == MiniTokenType::LAngle;
+           type == MiniTokenType::LAngle ||
+           type == MiniTokenType::LBrace;
 }
 
 NodeIndex MiniParser::parse_atom() {
@@ -188,6 +189,10 @@ NodeIndex MiniParser::parse_atom() {
 
     if (check(MiniTokenType::LAngle)) {
         return parse_sequence();
+    }
+
+    if (check(MiniTokenType::LBrace)) {
+        return parse_polymeter();
     }
 
     // Not an atom - this is OK, pattern might be empty or we're at end
@@ -301,6 +306,41 @@ NodeIndex MiniParser::parse_sequence() {
     }
 
     consume(MiniTokenType::RAngle, "Expected '>' after sequence");
+
+    return node;
+}
+
+NodeIndex MiniParser::parse_polymeter() {
+    // polymeter = "{" pattern "}" [ "%" number ]
+    MiniToken open = advance(); // consume '{'
+
+    NodeIndex node = make_node(NodeType::MiniPolymeter, open);
+
+    // Parse children until '}'
+    while (!is_at_end() && !check(MiniTokenType::RBrace)) {
+        NodeIndex elem = parse_choice();
+        if (elem == NULL_NODE) {
+            break;
+        }
+        arena_.add_child(node, elem);
+    }
+
+    consume(MiniTokenType::RBrace, "Expected '}' after polymeter");
+
+    // Optional %n modifier for step count
+    std::uint8_t step_count = 0;  // 0 means use child count
+    if (match(MiniTokenType::Percent)) {
+        if (!check(MiniTokenType::Number)) {
+            error("Expected step count after '%'");
+        } else {
+            step_count = static_cast<std::uint8_t>(current().as_number());
+            advance();
+        }
+    }
+
+    arena_[node].data = Node::MiniPolymeterData{
+        .step_count = step_count
+    };
 
     return node;
 }
