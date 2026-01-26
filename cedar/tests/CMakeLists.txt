@@ -28,6 +28,7 @@ add_executable(cedar_tests
     test_crossfade.cpp
     test_sample_bank.cpp
     test_memory_stress.cpp
+    test_pattern_query.cpp
 )
 
 # Add concurrency tests if enabled

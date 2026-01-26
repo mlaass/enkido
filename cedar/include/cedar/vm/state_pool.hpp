@@ -231,6 +231,39 @@ public:
         }
     }
 
+    // Initialize a PatternQueryState with a compiled pattern program
+    // Used by compiler to set up lazy queryable patterns
+    void init_pattern_program(std::uint32_t state_id,
+                              const PatternNode* nodes, std::size_t node_count,
+                              float cycle_length, bool is_sample_pattern) {
+        auto& state = get_or_create<PatternQueryState>(state_id);
+
+        // Copy pattern nodes
+        state.num_nodes = static_cast<std::uint32_t>(
+            std::min(node_count, PatternQueryState::MAX_NODES));
+        for (std::size_t i = 0; i < state.num_nodes; ++i) {
+            state.nodes[i] = nodes[i];
+        }
+
+        // Set metadata
+        state.cycle_length = cycle_length;
+        state.is_sample_pattern = is_sample_pattern;
+
+        // Initialize pattern seed from state_id (deterministic randomness)
+        // Use splitmix64-style mixing for good distribution
+        std::uint64_t seed = state_id;
+        seed = (seed ^ (seed >> 30)) * 0xBF58476D1CE4E5B9ull;
+        seed = (seed ^ (seed >> 27)) * 0x94D049BB133111EBull;
+        state.pattern_seed = seed ^ (seed >> 31);
+
+        // Reset playback state
+        state.current_index = 0;
+        state.last_beat_pos = -1.0f;
+        state.num_events = 0;
+        state.query_start = 0.0f;
+        state.query_end = 0.0f;
+    }
+
 private:
     static constexpr std::size_t INVALID_SLOT = ~std::size_t{0};
 

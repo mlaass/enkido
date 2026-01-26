@@ -526,6 +526,15 @@ void VM::execute(const Instruction& inst) {
             op_timeline(ctx_, inst);
             break;
 
+        // === Lazy Queryable Patterns ===
+        case Opcode::PAT_QUERY:
+            op_pat_query(ctx_, inst);
+            break;
+
+        case Opcode::PAT_STEP:
+            op_pat_step(ctx_, inst);
+            break;
+
         // === Envelopes ===
         case Opcode::ENV_ADSR:
             op_env_adsr(ctx_, inst);

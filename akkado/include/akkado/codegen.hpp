@@ -5,6 +5,7 @@
 #include "symbol_table.hpp"
 #include "sample_registry.hpp"
 #include <cedar/vm/instruction.hpp>
+#include <cedar/opcodes/dsp_state.hpp>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -12,12 +13,13 @@
 
 namespace akkado {
 
-/// State initialization data for SEQ_STEP and TIMELINE opcodes
+/// State initialization data for SEQ_STEP, TIMELINE, and PAT_QUERY opcodes
 struct StateInitData {
     std::uint32_t state_id;  // Must match Instruction::state_id (32-bit FNV-1a hash)
     enum class Type : std::uint8_t {
-        SeqStep,   // Initialize SeqStepState with timed events
-        Timeline   // Initialize TimelineState with breakpoints
+        SeqStep,         // Initialize SeqStepState with timed events
+        Timeline,        // Initialize TimelineState with breakpoints
+        PatternProgram   // Initialize PatternQueryState with pattern nodes
     } type;
 
     // For SeqStep: parallel arrays of event data
@@ -28,6 +30,10 @@ struct StateInitData {
     float cycle_length = 4.0f;      // Cycle length in beats
 
     // For Timeline: [time, value, curve, ...] triplets (existing usage)
+
+    // For PatternProgram: compiled pattern nodes for lazy query
+    std::vector<cedar::PatternNode> pattern_nodes;  // Pattern program
+    bool is_sample_pattern = false;  // Sample pattern vs pitch pattern
 };
 
 /// Result of code generation
@@ -179,6 +185,11 @@ private:
     std::uint16_t handle_chord_progression(NodeIndex node, const Node& n,
                                            const std::vector<struct ChordInfo>& chords,
                                            const std::string& chord_str);
+
+    /// Handle chord progression using mini-notation event timing
+    std::uint16_t handle_chord_progression_events(NodeIndex node, const Node& n,
+                                                  const struct PatternEventStream& events,
+                                                  const std::string& chord_str);
 
     // Context
     const Ast* ast_ = nullptr;

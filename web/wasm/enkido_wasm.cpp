@@ -639,6 +639,16 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                 init.cycle_length
             );
             count++;
+        } else if (init.type == akkado::StateInitData::Type::PatternProgram) {
+            // Initialize lazy queryable pattern
+            g_vm->init_pattern_program_state(
+                init.state_id,
+                init.pattern_nodes.data(),
+                init.pattern_nodes.size(),
+                init.cycle_length,
+                init.is_sample_pattern
+            );
+            count++;
         }
         // Timeline state init would go here if needed
     }
