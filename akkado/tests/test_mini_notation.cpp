@@ -405,7 +405,8 @@ TEST_CASE("Pattern evaluation", "[pattern_eval]") {
         CHECK_THAT(events.events[2].time, WithinRel(0.75f, 0.01f));  // 6/8
     }
 
-    SECTION("repeat modifier") {
+    SECTION("repeat modifier - single element pattern") {
+        // c4!3 as sole element: 3 copies each taking 1/3 of the cycle
         AstArena arena;
         auto [root, diags] = parse_mini("c4!3", arena);
         REQUIRE(diags.empty());
@@ -413,10 +414,88 @@ TEST_CASE("Pattern evaluation", "[pattern_eval]") {
         PatternEventStream events = evaluate_pattern(root, arena, 0);
         REQUIRE(events.size() == 3);
 
-        // Three repeats evenly spaced
+        // Three repeats evenly spaced (each takes 1/3 of cycle)
         CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
         CHECK_THAT(events.events[1].time, WithinRel(0.333f, 0.01f));
         CHECK_THAT(events.events[2].time, WithinRel(0.666f, 0.01f));
+    }
+
+    SECTION("repeat modifier extends sequence") {
+        // a!2 b → 3 elements (a, a, b), each gets 1/3 of time
+        // This is different from a*2 b which would be 2 elements
+        AstArena arena;
+        auto [root, diags] = parse_mini("a!2 b", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 3);
+
+        // Events at 0, 1/3, 2/3
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.333f, 0.01f));
+        CHECK_THAT(events.events[2].time, WithinRel(0.666f, 0.01f));
+
+        // Durations should all be 1/3
+        CHECK_THAT(events.events[0].duration, WithinRel(0.333f, 0.01f));
+        CHECK_THAT(events.events[1].duration, WithinRel(0.333f, 0.01f));
+        CHECK_THAT(events.events[2].duration, WithinRel(0.333f, 0.01f));
+    }
+
+    SECTION("weight modifier elongation") {
+        // a@2 b c → weights 2,1,1 = total 4
+        // a at 0-0.5 (2/4), b at 0.5-0.75 (1/4), c at 0.75-1.0 (1/4)
+        AstArena arena;
+        auto [root, diags] = parse_mini("a@2 b c", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 3);
+
+        // Check times
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.5f, 0.001f));
+        CHECK_THAT(events.events[2].time, WithinRel(0.75f, 0.001f));
+
+        // Check durations
+        CHECK_THAT(events.events[0].duration, WithinRel(0.5f, 0.001f));
+        CHECK_THAT(events.events[1].duration, WithinRel(0.25f, 0.001f));
+        CHECK_THAT(events.events[2].duration, WithinRel(0.25f, 0.001f));
+    }
+
+    SECTION("weight modifier does not affect velocity") {
+        // Weight should only affect time, not velocity
+        AstArena arena;
+        auto [root, diags] = parse_mini("a@2", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 1);
+
+        // Velocity should be default (1.0), not 2.0
+        CHECK_THAT(events.events[0].velocity, WithinRel(1.0f, 0.001f));
+    }
+
+    SECTION("combined weight and repeat") {
+        // a@2!2 b → a with weight 2, repeated twice, plus b
+        // Effective: 2 copies of weight-2 element + 1 copy of weight-1 element
+        // Weights = 2 + 2 + 1 = 5
+        // Times: 0-0.4 (2/5), 0.4-0.8 (2/5), 0.8-1.0 (1/5)
+        AstArena arena;
+        auto [root, diags] = parse_mini("a@2!2 b", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 3);
+
+        // Check times
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.4f, 0.01f));
+        CHECK_THAT(events.events[2].time, WithinRel(0.8f, 0.01f));
+
+        // Check durations
+        CHECK_THAT(events.events[0].duration, WithinRel(0.4f, 0.01f));
+        CHECK_THAT(events.events[1].duration, WithinRel(0.4f, 0.01f));
+        CHECK_THAT(events.events[2].duration, WithinRel(0.2f, 0.01f));
     }
 
     SECTION("rest produces rest event") {
@@ -495,5 +574,179 @@ TEST_CASE("Pattern evaluation", "[pattern_eval]") {
         for (std::size_t i = 0; i < events_sub.size(); ++i) {
             CHECK_THAT(events_sub.events[i].time, WithinRel(events_poly.events[i].time, 0.01f));
         }
+    }
+}
+
+// ============================================================================
+// Multi-Cycle Pattern Tests
+// ============================================================================
+
+TEST_CASE("Multi-cycle pattern evaluation", "[pattern_eval][multi_cycle]") {
+    SECTION("count_cycles for atoms") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c4", arena);
+        REQUIRE(diags.empty());
+
+        std::uint32_t cycles = count_pattern_cycles(root, arena);
+        CHECK(cycles == 1);
+    }
+
+    SECTION("count_cycles for groups") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("[a b c d]", arena);
+        REQUIRE(diags.empty());
+
+        std::uint32_t cycles = count_pattern_cycles(root, arena);
+        CHECK(cycles == 1);  // Groups don't add cycles
+    }
+
+    SECTION("count_cycles for sequence <a b c>") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<a b c>", arena);
+        REQUIRE(diags.empty());
+
+        std::uint32_t cycles = count_pattern_cycles(root, arena);
+        CHECK(cycles == 3);  // 3 elements = 3 cycles
+    }
+
+    SECTION("count_cycles for slow modifier") {
+        // Slow modifier /n stretches TIME within single evaluation,
+        // it doesn't require additional cycle evaluations.
+        // cycle_span is calculated from max event times after evaluation.
+        AstArena arena;
+        auto [root, diags] = parse_mini("[a b c d]/2", arena);
+        REQUIRE(diags.empty());
+
+        std::uint32_t cycles = count_pattern_cycles(root, arena);
+        CHECK(cycles == 1);  // /2 stretches time, doesn't add cycles
+    }
+
+    SECTION("count_cycles for nested sequence") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<[a b] [c d]>", arena);
+        REQUIRE(diags.empty());
+
+        std::uint32_t cycles = count_pattern_cycles(root, arena);
+        CHECK(cycles == 2);  // 2 elements in sequence
+    }
+
+    SECTION("multi-cycle evaluation for <a b c>") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<c4 e4 g4>", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern_multi_cycle(root, arena);
+
+        // Should have 3 events (one per cycle)
+        REQUIRE(events.size() == 3);
+        CHECK_THAT(events.cycle_span, WithinRel(3.0f, 0.001f));
+
+        // Events at times 0, 1, 2 (one per cycle)
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(1.0f, 0.001f));
+        CHECK_THAT(events.events[2].time, WithinRel(2.0f, 0.001f));
+
+        // Check notes
+        CHECK(events.events[0].midi_note == 60); // C4
+        CHECK(events.events[1].midi_note == 64); // E4
+        CHECK(events.events[2].midi_note == 67); // G4
+    }
+
+    SECTION("multi-cycle evaluation for [a b c d]/2") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("[c4 e4 g4 b4]/2", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern_multi_cycle(root, arena);
+
+        // Should have 4 events spanning 2 cycles
+        REQUIRE(events.size() == 4);
+        CHECK_THAT(events.cycle_span, WithinRel(2.0f, 0.001f));
+
+        // Events at times 0, 0.5, 1.0, 1.5 (normalized to 2 cycles)
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.5f, 0.001f));
+        CHECK_THAT(events.events[2].time, WithinRel(1.0f, 0.001f));
+        CHECK_THAT(events.events[3].time, WithinRel(1.5f, 0.001f));
+    }
+
+    SECTION("multi-cycle evaluation for nested <[a b] [c d]>") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<[c4 e4] [g4 b4]>", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern_multi_cycle(root, arena);
+
+        // Should have 4 events spanning 2 cycles
+        REQUIRE(events.size() == 4);
+        CHECK_THAT(events.cycle_span, WithinRel(2.0f, 0.001f));
+
+        // Cycle 0: [c4 e4] at times 0.0, 0.5
+        // Cycle 1: [g4 b4] at times 1.0, 1.5
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK(events.events[0].midi_note == 60); // C4
+        CHECK_THAT(events.events[1].time, WithinRel(0.5f, 0.001f));
+        CHECK(events.events[1].midi_note == 64); // E4
+        CHECK_THAT(events.events[2].time, WithinRel(1.0f, 0.001f));
+        CHECK(events.events[2].midi_note == 67); // G4
+        CHECK_THAT(events.events[3].time, WithinRel(1.5f, 0.001f));
+        CHECK(events.events[3].midi_note == 71); // B4
+    }
+
+    SECTION("single cycle patterns are unchanged") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c4 e4 g4", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream single = evaluate_pattern(root, arena, 0);
+        PatternEventStream multi = evaluate_pattern_multi_cycle(root, arena);
+
+        // Should be identical
+        REQUIRE(single.size() == multi.size());
+        for (std::size_t i = 0; i < single.size(); ++i) {
+            CHECK_THAT(single.events[i].time, WithinRel(multi.events[i].time, 0.001f));
+            CHECK(single.events[i].midi_note == multi.events[i].midi_note);
+        }
+    }
+
+    SECTION("sample pattern with sequence") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<bd sd hh>", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern_multi_cycle(root, arena);
+
+        REQUIRE(events.size() == 3);
+        CHECK_THAT(events.cycle_span, WithinRel(3.0f, 0.001f));
+
+        CHECK(events.events[0].type == PatternEventType::Sample);
+        CHECK(events.events[0].sample_name == "bd");
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+
+        CHECK(events.events[1].sample_name == "sd");
+        CHECK_THAT(events.events[1].time, WithinRel(1.0f, 0.001f));
+
+        CHECK(events.events[2].sample_name == "hh");
+        CHECK_THAT(events.events[2].time, WithinRel(2.0f, 0.001f));
+    }
+
+    SECTION("sequence with groups inside") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("<[bd bd] sn>", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern_multi_cycle(root, arena);
+
+        // Cycle 0: [bd bd] at times 0.0, 0.5
+        // Cycle 1: sn at time 1.0
+        REQUIRE(events.size() == 3);
+        CHECK_THAT(events.cycle_span, WithinRel(2.0f, 0.001f));
+
+        CHECK(events.events[0].sample_name == "bd");
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK(events.events[1].sample_name == "bd");
+        CHECK_THAT(events.events[1].time, WithinRel(0.5f, 0.001f));
+        CHECK(events.events[2].sample_name == "sn");
+        CHECK_THAT(events.events[2].time, WithinRel(1.0f, 0.001f));
     }
 }

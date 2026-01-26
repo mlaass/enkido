@@ -3,6 +3,7 @@
 #include "akkado/chord_parser.hpp"
 #include "akkado/akkado.hpp"
 #include <cedar/vm/instruction.hpp>
+#include <cmath>
 #include <cstring>
 #include <set>
 
@@ -471,4 +472,154 @@ TEST_CASE("chord pattern produces polyphonic sequence", "[chord][pattern]") {
     CHECK(seq_count == 3);
     // Should have 3 oscillators (one per voice)
     CHECK(osc_count == 3);
+}
+
+// ============================================================================
+// Mini-notation chord tests
+// ============================================================================
+
+TEST_CASE("chord with mini-notation brackets", "[chord][mini]") {
+    SECTION("brackets subdivide timing - [Am C7] Fm Gm produces 4 chords") {
+        auto result = akkado::compile("chord(\"[Am C7] Fm Gm\")");
+        REQUIRE(result.success);
+        // 3 top-level elements: [Am C7], Fm, Gm - each gets 1/3 of the cycle
+        // Inside [Am C7]: Am and C7 each get 1/6 of the cycle
+        // Max voices = 4 (C7 has 4 notes)
+        CHECK(result.state_inits.size() == 4);
+
+        // Verify timing (mini-notation subdivision):
+        // [Am C7] Fm Gm -> thirds at 0, 1/3, 2/3
+        // [Am C7] subdivides first third -> Am at 0, C7 at 1/6
+        // In 4-beat cycles: Am=0.0, C7=0.667, Fm=1.333, Gm=2.667
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 4);
+            // Use approximate comparisons (within 0.01 beats)
+            CHECK(std::abs(first_voice.times[0] - 0.0f) < 0.01f);       // Am
+            CHECK(std::abs(first_voice.times[1] - 0.6667f) < 0.01f);    // C7
+            CHECK(std::abs(first_voice.times[2] - 1.3333f) < 0.01f);    // Fm
+            CHECK(std::abs(first_voice.times[3] - 2.6667f) < 0.01f);    // Gm
+        }
+    }
+
+    SECTION("simple 4-chord pattern without brackets") {
+        auto result = akkado::compile("chord(\"Am C7 Fm Gm\")");
+        REQUIRE(result.success);
+        // 4 chords at top level, each gets 1/4 of the cycle
+        CHECK(result.state_inits.size() == 4);
+
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 4);
+            // Each chord at 0, 1/4, 2/4, 3/4 of cycle -> 0, 1, 2, 3 beats
+            CHECK(first_voice.times[0] == 0.0f);
+            CHECK(first_voice.times[1] == 1.0f);
+            CHECK(first_voice.times[2] == 2.0f);
+            CHECK(first_voice.times[3] == 3.0f);
+        }
+    }
+}
+
+TEST_CASE("chord with repeat modifier", "[chord][mini]") {
+    SECTION("Am!2 C repeats Am twice (extends sequence)") {
+        // !2 is the repeat modifier - it EXTENDS the sequence (not *2 which compresses)
+        // Am!2 C = Am Am C (3 elements, each gets 1/3 of cycle)
+        auto result = akkado::compile("chord(\"Am!2 C\")");
+        REQUIRE(result.success);
+        // 3 chord events total (Am, Am, C), each taking 1/3 of cycle
+        CHECK(result.state_inits.size() == 3);  // triads = 3 voices
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 3);
+            // Normalized times: 0, 1/3, 2/3 → beat times: 0, 1.333, 2.667 (cycle_length=4)
+            CHECK(first_voice.times[0] == 0.0f);
+            CHECK_THAT(first_voice.times[1], WithinRel(4.0f / 3.0f, 0.01f));  // ~1.333
+            CHECK_THAT(first_voice.times[2], WithinRel(8.0f / 3.0f, 0.01f));  // ~2.667
+        }
+    }
+}
+
+TEST_CASE("chord with alternating sequence", "[chord][mini]") {
+    SECTION("<Am C> Fm expands across cycles") {
+        auto result = akkado::compile("chord(\"<Am C> Fm\")");
+        REQUIRE(result.success);
+        // <Am C> is a sequence that alternates per cycle
+        // Multi-cycle evaluation expands this across 2 cycles:
+        // Cycle 0: Am at 0, Fm at 0.5
+        // Cycle 1: C at 1.0, Fm at 1.5
+        // Result: 4 chords total spanning 2 cycles
+        CHECK(result.state_inits.size() == 3);  // 3 voices (triads)
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 4);  // 4 chords across 2 cycles
+        }
+    }
+}
+
+TEST_CASE("chord with nested brackets", "[chord][mini]") {
+    SECTION("[[Am C] Dm] Em creates nested timing") {
+        auto result = akkado::compile("chord(\"[[Am C] Dm] Em\")");
+        REQUIRE(result.success);
+        // Outer bracket splits into two: [[Am C] Dm] at 0-0.5, Em at 0.5-1.0
+        // Inner bracket [[Am C] Dm] splits 0-0.5 into: [Am C] at 0-0.25, Dm at 0.25-0.5
+        // [Am C] splits 0-0.25 into: Am at 0-0.125, C at 0.125-0.25
+        // Result: Am=0.0, C=0.5, Dm=1.0, Em=2.0 (in beats with cycle_length=4)
+        CHECK(result.state_inits.size() == 3);  // triads
+    }
+}
+
+TEST_CASE("chord with euclidean rhythm", "[chord][mini]") {
+    SECTION("Am(3,8) creates euclidean pattern of Am") {
+        auto result = akkado::compile("chord(\"Am(3,8)\")");
+        REQUIRE(result.success);
+        // Euclidean(3,8) = [x . . x . . x .] = hits at 0, 3, 6 out of 8
+        CHECK(result.state_inits.size() == 3);  // Am triad = 3 voices
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 3);  // 3 hits
+        }
+    }
+}
+
+TEST_CASE("chord with polyrhythm", "[chord][mini]") {
+    SECTION("[Am, C, F] plays all simultaneously") {
+        auto result = akkado::compile("chord(\"[Am, C, F]\")");
+        REQUIRE(result.success);
+        // Polyrhythm plays all three chords at time 0
+        // 3 triads overlapping = still 3 voices, but each voice has 3 events at time 0
+        CHECK(result.state_inits.size() == 3);  // 3 voices
+        if (!result.state_inits.empty()) {
+            const auto& first_voice = result.state_inits[0];
+            CHECK(first_voice.times.size() == 3);  // 3 events
+            // All at time 0
+            CHECK(first_voice.times[0] == 0.0f);
+            CHECK(first_voice.times[1] == 0.0f);
+            CHECK(first_voice.times[2] == 0.0f);
+        }
+    }
+}
+
+TEST_CASE("chord backward compatibility", "[chord]") {
+    SECTION("simple whitespace-separated chords still work") {
+        // This is the most common use case - should continue working
+        auto result = akkado::compile("chord(\"Am C7 F G\")");
+        REQUIRE(result.success);
+        CHECK(result.state_inits.size() == 4);  // C7 has 4 notes = 4 voices
+    }
+
+    SECTION("single chord still produces multi-buffer") {
+        auto result = akkado::compile("chord(\"Am\")");
+        REQUIRE(result.success);
+
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
+        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        int push_const_count = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (insts[i].opcode == cedar::Opcode::PUSH_CONST) {
+                push_const_count++;
+            }
+        }
+        CHECK(push_const_count == 3);  // 3 MIDI notes for Am triad
+    }
 }

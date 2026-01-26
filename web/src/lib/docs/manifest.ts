@@ -508,6 +508,36 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "mini-notation",
 		"title": "Mini-Notation Basics"
 	},
+	"modifier": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"speed": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"slow": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"repeat": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"chance": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
+	"alternation": {
+		"slug": "basics",
+		"category": "mini-notation",
+		"title": "Mini-Notation Basics"
+	},
 	"pipe": {
 		"slug": "pipes",
 		"category": "language",

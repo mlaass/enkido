@@ -1,16 +1,26 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace akkado {
+
+/// Data for chord events
+struct ChordEventData {
+    std::string root;           // Root note name: "A", "C#", "Bb"
+    std::string quality;        // Chord quality: "", "m", "7", "maj7", etc.
+    std::vector<int> intervals; // Semitone intervals from root (e.g., [0, 3, 7] for minor)
+    int root_midi;              // MIDI note of root (default octave 4)
+};
 
 /// Type of pattern event
 enum class PatternEventType : std::uint8_t {
     Pitch,      // Melodic note (MIDI note number)
     Sample,     // Sample trigger (sample name + variant)
     Rest,       // Silence (no output)
+    Chord,      // Chord (multiple MIDI notes)
 };
 
 /// A single event in an expanded pattern timeline
@@ -36,6 +46,9 @@ struct PatternEvent {
     std::string sample_name;    // Sample identifier (e.g., "bd", "sd")
     std::uint8_t sample_variant = 0; // Sample variant (e.g., 0 for "bd", 2 for "bd:2")
 
+    // Chord data (for Chord type)
+    std::optional<ChordEventData> chord_data;
+
     /// Check if this event should trigger (based on chance)
     /// @param random_value Random value in [0, 1)
     [[nodiscard]] bool should_trigger(float random_value) const {
@@ -56,6 +69,11 @@ struct PatternEvent {
     [[nodiscard]] bool is_sample() const {
         return type == PatternEventType::Sample;
     }
+
+    /// Check if this is a chord event
+    [[nodiscard]] bool is_chord() const {
+        return type == PatternEventType::Chord;
+    }
 };
 
 /// A complete pattern expanded into a timeline of events
@@ -64,6 +82,7 @@ struct PatternEvent {
 /// constructs (groups, sequences, modifiers) resolved into concrete events.
 struct PatternEventStream {
     std::vector<PatternEvent> events;
+    float cycle_span = 1.0f;  // How many cycles this pattern spans (e.g., 2.0 for /2)
 
     /// Number of events in the stream
     [[nodiscard]] std::size_t size() const {
@@ -159,6 +178,23 @@ struct PatternEvalContext {
             .duration = duration,
             .velocity = velocity,
             .chance = chance * ch
+        };
+    }
+
+    /// Create a child context for weighted subdivision
+    /// @param accumulated_weight Sum of weights of preceding children
+    /// @param child_weight Weight of this child
+    /// @param total_weight Total weight of all children
+    [[nodiscard]] PatternEvalContext subdivide_weighted(float accumulated_weight,
+                                                         float child_weight,
+                                                         float total_weight) const {
+        float child_duration = duration * (child_weight / total_weight);
+        float child_start = start_time + duration * (accumulated_weight / total_weight);
+        return {
+            .start_time = child_start,
+            .duration = child_duration,
+            .velocity = velocity,
+            .chance = chance
         };
     }
 };

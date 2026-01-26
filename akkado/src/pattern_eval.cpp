@@ -1,4 +1,5 @@
 #include "akkado/pattern_eval.hpp"
+#include "akkado/chord_parser.hpp"
 #include <algorithm>
 
 namespace akkado {
@@ -66,6 +67,13 @@ PatternEventStream PatternEvaluator::evaluate(NodeIndex pattern_root,
     eval_node(pattern_root, ctx, stream);
     stream.sort_by_time();
 
+    // Calculate cycle_span from maximum event time
+    float max_time = 0.0f;
+    for (const auto& event : stream.events) {
+        max_time = std::max(max_time, event.time + event.duration);
+    }
+    stream.cycle_span = std::max(1.0f, max_time);  // At least 1 cycle
+
     return stream;
 }
 
@@ -112,17 +120,32 @@ void PatternEvaluator::eval_node(NodeIndex node, const PatternEvalContext& ctx,
 void PatternEvaluator::eval_pattern(NodeIndex node, const PatternEvalContext& ctx,
                                      PatternEventStream& stream) {
     // MiniPattern is the root - its children are the top-level elements
-    // They subdivide the cycle like a group
-    std::size_t child_count = count_children(node);
-    if (child_count == 0) return;
+    // They subdivide the cycle based on weights and repeat counts
 
-    std::size_t idx = 0;
+    // First pass: calculate total weight (accounting for repeat counts)
+    float total_weight = 0.0f;
     NodeIndex child = arena_[node].first_child;
     while (child != NULL_NODE) {
-        PatternEvalContext child_ctx = ctx.subdivide(idx, child_count);
-        eval_node(child, child_ctx, stream);
+        auto [weight, count] = get_child_weight_and_count(child);
+        total_weight += weight * static_cast<float>(count);
         child = arena_[child].next_sibling;
-        idx++;
+    }
+
+    if (total_weight <= 0.0f) return;
+
+    // Second pass: evaluate with weighted time allocation
+    float accumulated = 0.0f;
+    child = arena_[node].first_child;
+    while (child != NULL_NODE) {
+        auto [weight, count] = get_child_weight_and_count(child);
+
+        // For !n, evaluate n times with sequential time slots
+        for (int i = 0; i < count; ++i) {
+            PatternEvalContext child_ctx = ctx.subdivide_weighted(accumulated, weight, total_weight);
+            eval_node_unwrap(child, child_ctx, stream);
+            accumulated += weight;
+        }
+        child = arena_[child].next_sibling;
     }
 }
 
@@ -143,9 +166,26 @@ void PatternEvaluator::eval_atom(NodeIndex node, const PatternEvalContext& ctx,
             event.midi_note = atom_data.midi_note;
             break;
         case Node::MiniAtomKind::Sample:
-            event.type = PatternEventType::Sample;
-            event.sample_name = atom_data.sample_name;
-            event.sample_variant = atom_data.sample_variant;
+            // In chord mode, try to parse sample name as chord symbol
+            if (chord_mode_) {
+                auto chord = parse_chord_symbol(atom_data.sample_name);
+                if (chord.has_value()) {
+                    event.type = PatternEventType::Chord;
+                    event.chord_data = ChordEventData{
+                        .root = chord->root,
+                        .quality = chord->quality,
+                        .intervals = chord->intervals,
+                        .root_midi = chord->root_midi
+                    };
+                } else {
+                    // Invalid chord symbol - treat as rest
+                    event.type = PatternEventType::Rest;
+                }
+            } else {
+                event.type = PatternEventType::Sample;
+                event.sample_name = atom_data.sample_name;
+                event.sample_variant = atom_data.sample_variant;
+            }
             break;
         case Node::MiniAtomKind::Rest:
             event.type = PatternEventType::Rest;
@@ -157,17 +197,32 @@ void PatternEvaluator::eval_atom(NodeIndex node, const PatternEvalContext& ctx,
 
 void PatternEvaluator::eval_group(NodeIndex node, const PatternEvalContext& ctx,
                                    PatternEventStream& stream) {
-    // MiniGroup subdivides its time span among children
-    std::size_t child_count = count_children(node);
-    if (child_count == 0) return;
+    // MiniGroup subdivides its time span based on weights and repeat counts
 
-    std::size_t idx = 0;
+    // First pass: calculate total weight (accounting for repeat counts)
+    float total_weight = 0.0f;
     NodeIndex child = arena_[node].first_child;
     while (child != NULL_NODE) {
-        PatternEvalContext child_ctx = ctx.subdivide(idx, child_count);
-        eval_node(child, child_ctx, stream);
+        auto [weight, count] = get_child_weight_and_count(child);
+        total_weight += weight * static_cast<float>(count);
         child = arena_[child].next_sibling;
-        idx++;
+    }
+
+    if (total_weight <= 0.0f) return;
+
+    // Second pass: evaluate with weighted time allocation
+    float accumulated = 0.0f;
+    child = arena_[node].first_child;
+    while (child != NULL_NODE) {
+        auto [weight, count] = get_child_weight_and_count(child);
+
+        // For !n, evaluate n times with sequential time slots
+        for (int i = 0; i < count; ++i) {
+            PatternEvalContext child_ctx = ctx.subdivide_weighted(accumulated, weight, total_weight);
+            eval_node_unwrap(child, child_ctx, stream);
+            accumulated += weight;
+        }
+        child = arena_[child].next_sibling;
     }
 }
 
@@ -305,26 +360,14 @@ void PatternEvaluator::eval_modified(NodeIndex node, const PatternEvalContext& c
             break;
 
         case Node::MiniModifierType::Weight:
-            // Weight affects velocity
-            new_ctx = ctx.with_velocity(mod_data.value);
+            // Weight affects temporal allocation in parent group/pattern
+            // Just pass through to child - parent handles the time allocation
             break;
 
-        case Node::MiniModifierType::Repeat: {
-            // Repeat the child N times
-            int repeats = static_cast<int>(mod_data.value);
-            float repeat_duration = ctx.duration / static_cast<float>(repeats);
-
-            for (int i = 0; i < repeats; ++i) {
-                PatternEvalContext repeat_ctx{
-                    .start_time = ctx.start_time + repeat_duration * static_cast<float>(i),
-                    .duration = repeat_duration,
-                    .velocity = ctx.velocity,
-                    .chance = ctx.chance
-                };
-                eval_node(child, repeat_ctx, stream);
-            }
-            return; // Already handled
-        }
+        case Node::MiniModifierType::Repeat:
+            // Repeat extends sequence at parent level
+            // Just pass through to child - parent handles the replication
+            break;
 
         case Node::MiniModifierType::Chance:
             // Set probability
@@ -404,11 +447,179 @@ NodeIndex PatternEvaluator::get_child(NodeIndex node, std::size_t index) const {
     return child;
 }
 
+std::pair<float, int> PatternEvaluator::get_child_weight_and_count(NodeIndex child) const {
+    if (child == NULL_NODE) return {1.0f, 1};
+
+    float weight = 1.0f;
+    int count = 1;
+
+    // Walk through modifier chain to find Weight and Repeat
+    NodeIndex current = child;
+    while (arena_[current].type == NodeType::MiniModified) {
+        const auto& mod = arena_[current].as_mini_modifier();
+        if (mod.modifier_type == Node::MiniModifierType::Repeat) {
+            count = static_cast<int>(mod.value);
+        } else if (mod.modifier_type == Node::MiniModifierType::Weight) {
+            weight = mod.value;
+        }
+        current = arena_[current].first_child;
+        if (current == NULL_NODE) break;
+    }
+
+    return {weight, count};
+}
+
+void PatternEvaluator::eval_node_unwrap(NodeIndex node, const PatternEvalContext& ctx,
+                                         PatternEventStream& stream) {
+    if (node == NULL_NODE) return;
+
+    // If this is a Weight or Repeat modifier, skip it and eval inner content
+    // (the parent already handled the weight/repeat semantics)
+    NodeIndex current = node;
+    PatternEvalContext current_ctx = ctx;
+
+    while (arena_[current].type == NodeType::MiniModified) {
+        const auto& mod = arena_[current].as_mini_modifier();
+        if (mod.modifier_type == Node::MiniModifierType::Weight ||
+            mod.modifier_type == Node::MiniModifierType::Repeat) {
+            // Skip this modifier - parent handled it
+            current = arena_[current].first_child;
+            if (current == NULL_NODE) return;
+        } else {
+            // Other modifier - let eval_node handle it
+            break;
+        }
+    }
+
+    eval_node(current, current_ctx, stream);
+}
+
+std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
+    if (node == NULL_NODE) return 1;
+
+    const Node& n = arena_[node];
+
+    switch (n.type) {
+        case NodeType::MiniPattern: {
+            // Root pattern: max of all children's cycle counts
+            std::uint32_t max_cycles = 1;
+            NodeIndex child = n.first_child;
+            while (child != NULL_NODE) {
+                max_cycles = std::max(max_cycles, count_cycles(child));
+                child = arena_[child].next_sibling;
+            }
+            return max_cycles;
+        }
+
+        case NodeType::MiniSequence: {
+            // Alternating sequence <a b c> needs N cycles where N = child count
+            // Each element plays once per N cycles
+            std::size_t child_count = count_children(node);
+            if (child_count == 0) return 1;
+
+            // Also check if any child needs multiple cycles
+            std::uint32_t child_max = 1;
+            NodeIndex child = n.first_child;
+            while (child != NULL_NODE) {
+                child_max = std::max(child_max, count_cycles(child));
+                child = arena_[child].next_sibling;
+            }
+
+            // Total cycles = number of elements * max child cycles
+            return static_cast<std::uint32_t>(child_count) * child_max;
+        }
+
+        case NodeType::MiniGroup:
+        case NodeType::MiniPolyrhythm:
+        case NodeType::MiniPolymeter: {
+            // Group/polyrhythm: max of children's cycle counts
+            std::uint32_t max_cycles = 1;
+            NodeIndex child = n.first_child;
+            while (child != NULL_NODE) {
+                max_cycles = std::max(max_cycles, count_cycles(child));
+                child = arena_[child].next_sibling;
+            }
+            return max_cycles;
+        }
+
+        case NodeType::MiniModified: {
+            // Slow modifier /n stretches TIME within a single evaluation,
+            // it doesn't require additional cycle evaluations.
+            // The time stretching is handled by eval_modified which increases
+            // the duration, resulting in events with times > 1.0.
+            // cycle_span is then calculated from max event times.
+            //
+            // Speed, repeat, etc. also don't increase cycle count.
+            return count_cycles(n.first_child);
+        }
+
+        case NodeType::MiniChoice: {
+            // Random choice: max of children (all options could potentially play)
+            std::uint32_t max_cycles = 1;
+            NodeIndex child = n.first_child;
+            while (child != NULL_NODE) {
+                max_cycles = std::max(max_cycles, count_cycles(child));
+                child = arena_[child].next_sibling;
+            }
+            return max_cycles;
+        }
+
+        case NodeType::MiniEuclidean:
+            // Euclidean rhythm: check its atom child
+            return count_cycles(n.first_child);
+
+        case NodeType::MiniAtom:
+        default:
+            // Atoms and other types need 1 cycle
+            return 1;
+    }
+}
+
 // Convenience function
 PatternEventStream evaluate_pattern(NodeIndex pattern_root, const AstArena& arena,
                                      std::uint32_t cycle) {
     PatternEvaluator evaluator(arena);
     return evaluator.evaluate(pattern_root, cycle);
+}
+
+std::uint32_t count_pattern_cycles(NodeIndex pattern_root, const AstArena& arena) {
+    PatternEvaluator evaluator(arena);
+    return evaluator.count_cycles(pattern_root);
+}
+
+PatternEventStream evaluate_pattern_multi_cycle(NodeIndex pattern_root,
+                                                 const AstArena& arena) {
+    PatternEvaluator evaluator(arena);
+
+    // Determine how many cycles this pattern spans
+    std::uint32_t num_cycles = evaluator.count_cycles(pattern_root);
+
+    if (num_cycles <= 1) {
+        // Single cycle - use standard evaluation
+        return evaluator.evaluate(pattern_root, 0);
+    }
+
+    // Multi-cycle evaluation
+    PatternEventStream combined;
+
+    for (std::uint32_t cycle = 0; cycle < num_cycles; cycle++) {
+        PatternEventStream cycle_events = evaluator.evaluate(pattern_root, cycle);
+
+        // Offset times by cycle number
+        for (auto& event : cycle_events.events) {
+            event.time += static_cast<float>(cycle);
+        }
+
+        // Append to combined stream
+        combined.events.insert(combined.events.end(),
+                               cycle_events.events.begin(),
+                               cycle_events.events.end());
+    }
+
+    combined.cycle_span = static_cast<float>(num_cycles);
+    combined.sort_by_time();
+
+    return combined;
 }
 
 } // namespace akkado
