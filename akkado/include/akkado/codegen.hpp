@@ -13,6 +13,38 @@
 
 namespace akkado {
 
+// ============================================================================
+// Parameter Exposure System
+// ============================================================================
+
+/// Type of exposed parameter for UI generation
+enum class ParamType : std::uint8_t {
+    Continuous = 0,  // Float value in range [min, max] - rendered as slider
+    Button = 1,      // Momentary: 1 while pressed, 0 otherwise
+    Toggle = 2,      // Boolean: 0 or 1, click to flip
+    Select = 3       // Discrete: integer index into options array
+};
+
+/// Declaration of an exposed parameter extracted at compile time
+/// Used for auto-generating UI controls and external binding (Godot, MIDI, etc.)
+struct ParamDecl {
+    std::string name;              // Display name and EnvMap key
+    std::uint32_t name_hash = 0;   // FNV-1a hash for ENV_GET lookup
+    ParamType type = ParamType::Continuous;
+    float default_value = 0.0f;    // Initial value
+    float min_value = 0.0f;        // Minimum (Continuous only)
+    float max_value = 1.0f;        // Maximum (Continuous only)
+    std::vector<std::string> options;  // Option names (Select only)
+
+    // Source location for UI linking (click-to-source)
+    std::uint32_t source_offset = 0;   // Byte offset in source
+    std::uint32_t source_length = 0;   // Length in source
+};
+
+// ============================================================================
+// State Initialization Data
+// ============================================================================
+
 /// State initialization data for SEQ_STEP, TIMELINE, and SEQPAT_QUERY opcodes
 struct StateInitData {
     std::uint32_t state_id;  // Must match Instruction::state_id (32-bit FNV-1a hash)
@@ -45,6 +77,7 @@ struct CodeGenResult {
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data
     std::vector<std::string> required_samples;  // Unique sample names used
+    std::vector<ParamDecl> param_decls;  // Declared parameters for UI generation
     bool success = false;
 };
 
@@ -194,6 +227,22 @@ private:
                                                   const struct PatternEventStream& events,
                                                   const std::string& chord_str);
 
+    // ============================================================================
+    // Parameter exposure handlers
+    // ============================================================================
+
+    /// Handle param(name, default, min?, max?) - continuous slider parameter
+    std::uint16_t handle_param_call(NodeIndex node, const Node& n);
+
+    /// Handle button(name) - momentary button parameter
+    std::uint16_t handle_button_call(NodeIndex node, const Node& n);
+
+    /// Handle toggle(name, default?) - boolean toggle parameter
+    std::uint16_t handle_toggle_call(NodeIndex node, const Node& n);
+
+    /// Handle select(name, opt1, opt2, ...) - selection dropdown parameter
+    std::uint16_t handle_select_call(NodeIndex node, const Node& n);
+
     // Context
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;
@@ -202,6 +251,7 @@ private:
     std::vector<cedar::Instruction> instructions_;
     std::vector<Diagnostic> diagnostics_;
     std::vector<StateInitData> state_inits_;  // State initialization data
+    std::vector<ParamDecl> param_decls_;      // Declared parameters
     std::string filename_;
 
     // Semantic path tracking for state_id generation

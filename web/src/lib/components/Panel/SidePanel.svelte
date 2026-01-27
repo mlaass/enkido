@@ -3,6 +3,7 @@
 	import DocsPanel from '$lib/docs/components/DocsPanel.svelte';
 	import ResizeHandle from './ResizeHandle.svelte';
 	import ThemeSelector from '$lib/components/Theme/ThemeSelector.svelte';
+	import { ParamsPanel } from '$lib/components/Params';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
 	interface Props {
@@ -134,8 +135,7 @@
 		<div class="panel-content">
 			{#if activeTab === 'controls'}
 				<div class="tab-content" bind:this={controlsScrollEl}>
-					<p class="placeholder">Control panel coming soon...</p>
-					<p class="hint">Add knobs and faders that bind to Akkado variables</p>
+					<ParamsPanel />
 				</div>
 			{:else if activeTab === 'settings'}
 				<div class="tab-content settings-content" bind:this={settingsScrollEl}>
@@ -297,22 +297,9 @@
 	}
 
 	.tab-content {
-		padding: var(--spacing-md);
 		display: flex;
 		flex-direction: column;
 		gap: var(--spacing-sm);
-	}
-
-	.placeholder {
-		color: var(--text-secondary);
-		font-size: 13px;
-		margin: 0;
-	}
-
-	.hint {
-		color: var(--text-muted);
-		font-size: 12px;
-		margin: 0;
 	}
 
 	/* Settings styles */

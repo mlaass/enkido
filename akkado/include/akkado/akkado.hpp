@@ -29,6 +29,7 @@ struct CompileResult {
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data for patterns
     std::vector<std::string> required_samples;  // Sample names used (for runtime loading)
+    std::vector<ParamDecl> param_decls;  // Declared parameters for UI generation
 };
 
 /// Compile Akkado source code to Cedar bytecode

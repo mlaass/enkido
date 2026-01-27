@@ -275,6 +275,51 @@ class CedarProcessor extends AudioWorkletProcessor {
 	}
 
 	/**
+	 * Extract all parameter declarations from compile result into JS objects.
+	 * Must be called immediately after compilation, before any memory growth.
+	 */
+	extractParamDecls() {
+		const count = this.module._akkado_get_param_decl_count();
+		const paramDecls = [];
+
+		for (let i = 0; i < count; i++) {
+			const namePtr = this.module._akkado_get_param_name(i);
+			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
+			const type = this.module._akkado_get_param_type(i);
+			const defaultValue = this.module._akkado_get_param_default(i);
+			const min = this.module._akkado_get_param_min(i);
+			const max = this.module._akkado_get_param_max(i);
+			const sourceOffset = this.module._akkado_get_param_source_offset(i);
+			const sourceLength = this.module._akkado_get_param_source_length(i);
+
+			// Extract options for Select type
+			const options = [];
+			if (type === 3) { // Select
+				const optCount = this.module._akkado_get_param_option_count(i);
+				for (let j = 0; j < optCount; j++) {
+					const optPtr = this.module._akkado_get_param_option(i, j);
+					if (optPtr) {
+						options.push(this.module.UTF8ToString(optPtr));
+					}
+				}
+			}
+
+			paramDecls.push({
+				name,
+				type,  // 0=Continuous, 1=Button, 2=Toggle, 3=Select
+				defaultValue,
+				min,
+				max,
+				options,
+				sourceOffset,
+				sourceLength
+			});
+		}
+
+		return paramDecls;
+	}
+
+	/**
 	 * Extract all state initialization data from compile result into JS objects.
 	 * Must be called immediately after compilation, before any memory growth.
 	 */
@@ -410,6 +455,9 @@ class CedarProcessor extends AudioWorkletProcessor {
 					// Extract all state initialization data
 					const stateInits = this.extractStateInits();
 
+					// Extract parameter declarations for UI generation
+					const paramDecls = this.extractParamDecls();
+
 					// CRITICAL: Clear the compile result NOW, before returning
 					// This ensures we don't have stale pointers when memory grows
 					this.module._akkado_clear_result();
@@ -418,13 +466,15 @@ class CedarProcessor extends AudioWorkletProcessor {
 					this.pendingProgram = { bytecode, stateInits, requiredSamples };
 
 					console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
-						'required samples:', requiredSamples, 'state inits:', stateInits.length);
+						'required samples:', requiredSamples, 'state inits:', stateInits.length,
+						'param decls:', paramDecls.length);
 
 					this.port.postMessage({
 						type: 'compiled',
 						success: true,
 						bytecodeSize,
-						requiredSamples
+						requiredSamples,
+						paramDecls
 					});
 				} else {
 					// Extract diagnostics

@@ -13,11 +13,31 @@ interface Diagnostic {
 	column: number;
 }
 
+// Parameter declaration types
+export enum ParamType {
+	Continuous = 0,
+	Button = 1,
+	Toggle = 2,
+	Select = 3
+}
+
+export interface ParamDecl {
+	name: string;
+	type: ParamType;
+	defaultValue: number;
+	min: number;
+	max: number;
+	options: string[];
+	sourceOffset: number;
+	sourceLength: number;
+}
+
 interface CompileResult {
 	success: boolean;
 	bytecodeSize?: number;
 	diagnostics?: Diagnostic[];
 	requiredSamples?: string[];
+	paramDecls?: ParamDecl[];
 }
 
 // Builtins metadata from the compiler
@@ -71,6 +91,8 @@ interface AudioState {
 	error: string | null;
 	samplesLoaded: boolean;
 	samplesLoading: boolean;
+	params: ParamDecl[];
+	paramValues: Map<string, number>;
 }
 
 function createAudioEngine() {
@@ -86,7 +108,9 @@ function createAudioEngine() {
 		hasProgram: false,
 		error: null,
 		samplesLoaded: false,
-		samplesLoading: false
+		samplesLoading: false,
+		params: [],
+		paramValues: new Map()
 	});
 
 	let audioContext: AudioContext | null = null;
@@ -197,15 +221,22 @@ function createAudioEngine() {
 					success: msg.success as boolean,
 					bytecodeSize: msg.bytecodeSize as number | undefined,
 					diagnostics: msg.diagnostics as Diagnostic[] | undefined,
-					requiredSamples: msg.requiredSamples as string[] | undefined
+					requiredSamples: msg.requiredSamples as string[] | undefined,
+					paramDecls: msg.paramDecls as ParamDecl[] | undefined
 				};
 				if (result.success) {
 					console.log(
 						'[AudioEngine] Compiled successfully, bytecode size:',
 						result.bytecodeSize,
 						'required samples:',
-						result.requiredSamples
+						result.requiredSamples,
+						'param decls:',
+						result.paramDecls?.length ?? 0
 					);
+					// Update param declarations and preserve values for existing params
+					if (result.paramDecls) {
+						updateParamDecls(result.paramDecls);
+					}
 				} else {
 					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
 				}
@@ -797,6 +828,90 @@ function createAudioEngine() {
 	}
 
 	// =========================================================================
+	// Parameter Exposure API
+	// =========================================================================
+
+	/**
+	 * Update parameter declarations after successful compile.
+	 * Preserves values for params that still exist.
+	 */
+	function updateParamDecls(newParams: ParamDecl[]) {
+		const oldValues = new Map(state.paramValues);
+		const newValues = new Map<string, number>();
+
+		for (const param of newParams) {
+			// Preserve existing value if param still exists, otherwise use default
+			const existingValue = oldValues.get(param.name);
+			if (existingValue !== undefined) {
+				newValues.set(param.name, existingValue);
+			} else {
+				newValues.set(param.name, param.defaultValue);
+				// Send initial value to worklet
+				workletNode?.port.postMessage({
+					type: 'setParam',
+					name: param.name,
+					value: param.defaultValue
+				});
+			}
+		}
+
+		state.params = newParams;
+		state.paramValues = newValues;
+	}
+
+	/**
+	 * Set a parameter value (for sliders/continuous params)
+	 */
+	function setParamValue(name: string, value: number, slewMs?: number) {
+		state.paramValues.set(name, value);
+		workletNode?.port.postMessage({ type: 'setParam', name, value, slewMs });
+	}
+
+	/**
+	 * Get current value of a parameter
+	 */
+	function getParamValue(name: string): number {
+		return state.paramValues.get(name) ?? 0;
+	}
+
+	/**
+	 * Press a button (set to 1)
+	 */
+	function pressButton(name: string) {
+		state.paramValues.set(name, 1);
+		workletNode?.port.postMessage({ type: 'setParam', name, value: 1 });
+	}
+
+	/**
+	 * Release a button (set to 0)
+	 */
+	function releaseButton(name: string) {
+		state.paramValues.set(name, 0);
+		workletNode?.port.postMessage({ type: 'setParam', name, value: 0 });
+	}
+
+	/**
+	 * Toggle a boolean parameter
+	 */
+	function toggleParam(name: string) {
+		const current = state.paramValues.get(name) ?? 0;
+		const newValue = current > 0.5 ? 0 : 1;
+		state.paramValues.set(name, newValue);
+		workletNode?.port.postMessage({ type: 'setParam', name, value: newValue });
+	}
+
+	/**
+	 * Reset a parameter to its default value
+	 */
+	function resetParam(name: string) {
+		const param = state.params.find(p => p.name === name);
+		if (param) {
+			state.paramValues.set(name, param.defaultValue);
+			workletNode?.port.postMessage({ type: 'setParam', name, value: param.defaultValue });
+		}
+	}
+
+	// =========================================================================
 	// Pattern Highlighting API
 	// =========================================================================
 
@@ -893,6 +1008,9 @@ function createAudioEngine() {
 		get error() { return state.error; },
 		get samplesLoaded() { return state.samplesLoaded; },
 		get samplesLoading() { return state.samplesLoading; },
+		// Parameter exposure
+		get params() { return state.params; },
+		get paramValues() { return state.paramValues; },
 
 		initialize,
 		play,
@@ -914,6 +1032,13 @@ function createAudioEngine() {
 		loadSamplePack,
 		clearSamples,
 		getBuiltins,
+		// Parameter exposure API
+		setParamValue,
+		getParamValue,
+		pressButton,
+		releaseButton,
+		toggleParam,
+		resetParam,
 		// Pattern highlighting API
 		getPatternInfo,
 		queryPatternPreview,

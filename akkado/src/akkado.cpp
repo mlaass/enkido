@@ -137,6 +137,9 @@ CompileResult compile(std::string_view source, std::string_view filename,
     // Copy required sample names for runtime loading
     result.required_samples = std::move(gen.required_samples);
 
+    // Copy parameter declarations for UI generation
+    result.param_decls = std::move(gen.param_decls);
+
     result.success = true;
     return result;
 }

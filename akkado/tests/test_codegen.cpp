@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include "akkado/akkado.hpp"
 #include <cedar/vm/instruction.hpp>
+#include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <cstring>
 #include <vector>
 
@@ -1065,5 +1066,322 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         CHECK(state.output.events[0].time == Catch::Approx(0.0f).margin(0.01f));
         CHECK(state.output.events[1].time == Catch::Approx(expected_duration).margin(0.01f));
         CHECK(state.output.events[2].time == Catch::Approx(2.0f * expected_duration).margin(0.01f));
+    }
+}
+
+// =============================================================================
+// Parameter Exposure Tests
+// =============================================================================
+
+TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codegen][params]") {
+    SECTION("basic param declaration") {
+        auto result = akkado::compile(R"(
+            vol = param("volume", 0.8, 0, 1)
+            saw(220) * vol
+        )");
+        REQUIRE(result.success);
+
+        // Check param_decls populated
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.name == "volume");
+        CHECK(decl.type == akkado::ParamType::Continuous);
+        CHECK(decl.default_value == Catch::Approx(0.8f));
+        CHECK(decl.min_value == Catch::Approx(0.0f));
+        CHECK(decl.max_value == Catch::Approx(1.0f));
+
+        // Verify ENV_GET instruction emitted
+        auto insts = get_instructions(result);
+        auto* env_get = find_instruction(insts, cedar::Opcode::ENV_GET);
+        REQUIRE(env_get != nullptr);
+
+        // Verify hash matches declaration
+        CHECK(env_get->state_id == decl.name_hash);
+    }
+
+    SECTION("param with default range") {
+        auto result = akkado::compile(R"(
+            x = param("x", 0.5)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.default_value == Catch::Approx(0.5f));
+        CHECK(decl.min_value == Catch::Approx(0.0f));
+        CHECK(decl.max_value == Catch::Approx(1.0f));
+    }
+
+    SECTION("param clamps default to range") {
+        auto result = akkado::compile(R"(
+            x = param("x", 2.0, 0, 1)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        CHECK(result.param_decls[0].default_value == Catch::Approx(1.0f));
+    }
+
+    SECTION("param default below min gets clamped") {
+        auto result = akkado::compile(R"(
+            x = param("x", -1.0, 0, 10)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        CHECK(result.param_decls[0].default_value == Catch::Approx(0.0f));
+    }
+
+    SECTION("param with min > max swaps values") {
+        auto result = akkado::compile(R"(
+            x = param("x", 0.5, 1, 0)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        // min/max should be swapped
+        CHECK(result.param_decls[0].min_value == Catch::Approx(0.0f));
+        CHECK(result.param_decls[0].max_value == Catch::Approx(1.0f));
+        // Check for warning
+        bool has_warning = false;
+        for (const auto& diag : result.diagnostics) {
+            if (diag.severity == akkado::Severity::Warning && diag.code == "W050") {
+                has_warning = true;
+                break;
+            }
+        }
+        CHECK(has_warning);
+    }
+
+    SECTION("multiple params deduplicate by name") {
+        auto result = akkado::compile(R"(
+            a = param("vol", 0.5)
+            b = param("vol", 0.5)
+        )");
+        REQUIRE(result.success);
+        CHECK(result.param_decls.size() == 1);
+    }
+
+    SECTION("different params recorded separately") {
+        auto result = akkado::compile(R"(
+            v = param("volume", 0.8)
+            c = param("cutoff", 2000, 100, 8000)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 2);
+        CHECK(result.param_decls[0].name == "volume");
+        CHECK(result.param_decls[1].name == "cutoff");
+    }
+}
+
+TEST_CASE("Codegen: param() requires string literal name", "[codegen][params]") {
+    SECTION("variable name fails") {
+        auto result = akkado::compile(R"(
+            name = "vol"
+            x = param(name, 0.5)
+        )");
+        REQUIRE_FALSE(result.success);
+        bool has_error = false;
+        for (const auto& diag : result.diagnostics) {
+            if (diag.code == "E151") {
+                has_error = true;
+                break;
+            }
+        }
+        CHECK(has_error);
+    }
+
+    SECTION("number literal fails") {
+        auto result = akkado::compile(R"(
+            x = param(42, 0.5)
+        )");
+        REQUIRE_FALSE(result.success);
+    }
+}
+
+TEST_CASE("Codegen: button() creates momentary parameter", "[codegen][params]") {
+    SECTION("basic button declaration") {
+        auto result = akkado::compile(R"(
+            kick = button("kick")
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.name == "kick");
+        CHECK(decl.type == akkado::ParamType::Button);
+        CHECK(decl.default_value == 0.0f);
+        CHECK(decl.min_value == 0.0f);
+        CHECK(decl.max_value == 1.0f);
+    }
+
+    SECTION("button emits ENV_GET with zero fallback") {
+        auto result = akkado::compile(R"(
+            trig = button("trigger")
+        )");
+        REQUIRE(result.success);
+
+        auto insts = get_instructions(result);
+
+        // Find PUSH_CONST for fallback (should be 0)
+        const cedar::Instruction* fallback = nullptr;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::PUSH_CONST) {
+                fallback = &inst;
+                break;
+            }
+        }
+        REQUIRE(fallback != nullptr);
+        CHECK(decode_const_float(*fallback) == 0.0f);
+
+        // Verify ENV_GET
+        auto* env_get = find_instruction(insts, cedar::Opcode::ENV_GET);
+        REQUIRE(env_get != nullptr);
+    }
+}
+
+TEST_CASE("Codegen: toggle() creates boolean parameter", "[codegen][params]") {
+    SECTION("toggle with default off") {
+        auto result = akkado::compile(R"(
+            mute = toggle("mute")
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.name == "mute");
+        CHECK(decl.type == akkado::ParamType::Toggle);
+        CHECK(decl.default_value == 0.0f);
+    }
+
+    SECTION("toggle with default on") {
+        auto result = akkado::compile(R"(
+            enabled = toggle("enabled", 1)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        CHECK(result.param_decls[0].default_value == 1.0f);
+    }
+
+    SECTION("toggle normalizes default to boolean") {
+        auto result = akkado::compile(R"(
+            x = toggle("x", 0.7)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        // 0.7 > 0.5 should normalize to 1.0
+        CHECK(result.param_decls[0].default_value == 1.0f);
+    }
+
+    SECTION("toggle normalizes default below threshold") {
+        auto result = akkado::compile(R"(
+            x = toggle("x", 0.3)
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+        // 0.3 < 0.5 should normalize to 0.0
+        CHECK(result.param_decls[0].default_value == 0.0f);
+    }
+}
+
+TEST_CASE("Codegen: param_decls source location", "[codegen][params]") {
+    SECTION("source offset and length recorded") {
+        auto result = akkado::compile(R"(vol = param("volume", 0.5))");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        // Source offset should point to the param() call
+        CHECK(decl.source_offset > 0);
+        CHECK(decl.source_length > 0);
+    }
+}
+
+TEST_CASE("Codegen: param hash matches cedar FNV-1a", "[codegen][params]") {
+    SECTION("hash is consistent") {
+        auto result = akkado::compile(R"(x = param("volume", 0.5))");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        // Compute expected hash
+        const char* name = "volume";
+        std::uint32_t expected = cedar::fnv1a_hash_runtime(name, std::strlen(name));
+        CHECK(decl.name_hash == expected);
+
+        // ENV_GET instruction should use the same hash
+        auto insts = get_instructions(result);
+        auto* env_get = find_instruction(insts, cedar::Opcode::ENV_GET);
+        REQUIRE(env_get != nullptr);
+        CHECK(env_get->state_id == expected);
+    }
+}
+
+TEST_CASE("Codegen: dropdown() creates selection parameter", "[codegen][params]") {
+    SECTION("basic dropdown declaration") {
+        auto result = akkado::compile(R"(
+            wave = dropdown("waveform", "sine", "saw", "square")
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.name == "waveform");
+        CHECK(decl.type == akkado::ParamType::Select);
+        CHECK(decl.default_value == 0.0f);  // First option is default
+        CHECK(decl.min_value == 0.0f);
+        CHECK(decl.max_value == 2.0f);  // 3 options -> max index 2
+        REQUIRE(decl.options.size() == 3);
+        CHECK(decl.options[0] == "sine");
+        CHECK(decl.options[1] == "saw");
+        CHECK(decl.options[2] == "square");
+    }
+
+    SECTION("dropdown with single option") {
+        auto result = akkado::compile(R"(
+            mode = dropdown("mode", "default")
+        )");
+        REQUIRE(result.success);
+        REQUIRE(result.param_decls.size() == 1);
+
+        const auto& decl = result.param_decls[0];
+        CHECK(decl.min_value == 0.0f);
+        CHECK(decl.max_value == 0.0f);  // 1 option -> max index 0
+        REQUIRE(decl.options.size() == 1);
+    }
+
+    SECTION("dropdown emits ENV_GET") {
+        auto result = akkado::compile(R"(
+            x = dropdown("x", "a", "b")
+        )");
+        REQUIRE(result.success);
+
+        auto insts = get_instructions(result);
+        auto* env_get = find_instruction(insts, cedar::Opcode::ENV_GET);
+        REQUIRE(env_get != nullptr);
+    }
+
+    SECTION("dropdown requires at least one option") {
+        // Note: The builtin signature requires at least 2 args (name + opt1)
+        // so the analyzer rejects this before codegen sees it
+        auto result = akkado::compile(R"(
+            x = dropdown("x")
+        )");
+        REQUIRE_FALSE(result.success);
+        // Either analyzer rejection (E004 or E005) or codegen error (E159)
+        bool has_error = false;
+        for (const auto& diag : result.diagnostics) {
+            if (diag.severity == akkado::Severity::Error) {
+                has_error = true;
+                break;
+            }
+        }
+        CHECK(has_error);
+    }
+
+    SECTION("dropdown options must be string literals") {
+        auto result = akkado::compile(R"(
+            opt = "dynamic"
+            x = dropdown("x", opt)
+        )");
+        REQUIRE_FALSE(result.success);
     }
 }

@@ -1000,4 +1000,109 @@ WASM_EXPORT uint32_t cedar_get_pattern_active_length(uint32_t state_id) {
     return state.active_source_length;
 }
 
+// ============================================================================
+// Parameter Declaration API
+// ============================================================================
+
+/**
+ * Get number of parameter declarations from compile result
+ * @return Number of declared parameters
+ */
+WASM_EXPORT uint32_t akkado_get_param_decl_count() {
+    return static_cast<uint32_t>(g_compile_result.param_decls.size());
+}
+
+/**
+ * Get parameter name by index
+ * @param index Parameter index (0 to count-1)
+ * @return Pointer to null-terminated name string, or nullptr if invalid
+ */
+WASM_EXPORT const char* akkado_get_param_name(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return nullptr;
+    return g_compile_result.param_decls[index].name.c_str();
+}
+
+/**
+ * Get parameter type by index
+ * @param index Parameter index
+ * @return Type: 0=Continuous, 1=Button, 2=Toggle, 3=Select, or -1 if invalid
+ */
+WASM_EXPORT int akkado_get_param_type(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return -1;
+    return static_cast<int>(g_compile_result.param_decls[index].type);
+}
+
+/**
+ * Get parameter default value
+ * @param index Parameter index
+ * @return Default value
+ */
+WASM_EXPORT float akkado_get_param_default(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 0.0f;
+    return g_compile_result.param_decls[index].default_value;
+}
+
+/**
+ * Get parameter minimum value (Continuous only)
+ * @param index Parameter index
+ * @return Minimum value
+ */
+WASM_EXPORT float akkado_get_param_min(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 0.0f;
+    return g_compile_result.param_decls[index].min_value;
+}
+
+/**
+ * Get parameter maximum value (Continuous only)
+ * @param index Parameter index
+ * @return Maximum value
+ */
+WASM_EXPORT float akkado_get_param_max(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 1.0f;
+    return g_compile_result.param_decls[index].max_value;
+}
+
+/**
+ * Get number of options for a Select parameter
+ * @param index Parameter index
+ * @return Number of options, or 0 if not Select type or invalid
+ */
+WASM_EXPORT uint32_t akkado_get_param_option_count(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 0;
+    return static_cast<uint32_t>(g_compile_result.param_decls[index].options.size());
+}
+
+/**
+ * Get option name for a Select parameter
+ * @param index Parameter index
+ * @param opt_index Option index within the parameter
+ * @return Pointer to null-terminated option string, or nullptr if invalid
+ */
+WASM_EXPORT const char* akkado_get_param_option(uint32_t index, uint32_t opt_index) {
+    if (index >= g_compile_result.param_decls.size()) return nullptr;
+    const auto& param = g_compile_result.param_decls[index];
+    if (opt_index >= param.options.size()) return nullptr;
+    return param.options[opt_index].c_str();
+}
+
+/**
+ * Get source offset for a parameter declaration
+ * @param index Parameter index
+ * @return Source offset in bytes
+ */
+WASM_EXPORT uint32_t akkado_get_param_source_offset(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 0;
+    return g_compile_result.param_decls[index].source_offset;
+}
+
+/**
+ * Get source length for a parameter declaration
+ * @param index Parameter index
+ * @return Source length in characters
+ */
+WASM_EXPORT uint32_t akkado_get_param_source_length(uint32_t index) {
+    if (index >= g_compile_result.param_decls.size()) return 0;
+    return g_compile_result.param_decls[index].source_length;
+}
+
 } // extern "C"

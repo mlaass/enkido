@@ -578,6 +578,25 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"pattern", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Note pattern. Returns MIDI note values."}},
+
+    // Parameter exposure builtins (handled specially by codegen)
+    // These extract metadata at compile time for UI generation
+    {"param",   {cedar::Opcode::ENV_GET, 2, 2, false,
+                 {"name", "default", "min", "max", "", ""},
+                 {NAN, 0.0f, 0.0f, 1.0f},
+                 "Continuous parameter (slider). Reads from EnvMap."}},
+    {"button",  {cedar::Opcode::ENV_GET, 1, 0, false,
+                 {"name", "", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Momentary button. 1 while pressed, 0 otherwise."}},
+    {"toggle",  {cedar::Opcode::ENV_GET, 1, 1, false,
+                 {"name", "default", "", "", "", ""},
+                 {NAN, 0.0f, NAN},
+                 "Boolean toggle. Click to flip between 0 and 1."}},
+    {"dropdown", {cedar::Opcode::ENV_GET, 2, 6, false,
+                 {"name", "opt1", "opt2", "opt3", "opt4", "opt5"},
+                 {NAN, NAN, NAN},
+                 "Selection dropdown. Returns index (0, 1, ...) of selected option."}},
 };
 
 /// Alias mappings for convenience syntax

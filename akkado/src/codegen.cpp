@@ -36,6 +36,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     diagnostics_.clear();
     state_inits_.clear();
     required_samples_.clear();
+    param_decls_.clear();
     filename_ = std::string(filename);
     path_stack_.clear();
     anonymous_counter_ = 0;
@@ -48,7 +49,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, std::move(diagnostics_), {}, {}, false};
+        return {{}, std::move(diagnostics_), {}, {}, {}, false};
     }
 
     // Visit root (Program node)
@@ -62,7 +63,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     std::vector<std::string> required_samples_vec(required_samples_.begin(), required_samples_.end());
 
     return {std::move(instructions_), std::move(diagnostics_), std::move(state_inits_),
-            std::move(required_samples_vec), success};
+            std::move(required_samples_vec), std::move(param_decls_), success};
 }
 
 std::uint16_t CodeGenerator::visit(NodeIndex node) {
@@ -345,6 +346,11 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 {"reverse", &CodeGenerator::handle_reverse_call},
                 {"range",   &CodeGenerator::handle_range_call},
                 {"repeat",  &CodeGenerator::handle_repeat_call},
+                // Parameter exposure builtins
+                {"param",   &CodeGenerator::handle_param_call},
+                {"button",  &CodeGenerator::handle_button_call},
+                {"toggle",  &CodeGenerator::handle_toggle_call},
+                {"dropdown", &CodeGenerator::handle_select_call},
             };
 
             auto handler_it = special_handlers.find(func_name);
