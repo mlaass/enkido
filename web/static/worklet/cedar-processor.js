@@ -462,19 +462,36 @@ class CedarProcessor extends AudioWorkletProcessor {
 					// This ensures we don't have stale pointers when memory grows
 					this.module._akkado_clear_result();
 
+					// Extract disassembly for debug panel
+					let disassembly = null;
+					if (this.module._akkado_get_disassembly) {
+						const disasmPtr = this.module._akkado_get_disassembly();
+						if (disasmPtr) {
+							disassembly = this.module.UTF8ToString(disasmPtr);
+							try {
+								disassembly = JSON.parse(disassembly);
+							} catch (e) {
+								console.warn('[CedarProcessor] Failed to parse disassembly JSON:', e);
+								disassembly = null;
+							}
+						}
+					}
+
 					// Store extracted data for loadCompiledProgram()
 					this.pendingProgram = { bytecode, stateInits, requiredSamples };
 
 					console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
 						'required samples:', requiredSamples, 'state inits:', stateInits.length,
-						'param decls:', paramDecls.length);
+						'param decls:', paramDecls.length,
+						'unique states:', disassembly?.summary?.uniqueStateIds ?? 'N/A');
 
 					this.port.postMessage({
 						type: 'compiled',
 						success: true,
 						bytecodeSize,
 						requiredSamples,
-						paramDecls
+						paramDecls,
+						disassembly
 					});
 				} else {
 					// Extract diagnostics

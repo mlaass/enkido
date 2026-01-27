@@ -37,13 +37,18 @@ inline void op_copy(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // OUTPUT: Add input buffer to stereo output (accumulates)
+// inputs[0]: left channel (required)
+// inputs[1]: right channel (optional, uses left if BUFFER_UNUSED)
 [[gnu::always_inline]]
 inline void op_output(ExecutionContext& ctx, const Instruction& inst) {
-    const float* in = ctx.buffers->get(inst.inputs[0]);
+    const float* left = ctx.buffers->get(inst.inputs[0]);
+    const float* right = (inst.inputs[1] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[1])
+        : left;  // mono: use left for both
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        ctx.output_left[i] += in[i];
-        ctx.output_right[i] += in[i];
+        ctx.output_left[i] += left[i];
+        ctx.output_right[i] += right[i];
     }
 }
 

@@ -7,6 +7,7 @@
 
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/instruction.hpp>
+#include <cedar/generated/opcode_metadata.hpp>
 #include <cedar/opcodes/sequencing.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <akkado/akkado.hpp>
@@ -1103,6 +1104,122 @@ WASM_EXPORT uint32_t akkado_get_param_source_offset(uint32_t index) {
 WASM_EXPORT uint32_t akkado_get_param_source_length(uint32_t index) {
     if (index >= g_compile_result.param_decls.size()) return 0;
     return g_compile_result.param_decls[index].source_length;
+}
+
+// ============================================================================
+// Debug/Disassembly API
+// ============================================================================
+
+// Static buffer for disassembly JSON
+static std::string g_disassembly_json;
+
+
+/**
+ * Get disassembly of compiled bytecode as JSON
+ * Returns a JSON array of instruction objects
+ *
+ * Format:
+ * {
+ *   "instructions": [
+ *     {
+ *       "index": 0,
+ *       "opcode": "OSC_SIN",
+ *       "opcodeNum": 20,
+ *       "out": 0,
+ *       "inputs": [1, 65535, 65535, 65535, 65535],
+ *       "stateId": 1234567890,
+ *       "rate": 0,
+ *       "stateful": true
+ *     },
+ *     ...
+ *   ],
+ *   "summary": {
+ *     "totalInstructions": 10,
+ *     "statefulCount": 3,
+ *     "uniqueStateIds": 3,
+ *     "stateIds": [123, 456, 789]
+ *   }
+ * }
+ */
+WASM_EXPORT const char* akkado_get_disassembly() {
+    g_disassembly_json.clear();
+
+    if (g_compile_result.bytecode.empty()) {
+        g_disassembly_json = "{\"instructions\":[],\"summary\":{\"totalInstructions\":0,\"statefulCount\":0,\"uniqueStateIds\":0,\"stateIds\":[]}}";
+        return g_disassembly_json.c_str();
+    }
+
+    constexpr size_t INST_SIZE = sizeof(cedar::Instruction);
+    size_t inst_count = g_compile_result.bytecode.size() / INST_SIZE;
+    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.bytecode.data());
+
+    std::ostringstream json;
+    json << "{\"instructions\":[";
+
+    std::vector<uint32_t> state_ids;
+    int stateful_count = 0;
+
+    for (size_t i = 0; i < inst_count; ++i) {
+        const auto& inst = instructions[i];
+        if (i > 0) json << ",";
+
+        json << "{\"index\":" << i;
+        json << ",\"opcode\":\"" << cedar::opcode_to_string(inst.opcode) << "\"";
+        json << ",\"opcodeNum\":" << static_cast<int>(inst.opcode);
+        json << ",\"out\":" << inst.out_buffer;
+        json << ",\"inputs\":[" << inst.inputs[0] << "," << inst.inputs[1] << ","
+             << inst.inputs[2] << "," << inst.inputs[3] << "," << inst.inputs[4] << "]";
+        json << ",\"stateId\":" << inst.state_id;
+        json << ",\"rate\":" << static_cast<int>(inst.rate);
+
+        bool is_stateful = cedar::opcode_is_stateful(inst.opcode);
+        json << ",\"stateful\":" << (is_stateful ? "true" : "false");
+        json << "}";
+
+        if (is_stateful && inst.state_id != 0) {
+            stateful_count++;
+            if (std::find(state_ids.begin(), state_ids.end(), inst.state_id) == state_ids.end()) {
+                state_ids.push_back(inst.state_id);
+            }
+        }
+    }
+
+    json << "],\"summary\":{";
+    json << "\"totalInstructions\":" << inst_count;
+    json << ",\"statefulCount\":" << stateful_count;
+    json << ",\"uniqueStateIds\":" << state_ids.size();
+    json << ",\"stateIds\":[";
+    for (size_t i = 0; i < state_ids.size(); ++i) {
+        if (i > 0) json << ",";
+        json << state_ids[i];
+    }
+    json << "]}}";
+
+    g_disassembly_json = json.str();
+    return g_disassembly_json.c_str();
+}
+
+/**
+ * Get the number of unique state IDs in compiled bytecode
+ * Useful for quick debugging without full disassembly
+ */
+WASM_EXPORT uint32_t akkado_get_unique_state_count() {
+    if (g_compile_result.bytecode.empty()) return 0;
+
+    constexpr size_t INST_SIZE = sizeof(cedar::Instruction);
+    size_t inst_count = g_compile_result.bytecode.size() / INST_SIZE;
+    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.bytecode.data());
+
+    std::vector<uint32_t> state_ids;
+    for (size_t i = 0; i < inst_count; ++i) {
+        const auto& inst = instructions[i];
+        if (cedar::opcode_is_stateful(inst.opcode) && inst.state_id != 0) {
+            if (std::find(state_ids.begin(), state_ids.end(), inst.state_id) == state_ids.end()) {
+                state_ids.push_back(inst.state_id);
+            }
+        }
+    }
+    return static_cast<uint32_t>(state_ids.size());
 }
 
 } // extern "C"

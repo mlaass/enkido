@@ -1,5 +1,6 @@
 #include "bytecode_dump.hpp"
 #include "cedar/dsp/constants.hpp"
+#include <cedar/generated/opcode_metadata.hpp>
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -7,72 +8,7 @@
 namespace enkido {
 
 const char* opcode_name(cedar::Opcode op) {
-    switch (op) {
-        // Stack/Constants
-        case cedar::Opcode::NOP:        return "NOP";
-        case cedar::Opcode::PUSH_CONST: return "PUSH_CONST";
-        case cedar::Opcode::COPY:       return "COPY";
-
-        // Arithmetic
-        case cedar::Opcode::ADD:        return "ADD";
-        case cedar::Opcode::SUB:        return "SUB";
-        case cedar::Opcode::MUL:        return "MUL";
-        case cedar::Opcode::DIV:        return "DIV";
-        case cedar::Opcode::POW:        return "POW";
-        case cedar::Opcode::NEG:        return "NEG";
-
-        // Oscillators
-        case cedar::Opcode::OSC_SIN:    return "OSC_SIN";
-        case cedar::Opcode::OSC_TRI:    return "OSC_TRI";
-        case cedar::Opcode::OSC_SAW:    return "OSC_SAW";
-        case cedar::Opcode::OSC_SQR:    return "OSC_SQR";
-        case cedar::Opcode::OSC_RAMP:   return "OSC_RAMP";
-        case cedar::Opcode::OSC_PHASOR: return "OSC_PHASOR";
-
-        // Filters (SVF only)
-        case cedar::Opcode::FILTER_SVF_LP: return "FILTER_SVF_LP";
-        case cedar::Opcode::FILTER_SVF_HP: return "FILTER_SVF_HP";
-        case cedar::Opcode::FILTER_SVF_BP: return "FILTER_SVF_BP";
-
-        // Math
-        case cedar::Opcode::ABS:        return "ABS";
-        case cedar::Opcode::SQRT:       return "SQRT";
-        case cedar::Opcode::LOG:        return "LOG";
-        case cedar::Opcode::EXP:        return "EXP";
-        case cedar::Opcode::MIN:        return "MIN";
-        case cedar::Opcode::MAX:        return "MAX";
-        case cedar::Opcode::CLAMP:      return "CLAMP";
-        case cedar::Opcode::WRAP:       return "WRAP";
-        case cedar::Opcode::FLOOR:      return "FLOOR";
-        case cedar::Opcode::CEIL:       return "CEIL";
-
-        // Utility
-        case cedar::Opcode::OUTPUT:     return "OUTPUT";
-        case cedar::Opcode::NOISE:      return "NOISE";
-        case cedar::Opcode::MTOF:       return "MTOF";
-        case cedar::Opcode::DC:         return "DC";
-        case cedar::Opcode::SLEW:       return "SLEW";
-        case cedar::Opcode::SAH:        return "SAH";
-        case cedar::Opcode::ENV_GET:    return "ENV_GET";
-
-        // Envelopes
-        case cedar::Opcode::ENV_ADSR:   return "ENV_ADSR";
-        case cedar::Opcode::ENV_AR:     return "ENV_AR";
-
-        // Delays
-        case cedar::Opcode::DELAY:      return "DELAY";
-
-        // Sequencing & Timing
-        case cedar::Opcode::CLOCK:      return "CLOCK";
-        case cedar::Opcode::LFO:        return "LFO";
-        case cedar::Opcode::SEQ_STEP:   return "SEQ_STEP";
-        case cedar::Opcode::EUCLID:     return "EUCLID";
-        case cedar::Opcode::TRIGGER:    return "TRIGGER";
-        case cedar::Opcode::TIMELINE:   return "TIMELINE";
-
-        case cedar::Opcode::INVALID:    return "INVALID";
-        default:                        return "UNKNOWN";
-    }
+    return cedar::opcode_to_string(op);
 }
 
 std::string format_instruction(const cedar::Instruction& inst, std::size_t index) {

@@ -193,6 +193,29 @@ This generates `src/lib/docs/lookup-index.ts` which maps keywords to documentati
 - Frontmatter `keywords` arrays
 - H2 headings in builtin docs (for function-level anchors)
 
+## Code Generation
+
+### Opcode Metadata
+
+The opcode metadata (name strings and statefulness flags) is auto-generated from source files to avoid manual synchronization.
+
+**When adding new opcodes:**
+
+```bash
+cd web && bun run build:opcodes
+```
+
+This parses:
+- `cedar/include/cedar/vm/instruction.hpp` - extracts Opcode enum values
+- `akkado/include/akkado/builtins.hpp` - extracts `requires_state` flags
+
+And generates:
+- `cedar/include/cedar/generated/opcode_metadata.hpp` - provides `cedar::opcode_to_string()` and `cedar::opcode_is_stateful()`
+
+The generated header is used by:
+- `web/wasm/enkido_wasm.cpp` - for debug disassembly in web UI
+- `tools/enkido-cli/bytecode_dump.cpp` - for CLI bytecode inspection
+
 ## Python Experiments
 
 The `experiments/` directory contains Python scripts for testing Cedar opcodes. Always use `uv run python` to run scripts:

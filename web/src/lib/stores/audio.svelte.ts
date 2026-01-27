@@ -32,12 +32,39 @@ export interface ParamDecl {
 	sourceLength: number;
 }
 
+// Disassembly info for debug panel
+interface DisassemblyInstruction {
+	index: number;
+	opcode: string;
+	opcodeNum: number;
+	out: number;
+	inputs: number[];
+	stateId: number;
+	rate: number;
+	stateful: boolean;
+}
+
+interface DisassemblySummary {
+	totalInstructions: number;
+	statefulCount: number;
+	uniqueStateIds: number;
+	stateIds: number[];
+}
+
+interface DisassemblyInfo {
+	instructions: DisassemblyInstruction[];
+	summary: DisassemblySummary;
+}
+
+export type { DisassemblyInfo, DisassemblyInstruction, DisassemblySummary };
+
 interface CompileResult {
 	success: boolean;
 	bytecodeSize?: number;
 	diagnostics?: Diagnostic[];
 	requiredSamples?: string[];
 	paramDecls?: ParamDecl[];
+	disassembly?: DisassemblyInfo;
 }
 
 // Builtins metadata from the compiler
@@ -93,6 +120,7 @@ interface AudioState {
 	samplesLoading: boolean;
 	params: ParamDecl[];
 	paramValues: Map<string, number>;
+	disassembly: DisassemblyInfo | null;
 }
 
 function createAudioEngine() {
@@ -110,7 +138,8 @@ function createAudioEngine() {
 		samplesLoaded: false,
 		samplesLoading: false,
 		params: [],
-		paramValues: new Map()
+		paramValues: new Map(),
+		disassembly: null
 	});
 
 	let audioContext: AudioContext | null = null;
@@ -222,7 +251,8 @@ function createAudioEngine() {
 					bytecodeSize: msg.bytecodeSize as number | undefined,
 					diagnostics: msg.diagnostics as Diagnostic[] | undefined,
 					requiredSamples: msg.requiredSamples as string[] | undefined,
-					paramDecls: msg.paramDecls as ParamDecl[] | undefined
+					paramDecls: msg.paramDecls as ParamDecl[] | undefined,
+					disassembly: msg.disassembly as DisassemblyInfo | undefined
 				};
 				if (result.success) {
 					console.log(
@@ -231,14 +261,19 @@ function createAudioEngine() {
 						'required samples:',
 						result.requiredSamples,
 						'param decls:',
-						result.paramDecls?.length ?? 0
+						result.paramDecls?.length ?? 0,
+						'unique states:',
+						result.disassembly?.summary?.uniqueStateIds ?? 'N/A'
 					);
 					// Update param declarations and preserve values for existing params
 					if (result.paramDecls) {
 						updateParamDecls(result.paramDecls);
 					}
+					// Store disassembly for debug panel
+					state.disassembly = result.disassembly ?? null;
 				} else {
 					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
+					state.disassembly = null;
 				}
 				// Resolve pending compile promise
 				if (compileResolve) {
@@ -1011,6 +1046,8 @@ function createAudioEngine() {
 		// Parameter exposure
 		get params() { return state.params; },
 		get paramValues() { return state.paramValues; },
+		// Debug info
+		get disassembly() { return state.disassembly; },
 
 		initialize,
 		play,

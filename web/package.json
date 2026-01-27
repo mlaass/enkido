@@ -7,6 +7,7 @@
     "dev": "bunx --bun vite dev",
     "build": "bun scripts/build-docs-index.ts && bunx --bun vite build",
     "build:docs": "bun scripts/build-docs-index.ts",
+    "build:opcodes": "bun scripts/generate-opcode-metadata.ts",
     "build:wasm": "cd wasm && sh ./build.sh",
     "preview": "bunx --bun vite preview",
     "check": "bunx svelte-kit sync && bunx svelte-check --tsconfig ./tsconfig.json",

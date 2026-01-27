@@ -66,6 +66,18 @@ Source Code -> Lexer -> Parser -> AST -> DAG -> Topological Sort -> Bytecode -> 
 
 The system supports glitch-free live coding through semantic ID tracking and micro-crossfading between program versions.
 
+## Development
+
+### Code Generation
+
+After adding new opcodes to Cedar, regenerate the opcode metadata:
+
+```bash
+cd web && bun run build:opcodes
+```
+
+This generates `cedar/include/cedar/generated/opcode_metadata.hpp` from the source files.
+
 ## Documentation
 
 See `docs/` for design documents and `web/static/docs/` for user-facing documentation.

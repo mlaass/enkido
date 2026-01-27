@@ -4,6 +4,7 @@
 	import ResizeHandle from './ResizeHandle.svelte';
 	import ThemeSelector from '$lib/components/Theme/ThemeSelector.svelte';
 	import { ParamsPanel } from '$lib/components/Params';
+	import DebugPanel from './DebugPanel.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
 	interface Props {
@@ -16,6 +17,7 @@
 	let collapsed = $derived(settingsStore.panelCollapsed);
 	let activeTab = $derived(settingsStore.activeTab);
 	let width = $derived(settingsStore.panelWidth);
+	let showDebugTab = $derived(settingsStore.showDebugTab);
 
 	// Local state for resize
 	let currentWidth = $state(settingsStore.panelWidth);
@@ -24,11 +26,13 @@
 	let controlsScrollEl: HTMLElement | null = $state(null);
 	let settingsScrollEl: HTMLElement | null = $state(null);
 	let docsScrollEl: HTMLElement | null = $state(null);
+	let debugScrollEl: HTMLElement | null = $state(null);
 
 	function getScrollEl(tab: string): HTMLElement | null {
 		if (tab === 'controls') return controlsScrollEl;
 		if (tab === 'settings') return settingsScrollEl;
 		if (tab === 'docs') return docsScrollEl;
+		if (tab === 'debug') return debugScrollEl;
 		return null;
 	}
 
@@ -47,7 +51,7 @@
 		}
 	}
 
-	function handleTabChange(tab: 'controls' | 'settings' | 'docs') {
+	function handleTabChange(tab: 'controls' | 'settings' | 'docs' | 'debug') {
 		saveScrollPosition(activeTab);
 		settingsStore.setActiveTab(tab);
 		// Restore scroll after DOM updates
@@ -130,6 +134,15 @@
 			>
 				Docs
 			</button>
+			{#if showDebugTab}
+				<button
+					class="tab"
+					class:active={activeTab === 'debug'}
+					onclick={() => handleTabChange('debug')}
+				>
+					Debug
+				</button>
+			{/if}
 		</div>
 
 		<div class="panel-content">
@@ -199,6 +212,18 @@
 						</select>
 					</div>
 
+					<!-- Developer -->
+					<div class="setting-group">
+						<label class="toggle-setting">
+							<input
+								type="checkbox"
+								checked={settingsStore.showDebugTab}
+								onchange={(e) => settingsStore.setShowDebugTab((e.target as HTMLInputElement).checked)}
+							/>
+							<span>Show Debug Tab</span>
+						</label>
+					</div>
+
 					<button class="reset-button" onclick={() => settingsStore.reset()}>
 						Reset to Defaults
 					</button>
@@ -206,6 +231,10 @@
 			{:else if activeTab === 'docs'}
 				<div bind:this={docsScrollEl}>
 					<DocsPanel />
+				</div>
+			{:else if activeTab === 'debug'}
+				<div class="tab-content" bind:this={debugScrollEl}>
+					<DebugPanel />
 				</div>
 			{/if}
 		</div>
@@ -351,6 +380,26 @@
 	.setting-group select {
 		padding: var(--spacing-xs) var(--spacing-sm);
 		font-size: 13px;
+	}
+
+	.toggle-setting {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-sm);
+		cursor: pointer;
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+
+	.toggle-setting:hover {
+		color: var(--text-primary);
+	}
+
+	.toggle-setting input[type="checkbox"] {
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		cursor: pointer;
 	}
 
 	.reset-button {

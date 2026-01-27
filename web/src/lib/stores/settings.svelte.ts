@@ -2,7 +2,7 @@
  * Settings store with localStorage persistence
  */
 
-type TabName = 'controls' | 'settings' | 'docs';
+type TabName = 'controls' | 'settings' | 'docs' | 'debug';
 
 interface Settings {
 	panelPosition: 'left' | 'right';
@@ -13,6 +13,7 @@ interface Settings {
 	panelCollapsed: boolean;
 	activeTab: TabName;
 	scrollPositions: Record<string, number>;
+	showDebugTab: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -23,7 +24,8 @@ const DEFAULT_SETTINGS: Settings = {
 	panelWidth: 280,
 	panelCollapsed: false,
 	activeTab: 'controls',
-	scrollPositions: {}
+	scrollPositions: {},
+	showDebugTab: false
 };
 
 function loadSettings(): Settings {
@@ -92,6 +94,15 @@ function createSettingsStore() {
 		save();
 	}
 
+	function setShowDebugTab(show: boolean) {
+		settings.showDebugTab = show;
+		// If hiding debug tab while it's active, switch to controls
+		if (!show && settings.activeTab === 'debug') {
+			settings.activeTab = 'controls';
+		}
+		save();
+	}
+
 	function reset() {
 		Object.assign(settings, DEFAULT_SETTINGS);
 		save();
@@ -106,6 +117,7 @@ function createSettingsStore() {
 		get panelCollapsed() { return settings.panelCollapsed; },
 		get activeTab() { return settings.activeTab; },
 		get scrollPositions() { return settings.scrollPositions; },
+		get showDebugTab() { return settings.showDebugTab; },
 
 		setPanelPosition,
 		setFontSize,
@@ -115,6 +127,7 @@ function createSettingsStore() {
 		setPanelCollapsed,
 		setActiveTab,
 		setScrollPosition,
+		setShowDebugTab,
 		reset
 	};
 }
