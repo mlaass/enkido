@@ -329,8 +329,10 @@ const signatureHelpPlugin = ViewPlugin.fromClass(
 				// No function context, hide tooltip
 				if (this.lastContextKey !== null) {
 					this.lastContextKey = null;
-					this.view.dispatch({
-						effects: setSignatureHelp.of(null)
+					queueMicrotask(() => {
+						this.view.dispatch({
+							effects: setSignatureHelp.of(null)
+						});
 					});
 				}
 				return;
@@ -358,8 +360,10 @@ const signatureHelpPlugin = ViewPlugin.fromClass(
 						}
 					};
 
-					this.view.dispatch({
-						effects: setSignatureHelp.of(tooltip)
+					queueMicrotask(() => {
+						this.view.dispatch({
+							effects: setSignatureHelp.of(tooltip)
+						});
 					});
 				}
 				return;
@@ -374,8 +378,10 @@ const signatureHelpPlugin = ViewPlugin.fromClass(
 			if (!builtins) {
 				if (this.lastContextKey !== null) {
 					this.lastContextKey = null;
-					this.view.dispatch({
-						effects: setSignatureHelp.of(null)
+					queueMicrotask(() => {
+						this.view.dispatch({
+							effects: setSignatureHelp.of(null)
+						});
 					});
 				}
 				return;
@@ -392,8 +398,10 @@ const signatureHelpPlugin = ViewPlugin.fromClass(
 				// Unknown function
 				if (this.lastContextKey !== null) {
 					this.lastContextKey = null;
-					this.view.dispatch({
-						effects: setSignatureHelp.of(null)
+					queueMicrotask(() => {
+						this.view.dispatch({
+							effects: setSignatureHelp.of(null)
+						});
 					});
 				}
 				return;
@@ -412,8 +420,10 @@ const signatureHelpPlugin = ViewPlugin.fromClass(
 					}
 				};
 
-				this.view.dispatch({
-					effects: setSignatureHelp.of(tooltip)
+				queueMicrotask(() => {
+					this.view.dispatch({
+						effects: setSignatureHelp.of(tooltip)
+					});
 				});
 			}
 		}

@@ -640,12 +640,15 @@ TEST_CASE("Codegen: Match expressions - warnings", "[codegen][match]") {
 // =============================================================================
 
 TEST_CASE("Codegen: Patterns", "[codegen][patterns]") {
-    SECTION("pitch pattern produces SEQ_STEP") {
+    SECTION("pitch pattern produces SEQPAT_QUERY and SEQPAT_STEP") {
         auto result = akkado::compile("pat(\"c4 e4 g4\")");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        auto* seq = find_instruction(insts, cedar::Opcode::SEQ_STEP);
-        REQUIRE(seq != nullptr);
+        // Patterns now use lazy query system (SEQPAT_QUERY + SEQPAT_STEP)
+        auto* query = find_instruction(insts, cedar::Opcode::SEQPAT_QUERY);
+        auto* step = find_instruction(insts, cedar::Opcode::SEQPAT_STEP);
+        REQUIRE(query != nullptr);
+        REQUIRE(step != nullptr);
     }
 }
 
@@ -961,5 +964,106 @@ TEST_CASE("Codegen: Complex expressions", "[codegen][integration]") {
         // Should have multiple SAW oscillators and ADDs to sum them
         CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) >= 3);
         CHECK(count_instructions(insts, cedar::Opcode::ADD) >= 2);
+    }
+}
+
+// =============================================================================
+// Embedded Alternate Pattern Tests
+// =============================================================================
+
+TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][sequence]") {
+    SECTION("a <b c> d - alternate embedded in normal sequence") {
+        // Pattern: a <b c> d
+        // a takes 1/3, <b c> takes 1/3, d takes 1/3
+        // Inside the alternate, b and c each have full span (1.0) of their SUB_SEQ slot
+        auto result = akkado::compile("pat(\"c4 <e4 g4> a4\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+        REQUIRE(seq_init->sequences.size() >= 2);  // Root + alternate
+
+        // Root sequence should have 3 elements (c4, SUB_SEQ, a4)
+        const auto& root = seq_init->sequences[0];
+        REQUIRE(root.num_events == 3);
+        CHECK(root.mode == cedar::SequenceMode::NORMAL);
+
+        // Check event times and durations
+        // Each element takes 1/3 of the normalized span (0.333)
+        const float third = 1.0f / 3.0f;
+
+        // Event 0: c4 at time=0
+        CHECK(root.events[0].type == cedar::EventType::DATA);
+        CHECK(root.events[0].time == Catch::Approx(0.0f).margin(0.001f));
+        CHECK(root.events[0].duration == Catch::Approx(third).margin(0.001f));
+
+        // Event 1: SUB_SEQ at time=1/3
+        CHECK(root.events[1].type == cedar::EventType::SUB_SEQ);
+        CHECK(root.events[1].time == Catch::Approx(third).margin(0.001f));
+        CHECK(root.events[1].duration == Catch::Approx(third).margin(0.001f));
+
+        // Event 2: a4 at time=2/3
+        CHECK(root.events[2].type == cedar::EventType::DATA);
+        CHECK(root.events[2].time == Catch::Approx(2.0f * third).margin(0.001f));
+        CHECK(root.events[2].duration == Catch::Approx(third).margin(0.001f));
+
+        // Alternate sequence (ID 1) should have 2 choices with duration=1.0
+        if (seq_init->sequences.size() > 1) {
+            const auto& alt = seq_init->sequences[1];
+            CHECK(alt.mode == cedar::SequenceMode::ALTERNATE);
+            REQUIRE(alt.num_events == 2);
+            // Each alternate choice has full span (1.0) within its SUB_SEQ slot
+            CHECK(alt.events[0].duration == Catch::Approx(1.0f).margin(0.001f));
+            CHECK(alt.events[1].duration == Catch::Approx(1.0f).margin(0.001f));
+        }
+    }
+
+    SECTION("verify query output durations") {
+        // Compile the pattern
+        auto result = akkado::compile("pat(\"c4 <e4 g4> a4\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+
+        // Create a SequenceState and query it
+        cedar::SequenceState state;
+        state.num_sequences = static_cast<std::uint32_t>(
+            std::min(seq_init->sequences.size(), cedar::MAX_SEQUENCES));
+        for (std::size_t i = 0; i < state.num_sequences; ++i) {
+            state.sequences[i] = seq_init->sequences[i];
+        }
+        state.cycle_length = seq_init->cycle_length;
+
+        // Query cycle 0
+        cedar::query_pattern(state, 0, seq_init->cycle_length);
+
+        // Should have 3 events
+        REQUIRE(state.output.num_events == 3);
+
+        // All durations should be cycle_length / 3
+        float expected_duration = seq_init->cycle_length / 3.0f;
+        CHECK(state.output.events[0].duration == Catch::Approx(expected_duration).margin(0.01f));
+        CHECK(state.output.events[1].duration == Catch::Approx(expected_duration).margin(0.01f));
+        CHECK(state.output.events[2].duration == Catch::Approx(expected_duration).margin(0.01f));
+
+        // Check times
+        CHECK(state.output.events[0].time == Catch::Approx(0.0f).margin(0.01f));
+        CHECK(state.output.events[1].time == Catch::Approx(expected_duration).margin(0.01f));
+        CHECK(state.output.events[2].time == Catch::Approx(2.0f * expected_duration).margin(0.01f));
     }
 }

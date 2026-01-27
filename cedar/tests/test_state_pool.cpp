@@ -234,7 +234,7 @@ TEST_CASE("StatePool edge cases", "[state_pool][edge]") {
     }
 
     SECTION("create many states") {
-        const std::uint32_t num_states = 1000;
+        const std::uint32_t num_states = 200;  // Within MAX_STATES limit
         for (std::uint32_t i = 0; i < num_states; ++i) {
             pool.get_or_create<OscState>(i).phase = static_cast<float>(i) * 0.001f;
         }
@@ -370,24 +370,24 @@ TEST_CASE("StatePool stress test", "[state_pool][stress]") {
     StatePool pool;
     pool.set_fade_blocks(5);
 
-    SECTION("create 1000 states, gc 500, create 500 new - repeat 100x") {
+    SECTION("create 200 states, gc 100, create 100 new - repeat 100x") {
         for (int cycle = 0; cycle < 100; ++cycle) {
-            // Create 1000 states
-            for (int i = 0; i < 1000; ++i) {
+            // Create 200 states (within MAX_STATES limit)
+            for (int i = 0; i < 200; ++i) {
                 std::uint32_t id = static_cast<std::uint32_t>(cycle * 10000 + i);
                 pool.get_or_create<OscState>(id).phase = static_cast<float>(i) * 0.001f;
             }
 
             // Begin frame and only touch half
             pool.begin_frame();
-            for (int i = 0; i < 500; ++i) {
+            for (int i = 0; i < 100; ++i) {
                 std::uint32_t id = static_cast<std::uint32_t>(cycle * 10000 + i);
                 pool.touch(id);
             }
             pool.gc_sweep();
 
-            // Create 500 new states
-            for (int i = 1000; i < 1500; ++i) {
+            // Create 100 new states
+            for (int i = 200; i < 300; ++i) {
                 std::uint32_t id = static_cast<std::uint32_t>(cycle * 10000 + i);
                 pool.get_or_create<OscState>(id).phase = static_cast<float>(i) * 0.001f;
             }

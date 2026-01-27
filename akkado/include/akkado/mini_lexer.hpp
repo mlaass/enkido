@@ -29,7 +29,10 @@ public:
     /// Construct a mini-lexer for a pattern string
     /// @param pattern The pattern string content (without quotes)
     /// @param base_location Location of the pattern string in source for error reporting
-    explicit MiniLexer(std::string_view pattern, SourceLocation base_location = {});
+    /// @param sample_only When true, all alphanumeric sequences are treated as sample tokens
+    ///                    (used for chord patterns where "C7" is a chord, not pitch C at octave 7)
+    explicit MiniLexer(std::string_view pattern, SourceLocation base_location = {},
+                       bool sample_only = false);
 
     /// Lex all tokens from the pattern
     /// @return Vector of tokens, ending with Eof token
@@ -67,6 +70,7 @@ private:
     MiniToken lex_token();
     MiniToken lex_number();
     MiniToken lex_pitch_or_sample();
+    MiniToken lex_sample_only();  // For sample_only mode
 
     // Pitch detection
     [[nodiscard]] bool looks_like_pitch() const;
@@ -78,6 +82,7 @@ private:
     std::string_view pattern_;
     SourceLocation base_location_;
     std::vector<Diagnostic> diagnostics_;
+    bool sample_only_ = false;   // When true, skip pitch detection
 
     // Current position
     std::uint32_t start_ = 0;    // Start of current token
@@ -88,8 +93,10 @@ private:
 /// Convenience function to lex a mini-notation pattern
 /// @param pattern The pattern string content
 /// @param base_location Location for error reporting
+/// @param sample_only When true, treat all alphanumeric sequences as samples (for chord patterns)
 /// @return Pair of tokens and diagnostics
 std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
-lex_mini(std::string_view pattern, SourceLocation base_location = {});
+lex_mini(std::string_view pattern, SourceLocation base_location = {},
+         bool sample_only = false);
 
 } // namespace akkado

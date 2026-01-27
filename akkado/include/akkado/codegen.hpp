@@ -5,7 +5,7 @@
 #include "symbol_table.hpp"
 #include "sample_registry.hpp"
 #include <cedar/vm/instruction.hpp>
-#include <cedar/opcodes/dsp_state.hpp>
+#include <cedar/opcodes/sequence.hpp>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -13,13 +13,13 @@
 
 namespace akkado {
 
-/// State initialization data for SEQ_STEP, TIMELINE, and PAT_QUERY opcodes
+/// State initialization data for SEQ_STEP, TIMELINE, and SEQPAT_QUERY opcodes
 struct StateInitData {
     std::uint32_t state_id;  // Must match Instruction::state_id (32-bit FNV-1a hash)
     enum class Type : std::uint8_t {
-        SeqStep,         // Initialize SeqStepState with timed events
-        Timeline,        // Initialize TimelineState with breakpoints
-        PatternProgram   // Initialize PatternQueryState with pattern nodes
+        SeqStep,          // Initialize SeqStepState with timed events
+        Timeline,         // Initialize TimelineState with breakpoints
+        SequenceProgram   // Initialize SequenceState with compiled sequences
     } type;
 
     // For SeqStep: parallel arrays of event data
@@ -31,9 +31,12 @@ struct StateInitData {
 
     // For Timeline: [time, value, curve, ...] triplets (existing usage)
 
-    // For PatternProgram: compiled pattern nodes for lazy query
-    std::vector<cedar::PatternNode> pattern_nodes;  // Pattern program
+    // For SequenceProgram: compiled sequences for lazy query
+    std::vector<cedar::Sequence> sequences;  // Compiled sequence data
     bool is_sample_pattern = false;  // Sample pattern vs pitch pattern
+
+    // Pattern string location in document (for UI highlighting)
+    SourceLocation pattern_location;  // Document offset of pattern string
 };
 
 /// Result of code generation

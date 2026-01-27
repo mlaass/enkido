@@ -454,8 +454,9 @@ NodeIndex MiniParser::parse_modifiers(NodeIndex atom) {
 
 // Convenience function
 std::pair<NodeIndex, std::vector<Diagnostic>>
-parse_mini(std::string_view pattern, AstArena& arena, SourceLocation base_location) {
-    auto [tokens, lex_diags] = lex_mini(pattern, base_location);
+parse_mini(std::string_view pattern, AstArena& arena, SourceLocation base_location,
+           bool sample_only) {
+    auto [tokens, lex_diags] = lex_mini(pattern, base_location, sample_only);
 
     MiniParser parser(std::move(tokens), arena, base_location);
     NodeIndex root = parser.parse();

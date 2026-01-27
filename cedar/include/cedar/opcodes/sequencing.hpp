@@ -359,360 +359,69 @@ inline void op_timeline(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // ============================================================================
-// Pattern Query Helpers - Deterministic Randomness
+// SEQPAT_QUERY - Query new sequence system at block boundaries
 // ============================================================================
-
-// Splitmix64-style mixer for deterministic pseudo-random values
+// Fills SequenceState.output[] for current cycle
+// Called once per block to prepare events for SEQ_STEP
+//
+// Uses the new simplified sequence model with query_pattern()
 [[gnu::always_inline]]
-inline std::uint64_t splitmix64(std::uint64_t x) {
-    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
-    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
-    return x ^ (x >> 31);
-}
-
-// Mix pattern seed with time position for deterministic randomness
-// Same seed + time always produces same result (important for seek/scrub)
-[[gnu::always_inline]]
-inline float deterministic_random(std::uint64_t pattern_seed, float time_position) {
-    // Quantize time to avoid floating point issues (10000 quanta per beat)
-    std::uint64_t time_quant = static_cast<std::uint64_t>(time_position * 10000.0f);
-    std::uint64_t h = splitmix64(pattern_seed ^ time_quant);
-    return static_cast<float>(h & 0xFFFFFFFFull) / 4294967296.0f;
-}
-
-// ============================================================================
-// Pattern Query Context - Passed through recursive evaluation
-// ============================================================================
-
-struct PatternQueryContext {
-    float arc_start;      // Query start time (in beats, relative to cycle)
-    float arc_end;        // Query end time
-    float time_scale;     // Current time scale (for FAST/SLOW)
-    float time_offset;    // Current time offset
-    std::uint64_t rng_seed;
-    PatternQueryState* state;
-
-    // Emit an event if it falls within the query arc
-    void add_event(float time, float duration, float value, float velocity = 1.0f) {
-        // Transform time by current scale and offset
-        float event_time = time * time_scale + time_offset;
-
-        // Check if event overlaps query arc
-        if (event_time < arc_end && event_time + duration * time_scale > arc_start) {
-            if (state->num_events < PatternQueryState::MAX_QUERY_EVENTS) {
-                auto& e = state->events[state->num_events++];
-                e.time = event_time;
-                e.duration = duration * time_scale;
-                e.value = value;
-                e.velocity = velocity;
-            }
-        }
-    }
-
-    // Create a subdivided context for CAT children
-    [[nodiscard]] PatternQueryContext subdivide(std::size_t child_idx, std::size_t total_children,
-                                                 float child_weight = 1.0f, float total_weight = 0.0f) const {
-        if (total_weight <= 0.0f) total_weight = static_cast<float>(total_children);
-        float child_duration = time_scale / total_weight * child_weight;
-        float accumulated = 0.0f;
-        for (std::size_t i = 0; i < child_idx; ++i) {
-            accumulated += 1.0f;  // Simplified: assume equal weight for now
-        }
-        if (total_weight > 0.0f && total_weight != static_cast<float>(total_children)) {
-            accumulated = static_cast<float>(child_idx);
-        }
-        float child_offset = time_offset + (accumulated / total_weight) * time_scale;
-
-        return {
-            .arc_start = arc_start,
-            .arc_end = arc_end,
-            .time_scale = child_duration,
-            .time_offset = child_offset,
-            .rng_seed = rng_seed ^ (child_idx + 1),
-            .state = state
-        };
-    }
-
-    // Create a context with modified time scale (for FAST/SLOW)
-    [[nodiscard]] PatternQueryContext with_scale(float factor) const {
-        return {
-            .arc_start = arc_start,
-            .arc_end = arc_end,
-            .time_scale = time_scale / factor,
-            .time_offset = time_offset,
-            .rng_seed = rng_seed,
-            .state = state
-        };
-    }
-
-    // Create a context with modified time offset (for EARLY/LATE)
-    [[nodiscard]] PatternQueryContext with_offset(float offset) const {
-        return {
-            .arc_start = arc_start,
-            .arc_end = arc_end,
-            .time_scale = time_scale,
-            .time_offset = time_offset + offset,
-            .rng_seed = rng_seed,
-            .state = state
-        };
-    }
-};
-
-// Forward declaration for recursive evaluation
-void evaluate_pattern_node(const PatternQueryState* prog, std::uint32_t node_idx,
-                           PatternQueryContext& ctx);
-
-// Recursive pattern evaluation
-inline void evaluate_pattern_node(const PatternQueryState* prog, std::uint32_t node_idx,
-                                   PatternQueryContext& ctx) {
-    if (node_idx >= prog->num_nodes) return;
-
-    const PatternNode& node = prog->nodes[node_idx];
-
-    switch (node.op) {
-        case PatternOp::ATOM:
-            // Emit event for this atom
-            ctx.add_event(0.0f, 1.0f, node.data.float_val);
-            break;
-
-        case PatternOp::SILENCE:
-            // No event - rest
-            break;
-
-        case PatternOp::CAT: {
-            // Sequential concatenation - subdivide time among children
-            for (std::uint8_t i = 0; i < node.num_children; ++i) {
-                PatternQueryContext child_ctx = ctx.subdivide(i, node.num_children);
-                evaluate_pattern_node(prog, node.first_child_idx + i, child_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::STACK: {
-            // Parallel - all children share the same time span
-            for (std::uint8_t i = 0; i < node.num_children; ++i) {
-                PatternQueryContext child_ctx = ctx;
-                child_ctx.rng_seed ^= static_cast<std::uint64_t>(i + 1);
-                evaluate_pattern_node(prog, node.first_child_idx + i, child_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::SLOWCAT: {
-            // Alternation - pick child based on cycle number
-            // Calculate which cycle we're in based on arc_start
-            float cycle_pos = ctx.arc_start / prog->cycle_length;
-            std::uint32_t cycle = static_cast<std::uint32_t>(cycle_pos);
-            std::uint8_t choice = static_cast<std::uint8_t>(cycle % node.num_children);
-            evaluate_pattern_node(prog, node.first_child_idx + choice, ctx);
-            break;
-        }
-
-        case PatternOp::FAST: {
-            // Speed up by factor
-            PatternQueryContext scaled_ctx = ctx.with_scale(node.data.float_val);
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, scaled_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::SLOW: {
-            // Slow down by factor
-            PatternQueryContext scaled_ctx = ctx.with_scale(1.0f / node.data.float_val);
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, scaled_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::EARLY: {
-            // Shift earlier in time
-            PatternQueryContext offset_ctx = ctx.with_offset(-node.time_offset);
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, offset_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::LATE: {
-            // Shift later in time
-            PatternQueryContext offset_ctx = ctx.with_offset(node.time_offset);
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, offset_ctx);
-            }
-            break;
-        }
-
-        case PatternOp::REV: {
-            // Reverse is complex - for now, just pass through
-            // TODO: Implement proper time reversal
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, ctx);
-            }
-            break;
-        }
-
-        case PatternOp::DEGRADE: {
-            // Chance-based filtering
-            float rnd = deterministic_random(ctx.rng_seed, ctx.time_offset);
-            if (rnd < node.data.float_val && node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, ctx);
-            }
-            break;
-        }
-
-        case PatternOp::CHOOSE: {
-            // Random element from children
-            if (node.num_children > 0) {
-                float rnd = deterministic_random(ctx.rng_seed, ctx.time_offset);
-                std::uint8_t choice = static_cast<std::uint8_t>(
-                    rnd * static_cast<float>(node.num_children)) % node.num_children;
-                evaluate_pattern_node(prog, node.first_child_idx + choice, ctx);
-            }
-            break;
-        }
-
-        case PatternOp::EUCLID: {
-            // Euclidean rhythm - generate pattern and emit events
-            std::uint32_t hits = node.data.euclid.hits;
-            std::uint32_t steps = node.data.euclid.steps;
-            std::uint32_t rotation = node.data.euclid.rotation;
-
-            if (steps > 0 && hits > 0 && node.num_children > 0) {
-                std::uint32_t pattern = compute_euclidean_pattern(hits, steps, rotation);
-                for (std::uint32_t i = 0; i < steps; ++i) {
-                    if ((pattern >> i) & 1) {
-                        PatternQueryContext step_ctx = ctx.subdivide(i, steps);
-                        evaluate_pattern_node(prog, node.first_child_idx, step_ctx);
-                    }
-                }
-            }
-            break;
-        }
-
-        case PatternOp::REPLICATE: {
-            // Repeat n times (but don't subdivide time - that's handled by !n modifier)
-            std::uint32_t count = static_cast<std::uint32_t>(node.data.float_val);
-            if (count > 0 && node.num_children > 0) {
-                for (std::uint32_t i = 0; i < count; ++i) {
-                    PatternQueryContext rep_ctx = ctx.subdivide(i, count);
-                    evaluate_pattern_node(prog, node.first_child_idx, rep_ctx);
-                }
-            }
-            break;
-        }
-
-        case PatternOp::WEIGHT: {
-            // Weight modifier - adjust time scale
-            // The weight is stored in float_val, but actual time subdivision
-            // is handled by the parent CAT node
-            if (node.num_children > 0) {
-                evaluate_pattern_node(prog, node.first_child_idx, ctx);
-            }
-            break;
-        }
-    }
-}
-
-// Sort events by time (simple insertion sort for small arrays)
-inline void sort_query_events(PatternQueryState& state) {
-    for (std::uint32_t i = 1; i < state.num_events; ++i) {
-        QueryEvent key = state.events[i];
-        std::int32_t j = static_cast<std::int32_t>(i) - 1;
-        while (j >= 0 && state.events[j].time > key.time) {
-            state.events[j + 1] = state.events[j];
-            --j;
-        }
-        state.events[j + 1] = key;
-    }
-}
-
-// ============================================================================
-// PAT_QUERY - Query pattern at block boundaries (control rate)
-// ============================================================================
-// Fills PatternQueryState.events[] for current beat range
-// Called once per block to prepare events for PAT_STEP
-[[gnu::always_inline]]
-inline void op_pat_query(ExecutionContext& ctx, const Instruction& inst) {
-    auto& state = ctx.states->get_or_create<PatternQueryState>(inst.state_id);
+inline void op_seqpat_query(ExecutionContext& ctx, const Instruction& inst) {
+    auto& state = ctx.states->get_or_create<SequenceState>(inst.state_id);
 
     const float spb = ctx.samples_per_beat();
 
     // Calculate current beat position (start of block)
     float beat_start = static_cast<float>(ctx.global_sample_counter) / spb;
 
-    // Calculate beat position at end of block (lookahead)
-    float beat_end = static_cast<float>(ctx.global_sample_counter + BLOCK_SIZE) / spb;
+    // Determine which cycle we're currently in
+    float current_cycle = std::floor(beat_start / state.cycle_length);
 
-    // Normalize to cycle position
-    float cycle_start = std::fmod(beat_start, state.cycle_length);
-    float cycle_end = std::fmod(beat_end, state.cycle_length);
-
-    // Handle cycle wrap
-    if (cycle_end < cycle_start) {
-        cycle_end += state.cycle_length;
+    // Only re-query if we've entered a new cycle
+    if (current_cycle == state.last_queried_cycle && state.output.num_events > 0) {
+        return;  // Use cached results from this cycle
     }
 
-    // Only re-query if we've moved to a new time window
-    // (optimization to avoid redundant work)
-    if (std::abs(cycle_start - state.query_start) < 0.0001f &&
-        std::abs(cycle_end - state.query_end) < 0.0001f) {
-        return;  // Already have events for this window
-    }
+    // Update cycle tracking
+    state.last_queried_cycle = current_cycle;
 
-    // Clear previous events
-    state.num_events = 0;
-    state.query_start = cycle_start;
-    state.query_end = cycle_end;
+    // Query the root sequence for this cycle
+    query_pattern(state, static_cast<std::uint64_t>(current_cycle), state.cycle_length);
 
-    // Set up query context
-    PatternQueryContext query_ctx{
-        .arc_start = cycle_start,
-        .arc_end = cycle_end,
-        .time_scale = state.cycle_length,
-        .time_offset = 0.0f,
-        .rng_seed = state.pattern_seed,
-        .state = &state
-    };
-
-    // Evaluate pattern from root (node 0)
-    if (state.num_nodes > 0) {
-        evaluate_pattern_node(&state, 0, query_ctx);
-    }
-
-    // Sort events by time
-    sort_query_events(state);
-
-    // Reset playback index
+    // Find first event at or after current beat position within cycle
+    float cycle_pos = std::fmod(beat_start, state.cycle_length);
     state.current_index = 0;
-
-    // Find first event after current position (handle wrap)
-    while (state.current_index < state.num_events &&
-           state.events[state.current_index].time < cycle_start) {
+    while (state.current_index < state.output.num_events &&
+           state.output.events[state.current_index].time < cycle_pos) {
         state.current_index++;
     }
 }
 
 // ============================================================================
-// PAT_STEP - Step through query results
+// SEQPAT_STEP - Step through sequence query results
 // ============================================================================
 // out_buffer: value output (frequency or sample ID)
 // inputs[0]: velocity output buffer
 // inputs[1]: trigger output buffer
-// Outputs current event value, velocity, and trigger when events fire
+// Outputs current event value and trigger when events fire
 [[gnu::always_inline]]
-inline void op_pat_step(ExecutionContext& ctx, const Instruction& inst) {
+inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
     float* out_value = ctx.buffers->get(inst.out_buffer);
     float* out_velocity = ctx.buffers->get(inst.inputs[0]);
     float* out_trigger = ctx.buffers->get(inst.inputs[1]);
-    auto& state = ctx.states->get_or_create<PatternQueryState>(inst.state_id);
+    auto& state = ctx.states->get_or_create<SequenceState>(inst.state_id);
 
-    if (state.num_events == 0) {
+    if (state.output.num_events == 0) {
         std::fill_n(out_value, BLOCK_SIZE, 0.0f);
         std::fill_n(out_velocity, BLOCK_SIZE, 0.0f);
         std::fill_n(out_trigger, BLOCK_SIZE, 0.0f);
         return;
+    }
+
+    // Initialize active step from first event if not yet set
+    if (state.active_source_length == 0 && state.output.num_events > 0) {
+        state.active_source_offset = state.output.events[0].source_offset;
+        state.active_source_length = state.output.events[0].source_length;
     }
 
     const float spb = ctx.samples_per_beat();
@@ -732,23 +441,33 @@ inline void op_pat_step(ExecutionContext& ctx, const Instruction& inst) {
 
         // Check if we crossed an event time (for trigger)
         out_trigger[i] = 0.0f;
-        while (state.current_index < state.num_events &&
-               beat_pos >= state.events[state.current_index].time) {
+        while (state.current_index < state.output.num_events &&
+               beat_pos >= state.output.events[state.current_index].time) {
             out_trigger[i] = 1.0f;
+            // Update active step for UI highlighting
+            const auto& evt = state.output.events[state.current_index];
+            state.active_source_offset = evt.source_offset;
+            state.active_source_length = evt.source_length;
             state.current_index++;
         }
 
         // Handle wrap: also trigger if we wrapped and crossed first event
-        if (wrapped && state.num_events > 0 && beat_pos >= state.events[0].time) {
+        if (wrapped && state.output.num_events > 0 && beat_pos >= state.output.events[0].time) {
             out_trigger[i] = 1.0f;
         }
 
         // Output current value and velocity (from current event)
         std::uint32_t event_index = (state.current_index > 0)
             ? state.current_index - 1
-            : state.num_events - 1;
-        out_value[i] = state.events[event_index].value;
-        out_velocity[i] = state.events[event_index].velocity;
+            : state.output.num_events - 1;
+        // Use first value from event (multi-value support for chords)
+        const auto& evt = state.output.events[event_index];
+        out_value[i] = evt.num_values > 0 ? evt.values[0] : 0.0f;
+        out_velocity[i] = 1.0f;  // Velocity support TBD
+
+        // Keep active step in sync with current event for UI highlighting
+        state.active_source_offset = evt.source_offset;
+        state.active_source_length = evt.source_length;
 
         state.last_beat_pos = beat_pos;
     }

@@ -6,6 +6,7 @@
 #include "akkado/chord_parser.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/mini_parser.hpp"
+#include <cedar/opcodes/sequence.hpp>
 #include <cmath>
 
 namespace akkado {
@@ -15,27 +16,49 @@ using codegen::unwrap_argument;
 using codegen::emit_zero;
 
 // ============================================================================
-// PatternCompiler - Converts mini-notation AST to PatternNode array
+// SequenceCompiler - Converts mini-notation AST to Sequence/Event format
 // ============================================================================
-// This compiles the AST into a flat array of PatternNodes that can be
-// evaluated at runtime by the PAT_QUERY opcode.
+// This compiles the AST into sequences that can be evaluated at runtime
+// using the new simplified query_sequence() function.
+//
+// Key mappings:
+//   [a b c]    -> NORMAL sequence (events at subdivided times)
+//   <a b c>    -> ALTERNATE sequence (one event per query, advances step)
+//   a | b | c  -> RANDOM sequence (pick one randomly)
+//   *N         -> Speed modifier (creates N SUB_SEQ events for alternates)
+//   !N         -> Repeat modifier (duplicates events)
+//   ?N         -> Chance modifier (sets event.chance)
 
-class PatternCompiler {
+class SequenceCompiler {
 public:
-    explicit PatternCompiler(const AstArena& arena, SampleRegistry* sample_registry = nullptr)
+    explicit SequenceCompiler(const AstArena& arena, SampleRegistry* sample_registry = nullptr)
         : arena_(arena), sample_registry_(sample_registry) {}
 
-    // Compile a pattern AST into PatternNode array
+    // Compile a pattern AST into Sequence format
     // Returns true on success, false if compilation fails
     bool compile(NodeIndex root) {
-        nodes_.clear();
+        sequences_.clear();
         if (root == NULL_NODE) return false;
-        compile_node(root);
-        return !nodes_.empty();
+
+        // Create root sequence at index 0 (query_pattern always starts from sequence 0)
+        cedar::Sequence root_seq;
+        root_seq.mode = cedar::SequenceMode::NORMAL;
+        root_seq.duration = 1.0f;  // Normalized to 1.0, scaled by cycle_length later
+
+        // Reserve slot 0 for root - sub-sequences will be added at indices 1+
+        sequences_.push_back(root_seq);
+
+        compile_into_sequence(root, root_seq, 0.0f, 1.0f);
+
+        if (root_seq.num_events == 0) return false;
+
+        // Update slot 0 with the populated root sequence
+        sequences_[0] = root_seq;
+        return true;
     }
 
-    // Get the compiled nodes
-    const std::vector<cedar::PatternNode>& nodes() const { return nodes_; }
+    // Get the compiled sequences
+    const std::vector<cedar::Sequence>& sequences() const { return sequences_; }
 
     // Check if pattern contains samples (vs pitch)
     bool is_sample_pattern() const { return is_sample_pattern_; }
@@ -47,338 +70,451 @@ public:
         }
     }
 
-private:
-    // Allocate a new node and return its index
-    std::uint16_t alloc_node() {
-        if (nodes_.size() >= cedar::PatternQueryState::MAX_NODES) {
-            return 0xFFFF;  // Overflow
+    // Count top-level elements in a pattern (each element = 1 beat)
+    // This determines cycle_length: pattern "a <b c> d" has 3 top-level elements
+    std::uint32_t count_top_level_elements(NodeIndex node) {
+        if (node == NULL_NODE) return 1;
+        const Node& n = arena_[node];
+
+        // For MiniPattern, count children (with repeat expansion)
+        if (n.type == NodeType::MiniPattern) {
+            std::uint32_t count = 0;
+            NodeIndex child = n.first_child;
+            while (child != NULL_NODE) {
+                count += static_cast<std::uint32_t>(get_node_repeat(child));
+                child = arena_[child].next_sibling;
+            }
+            return count > 0 ? count : 1;
         }
-        nodes_.emplace_back();
-        return static_cast<std::uint16_t>(nodes_.size() - 1);
+
+        // Single element
+        return 1;
     }
 
-    // Compile a node recursively
-    std::uint16_t compile_node(NodeIndex ast_idx) {
-        if (ast_idx == NULL_NODE) return 0xFFFF;
+private:
+    // Compile a node into events within an existing sequence
+    // time_offset: where in the parent's time span this starts (0.0-1.0)
+    // time_span: how much of the parent's time span this uses (0.0-1.0)
+    void compile_into_sequence(NodeIndex ast_idx, cedar::Sequence& seq,
+                                float time_offset, float time_span) {
+        if (ast_idx == NULL_NODE) return;
 
         const Node& n = arena_[ast_idx];
 
         switch (n.type) {
             case NodeType::MiniPattern:
-                return compile_pattern(ast_idx, n);
+                compile_pattern_node(ast_idx, n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniAtom:
-                return compile_atom(ast_idx, n);
+                compile_atom_event(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniGroup:
-                return compile_group(ast_idx, n);
+                compile_group_events(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniSequence:
-                return compile_sequence(ast_idx, n);
+                compile_alternate_sequence(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniPolyrhythm:
-                return compile_polyrhythm(ast_idx, n);
+                compile_polyrhythm_events(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniPolymeter:
-                return compile_polymeter(ast_idx, n);
+                // Treat polymeter as group for now
+                compile_group_events(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniChoice:
-                return compile_choice(ast_idx, n);
+                compile_choice_sequence(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniEuclidean:
-                return compile_euclidean(ast_idx, n);
+                compile_euclidean_events(n, seq, time_offset, time_span);
+                break;
             case NodeType::MiniModified:
-                return compile_modified(ast_idx, n);
+                compile_modified_node(n, seq, time_offset, time_span);
+                break;
             default:
-                // Unknown node type - emit silence
-                return compile_silence();
+                // Unknown node type - skip
+                break;
         }
     }
 
-    // Compile a MiniPattern (root) node - contains children
-    std::uint16_t compile_pattern(NodeIndex ast_idx, const Node& n) {
-        // MiniPattern with single child - just compile child
-        // MiniPattern with multiple children - wrap in CAT
-        std::vector<std::uint16_t> child_indices;
+    // MiniPattern: root containing children (sequential concatenation)
+    void compile_pattern_node(NodeIndex /*ast_idx*/, const Node& n, cedar::Sequence& seq,
+                               float time_offset, float time_span) {
+        // Count children and their weights
+        std::vector<NodeIndex> children;
+        std::vector<float> weights;
+        float total_weight = 0.0f;
+
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            std::uint16_t idx = compile_node(child);
-            if (idx != 0xFFFF) {
-                child_indices.push_back(idx);
+            float weight = get_node_weight(child);
+            int repeat = get_node_repeat(child);
+            for (int i = 0; i < repeat; ++i) {
+                children.push_back(child);
+                weights.push_back(weight);
+                total_weight += weight;
             }
             child = arena_[child].next_sibling;
         }
 
-        if (child_indices.empty()) {
-            return compile_silence();
+        if (children.empty()) return;
+        if (total_weight <= 0.0f) total_weight = static_cast<float>(children.size());
+
+        // Subdivide time among children
+        float accumulated_time = 0.0f;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            float child_span = (weights[i] / total_weight) * time_span;
+            float child_offset = time_offset + accumulated_time;
+            compile_into_sequence(children[i], seq, child_offset, child_span);
+            accumulated_time += child_span;
         }
-        if (child_indices.size() == 1) {
-            return child_indices[0];
-        }
-
-        // Multiple children - wrap in CAT
-        std::uint16_t cat_idx = alloc_node();
-        if (cat_idx == 0xFFFF) return 0xFFFF;
-
-        auto& cat_node = nodes_[cat_idx];
-        cat_node.op = cedar::PatternOp::CAT;
-        cat_node.num_children = static_cast<std::uint8_t>(
-            std::min(child_indices.size(), std::size_t(255)));
-        cat_node.first_child_idx = child_indices[0];
-
-        return cat_idx;
     }
 
-    // Compile an atom (pitch, sample, or rest)
-    std::uint16_t compile_atom(NodeIndex /*ast_idx*/, const Node& n) {
+    // MiniAtom: single note, sample, or rest -> DATA event
+    void compile_atom_event(const Node& n, cedar::Sequence& seq,
+                            float time_offset, float time_span) {
         const auto& atom_data = n.as_mini_atom();
 
-        std::uint16_t idx = alloc_node();
-        if (idx == 0xFFFF) return 0xFFFF;
-
-        auto& node = nodes_[idx];
-
-        switch (atom_data.kind) {
-            case Node::MiniAtomKind::Pitch: {
-                node.op = cedar::PatternOp::ATOM;
-                // Convert MIDI note to frequency
-                float freq = 440.0f * std::pow(2.0f,
-                    (static_cast<float>(atom_data.midi_note) - 69.0f) / 12.0f);
-                node.data.float_val = freq;
-                break;
-            }
-            case Node::MiniAtomKind::Sample: {
-                is_sample_pattern_ = true;
-                node.op = cedar::PatternOp::ATOM;
-                // Store sample ID
-                std::uint32_t sample_id = 0;
-                if (sample_registry_ && !atom_data.sample_name.empty()) {
-                    sample_id = sample_registry_->get_id(atom_data.sample_name);
-                    sample_names_.insert(atom_data.sample_name);
-                }
-                node.data.sample_id = sample_id;
-                break;
-            }
-            case Node::MiniAtomKind::Rest:
-                node.op = cedar::PatternOp::SILENCE;
-                break;
+        if (atom_data.kind == Node::MiniAtomKind::Rest) {
+            return;  // Rest = no event
         }
 
-        return idx;
+        cedar::Event e;
+        e.type = cedar::EventType::DATA;
+        e.time = time_offset;
+        e.duration = time_span;
+        e.chance = 1.0f;
+        e.num_values = 1;
+        e.source_offset = static_cast<std::uint16_t>(n.location.offset);
+        e.source_length = static_cast<std::uint16_t>(n.location.length);
+
+        if (atom_data.kind == Node::MiniAtomKind::Pitch) {
+            // Convert MIDI note to frequency
+            float freq = 440.0f * std::pow(2.0f,
+                (static_cast<float>(atom_data.midi_note) - 69.0f) / 12.0f);
+            e.values[0] = freq;
+        } else {
+            // Sample
+            is_sample_pattern_ = true;
+            std::uint32_t sample_id = 0;
+            if (sample_registry_ && !atom_data.sample_name.empty()) {
+                sample_id = sample_registry_->get_id(atom_data.sample_name);
+                sample_names_.insert(atom_data.sample_name);
+            }
+            e.values[0] = static_cast<float>(sample_id);
+        }
+
+        seq.add_event(e);
     }
 
-    // Compile silence
-    std::uint16_t compile_silence() {
-        std::uint16_t idx = alloc_node();
-        if (idx == 0xFFFF) return 0xFFFF;
-        nodes_[idx].op = cedar::PatternOp::SILENCE;
-        return idx;
-    }
+    // MiniGroup [a b c]: sequential concatenation, subdivide time
+    void compile_group_events(const Node& n, cedar::Sequence& seq,
+                               float time_offset, float time_span) {
+        // Same logic as compile_pattern_node
+        std::vector<NodeIndex> children;
+        std::vector<float> weights;
+        float total_weight = 0.0f;
 
-    // Compile a group [a b c] - sequential concatenation
-    std::uint16_t compile_group(NodeIndex ast_idx, const Node& n) {
-        std::vector<std::uint16_t> child_indices;
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            std::uint16_t idx = compile_node(child);
-            if (idx != 0xFFFF) {
-                child_indices.push_back(idx);
+            float weight = get_node_weight(child);
+            int repeat = get_node_repeat(child);
+            for (int i = 0; i < repeat; ++i) {
+                children.push_back(child);
+                weights.push_back(weight);
+                total_weight += weight;
             }
             child = arena_[child].next_sibling;
         }
 
-        if (child_indices.empty()) {
-            return compile_silence();
+        if (children.empty()) return;
+        if (total_weight <= 0.0f) total_weight = static_cast<float>(children.size());
+
+        float accumulated_time = 0.0f;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            float child_span = (weights[i] / total_weight) * time_span;
+            float child_offset = time_offset + accumulated_time;
+            compile_into_sequence(children[i], seq, child_offset, child_span);
+            accumulated_time += child_span;
         }
-        if (child_indices.size() == 1) {
-            return child_indices[0];
-        }
-
-        std::uint16_t cat_idx = alloc_node();
-        if (cat_idx == 0xFFFF) return 0xFFFF;
-
-        auto& cat_node = nodes_[cat_idx];
-        cat_node.op = cedar::PatternOp::CAT;
-        cat_node.num_children = static_cast<std::uint8_t>(
-            std::min(child_indices.size(), std::size_t(255)));
-        cat_node.first_child_idx = child_indices[0];
-
-        return cat_idx;
     }
 
-    // Compile a sequence <a b c> - alternating per cycle
-    std::uint16_t compile_sequence(NodeIndex ast_idx, const Node& n) {
-        std::vector<std::uint16_t> child_indices;
+    // MiniSequence <a b c>: ALTERNATE mode (one per call, cycles through)
+    void compile_alternate_sequence(const Node& n, cedar::Sequence& parent_seq,
+                                     float time_offset, float time_span) {
+        // Create a sub-sequence with ALTERNATE mode
+        cedar::Sequence alt_seq;
+        alt_seq.mode = cedar::SequenceMode::ALTERNATE;
+        alt_seq.duration = 1.0f;
+
+        // Add each child as a separate event in the alternate sequence
+        // Support !N repeat modifier: <a!3 b> becomes 4 choices (a, a, a, b)
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            std::uint16_t idx = compile_node(child);
-            if (idx != 0xFFFF) {
-                child_indices.push_back(idx);
+            int repeat = get_node_repeat(child);
+            for (int i = 0; i < repeat; ++i) {
+                compile_into_sequence(child, alt_seq, 0.0f, 1.0f);
             }
             child = arena_[child].next_sibling;
         }
 
-        if (child_indices.empty()) {
-            return compile_silence();
-        }
-        if (child_indices.size() == 1) {
-            return child_indices[0];
-        }
+        if (alt_seq.num_events == 0) return;
 
-        std::uint16_t seq_idx = alloc_node();
-        if (seq_idx == 0xFFFF) return 0xFFFF;
+        // Add the sub-sequence
+        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
+        sequences_.push_back(alt_seq);
 
-        auto& seq_node = nodes_[seq_idx];
-        seq_node.op = cedar::PatternOp::SLOWCAT;
-        seq_node.num_children = static_cast<std::uint8_t>(
-            std::min(child_indices.size(), std::size_t(255)));
-        seq_node.first_child_idx = child_indices[0];
-
-        return seq_idx;
+        // Add a SUB_SEQ event pointing to it
+        cedar::Event e;
+        e.type = cedar::EventType::SUB_SEQ;
+        e.time = time_offset;
+        e.duration = time_span;
+        e.chance = 1.0f;
+        e.seq_id = seq_id;
+        parent_seq.add_event(e);
     }
 
-    // Compile a polyrhythm [a, b, c] - parallel stacking
-    std::uint16_t compile_polyrhythm(NodeIndex ast_idx, const Node& n) {
-        std::vector<std::uint16_t> child_indices;
+    // MiniChoice a | b | c: RANDOM mode (pick one randomly)
+    void compile_choice_sequence(const Node& n, cedar::Sequence& parent_seq,
+                                  float time_offset, float time_span) {
+        // Create a sub-sequence with RANDOM mode
+        cedar::Sequence choice_seq;
+        choice_seq.mode = cedar::SequenceMode::RANDOM;
+        choice_seq.duration = 1.0f;
+
+        // Add each child as a separate event
+        // Support !N repeat modifier: a!3 | b becomes 4 choices (a, a, a, b)
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            std::uint16_t idx = compile_node(child);
-            if (idx != 0xFFFF) {
-                child_indices.push_back(idx);
+            int repeat = get_node_repeat(child);
+            for (int i = 0; i < repeat; ++i) {
+                compile_into_sequence(child, choice_seq, 0.0f, 1.0f);
             }
             child = arena_[child].next_sibling;
         }
 
-        if (child_indices.empty()) {
-            return compile_silence();
-        }
-        if (child_indices.size() == 1) {
-            return child_indices[0];
-        }
+        if (choice_seq.num_events == 0) return;
 
-        std::uint16_t stack_idx = alloc_node();
-        if (stack_idx == 0xFFFF) return 0xFFFF;
+        // Add the sub-sequence
+        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
+        sequences_.push_back(choice_seq);
 
-        auto& stack_node = nodes_[stack_idx];
-        stack_node.op = cedar::PatternOp::STACK;
-        stack_node.num_children = static_cast<std::uint8_t>(
-            std::min(child_indices.size(), std::size_t(255)));
-        stack_node.first_child_idx = child_indices[0];
-
-        return stack_idx;
+        // Add a SUB_SEQ event pointing to it
+        cedar::Event e;
+        e.type = cedar::EventType::SUB_SEQ;
+        e.time = time_offset;
+        e.duration = time_span;
+        e.chance = 1.0f;
+        e.seq_id = seq_id;
+        parent_seq.add_event(e);
     }
 
-    // Compile a polymeter {a b}%n
-    std::uint16_t compile_polymeter(NodeIndex ast_idx, const Node& n) {
-        // For now, treat polymeter similar to group
-        return compile_group(ast_idx, n);
-    }
-
-    // Compile a choice a | b | c - random selection
-    std::uint16_t compile_choice(NodeIndex ast_idx, const Node& n) {
-        std::vector<std::uint16_t> child_indices;
+    // MiniPolyrhythm [a, b, c]: all elements simultaneously
+    void compile_polyrhythm_events(const Node& n, cedar::Sequence& seq,
+                                    float time_offset, float time_span) {
+        // Each child occupies the same time span
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            std::uint16_t idx = compile_node(child);
-            if (idx != 0xFFFF) {
-                child_indices.push_back(idx);
-            }
+            compile_into_sequence(child, seq, time_offset, time_span);
             child = arena_[child].next_sibling;
         }
-
-        if (child_indices.empty()) {
-            return compile_silence();
-        }
-        if (child_indices.size() == 1) {
-            return child_indices[0];
-        }
-
-        std::uint16_t choice_idx = alloc_node();
-        if (choice_idx == 0xFFFF) return 0xFFFF;
-
-        auto& choice_node = nodes_[choice_idx];
-        choice_node.op = cedar::PatternOp::CHOOSE;
-        choice_node.num_children = static_cast<std::uint8_t>(
-            std::min(child_indices.size(), std::size_t(255)));
-        choice_node.first_child_idx = child_indices[0];
-
-        return choice_idx;
     }
 
-    // Compile euclidean rhythm
-    std::uint16_t compile_euclidean(NodeIndex ast_idx, const Node& n) {
+    // MiniEuclidean: Euclidean rhythm pattern
+    void compile_euclidean_events(const Node& n, cedar::Sequence& seq,
+                                   float time_offset, float time_span) {
         const auto& euclid_data = n.as_mini_euclidean();
+        std::uint32_t hits = euclid_data.hits;
+        std::uint32_t steps = euclid_data.steps;
+        std::uint32_t rotation = euclid_data.rotation;
 
-        // First compile the child (atom to place on hits)
-        std::uint16_t child_idx = 0xFFFF;
-        if (n.first_child != NULL_NODE) {
-            child_idx = compile_node(n.first_child);
+        if (steps == 0 || hits == 0) return;
+
+        // Generate Euclidean pattern
+        std::uint32_t pattern = compute_euclidean_pattern(hits, steps, rotation);
+
+        // Child element to place on hits
+        NodeIndex child = n.first_child;
+
+        float step_span = time_span / static_cast<float>(steps);
+        for (std::uint32_t i = 0; i < steps; ++i) {
+            if ((pattern >> i) & 1) {
+                float step_offset = time_offset + static_cast<float>(i) * step_span;
+                if (child != NULL_NODE) {
+                    compile_into_sequence(child, seq, step_offset, step_span);
+                }
+            }
         }
-        if (child_idx == 0xFFFF) {
-            child_idx = compile_silence();
-        }
-
-        std::uint16_t idx = alloc_node();
-        if (idx == 0xFFFF) return 0xFFFF;
-
-        auto& node = nodes_[idx];
-        node.op = cedar::PatternOp::EUCLID;
-        node.data.euclid.hits = euclid_data.hits;
-        node.data.euclid.steps = euclid_data.steps;
-        node.data.euclid.rotation = euclid_data.rotation;
-        node.num_children = 1;
-        node.first_child_idx = child_idx;
-
-        return idx;
     }
 
-    // Compile modified node (with modifiers like *n, /n, !n, ?n, @n)
-    std::uint16_t compile_modified(NodeIndex ast_idx, const Node& n) {
+    // Compute Euclidean pattern as bitmask
+    std::uint32_t compute_euclidean_pattern(std::uint32_t hits, std::uint32_t steps,
+                                             std::uint32_t rotation) {
+        if (steps == 0 || hits == 0) return 0;
+        if (hits >= steps) return (1u << steps) - 1;
+
+        std::uint32_t pattern = 0;
+        float bucket = 0.0f;
+        float increment = static_cast<float>(hits) / static_cast<float>(steps);
+
+        for (std::uint32_t i = 0; i < steps; ++i) {
+            bucket += increment;
+            if (bucket >= 1.0f) {
+                pattern |= (1u << i);
+                bucket -= 1.0f;
+            }
+        }
+
+        // Apply rotation
+        if (rotation > 0 && steps > 0) {
+            rotation = rotation % steps;
+            std::uint32_t mask = (1u << steps) - 1;
+            pattern = ((pattern >> rotation) | (pattern << (steps - rotation))) & mask;
+        }
+
+        return pattern;
+    }
+
+    // MiniModified: handle modifiers (*n, !n, ?n, @n)
+    void compile_modified_node(const Node& n, cedar::Sequence& seq,
+                                float time_offset, float time_span) {
         const auto& mod_data = n.as_mini_modifier();
+        NodeIndex child = n.first_child;
 
-        // First compile the child
-        std::uint16_t child_idx = 0xFFFF;
-        if (n.first_child != NULL_NODE) {
-            child_idx = compile_node(n.first_child);
-        }
-        if (child_idx == 0xFFFF) {
-            return compile_silence();
-        }
-
-        std::uint16_t idx = alloc_node();
-        if (idx == 0xFFFF) return child_idx;  // Fall back to child if we can't allocate
-
-        auto& node = nodes_[idx];
-        node.num_children = 1;
-        node.first_child_idx = child_idx;
-        node.data.float_val = mod_data.value;
+        if (child == NULL_NODE) return;
 
         switch (mod_data.modifier_type) {
-            case Node::MiniModifierType::Speed:
-                node.op = cedar::PatternOp::FAST;
-                break;
-            case Node::MiniModifierType::Slow:
-                node.op = cedar::PatternOp::SLOW;
-                break;
-            case Node::MiniModifierType::Repeat:
-                node.op = cedar::PatternOp::REPLICATE;
-                break;
-            case Node::MiniModifierType::Chance:
-                node.op = cedar::PatternOp::DEGRADE;
-                break;
-            case Node::MiniModifierType::Weight:
-                node.op = cedar::PatternOp::WEIGHT;
-                break;
-            case Node::MiniModifierType::Duration:
-                // Duration is handled differently - just pass through
-                return child_idx;
-        }
+            case Node::MiniModifierType::Speed: {
+                // *N: Speed up - creates N events (for alternates) or compresses time
+                int count = static_cast<int>(mod_data.value);
+                if (count <= 0) count = 1;
 
-        return idx;
+                // Check if child is MiniSequence (alternate)
+                const Node& child_node = arena_[child];
+                if (child_node.type == NodeType::MiniSequence) {
+                    // <a b c>*8 -> 8 SUB_SEQ events pointing to ALTERNATE sequence
+                    cedar::Sequence alt_seq;
+                    alt_seq.mode = cedar::SequenceMode::ALTERNATE;
+                    alt_seq.duration = 1.0f;
+
+                    NodeIndex alt_child = child_node.first_child;
+                    while (alt_child != NULL_NODE) {
+                        compile_into_sequence(alt_child, alt_seq, 0.0f, 1.0f);
+                        alt_child = arena_[alt_child].next_sibling;
+                    }
+
+                    if (alt_seq.num_events > 0) {
+                        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
+                        sequences_.push_back(alt_seq);
+
+                        // Create N SUB_SEQ events
+                        float event_span = time_span / static_cast<float>(count);
+                        for (int i = 0; i < count; ++i) {
+                            cedar::Event e;
+                            e.type = cedar::EventType::SUB_SEQ;
+                            e.time = time_offset + static_cast<float>(i) * event_span;
+                            e.duration = event_span;
+                            e.chance = 1.0f;
+                            e.seq_id = seq_id;
+                            seq.add_event(e);
+                        }
+                    }
+                } else {
+                    // Regular speed modifier - wrap N fast events in a sub-sequence
+                    // so they form ONE element (not N separate elements)
+                    cedar::Sequence speed_seq;
+                    speed_seq.mode = cedar::SequenceMode::NORMAL;
+                    speed_seq.duration = 1.0f;
+
+                    float event_span = 1.0f / static_cast<float>(count);
+                    for (int i = 0; i < count; ++i) {
+                        float event_offset = static_cast<float>(i) * event_span;
+                        compile_into_sequence(child, speed_seq, event_offset, event_span);
+                    }
+
+                    if (speed_seq.num_events > 0) {
+                        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
+                        sequences_.push_back(speed_seq);
+
+                        cedar::Event e;
+                        e.type = cedar::EventType::SUB_SEQ;
+                        e.time = time_offset;
+                        e.duration = time_span;
+                        e.chance = 1.0f;
+                        e.seq_id = seq_id;
+                        seq.add_event(e);
+                    }
+                }
+                break;
+            }
+
+            case Node::MiniModifierType::Repeat: {
+                // !N: Handled by parent enumeration via get_node_repeat()
+                // Just compile the child once with full time span
+                compile_into_sequence(child, seq, time_offset, time_span);
+                break;
+            }
+
+            case Node::MiniModifierType::Chance: {
+                // ?N: Chance modifier - wrap in a sequence that applies chance
+                // For simplicity, we compile the child and then modify the last event's chance
+                std::size_t events_before = seq.num_events;
+                compile_into_sequence(child, seq, time_offset, time_span);
+
+                // Apply chance to all new events
+                float chance = mod_data.value;
+                for (std::size_t i = events_before; i < seq.num_events; ++i) {
+                    seq.events[i].chance = chance;
+                }
+                break;
+            }
+
+            case Node::MiniModifierType::Slow: {
+                // /N: Slow down - just compile with same span (handled at cycle level)
+                compile_into_sequence(child, seq, time_offset, time_span);
+                break;
+            }
+
+            case Node::MiniModifierType::Weight:
+            case Node::MiniModifierType::Duration:
+                // Weight and Duration are handled by parent (get_node_weight)
+                compile_into_sequence(child, seq, time_offset, time_span);
+                break;
+        }
+    }
+
+    // Get the weight (@N) of a node (default 1.0)
+    float get_node_weight(NodeIndex node_idx) {
+        const Node& n = arena_[node_idx];
+        if (n.type == NodeType::MiniModified) {
+            const auto& mod = n.as_mini_modifier();
+            if (mod.modifier_type == Node::MiniModifierType::Weight) {
+                return mod.value;
+            }
+        }
+        return 1.0f;
+    }
+
+    // Get the repeat count (!N) of a node (default 1)
+    int get_node_repeat(NodeIndex node_idx) {
+        const Node& n = arena_[node_idx];
+        if (n.type == NodeType::MiniModified) {
+            const auto& mod = n.as_mini_modifier();
+            if (mod.modifier_type == Node::MiniModifierType::Repeat) {
+                return static_cast<int>(mod.value);
+            }
+        }
+        return 1;
     }
 
     const AstArena& arena_;
     SampleRegistry* sample_registry_ = nullptr;
-    std::vector<cedar::PatternNode> nodes_;
+    std::vector<cedar::Sequence> sequences_;
     std::set<std::string> sample_names_;
     bool is_sample_pattern_ = false;
 };
 
 // ============================================================================
-// End PatternCompiler
+// End Compilers
 // ============================================================================
 
 // Handle MiniLiteral (pattern) nodes
@@ -401,8 +537,8 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     push_path("pat#" + std::to_string(pat_count));
     std::uint32_t state_id = compute_state_id();
 
-    // Use the new PatternCompiler for lazy queryable patterns
-    PatternCompiler compiler(ast_->arena, sample_registry_);
+    // Use the SequenceCompiler for lazy queryable patterns
+    SequenceCompiler compiler(ast_->arena, sample_registry_);
     if (!compiler.compile(pattern_node)) {
         // Fallback: try the old evaluation method for empty patterns
         PatternEventStream events = evaluate_pattern_multi_cycle(pattern_node, ast_->arena);
@@ -432,10 +568,9 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // Determine cycle count from pattern evaluation
-    PatternEvaluator evaluator(ast_->arena);
-    std::uint32_t num_cycles = evaluator.count_cycles(pattern_node);
-    float cycle_length = 4.0f * static_cast<float>(std::max(1u, num_cycles));
+    // Determine cycle length from top-level element count (each element = 1 beat)
+    std::uint32_t num_elements = compiler.count_top_level_elements(pattern_node);
+    float cycle_length = static_cast<float>(std::max(1u, num_elements));
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -452,9 +587,9 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    // Emit PAT_QUERY instruction (queries pattern at block boundaries)
+    // Emit SEQPAT_QUERY instruction (queries pattern at block boundaries)
     cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::PAT_QUERY;
+    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
     query_inst.out_buffer = 0xFFFF;  // No direct output
     query_inst.inputs[0] = 0xFFFF;
     query_inst.inputs[1] = 0xFFFF;
@@ -464,9 +599,9 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     query_inst.state_id = state_id;
     emit(query_inst);
 
-    // Emit PAT_STEP instruction (steps through query results)
+    // Emit SEQPAT_STEP instruction (steps through query results)
     cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::PAT_STEP;
+    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
     step_inst.out_buffer = value_buf;  // value output (freq or sample_id)
     step_inst.inputs[0] = velocity_buf;  // velocity output
     step_inst.inputs[1] = trigger_buf;   // trigger output
@@ -476,14 +611,15 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     step_inst.state_id = state_id;
     emit(step_inst);
 
-    // Store pattern program initialization data
-    StateInitData pat_init;
-    pat_init.state_id = state_id;
-    pat_init.type = StateInitData::Type::PatternProgram;
-    pat_init.cycle_length = cycle_length;
-    pat_init.pattern_nodes = compiler.nodes();
-    pat_init.is_sample_pattern = is_sample_pattern;
-    state_inits_.push_back(std::move(pat_init));
+    // Store sequence program initialization data
+    StateInitData seq_init;
+    seq_init.state_id = state_id;
+    seq_init.type = StateInitData::Type::SequenceProgram;
+    seq_init.cycle_length = cycle_length;
+    seq_init.sequences = compiler.sequences();
+    seq_init.is_sample_pattern = is_sample_pattern;
+    seq_init.pattern_location = n.location;  // Store pattern string location for UI
+    state_inits_.push_back(std::move(seq_init));
 
     std::uint16_t result_buf = value_buf;
 
@@ -759,8 +895,8 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    // Use the new PatternCompiler
-    PatternCompiler compiler(ast_->arena, sample_registry_);
+    // Use the SequenceCompiler
+    SequenceCompiler compiler(ast_->arena, sample_registry_);
     if (!compiler.compile(mini_pattern)) {
         // Fallback to old evaluation
         PatternEventStream events = evaluate_pattern_multi_cycle(mini_pattern, ast_->arena);
@@ -838,10 +974,9 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // Determine cycle count
-    PatternEvaluator evaluator(ast_->arena);
-    std::uint32_t num_cycles = evaluator.count_cycles(mini_pattern);
-    float cycle_length = 4.0f * static_cast<float>(std::max(1u, num_cycles));
+    // Determine cycle length from top-level element count (each element = 1 beat)
+    std::uint32_t num_elements = compiler.count_top_level_elements(mini_pattern);
+    float cycle_length = static_cast<float>(std::max(1u, num_elements));
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -858,9 +993,9 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    // Emit PAT_QUERY
+    // Emit SEQPAT_QUERY
     cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::PAT_QUERY;
+    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
     query_inst.out_buffer = 0xFFFF;
     query_inst.inputs[0] = 0xFFFF;
     query_inst.inputs[1] = 0xFFFF;
@@ -870,9 +1005,9 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     query_inst.state_id = state_id;
     emit(query_inst);
 
-    // Emit PAT_STEP
+    // Emit SEQPAT_STEP
     cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::PAT_STEP;
+    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
     step_inst.out_buffer = value_buf;
     step_inst.inputs[0] = velocity_buf;
     step_inst.inputs[1] = trigger_buf;
@@ -882,14 +1017,14 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     step_inst.state_id = state_id;
     emit(step_inst);
 
-    // Store pattern program
-    StateInitData pat_init;
-    pat_init.state_id = state_id;
-    pat_init.type = StateInitData::Type::PatternProgram;
-    pat_init.cycle_length = cycle_length;
-    pat_init.pattern_nodes = compiler.nodes();
-    pat_init.is_sample_pattern = is_sample_pattern;
-    state_inits_.push_back(std::move(pat_init));
+    // Store sequence program
+    StateInitData seq_init;
+    seq_init.state_id = state_id;
+    seq_init.type = StateInitData::Type::SequenceProgram;
+    seq_init.cycle_length = cycle_length;
+    seq_init.sequences = compiler.sequences();
+    seq_init.is_sample_pattern = is_sample_pattern;
+    state_inits_.push_back(std::move(seq_init));
 
     pop_path();
     return value_buf;

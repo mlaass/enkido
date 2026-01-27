@@ -4,9 +4,10 @@
 
 namespace akkado {
 
-MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location)
+MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location, bool sample_only)
     : pattern_(pattern)
     , base_location_(base_location)
+    , sample_only_(sample_only)
 {}
 
 std::vector<MiniToken> MiniLexer::lex_all() {
@@ -190,14 +191,17 @@ MiniToken MiniLexer::lex_token() {
         return make_token(MiniTokenType::Rest);
     }
 
-    // Check for pitch token first (highest priority for a-g)
-    if (looks_like_pitch()) {
-        return lex_pitch_or_sample();
+    // In sample_only mode (chord patterns), skip pitch detection
+    if (!sample_only_) {
+        // Check for pitch token first (highest priority for a-g)
+        if (looks_like_pitch()) {
+            return lex_pitch_or_sample();
+        }
     }
 
     // Sample/identifier tokens (other letters, excluding _)
     if (is_alpha(c)) {
-        return lex_pitch_or_sample();
+        return lex_sample_only();
     }
 
     // Numbers (for modifiers and euclidean)
@@ -346,10 +350,40 @@ MiniToken MiniLexer::lex_pitch_or_sample() {
     return make_token(MiniTokenType::SampleToken, MiniSampleData{std::string(text), variant});
 }
 
+MiniToken MiniLexer::lex_sample_only() {
+    // Consume all alphanumeric characters
+    while (!is_at_end()) {
+        char c = peek();
+        if (is_alpha(c) || is_digit(c) || c == '#') {
+            advance();
+        } else {
+            break;
+        }
+    }
+
+    std::string_view text = pattern_.substr(start_, current_ - start_);
+
+    // Check for variant suffix (e.g., :2)
+    std::uint8_t variant = 0;
+    if (peek() == ':' && is_digit(peek_next())) {
+        advance(); // consume ':'
+        std::size_t var_start = current_;
+        while (is_digit(peek())) {
+            advance();
+        }
+        std::string_view var_text = pattern_.substr(var_start, current_ - var_start);
+        int var_val = 0;
+        std::from_chars(var_text.data(), var_text.data() + var_text.size(), var_val);
+        variant = static_cast<std::uint8_t>(var_val);
+    }
+
+    return make_token(MiniTokenType::SampleToken, MiniSampleData{std::string(text), variant});
+}
+
 // Convenience function
 std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
-lex_mini(std::string_view pattern, SourceLocation base_location) {
-    MiniLexer lexer(pattern, base_location);
+lex_mini(std::string_view pattern, SourceLocation base_location, bool sample_only) {
+    MiniLexer lexer(pattern, base_location, sample_only);
     auto tokens = lexer.lex_all();
     return {std::move(tokens), lexer.diagnostics()};
 }

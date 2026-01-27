@@ -149,8 +149,8 @@ enum class Opcode : std::uint8_t {
     LOGIC_NOT = 149,         // out = (a > 0) ? 0.0 : 1.0
 
     // Lazy Queryable Patterns (150-159)
-    PAT_QUERY = 150,         // Query pattern at block boundaries, fill events buffer
-    PAT_STEP = 151,          // Step through query results: out=value, in[0]=velocity, in[1]=trigger
+    SEQPAT_QUERY = 152,      // Query sequence system at block boundaries
+    SEQPAT_STEP = 153,       // Step through sequence results: out=value, in[0]=velocity, in[1]=trigger
 
     INVALID = 255
 };

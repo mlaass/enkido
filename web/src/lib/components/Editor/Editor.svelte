@@ -11,6 +11,9 @@
 	import { linterExtensions, updateEditorDiagnostics } from './editor-linter';
 	import { akkadoCompletions } from '$lib/editor/akkado-completions';
 	import { signatureHelp } from '$lib/editor/signature-help';
+	import { patternPreview } from '$lib/editor/pattern-preview';
+	import { stepHighlight } from '$lib/editor/step-highlight';
+	import { patternHighlightStore } from '$stores/pattern-highlight.svelte';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -172,7 +175,10 @@
 					}
 				}),
 				// Linter for inline error display
-				...linterExtensions
+				...linterExtensions,
+				// Pattern highlighting (preview + step highlighting)
+				patternPreview(),
+				...stepHighlight()
 			]
 		});
 
@@ -192,6 +198,18 @@
 		const diagnostics = editorStore.diagnostics;
 		if (view) {
 			updateEditorDiagnostics(view, diagnostics);
+		}
+	});
+
+	// Update pattern previews after successful compilation
+	$effect(() => {
+		const compileTime = editorStore.lastCompileTime;
+		const hasErrors = editorStore.diagnostics.some(d => d.severity === 2);
+		if (compileTime && !hasErrors) {
+			// Small delay to ensure WASM state is ready
+			setTimeout(() => {
+				patternHighlightStore.updatePreviews();
+			}, 50);
 		}
 	});
 

@@ -140,12 +140,12 @@ public:
         state_pool_.init_seq_step(state_id, times, values, velocities, count, cycle_length);
     }
 
-    // Initialize a PatternQueryState with a compiled pattern program
-    // Used by compiler to set up lazy queryable patterns
-    void init_pattern_program_state(std::uint32_t state_id,
-                                    const PatternNode* nodes, std::size_t node_count,
-                                    float cycle_length, bool is_sample_pattern) {
-        state_pool_.init_pattern_program(state_id, nodes, node_count, cycle_length, is_sample_pattern);
+    // Initialize a SequenceState with compiled sequences
+    // Used by compiler to set up the simplified sequence-based patterns
+    void init_sequence_program_state(std::uint32_t state_id,
+                                     const Sequence* sequences, std::size_t seq_count,
+                                     float cycle_length, bool is_sample_pattern) {
+        state_pool_.init_sequence_program(state_id, sequences, seq_count, cycle_length, is_sample_pattern);
     }
 
     // =========================================================================

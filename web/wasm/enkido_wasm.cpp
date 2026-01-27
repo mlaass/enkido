@@ -7,6 +7,8 @@
 
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/instruction.hpp>
+#include <cedar/opcodes/sequencing.hpp>
+#include <cedar/opcodes/sequence.hpp>
 #include <akkado/akkado.hpp>
 #include <akkado/builtins.hpp>
 #include <akkado/sample_registry.hpp>
@@ -639,12 +641,12 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                 init.cycle_length
             );
             count++;
-        } else if (init.type == akkado::StateInitData::Type::PatternProgram) {
-            // Initialize lazy queryable pattern
-            g_vm->init_pattern_program_state(
+        } else if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+            // Initialize sequence-based pattern
+            g_vm->init_sequence_program_state(
                 init.state_id,
-                init.pattern_nodes.data(),
-                init.pattern_nodes.size(),
+                init.sequences.data(),
+                init.sequences.size(),
                 init.cycle_length,
                 init.is_sample_pattern
             );
@@ -785,6 +787,217 @@ WASM_EXPORT const char* akkado_get_builtins_json() {
 
     g_builtins_json = json.str();
     return g_builtins_json.c_str();
+}
+
+// ============================================================================
+// Pattern Highlighting API
+// ============================================================================
+
+// Preview query result buffer (for getting events one at a time)
+static cedar::OutputEvents g_preview_output;
+
+/**
+ * Get number of SequenceProgram state inits (for UI highlighting)
+ * @return Number of pattern state inits
+ */
+WASM_EXPORT uint32_t akkado_get_pattern_init_count() {
+    uint32_t count = 0;
+    for (const auto& init : g_compile_result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
+ * Get the Nth SequenceProgram state init index (maps pattern index to state_inits index)
+ * @param pattern_index Pattern index (0 to pattern_count-1)
+ * @return Index into state_inits array, or UINT32_MAX if not found
+ */
+static uint32_t get_pattern_init_index(uint32_t pattern_index) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < g_compile_result.state_inits.size(); ++i) {
+        if (g_compile_result.state_inits[i].type == akkado::StateInitData::Type::SequenceProgram) {
+            if (count == pattern_index) return i;
+            count++;
+        }
+    }
+    return UINT32_MAX;
+}
+
+/**
+ * Get state_id for a pattern
+ * @param pattern_index Pattern index (0 to pattern_count-1)
+ * @return state_id (32-bit FNV-1a hash), or 0 if invalid
+ */
+WASM_EXPORT uint32_t akkado_get_pattern_state_id(uint32_t pattern_index) {
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) return 0;
+    return g_compile_result.state_inits[idx].state_id;
+}
+
+/**
+ * Get document offset where pattern string starts
+ * @param pattern_index Pattern index
+ * @return Document offset (0-based byte offset), or 0 if invalid
+ */
+WASM_EXPORT uint32_t akkado_get_pattern_doc_offset(uint32_t pattern_index) {
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) return 0;
+    return g_compile_result.state_inits[idx].pattern_location.offset;
+}
+
+/**
+ * Get pattern string length in document
+ * @param pattern_index Pattern index
+ * @return Length in characters, or 0 if invalid
+ */
+WASM_EXPORT uint32_t akkado_get_pattern_doc_length(uint32_t pattern_index) {
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) return 0;
+    return g_compile_result.state_inits[idx].pattern_location.length;
+}
+
+/**
+ * Get cycle length for a pattern
+ * @param pattern_index Pattern index
+ * @return Cycle length in beats, or 4.0 if invalid
+ */
+WASM_EXPORT float akkado_get_pattern_cycle_length(uint32_t pattern_index) {
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) return 4.0f;
+    return g_compile_result.state_inits[idx].cycle_length;
+}
+
+/**
+ * Query pattern for preview events (fills internal buffer)
+ * @param pattern_index Pattern index
+ * @param start_beat Query window start (in beats)
+ * @param end_beat Query window end (in beats)
+ * @return Number of events found
+ */
+WASM_EXPORT uint32_t akkado_query_pattern_preview(uint32_t pattern_index, float start_beat, float end_beat) {
+    g_preview_output.clear();
+
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) return 0;
+
+    const auto& init = g_compile_result.state_inits[idx];
+    if (init.sequences.empty()) return 0;
+
+    // Create a temporary sequence state for querying
+    cedar::SequenceState temp_state;
+    temp_state.num_sequences = static_cast<uint32_t>(
+        std::min(init.sequences.size(), cedar::MAX_SEQUENCES));
+    for (size_t i = 0; i < temp_state.num_sequences; ++i) {
+        temp_state.sequences[i] = init.sequences[i];
+    }
+    temp_state.cycle_length = init.cycle_length;
+    temp_state.pattern_seed = init.state_id;  // Use state_id as seed
+
+    // Determine which cycle to query
+    uint64_t cycle = static_cast<uint64_t>(start_beat / init.cycle_length);
+
+    // Query the pattern for the full cycle
+    cedar::query_pattern(temp_state, cycle, init.cycle_length);
+
+    // Copy results to preview buffer
+    g_preview_output = temp_state.output;
+
+    return g_preview_output.num_events;
+}
+
+/**
+ * Get preview event time
+ * @param event_index Event index (0 to event_count-1)
+ * @return Event time in beats within cycle
+ */
+WASM_EXPORT float akkado_get_preview_event_time(uint32_t event_index) {
+    if (event_index >= g_preview_output.num_events) return 0.0f;
+    return g_preview_output.events[event_index].time;
+}
+
+/**
+ * Get preview event duration
+ * @param event_index Event index
+ * @return Event duration in beats
+ */
+WASM_EXPORT float akkado_get_preview_event_duration(uint32_t event_index) {
+    if (event_index >= g_preview_output.num_events) return 0.0f;
+    return g_preview_output.events[event_index].duration;
+}
+
+/**
+ * Get preview event value (frequency or sample ID)
+ * @param event_index Event index
+ * @return Event value
+ */
+WASM_EXPORT float akkado_get_preview_event_value(uint32_t event_index) {
+    if (event_index >= g_preview_output.num_events) return 0.0f;
+    // Return first value (OutputEvent can have multiple values for chords)
+    return g_preview_output.events[event_index].values[0];
+}
+
+/**
+ * Get preview event source offset (char offset within pattern string)
+ * @param event_index Event index
+ * @return Source offset, or 0 if invalid
+ */
+WASM_EXPORT uint32_t akkado_get_preview_event_source_offset(uint32_t event_index) {
+    if (event_index >= g_preview_output.num_events) return 0;
+    return g_preview_output.events[event_index].source_offset;
+}
+
+/**
+ * Get preview event source length
+ * @param event_index Event index
+ * @return Source length in characters, or 0 if invalid
+ */
+WASM_EXPORT uint32_t akkado_get_preview_event_source_length(uint32_t event_index) {
+    if (event_index >= g_preview_output.num_events) return 0;
+    return g_preview_output.events[event_index].source_length;
+}
+
+/**
+ * Get current beat position (for scrolling preview)
+ * @return Current beat position (0-based, wraps at cycle boundary)
+ */
+WASM_EXPORT float cedar_get_current_beat_position() {
+    if (!g_vm) return 0.0f;
+    const auto& ctx = g_vm->context();
+    float spb = ctx.samples_per_beat();
+    return static_cast<float>(ctx.global_sample_counter) / spb;
+}
+
+/**
+ * Get active step source offset for a pattern (by state_id)
+ * @param state_id Pattern state ID (32-bit FNV-1a hash)
+ * @return Source offset of currently active step, or 0 if not found
+ */
+WASM_EXPORT uint32_t cedar_get_pattern_active_offset(uint32_t state_id) {
+    if (!g_vm) return 0;
+
+    auto& states = g_vm->states();
+    if (!states.exists(state_id)) return 0;
+
+    auto& state = states.get<cedar::SequenceState>(state_id);
+    return state.active_source_offset;
+}
+
+/**
+ * Get active step source length for a pattern (by state_id)
+ * @param state_id Pattern state ID
+ * @return Source length of currently active step, or 0 if not found
+ */
+WASM_EXPORT uint32_t cedar_get_pattern_active_length(uint32_t state_id) {
+    if (!g_vm) return 0;
+
+    auto& states = g_vm->states();
+    if (!states.exists(state_id)) return 0;
+
+    auto& state = states.get<cedar::SequenceState>(state_id);
+    return state.active_source_length;
 }
 
 } // extern "C"

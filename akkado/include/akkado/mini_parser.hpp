@@ -102,9 +102,10 @@ private:
 /// @param pattern The pattern string content
 /// @param arena Reference to the AST arena
 /// @param base_location Location for error reporting
+/// @param sample_only When true, treat all alphanumeric sequences as samples (for chord patterns)
 /// @return Pair of root node index and diagnostics
 std::pair<NodeIndex, std::vector<Diagnostic>>
 parse_mini(std::string_view pattern, AstArena& arena,
-           SourceLocation base_location = {});
+           SourceLocation base_location = {}, bool sample_only = false);
 
 } // namespace akkado

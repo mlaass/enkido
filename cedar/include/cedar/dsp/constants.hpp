@@ -17,7 +17,7 @@ inline constexpr float DEFAULT_BPM = 120.0f;
 
 // Memory limits
 inline constexpr std::size_t MAX_BUFFERS = 256;
-inline constexpr std::size_t MAX_STATES = 4096;
+inline constexpr std::size_t MAX_STATES = 256;
 inline constexpr std::size_t MAX_VARS = 4096;
 inline constexpr std::size_t MAX_PROGRAM_SIZE = 4096;
 inline constexpr std::size_t MAX_ENV_PARAMS = 256;

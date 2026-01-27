@@ -527,12 +527,12 @@ void VM::execute(const Instruction& inst) {
             break;
 
         // === Lazy Queryable Patterns ===
-        case Opcode::PAT_QUERY:
-            op_pat_query(ctx_, inst);
+        case Opcode::SEQPAT_QUERY:
+            op_seqpat_query(ctx_, inst);
             break;
 
-        case Opcode::PAT_STEP:
-            op_pat_step(ctx_, inst);
+        case Opcode::SEQPAT_STEP:
+            op_seqpat_step(ctx_, inst);
             break;
 
         // === Envelopes ===

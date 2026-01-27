@@ -40,6 +40,24 @@ interface BuiltinsData {
 
 export type { BuiltinsData, BuiltinInfo, BuiltinParam };
 
+// Pattern highlighting types
+interface PatternInfo {
+	stateId: number;
+	docOffset: number;
+	docLength: number;
+	cycleLength: number;
+}
+
+interface PatternEvent {
+	time: number;
+	duration: number;
+	value: number;
+	sourceOffset: number;
+	sourceLength: number;
+}
+
+export type { PatternInfo, PatternEvent };
+
 interface AudioState {
 	isPlaying: boolean;
 	bpm: number;
@@ -84,6 +102,12 @@ function createAudioEngine() {
 	// Builtins metadata cache
 	let builtinsCache: BuiltinsData | null = null;
 	let builtinsResolve: ((data: BuiltinsData | null) => void) | null = null;
+
+	// Pattern highlighting resolve functions
+	let patternInfoResolve: ((patterns: PatternInfo[]) => void) | null = null;
+	let patternPreviewResolve: ((events: PatternEvent[]) => void) | null = null;
+	let beatPositionResolve: ((position: number) => void) | null = null;
+	let activeStepsResolve: ((steps: Record<number, { offset: number; length: number }>) => void) | null = null;
 
 	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
@@ -234,6 +258,34 @@ function createAudioEngine() {
 				if (builtinsResolve) {
 					builtinsResolve(builtinsCache);
 					builtinsResolve = null;
+				}
+				break;
+			}
+			case 'patternInfo': {
+				if (patternInfoResolve) {
+					patternInfoResolve(msg.success ? (msg.patterns as PatternInfo[]) : []);
+					patternInfoResolve = null;
+				}
+				break;
+			}
+			case 'patternPreview': {
+				if (patternPreviewResolve) {
+					patternPreviewResolve(msg.success ? (msg.events as PatternEvent[]) : []);
+					patternPreviewResolve = null;
+				}
+				break;
+			}
+			case 'beatPosition': {
+				if (beatPositionResolve) {
+					beatPositionResolve(msg.position as number);
+					beatPositionResolve = null;
+				}
+				break;
+			}
+			case 'activeSteps': {
+				if (activeStepsResolve) {
+					activeStepsResolve(msg.steps as Record<number, { offset: number; length: number }>);
+					activeStepsResolve = null;
 				}
 				break;
 			}
@@ -744,6 +796,90 @@ function createAudioEngine() {
 		});
 	}
 
+	// =========================================================================
+	// Pattern Highlighting API
+	// =========================================================================
+
+	/**
+	 * Get pattern info for all patterns in the current compile result
+	 */
+	async function getPatternInfo(): Promise<PatternInfo[]> {
+		if (!workletNode) {
+			return [];
+		}
+
+		return new Promise((resolve) => {
+			patternInfoResolve = resolve;
+			setTimeout(() => {
+				if (patternInfoResolve === resolve) {
+					patternInfoResolve = null;
+					resolve([]);
+				}
+			}, 1000);
+			workletNode!.port.postMessage({ type: 'getPatternInfo' });
+		});
+	}
+
+	/**
+	 * Query pattern for preview events
+	 */
+	async function queryPatternPreview(patternIndex: number, startBeat: number, endBeat: number): Promise<PatternEvent[]> {
+		if (!workletNode) {
+			return [];
+		}
+
+		return new Promise((resolve) => {
+			patternPreviewResolve = resolve;
+			setTimeout(() => {
+				if (patternPreviewResolve === resolve) {
+					patternPreviewResolve = null;
+					resolve([]);
+				}
+			}, 1000);
+			workletNode!.port.postMessage({ type: 'queryPatternPreview', patternIndex, startBeat, endBeat });
+		});
+	}
+
+	/**
+	 * Get current beat position from VM
+	 */
+	async function getCurrentBeatPosition(): Promise<number> {
+		if (!workletNode) {
+			return 0;
+		}
+
+		return new Promise((resolve) => {
+			beatPositionResolve = resolve;
+			setTimeout(() => {
+				if (beatPositionResolve === resolve) {
+					beatPositionResolve = null;
+					resolve(0);
+				}
+			}, 100);
+			workletNode!.port.postMessage({ type: 'getCurrentBeatPosition' });
+		});
+	}
+
+	/**
+	 * Get active step source ranges for patterns
+	 */
+	async function getActiveSteps(stateIds: number[]): Promise<Record<number, { offset: number; length: number }>> {
+		if (!workletNode) {
+			return {};
+		}
+
+		return new Promise((resolve) => {
+			activeStepsResolve = resolve;
+			setTimeout(() => {
+				if (activeStepsResolve === resolve) {
+					activeStepsResolve = null;
+					resolve({});
+				}
+			}, 100);
+			workletNode!.port.postMessage({ type: 'getActiveSteps', stateIds });
+		});
+	}
+
 	return {
 		get isPlaying() { return state.isPlaying; },
 		get bpm() { return state.bpm; },
@@ -777,7 +913,12 @@ function createAudioEngine() {
 		loadSampleFromUrl,
 		loadSamplePack,
 		clearSamples,
-		getBuiltins
+		getBuiltins,
+		// Pattern highlighting API
+		getPatternInfo,
+		queryPatternPreview,
+		getCurrentBeatPosition,
+		getActiveSteps
 	};
 }
 

@@ -304,11 +304,11 @@ TEST_CASE("Cross-class memory stress: Maximum capacity test", "[stress]") {
         }
         CHECK(env_count == MAX_ENV_PARAMS);
 
-        // Fill StatePool with many states
-        for (std::uint32_t i = 0; i < 2000; ++i) {
+        // Fill StatePool with many states (up to MAX_STATES)
+        for (std::uint32_t i = 0; i < MAX_STATES; ++i) {
             states.get_or_create<OscState>(i).phase = static_cast<float>(i) * 0.001f;
         }
-        CHECK(states.size() == 2000);
+        CHECK(states.size() == MAX_STATES);
 
         // Use all buffer pool buffers
         for (std::uint16_t i = 0; i < MAX_BUFFERS; ++i) {

@@ -173,6 +173,22 @@ class CedarProcessor extends AudioWorkletProcessor {
 			case 'getBuiltins':
 				this.getBuiltins();
 				break;
+
+			case 'getPatternInfo':
+				this.getPatternInfo();
+				break;
+
+			case 'queryPatternPreview':
+				this.queryPatternPreview(msg.patternIndex, msg.startBeat, msg.endBeat);
+				break;
+
+			case 'getCurrentBeatPosition':
+				this.getCurrentBeatPosition();
+				break;
+
+			case 'getActiveSteps':
+				this.getActiveSteps(msg.stateIds);
+				break;
 		}
 	}
 
@@ -487,50 +503,11 @@ class CedarProcessor extends AudioWorkletProcessor {
 				return;
 			}
 
-			// Apply state initializations using pre-extracted JS data
-			let stateInitsApplied = 0;
-			for (const init of stateInits) {
-				if (init.type !== 0) continue; // Only SeqStep (type 0) for now
-
-				// Resolve sample names to IDs
-				const resolvedValues = new Float32Array(init.values);
-				for (let i = 0; i < init.sampleNames.length; i++) {
-					const name = init.sampleNames[i];
-					if (name) {
-						const sampleId = this.getSampleId(name);
-						resolvedValues[i] = sampleId;
-					}
-				}
-
-				// Allocate arrays in WASM memory
-				const count = init.values.length;
-				const timesPtr = this.module._enkido_malloc(count * 4);
-				const valuesPtr = this.module._enkido_malloc(count * 4);
-				const velocitiesPtr = this.module._enkido_malloc(count * 4);
-
-				if (timesPtr && valuesPtr && velocitiesPtr) {
-					this.writeFloatArray(timesPtr, init.times);
-					this.writeFloatArray(valuesPtr, resolvedValues);
-					this.writeFloatArray(velocitiesPtr, init.velocities);
-
-					this.module._cedar_init_seq_step_state(
-						init.stateId,
-						timesPtr,
-						valuesPtr,
-						velocitiesPtr,
-						count,
-						init.cycleLength
-					);
-
-					stateInitsApplied++;
-				}
-
-				// Free allocated memory
-				if (timesPtr) this.module._enkido_free(timesPtr);
-				if (valuesPtr) this.module._enkido_free(valuesPtr);
-				if (velocitiesPtr) this.module._enkido_free(velocitiesPtr);
-			}
-
+			// Apply state initializations using WASM function
+			// First resolve sample names to IDs (uses samples already loaded in sample bank)
+			this.module._akkado_resolve_sample_ids();
+			// Then apply all state inits (handles both SeqStep and SequenceProgram types)
+			const stateInitsApplied = this.module._cedar_apply_state_inits();
 			if (stateInitsApplied > 0) {
 				console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
 			}
@@ -760,6 +737,139 @@ class CedarProcessor extends AudioWorkletProcessor {
 				error: String(err)
 			});
 		}
+	}
+
+	/**
+	 * Get pattern info for all patterns in the compile result
+	 * Used by UI for pattern highlighting
+	 */
+	getPatternInfo() {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'patternInfo',
+				success: false,
+				error: 'Module not initialized'
+			});
+			return;
+		}
+
+		try {
+			const count = this.module._akkado_get_pattern_init_count();
+			const patterns = [];
+
+			for (let i = 0; i < count; i++) {
+				patterns.push({
+					stateId: this.module._akkado_get_pattern_state_id(i),
+					docOffset: this.module._akkado_get_pattern_doc_offset(i),
+					docLength: this.module._akkado_get_pattern_doc_length(i),
+					cycleLength: this.module._akkado_get_pattern_cycle_length(i)
+				});
+			}
+
+			this.port.postMessage({
+				type: 'patternInfo',
+				success: true,
+				patterns
+			});
+		} catch (err) {
+			this.port.postMessage({
+				type: 'patternInfo',
+				success: false,
+				error: String(err)
+			});
+		}
+	}
+
+	/**
+	 * Query pattern for preview events
+	 * @param {number} patternIndex - Pattern index
+	 * @param {number} startBeat - Query window start
+	 * @param {number} endBeat - Query window end
+	 */
+	queryPatternPreview(patternIndex, startBeat, endBeat) {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'patternPreview',
+				success: false,
+				error: 'Module not initialized'
+			});
+			return;
+		}
+
+		try {
+			const eventCount = this.module._akkado_query_pattern_preview(patternIndex, startBeat, endBeat);
+			const events = [];
+
+			for (let i = 0; i < eventCount; i++) {
+				events.push({
+					time: this.module._akkado_get_preview_event_time(i),
+					duration: this.module._akkado_get_preview_event_duration(i),
+					value: this.module._akkado_get_preview_event_value(i),
+					sourceOffset: this.module._akkado_get_preview_event_source_offset(i),
+					sourceLength: this.module._akkado_get_preview_event_source_length(i)
+				});
+			}
+
+			this.port.postMessage({
+				type: 'patternPreview',
+				success: true,
+				patternIndex,
+				events
+			});
+		} catch (err) {
+			this.port.postMessage({
+				type: 'patternPreview',
+				success: false,
+				error: String(err)
+			});
+		}
+	}
+
+	/**
+	 * Get current beat position from VM
+	 */
+	getCurrentBeatPosition() {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'beatPosition',
+				position: 0
+			});
+			return;
+		}
+
+		const position = this.module._cedar_get_current_beat_position();
+		this.port.postMessage({
+			type: 'beatPosition',
+			position
+		});
+	}
+
+	/**
+	 * Get active step source ranges for multiple patterns
+	 * @param {number[]} stateIds - Array of state IDs to query
+	 */
+	getActiveSteps(stateIds) {
+		if (!this.module || !stateIds) {
+			this.port.postMessage({
+				type: 'activeSteps',
+				steps: {}
+			});
+			return;
+		}
+
+		const steps = {};
+		for (const stateId of stateIds) {
+			const offset = this.module._cedar_get_pattern_active_offset(stateId);
+			const length = this.module._cedar_get_pattern_active_length(stateId);
+			if (length > 0) {
+				steps[stateId] = { offset, length };
+			}
+		}
+
+		this.port.postMessage({
+			type: 'activeSteps',
+			steps
+		});
 	}
 
 	process(inputs, outputs, parameters) {

@@ -1021,17 +1021,17 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
         )");
 
         REQUIRE(result.success);
-        // Should have SEQ_STEP instruction
-        bool has_seq_step = false;
+        // Patterns now use SEQPAT_QUERY + SEQPAT_STEP (lazy query system)
+        bool has_pat_step = false;
         auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
         std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t i = 0; i < count; ++i) {
-            if (insts[i].opcode == cedar::Opcode::SEQ_STEP) {
-                has_seq_step = true;
+            if (insts[i].opcode == cedar::Opcode::SEQPAT_STEP) {
+                has_pat_step = true;
                 break;
             }
         }
-        CHECK(has_seq_step);
+        CHECK(has_pat_step);
     }
 
     SECTION("pattern variable reuse") {
@@ -1061,17 +1061,17 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
         )");
 
         REQUIRE(result.success);
-        // Should have SEQ_STEP for pitch pattern
-        bool has_seq_step = false;
+        // Patterns now use SEQPAT_QUERY + SEQPAT_STEP (lazy query system)
+        bool has_pat_step = false;
         auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
         std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t i = 0; i < count; ++i) {
-            if (insts[i].opcode == cedar::Opcode::SEQ_STEP) {
-                has_seq_step = true;
+            if (insts[i].opcode == cedar::Opcode::SEQPAT_STEP) {
+                has_pat_step = true;
                 break;
             }
         }
-        CHECK(has_seq_step);
+        CHECK(has_pat_step);
     }
 
     SECTION("sample pattern in state_inits") {
@@ -1081,11 +1081,13 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
         )");
 
         REQUIRE(result.success);
-        // Should have state initialization data for the pattern
+        // Should have state initialization data for the pattern (now uses SequenceProgram)
         REQUIRE(result.state_inits.size() >= 1);
-        CHECK(result.state_inits[0].type == akkado::StateInitData::Type::SeqStep);
-        CHECK(result.state_inits[0].times.size() == 3);
-        CHECK(result.state_inits[0].values.size() == 3);
+        CHECK(result.state_inits[0].type == akkado::StateInitData::Type::SequenceProgram);
+        // Sequences should be populated (root sequence with events)
+        CHECK(result.state_inits[0].sequences.size() >= 1);
+        // Sample patterns should be marked
+        CHECK(result.state_inits[0].is_sample_pattern == true);
     }
 }
 

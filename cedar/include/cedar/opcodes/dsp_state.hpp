@@ -6,6 +6,7 @@
 #include <variant>
 #include <cstring>
 #include "../vm/audio_arena.hpp"
+#include "sequence.hpp"
 
 namespace cedar {
 
@@ -20,16 +21,16 @@ struct OscState {
 struct MinBLEPOscState {
     float phase = 0.0f;
     bool initialized = false;
-    
+
     // MinBLEP residual buffer (128 samples should be plenty)
     static constexpr std::size_t BUFFER_SIZE = 128;
     float buffer[BUFFER_SIZE] = {};
     std::size_t write_pos = 0;
-    
+
     // Add a step discontinuity to the buffer
-    void add_step(float amplitude, float frac_pos, const float* minblep_table, 
+    void add_step(float amplitude, float frac_pos, const float* minblep_table,
                   std::size_t table_phases, std::size_t samples_per_phase);
-    
+
     // Get current sample's residual and advance
     float get_and_advance() {
         float value = buffer[write_pos];
@@ -37,7 +38,7 @@ struct MinBLEPOscState {
         write_pos = (write_pos + 1) % BUFFER_SIZE;
         return value;
     }
-    
+
     void reset() {
         std::fill_n(buffer, BUFFER_SIZE, 0.0f);
         write_pos = 0;
@@ -470,109 +471,6 @@ struct SamplerState {
 };
 
 // ============================================================================
-// Lazy Queryable Pattern States (Tidal-Style)
-// ============================================================================
-
-/// Pattern operation types for the pattern bytecode
-enum class PatternOp : std::uint8_t {
-    // Terminals
-    ATOM = 0,       // Single value (note, sample)
-    SILENCE = 1,    // Rest
-
-    // Structural
-    CAT = 2,        // Sequential concatenation (subdivide time)
-    STACK = 3,      // Parallel (polyrhythm)
-    SLOWCAT = 4,    // Alternation per cycle (<>)
-
-    // Transformers
-    FAST = 5,       // Speed up by factor (*n)
-    SLOW = 6,       // Slow down by factor (/n)
-    EARLY = 7,      // Shift earlier in time
-    LATE = 8,       // Shift later in time
-    REV = 9,        // Reverse within cycle
-
-    // Randomness
-    DEGRADE = 10,   // Chance-based filtering (?n)
-    CHOOSE = 11,    // Random element from children
-
-    // Structural
-    EUCLID = 12,    // Euclidean rhythm
-    REPLICATE = 13, // Repeat n times (!n)
-    WEIGHT = 14,    // Temporal weight (@n)
-};
-
-/// Fixed 12-byte node for compact storage
-/// Used to build pattern programs that are evaluated at runtime
-struct alignas(4) PatternNode {
-    PatternOp op;              // 1 byte
-    std::uint8_t num_children; // 1 byte
-    std::uint16_t first_child_idx; // 2 bytes
-    union {                    // 4 bytes
-        float float_val;       // ATOM freq, FAST/SLOW factor, DEGRADE probability
-        std::uint32_t sample_id; // Sample ATOM
-        struct {
-            std::uint8_t hits;
-            std::uint8_t steps;
-            std::uint8_t rotation;
-            std::uint8_t _pad;
-        } euclid;
-    } data;
-    float time_offset;         // 4 bytes - for EARLY/LATE modifiers
-
-    PatternNode()
-        : op(PatternOp::SILENCE)
-        , num_children(0)
-        , first_child_idx(0)
-        , time_offset(0.0f) {
-        data.float_val = 0.0f;
-    }
-};
-
-static_assert(sizeof(PatternNode) == 12, "PatternNode must be 12 bytes");
-
-/// Query result event - single event from pattern query
-struct QueryEvent {
-    float time;        // Beat time within query window
-    float duration;    // Event duration in beats
-    float value;       // Frequency or sample ID
-    float velocity;    // Event velocity (0-1)
-};
-
-/// Combined pattern program and query state
-/// Stored inline in StatePool for zero-allocation runtime
-/// NOTE: Sizes are kept small to fit within state pool limits (~500 bytes)
-struct PatternQueryState {
-    static constexpr std::size_t MAX_QUERY_EVENTS = 16;
-    static constexpr std::size_t MAX_NODES = 24;
-
-    // Inline pattern program (compiled at init time)
-    PatternNode nodes[MAX_NODES];       // 24 * 12 = 288 bytes
-    std::uint32_t num_nodes = 0;        // 4 bytes
-    float cycle_length = 4.0f;          // 4 bytes
-
-    // Per-pattern random seed (from semantic ID hash)
-    std::uint64_t pattern_seed = 0;     // 8 bytes
-
-    // Pre-allocated query result buffer
-    QueryEvent events[MAX_QUERY_EVENTS]; // 16 * 16 = 256 bytes
-    std::uint32_t num_events = 0;        // 4 bytes
-
-    // Playback state
-    std::uint32_t current_index = 0;    // 4 bytes
-    float last_beat_pos = -1.0f;        // 4 bytes
-
-    // Query window tracking
-    float query_start = 0.0f;           // 4 bytes
-    float query_end = 0.0f;             // 4 bytes
-
-    // Is this a sample pattern (vs pitch pattern)?
-    bool is_sample_pattern = false;     // 1 byte + padding
-};
-
-// Ensure PatternQueryState is small enough for the state pool
-static_assert(sizeof(PatternQueryState) < 700, "PatternQueryState too large");
-
-// ============================================================================
 // Dynamics States
 // ============================================================================
 
@@ -801,7 +699,7 @@ using DSPState = std::variant<
     EuclidState,
     TriggerState,
     TimelineState,
-    PatternQueryState,  // Lazy queryable patterns (Tidal-style)
+    SequenceState,      // Lazy queryable patterns (sequence system)
     // Filter states
     MoogState,
     DiodeState,

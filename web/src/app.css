@@ -236,3 +236,30 @@ code, pre, .mono {
 .cm-gutter-lint {
 	width: 16px;
 }
+
+/* ============================================
+   Pattern Highlighting
+   ============================================ */
+
+/* Active step highlighting in pattern strings */
+.cm-active-step {
+	background: var(--accent-primary);
+	color: var(--bg-primary);
+	border-radius: 2px;
+	transition: background 50ms;
+}
+
+/* Pattern preview widget container */
+.pattern-preview {
+	display: inline-block;
+	margin-left: 8px;
+	vertical-align: middle;
+	border-radius: 4px;
+	overflow: hidden;
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-default);
+}
+
+.pattern-preview canvas {
+	display: block;
+}
