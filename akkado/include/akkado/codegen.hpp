@@ -169,6 +169,14 @@ private:
     std::uint16_t handle_user_function_call(NodeIndex node, const Node& n,
                                             const UserFunctionInfo& func);
 
+    /// Handle FunctionValue calls - inline expansion of lambda assigned to variable
+    /// @param node The Call node
+    /// @param n The Node reference
+    /// @param func The function reference from symbol table
+    /// @return Output buffer index
+    std::uint16_t handle_function_value_call(NodeIndex node, const Node& n,
+                                              const FunctionRef& func);
+
     /// Handle Closure nodes - allocate buffers for parameters and generate body
     /// @param node The Closure node
     /// @param n The Node reference

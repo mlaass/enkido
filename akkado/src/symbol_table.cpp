@@ -105,7 +105,7 @@ bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
 }
 
 void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
-    // Iterate through all scopes and update UserFunction and Pattern entries
+    // Iterate through all scopes and update UserFunction, FunctionValue, and Pattern entries
     for (auto& scope : scopes_) {
         for (auto& [hash, sym] : scope) {
             if (sym.kind == SymbolKind::UserFunction) {
@@ -118,6 +118,12 @@ void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, Node
                 auto def_it = node_map.find(sym.user_function.def_node);
                 if (def_it != node_map.end()) {
                     sym.user_function.def_node = def_it->second;
+                }
+            } else if (sym.kind == SymbolKind::FunctionValue) {
+                // Update closure_node for lambda variables
+                auto closure_it = node_map.find(sym.function_ref.closure_node);
+                if (closure_it != node_map.end()) {
+                    sym.function_ref.closure_node = closure_it->second;
                 }
             } else if (sym.kind == SymbolKind::Pattern) {
                 // Update pattern_node

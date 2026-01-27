@@ -1242,3 +1242,84 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
         CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
     }
 }
+
+TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
+    SECTION("pipe in function body") {
+        auto result = akkado::compile(R"(
+            fn process(x) -> lp(x, 1000, 0.7) |> hp(%, 200, 0.7)
+            saw(440) |> process(%) |> out(%, %)
+        )");
+
+        REQUIRE(result.success);
+        // Should have: SAW, LP filter, HP filter, OUTPUT
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("pipe in closure body") {
+        auto result = akkado::compile(R"(
+            process = (x) -> lp(x, 1000, 0.7) |> hp(%, 200, 0.7)
+            saw(440) |> process(%) |> out(%, %)
+        )");
+
+        REQUIRE(result.success);
+        // Should have: SAW, LP filter, HP filter, OUTPUT
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("pipe-to-lambda syntax") {
+        auto result = akkado::compile(R"(
+            process = x |> lp(%, 1000, 0.7) |> hp(%, 200, 0.7)
+            saw(440) |> process(%) |> out(%, %)
+        )");
+
+        REQUIRE(result.success);
+        // Should have: SAW, LP filter, HP filter, OUTPUT
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("longer pipe chain in function body") {
+        auto result = akkado::compile(R"(
+            fn fx_chain(sig) -> sig |> lp(%, 2000, 0.5) |> tube(%, 0.3) |> hp(%, 100, 0.7)
+            saw(220) |> fx_chain(%) |> out(%, %)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("pipe-to-lambda used in map") {
+        auto result = akkado::compile(R"(
+            freqs = [440, 550]
+            fx = x |> saw(%) |> lp(%, 1000, 0.7)
+            map(freqs, fx) |> sum(%)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+    }
+
+    SECTION("nested function calls with pipes") {
+        auto result = akkado::compile(R"(
+            fn gain(x) -> x * 0.5
+            fn process(x) -> x |> gain(%)
+            saw(440) |> process(%) |> out(%, %)
+        )");
+
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+}

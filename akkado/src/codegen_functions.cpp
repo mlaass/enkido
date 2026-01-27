@@ -112,6 +112,126 @@ std::uint16_t CodeGenerator::handle_user_function_call(
     return result;
 }
 
+// FunctionValue (lambda variable) call handler - inlines closure bodies at call sites
+std::uint16_t CodeGenerator::handle_function_value_call(
+    NodeIndex node, const Node& n, const FunctionRef& func) {
+
+    // Collect call arguments
+    std::vector<NodeIndex> args;
+    NodeIndex arg = n.first_child;
+    while (arg != NULL_NODE) {
+        const Node& arg_node = ast_->arena[arg];
+        NodeIndex arg_value = arg;
+        if (arg_node.type == NodeType::Argument) {
+            arg_value = arg_node.first_child;
+        }
+        args.push_back(arg_value);
+        arg = ast_->arena[arg].next_sibling;
+    }
+
+    // Save param_literals for this scope
+    auto saved_param_literals = std::move(param_literals_);
+    param_literals_.clear();
+
+    // Visit arguments BEFORE pushing scope to evaluate them in caller's context
+    std::vector<std::uint16_t> param_bufs;
+    for (std::size_t i = 0; i < func.params.size(); ++i) {
+        std::uint16_t param_buf;
+
+        if (i < args.size()) {
+            // Check if the argument is a literal - record for match resolution
+            const Node& arg_node = ast_->arena[args[i]];
+            if (arg_node.type == NodeType::StringLit ||
+                arg_node.type == NodeType::NumberLit ||
+                arg_node.type == NodeType::BoolLit) {
+                std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
+                param_literals_[param_hash] = args[i];
+            }
+
+            // Visit argument in caller's scope
+            param_buf = visit(args[i]);
+        } else if (func.params[i].default_value.has_value()) {
+            // Use default value
+            param_buf = buffers_.allocate();
+            if (param_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                param_literals_ = std::move(saved_param_literals);
+                return BufferAllocator::BUFFER_UNUSED;
+            }
+
+            cedar::Instruction push_inst{};
+            push_inst.opcode = cedar::Opcode::PUSH_CONST;
+            push_inst.out_buffer = param_buf;
+            push_inst.inputs[0] = 0xFFFF;
+            push_inst.inputs[1] = 0xFFFF;
+            push_inst.inputs[2] = 0xFFFF;
+            push_inst.inputs[3] = 0xFFFF;
+
+            float default_val = static_cast<float>(*func.params[i].default_value);
+            encode_const_value(push_inst, default_val);
+            emit(push_inst);
+        } else {
+            // Missing required argument - should have been caught by analyzer
+            error("E105", "Missing required argument for parameter '" +
+                  func.params[i].name + "'", n.location);
+            param_literals_ = std::move(saved_param_literals);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        param_bufs.push_back(param_buf);
+    }
+
+    // Push scope for parameters and bind them
+    symbols_->push_scope();
+    for (std::size_t i = 0; i < func.params.size(); ++i) {
+        symbols_->define_variable(func.params[i].name, param_bufs[i]);
+    }
+
+    // Find the body node from the closure
+    // The closure structure is: [param1, param2, ..., body]
+    const Node& closure_node = ast_->arena[func.closure_node];
+    NodeIndex body = NULL_NODE;
+    NodeIndex child = closure_node.first_child;
+    std::size_t param_count = 0;
+
+    while (child != NULL_NODE) {
+        const Node& child_node = ast_->arena[child];
+        if (child_node.type == NodeType::Identifier) {
+            // This is a parameter
+            param_count++;
+        } else {
+            // This is the body
+            body = child;
+            break;
+        }
+        child = ast_->arena[child].next_sibling;
+    }
+
+    // Save node_buffers_ state before visiting body
+    auto saved_node_buffers = std::move(node_buffers_);
+    node_buffers_.clear();
+
+    // Visit closure body (inline expansion)
+    std::uint16_t result = BufferAllocator::BUFFER_UNUSED;
+    if (body != NULL_NODE) {
+        result = visit(body);
+    }
+
+    // Restore node_buffers_
+    for (auto& [k, v] : saved_node_buffers) {
+        if (node_buffers_.find(k) == node_buffers_.end()) {
+            node_buffers_[k] = v;
+        }
+    }
+
+    // Pop scope and restore param_literals
+    symbols_->pop_scope();
+    param_literals_ = std::move(saved_param_literals);
+
+    node_buffers_[node] = result;
+    return result;
+}
+
 // Handle Closure nodes - allocate buffers for parameters and generate body
 std::uint16_t CodeGenerator::handle_closure(NodeIndex node, const Node& n) {
     // For simple closures: allocate buffers for parameters, then generate body

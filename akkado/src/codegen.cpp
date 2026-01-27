@@ -331,6 +331,11 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return handle_user_function_call(node, n, sym->user_function);
             }
 
+            // Check for FunctionValue (lambda assigned to variable)
+            if (sym && sym->kind == SymbolKind::FunctionValue) {
+                return handle_function_value_call(node, n, sym->function_ref);
+            }
+
             // Dispatch table for special function handlers
             using Handler = std::uint16_t (CodeGenerator::*)(NodeIndex, const Node&);
             static const std::unordered_map<std::string_view, Handler> special_handlers = {

@@ -55,8 +55,18 @@ private:
     // Helper: Substitute all holes (%) with a replacement node
     NodeIndex substitute_holes(NodeIndex node, NodeIndex replacement);
 
+    // Helper: Substitute holes AND a specific identifier node with replacement
+    // Used for pipe-to-lambda transformation where the identifier becomes the param
+    NodeIndex substitute_holes_and_identifier(NodeIndex node, NodeIndex replacement,
+                                               NodeIndex identifier_to_replace);
+
     // Helper: Check if a subtree contains a hole
     bool contains_hole(NodeIndex node) const;
+
+    // Helper: Create a closure from pipe expression with unbound identifier LHS
+    // Transforms: x |> f(%) |> g(%)  ->  (x) -> g(f(x))
+    NodeIndex create_closure_from_pipe(NodeIndex param_node, NodeIndex body_node,
+                                       SourceLocation loc);
 
     // Helper: Validate argument count for builtin
     void validate_arguments(const std::string& func_name, const BuiltinInfo& builtin,

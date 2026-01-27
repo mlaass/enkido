@@ -102,6 +102,46 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 child = (*input_ast_).arena[child].next_sibling;
             }
             symbols_.define_function_value(name, func_ref);
+        } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::Pipe) {
+            // Check for pipe-to-lambda: x |> f(%) |> g(%)
+            // If innermost LHS of pipe chain is an unbound identifier, this becomes a closure
+            // Walk down nested pipes to find the innermost LHS
+            NodeIndex current = rhs;
+            while (current != NULL_NODE && (*input_ast_).arena[current].type == NodeType::Pipe) {
+                current = (*input_ast_).arena[current].first_child;
+            }
+
+            // current is now the innermost LHS (should be Identifier for pipe-to-lambda)
+            if (current != NULL_NODE) {
+                const Node& lhs_node = (*input_ast_).arena[current];
+                if (lhs_node.type == NodeType::Identifier) {
+                    std::string param_name;
+                    if (std::holds_alternative<Node::IdentifierData>(lhs_node.data)) {
+                        param_name = lhs_node.as_identifier();
+                    }
+                    // Check if identifier is unbound (not defined)
+                    if (!param_name.empty() && !symbols_.lookup(param_name)) {
+                        // This is pipe-to-lambda: register as FunctionValue
+                        FunctionRef func_ref{};
+                        func_ref.closure_node = rhs;  // Will be updated to the closure
+                        func_ref.is_user_function = false;
+                        FunctionParamInfo param;
+                        param.name = param_name;
+                        param.default_value = std::nullopt;
+                        func_ref.params.push_back(std::move(param));
+                        symbols_.define_function_value(name, func_ref);
+                    } else {
+                        // LHS is bound - regular variable
+                        symbols_.define_variable(name, 0xFFFF);
+                    }
+                } else {
+                    // LHS is not an identifier - regular variable
+                    symbols_.define_variable(name, 0xFFFF);
+                }
+            } else {
+                // Invalid pipe - regular variable
+                symbols_.define_variable(name, 0xFFFF);
+            }
         } else {
             // Regular variable assignment
             symbols_.define_variable(name, 0xFFFF);
@@ -175,6 +215,32 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
             return NULL_NODE;
         }
 
+        // Check if innermost LHS is an unbound identifier -> create closure
+        // Walk down nested pipes to find the innermost LHS
+        NodeIndex innermost_lhs = lhs_idx;
+        while (innermost_lhs != NULL_NODE &&
+               (*input_ast_).arena[innermost_lhs].type == NodeType::Pipe) {
+            innermost_lhs = (*input_ast_).arena[innermost_lhs].first_child;
+        }
+
+        if (innermost_lhs != NULL_NODE) {
+            const Node& lhs = (*input_ast_).arena[innermost_lhs];
+            if (lhs.type == NodeType::Identifier) {
+                std::string name;
+                if (std::holds_alternative<Node::IdentifierData>(lhs.data)) {
+                    name = lhs.as_identifier();
+                }
+                if (!name.empty() && !symbols_.lookup(name)) {
+                    // Unbound identifier - transform to closure: x |> f(%) -> (x) -> f(x)
+                    // For the closure, we use the innermost identifier as param
+                    // and the whole pipe chain (except innermost) as body
+                    NodeIndex closure = create_closure_from_pipe(innermost_lhs, node, n.location);
+                    node_map_[node] = closure;
+                    return closure;
+                }
+            }
+        }
+
         // First, recursively rewrite the LHS (may contain nested pipes)
         NodeIndex new_lhs = rewrite_pipes(lhs_idx);
 
@@ -182,6 +248,9 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
         // This performs: a |> f(%) -> f(a)
         // substitute_holes also handles any nested pipes in the RHS
         NodeIndex new_rhs = substitute_holes(rhs_idx, new_lhs);
+
+        // Track mapping so function/closure bodies pointing to this pipe get updated
+        node_map_[node] = new_rhs;
 
         // The pipe is eliminated - return the transformed RHS
         return new_rhs;
@@ -287,6 +356,9 @@ NodeIndex SemanticAnalyzer::substitute_holes(NodeIndex node, NodeIndex replaceme
         // This eliminates the nested pipe
         NodeIndex new_rhs = substitute_holes(src_rhs, new_lhs);
 
+        // Track mapping so function/closure bodies pointing to this pipe get updated
+        node_map_[node] = new_rhs;
+
         // Return the transformed RHS (pipe is eliminated)
         return new_rhs;
     }
@@ -341,6 +413,107 @@ bool SemanticAnalyzer::contains_hole(NodeIndex node) const {
     }
 
     return false;
+}
+
+// Helper for pipe-to-lambda: substitute holes AND a specific identifier
+NodeIndex SemanticAnalyzer::substitute_holes_and_identifier(
+    NodeIndex node, NodeIndex replacement, NodeIndex identifier_to_replace) {
+
+    if (node == NULL_NODE) return NULL_NODE;
+
+    const Node& n = (*input_ast_).arena[node];
+
+    // If this is a hole, return the replacement node
+    if (n.type == NodeType::Hole) {
+        return replacement;
+    }
+
+    // If this is the identifier we're replacing, return the replacement
+    if (node == identifier_to_replace) {
+        return replacement;
+    }
+
+    // Handle nested pipes - they need to be rewritten
+    if (n.type == NodeType::Pipe) {
+        NodeIndex src_lhs = n.first_child;
+        NodeIndex src_rhs = (src_lhs != NULL_NODE) ?
+                            (*input_ast_).arena[src_lhs].next_sibling : NULL_NODE;
+
+        // Substitute holes/identifier in the LHS
+        NodeIndex new_lhs = substitute_holes_and_identifier(src_lhs, replacement, identifier_to_replace);
+
+        // Substitute holes in the RHS using the new LHS as replacement
+        // (normal pipe semantics: holes in RHS get the LHS value)
+        NodeIndex new_rhs = substitute_holes(src_rhs, new_lhs);
+
+        // Track mapping
+        node_map_[node] = new_rhs;
+
+        return new_rhs;
+    }
+
+    // For other nodes, clone and recurse on children
+    NodeIndex new_node = clone_node(node);
+
+    // Handle MatchArm guard_node specially
+    if (n.type == NodeType::MatchArm) {
+        const auto& arm_data = n.as_match_arm();
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            NodeIndex new_guard = substitute_holes_and_identifier(arm_data.guard_node, replacement, identifier_to_replace);
+            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[new_node].data);
+            dst_data.guard_node = new_guard;
+        }
+    }
+
+    NodeIndex src_child = n.first_child;
+    NodeIndex prev_dst_child = NULL_NODE;
+
+    while (src_child != NULL_NODE) {
+        NodeIndex dst_child = substitute_holes_and_identifier(src_child, replacement, identifier_to_replace);
+
+        if (dst_child != NULL_NODE) {
+            if (prev_dst_child == NULL_NODE) {
+                output_arena_[new_node].first_child = dst_child;
+            } else {
+                output_arena_[prev_dst_child].next_sibling = dst_child;
+            }
+            prev_dst_child = dst_child;
+        }
+
+        src_child = (*input_ast_).arena[src_child].next_sibling;
+    }
+
+    return new_node;
+}
+
+NodeIndex SemanticAnalyzer::create_closure_from_pipe(
+    NodeIndex param_node, NodeIndex body_node, SourceLocation loc) {
+
+    const Node& param_src = (*input_ast_).arena[param_node];
+    const std::string& param_name = param_src.as_identifier();
+
+    // Create closure node
+    NodeIndex closure = output_arena_.alloc(NodeType::Closure, loc);
+
+    // Clone parameter as closure param
+    NodeIndex param = clone_node(param_node);
+    output_arena_[closure].first_child = param;
+
+    // Push scope, define param
+    symbols_.push_scope();
+    symbols_.define_variable(param_name, 0xFFFF);
+
+    // Create param reference for hole substitution
+    NodeIndex param_ref = output_arena_.alloc(NodeType::Identifier, loc);
+    output_arena_[param_ref].data = Node::IdentifierData{param_name};
+
+    // Substitute holes AND the parameter identifier in body with param reference
+    NodeIndex body = substitute_holes_and_identifier(body_node, param_ref, param_node);
+    output_arena_[param].next_sibling = body;
+
+    symbols_.pop_scope();
+
+    return closure;
 }
 
 void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
