@@ -59,7 +59,7 @@ State preservation during code updates:
 
 ### Chord Expansion
 Chords are signal arrays that auto-expand UGens:
-- `'c4:maj'` → `[261.6, 329.6, 392.0]` Hz
+- `C4'` → `[261.6, 329.6, 392.0]` Hz
 - `'c3e3g3'` → inline chord notation
 
 ### Clock System

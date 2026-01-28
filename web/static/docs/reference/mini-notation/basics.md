@@ -40,17 +40,20 @@ pat("c4 e4 ~ g4")
 
 ## Chords
 
-Specify chords with `:` notation:
+Use the `chord()` function with standard chord symbols:
 
 ```akk
 // Major chord
-pat("c4:maj")   // C, E, G
+chord("C")      // C major triad
 
 // Minor seventh
-pat("a3:min7")  // A, C, E, G
+chord("Am7")    // A minor seventh
 
-// Available chord types:
-// maj, min, dom7, maj7, min7, dim, aug, sus2, sus4
+// Chord progression
+chord("Am C Dm G")  // One chord per beat
+
+// Available chord qualities:
+// m (minor), maj, 7, maj7, m7, dim, aug, sus2, sus4
 ```
 
 ## Inline Chords
@@ -203,7 +206,7 @@ pat("c4 e4 g4 e4") |> ((f) ->
 
 ```akk
 // Chord progression
-pat("c3:maj e3:min a3:min g3:maj") |> ((f) ->
+chord("C Em Am G") |> ((f) ->
     osc("saw", f) |> lp(%, 800) * ar(trigger(1), 0.1, 0.5)
 ) |> out(%, %)
 ```

@@ -274,7 +274,7 @@ Token Lexer::lex_token() {
         case '`':
             return lex_string(c);
         case '\'':
-            // Try to lex as pitch or chord literal first ('c4', 'f#3', 'c4:maj', etc.)
+            // Try to lex as pitch or chord literal first ('c4', 'f#3', C4', etc.)
             if (auto pitch_or_chord = try_lex_pitch_or_chord()) {
                 return *pitch_or_chord;
             }

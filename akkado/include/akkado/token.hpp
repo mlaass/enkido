@@ -19,7 +19,7 @@ enum class TokenType : std::uint8_t {
     String,         // "hello"
     Identifier,     // foo, bar_baz
     PitchLit,       // 'c4', 'f#3', 'Bb5'
-    ChordLit,       // 'c4:maj', 'a3:min7'
+    ChordLit,       // C4', Am3', F#m7_4'
 
     // Keywords
     True,           // true

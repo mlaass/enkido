@@ -194,8 +194,8 @@ Pattern functions (`pat()`, `seq()`, `note()`) produce a built-in record type wi
 // Single note "a4" → 1 event
 pat("a4") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 
-// Chord "c4:maj" → 3 simultaneous events, auto-summed
-pat("c4:maj") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
+// Chord "Cmaj" → 3 simultaneous events, auto-summed
+chord("C") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 // Internally: 3 oscillators created, outputs summed automatically
 ```
 
@@ -233,28 +233,28 @@ pat("bd'c4 bd'e4 bd'g4") as e |>
 
 ```akkado
 // Default: up to 16 voices, auto-summed
-pat("c4:maj c4:min7") as e |> osc("sin", e.freq) * e.vel
+chord("C Am7") as e |> osc("sin", e.freq) * e.vel
 
 // Explicit voice limit
-pat("c4:maj c4:min7", voices: 4) as e |> osc("sin", e.freq) * e.vel
+chord("C Am7", voices: 4) as e |> osc("sin", e.freq) * e.vel
 ```
 
 **Per-voice control:** Use the `.voice` field with `match` or `select` to route voices differently:
 
 ```akkado
 // Different oscillator per voice
-pat("c4:maj") as e |> match(e.voice) {
+chord("C") as e |> match(e.voice) {
     0: osc("sin", e.freq),   // root gets sine
     1: osc("saw", e.freq),   // third gets saw
     _: osc("tri", e.freq),   // fifth gets triangle
 } * e.vel |> out(%, %)
 
 // Simple branching with select
-pat("c4:maj") as e |>
+chord("C") as e |>
     select(e.voice == 0, osc("sin", e.freq), osc("saw", e.freq)) * e.vel
 
 // Spread voices in stereo
-pat("c4:maj") as e |>
+chord("C") as e |>
     osc("sin", e.freq) * e.vel |>
     out(% * (1 - e.voice * 0.3), % * (e.voice * 0.3))
 ```
@@ -615,7 +615,7 @@ r = {[field]: 1}  // Dynamic field name
 ### Q6: Nested Pattern Field Access
 
 ```akkado
-pat("c4:maj") |> %.chord.root
+chord("C") |> %.chord.root
 ```
 
 Should chord data be accessible as nested fields?

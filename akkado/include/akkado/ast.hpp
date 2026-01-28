@@ -20,7 +20,7 @@ enum class NodeType : std::uint8_t {
     BoolLit,        // true/false
     StringLit,      // "..." or '...' or `...`
     PitchLit,       // 'c4', 'f#3', 'Bb5' (MIDI note)
-    ChordLit,       // 'c4:maj', 'a3:min7' (chord)
+    ChordLit,       // C4', Am3', F#m7_4' (chord)
     ArrayLit,       // [a, b, c] - array literal
 
     // Identifiers

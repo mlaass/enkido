@@ -155,11 +155,15 @@ Examples: `'c4'`, `'f#3'`, `'Bb5'`
 
 **Chord Literals:**
 ```ebnf
-chord_literal = "'" pitch_name octave ":" chord_type "'" ;
-chord_type    = "maj" | "min" | "dom7" | "maj7" | "min7" | "dim" | "aug" | "sus2" | "sus4" ;
+chord_literal = pitch_name [ chord_symbol ] [ "_" ] octave "'" ;
+chord_symbol  = [ quality ] [ extension ] ;
+quality       = "m" | "-" | "M" | "^" | "maj" | "o" | "dim" | "aug" | "+" | "sus2" | "sus4" | "5" ;
+extension     = "7" | "9" | "11" | "13" | "6" | "69" ;
 ```
+Uses standard Strudel chord symbol notation: `{Root}{Quality}{Extensions}`.
+Use `_` before octave to disambiguate when symbol ends in a digit (e.g., `A7_3'`).
 
-Examples: `'c4:maj'`, `'a3:min7'`
+Examples: `C4'` (C major), `Am3'` (A minor), `Cmaj7_4'` (C major 7), `E5_2'` (E power chord)
 
 **Array Literals:**
 ```ebnf
@@ -781,7 +785,7 @@ Random selection each cycle: `bd | sd | hh`
 Chord literals and inline chords expand to frequency arrays (see Section 6 for array operations):
 
 ```
-'c4:maj'   -> [261.6, 329.6, 392.0]  // C, E, G in Hz
+C4'   -> [261.6, 329.6, 392.0]  // C, E, G in Hz
 'c3e3g3'   -> [130.8, 164.8, 196.0]  // inline chord
 ```
 
@@ -790,7 +794,7 @@ When passed to a UGen expecting a scalar:
 2. Outputs are summed by default
 3. Use `map()` for custom per-voice processing:
    ```
-   freqs = 'c4:maj'
+   freqs = C4'
    map(freqs, hz -> osc("saw", hz) |> lp(%, 1000))
    ```
 

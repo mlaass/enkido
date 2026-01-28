@@ -59,7 +59,7 @@ osc("saw", [c4, e4, g4]) |> out(%, %)  // Equivalent to above
 
 ```akkado
 chord("Am C7 Dm")  // Strudel-compatible
-// NOT 'c4:maj' (old syntax, to be deprecated)
+// NOT C4' (old syntax, to be deprecated)
 ```
 
 **Symbol Format**: `{Root}{Quality}{Extensions}`
@@ -143,7 +143,7 @@ drums.slow(2).rev() |> sampler(%) |> out(%, %)
 | Mini-notation lexer | ✓ Complete | Tokens, modifiers working |
 | Mini-notation parser | ✓ Complete | AST nodes for groups, sequences |
 | Pattern evaluation | ✓ Complete | Time division, modifiers |
-| Chord parsing | ✗ Wrong syntax | Uses `'c4:maj'` instead of `chord("Am")` |
+| Chord parsing | ✗ Wrong syntax | Uses `C4'` instead of `chord("Am")` |
 | Chord expansion | ✗ Not implemented | Only emits root note |
 | Array type | ✗ Not implemented | Blocking chord expansion |
 | Polymeter `{x}` | ✗ Not implemented | No curly brace handling |
@@ -246,7 +246,7 @@ drums.slow(2).rev() |> out(%, %)
 
 **Files to Modify**:
 - `akkado/include/akkado/music_theory.hpp` — Symbol parsing
-- `akkado/src/lexer.cpp` — Deprecate old `'c4:maj'` syntax
+- `akkado/src/lexer.cpp` — Deprecate old `C4'` syntax
 - `akkado/src/codegen.cpp` — Chord expansion via arrays
 
 **Verification**:

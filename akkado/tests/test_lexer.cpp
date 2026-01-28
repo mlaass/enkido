@@ -291,7 +291,7 @@ TEST_CASE("Lexer pitch literals", "[lexer]") {
 
 TEST_CASE("Lexer chord literals", "[lexer]") {
     SECTION("major chord") {
-        auto [tokens, diags] = lex("'c4:maj'");
+        auto [tokens, diags] = lex("C4'");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
@@ -305,7 +305,7 @@ TEST_CASE("Lexer chord literals", "[lexer]") {
     }
 
     SECTION("minor chord with sharp") {
-        auto [tokens, diags] = lex("'f#3:min'");
+        auto [tokens, diags] = lex("F#m3'");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
@@ -319,7 +319,7 @@ TEST_CASE("Lexer chord literals", "[lexer]") {
     }
 
     SECTION("seventh chord") {
-        auto [tokens, diags] = lex("'a3:dom7'");
+        auto [tokens, diags] = lex("A7_3'");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
@@ -334,7 +334,7 @@ TEST_CASE("Lexer chord literals", "[lexer]") {
     }
 
     SECTION("power chord") {
-        auto [tokens, diags] = lex("'e2:5'");
+        auto [tokens, diags] = lex("E5_2'");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
@@ -347,13 +347,13 @@ TEST_CASE("Lexer chord literals", "[lexer]") {
     }
 
     SECTION("unknown chord type falls back to string") {
-        // 'c4:xyz' should be a string since 'xyz' is not a known chord
-        auto [tokens, diags] = lex("'c4:xyz'");
+        // 'c4xyz' should be a string since 'xyz' is not a known chord
+        auto [tokens, diags] = lex("'c4xyz'");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].as_string() == "c4:xyz");
+        CHECK(tokens[0].as_string() == "c4xyz");
     }
 }
 

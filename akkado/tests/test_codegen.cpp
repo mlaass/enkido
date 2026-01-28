@@ -124,7 +124,7 @@ TEST_CASE("Codegen: Pitch literals", "[codegen][literals]") {
 
 TEST_CASE("Codegen: Chord literals", "[codegen][literals]") {
     SECTION("major chord uses root note") {
-        auto result = akkado::compile("'c4:maj'");
+        auto result = akkado::compile("C4'");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         REQUIRE(insts.size() >= 2);

@@ -89,7 +89,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
     }
 
     SECTION("chord literal as oscillator frequency (uses root)") {
-        auto result = akkado::compile("saw('c4:maj')");  // C4 major chord, root = 60
+        auto result = akkado::compile("saw(C4')");  // C4 major chord, root = 60
 
         REQUIRE(result.success);
         // Should have 3 instructions: PUSH_CONST (60), MTOF, OSC_SAW
