@@ -75,15 +75,57 @@ inline float poly_blamp(float t, float dt) {
     return 0.0f;
 }
 
+// ============================================================================
+// Phase Reset Helper for Trigger-based Phase Control
+// ============================================================================
+
+// Get buffer pointer, falling back to BUFFER_ZERO for unused inputs
+[[gnu::always_inline]]
+inline const float* get_input_or_zero(ExecutionContext& ctx, std::uint16_t buffer_id) {
+    if (buffer_id == BUFFER_UNUSED) {
+        return ctx.buffers->get(BUFFER_ZERO);
+    }
+    return ctx.buffers->get(buffer_id);
+}
+
+// Check for rising edge trigger and reset phase to offset if triggered
+// Returns true if phase was reset (useful for MinBLEP buffer clearing)
+[[gnu::always_inline]]
+inline bool check_phase_reset(float& phase, float& prev_trigger, bool& initialized,
+                               float trigger, float phase_offset) {
+    // Detect rising edge (previous <= 0, current > 0)
+    bool triggered = (trigger > 0.0f && prev_trigger <= 0.0f);
+    prev_trigger = trigger;
+
+    if (triggered) {
+        // Normalize phase offset to [0, 1)
+        phase = std::fmod(phase_offset, 1.0f);
+        if (phase < 0.0f) phase += 1.0f;
+        // Reset initialized to avoid PolyBLEP artifacts at reset point
+        initialized = false;
+        return true;
+    }
+    return false;
+}
+
 // SIN oscillator: out = sin(phase * 2pi), frequency from in0
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Note: Sine has no discontinuities so no anti-aliasing needed
 [[gnu::always_inline]]
 inline void op_osc_sin(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         out[i] = std::sin(state.phase * TWO_PI);
 
         // Advance phase
@@ -98,14 +140,23 @@ inline void op_osc_sin(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // TRI oscillator: triangle wave with PolyBLAMP anti-aliasing
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Output: -1 to +1, linear rise then fall
 [[gnu::always_inline]]
 inline void op_osc_tri(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Naive triangle: 4 * |phase - 0.5| - 1
@@ -145,14 +196,23 @@ inline void op_osc_tri(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SAW oscillator: sawtooth wave with PolyBLEP anti-aliasing
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Output: -1 to +1, linear ramp up then instant reset
 [[gnu::always_inline]]
 inline void op_osc_saw(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Naive sawtooth: 2 * phase - 1
@@ -178,14 +238,23 @@ inline void op_osc_saw(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SQR oscillator: square wave with PolyBLEP anti-aliasing
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Output: +1 for first half of cycle, -1 for second half
 [[gnu::always_inline]]
 inline void op_osc_sqr(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Naive square: +1 if phase < 0.5, else -1
@@ -217,14 +286,23 @@ inline void op_osc_sqr(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // RAMP oscillator: inverted sawtooth (descending ramp) with PolyBLEP
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Output: +1 to -1, linear ramp down then instant reset
 [[gnu::always_inline]]
 inline void op_osc_ramp(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Naive ramp (inverted saw): 1 - 2 * phase
@@ -250,15 +328,24 @@ inline void op_osc_ramp(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // PHASOR: raw phase output (0 to 1)
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Useful as modulation source or for custom waveshaping
 // Note: Discontinuity at phase wrap is intentional for phasor use
 [[gnu::always_inline]]
 inline void op_osc_phasor(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         out[i] = state.phase;
 
         state.prev_phase = state.phase;
@@ -276,16 +363,32 @@ inline void op_osc_phasor(ExecutionContext& ctx, const Instruction& inst) {
 // ============================================================================
 
 // SQR_MINBLEP oscillator: square wave with MinBLEP anti-aliasing
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Perfect harmonic purity - no even harmonics, ideal for PWM and distortion
 [[gnu::always_inline]]
 inline void op_osc_sqr_minblep(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<MinBLEPOscState>(inst.state_id);
 
     const auto& minblep_table = get_minblep_table();
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        if (trigger[i] > 0.0f && state.prev_trigger <= 0.0f) {
+            // Reset phase to offset
+            state.phase = std::fmod(phase_offset[i], 1.0f);
+            if (state.phase < 0.0f) state.phase += 1.0f;
+            state.initialized = false;
+            // Clear MinBLEP buffer on reset to avoid artifacts
+            state.reset();
+        }
+        state.prev_trigger = trigger[i];
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Naive square wave based on current phase (PRE-advance value)
@@ -331,15 +434,23 @@ inline void op_osc_sqr_minblep(ExecutionContext& ctx, const Instruction& inst) {
 // SQR_PWM oscillator: square wave with variable pulse width
 // in0: frequency (Hz)
 // in1: PWM (-1 to +1, where 0 = 50% duty cycle)
+// in2: phase offset (0-1, optional)
+// in3: trigger (reset phase on rising edge, optional)
 // PWM mapping: duty = 0.5 + pwm * 0.5, so [-1,+1] maps to [0,1]
 [[gnu::always_inline]]
 inline void op_osc_sqr_pwm(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
     const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[2]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[3]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Calculate duty cycle from PWM input
@@ -378,6 +489,8 @@ inline void op_osc_sqr_pwm(ExecutionContext& ctx, const Instruction& inst) {
 // SAW_PWM oscillator: variable-slope sawtooth (morphs saw to tri to ramp)
 // in0: frequency (Hz)
 // in1: PWM (-1 to +1)
+// in2: phase offset (0-1, optional)
+// in3: trigger (reset phase on rising edge, optional)
 // PWM = -1: Rising ramp (standard saw)
 // PWM = 0: Triangle
 // PWM = +1: Falling ramp (inverted saw)
@@ -386,9 +499,15 @@ inline void op_osc_saw_pwm(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
     const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[2]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[3]);
     auto& state = ctx.states->get_or_create<OscState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.phase, state.prev_trigger, state.initialized,
+                          trigger[i], phase_offset[i]);
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Map PWM to midpoint position: [-1,+1] -> [0.01, 0.99]
@@ -438,17 +557,34 @@ inline void op_osc_saw_pwm(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SQR_PWM_MINBLEP oscillator: highest quality PWM square wave
+// in0: frequency (Hz)
+// in1: PWM (-1 to +1, where 0 = 50% duty cycle)
+// in2: phase offset (0-1, optional)
+// in3: trigger (reset phase on rising edge, optional)
 // Uses MinBLEP for sub-sample accurate edge placement
 [[gnu::always_inline]]
 inline void op_osc_sqr_pwm_minblep(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
     const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[2]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[3]);
     auto& state = ctx.states->get_or_create<MinBLEPOscState>(inst.state_id);
 
     const auto& minblep_table = get_minblep_table();
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        if (trigger[i] > 0.0f && state.prev_trigger <= 0.0f) {
+            // Reset phase to offset
+            state.phase = std::fmod(phase_offset[i], 1.0f);
+            if (state.phase < 0.0f) state.phase += 1.0f;
+            state.initialized = false;
+            // Clear MinBLEP buffer on reset to avoid artifacts
+            state.reset();
+        }
+        state.prev_trigger = trigger[i];
+
         float dt = freq[i] * ctx.inv_sample_rate;
 
         // Calculate duty cycle from PWM
@@ -489,16 +625,25 @@ inline void op_osc_sqr_pwm_minblep(ExecutionContext& ctx, const Instruction& ins
 // ============================================================================
 
 // SIN_2X: 2x oversampled sine oscillator
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_sin_2x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
 
     float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         // Interpolate frequency between this sample and next
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
@@ -523,16 +668,25 @@ inline void op_osc_sin_2x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SIN_4X: 4x oversampled sine oscillator
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_sin_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         // Interpolate frequency between this sample and next
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
@@ -557,16 +711,25 @@ inline void op_osc_sin_4x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SAW_2X: 2x oversampled sawtooth with PolyBLEP at higher rate
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_saw_2x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
 
     float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -597,16 +760,25 @@ inline void op_osc_saw_2x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SAW_4X: 4x oversampled sawtooth
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_saw_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -637,16 +809,25 @@ inline void op_osc_saw_4x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SQR_2X: 2x oversampled square with PolyBLEP
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_sqr_2x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
 
     float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -680,16 +861,25 @@ inline void op_osc_sqr_2x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SQR_4X: 4x oversampled square
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_sqr_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -723,16 +913,25 @@ inline void op_osc_sqr_4x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // TRI_2X: 2x oversampled triangle with PolyBLAMP
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_tri_2x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState2x>(inst.state_id);
 
     float inv_sr_2x = ctx.inv_sample_rate * 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -767,16 +966,25 @@ inline void op_osc_tri_2x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // TRI_4X: 4x oversampled triangle
+// in0: frequency (Hz)
+// in1: phase offset (0-1, optional)
+// in2: trigger (reset phase on rising edge, optional)
 // Interpolates frequency input for true sample-accurate FM
 [[gnu::always_inline]]
 inline void op_osc_tri_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[1]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[2]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
 
@@ -815,17 +1023,26 @@ inline void op_osc_tri_4x(ExecutionContext& ctx, const Instruction& inst) {
 // ============================================================================
 
 // SQR_PWM_4X: 4x oversampled PWM square wave
-// Inputs: freq (in0), pwm (in1)
+// in0: frequency (Hz)
+// in1: PWM (-1 to +1, where 0 = 50% duty cycle)
+// in2: phase offset (0-1, optional)
+// in3: trigger (reset phase on rising edge, optional)
 [[gnu::always_inline]]
 inline void op_osc_sqr_pwm_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
     const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[2]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[3]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
         float pwm_val = pwm[i];
@@ -868,17 +1085,26 @@ inline void op_osc_sqr_pwm_4x(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // SAW_PWM_4X: 4x oversampled variable-slope sawtooth
-// Inputs: freq (in0), pwm (in1)
+// in0: frequency (Hz)
+// in1: PWM (-1 to +1)
+// in2: phase offset (0-1, optional)
+// in3: trigger (reset phase on rising edge, optional)
 [[gnu::always_inline]]
 inline void op_osc_saw_pwm_4x(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
     const float* freq = ctx.buffers->get(inst.inputs[0]);
     const float* pwm = ctx.buffers->get(inst.inputs[1]);
+    const float* phase_offset = get_input_or_zero(ctx, inst.inputs[2]);
+    const float* trigger = get_input_or_zero(ctx, inst.inputs[3]);
     auto& state = ctx.states->get_or_create<OscState4x>(inst.state_id);
 
     float inv_sr_4x = ctx.inv_sample_rate * 0.25f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check for phase reset trigger
+        check_phase_reset(state.osc.phase, state.osc.prev_trigger, state.osc.initialized,
+                          trigger[i], phase_offset[i]);
+
         float freq_curr = freq[i];
         float freq_next = (i + 1 < BLOCK_SIZE) ? freq[i + 1] : freq[i];
         float pwm_val = pwm[i];
