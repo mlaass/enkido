@@ -14,12 +14,14 @@ namespace cedar {
 struct OscState {
     float phase = 0.0f;       // 0.0 to 1.0
     float prev_phase = 0.0f;  // Previous phase for PolyBLEP discontinuity detection
+    float prev_trigger = 0.0f; // Previous trigger value for rising edge detection
     bool initialized = false; // Skip anti-aliasing on first sample
 };
 
 // MinBLEP oscillator state with residual buffer
 struct MinBLEPOscState {
     float phase = 0.0f;
+    float prev_trigger = 0.0f; // Previous trigger value for rising edge detection
     bool initialized = false;
 
     // MinBLEP residual buffer (128 samples should be plenty)
@@ -88,8 +90,14 @@ struct SVFState {
 };
 
 // Noise generator state (LCG for deterministic noise)
+// Supports frequency-controlled sample-and-hold mode
 struct NoiseState {
-    std::uint32_t seed = 12345;
+    std::uint32_t seed = 12345;         // Current RNG state
+    std::uint32_t start_seed = 12345;   // Initial seed (reset target)
+    float phase = 0.0f;                 // Phase accumulator for freq>0 mode
+    float prev_trigger = 0.0f;          // For trigger detection
+    float current_value = 0.0f;         // Held sample value
+    bool initialized = false;           // First-time init flag
 };
 
 // Slew rate limiter state

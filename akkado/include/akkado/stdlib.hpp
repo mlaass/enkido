@@ -11,26 +11,26 @@ constexpr std::string_view STDLIB_SOURCE = R"akkado(
 // Akkado Standard Library
 // User definitions can shadow these.
 
-fn osc(type, freq, pwm = 0.5) -> match(type) {
-    "sin": sine_osc(freq)
-    "sine": sine_osc(freq)
-    "tri": tri(freq)
-    "triangle": tri(freq)
-    "saw": saw(freq)
-    "sawtooth": saw(freq)
-    "sqr": sqr(freq)
-    "square": sqr(freq)
-    "ramp": ramp(freq)
-    "phasor": phasor(freq)
-    "noise": noise()
-    "white": noise()
-    "sqr_pwm": sqr_pwm(freq, pwm)
-    "pulse": sqr_pwm(freq, pwm)
-    "saw_pwm": saw_pwm(freq, pwm)
-    "var_saw": saw_pwm(freq, pwm)
-    "sqr_minblep": sqr_minblep(freq)
-    "sqr_pwm_minblep": sqr_pwm_minblep(freq, pwm)
-    _: sine_osc(freq)
+fn osc(type, freq, pwm = 0.5, phase = 0.0, trig = 0.0) -> match(type) {
+    "sin": sine_osc(freq, phase, trig)
+    "sine": sine_osc(freq, phase, trig)
+    "tri": tri(freq, phase, trig)
+    "triangle": tri(freq, phase, trig)
+    "saw": saw(freq, phase, trig)
+    "sawtooth": saw(freq, phase, trig)
+    "sqr": sqr(freq, phase, trig)
+    "square": sqr(freq, phase, trig)
+    "ramp": ramp(freq, phase, trig)
+    "phasor": phasor(freq, phase, trig)
+    "noise": noise(freq, trig)
+    "white": noise(freq, trig)
+    "sqr_pwm": sqr_pwm(freq, pwm, phase, trig)
+    "pulse": sqr_pwm(freq, pwm, phase, trig)
+    "saw_pwm": saw_pwm(freq, pwm, phase, trig)
+    "var_saw": saw_pwm(freq, pwm, phase, trig)
+    "sqr_minblep": sqr_minblep(freq, phase, trig)
+    "sqr_pwm_minblep": sqr_pwm_minblep(freq, pwm, phase, trig)
+    _: sine_osc(freq, phase, trig)
 }
 )akkado";
 

@@ -52,19 +52,64 @@ inline void op_output(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
-// NOISE: White noise generator (deterministic LCG for reproducibility)
+// NOISE: Noise generator (deterministic LCG for reproducibility)
+// in0: freq - rate in Hz (0 = white noise, >0 = sample-and-hold at that frequency)
+// in1: trig - reset RNG to start_seed on rising edge (optional)
+// in2: seed - initial seed value (optional, default 12345)
 [[gnu::always_inline]]
 inline void op_noise(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
+
+    // Get inputs (fall back to BUFFER_ZERO for unused)
+    const float* freq = (inst.inputs[0] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[0])
+        : ctx.buffers->get(BUFFER_ZERO);
+    const float* trigger = (inst.inputs[1] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[1])
+        : ctx.buffers->get(BUFFER_ZERO);
+    const float* seed_input = (inst.inputs[2] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[2])
+        : nullptr;
+
     auto& state = ctx.states->get_or_create<NoiseState>(inst.state_id);
 
-    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // LCG: x_{n+1} = (a * x_n + c) mod m
+    // Helper: generate next random value using LCG
+    auto generate = [&state]() -> float {
         state.seed = state.seed * 1103515245u + 12345u;
+        return static_cast<float>(static_cast<std::int32_t>(state.seed)) / 2147483648.0f;
+    };
 
-        // Convert to float in range [-1, 1]
-        // Use signed interpretation for symmetric distribution
-        out[i] = static_cast<float>(static_cast<std::int32_t>(state.seed)) / 2147483648.0f;
+    // Initialize on first run
+    if (!state.initialized) {
+        state.start_seed = seed_input ? static_cast<std::uint32_t>(seed_input[0]) : 12345u;
+        state.seed = state.start_seed;
+        state.current_value = generate();
+        state.initialized = true;
+    }
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Check trigger - reset to start seed on rising edge
+        if (trigger[i] > 0.0f && state.prev_trigger <= 0.0f) {
+            state.seed = state.start_seed;
+            state.phase = 0.0f;
+            state.current_value = generate();
+        }
+        state.prev_trigger = trigger[i];
+
+        float f = freq[i];
+        if (f <= 0.0f) {
+            // Every-sample mode: new value each sample (white noise)
+            out[i] = generate();
+        } else {
+            // Sample-and-hold mode: new value at phase wrap
+            float phase_inc = f / ctx.sample_rate;
+            state.phase += phase_inc;
+            if (state.phase >= 1.0f) {
+                state.phase -= 1.0f;
+                state.current_value = generate();
+            }
+            out[i] = state.current_value;
+        }
     }
 }
 

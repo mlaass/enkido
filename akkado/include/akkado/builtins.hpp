@@ -61,69 +61,72 @@ struct BuiltinInfo {
 /// It resolves the string type ("sin", "sine", "saw", etc.) at compile-time
 /// to the appropriate OSC_* opcode. See codegen.cpp for the implementation.
 inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS = {
-    // Strudel-style unified oscillator function: osc(type, freq) or osc(type, freq, pwm)
+    // Strudel-style unified oscillator function: osc(type, freq, pwm, phase, trig)
     // Type is resolved at compile-time from a string literal.
     // Examples: osc("sin", 440), osc("saw", freq), osc("sqr_pwm", freq, 0.5)
     // The opcode here is a placeholder - actual opcode is determined by type string in codegen.
-    {"osc",     {cedar::Opcode::OSC_SIN, 2, 1, true,
-                 {"type", "freq", "pwm", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"osc",     {cedar::Opcode::OSC_SIN, 2, 3, true,
+                 {"type", "freq", "pwm", "phase", "trig", ""},
+                 {0.5f, NAN, NAN, NAN, NAN},
                  "Band-limited oscillator (sin, saw, sqr, tri, ramp, phasor)"}},
 
     // Basic Oscillators - kept for backwards compatibility and direct access
     // For Strudel-style syntax, use osc("type", freq) instead
-    {"tri",     {cedar::Opcode::OSC_TRI,    1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    // All oscillators now support optional phase offset and trigger for phase reset.
+    // Phase/trig default to BUFFER_UNUSED, which falls back to BUFFER_ZERO (always 0.0).
+    // This avoids emitting PUSH_CONST instructions for the common case.
+    {"tri",     {cedar::Opcode::OSC_TRI,    1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Triangle wave oscillator"}},
-    {"saw",     {cedar::Opcode::OSC_SAW,    1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"saw",     {cedar::Opcode::OSC_SAW,    1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Band-limited sawtooth oscillator"}},
-    {"sqr",     {cedar::Opcode::OSC_SQR,    1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"sqr",     {cedar::Opcode::OSC_SQR,    1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Band-limited square wave oscillator"}},
-    {"ramp",    {cedar::Opcode::OSC_RAMP,   1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"ramp",    {cedar::Opcode::OSC_RAMP,   1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Rising ramp oscillator (0 to 1)"}},
-    {"phasor",  {cedar::Opcode::OSC_PHASOR, 1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"phasor",  {cedar::Opcode::OSC_PHASOR, 1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Phase accumulator (0 to 1 ramp)"}},
-    {"sqr_minblep", {cedar::Opcode::OSC_SQR_MINBLEP, 1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"sqr_minblep", {cedar::Opcode::OSC_SQR_MINBLEP, 1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "MinBLEP anti-aliased square wave"}},
     // Sine oscillator renamed to avoid conflict with sin() math function
-    {"sine_osc", {cedar::Opcode::OSC_SIN,   1, 0, true,
-                 {"freq", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"sine_osc", {cedar::Opcode::OSC_SIN,   1, 2, true,
+                 {"freq", "phase", "trig", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Sine wave oscillator"}},
 
-    // PWM Oscillators (2 inputs: frequency, pwm amount)
-    {"sqr_pwm", {cedar::Opcode::OSC_SQR_PWM, 2, 0, true,
-                 {"freq", "pwm", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    // PWM Oscillators (2 inputs: frequency, pwm amount + optional phase/trig)
+    {"sqr_pwm", {cedar::Opcode::OSC_SQR_PWM, 2, 2, true,
+                 {"freq", "pwm", "phase", "trig", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Pulse width modulated square wave"}},
-    {"saw_pwm", {cedar::Opcode::OSC_SAW_PWM, 2, 0, true,
-                 {"freq", "pwm", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"saw_pwm", {cedar::Opcode::OSC_SAW_PWM, 2, 2, true,
+                 {"freq", "pwm", "phase", "trig", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "Variable-width sawtooth oscillator"}},
-    {"sqr_pwm_minblep", {cedar::Opcode::OSC_SQR_PWM_MINBLEP, 2, 0, true,
-                 {"freq", "pwm", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"sqr_pwm_minblep", {cedar::Opcode::OSC_SQR_PWM_MINBLEP, 2, 2, true,
+                 {"freq", "pwm", "phase", "trig", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "MinBLEP PWM square wave"}},
 
     // 4x Oversampled PWM (explicit, for when auto-detection isn't desired)
-    {"sqr_pwm_4x", {cedar::Opcode::OSC_SQR_PWM_4X, 2, 0, true,
-                 {"freq", "pwm", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"sqr_pwm_4x", {cedar::Opcode::OSC_SQR_PWM_4X, 2, 2, true,
+                 {"freq", "pwm", "phase", "trig", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "4x oversampled PWM square wave"}},
-    {"saw_pwm_4x", {cedar::Opcode::OSC_SAW_PWM_4X, 2, 0, true,
-                 {"freq", "pwm", "", "", "", ""},
-                 {NAN, NAN, NAN},
+    {"saw_pwm_4x", {cedar::Opcode::OSC_SAW_PWM_4X, 2, 2, true,
+                 {"freq", "pwm", "phase", "trig", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
                  "4x oversampled PWM sawtooth"}},
 
     // Filters (signal, cutoff required; q optional with default 0.707)
@@ -454,10 +457,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  "Logical NOT: (a > 0) ? 0 : 1"}},
 
     // Utility
-    {"noise",   {cedar::Opcode::NOISE, 0, 0, true,
-                 {"", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "White noise generator"}},
+    {"noise",   {cedar::Opcode::NOISE, 0, 3, true,
+                 {"freq", "trig", "seed", "", "", ""},
+                 {NAN, NAN, NAN, NAN, NAN},
+                 "Noise generator (freq=0: white, freq>0: sample-and-hold)"}},
     {"mtof",    {cedar::Opcode::MTOF,  1, 0, false,
                  {"note", "", "", "", "", ""},
                  {NAN, NAN, NAN},
