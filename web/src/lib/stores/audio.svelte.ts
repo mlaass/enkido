@@ -115,6 +115,54 @@ interface PatternEvent {
 
 export type { PatternInfo, PatternEvent };
 
+// Pattern debug types (detailed debugging info)
+export interface PatternDebugEvent {
+	type: 'DATA' | 'SUB_SEQ';
+	time: number;
+	duration: number;
+	chance: number;
+	values?: number[];
+	numValues?: number;
+	seqId?: number;
+	sourceOffset: number;
+	sourceLength: number;
+}
+
+export interface PatternDebugSequence {
+	id: number;
+	mode: 'NORMAL' | 'ALTERNATE' | 'RANDOM';
+	duration: number;
+	step?: number;
+	events: PatternDebugEvent[];
+}
+
+export interface MiniAstNode {
+	type: string; // MiniPattern, MiniGroup, MiniAtom, etc.
+	location?: { offset: number; length: number };
+	children?: MiniAstNode[];
+	// MiniAtom-specific
+	kind?: string; // Pitch, Sample, Rest
+	midi?: number;
+	sampleName?: string;
+	variant?: number;
+	// MiniModified-specific
+	modifier?: string; // Speed, Slow, Duration, Weight, Repeat, Chance
+	value?: number;
+	// MiniEuclidean-specific
+	hits?: number;
+	steps?: number;
+	rotation?: number;
+	// MiniPolymeter-specific
+	stepCount?: number;
+}
+
+export interface PatternDebugInfo {
+	ast: MiniAstNode | null;
+	sequences: PatternDebugSequence[];
+	cycleLength: number;
+	isSamplePattern: boolean;
+}
+
 // State inspection types
 export interface StateInspection {
 	type: string;
@@ -180,6 +228,7 @@ function createAudioEngine() {
 	let beatPositionResolve: ((position: number) => void) | null = null;
 	let activeStepsResolve: ((steps: Record<number, { offset: number; length: number }>) => void) | null = null;
 	let stateInspectionResolve: ((data: StateInspection | null) => void) | null = null;
+	let patternDebugResolve: ((data: PatternDebugInfo | null) => void) | null = null;
 
 	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
@@ -379,6 +428,13 @@ function createAudioEngine() {
 				if (stateInspectionResolve) {
 					stateInspectionResolve(msg.data as StateInspection | null);
 					stateInspectionResolve = null;
+				}
+				break;
+			}
+			case 'patternDebug': {
+				if (patternDebugResolve) {
+					patternDebugResolve(msg.success ? (msg.data as PatternDebugInfo) : null);
+					patternDebugResolve = null;
 				}
 				break;
 			}
@@ -1121,6 +1177,28 @@ function createAudioEngine() {
 		});
 	}
 
+	/**
+	 * Get detailed pattern debug info (AST, sequences, events)
+	 * @param patternIndex Pattern index (0 to pattern_count-1)
+	 * @returns Pattern debug info or null if not found
+	 */
+	async function getPatternDebug(patternIndex: number): Promise<PatternDebugInfo | null> {
+		if (!workletNode) {
+			return null;
+		}
+
+		return new Promise((resolve) => {
+			patternDebugResolve = resolve;
+			setTimeout(() => {
+				if (patternDebugResolve === resolve) {
+					patternDebugResolve = null;
+					resolve(null);
+				}
+			}, 1000);
+			workletNode!.port.postMessage({ type: 'getPatternDebug', patternIndex });
+		});
+	}
+
 	return {
 		get isPlaying() { return state.isPlaying; },
 		get bpm() { return state.bpm; },
@@ -1176,7 +1254,9 @@ function createAudioEngine() {
 		getCurrentBeatPosition,
 		getActiveSteps,
 		// State inspection API
-		inspectState
+		inspectState,
+		// Pattern debug API
+		getPatternDebug
 	};
 }
 

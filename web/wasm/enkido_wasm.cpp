@@ -13,6 +13,7 @@
 #include <akkado/akkado.hpp>
 #include <akkado/builtins.hpp>
 #include <akkado/sample_registry.hpp>
+#include <akkado/pattern_debug.hpp>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -1055,6 +1056,67 @@ WASM_EXPORT uint32_t cedar_get_pattern_active_length(uint32_t state_id) {
 
     auto& state = states.get<cedar::SequenceState>(state_id);
     return state.active_source_length;
+}
+
+// ============================================================================
+// Pattern Debug API
+// ============================================================================
+
+// Static buffer for pattern debug JSON
+static std::string g_pattern_debug_json;
+
+/**
+ * Get detailed pattern debug info as JSON
+ * Includes: AST structure, compiled sequences, and flattened events
+ *
+ * JSON format:
+ * {
+ *   "ast": { ... AST tree ... },
+ *   "sequences": [
+ *     { "id": 0, "mode": "NORMAL", "duration": 4.0, "events": [...] },
+ *     ...
+ *   ],
+ *   "cycleLength": 4.0,
+ *   "isSamplePattern": false
+ * }
+ *
+ * @param pattern_index Pattern index (0 to pattern_count-1)
+ * @return Pointer to null-terminated JSON string
+ */
+WASM_EXPORT const char* akkado_get_pattern_debug_json(uint32_t pattern_index) {
+    uint32_t idx = get_pattern_init_index(pattern_index);
+    if (idx == UINT32_MAX) {
+        g_pattern_debug_json = "{}";
+        return g_pattern_debug_json.c_str();
+    }
+
+    const auto& init = g_compile_result.state_inits[idx];
+
+    // Serialize sequences to JSON - returns {"sequences":[...]}
+    std::string sequences_json = akkado::serialize_sequences_json(
+        init.sequences, init.sequence_events);
+
+    // Extract just the array part (after "sequences":)
+    std::string sequences_array = "[]";
+    auto pos = sequences_json.find('[');
+    if (pos != std::string::npos) {
+        // Find the last ] and extract the array
+        auto end_pos = sequences_json.rfind(']');
+        if (end_pos != std::string::npos && end_pos > pos) {
+            sequences_array = sequences_json.substr(pos, end_pos - pos + 1);
+        }
+    }
+
+    std::ostringstream json;
+    json << "{";
+    json << "\"ast\":" << (init.ast_json.empty() ? "null" : init.ast_json);
+    json << ",\"sequences\":" << sequences_array;
+    json << ",\"cycleLength\":" << init.cycle_length;
+    json << ",\"isSamplePattern\":" << (init.is_sample_pattern ? "true" : "false");
+    json << "}";
+
+    g_pattern_debug_json = json.str();
+    return g_pattern_debug_json.c_str();
 }
 
 // ============================================================================

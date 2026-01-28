@@ -252,7 +252,7 @@ TEST_CASE("Mini parser basic patterns", "[mini_parser]") {
         CHECK_THAT(mod.value, WithinRel(3.0f, 0.001f));
     }
 
-    SECTION("chance modifier") {
+    SECTION("chance modifier with value") {
         AstArena arena;
         auto [root, diags] = parse_mini("c?0.5", arena);
         REQUIRE(diags.empty());
@@ -260,6 +260,26 @@ TEST_CASE("Mini parser basic patterns", "[mini_parser]") {
         auto& mod = arena[modified].as_mini_modifier();
         CHECK(mod.modifier_type == Node::MiniModifierType::Chance);
         CHECK_THAT(mod.value, WithinRel(0.5f, 0.001f));
+    }
+
+    SECTION("chance modifier without value defaults to 0.5") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c?", arena);
+        REQUIRE(diags.empty());
+        NodeIndex modified = arena[root].first_child;
+        auto& mod = arena[modified].as_mini_modifier();
+        CHECK(mod.modifier_type == Node::MiniModifierType::Chance);
+        CHECK_THAT(mod.value, WithinRel(0.5f, 0.001f));
+    }
+
+    SECTION("chance modifier with different values") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c?0.25", arena);
+        REQUIRE(diags.empty());
+        NodeIndex modified = arena[root].first_child;
+        auto& mod = arena[modified].as_mini_modifier();
+        CHECK(mod.modifier_type == Node::MiniModifierType::Chance);
+        CHECK_THAT(mod.value, WithinRel(0.25f, 0.001f));
     }
 
     SECTION("choice operator") {

@@ -2,6 +2,7 @@
 	import { audioEngine } from '$lib/stores/audio.svelte';
 	import type { DisassemblyInstruction, SourceLocation } from '$lib/stores/audio.svelte';
 	import StateInspector from './StateInspector.svelte';
+	import PatternDebugPanel from './PatternDebugPanel.svelte';
 
 	let disassembly = $derived(audioEngine.disassembly);
 	let selectedInstructionIndex = $state<number | null>(null);
@@ -9,6 +10,7 @@
 	let showAllInstructions = $state(false);
 	let filterStateful = $state(false);
 	let searchQuery = $state('');
+	let activeSection = $state<'bytecode' | 'patterns'>('bytecode');
 
 	// Filter instructions based on search and stateful filter
 	let filteredInstructions = $derived.by(() => {
@@ -145,6 +147,27 @@
 			<p class="hint">Compile code with Ctrl+Enter to see bytecode</p>
 		</div>
 	{:else}
+		<!-- Section tabs -->
+		<div class="section-tabs">
+			<button
+				class="section-tab"
+				class:active={activeSection === 'bytecode'}
+				onclick={() => (activeSection = 'bytecode')}
+			>
+				Bytecode
+			</button>
+			<button
+				class="section-tab"
+				class:active={activeSection === 'patterns'}
+				onclick={() => (activeSection = 'patterns')}
+			>
+				Patterns
+			</button>
+		</div>
+
+		{#if activeSection === 'patterns'}
+			<PatternDebugPanel />
+		{:else}
 		<!-- Summary Section -->
 		<section class="summary-section">
 			<h3>Summary</h3>
@@ -256,6 +279,7 @@
 
 		<!-- State Inspector -->
 		<StateInspector stateId={inspectedStateId} onClose={closeStateInspector} />
+		{/if}
 	{/if}
 </div>
 
@@ -269,6 +293,39 @@
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
+	}
+
+	.section-tabs {
+		display: flex;
+		gap: 2px;
+		background: var(--bg-tertiary);
+		border-radius: 6px;
+		padding: 2px;
+		flex-shrink: 0;
+	}
+
+	.section-tab {
+		flex: 1;
+		padding: 6px 12px;
+		border: none;
+		background: transparent;
+		color: var(--text-secondary);
+		font-size: 11px;
+		font-weight: 500;
+		border-radius: 4px;
+		cursor: pointer;
+		transition:
+			background 0.15s,
+			color 0.15s;
+	}
+
+	.section-tab:hover {
+		color: var(--text-primary);
+	}
+
+	.section-tab.active {
+		background: var(--bg-secondary);
+		color: var(--text-primary);
 	}
 
 	.empty-state {

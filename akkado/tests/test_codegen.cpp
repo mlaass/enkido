@@ -1144,6 +1144,80 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         // Should have 10 note events
         CHECK(total_events >= 10);
     }
+
+    SECTION("alternation with groups - groups wrapped in sub-sequences") {
+        // <[c4 e4] [g4 b4]> should alternate between the two groups as units
+        // not cycle through individual notes c4, e4, g4, b4
+        auto result = akkado::compile("pat(\"<[c4 e4] [g4 b4]>\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+        REQUIRE(seq_init->sequences.size() >= 2);
+
+        // Find the ALTERNATE sequence
+        std::size_t alt_idx = static_cast<std::size_t>(-1);
+        for (std::size_t i = 0; i < seq_init->sequences.size(); ++i) {
+            if (seq_init->sequences[i].mode == cedar::SequenceMode::ALTERNATE) {
+                alt_idx = i;
+                break;
+            }
+        }
+        REQUIRE(alt_idx != static_cast<std::size_t>(-1));
+
+        // The ALTERNATE sequence should have exactly 2 events (SUB_SEQ for each group)
+        // not 4 events (individual notes unrolled)
+        const auto& alt_events = seq_init->sequence_events[alt_idx];
+        CHECK(alt_events.size() == 2);
+
+        // Each event should be a SUB_SEQ pointing to a NORMAL sequence containing
+        // the group's notes
+        for (const auto& ev : alt_events) {
+            CHECK(ev.type == cedar::EventType::SUB_SEQ);
+        }
+    }
+
+    SECTION("choice with groups - groups wrapped in sub-sequences") {
+        // [c4 e4] | [g4 b4] should pick between the two groups as units
+        auto result = akkado::compile("pat(\"[c4 e4] | [g4 b4]\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+
+        // Find the RANDOM sequence (choice operator uses RANDOM mode)
+        std::size_t rand_idx = static_cast<std::size_t>(-1);
+        for (std::size_t i = 0; i < seq_init->sequences.size(); ++i) {
+            if (seq_init->sequences[i].mode == cedar::SequenceMode::RANDOM) {
+                rand_idx = i;
+                break;
+            }
+        }
+        REQUIRE(rand_idx != static_cast<std::size_t>(-1));
+
+        // The RANDOM sequence should have exactly 2 events (SUB_SEQ for each group)
+        const auto& rand_events = seq_init->sequence_events[rand_idx];
+        CHECK(rand_events.size() == 2);
+
+        // Each event should be a SUB_SEQ
+        for (const auto& ev : rand_events) {
+            CHECK(ev.type == cedar::EventType::SUB_SEQ);
+        }
+    }
 }
 
 // =============================================================================

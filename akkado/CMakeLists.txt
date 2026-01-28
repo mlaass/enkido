@@ -51,6 +51,7 @@ add_library(akkado STATIC
     src/codegen_params.cpp
     src/codegen_patterns.cpp
     src/chord_parser.cpp
+    src/pattern_debug.cpp
 )
 
 target_include_directories(akkado

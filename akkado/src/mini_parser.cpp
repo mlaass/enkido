@@ -422,19 +422,23 @@ NodeIndex MiniParser::parse_modifiers(NodeIndex atom) {
         }
 
         // Parse the modifier value
-        float value = 1.0f; // Default for !
+        float value = 1.0f;
         if (check(MiniTokenType::Number)) {
             advance();
             value = static_cast<float>(previous().as_number());
-        } else if (mod_type != Node::MiniModifierType::Repeat) {
-            // Only repeat (!) can omit the number (defaults to 2)
-            if (mod_type == Node::MiniModifierType::Repeat) {
-                value = 2.0f;
-            } else {
-                error("Expected number after modifier");
-            }
         } else {
-            value = 2.0f; // Default repeat count
+            // Set defaults for modifiers without explicit numbers
+            switch (mod_type) {
+                case Node::MiniModifierType::Repeat:
+                    value = 2.0f;  // ! defaults to 2 repeats
+                    break;
+                case Node::MiniModifierType::Chance:
+                    value = 0.5f;  // ? defaults to 50% chance
+                    break;
+                default:
+                    error("Expected number after modifier");
+                    break;
+            }
         }
 
         // Wrap atom in MiniModified node

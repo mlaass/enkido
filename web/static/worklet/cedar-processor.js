@@ -193,6 +193,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 			case 'inspectState':
 				this.inspectState(msg.stateId);
 				break;
+
+			case 'getPatternDebug':
+				this.getPatternDebug(msg.patternIndex);
+				break;
 		}
 	}
 
@@ -989,6 +993,52 @@ class CedarProcessor extends AudioWorkletProcessor {
 				type: 'stateInspection',
 				stateId,
 				data: null,
+				error: String(err)
+			});
+		}
+	}
+
+	/**
+	 * Get detailed pattern debug info (AST, sequences, events)
+	 * @param {number} patternIndex - Pattern index
+	 */
+	getPatternDebug(patternIndex) {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'patternDebug',
+				patternIndex,
+				success: false,
+				error: 'Module not initialized'
+			});
+			return;
+		}
+
+		try {
+			const jsonPtr = this.module._akkado_get_pattern_debug_json(patternIndex);
+			if (!jsonPtr) {
+				this.port.postMessage({
+					type: 'patternDebug',
+					patternIndex,
+					success: false,
+					error: 'Failed to get pattern debug JSON'
+				});
+				return;
+			}
+
+			const jsonStr = this.module.UTF8ToString(jsonPtr);
+			const data = JSON.parse(jsonStr);
+
+			this.port.postMessage({
+				type: 'patternDebug',
+				patternIndex,
+				success: true,
+				data
+			});
+		} catch (err) {
+			this.port.postMessage({
+				type: 'patternDebug',
+				patternIndex,
+				success: false,
 				error: String(err)
 			});
 		}

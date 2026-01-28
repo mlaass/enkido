@@ -6,6 +6,7 @@
 #include "akkado/chord_parser.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/mini_parser.hpp"
+#include "akkado/pattern_debug.hpp"
 #include <cedar/opcodes/sequence.hpp>
 #include <cmath>
 
@@ -136,6 +137,55 @@ private:
     void add_event_to_sequence(std::uint16_t seq_idx, const cedar::Event& e) {
         if (seq_idx < sequence_events_.size()) {
             sequence_events_[seq_idx].push_back(e);
+        }
+    }
+
+    // Check if a node is "compound" (produces multiple events when compiled)
+    // Such nodes need to be wrapped in a sub-sequence when added to ALTERNATE/RANDOM
+    bool is_compound_node(NodeIndex idx) const {
+        if (idx == NULL_NODE) return false;
+        const Node& n = arena_[idx];
+        // Unwrap modifiers to check the underlying node
+        if (n.type == NodeType::MiniModified) {
+            return is_compound_node(n.first_child);
+        }
+        switch (n.type) {
+            case NodeType::MiniGroup:
+            case NodeType::MiniPattern:
+            case NodeType::MiniPolyrhythm:
+            case NodeType::MiniPolymeter:
+            case NodeType::MiniEuclidean:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Compile a child into an ALTERNATE or RANDOM sequence
+    // If the child is compound, wrap it in a NORMAL sub-sequence first
+    void compile_alternate_child(NodeIndex child, std::uint16_t parent_seq_idx) {
+        if (is_compound_node(child)) {
+            // Create a NORMAL sub-sequence to hold the compound child
+            std::uint16_t sub_seq_idx = create_sub_sequence(cedar::SequenceMode::NORMAL);
+
+            std::uint16_t saved_seq_idx = current_seq_idx_;
+            current_seq_idx_ = sub_seq_idx;
+            compile_into_sequence(child, sub_seq_idx, 0.0f, 1.0f);
+            current_seq_idx_ = saved_seq_idx;
+
+            if (sequence_events_[sub_seq_idx].empty()) return;
+
+            // Add SUB_SEQ event pointing to the wrapped sequence
+            cedar::Event e;
+            e.type = cedar::EventType::SUB_SEQ;
+            e.time = 0.0f;
+            e.duration = 1.0f;
+            e.chance = 1.0f;
+            e.seq_id = sub_seq_idx;
+            add_event_to_sequence(parent_seq_idx, e);
+        } else {
+            // Simple atom - compile directly
+            compile_into_sequence(child, parent_seq_idx, 0.0f, 1.0f);
         }
     }
 
@@ -320,22 +370,18 @@ private:
         // Create a sub-sequence with ALTERNATE mode
         std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::ALTERNATE);
 
-        // Track sequence index for sample mappings
-        std::uint16_t saved_seq_idx = current_seq_idx_;
-        current_seq_idx_ = new_seq_idx;
-
-        // Add each child as a separate event in the alternate sequence
+        // Add each child as an event in the alternate sequence
+        // Compound children (groups, patterns, etc.) are wrapped in NORMAL sub-sequences
+        // so <[a b] [c d]> alternates between groups, not individual elements
         // Support !N repeat modifier: <a!3 b> becomes 4 choices (a, a, a, b)
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
             int repeat = get_node_repeat(child);
             for (int i = 0; i < repeat; ++i) {
-                compile_into_sequence(child, new_seq_idx, 0.0f, 1.0f);
+                compile_alternate_child(child, new_seq_idx);
             }
             child = arena_[child].next_sibling;
         }
-
-        current_seq_idx_ = saved_seq_idx;
 
         if (sequence_events_[new_seq_idx].empty()) return;
 
@@ -355,22 +401,18 @@ private:
         // Create a sub-sequence with RANDOM mode
         std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::RANDOM);
 
-        // Track sequence index for sample mappings
-        std::uint16_t saved_seq_idx = current_seq_idx_;
-        current_seq_idx_ = new_seq_idx;
-
-        // Add each child as a separate event
+        // Add each child as an event in the random sequence
+        // Compound children (groups, patterns, etc.) are wrapped in NORMAL sub-sequences
+        // so [a b] | [c d] picks between groups, not individual elements
         // Support !N repeat modifier: a!3 | b becomes 4 choices (a, a, a, b)
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
             int repeat = get_node_repeat(child);
             for (int i = 0; i < repeat; ++i) {
-                compile_into_sequence(child, new_seq_idx, 0.0f, 1.0f);
+                compile_alternate_child(child, new_seq_idx);
             }
             child = arena_[child].next_sibling;
         }
-
-        current_seq_idx_ = saved_seq_idx;
 
         if (sequence_events_[new_seq_idx].empty()) return;
 
@@ -709,6 +751,7 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     seq_init.is_sample_pattern = is_sample_pattern;
     seq_init.pattern_location = pattern.location;  // Store pattern content location for UI
     seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
+    seq_init.ast_json = serialize_mini_ast_json(pattern_node, ast_->arena);  // Serialize AST for debug UI
     state_inits_.push_back(std::move(seq_init));
 
     std::uint16_t result_buf = value_buf;

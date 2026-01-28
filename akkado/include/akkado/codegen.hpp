@@ -85,6 +85,9 @@ struct StateInitData {
 
     // Pattern string location in document (for UI highlighting)
     SourceLocation pattern_location;  // Document offset of pattern string
+
+    // AST JSON (serialized during compilation for debug UI)
+    std::string ast_json;
 };
 
 /// Result of code generation
