@@ -205,6 +205,9 @@
 		gap: var(--spacing-md);
 		padding: var(--spacing-sm);
 		font-size: 12px;
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
 	}
 
 	.empty-state {
@@ -325,6 +328,11 @@
 	}
 
 	/* Instructions Section */
+	.instructions-section {
+		flex: 1;
+		min-height: 0;
+	}
+
 	.instructions-header {
 		display: flex;
 		justify-content: space-between;
@@ -359,6 +367,10 @@
 
 	/* Instructions Table */
 	.instructions-table {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-height: 0;
 		border: 1px solid var(--border-muted);
 		border-radius: 6px;
 		overflow: hidden;
@@ -375,7 +387,8 @@
 	}
 
 	.table-body {
-		max-height: 300px;
+		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 	}
 
