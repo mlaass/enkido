@@ -4,6 +4,9 @@
 #include "../opcodes/dsp_state.hpp"
 #include <array>
 #include <cstdint>
+#include <sstream>
+#include <string>
+#include <iomanip>
 
 namespace cedar {
 
@@ -208,6 +211,278 @@ public:
             if (fading_states_[i].occupied) ++count;
         }
         return count;
+    }
+
+    // =========================================================================
+    // State Inspection (for debug UI)
+    // =========================================================================
+
+    /**
+     * Inspect state by ID, returning JSON representation.
+     * Returns empty string if state not found.
+     */
+    [[nodiscard]] std::string inspect_state_json(std::uint32_t state_id) const {
+        std::size_t idx = find_slot(state_id);
+        if (idx == INVALID_SLOT) {
+            return "";
+        }
+
+        const auto& entry = states_[idx];
+        if (!entry.occupied) {
+            return "";
+        }
+
+        std::ostringstream json;
+        json << std::fixed << std::setprecision(6);
+
+        std::visit([&json](auto&& state) {
+            using T = std::decay_t<decltype(state)>;
+
+            if constexpr (std::is_same_v<T, std::monostate>) {
+                json << R"({"type":"none"})";
+            }
+            else if constexpr (std::is_same_v<T, OscState>) {
+                json << R"({"type":"OscState")";
+                json << R"(,"phase":)" << state.phase;
+                json << R"(,"prev_phase":)" << state.prev_phase;
+                json << R"(,"initialized":)" << (state.initialized ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, MinBLEPOscState>) {
+                json << R"({"type":"MinBLEPOscState")";
+                json << R"(,"phase":)" << state.phase;
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"initialized":)" << (state.initialized ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SVFState>) {
+                json << R"({"type":"SVFState")";
+                json << R"(,"ic1eq":)" << state.ic1eq;
+                json << R"(,"ic2eq":)" << state.ic2eq;
+                json << R"(,"g":)" << state.g;
+                json << R"(,"k":)" << state.k;
+                json << R"(,"last_freq":)" << state.last_freq;
+                json << R"(,"last_q":)" << state.last_q;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, NoiseState>) {
+                json << R"({"type":"NoiseState")";
+                json << R"(,"seed":)" << state.seed;
+                json << R"(,"phase":)" << state.phase;
+                json << R"(,"current_value":)" << state.current_value;
+                json << R"(,"initialized":)" << (state.initialized ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SlewState>) {
+                json << R"({"type":"SlewState")";
+                json << R"(,"current":)" << state.current;
+                json << R"(,"initialized":)" << (state.initialized ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SAHState>) {
+                json << R"({"type":"SAHState")";
+                json << R"(,"held_value":)" << state.held_value;
+                json << R"(,"prev_trigger":)" << state.prev_trigger;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, DelayState>) {
+                json << R"({"type":"DelayState")";
+                json << R"(,"buffer_size":)" << state.buffer_size;
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, EnvState>) {
+                json << R"({"type":"EnvState")";
+                json << R"(,"level":)" << state.level;
+                json << R"(,"stage":)" << static_cast<int>(state.stage);
+                json << R"(,"time_in_stage":)" << state.time_in_stage;
+                json << R"(,"prev_gate":)" << state.prev_gate;
+                json << R"(,"release_level":)" << state.release_level;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, LFOState>) {
+                json << R"({"type":"LFOState")";
+                json << R"(,"prev_phase":)" << state.prev_phase;
+                json << R"(,"prev_value":)" << state.prev_value;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SeqStepState>) {
+                json << R"({"type":"SeqStepState")";
+                json << R"(,"num_events":)" << state.num_events;
+                json << R"(,"cycle_length":)" << state.cycle_length;
+                json << R"(,"current_index":)" << state.current_index;
+                json << R"(,"last_beat_pos":)" << state.last_beat_pos;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, EuclidState>) {
+                json << R"({"type":"EuclidState")";
+                json << R"(,"prev_step":)" << state.prev_step;
+                json << R"(,"pattern":)" << state.pattern;
+                json << R"(,"last_hits":)" << state.last_hits;
+                json << R"(,"last_steps":)" << state.last_steps;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, TriggerState>) {
+                json << R"({"type":"TriggerState")";
+                json << R"(,"prev_phase":)" << state.prev_phase;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, TimelineState>) {
+                json << R"({"type":"TimelineState")";
+                json << R"(,"num_points":)" << state.num_points;
+                json << R"(,"loop":)" << (state.loop ? "true" : "false");
+                json << R"(,"loop_length":)" << state.loop_length;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SequenceState>) {
+                json << R"({"type":"SequenceState")";
+                json << R"(,"num_sequences":)" << state.num_sequences;
+                json << R"(,"cycle_length":)" << state.cycle_length;
+                json << R"(,"current_index":)" << state.current_index;
+                json << R"(,"last_beat_pos":)" << state.last_beat_pos;
+                json << R"(,"is_sample_pattern":)" << (state.is_sample_pattern ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, MoogState>) {
+                json << R"({"type":"MoogState")";
+                json << R"(,"stage":[)" << state.stage[0] << "," << state.stage[1] << ","
+                     << state.stage[2] << "," << state.stage[3] << "]";
+                json << R"(,"g":)" << state.g;
+                json << R"(,"k":)" << state.k;
+                json << R"(,"last_freq":)" << state.last_freq;
+                json << R"(,"last_res":)" << state.last_res;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, DiodeState>) {
+                json << R"({"type":"DiodeState")";
+                json << R"(,"cap":[)" << state.cap[0] << "," << state.cap[1] << ","
+                     << state.cap[2] << "," << state.cap[3] << "]";
+                json << R"(,"g":)" << state.g;
+                json << R"(,"k":)" << state.k;
+                json << R"(,"last_freq":)" << state.last_freq;
+                json << R"(,"last_res":)" << state.last_res;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, FormantState>) {
+                json << R"({"type":"FormantState")";
+                json << R"(,"f1":)" << state.f1;
+                json << R"(,"f2":)" << state.f2;
+                json << R"(,"f3":)" << state.f3;
+                json << R"(,"last_morph":)" << state.last_morph;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SallenkeyState>) {
+                json << R"({"type":"SallenkeyState")";
+                json << R"(,"cap1":)" << state.cap1;
+                json << R"(,"cap2":)" << state.cap2;
+                json << R"(,"g":)" << state.g;
+                json << R"(,"k":)" << state.k;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, BitcrushState>) {
+                json << R"({"type":"BitcrushState")";
+                json << R"(,"held_sample":)" << state.held_sample;
+                json << R"(,"phase":)" << state.phase;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SmoothSatState>) {
+                json << R"({"type":"SmoothSatState")";
+                json << R"(,"x_prev":)" << state.x_prev;
+                json << R"(,"ad_prev":)" << state.ad_prev;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, FoldADAAState>) {
+                json << R"({"type":"FoldADAAState")";
+                json << R"(,"x_prev":)" << state.x_prev;
+                json << R"(,"ad_prev":)" << state.ad_prev;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, TubeState> || std::is_same_v<T, TapeState> ||
+                               std::is_same_v<T, XfmrState> || std::is_same_v<T, ExciterState>) {
+                json << R"({"type":"OversamplingSatState")";
+                json << R"(,"os_idx":)" << state.os_idx;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, CombFilterState>) {
+                json << R"({"type":"CombFilterState")";
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"filter_state":)" << state.filter_state;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, FlangerState>) {
+                json << R"({"type":"FlangerState")";
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"lfo_phase":)" << state.lfo_phase;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, ChorusState>) {
+                json << R"({"type":"ChorusState")";
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"lfo_phase":)" << state.lfo_phase;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, PhaserState>) {
+                json << R"({"type":"PhaserState")";
+                json << R"(,"lfo_phase":)" << state.lfo_phase;
+                json << R"(,"last_output":)" << state.last_output;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, SamplerState>) {
+                // Count active voices
+                int active_voices = 0;
+                for (std::size_t i = 0; i < SamplerState::MAX_VOICES; ++i) {
+                    if (state.voices[i].active) ++active_voices;
+                }
+                json << R"({"type":"SamplerState")";
+                json << R"(,"active_voices":)" << active_voices;
+                json << R"(,"prev_trigger":)" << state.prev_trigger;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, CompressorState>) {
+                json << R"({"type":"CompressorState")";
+                json << R"(,"envelope":)" << state.envelope;
+                json << R"(,"gain_reduction":)" << state.gain_reduction;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, LimiterState>) {
+                json << R"({"type":"LimiterState")";
+                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"gain":)" << state.gain;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, GateState>) {
+                json << R"({"type":"GateState")";
+                json << R"(,"envelope":)" << state.envelope;
+                json << R"(,"gain":)" << state.gain;
+                json << R"(,"is_open":)" << (state.is_open ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, FreeverbState>) {
+                json << R"({"type":"FreeverbState")";
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, DattorroState>) {
+                json << R"({"type":"DattorroState")";
+                json << R"(,"mod_phase":)" << state.mod_phase;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, FDNState>) {
+                json << R"({"type":"FDNState")";
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, OscState2x> || std::is_same_v<T, OscState4x>) {
+                json << R"({"type":"OscStateOversampled")";
+                json << R"(,"phase":)" << state.osc.phase;
+                json << R"(,"prev_phase":)" << state.osc.prev_phase;
+                json << R"(,"initialized":)" << (state.osc.initialized ? "true" : "false");
+                json << "}";
+            }
+            else {
+                json << R"({"type":"Unknown"})";
+            }
+        }, entry.state);
+
+        return json.str();
     }
 
     // =========================================================================

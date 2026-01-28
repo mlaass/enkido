@@ -784,6 +784,14 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
 
     pop_path();
     node_buffers_[node] = result_buf;
+
+    // Store pattern field buffers for %.field access
+    std::unordered_map<std::string, std::uint16_t> pattern_fields;
+    pattern_fields["freq"] = value_buf;
+    pattern_fields["vel"] = velocity_buf;
+    pattern_fields["trig"] = trigger_buf;
+    record_fields_[node] = std::move(pattern_fields);
+
     return result_buf;
 }
 
@@ -869,6 +877,14 @@ std::uint16_t CodeGenerator::handle_sample_pattern(NodeIndex node, const Node& n
 
     pop_path();
     node_buffers_[node] = output_buf;
+
+    // Store pattern field buffers for %.field access
+    std::unordered_map<std::string, std::uint16_t> pattern_fields;
+    pattern_fields["freq"] = sample_id_buf;  // sample patterns use sample_id as "freq"
+    pattern_fields["vel"] = velocity_buf;
+    pattern_fields["trig"] = trigger_buf;
+    record_fields_[node] = std::move(pattern_fields);
+
     return output_buf;
 }
 
@@ -957,6 +973,14 @@ std::uint16_t CodeGenerator::handle_pitch_pattern(NodeIndex node, const Node& n,
 
     pop_path();
     node_buffers_[node] = result_buf;
+
+    // Store pattern field buffers for %.field access
+    std::unordered_map<std::string, std::uint16_t> pattern_fields;
+    pattern_fields["freq"] = pitch_buf;
+    pattern_fields["vel"] = velocity_buf;
+    pattern_fields["trig"] = trigger_buf;
+    record_fields_[node] = std::move(pattern_fields);
+
     return result_buf;
 }
 

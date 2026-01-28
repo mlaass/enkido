@@ -3,6 +3,7 @@
 #include "builtins.hpp"
 #include "ast.hpp"
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -44,6 +45,7 @@ enum class SymbolKind : std::uint8_t {
     Pattern,        // Pattern variable (pat(), seq(), etc.)
     Array,          // Array value
     FunctionValue,  // Function as value (lambda or fn reference)
+    Record,         // Record value (structured data with named fields)
 };
 
 /// Information about a pattern variable
@@ -74,6 +76,41 @@ struct FunctionRef {
     std::string user_function_name;              // For user functions
 };
 
+/// Information about a record field
+struct RecordFieldInfo {
+    std::string name;                            // Field name
+    std::uint16_t buffer_index;                  // Buffer index for this field's value
+    SymbolKind field_kind;                       // Kind of value (Variable, Record, etc.)
+    // For nested records, we store the nested type info
+    std::shared_ptr<struct RecordTypeInfo> nested_record_type;
+};
+
+/// Information about a record type
+struct RecordTypeInfo {
+    std::vector<RecordFieldInfo> fields;         // Field definitions in declaration order
+    NodeIndex source_node;                       // Original RecordLit node
+
+    /// Find a field by name, returns nullptr if not found
+    const RecordFieldInfo* find_field(std::string_view name) const {
+        for (const auto& field : fields) {
+            if (field.name == name) {
+                return &field;
+            }
+        }
+        return nullptr;
+    }
+
+    /// Get list of all field names (for error messages)
+    std::vector<std::string> field_names() const {
+        std::vector<std::string> names;
+        names.reserve(fields.size());
+        for (const auto& field : fields) {
+            names.push_back(field.name);
+        }
+        return names;
+    }
+};
+
 /// Symbol entry in the symbol table
 struct Symbol {
     SymbolKind kind;
@@ -95,6 +132,9 @@ struct Symbol {
 
     // Only valid if kind == FunctionValue
     FunctionRef function_ref;
+
+    // Only valid if kind == Record
+    std::shared_ptr<RecordTypeInfo> record_type;
 };
 
 /// Scoped symbol table with lexical scoping
@@ -132,6 +172,9 @@ public:
 
     /// Define a function value (lambda or fn reference)
     bool define_function_value(std::string_view name, const FunctionRef& func_ref);
+
+    /// Define a record variable
+    bool define_record(std::string_view name, std::shared_ptr<RecordTypeInfo> record_type);
 
     /// Lookup a symbol by name (searches all scopes, innermost first)
     [[nodiscard]] std::optional<Symbol> lookup(std::string_view name) const;

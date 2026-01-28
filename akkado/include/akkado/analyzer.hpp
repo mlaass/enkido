@@ -55,6 +55,11 @@ private:
     // Helper: Substitute all holes (%) with a replacement node
     NodeIndex substitute_holes(NodeIndex node, NodeIndex replacement);
 
+    // Helper: Substitute holes AND identifiers matching a binding name
+    // Used for 'as' bindings in pipes: expr as name |> ...
+    NodeIndex substitute_holes_and_binding(NodeIndex node, NodeIndex replacement,
+                                           const std::string& binding_name);
+
     // Helper: Substitute holes AND a specific identifier node with replacement
     // Used for pipe-to-lambda transformation where the identifier becomes the param
     NodeIndex substitute_holes_and_identifier(NodeIndex node, NodeIndex replacement,

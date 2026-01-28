@@ -33,6 +33,14 @@ export interface ParamDecl {
 	sourceLength: number;
 }
 
+// Source location for bytecode-to-source mapping
+export interface SourceLocation {
+	line: number;
+	column: number;
+	offset: number;
+	length: number;
+}
+
 // Disassembly info for debug panel
 interface DisassemblyInstruction {
 	index: number;
@@ -43,6 +51,7 @@ interface DisassemblyInstruction {
 	stateId: number;
 	rate: number;
 	stateful: boolean;
+	source?: SourceLocation;
 }
 
 interface DisassemblySummary {
@@ -106,6 +115,12 @@ interface PatternEvent {
 
 export type { PatternInfo, PatternEvent };
 
+// State inspection types
+export interface StateInspection {
+	type: string;
+	[key: string]: unknown;
+}
+
 interface AudioState {
 	isPlaying: boolean;
 	bpm: number;
@@ -164,6 +179,7 @@ function createAudioEngine() {
 	let patternPreviewResolve: ((events: PatternEvent[]) => void) | null = null;
 	let beatPositionResolve: ((position: number) => void) | null = null;
 	let activeStepsResolve: ((steps: Record<number, { offset: number; length: number }>) => void) | null = null;
+	let stateInspectionResolve: ((data: StateInspection | null) => void) | null = null;
 
 	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
@@ -356,6 +372,13 @@ function createAudioEngine() {
 				if (activeStepsResolve) {
 					activeStepsResolve(msg.steps as Record<number, { offset: number; length: number }>);
 					activeStepsResolve = null;
+				}
+				break;
+			}
+			case 'stateInspection': {
+				if (stateInspectionResolve) {
+					stateInspectionResolve(msg.data as StateInspection | null);
+					stateInspectionResolve = null;
 				}
 				break;
 			}
@@ -1076,6 +1099,28 @@ function createAudioEngine() {
 		});
 	}
 
+	/**
+	 * Inspect state by ID, returning JSON representation of state fields
+	 * @param stateId State ID (32-bit FNV-1a hash)
+	 * @returns State inspection data or null if not found
+	 */
+	async function inspectState(stateId: number): Promise<StateInspection | null> {
+		if (!workletNode) {
+			return null;
+		}
+
+		return new Promise((resolve) => {
+			stateInspectionResolve = resolve;
+			setTimeout(() => {
+				if (stateInspectionResolve === resolve) {
+					stateInspectionResolve = null;
+					resolve(null);
+				}
+			}, 100);
+			workletNode!.port.postMessage({ type: 'inspectState', stateId });
+		});
+	}
+
 	return {
 		get isPlaying() { return state.isPlaying; },
 		get bpm() { return state.bpm; },
@@ -1129,7 +1174,9 @@ function createAudioEngine() {
 		getPatternInfo,
 		queryPatternPreview,
 		getCurrentBeatPosition,
-		getActiveSteps
+		getActiveSteps,
+		// State inspection API
+		inspectState
 	};
 }
 

@@ -90,6 +90,7 @@ struct StateInitData {
 /// Result of code generation
 struct CodeGenResult {
     std::vector<cedar::Instruction> instructions;
+    std::vector<SourceLocation> source_locations;  // Parallel to instructions, tracks origin
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data
     std::vector<std::string> required_samples;  // Unique sample names used
@@ -275,10 +276,12 @@ private:
     SampleRegistry* sample_registry_ = nullptr;
     BufferAllocator buffers_;
     std::vector<cedar::Instruction> instructions_;
+    std::vector<SourceLocation> source_locations_;  // Parallel to instructions_
     std::vector<Diagnostic> diagnostics_;
     std::vector<StateInitData> state_inits_;  // State initialization data
     std::vector<ParamDecl> param_decls_;      // Declared parameters
     std::string filename_;
+    SourceLocation current_source_loc_;  // Current source location for emitted instructions
 
     // Semantic path tracking for state_id generation
     std::vector<std::string> path_stack_;
@@ -362,6 +365,32 @@ private:
 
     /// Handle repeat(value, n) call - repeat value n times
     std::uint16_t handle_repeat_call(NodeIndex node, const Node& n);
+
+    // ============================================================================
+    // Record support
+    // ============================================================================
+
+    /// Handle record literal nodes - expand to multiple buffers
+    /// @param node The RecordLit node
+    /// @param n The Node reference
+    /// @return First buffer index (for single-buffer compatibility)
+    std::uint16_t handle_record_literal(NodeIndex node, const Node& n);
+
+    /// Handle field access nodes - resolve to correct field buffer
+    /// @param node The FieldAccess node
+    /// @param n The Node reference
+    /// @return Buffer index of the accessed field
+    std::uint16_t handle_field_access(NodeIndex node, const Node& n);
+
+    /// Handle pipe binding nodes - create buffer alias for named binding
+    /// @param node The PipeBinding node
+    /// @param n The Node reference
+    /// @return Buffer index of the bound expression
+    std::uint16_t handle_pipe_binding(NodeIndex node, const Node& n);
+
+    // Map from record node to field name -> buffer index
+    // Used to track field buffers for record literals
+    std::unordered_map<NodeIndex, std::unordered_map<std::string, std::uint16_t>> record_fields_;
 
     /// Apply a binary function reference to two buffer arguments
     /// @param ref The function reference containing closure/body info

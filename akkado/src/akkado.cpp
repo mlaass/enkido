@@ -131,6 +131,15 @@ CompileResult compile(std::string_view source, std::string_view filename,
     std::memcpy(result.bytecode.data(), gen.instructions.data(),
                 result.bytecode.size());
 
+    // Copy source locations for bytecode-to-source mapping, adjusting offsets for stdlib
+    result.source_locations = std::move(gen.source_locations);
+    for (auto& loc : result.source_locations) {
+        if (loc.offset >= stdlib_byte_offset) {
+            loc.offset -= static_cast<std::uint32_t>(stdlib_byte_offset);
+            loc.line -= static_cast<std::uint32_t>(STDLIB_LINE_COUNT);
+        }
+    }
+
     // Copy state initializations for patterns, adjusting offsets for stdlib
     result.state_inits = std::move(gen.state_inits);
     for (auto& init : result.state_inits) {

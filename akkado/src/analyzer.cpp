@@ -74,6 +74,28 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 elem = (*input_ast_).arena[elem].next_sibling;
             }
             symbols_.define_array(name, arr_info);
+        } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::RecordLit) {
+            // Record assignment - collect field names and register as Record symbol
+            auto record_type = std::make_shared<RecordTypeInfo>();
+            record_type->source_node = rhs;
+
+            // Collect field names from RecordLit children (each is an Argument with RecordFieldData)
+            NodeIndex field_node = (*input_ast_).arena[rhs].first_child;
+            while (field_node != NULL_NODE) {
+                const Node& field = (*input_ast_).arena[field_node];
+                if (field.type == NodeType::Argument &&
+                    std::holds_alternative<Node::RecordFieldData>(field.data)) {
+                    const auto& field_data = field.as_record_field();
+                    RecordFieldInfo field_info;
+                    field_info.name = field_data.name;
+                    field_info.buffer_index = 0xFFFF;  // Will be set during codegen
+                    field_info.field_kind = SymbolKind::Variable;  // Default, may be updated
+                    record_type->fields.push_back(std::move(field_info));
+                }
+                field_node = (*input_ast_).arena[field_node].next_sibling;
+            }
+
+            symbols_.define_record(name, record_type);
         } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::Closure) {
             // Lambda assignment - register as FunctionValue
             FunctionRef func_ref{};
@@ -215,9 +237,22 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
             return NULL_NODE;
         }
 
+        // Handle PipeBinding on LHS: expr as name |> ...
+        // This creates a named binding visible in the RHS
+        std::string binding_name;
+        NodeIndex actual_lhs = lhs_idx;
+
+        const Node& lhs_node = (*input_ast_).arena[lhs_idx];
+        if (lhs_node.type == NodeType::PipeBinding) {
+            const auto& binding_data = lhs_node.as_pipe_binding();
+            binding_name = binding_data.binding_name;
+            // Get the actual expression inside the binding
+            actual_lhs = lhs_node.first_child;
+        }
+
         // Check if innermost LHS is an unbound identifier -> create closure
         // Walk down nested pipes to find the innermost LHS
-        NodeIndex innermost_lhs = lhs_idx;
+        NodeIndex innermost_lhs = actual_lhs;
         while (innermost_lhs != NULL_NODE &&
                (*input_ast_).arena[innermost_lhs].type == NodeType::Pipe) {
             innermost_lhs = (*input_ast_).arena[innermost_lhs].first_child;
@@ -241,13 +276,20 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
             }
         }
 
-        // First, recursively rewrite the LHS (may contain nested pipes)
-        NodeIndex new_lhs = rewrite_pipes(lhs_idx);
+        // First, recursively rewrite the actual LHS (may contain nested pipes)
+        NodeIndex new_lhs = rewrite_pipes(actual_lhs);
 
         // Now substitute all holes in RHS with the LHS value
         // This performs: a |> f(%) -> f(a)
-        // substitute_holes also handles any nested pipes in the RHS
-        NodeIndex new_rhs = substitute_holes(rhs_idx, new_lhs);
+        // Also substitute binding name references with the LHS value
+        NodeIndex new_rhs;
+        if (!binding_name.empty()) {
+            // Substitute both holes and binding name references
+            new_rhs = substitute_holes_and_binding(rhs_idx, new_lhs, binding_name);
+        } else {
+            // substitute_holes also handles any nested pipes in the RHS
+            new_rhs = substitute_holes(rhs_idx, new_lhs);
+        }
 
         // Track mapping so function/closure bodies pointing to this pipe get updated
         node_map_[node] = new_rhs;
@@ -339,6 +381,18 @@ NodeIndex SemanticAnalyzer::substitute_holes(NodeIndex node, NodeIndex replaceme
     // If this is a hole, return the replacement node
     // (For MVP, multiple holes share the same replacement node)
     if (n.type == NodeType::Hole) {
+        // Check for hole with field access: %.field
+        if (std::holds_alternative<Node::HoleData>(n.data)) {
+            const auto& hole_data = n.as_hole();
+            if (hole_data.field_name.has_value()) {
+                // Create FieldAccess node: replacement.field
+                NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
+                output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
+                NodeIndex cloned_replacement = clone_subtree(replacement);
+                output_arena_[field_access].first_child = cloned_replacement;
+                return field_access;
+            }
+        }
         return replacement;
     }
 
@@ -415,6 +469,97 @@ bool SemanticAnalyzer::contains_hole(NodeIndex node) const {
     return false;
 }
 
+// Helper for as-binding: substitute holes AND identifiers matching binding_name
+NodeIndex SemanticAnalyzer::substitute_holes_and_binding(
+    NodeIndex node, NodeIndex replacement, const std::string& binding_name) {
+
+    if (node == NULL_NODE) return NULL_NODE;
+
+    const Node& n = (*input_ast_).arena[node];
+
+    // If this is a hole, return the replacement node
+    if (n.type == NodeType::Hole) {
+        // Check for hole with field access: %.field
+        if (std::holds_alternative<Node::HoleData>(n.data)) {
+            const auto& hole_data = n.as_hole();
+            if (hole_data.field_name.has_value()) {
+                // Create FieldAccess node: replacement.field
+                NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
+                output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
+                NodeIndex cloned_replacement = clone_subtree(replacement);
+                output_arena_[field_access].first_child = cloned_replacement;
+                return field_access;
+            }
+        }
+        // Clone the replacement to create a fresh copy
+        return clone_subtree(replacement);
+    }
+
+    // If this is an identifier matching the binding name, substitute it
+    if (n.type == NodeType::Identifier) {
+        std::string name;
+        if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+            name = n.as_identifier();
+        }
+        if (name == binding_name) {
+            // Clone the replacement to create a fresh copy
+            return clone_subtree(replacement);
+        }
+    }
+
+    // Handle nested pipes - they need to be rewritten
+    if (n.type == NodeType::Pipe) {
+        NodeIndex src_lhs = n.first_child;
+        NodeIndex src_rhs = (src_lhs != NULL_NODE) ?
+                            (*input_ast_).arena[src_lhs].next_sibling : NULL_NODE;
+
+        // Substitute binding references in the LHS
+        NodeIndex new_lhs = substitute_holes_and_binding(src_lhs, replacement, binding_name);
+
+        // Substitute holes in the RHS using the new LHS as replacement
+        // But also substitute binding name references
+        NodeIndex new_rhs = substitute_holes_and_binding(src_rhs, new_lhs, binding_name);
+
+        // Track mapping
+        node_map_[node] = new_rhs;
+
+        return new_rhs;
+    }
+
+    // For other nodes, clone and recurse on children
+    NodeIndex new_node = clone_node(node);
+
+    // Handle MatchArm guard_node specially
+    if (n.type == NodeType::MatchArm) {
+        const auto& arm_data = n.as_match_arm();
+        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
+            NodeIndex new_guard = substitute_holes_and_binding(arm_data.guard_node, replacement, binding_name);
+            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[new_node].data);
+            dst_data.guard_node = new_guard;
+        }
+    }
+
+    NodeIndex src_child = n.first_child;
+    NodeIndex prev_dst_child = NULL_NODE;
+
+    while (src_child != NULL_NODE) {
+        NodeIndex dst_child = substitute_holes_and_binding(src_child, replacement, binding_name);
+
+        if (dst_child != NULL_NODE) {
+            if (prev_dst_child == NULL_NODE) {
+                output_arena_[new_node].first_child = dst_child;
+            } else {
+                output_arena_[prev_dst_child].next_sibling = dst_child;
+            }
+            prev_dst_child = dst_child;
+        }
+
+        src_child = (*input_ast_).arena[src_child].next_sibling;
+    }
+
+    return new_node;
+}
+
 // Helper for pipe-to-lambda: substitute holes AND a specific identifier
 NodeIndex SemanticAnalyzer::substitute_holes_and_identifier(
     NodeIndex node, NodeIndex replacement, NodeIndex identifier_to_replace) {
@@ -425,6 +570,18 @@ NodeIndex SemanticAnalyzer::substitute_holes_and_identifier(
 
     // If this is a hole, return the replacement node
     if (n.type == NodeType::Hole) {
+        // Check for hole with field access: %.field
+        if (std::holds_alternative<Node::HoleData>(n.data)) {
+            const auto& hole_data = n.as_hole();
+            if (hole_data.field_name.has_value()) {
+                // Create FieldAccess node: replacement.field
+                NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
+                output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
+                NodeIndex cloned_replacement = clone_subtree(replacement);
+                output_arena_[field_access].first_child = cloned_replacement;
+                return field_access;
+            }
+        }
         return replacement;
     }
 
@@ -722,6 +879,121 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         }
         // FunctionValue and UserFunction can be used as values
         // (already allowed by symbol table lookup)
+    }
+
+    if (n.type == NodeType::FieldAccess) {
+        // Validate field access: check that field exists on the record type
+        const auto& field_data = n.as_field_access();
+        const std::string& field_name = field_data.field_name;
+
+        // Get the expression being accessed (first child)
+        NodeIndex expr = n.first_child;
+        if (expr != NULL_NODE) {
+            // First, validate the expression
+            resolve_and_validate(expr);
+
+            // Try to determine the type of the expression and validate field access
+            // For MVP, we only validate field access on direct identifier references to records
+            const Node& expr_node = output_arena_[expr];
+            if (expr_node.type == NodeType::Identifier) {
+                std::string expr_name;
+                if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
+                    expr_name = expr_node.as_identifier();
+                }
+                if (!expr_name.empty()) {
+                    auto sym = symbols_.lookup(expr_name);
+                    if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+                        // Check if field exists
+                        const auto* field = sym->record_type->find_field(field_name);
+                        if (!field) {
+                            // Build list of available fields for error message
+                            std::string available;
+                            auto field_names = sym->record_type->field_names();
+                            for (size_t i = 0; i < field_names.size(); ++i) {
+                                if (i > 0) available += ", ";
+                                available += field_names[i];
+                            }
+                            error("E060", "Unknown field '" + field_name + "' on record. Available: " + available, n.location);
+                        }
+                    } else if (sym && sym->kind != SymbolKind::Record) {
+                        error("E061", "Cannot access field '" + field_name + "' on non-record value", n.location);
+                    }
+                }
+            }
+            // For nested field access (e.g., a.b.c) or complex expressions,
+            // we skip validation for MVP - codegen will catch errors
+        }
+        return;  // Already validated child
+    }
+
+    if (n.type == NodeType::PipeBinding) {
+        // Pipe binding creates a scoped symbol for the bound name
+        const auto& binding_data = n.as_pipe_binding();
+        const std::string& binding_name = binding_data.binding_name;
+
+        // Define the binding in current scope (it will be visible in subsequent pipe stages)
+        // The actual type will be determined based on the expression being bound
+        NodeIndex bound_expr = n.first_child;
+        if (bound_expr != NULL_NODE) {
+            resolve_and_validate(bound_expr);
+
+            // Try to determine the type of the bound expression and propagate it
+            const Node& expr_node = output_arena_[bound_expr];
+            if (expr_node.type == NodeType::Identifier) {
+                std::string expr_name;
+                if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
+                    expr_name = expr_node.as_identifier();
+                }
+                auto sym = symbols_.lookup(expr_name);
+                if (sym) {
+                    // Create a new symbol for the binding with the same type
+                    if (sym->kind == SymbolKind::Record && sym->record_type) {
+                        symbols_.define_record(binding_name, sym->record_type);
+                    } else {
+                        symbols_.define_variable(binding_name, 0xFFFF);
+                    }
+                } else {
+                    symbols_.define_variable(binding_name, 0xFFFF);
+                }
+            } else if (expr_node.type == NodeType::RecordLit) {
+                // Inline record literal - create record type from it
+                auto record_type = std::make_shared<RecordTypeInfo>();
+                record_type->source_node = bound_expr;
+
+                NodeIndex field_node = expr_node.first_child;
+                while (field_node != NULL_NODE) {
+                    const Node& field = output_arena_[field_node];
+                    if (field.type == NodeType::Argument &&
+                        std::holds_alternative<Node::RecordFieldData>(field.data)) {
+                        const auto& field_data = field.as_record_field();
+                        RecordFieldInfo field_info;
+                        field_info.name = field_data.name;
+                        field_info.buffer_index = 0xFFFF;
+                        field_info.field_kind = SymbolKind::Variable;
+                        record_type->fields.push_back(std::move(field_info));
+                    }
+                    field_node = output_arena_[field_node].next_sibling;
+                }
+                symbols_.define_record(binding_name, record_type);
+            } else {
+                // For other expression types, treat as a simple variable
+                symbols_.define_variable(binding_name, 0xFFFF);
+            }
+        }
+        return;  // Already validated child
+    }
+
+    if (n.type == NodeType::Hole) {
+        // Check for hole with field access (%.field)
+        if (std::holds_alternative<Node::HoleData>(n.data)) {
+            const auto& hole_data = n.as_hole();
+            if (hole_data.field_name.has_value()) {
+                // This is %.field - validation happens at the pipe level
+                // For MVP, we just note this and let codegen handle it
+                // A proper implementation would check that we're in a pattern pipe context
+            }
+        }
+        // Regular holes are validated elsewhere (E003 for holes outside pipes)
     }
 
     if (n.type == NodeType::Closure) {

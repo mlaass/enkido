@@ -964,3 +964,197 @@ TEST_CASE("Parser function definitions", "[parser]") {
         CHECK(ast.arena[fn2].as_function_def().name == "bar");
     }
 }
+
+// ============================================================================
+// Record and field access tests
+// ============================================================================
+
+TEST_CASE("Parser record literals", "[parser][records]") {
+    SECTION("simple record literal") {
+        auto ast = parse_ok("{x: 1, y: 2}");
+        NodeIndex root = ast.root;
+        NodeIndex child = ast.arena[root].first_child;
+        REQUIRE(child != NULL_NODE);
+        REQUIRE(ast.arena[child].type == NodeType::RecordLit);
+
+        // Check fields
+        NodeIndex field1 = ast.arena[child].first_child;
+        REQUIRE(field1 != NULL_NODE);
+        REQUIRE(ast.arena[field1].type == NodeType::Argument);
+        REQUIRE(std::holds_alternative<Node::RecordFieldData>(ast.arena[field1].data));
+        CHECK(ast.arena[field1].as_record_field().name == "x");
+        CHECK_FALSE(ast.arena[field1].as_record_field().is_shorthand);
+
+        NodeIndex field2 = ast.arena[field1].next_sibling;
+        REQUIRE(field2 != NULL_NODE);
+        CHECK(ast.arena[field2].as_record_field().name == "y");
+    }
+
+    SECTION("empty record literal") {
+        auto ast = parse_ok("{}");
+        NodeIndex root = ast.root;
+        NodeIndex child = ast.arena[root].first_child;
+        REQUIRE(child != NULL_NODE);
+        REQUIRE(ast.arena[child].type == NodeType::RecordLit);
+        CHECK(ast.arena[child].first_child == NULL_NODE);
+    }
+
+    SECTION("shorthand field syntax") {
+        auto ast = parse_ok(R"(
+            x = 1
+            y = 2
+            {x, y}
+        )");
+        NodeIndex root = ast.root;
+
+        // Find the record literal (third statement)
+        NodeIndex stmt1 = ast.arena[root].first_child;
+        NodeIndex stmt2 = ast.arena[stmt1].next_sibling;
+        NodeIndex stmt3 = ast.arena[stmt2].next_sibling;
+        REQUIRE(ast.arena[stmt3].type == NodeType::RecordLit);
+
+        NodeIndex field1 = ast.arena[stmt3].first_child;
+        REQUIRE(field1 != NULL_NODE);
+        CHECK(ast.arena[field1].as_record_field().name == "x");
+        CHECK(ast.arena[field1].as_record_field().is_shorthand);
+    }
+
+    SECTION("mixed shorthand and explicit") {
+        auto ast = parse_ok(R"(
+            x = 1
+            {x, y: 2}
+        )");
+        NodeIndex root = ast.root;
+        NodeIndex stmt1 = ast.arena[root].first_child;
+        NodeIndex record = ast.arena[stmt1].next_sibling;
+        REQUIRE(ast.arena[record].type == NodeType::RecordLit);
+
+        NodeIndex field1 = ast.arena[record].first_child;
+        NodeIndex field2 = ast.arena[field1].next_sibling;
+
+        CHECK(ast.arena[field1].as_record_field().is_shorthand);
+        CHECK_FALSE(ast.arena[field2].as_record_field().is_shorthand);
+    }
+
+    SECTION("trailing comma allowed") {
+        auto ast = parse_ok("{x: 1, y: 2,}");
+        NodeIndex root = ast.root;
+        NodeIndex child = ast.arena[root].first_child;
+        REQUIRE(ast.arena[child].type == NodeType::RecordLit);
+        CHECK(ast.arena.child_count(child) == 2);
+    }
+}
+
+TEST_CASE("Parser field access", "[parser][records]") {
+    SECTION("simple field access") {
+        auto ast = parse_ok(R"(
+            pos = {x: 1, y: 2}
+            pos.x
+        )");
+        NodeIndex root = ast.root;
+        NodeIndex assign = ast.arena[root].first_child;
+        NodeIndex access = ast.arena[assign].next_sibling;
+
+        REQUIRE(access != NULL_NODE);
+        REQUIRE(ast.arena[access].type == NodeType::FieldAccess);
+        CHECK(ast.arena[access].as_field_access().field_name == "x");
+
+        // First child is the identifier 'pos'
+        NodeIndex expr = ast.arena[access].first_child;
+        REQUIRE(expr != NULL_NODE);
+        REQUIRE(ast.arena[expr].type == NodeType::Identifier);
+        CHECK(ast.arena[expr].as_identifier() == "pos");
+    }
+
+    SECTION("chained field access") {
+        auto ast = parse_ok(R"(
+            obj = {inner: {val: 42}}
+            obj.inner.val
+        )");
+        NodeIndex root = ast.root;
+        NodeIndex assign = ast.arena[root].first_child;
+        NodeIndex access1 = ast.arena[assign].next_sibling;
+
+        REQUIRE(access1 != NULL_NODE);
+        REQUIRE(ast.arena[access1].type == NodeType::FieldAccess);
+        CHECK(ast.arena[access1].as_field_access().field_name == "val");
+
+        // First child should be another FieldAccess
+        NodeIndex access2 = ast.arena[access1].first_child;
+        REQUIRE(access2 != NULL_NODE);
+        REQUIRE(ast.arena[access2].type == NodeType::FieldAccess);
+        CHECK(ast.arena[access2].as_field_access().field_name == "inner");
+    }
+
+    SECTION("field access vs method call") {
+        auto ast = parse_ok(R"(
+            obj.field
+            obj.method()
+        )");
+        NodeIndex root = ast.root;
+        NodeIndex field = ast.arena[root].first_child;
+        NodeIndex method = ast.arena[field].next_sibling;
+
+        REQUIRE(ast.arena[field].type == NodeType::FieldAccess);
+        REQUIRE(ast.arena[method].type == NodeType::MethodCall);
+    }
+}
+
+TEST_CASE("Parser hole field access", "[parser][records]") {
+    SECTION("hole with field") {
+        auto ast = parse_ok("pat(\"c4\") |> %.freq");
+        NodeIndex root = ast.root;
+        NodeIndex pipe = ast.arena[root].first_child;
+        REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
+
+        // RHS of pipe is the hole with field
+        NodeIndex lhs = ast.arena[pipe].first_child;
+        NodeIndex rhs = ast.arena[lhs].next_sibling;
+
+        REQUIRE(ast.arena[rhs].type == NodeType::Hole);
+        REQUIRE(std::holds_alternative<Node::HoleData>(ast.arena[rhs].data));
+        auto& hole_data = ast.arena[rhs].as_hole();
+        REQUIRE(hole_data.field_name.has_value());
+        CHECK(hole_data.field_name.value() == "freq");
+    }
+
+    SECTION("bare hole has no field") {
+        auto ast = parse_ok("1 |> %");
+        NodeIndex root = ast.root;
+        NodeIndex pipe = ast.arena[root].first_child;
+        NodeIndex lhs = ast.arena[pipe].first_child;
+        NodeIndex rhs = ast.arena[lhs].next_sibling;
+
+        REQUIRE(ast.arena[rhs].type == NodeType::Hole);
+        auto& hole_data = ast.arena[rhs].as_hole();
+        CHECK_FALSE(hole_data.field_name.has_value());
+    }
+}
+
+TEST_CASE("Parser pipe binding", "[parser][records]") {
+    SECTION("simple as binding") {
+        auto ast = parse_ok("osc(\"sin\", 440) as sig |> lp(%, 1000)");
+        NodeIndex root = ast.root;
+        NodeIndex pipe = ast.arena[root].first_child;
+        REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
+
+        // LHS should be a PipeBinding
+        NodeIndex lhs = ast.arena[pipe].first_child;
+        REQUIRE(ast.arena[lhs].type == NodeType::PipeBinding);
+        CHECK(ast.arena[lhs].as_pipe_binding().binding_name == "sig");
+
+        // First child of PipeBinding is the bound expression
+        NodeIndex expr = ast.arena[lhs].first_child;
+        REQUIRE(ast.arena[expr].type == NodeType::Call);
+    }
+
+    SECTION("binding used multiple times") {
+        auto ast = parse_ok("1 as x |> x + x");
+        NodeIndex root = ast.root;
+        NodeIndex pipe = ast.arena[root].first_child;
+
+        NodeIndex lhs = ast.arena[pipe].first_child;
+        REQUIRE(ast.arena[lhs].type == NodeType::PipeBinding);
+        CHECK(ast.arena[lhs].as_pipe_binding().binding_name == "x");
+    }
+}

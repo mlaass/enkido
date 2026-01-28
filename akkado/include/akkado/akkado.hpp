@@ -26,6 +26,7 @@ struct Version {
 struct CompileResult {
     bool success = false;
     std::vector<std::uint8_t> bytecode;
+    std::vector<SourceLocation> source_locations;  // Parallel to bytecode instructions, tracks origin
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data for patterns
     std::vector<std::string> required_samples;  // Sample names used (for runtime loading)

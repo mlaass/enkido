@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { audioEngine } from '$lib/stores/audio.svelte';
-	import type { DisassemblyInstruction } from '$lib/stores/audio.svelte';
+	import type { DisassemblyInstruction, SourceLocation } from '$lib/stores/audio.svelte';
+	import StateInspector from './StateInspector.svelte';
 
 	let disassembly = $derived(audioEngine.disassembly);
+	let selectedInstructionIndex = $state<number | null>(null);
+	let inspectedStateId = $state<number | null>(null);
 	let showAllInstructions = $state(false);
 	let filterStateful = $state(false);
 	let searchQuery = $state('');
@@ -39,8 +42,18 @@
 		return groups;
 	});
 
-	function formatStateId(id: number): string {
+	function formatStateId(id: number, opcode?: string): string {
 		if (id === 0) return '-';
+
+		// PUSH_CONST and DC store float bits in state_id
+		if (opcode === 'PUSH_CONST' || opcode === 'DC') {
+			const buffer = new ArrayBuffer(4);
+			const view = new DataView(buffer);
+			view.setUint32(0, id, true); // little-endian
+			const floatValue = view.getFloat32(0, true);
+			return floatValue.toFixed(3);
+		}
+
 		return `0x${id.toString(16).toUpperCase().padStart(8, '0')}`;
 	}
 
@@ -49,6 +62,41 @@
 			.map((i) => (i === 65535 ? '-' : `b${i}`))
 			.filter((_, idx) => inputs[idx] !== 65535 || idx === 0)
 			.join(', ');
+	}
+
+	function formatSourceLoc(source?: SourceLocation): string {
+		if (!source || source.line === 0) return '-';
+		return `${source.line}:${source.column}`;
+	}
+
+	function handleInstructionClick(inst: DisassemblyInstruction) {
+		// Toggle selection
+		if (selectedInstructionIndex === inst.index) {
+			selectedInstructionIndex = null;
+			inspectedStateId = null;
+			// Clear highlight
+			window.dispatchEvent(
+				new CustomEvent('nkido:instruction-highlight', { detail: { source: null } })
+			);
+		} else {
+			selectedInstructionIndex = inst.index;
+			// Dispatch highlight event to Editor
+			if (inst.source && inst.source.line > 0) {
+				window.dispatchEvent(
+					new CustomEvent('nkido:instruction-highlight', { detail: { source: inst.source } })
+				);
+			}
+			// Select state for inspection if stateful
+			if (inst.stateful && inst.stateId !== 0) {
+				inspectedStateId = inst.stateId;
+			} else {
+				inspectedStateId = null;
+			}
+		}
+	}
+
+	function closeStateInspector() {
+		inspectedStateId = null;
 	}
 
 	// Opcode pairs that intentionally share state (cooperative opcodes)
@@ -174,19 +222,29 @@
 					<span class="col-out">Out</span>
 					<span class="col-inputs">Inputs</span>
 					<span class="col-state">State ID</span>
+					<span class="col-source">Source</span>
 				</div>
 
 				<div class="table-body">
 					{#each filteredInstructions as inst (inst.index)}
-						<div class="table-row" class:stateful={inst.stateful}>
+						<button
+							class="table-row"
+							class:stateful={inst.stateful}
+							class:selected={selectedInstructionIndex === inst.index}
+							class:has-source={inst.source && inst.source.line > 0}
+							onclick={() => handleInstructionClick(inst)}
+						>
 							<span class="col-index">{inst.index}</span>
 							<span class="col-opcode">{inst.opcode}</span>
 							<span class="col-out">b{inst.out}</span>
 							<span class="col-inputs">{formatInputs(inst.inputs)}</span>
 							<span class="col-state" class:has-state={inst.stateId !== 0}>
-								{formatStateId(inst.stateId)}
+								{formatStateId(inst.stateId, inst.opcode)}
 							</span>
-						</div>
+							<span class="col-source" class:has-source={inst.source && inst.source.line > 0}>
+								{formatSourceLoc(inst.source)}
+							</span>
+						</button>
 					{/each}
 				</div>
 			</div>
@@ -195,6 +253,9 @@
 				<p class="no-results">No matching instructions</p>
 			{/if}
 		</section>
+
+		<!-- State Inspector -->
+		<StateInspector stateId={inspectedStateId} onClose={closeStateInspector} />
 	{/if}
 </div>
 
@@ -378,6 +439,7 @@
 
 	.table-header {
 		display: flex;
+		flex-wrap: nowrap;
 		background: var(--bg-tertiary);
 		padding: var(--spacing-xs) var(--spacing-sm);
 		font-weight: 600;
@@ -394,10 +456,16 @@
 
 	.table-row {
 		display: flex;
+		flex-wrap: nowrap;
+		width: 100%;
 		padding: var(--spacing-xs) var(--spacing-sm);
+		border: none;
 		border-top: 1px solid var(--border-muted);
+		background: transparent;
 		font-family: var(--font-mono);
 		font-size: 11px;
+		text-align: left;
+		cursor: default;
 	}
 
 	.table-row:hover {
@@ -410,32 +478,63 @@
 
 	.col-index {
 		width: 32px;
+		flex-shrink: 0;
 		color: var(--text-muted);
 	}
 
 	.col-opcode {
 		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		color: var(--syntax-function);
 	}
 
 	.col-out {
 		width: 40px;
+		flex-shrink: 0;
 		color: var(--syntax-variable);
 	}
 
 	.col-inputs {
 		width: 100px;
+		flex-shrink: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		color: var(--text-secondary);
 	}
 
 	.col-state {
 		width: 90px;
+		flex-shrink: 0;
 		color: var(--text-muted);
 		font-size: 10px;
 	}
 
 	.col-state.has-state {
 		color: var(--syntax-number);
+	}
+
+	.col-source {
+		width: 60px;
+		flex-shrink: 0;
+		color: var(--text-muted);
+		font-size: 10px;
+	}
+
+	.col-source.has-source {
+		color: var(--accent-primary);
+	}
+
+	.table-row.has-source {
+		cursor: pointer;
+	}
+
+	.table-row.selected {
+		background: rgba(var(--accent-primary-rgb, 88, 166, 255), 0.15);
+		border-left: 2px solid var(--accent-primary);
 	}
 
 	.no-results {

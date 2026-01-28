@@ -1058,6 +1058,28 @@ WASM_EXPORT uint32_t cedar_get_pattern_active_length(uint32_t state_id) {
 }
 
 // ============================================================================
+// State Inspection API
+// ============================================================================
+
+// Static buffer for state inspection JSON
+static std::string g_state_inspection_json;
+
+/**
+ * Inspect state by ID, returning JSON representation of state fields.
+ * @param state_id State ID (32-bit FNV-1a hash)
+ * @return Pointer to null-terminated JSON string, or empty string if not found
+ */
+WASM_EXPORT const char* cedar_inspect_state(uint32_t state_id) {
+    if (!g_vm) {
+        g_state_inspection_json = "";
+        return g_state_inspection_json.c_str();
+    }
+
+    g_state_inspection_json = g_vm->states().inspect_state_json(state_id);
+    return g_state_inspection_json.c_str();
+}
+
+// ============================================================================
 // Parameter Declaration API
 // ============================================================================
 
@@ -1185,7 +1207,8 @@ static std::string g_disassembly_json;
  *       "inputs": [1, 65535, 65535, 65535, 65535],
  *       "stateId": 1234567890,
  *       "rate": 0,
- *       "stateful": true
+ *       "stateful": true,
+ *       "source": {"line": 5, "column": 3, "offset": 42, "length": 12}
  *     },
  *     ...
  *   ],
@@ -1209,6 +1232,10 @@ WASM_EXPORT const char* akkado_get_disassembly() {
     size_t inst_count = g_compile_result.bytecode.size() / INST_SIZE;
     auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.bytecode.data());
 
+    // Source locations parallel array (may be empty for older compiles)
+    const auto& source_locations = g_compile_result.source_locations;
+    bool has_source_info = source_locations.size() == inst_count;
+
     std::ostringstream json;
     json << "{\"instructions\":[";
 
@@ -1230,6 +1257,16 @@ WASM_EXPORT const char* akkado_get_disassembly() {
 
         bool is_stateful = cedar::opcode_is_stateful(inst.opcode);
         json << ",\"stateful\":" << (is_stateful ? "true" : "false");
+
+        // Add source location if available
+        if (has_source_info) {
+            const auto& loc = source_locations[i];
+            json << ",\"source\":{\"line\":" << loc.line
+                 << ",\"column\":" << loc.column
+                 << ",\"offset\":" << loc.offset
+                 << ",\"length\":" << loc.length << "}";
+        }
+
         json << "}";
 
         if (is_stateful && inst.state_id != 0) {

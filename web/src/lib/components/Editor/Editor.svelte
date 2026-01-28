@@ -13,7 +13,9 @@
 	import { signatureHelp } from '$lib/editor/signature-help';
 	import { patternPreview } from '$lib/editor/pattern-preview';
 	import { stepHighlight } from '$lib/editor/step-highlight';
+	import { instructionHighlight, highlightInstruction } from '$lib/editor/instruction-highlight';
 	import { patternHighlightStore } from '$stores/pattern-highlight.svelte';
+	import type { SourceLocation } from '$stores/audio.svelte';
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -178,7 +180,9 @@
 				...linterExtensions,
 				// Pattern highlighting (preview + step highlighting)
 				patternPreview(),
-				...stepHighlight()
+				...stepHighlight(),
+				// Instruction highlighting for debug panel
+				...instructionHighlight()
 			]
 		});
 
@@ -211,6 +215,23 @@
 				patternHighlightStore.updatePreviews();
 			}, 50);
 		}
+	});
+
+	// Listen for instruction highlight events from DebugPanel
+	function handleInstructionHighlight(event: CustomEvent<{ source: SourceLocation | null }>) {
+		if (view) {
+			highlightInstruction(view, event.detail.source);
+		}
+	}
+
+	$effect(() => {
+		// Set up event listener on mount
+		window.addEventListener('nkido:instruction-highlight', handleInstructionHighlight as EventListener);
+
+		// Clean up on unmount
+		return () => {
+			window.removeEventListener('nkido:instruction-highlight', handleInstructionHighlight as EventListener);
+		};
 	});
 
 	onDestroy(() => {

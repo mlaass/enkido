@@ -1,6 +1,7 @@
 #include "akkado/parser.hpp"
 #include "akkado/mini_parser.hpp"
 #include <stdexcept>
+#include <set>
 
 namespace akkado {
 
@@ -297,6 +298,26 @@ NodeIndex Parser::parse_precedence(Precedence prec) {
 
     // Handle binary operators
     while (!is_at_end()) {
+        // Check for 'as' binding before pipe operator: expr as name |> ...
+        // The 'as' binds the current expression to a name for use in pipe chain
+        if (check(TokenType::As) && prec <= Precedence::Pipe) {
+            Token as_tok = advance();  // consume 'as'
+
+            if (!check(TokenType::Identifier)) {
+                error("Expected identifier after 'as'");
+            } else {
+                Token name_tok = advance();
+
+                // Wrap 'left' in a PipeBinding node
+                NodeIndex binding = make_node(NodeType::PipeBinding, as_tok);
+                arena_[binding].data = Node::PipeBindingData{std::string(name_tok.lexeme)};
+                arena_.add_child(binding, left);
+
+                left = binding;
+            }
+            continue;  // Continue to check for |> or other operators
+        }
+
         if (!is_infix_operator(current().type)) {
             break;
         }
@@ -346,6 +367,8 @@ NodeIndex Parser::parse_prefix() {
             return parse_grouping();
         case TokenType::LBracket:
             return parse_array();
+        case TokenType::LBrace:
+            return parse_record_literal();
         case TokenType::Pat:
         case TokenType::Seq:
         case TokenType::Timeline:
@@ -427,8 +450,39 @@ NodeIndex Parser::parse_string() {
 }
 
 NodeIndex Parser::parse_hole() {
-    Token tok = advance();
-    return make_node(NodeType::Hole, tok);
+    Token tok = advance();  // consume '%'
+    NodeIndex node = make_node(NodeType::Hole, tok);
+
+    // Check for field access: %.field
+    // But NOT if followed by '(' which indicates a method call: %.method()
+    if (check(TokenType::Dot)) {
+        // Peek ahead: if it's identifier followed by '(', it's a method call
+        // In that case, don't consume the dot - let postfix handling do it
+        std::size_t save_pos = current_idx_;
+
+        advance();  // tentatively consume '.'
+
+        if (check(TokenType::Identifier)) {
+            Token field_tok = advance();  // tentatively consume identifier
+
+            if (check(TokenType::LParen)) {
+                // This is a method call: %.method()
+                // Restore position and let postfix handling deal with it
+                current_idx_ = save_pos;
+                arena_[node].data = Node::HoleData{std::nullopt};
+            } else {
+                // This is field access: %.field
+                arena_[node].data = Node::HoleData{std::string(field_tok.lexeme)};
+            }
+        } else {
+            error("Expected field name after '%.'");
+            arena_[node].data = Node::HoleData{std::nullopt};
+        }
+    } else {
+        arena_[node].data = Node::HoleData{std::nullopt};
+    }
+
+    return node;
 }
 
 NodeIndex Parser::parse_unary_not() {
@@ -735,6 +789,7 @@ NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
 }
 
 // Pipe parsing
+// The 'as' binding is handled in parse_precedence before the pipe operator
 
 NodeIndex Parser::parse_pipe(NodeIndex left) {
     Token pipe_tok = previous();
@@ -752,35 +807,60 @@ NodeIndex Parser::parse_pipe(NodeIndex left) {
     return node;
 }
 
-// Method call parsing (for x.method() syntax)
+// Method call or field access parsing (for x.method() or x.field syntax)
 NodeIndex Parser::parse_method_call(NodeIndex left) {
     Token dot_tok = previous();
 
     if (!check(TokenType::Identifier)) {
-        error("Expected method name after '.'");
+        error("Expected method or field name after '.'");
         return left;
     }
 
-    Token method_name = advance();
-    NodeIndex node = make_node(NodeType::MethodCall, dot_tok);
-    arena_[node].data = Node::IdentifierData{std::string(method_name.lexeme)};
+    Token name_tok = advance();
 
-    // Add receiver as first child
+    // Check if this is a method call (has parens) or field access (no parens)
+    if (check(TokenType::LParen)) {
+        // Method call: x.method(args)
+        NodeIndex node = make_node(NodeType::MethodCall, dot_tok);
+        arena_[node].data = Node::IdentifierData{std::string(name_tok.lexeme)};
+
+        // Add receiver as first child
+        arena_.add_child(node, left);
+
+        // Parse arguments
+        advance();  // consume '('
+
+        if (!check(TokenType::RParen)) {
+            auto args = parse_argument_list();
+            for (NodeIndex arg : args) {
+                arena_.add_child(node, arg);
+            }
+        }
+
+        consume(TokenType::RParen, "Expected ')' after arguments");
+
+        return node;
+    } else {
+        // Field access: x.field
+        return parse_field_access_with_name(left, name_tok);
+    }
+}
+
+// Field access parsing (for x.field syntax, name already consumed)
+NodeIndex Parser::parse_field_access_with_name(NodeIndex left, const Token& name_tok) {
+    NodeIndex node = make_node(NodeType::FieldAccess, name_tok);
+    arena_[node].data = Node::FieldAccessData{std::string(name_tok.lexeme)};
+
+    // Add the expression being accessed as first child
     arena_.add_child(node, left);
 
-    // Parse arguments
-    consume(TokenType::LParen, "Expected '(' after method name");
-
-    if (!check(TokenType::RParen)) {
-        auto args = parse_argument_list();
-        for (NodeIndex arg : args) {
-            arena_.add_child(node, arg);
-        }
-    }
-
-    consume(TokenType::RParen, "Expected ')' after arguments");
-
     return node;
+}
+
+// Field access helper (for parse_infix if needed)
+NodeIndex Parser::parse_field_access(NodeIndex left) {
+    Token name_tok = advance();  // consume field name
+    return parse_field_access_with_name(left, name_tok);
 }
 
 // Index parsing (for arr[i] syntax)
@@ -1107,6 +1187,68 @@ NodeIndex Parser::parse_fn_def() {
         arena_.add_child(node, body);
     }
 
+    return node;
+}
+
+// Record literal parsing: {field: value, ...} or {field, ...}
+NodeIndex Parser::parse_record_literal() {
+    Token brace_tok = advance();  // consume '{'
+    NodeIndex node = make_node(NodeType::RecordLit, brace_tok);
+
+    // Empty record
+    if (check(TokenType::RBrace)) {
+        advance();  // consume '}'
+        return node;
+    }
+
+    // Parse fields
+    std::set<std::string> seen_fields;  // Track duplicates
+
+    do {
+        if (!check(TokenType::Identifier)) {
+            error("Expected field name in record literal");
+            break;
+        }
+
+        Token field_tok = advance();
+        std::string field_name = std::string(field_tok.lexeme);
+
+        // Check for duplicate field names
+        if (seen_fields.count(field_name)) {
+            error_at(field_tok, "Duplicate field '" + field_name + "' in record literal");
+        }
+        seen_fields.insert(field_name);
+
+        // Create a node to hold the field (using Argument node type with RecordFieldData)
+        NodeIndex field_node = arena_.alloc(NodeType::Argument, field_tok.location);
+
+        // Check for shorthand {field} vs full {field: value}
+        if (check(TokenType::Colon)) {
+            advance();  // consume ':'
+
+            // Full form: field: value
+            arena_[field_node].data = Node::RecordFieldData{field_name, false};
+
+            // Parse the value expression
+            NodeIndex value = parse_expression();
+            if (value != NULL_NODE) {
+                arena_.add_child(field_node, value);
+            }
+        } else {
+            // Shorthand form: {field} - value is the identifier with same name
+            arena_[field_node].data = Node::RecordFieldData{field_name, true};
+
+            // Create identifier node for the value
+            NodeIndex ident = arena_.alloc(NodeType::Identifier, field_tok.location);
+            arena_[ident].data = Node::IdentifierData{field_name};
+            arena_.add_child(field_node, ident);
+        }
+
+        arena_.add_child(node, field_node);
+
+    } while (match(TokenType::Comma) && !check(TokenType::RBrace));
+
+    consume(TokenType::RBrace, "Expected '}' after record fields");
     return node;
 }
 

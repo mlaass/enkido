@@ -93,6 +93,9 @@ private:
     NodeIndex parse_closure();
     NodeIndex parse_mini_literal();
     NodeIndex parse_match_expr();
+    NodeIndex parse_record_literal();
+    NodeIndex parse_field_access(NodeIndex left);
+    NodeIndex parse_field_access_with_name(NodeIndex left, const Token& name_tok);
 
     // Infix parsers
     NodeIndex parse_binary(NodeIndex left, const Token& op);

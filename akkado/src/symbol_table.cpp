@@ -83,6 +83,16 @@ bool SymbolTable::define_function_value(std::string_view name, const FunctionRef
     return define(sym);
 }
 
+bool SymbolTable::define_record(std::string_view name, std::shared_ptr<RecordTypeInfo> record_type) {
+    Symbol sym{};
+    sym.kind = SymbolKind::Record;
+    sym.name_hash = fnv1a_hash(name);
+    sym.name = std::string(name);
+    sym.buffer_index = 0xFFFF;  // Records don't have a single buffer
+    sym.record_type = std::move(record_type);
+    return define(sym);
+}
+
 std::optional<Symbol> SymbolTable::lookup(std::string_view name) const {
     return lookup(fnv1a_hash(name));
 }
@@ -130,6 +140,18 @@ void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, Node
                 auto pat_it = node_map.find(sym.pattern.pattern_node);
                 if (pat_it != node_map.end()) {
                     sym.pattern.pattern_node = pat_it->second;
+                }
+            } else if (sym.kind == SymbolKind::Array) {
+                // Update array source_node
+                auto arr_it = node_map.find(sym.array.source_node);
+                if (arr_it != node_map.end()) {
+                    sym.array.source_node = arr_it->second;
+                }
+            } else if (sym.kind == SymbolKind::Record && sym.record_type) {
+                // Update record source_node
+                auto rec_it = node_map.find(sym.record_type->source_node);
+                if (rec_it != node_map.end()) {
+                    sym.record_type->source_node = rec_it->second;
                 }
             }
         }

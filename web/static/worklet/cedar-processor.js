@@ -189,6 +189,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 			case 'getActiveSteps':
 				this.getActiveSteps(msg.stateIds);
 				break;
+
+			case 'inspectState':
+				this.inspectState(msg.stateId);
+				break;
 		}
 	}
 
@@ -937,6 +941,57 @@ class CedarProcessor extends AudioWorkletProcessor {
 			type: 'activeSteps',
 			steps
 		});
+	}
+
+	/**
+	 * Inspect state by ID, returning JSON representation
+	 * @param {number} stateId - State ID to inspect
+	 */
+	inspectState(stateId) {
+		if (!this.module) {
+			this.port.postMessage({
+				type: 'stateInspection',
+				stateId,
+				data: null
+			});
+			return;
+		}
+
+		try {
+			const jsonPtr = this.module._cedar_inspect_state(stateId);
+			if (!jsonPtr) {
+				this.port.postMessage({
+					type: 'stateInspection',
+					stateId,
+					data: null
+				});
+				return;
+			}
+
+			const jsonStr = this.module.UTF8ToString(jsonPtr);
+			if (!jsonStr || jsonStr.length === 0) {
+				this.port.postMessage({
+					type: 'stateInspection',
+					stateId,
+					data: null
+				});
+				return;
+			}
+
+			const data = JSON.parse(jsonStr);
+			this.port.postMessage({
+				type: 'stateInspection',
+				stateId,
+				data
+			});
+		} catch (err) {
+			this.port.postMessage({
+				type: 'stateInspection',
+				stateId,
+				data: null,
+				error: String(err)
+			});
+		}
 	}
 
 	process(inputs, outputs, parameters) {

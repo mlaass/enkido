@@ -263,3 +263,14 @@ code, pre, .mono {
 .pattern-preview canvas {
 	display: block;
 }
+
+/* ============================================
+   Instruction Highlighting (Debug Panel)
+   ============================================ */
+
+/* Highlight for source location of selected bytecode instruction */
+.cm-instruction-highlight {
+	background: rgba(var(--accent-primary-rgb, 88, 166, 255), 0.2);
+	border-bottom: 2px solid var(--accent-primary);
+	border-radius: 2px;
+}

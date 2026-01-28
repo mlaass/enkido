@@ -33,6 +33,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     sample_registry_ = sample_registry;
     buffers_ = BufferAllocator{};
     instructions_.clear();
+    source_locations_.clear();
     diagnostics_.clear();
     state_inits_.clear();
     required_samples_.clear();
@@ -43,13 +44,14 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     node_buffers_.clear();
     call_counters_.clear();
     multi_buffers_.clear();
+    current_source_loc_ = {};
 
     // Start with "main" path
     push_path("main");
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, std::move(diagnostics_), {}, {}, {}, false};
+        return {{}, {}, std::move(diagnostics_), {}, {}, {}, false};
     }
 
     // Visit root (Program node)
@@ -62,8 +64,8 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     // Convert required_samples set to vector
     std::vector<std::string> required_samples_vec(required_samples_.begin(), required_samples_.end());
 
-    return {std::move(instructions_), std::move(diagnostics_), std::move(state_inits_),
-            std::move(required_samples_vec), std::move(param_decls_), success};
+    return {std::move(instructions_), std::move(source_locations_), std::move(diagnostics_),
+            std::move(state_inits_), std::move(required_samples_vec), std::move(param_decls_), success};
 }
 
 std::uint16_t CodeGenerator::visit(NodeIndex node) {
@@ -76,6 +78,9 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
     }
 
     const Node& n = ast_->arena[node];
+
+    // Track source location for any instructions emitted while processing this node
+    current_source_loc_ = n.location;
 
     switch (n.type) {
         case NodeType::Program: {
@@ -269,6 +274,24 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 return first_buf;
             }
 
+            if (sym->kind == SymbolKind::Record && sym->record_type) {
+                // Record variable - check if we've already generated code for it
+                auto rec_it = record_fields_.find(sym->record_type->source_node);
+                if (rec_it != record_fields_.end()) {
+                    // Already generated - return first field buffer
+                    if (!rec_it->second.empty()) {
+                        std::uint16_t first_buf = rec_it->second.begin()->second;
+                        node_buffers_[node] = first_buf;
+                        return first_buf;
+                    }
+                }
+
+                // Not yet generated - visit the source node
+                std::uint16_t first_buf = visit(sym->record_type->source_node);
+                node_buffers_[node] = first_buf;
+                return first_buf;
+            }
+
             if (sym->kind == SymbolKind::FunctionValue || sym->kind == SymbolKind::UserFunction) {
                 // Function values are handled specially in map() and other HOFs
                 // Return BUFFER_UNUSED since functions don't have runtime values
@@ -322,6 +345,9 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
         case NodeType::Call: {
             // Function name is stored in the node's data, not as a child
             const std::string& func_name = n.as_identifier();
+
+            // Save the call's source location - visiting arguments may overwrite it
+            SourceLocation call_loc = current_source_loc_;
 
             // Check user-defined functions FIRST (allows stdlib osc to work)
             // This enables the stdlib osc() to be defined in user-space and
@@ -383,6 +409,9 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                     auto midi_buffers = get_multi_buffers(midi_node);
                     std::vector<std::uint16_t> freq_buffers;
                     freq_buffers.reserve(midi_buffers.size());
+
+                    // Restore call location for emitting mtof instructions
+                    current_source_loc_ = call_loc;
 
                     for (std::uint16_t mb : midi_buffers) {
                         std::uint16_t freq_buf = buffers_.allocate();
@@ -447,6 +476,10 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             if (func_name == "out" && arg_buffers.size() == 1) {
                 arg_buffers.push_back(arg_buffers[0]);  // Duplicate L to R
             }
+
+            // Restore call location before emitting default parameter instructions
+            // (visiting arguments may have changed current_source_loc_)
+            current_source_loc_ = call_loc;
 
             // Fill in missing optional arguments with defaults
             std::size_t total_params = builtin->total_params();
@@ -630,6 +663,15 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
             error("E122", "Match arm visited outside of match expression", n.location);
             return BufferAllocator::BUFFER_UNUSED;
 
+        case NodeType::RecordLit:
+            return handle_record_literal(node, n);
+
+        case NodeType::FieldAccess:
+            return handle_field_access(node, n);
+
+        case NodeType::PipeBinding:
+            return handle_pipe_binding(node, n);
+
         default:
             error("E199", "Unsupported node type", n.location);
             return BufferAllocator::BUFFER_UNUSED;
@@ -643,6 +685,7 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
 
 void CodeGenerator::emit(const cedar::Instruction& inst) {
     instructions_.push_back(inst);
+    source_locations_.push_back(current_source_loc_);
 }
 
 std::uint32_t CodeGenerator::compute_state_id() const {
@@ -720,5 +763,235 @@ bool CodeGenerator::is_fm_modulated(std::uint16_t freq_buffer) const {
 
 // Array HOF implementations (map, sum, fold, zipWith, zip, take, drop, reverse, range, repeat)
 // and multi-buffer support functions are in codegen_arrays.cpp
+
+// ============================================================================
+// Record support implementation
+// ============================================================================
+
+std::uint16_t CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
+    // Record literals expand to multiple buffers - one per field
+    // We track the field->buffer mapping in record_fields_ for later field access
+
+    std::unordered_map<std::string, std::uint16_t> field_buffers;
+    std::uint16_t first_buffer = BufferAllocator::BUFFER_UNUSED;
+
+    // Iterate through field children (each is an Argument with RecordFieldData)
+    NodeIndex field_node = n.first_child;
+    while (field_node != NULL_NODE) {
+        const Node& field = ast_->arena[field_node];
+
+        if (field.type == NodeType::Argument &&
+            std::holds_alternative<Node::RecordFieldData>(field.data)) {
+
+            const auto& field_data = field.as_record_field();
+            const std::string& field_name = field_data.name;
+
+            // Get the field value (first child of the Argument node)
+            NodeIndex value_node = field.first_child;
+            if (value_node != NULL_NODE) {
+                // Generate code for the field value
+                std::uint16_t value_buffer = visit(value_node);
+
+                // Track this field's buffer
+                field_buffers[field_name] = value_buffer;
+
+                // Record first buffer for return value
+                if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
+                    first_buffer = value_buffer;
+                }
+            }
+        }
+
+        field_node = ast_->arena[field_node].next_sibling;
+    }
+
+    // Store field->buffer mapping for this record
+    record_fields_[node] = std::move(field_buffers);
+
+    // Return first buffer (for single-buffer compatibility)
+    node_buffers_[node] = first_buffer;
+    return first_buffer;
+}
+
+std::uint16_t CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
+    // Field access: expr.field
+    // We need to resolve the field name to the correct buffer
+
+    const auto& field_data = n.as_field_access();
+    const std::string& field_name = field_data.field_name;
+
+    // Get the expression being accessed (first child)
+    NodeIndex expr_node = n.first_child;
+    if (expr_node == NULL_NODE) {
+        error("E130", "Invalid field access: no expression", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    const Node& expr = ast_->arena[expr_node];
+
+    // Case 1: Direct record literal - visit it first, then look up in record_fields_
+    if (expr.type == NodeType::RecordLit) {
+        // Visit to generate code and populate record_fields_
+        visit(expr_node);
+
+        auto it = record_fields_.find(expr_node);
+        if (it != record_fields_.end()) {
+            auto field_it = it->second.find(field_name);
+            if (field_it != it->second.end()) {
+                std::uint16_t field_buffer = field_it->second;
+                node_buffers_[node] = field_buffer;
+                return field_buffer;
+            }
+        }
+        error("E131", "Unknown field '" + field_name + "' in record literal", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Case 1b: Pattern literal (MiniLiteral) - patterns have .freq, .vel, .trig fields
+    if (expr.type == NodeType::MiniLiteral) {
+        // Visit to generate code and populate record_fields_
+        visit(expr_node);
+
+        auto it = record_fields_.find(expr_node);
+        if (it != record_fields_.end()) {
+            auto field_it = it->second.find(field_name);
+            if (field_it != it->second.end()) {
+                std::uint16_t field_buffer = field_it->second;
+                node_buffers_[node] = field_buffer;
+                return field_buffer;
+            }
+        }
+        error("E136", "Unknown field '" + field_name + "' on pattern. Available: freq, vel, trig", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Case 2: Identifier reference to a record - look up in symbol table
+    if (expr.type == NodeType::Identifier) {
+        std::string var_name;
+        if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
+            var_name = expr.as_identifier();
+        }
+
+        auto sym = symbols_->lookup(var_name);
+        if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+            // Make sure the record's fields have been generated
+            auto rec_it = record_fields_.find(sym->record_type->source_node);
+            if (rec_it == record_fields_.end()) {
+                // Need to generate the record first
+                visit(sym->record_type->source_node);
+                rec_it = record_fields_.find(sym->record_type->source_node);
+            }
+
+            if (rec_it != record_fields_.end()) {
+                auto field_it = rec_it->second.find(field_name);
+                if (field_it != rec_it->second.end()) {
+                    std::uint16_t field_buffer = field_it->second;
+                    node_buffers_[node] = field_buffer;
+                    return field_buffer;
+                }
+            }
+
+            // Field not found - build error message
+            std::string available;
+            auto field_names = sym->record_type->field_names();
+            for (size_t i = 0; i < field_names.size(); ++i) {
+                if (i > 0) available += ", ";
+                available += field_names[i];
+            }
+            error("E131", "Unknown field '" + field_name + "' on record '" + var_name + "'. Available: " + available, n.location);
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+        // Not a record - error
+        error("E133", "Cannot access field '" + field_name + "' on non-record '" + var_name + "'", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Case 3: Chained field access (a.b.c) - the expr is a FieldAccess
+    if (expr.type == NodeType::FieldAccess) {
+        // The expr_buffer contains the result of the nested field access
+        // For nested records, we need to look up the field on the nested record type
+        // For MVP, we return expr_buffer if the nested access succeeded
+        // TODO: Proper nested record field resolution
+        error("E134", "Nested field access not fully supported in MVP", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Case 4: Other expression types - not supported for field access in MVP
+    error("E135", "Field access on expression type not supported", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
+}
+
+std::uint16_t CodeGenerator::handle_pipe_binding(NodeIndex node, const Node& n) {
+    // Pipe binding: expr as name
+    // The binding creates a symbol for 'name' that references the buffer(s) of expr
+
+    const auto& binding_data = n.as_pipe_binding();
+    const std::string& binding_name = binding_data.binding_name;
+
+    // Get the bound expression (first child)
+    NodeIndex expr_node = n.first_child;
+    if (expr_node == NULL_NODE) {
+        error("E140", "Invalid pipe binding: no expression", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Generate code for the expression
+    std::uint16_t expr_buffer = visit(expr_node);
+
+    // Check if the expression is a record
+    const Node& expr = ast_->arena[expr_node];
+    if (expr.type == NodeType::RecordLit) {
+        // For records, we need to update the symbol table with the record type
+        // so that subsequent field accesses can resolve correctly
+        auto rec_it = record_fields_.find(expr_node);
+        if (rec_it != record_fields_.end()) {
+            // Create a record type for this binding
+            auto record_type = std::make_shared<RecordTypeInfo>();
+            record_type->source_node = expr_node;
+
+            // Populate field info from the existing field buffers
+            for (const auto& [name, buffer] : rec_it->second) {
+                RecordFieldInfo field_info;
+                field_info.name = name;
+                field_info.buffer_index = buffer;
+                field_info.field_kind = SymbolKind::Variable;
+                record_type->fields.push_back(std::move(field_info));
+            }
+
+            symbols_->define_record(binding_name, record_type);
+
+            // Also store the mapping for this binding's field access
+            record_fields_[node] = rec_it->second;
+        }
+    } else if (expr.type == NodeType::Identifier) {
+        // Propagate the type from the identifier
+        std::string var_name;
+        if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
+            var_name = expr.as_identifier();
+        }
+
+        auto sym = symbols_->lookup(var_name);
+        if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+            // Bind the same record type to the new name
+            symbols_->define_record(binding_name, sym->record_type);
+
+            // Propagate field buffers
+            auto rec_it = record_fields_.find(sym->record_type->source_node);
+            if (rec_it != record_fields_.end()) {
+                record_fields_[node] = rec_it->second;
+            }
+        } else {
+            // Bind as a simple variable
+            symbols_->define_variable(binding_name, expr_buffer);
+        }
+    } else {
+        // For other expression types, just bind as a simple variable
+        symbols_->define_variable(binding_name, expr_buffer);
+    }
+
+    // Return the expression buffer
+    node_buffers_[node] = expr_buffer;
+    return expr_buffer;
+}
 
 } // namespace akkado

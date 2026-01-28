@@ -62,6 +62,11 @@ enum class NodeType : std::uint8_t {
     MatchExpr,      // match(expr) { arm, arm, ... }
     MatchArm,       // pattern: body
 
+    // Records
+    RecordLit,      // {field: value, ...} - record literal
+    FieldAccess,    // expr.field - field access on record
+    PipeBinding,    // expr as name - named binding in pipe chain
+
     // Program
     Program,        // Root node containing statements
 };
@@ -100,6 +105,9 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::FunctionDef: return "FunctionDef";
         case NodeType::MatchExpr:   return "MatchExpr";
         case NodeType::MatchArm:    return "MatchArm";
+        case NodeType::RecordLit:   return "RecordLit";
+        case NodeType::FieldAccess: return "FieldAccess";
+        case NodeType::PipeBinding: return "PipeBinding";
         case NodeType::Program:     return "Program";
     }
     return "Unknown";
@@ -217,6 +225,27 @@ struct Node {
         bool has_scrutinee;  // false for guard-only `match { ... }`
     };
 
+    // Data for record field (used in RecordLit children)
+    struct RecordFieldData {
+        std::string name;        // Field name
+        bool is_shorthand;       // true for {x} shorthand (name taken from identifier)
+    };
+
+    // Data for field access
+    struct FieldAccessData {
+        std::string field_name;  // The field being accessed
+    };
+
+    // Data for pipe binding (expr as name)
+    struct PipeBindingData {
+        std::string binding_name;  // The name bound by 'as'
+    };
+
+    // Data for hole with optional field access (%.field)
+    struct HoleData {
+        std::optional<std::string> field_name;  // Field name if %.field, nullopt for bare %
+    };
+
     std::variant<
         std::monostate,
         NumberData,
@@ -235,7 +264,11 @@ struct Node {
         MiniPolymeterData,
         FunctionDefData,
         MatchArmData,
-        MatchExprData
+        MatchExprData,
+        RecordFieldData,
+        FieldAccessData,
+        PipeBindingData,
+        HoleData
     > data;
 
     // Type-safe accessors
@@ -305,6 +338,22 @@ struct Node {
 
     [[nodiscard]] const MatchExprData& as_match_expr() const {
         return std::get<MatchExprData>(data);
+    }
+
+    [[nodiscard]] const RecordFieldData& as_record_field() const {
+        return std::get<RecordFieldData>(data);
+    }
+
+    [[nodiscard]] const FieldAccessData& as_field_access() const {
+        return std::get<FieldAccessData>(data);
+    }
+
+    [[nodiscard]] const PipeBindingData& as_pipe_binding() const {
+        return std::get<PipeBindingData>(data);
+    }
+
+    [[nodiscard]] const HoleData& as_hole() const {
+        return std::get<HoleData>(data);
     }
 };
 
