@@ -131,8 +131,13 @@ CompileResult compile(std::string_view source, std::string_view filename,
     std::memcpy(result.bytecode.data(), gen.instructions.data(),
                 result.bytecode.size());
 
-    // Copy state initializations for patterns
+    // Copy state initializations for patterns, adjusting offsets for stdlib
     result.state_inits = std::move(gen.state_inits);
+    for (auto& init : result.state_inits) {
+        if (init.pattern_location.offset >= stdlib_byte_offset) {
+            init.pattern_location.offset -= static_cast<std::uint32_t>(stdlib_byte_offset);
+        }
+    }
 
     // Copy required sample names for runtime loading
     result.required_samples = std::move(gen.required_samples);

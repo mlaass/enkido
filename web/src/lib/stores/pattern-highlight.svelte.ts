@@ -42,7 +42,6 @@ function createPatternHighlightStore() {
 			const info = infos[i];
 			// Query events for 4 cycles to handle alternating patterns
 			const events = await audioEngine.queryPatternPreview(i, 0, info.cycleLength * 4);
-
 			newPatterns.set(info.stateId, { info, events });
 		}
 
@@ -71,6 +70,7 @@ function createPatternHighlightStore() {
 
 			// Get state IDs for all patterns
 			const stateIds = Array.from(patterns.keys());
+
 			if (stateIds.length > 0) {
 				const steps = await audioEngine.getActiveSteps(stateIds);
 				// Convert to Map

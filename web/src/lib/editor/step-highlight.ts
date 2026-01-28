@@ -35,7 +35,7 @@ const stepHighlightField = StateField.define<DecorationSet>({
 	update(decorations, tr) {
 		for (const effect of tr.effects) {
 			if (effect.is(setActiveSteps)) {
-				return buildActiveStepDecorations(effect.value);
+				return buildActiveStepDecorations(effect.value, tr.state.doc.length);
 			}
 		}
 		// Map decorations through document changes
@@ -47,9 +47,12 @@ const stepHighlightField = StateField.define<DecorationSet>({
 
 /**
  * Build decorations for active steps
+ * @param activeSteps Map of state ID to step position info
+ * @param docLength Current document length for bounds checking
  */
 function buildActiveStepDecorations(
-	activeSteps: Map<number, { docOffset: number; sourceOffset: number; sourceLength: number }>
+	activeSteps: Map<number, { docOffset: number; sourceOffset: number; sourceLength: number }>,
+	docLength: number
 ): DecorationSet {
 	const ranges: Array<{ from: number; to: number }> = [];
 
@@ -57,7 +60,10 @@ function buildActiveStepDecorations(
 		if (step.sourceLength > 0) {
 			const from = step.docOffset + step.sourceOffset;
 			const to = from + step.sourceLength;
-			ranges.push({ from, to });
+			// Bounds check - skip invalid ranges
+			if (from >= 0 && to <= docLength) {
+				ranges.push({ from, to });
+			}
 		}
 	}
 
@@ -71,81 +77,81 @@ function buildActiveStepDecorations(
 
 /**
  * ViewPlugin that polls for active steps during playback
+ *
+ * Always polls, but only updates decorations when audio is playing.
+ * This is necessary because ViewPlugin.update() only fires on editor changes,
+ * not when external state (like audioEngine.isPlaying) changes.
  */
 class StepHighlightPlugin {
 	private view: EditorView;
 	private rafId = 0;
-	private isPolling = false;
+	private isDestroyed = false;
 
 	constructor(view: EditorView) {
 		this.view = view;
+		// Start polling immediately - we check isPlaying inside the loop
+		this.startPolling();
 	}
 
-	update(_update: ViewUpdate) {
-		// Start/stop polling based on playback state
-		const shouldPoll = audioEngine.isPlaying;
-
-		if (shouldPoll && !this.isPolling) {
-			this.startPolling();
-		} else if (!shouldPoll && this.isPolling) {
-			this.stopPolling();
-		}
-	}
+	// Note: update() is NOT used for polling control because it only fires
+	// on editor changes, not when audioEngine.isPlaying changes
 
 	destroy() {
-		this.stopPolling();
+		this.isDestroyed = true;
+		if (this.rafId) {
+			cancelAnimationFrame(this.rafId);
+			this.rafId = 0;
+		}
+		patternHighlightStore.stopPolling();
 	}
 
 	private startPolling() {
-		if (this.isPolling) return;
-		this.isPolling = true;
-
-		// Also start the store's polling for active steps
-		patternHighlightStore.startPolling();
+		let wasPlaying = false;
 
 		const poll = () => {
-			if (!this.isPolling) return;
+			if (this.isDestroyed) return;
 
-			// Get active steps from store and build decorations
-			const patterns = patternHighlightStore.getAllPatterns();
-			const activeSteps = new Map<number, { docOffset: number; sourceOffset: number; sourceLength: number }>();
+			const isPlaying = audioEngine.isPlaying;
 
-			for (const patternData of patterns) {
-				const step = patternHighlightStore.getActiveStep(patternData.info.stateId);
-				if (step && step.length > 0) {
-					activeSteps.set(patternData.info.stateId, {
-						docOffset: patternData.info.docOffset,
-						sourceOffset: step.offset,
-						sourceLength: step.length
-					});
-				}
+			// Start/stop the store's polling based on playback
+			if (isPlaying && !wasPlaying) {
+				patternHighlightStore.startPolling();
+			} else if (!isPlaying && wasPlaying) {
+				patternHighlightStore.stopPolling();
+				// Clear decorations when stopping
+				this.view.dispatch({
+					effects: setActiveSteps.of(new Map())
+				});
 			}
+			wasPlaying = isPlaying;
 
-			// Dispatch effect to update decorations
-			this.view.dispatch({
-				effects: setActiveSteps.of(activeSteps)
-			});
+			// Only update decorations while playing
+			if (isPlaying) {
+				// Get active steps from store and build decorations
+				const patterns = patternHighlightStore.getAllPatterns();
+				const activeSteps = new Map<number, { docOffset: number; sourceOffset: number; sourceLength: number }>();
+
+				for (const patternData of patterns) {
+					const step = patternHighlightStore.getActiveStep(patternData.info.stateId);
+					if (step && step.length > 0) {
+						activeSteps.set(patternData.info.stateId, {
+							docOffset: patternData.info.docOffset,
+							sourceOffset: step.offset,
+							sourceLength: step.length
+						});
+					}
+				}
+
+				// Dispatch effect to update decorations
+				this.view.dispatch({
+					effects: setActiveSteps.of(activeSteps)
+				});
+			}
 
 			this.rafId = requestAnimationFrame(poll);
 		};
 
 		poll();
-	}
-
-	private stopPolling() {
-		this.isPolling = false;
-		if (this.rafId) {
-			cancelAnimationFrame(this.rafId);
-			this.rafId = 0;
-		}
-
-		// Stop the store's polling
-		patternHighlightStore.stopPolling();
-
-		// Clear active step decorations
-		this.view.dispatch({
-			effects: setActiveSteps.of(new Map())
-		});
 	}
 }
 
