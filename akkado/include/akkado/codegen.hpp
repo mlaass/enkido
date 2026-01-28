@@ -45,6 +45,14 @@ struct ParamDecl {
 // State Initialization Data
 // ============================================================================
 
+/// Sample name mapping for SequenceProgram deferred resolution
+/// Tracks which events in which sequences need sample ID resolution
+struct SequenceSampleMapping {
+    std::uint16_t seq_idx;    // Index into sequences vector
+    std::uint16_t event_idx;  // Index into sequence's events array
+    std::string sample_name;  // Sample name to resolve
+};
+
 /// State initialization data for SEQ_STEP, TIMELINE, and SEQPAT_QUERY opcodes
 struct StateInitData {
     std::uint32_t state_id;  // Must match Instruction::state_id (32-bit FNV-1a hash)
@@ -64,8 +72,16 @@ struct StateInitData {
     // For Timeline: [time, value, curve, ...] triplets (existing usage)
 
     // For SequenceProgram: compiled sequences for lazy query
-    std::vector<cedar::Sequence> sequences;  // Compiled sequence data
+    // Note: The Sequence structs contain pointers to event vectors stored here
+    std::vector<cedar::Sequence> sequences;  // Compiled sequence data (shallow copy)
+    std::vector<std::vector<cedar::Event>> sequence_events;  // Actual event storage per sequence
     bool is_sample_pattern = false;  // Sample pattern vs pitch pattern
+
+    // Size hints for arena allocation
+    std::uint32_t total_events = 0;  // Total event count across all sequences
+
+    // For SequenceProgram: sample name mappings for deferred resolution
+    std::vector<SequenceSampleMapping> sequence_sample_mappings;
 
     // Pattern string location in document (for UI highlighting)
     SourceLocation pattern_location;  // Document offset of pattern string
@@ -87,6 +103,8 @@ class BufferAllocator {
 public:
     static constexpr std::uint16_t MAX_BUFFERS = 256;
     static constexpr std::uint16_t BUFFER_UNUSED = 0xFFFF;
+    // Buffer 255 is reserved for BUFFER_ZERO (always contains 0.0)
+    static constexpr std::uint16_t MAX_ALLOCATABLE = 255;
 
     BufferAllocator() = default;
 
@@ -98,7 +116,7 @@ public:
     [[nodiscard]] std::uint16_t count() const { return next_; }
 
     /// Check if any buffers available
-    [[nodiscard]] bool has_available() const { return next_ < MAX_BUFFERS; }
+    [[nodiscard]] bool has_available() const { return next_ < MAX_ALLOCATABLE; }
 
 private:
     std::uint16_t next_ = 0;

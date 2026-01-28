@@ -11,6 +11,64 @@ using namespace cedar;
 using Catch::Matchers::WithinAbs;
 
 // ============================================================================
+// Test Helper: Static buffers for sequence tests
+// ============================================================================
+// Since SequenceState is now pointer-based, tests need to provide storage
+
+namespace {
+
+// Static storage for test sequences
+constexpr std::size_t TEST_MAX_SEQUENCES = 16;
+constexpr std::size_t TEST_MAX_EVENTS = 64;
+constexpr std::size_t TEST_MAX_OUTPUT = 128;
+
+// Per-test storage (one set of buffers)
+struct TestSequenceStorage {
+    Sequence sequences[TEST_MAX_SEQUENCES];
+    Event events[TEST_MAX_SEQUENCES][TEST_MAX_EVENTS];
+    OutputEvents::OutputEvent output_events[TEST_MAX_OUTPUT];
+    std::uint32_t seq_count = 0;
+    std::uint32_t event_counts[TEST_MAX_SEQUENCES] = {};
+
+    void reset() {
+        seq_count = 0;
+        for (auto& c : event_counts) c = 0;
+    }
+
+    // Initialize a SequenceState with our storage
+    void init_state(SequenceState& state) {
+        state.sequences = sequences;
+        state.num_sequences = 0;
+        state.seq_capacity = TEST_MAX_SEQUENCES;
+        state.output.events = output_events;
+        state.output.num_events = 0;
+        state.output.capacity = TEST_MAX_OUTPUT;
+        state.cycle_length = 4.0f;
+        state.pattern_seed = 12345;
+        state.current_index = 0;
+        state.last_beat_pos = -1.0f;
+        state.last_queried_cycle = -1.0f;
+    }
+
+    // Add a sequence and return a reference to configure it
+    Sequence& add_sequence(SequenceState& state) {
+        std::uint32_t idx = state.num_sequences++;
+        sequences[idx].events = events[idx];
+        sequences[idx].num_events = 0;
+        sequences[idx].capacity = TEST_MAX_EVENTS;
+        sequences[idx].duration = 4.0f;
+        sequences[idx].step = 0;
+        sequences[idx].mode = SequenceMode::NORMAL;
+        return sequences[idx];
+    }
+};
+
+// Thread-local storage for tests
+thread_local TestSequenceStorage g_test_storage;
+
+}  // namespace
+
+// ============================================================================
 // Basic Structure Tests
 // ============================================================================
 
@@ -45,10 +103,12 @@ TEST_CASE("SequenceState size check", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Basic DATA events - single event", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // Create a sequence with one DATA event at time 0
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
     seq.duration = 4.0f;
 
@@ -61,7 +121,6 @@ TEST_CASE("Basic DATA events - single event", "[sequence]") {
     e.values[0] = 440.0f;  // A4 frequency
     seq.add_event(e);
 
-    state.add_sequence(seq);
     state.cycle_length = 4.0f;
     state.pattern_seed = 12345;
 
@@ -73,10 +132,12 @@ TEST_CASE("Basic DATA events - single event", "[sequence]") {
 }
 
 TEST_CASE("Basic DATA events - two events", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // Create sequence: [c4 e4] -> events at t=0 and t=2
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
     seq.duration = 4.0f;
 
@@ -100,7 +161,6 @@ TEST_CASE("Basic DATA events - two events", "[sequence]") {
     e2.values[0] = 329.63f;  // E4
     seq.add_event(e2);
 
-    state.add_sequence(seq);
     state.cycle_length = 4.0f;
 
     query_pattern(state, 0, 4.0f);
@@ -126,10 +186,12 @@ TEST_CASE("Degrade chance - deterministic", "[sequence]") {
 }
 
 TEST_CASE("Degrade chance - 50% filter", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // Create sequence with 50% chance event
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
     seq.duration = 4.0f;
 
@@ -142,7 +204,6 @@ TEST_CASE("Degrade chance - 50% filter", "[sequence]") {
     e.values[0] = 440.0f;
     seq.add_event(e);
 
-    state.add_sequence(seq);
     state.cycle_length = 4.0f;
 
     // Test multiple cycles with same seed - should be deterministic
@@ -161,9 +222,11 @@ TEST_CASE("Degrade chance - 50% filter", "[sequence]") {
 }
 
 TEST_CASE("Degrade chance - 100% always plays", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
 
     Event e;
@@ -174,7 +237,6 @@ TEST_CASE("Degrade chance - 100% always plays", "[sequence]") {
     e.values[0] = 440.0f;
     seq.add_event(e);
 
-    state.add_sequence(seq);
     state.pattern_seed = 99999;
 
     query_pattern(state, 0, 4.0f);
@@ -183,9 +245,11 @@ TEST_CASE("Degrade chance - 100% always plays", "[sequence]") {
 }
 
 TEST_CASE("Degrade chance - 0% never plays", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
 
     Event e;
@@ -196,7 +260,6 @@ TEST_CASE("Degrade chance - 0% never plays", "[sequence]") {
     e.values[0] = 440.0f;
     seq.add_event(e);
 
-    state.add_sequence(seq);
     state.pattern_seed = 99999;
 
     query_pattern(state, 0, 4.0f);
@@ -209,10 +272,12 @@ TEST_CASE("Degrade chance - 0% never plays", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Alternating sequence - basic", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // Create <a b c> pattern
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::ALTERNATE;
     seq.duration = 4.0f;
 
@@ -227,7 +292,6 @@ TEST_CASE("Alternating sequence - basic", "[sequence]") {
         seq.add_event(e);
     }
 
-    state.add_sequence(seq);
     state.cycle_length = 4.0f;
 
     // Query 5 times - should cycle through a, b, c, a, b
@@ -253,12 +317,17 @@ TEST_CASE("Alternating sequence - basic", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Nested sub-sequence - [a b] c", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
+
+    // Add outer sequence first (ID 0), then inner (ID 1)
+    Sequence& outer = g_test_storage.add_sequence(state);
+    Sequence& inner = g_test_storage.add_sequence(state);
 
     // Create inner sequence [a b] (ID 1)
     // Note: SequenceCompiler produces normalized sequences (duration=1.0)
     // Events a and b each take half the inner sequence span
-    Sequence inner;
     inner.mode = SequenceMode::NORMAL;
     inner.duration = 1.0f;  // Normalized coordinates
 
@@ -280,7 +349,6 @@ TEST_CASE("Nested sub-sequence - [a b] c", "[sequence]") {
 
     // Create outer sequence [[a b] c] (ID 0)
     // SUB_SEQ takes first half, c takes second half
-    Sequence outer;
     outer.mode = SequenceMode::NORMAL;
     outer.duration = 1.0f;  // Normalized coordinates
 
@@ -301,9 +369,6 @@ TEST_CASE("Nested sub-sequence - [a b] c", "[sequence]") {
     ec.values[0] = 440.0f;  // c
     outer.add_event(ec);
 
-    // Add sequences (outer first as ID 0, inner as ID 1)
-    state.add_sequence(outer);
-    state.add_sequence(inner);
     state.cycle_length = 4.0f;
 
     query_pattern(state, 0, 4.0f);
@@ -322,11 +387,16 @@ TEST_CASE("Nested sub-sequence - [a b] c", "[sequence]") {
 // Test for a <b c> d pattern - ALTERNATE embedded in NORMAL sequence
 // This tests that SUB_SEQ time_scale propagation is correct
 TEST_CASE("Embedded alternate - a <b c> d", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
+
+    // Add sequences: root first (ID 0), then alternate (ID 1)
+    Sequence& root_seq = g_test_storage.add_sequence(state);
+    Sequence& alt_seq = g_test_storage.add_sequence(state);
 
     // Create ALTERNATE sequence (seq_id=1): <b c>
     // Each choice has duration=1.0 (full sequence span)
-    Sequence alt_seq;
     alt_seq.mode = SequenceMode::ALTERNATE;
     alt_seq.duration = 1.0f;
 
@@ -348,7 +418,6 @@ TEST_CASE("Embedded alternate - a <b c> d", "[sequence]") {
 
     // Create root sequence (seq_id=0): a <b c> d
     // Each element takes 1/3 of the cycle
-    Sequence root_seq;
     root_seq.mode = SequenceMode::NORMAL;
     root_seq.duration = 1.0f;
 
@@ -378,9 +447,6 @@ TEST_CASE("Embedded alternate - a <b c> d", "[sequence]") {
     ed.values[0] = 550.0f;  // d
     root_seq.add_event(ed);
 
-    // Add sequences: root first (ID 0), then alternate (ID 1)
-    state.add_sequence(root_seq);
-    state.add_sequence(alt_seq);
     state.cycle_length = 4.0f;
 
     query_pattern(state, 0, 4.0f);
@@ -411,10 +477,12 @@ TEST_CASE("Embedded alternate - a <b c> d", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Random choice - deterministic selection", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // Create a | b | c pattern
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::RANDOM;
     seq.duration = 4.0f;
 
@@ -428,7 +496,6 @@ TEST_CASE("Random choice - deterministic selection", "[sequence]") {
         seq.add_event(e);
     }
 
-    state.add_sequence(seq);
     state.pattern_seed = 0x12345678;
 
     // Same seed + cycle should always pick same result
@@ -455,7 +522,9 @@ TEST_CASE("Random choice - deterministic selection", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Bug case: <a b c d e f>*8 - 8 events cycling through 6", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
     // The pattern <e5 b4 d5 c5 a4 c5>*8 should produce 8 events per cycle,
     // cycling through the 6 alternates: 0,1,2,3,4,5,0,1
@@ -464,8 +533,11 @@ TEST_CASE("Bug case: <a b c d e f>*8 - 8 events cycling through 6", "[sequence]"
     // - Root sequence (ID 0): 8 SUB_SEQ events pointing to an ALTERNATE sequence
     // - Alternate sequence (ID 1): 6 DATA events
 
+    // Add sequences (root first as ID 0)
+    Sequence& root_seq = g_test_storage.add_sequence(state);
+    Sequence& alt_seq = g_test_storage.add_sequence(state);
+
     // Create the ALTERNATE sequence with 6 notes
-    Sequence alt_seq;
     alt_seq.mode = SequenceMode::ALTERNATE;
     alt_seq.duration = 4.0f;
 
@@ -481,7 +553,6 @@ TEST_CASE("Bug case: <a b c d e f>*8 - 8 events cycling through 6", "[sequence]"
     }
 
     // Create the root sequence with 8 SUB_SEQ events
-    Sequence root_seq;
     root_seq.mode = SequenceMode::NORMAL;
     root_seq.duration = 4.0f;
 
@@ -494,9 +565,6 @@ TEST_CASE("Bug case: <a b c d e f>*8 - 8 events cycling through 6", "[sequence]"
         root_seq.add_event(e);
     }
 
-    // Add sequences (root first as ID 0)
-    state.add_sequence(root_seq);
-    state.add_sequence(alt_seq);
     state.cycle_length = 4.0f;
     state.pattern_seed = 12345;
 
@@ -526,9 +594,11 @@ TEST_CASE("Speed modifier - c4*2 produces shorter event", "[sequence]") {
     // an event with duration 0.5 (normalized) which becomes 2.0 beats
     // when scaled by cycle_length (4.0 beats)
 
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
     seq.duration = 4.0f;
 
@@ -539,8 +609,6 @@ TEST_CASE("Speed modifier - c4*2 produces shorter event", "[sequence]") {
     e.num_values = 1;
     e.values[0] = 261.63f;
     seq.add_event(e);
-
-    state.add_sequence(seq);
 
     query_pattern(state, 0, 4.0f);
 
@@ -557,9 +625,11 @@ TEST_CASE("Repeat modifier - c4!2 produces two events", "[sequence]") {
     // !2 means the event is repeated twice
     // This is a compile-time transformation, so we test the result
 
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
     seq.duration = 4.0f;
 
@@ -580,8 +650,6 @@ TEST_CASE("Repeat modifier - c4!2 produces two events", "[sequence]") {
     e2.values[0] = 261.63f;
     seq.add_event(e2);
 
-    state.add_sequence(seq);
-
     query_pattern(state, 0, 4.0f);
 
     REQUIRE(state.output.num_events == 2);
@@ -594,9 +662,11 @@ TEST_CASE("Repeat modifier - c4!2 produces two events", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Multi-value event - chord", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
 
     // C major chord
@@ -609,8 +679,6 @@ TEST_CASE("Multi-value event - chord", "[sequence]") {
     e.values[1] = 329.63f;  // E4
     e.values[2] = 392.00f;  // G4
     seq.add_event(e);
-
-    state.add_sequence(seq);
 
     query_pattern(state, 0, 4.0f);
 
@@ -626,9 +694,11 @@ TEST_CASE("Multi-value event - chord", "[sequence]") {
 // ============================================================================
 
 TEST_CASE("Source location tracking", "[sequence]") {
+    g_test_storage.reset();
     SequenceState state;
+    g_test_storage.init_state(state);
 
-    Sequence seq;
+    Sequence& seq = g_test_storage.add_sequence(state);
     seq.mode = SequenceMode::NORMAL;
 
     Event e;
@@ -639,8 +709,6 @@ TEST_CASE("Source location tracking", "[sequence]") {
     e.source_offset = 5;
     e.source_length = 3;
     seq.add_event(e);
-
-    state.add_sequence(seq);
 
     query_pattern(state, 0, 4.0f);
 

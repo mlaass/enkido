@@ -486,11 +486,24 @@ WASM_EXPORT void akkado_resolve_sample_ids() {
     if (!g_vm) return;
 
     for (auto& init : g_compile_result.state_inits) {
+        // Handle SeqStep type (legacy path)
         for (size_t i = 0; i < init.sample_names.size(); ++i) {
             const auto& name = init.sample_names[i];
             if (!name.empty()) {
                 auto id = g_vm->sample_bank().get_sample_id(name);
                 init.values[i] = static_cast<float>(id);
+            }
+        }
+
+        // Handle SequenceProgram type (new path with sample mappings)
+        // Events are stored in sequence_events vectors
+        for (const auto& mapping : init.sequence_sample_mappings) {
+            if (mapping.seq_idx < init.sequence_events.size()) {
+                auto& events = init.sequence_events[mapping.seq_idx];
+                if (mapping.event_idx < events.size()) {
+                    auto id = g_vm->sample_bank().get_sample_id(mapping.sample_name);
+                    events[mapping.event_idx].values[0] = static_cast<float>(id);
+                }
             }
         }
     }
@@ -643,13 +656,25 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             );
             count++;
         } else if (init.type == akkado::StateInitData::Type::SequenceProgram) {
-            // Initialize sequence-based pattern
+            // Set up sequence event pointers before passing to VM
+            // The sequences need their event pointers to point to the sequence_events data
+            std::vector<cedar::Sequence> seq_copy = init.sequences;
+            for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
+                if (!init.sequence_events[i].empty()) {
+                    seq_copy[i].events = const_cast<cedar::Event*>(init.sequence_events[i].data());
+                    seq_copy[i].num_events = static_cast<std::uint32_t>(init.sequence_events[i].size());
+                    seq_copy[i].capacity = static_cast<std::uint32_t>(init.sequence_events[i].size());
+                }
+            }
+
+            // Initialize sequence-based pattern (arena allocates and copies)
             g_vm->init_sequence_program_state(
                 init.state_id,
-                init.sequences.data(),
-                init.sequences.size(),
+                seq_copy.data(),
+                seq_copy.size(),
                 init.cycle_length,
-                init.is_sample_pattern
+                init.is_sample_pattern,
+                init.total_events
             );
             count++;
         }
@@ -794,7 +819,14 @@ WASM_EXPORT const char* akkado_get_builtins_json() {
 // Pattern Highlighting API
 // ============================================================================
 
-// Preview query result buffer (for getting events one at a time)
+// Preview query result buffers (for getting events one at a time)
+// These are static to avoid allocation during preview queries
+static constexpr std::size_t PREVIEW_MAX_SEQUENCES = 64;
+static constexpr std::size_t PREVIEW_MAX_EVENTS_PER_SEQ = 256;
+static constexpr std::size_t PREVIEW_MAX_OUTPUT_EVENTS = 256;
+static cedar::Sequence g_preview_sequences[PREVIEW_MAX_SEQUENCES];
+static cedar::Event g_preview_events[PREVIEW_MAX_SEQUENCES][PREVIEW_MAX_EVENTS_PER_SEQ];
+static cedar::OutputEvents::OutputEvent g_preview_output_events[PREVIEW_MAX_OUTPUT_EVENTS];
 static cedar::OutputEvents g_preview_output;
 
 /**
@@ -887,13 +919,37 @@ WASM_EXPORT uint32_t akkado_query_pattern_preview(uint32_t pattern_index, float 
     const auto& init = g_compile_result.state_inits[idx];
     if (init.sequences.empty()) return 0;
 
-    // Create a temporary sequence state for querying
-    cedar::SequenceState temp_state;
-    temp_state.num_sequences = static_cast<uint32_t>(
-        std::min(init.sequences.size(), cedar::MAX_SEQUENCES));
-    for (size_t i = 0; i < temp_state.num_sequences; ++i) {
-        temp_state.sequences[i] = init.sequences[i];
+    // Set up static preview buffers
+    std::size_t num_seqs = std::min(init.sequences.size(), PREVIEW_MAX_SEQUENCES);
+
+    // Copy sequences and set up event pointers to static buffers
+    for (std::size_t i = 0; i < num_seqs; ++i) {
+        g_preview_sequences[i] = init.sequences[i];
+
+        // Copy events from sequence_events if available
+        if (i < init.sequence_events.size() && !init.sequence_events[i].empty()) {
+            std::size_t num_events = std::min(init.sequence_events[i].size(), PREVIEW_MAX_EVENTS_PER_SEQ);
+            for (std::size_t j = 0; j < num_events; ++j) {
+                g_preview_events[i][j] = init.sequence_events[i][j];
+            }
+            g_preview_sequences[i].events = g_preview_events[i];
+            g_preview_sequences[i].num_events = static_cast<std::uint32_t>(num_events);
+            g_preview_sequences[i].capacity = static_cast<std::uint32_t>(PREVIEW_MAX_EVENTS_PER_SEQ);
+        } else {
+            g_preview_sequences[i].events = nullptr;
+            g_preview_sequences[i].num_events = 0;
+            g_preview_sequences[i].capacity = 0;
+        }
     }
+
+    // Create a temporary sequence state for querying using static buffers
+    cedar::SequenceState temp_state;
+    temp_state.sequences = g_preview_sequences;
+    temp_state.num_sequences = static_cast<std::uint32_t>(num_seqs);
+    temp_state.seq_capacity = static_cast<std::uint32_t>(PREVIEW_MAX_SEQUENCES);
+    temp_state.output.events = g_preview_output_events;
+    temp_state.output.num_events = 0;
+    temp_state.output.capacity = static_cast<std::uint32_t>(PREVIEW_MAX_OUTPUT_EVENTS);
     temp_state.cycle_length = init.cycle_length;
     temp_state.pattern_seed = init.state_id;  // Use state_id as seed
 
@@ -903,7 +959,7 @@ WASM_EXPORT uint32_t akkado_query_pattern_preview(uint32_t pattern_index, float 
     // Query the pattern for the full cycle
     cedar::query_pattern(temp_state, cycle, init.cycle_length);
 
-    // Copy results to preview buffer
+    // Copy results to preview buffer (shallow copy - points to same static memory)
     g_preview_output = temp_state.output;
 
     return g_preview_output.num_events;

@@ -34,10 +34,19 @@ public:
     explicit SequenceCompiler(const AstArena& arena, SampleRegistry* sample_registry = nullptr)
         : arena_(arena), sample_registry_(sample_registry) {}
 
+    // Set base offset for computing pattern-relative source offsets
+    void set_pattern_base_offset(std::uint32_t offset) {
+        pattern_base_offset_ = offset;
+    }
+
     // Compile a pattern AST into Sequence format
     // Returns true on success, false if compilation fails
     bool compile(NodeIndex root) {
         sequences_.clear();
+        sequence_events_.clear();
+        sample_mappings_.clear();
+        current_seq_idx_ = 0;
+        total_events_ = 0;
         if (root == NULL_NODE) return false;
 
         // Create root sequence at index 0 (query_pattern always starts from sequence 0)
@@ -47,18 +56,25 @@ public:
 
         // Reserve slot 0 for root - sub-sequences will be added at indices 1+
         sequences_.push_back(root_seq);
+        sequence_events_.push_back({});  // Empty event vector for root
 
-        compile_into_sequence(root, root_seq, 0.0f, 1.0f);
+        compile_into_sequence(root, 0, 0.0f, 1.0f);
 
-        if (root_seq.num_events == 0) return false;
+        if (sequence_events_[0].empty()) return false;
 
-        // Update slot 0 with the populated root sequence
-        sequences_[0] = root_seq;
+        // Update sequences with pointers to their event vectors and counts
+        finalize_sequences();
         return true;
     }
 
-    // Get the compiled sequences
+    // Get the compiled sequences (with pointers set up)
     const std::vector<cedar::Sequence>& sequences() const { return sequences_; }
+
+    // Get the event vectors (for storage in StateInitData)
+    const std::vector<std::vector<cedar::Event>>& sequence_events() const { return sequence_events_; }
+
+    // Get total event count
+    std::uint32_t total_events() const { return total_events_; }
 
     // Check if pattern contains samples (vs pitch)
     bool is_sample_pattern() const { return is_sample_pattern_; }
@@ -68,6 +84,11 @@ public:
         for (const auto& name : sample_names_) {
             required.insert(name);
         }
+    }
+
+    // Get sample mappings for deferred resolution
+    const std::vector<SequenceSampleMapping>& sample_mappings() const {
+        return sample_mappings_;
     }
 
     // Count top-level elements in a pattern (each element = 1 beat)
@@ -92,10 +113,37 @@ public:
     }
 
 private:
+    // Finalize sequences after compilation
+    // Sets up the Sequence structs to point to their event vectors
+    void finalize_sequences() {
+        for (std::size_t i = 0; i < sequences_.size(); ++i) {
+            auto& seq = sequences_[i];
+            auto& events = sequence_events_[i];
+            if (!events.empty()) {
+                seq.events = events.data();
+                seq.num_events = static_cast<std::uint32_t>(events.size());
+                seq.capacity = static_cast<std::uint32_t>(events.size());
+                total_events_ += seq.num_events;
+            } else {
+                seq.events = nullptr;
+                seq.num_events = 0;
+                seq.capacity = 0;
+            }
+        }
+    }
+
+    // Add event to a sequence by index
+    void add_event_to_sequence(std::uint16_t seq_idx, const cedar::Event& e) {
+        if (seq_idx < sequence_events_.size()) {
+            sequence_events_[seq_idx].push_back(e);
+        }
+    }
+
     // Compile a node into events within an existing sequence
+    // seq_idx: index of the target sequence
     // time_offset: where in the parent's time span this starts (0.0-1.0)
     // time_span: how much of the parent's time span this uses (0.0-1.0)
-    void compile_into_sequence(NodeIndex ast_idx, cedar::Sequence& seq,
+    void compile_into_sequence(NodeIndex ast_idx, std::uint16_t seq_idx,
                                 float time_offset, float time_span) {
         if (ast_idx == NULL_NODE) return;
 
@@ -103,32 +151,32 @@ private:
 
         switch (n.type) {
             case NodeType::MiniPattern:
-                compile_pattern_node(ast_idx, n, seq, time_offset, time_span);
+                compile_pattern_node(ast_idx, n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniAtom:
-                compile_atom_event(n, seq, time_offset, time_span);
+                compile_atom_event(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniGroup:
-                compile_group_events(n, seq, time_offset, time_span);
+                compile_group_events(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniSequence:
-                compile_alternate_sequence(n, seq, time_offset, time_span);
+                compile_alternate_sequence(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniPolyrhythm:
-                compile_polyrhythm_events(n, seq, time_offset, time_span);
+                compile_polyrhythm_events(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniPolymeter:
                 // Treat polymeter as group for now
-                compile_group_events(n, seq, time_offset, time_span);
+                compile_group_events(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniChoice:
-                compile_choice_sequence(n, seq, time_offset, time_span);
+                compile_choice_sequence(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniEuclidean:
-                compile_euclidean_events(n, seq, time_offset, time_span);
+                compile_euclidean_events(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniModified:
-                compile_modified_node(n, seq, time_offset, time_span);
+                compile_modified_node(n, seq_idx, time_offset, time_span);
                 break;
             default:
                 // Unknown node type - skip
@@ -137,7 +185,7 @@ private:
     }
 
     // MiniPattern: root containing children (sequential concatenation)
-    void compile_pattern_node(NodeIndex /*ast_idx*/, const Node& n, cedar::Sequence& seq,
+    void compile_pattern_node(NodeIndex /*ast_idx*/, const Node& n, std::uint16_t seq_idx,
                                float time_offset, float time_span) {
         // Count children and their weights
         std::vector<NodeIndex> children;
@@ -164,13 +212,13 @@ private:
         for (std::size_t i = 0; i < children.size(); ++i) {
             float child_span = (weights[i] / total_weight) * time_span;
             float child_offset = time_offset + accumulated_time;
-            compile_into_sequence(children[i], seq, child_offset, child_span);
+            compile_into_sequence(children[i], seq_idx, child_offset, child_span);
             accumulated_time += child_span;
         }
     }
 
     // MiniAtom: single note, sample, or rest -> DATA event
-    void compile_atom_event(const Node& n, cedar::Sequence& seq,
+    void compile_atom_event(const Node& n, std::uint16_t seq_idx,
                             float time_offset, float time_span) {
         const auto& atom_data = n.as_mini_atom();
 
@@ -184,7 +232,8 @@ private:
         e.duration = time_span;
         e.chance = 1.0f;
         e.num_values = 1;
-        e.source_offset = static_cast<std::uint16_t>(n.location.offset);
+        // Use pattern-relative offset for UI highlighting
+        e.source_offset = static_cast<std::uint16_t>(n.location.offset - pattern_base_offset_);
         e.source_length = static_cast<std::uint16_t>(n.location.length);
 
         if (atom_data.kind == Node::MiniAtomKind::Pitch) {
@@ -196,18 +245,30 @@ private:
             // Sample
             is_sample_pattern_ = true;
             std::uint32_t sample_id = 0;
+            // Always collect sample name for runtime resolution
+            if (!atom_data.sample_name.empty()) {
+                sample_names_.insert(atom_data.sample_name);
+                // Record mapping for deferred resolution in WASM
+                // Use current event count as index (before adding)
+                std::uint16_t event_idx = static_cast<std::uint16_t>(
+                    seq_idx < sequence_events_.size() ? sequence_events_[seq_idx].size() : 0);
+                sample_mappings_.push_back(SequenceSampleMapping{
+                    seq_idx,
+                    event_idx,
+                    atom_data.sample_name
+                });
+            }
             if (sample_registry_ && !atom_data.sample_name.empty()) {
                 sample_id = sample_registry_->get_id(atom_data.sample_name);
-                sample_names_.insert(atom_data.sample_name);
             }
             e.values[0] = static_cast<float>(sample_id);
         }
 
-        seq.add_event(e);
+        add_event_to_sequence(seq_idx, e);
     }
 
     // MiniGroup [a b c]: sequential concatenation, subdivide time
-    void compile_group_events(const Node& n, cedar::Sequence& seq,
+    void compile_group_events(const Node& n, std::uint16_t seq_idx,
                                float time_offset, float time_span) {
         // Same logic as compile_pattern_node
         std::vector<NodeIndex> children;
@@ -233,18 +294,35 @@ private:
         for (std::size_t i = 0; i < children.size(); ++i) {
             float child_span = (weights[i] / total_weight) * time_span;
             float child_offset = time_offset + accumulated_time;
-            compile_into_sequence(children[i], seq, child_offset, child_span);
+            compile_into_sequence(children[i], seq_idx, child_offset, child_span);
             accumulated_time += child_span;
         }
     }
 
+    // Create a new sub-sequence and return its index
+    std::uint16_t create_sub_sequence(cedar::SequenceMode mode) {
+        cedar::Sequence new_seq;
+        new_seq.mode = mode;
+        new_seq.duration = 1.0f;
+        new_seq.events = nullptr;  // Will be set in finalize_sequences
+        new_seq.num_events = 0;
+        new_seq.capacity = 0;
+
+        std::uint16_t new_idx = static_cast<std::uint16_t>(sequences_.size());
+        sequences_.push_back(new_seq);
+        sequence_events_.push_back({});  // Add empty event vector
+        return new_idx;
+    }
+
     // MiniSequence <a b c>: ALTERNATE mode (one per call, cycles through)
-    void compile_alternate_sequence(const Node& n, cedar::Sequence& parent_seq,
+    void compile_alternate_sequence(const Node& n, std::uint16_t parent_seq_idx,
                                      float time_offset, float time_span) {
         // Create a sub-sequence with ALTERNATE mode
-        cedar::Sequence alt_seq;
-        alt_seq.mode = cedar::SequenceMode::ALTERNATE;
-        alt_seq.duration = 1.0f;
+        std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::ALTERNATE);
+
+        // Track sequence index for sample mappings
+        std::uint16_t saved_seq_idx = current_seq_idx_;
+        current_seq_idx_ = new_seq_idx;
 
         // Add each child as a separate event in the alternate sequence
         // Support !N repeat modifier: <a!3 b> becomes 4 choices (a, a, a, b)
@@ -252,16 +330,14 @@ private:
         while (child != NULL_NODE) {
             int repeat = get_node_repeat(child);
             for (int i = 0; i < repeat; ++i) {
-                compile_into_sequence(child, alt_seq, 0.0f, 1.0f);
+                compile_into_sequence(child, new_seq_idx, 0.0f, 1.0f);
             }
             child = arena_[child].next_sibling;
         }
 
-        if (alt_seq.num_events == 0) return;
+        current_seq_idx_ = saved_seq_idx;
 
-        // Add the sub-sequence
-        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
-        sequences_.push_back(alt_seq);
+        if (sequence_events_[new_seq_idx].empty()) return;
 
         // Add a SUB_SEQ event pointing to it
         cedar::Event e;
@@ -269,17 +345,19 @@ private:
         e.time = time_offset;
         e.duration = time_span;
         e.chance = 1.0f;
-        e.seq_id = seq_id;
-        parent_seq.add_event(e);
+        e.seq_id = new_seq_idx;
+        add_event_to_sequence(parent_seq_idx, e);
     }
 
     // MiniChoice a | b | c: RANDOM mode (pick one randomly)
-    void compile_choice_sequence(const Node& n, cedar::Sequence& parent_seq,
+    void compile_choice_sequence(const Node& n, std::uint16_t parent_seq_idx,
                                   float time_offset, float time_span) {
         // Create a sub-sequence with RANDOM mode
-        cedar::Sequence choice_seq;
-        choice_seq.mode = cedar::SequenceMode::RANDOM;
-        choice_seq.duration = 1.0f;
+        std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::RANDOM);
+
+        // Track sequence index for sample mappings
+        std::uint16_t saved_seq_idx = current_seq_idx_;
+        current_seq_idx_ = new_seq_idx;
 
         // Add each child as a separate event
         // Support !N repeat modifier: a!3 | b becomes 4 choices (a, a, a, b)
@@ -287,16 +365,14 @@ private:
         while (child != NULL_NODE) {
             int repeat = get_node_repeat(child);
             for (int i = 0; i < repeat; ++i) {
-                compile_into_sequence(child, choice_seq, 0.0f, 1.0f);
+                compile_into_sequence(child, new_seq_idx, 0.0f, 1.0f);
             }
             child = arena_[child].next_sibling;
         }
 
-        if (choice_seq.num_events == 0) return;
+        current_seq_idx_ = saved_seq_idx;
 
-        // Add the sub-sequence
-        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
-        sequences_.push_back(choice_seq);
+        if (sequence_events_[new_seq_idx].empty()) return;
 
         // Add a SUB_SEQ event pointing to it
         cedar::Event e;
@@ -304,23 +380,23 @@ private:
         e.time = time_offset;
         e.duration = time_span;
         e.chance = 1.0f;
-        e.seq_id = seq_id;
-        parent_seq.add_event(e);
+        e.seq_id = new_seq_idx;
+        add_event_to_sequence(parent_seq_idx, e);
     }
 
     // MiniPolyrhythm [a, b, c]: all elements simultaneously
-    void compile_polyrhythm_events(const Node& n, cedar::Sequence& seq,
+    void compile_polyrhythm_events(const Node& n, std::uint16_t seq_idx,
                                     float time_offset, float time_span) {
         // Each child occupies the same time span
         NodeIndex child = n.first_child;
         while (child != NULL_NODE) {
-            compile_into_sequence(child, seq, time_offset, time_span);
+            compile_into_sequence(child, seq_idx, time_offset, time_span);
             child = arena_[child].next_sibling;
         }
     }
 
     // MiniEuclidean: Euclidean rhythm pattern
-    void compile_euclidean_events(const Node& n, cedar::Sequence& seq,
+    void compile_euclidean_events(const Node& n, std::uint16_t seq_idx,
                                    float time_offset, float time_span) {
         const auto& euclid_data = n.as_mini_euclidean();
         std::uint32_t hits = euclid_data.hits;
@@ -340,7 +416,7 @@ private:
             if ((pattern >> i) & 1) {
                 float step_offset = time_offset + static_cast<float>(i) * step_span;
                 if (child != NULL_NODE) {
-                    compile_into_sequence(child, seq, step_offset, step_span);
+                    compile_into_sequence(child, seq_idx, step_offset, step_span);
                 }
             }
         }
@@ -375,7 +451,7 @@ private:
     }
 
     // MiniModified: handle modifiers (*n, !n, ?n, @n)
-    void compile_modified_node(const Node& n, cedar::Sequence& seq,
+    void compile_modified_node(const Node& n, std::uint16_t seq_idx,
                                 float time_offset, float time_span) {
         const auto& mod_data = n.as_mini_modifier();
         NodeIndex child = n.first_child;
@@ -392,20 +468,21 @@ private:
                 const Node& child_node = arena_[child];
                 if (child_node.type == NodeType::MiniSequence) {
                     // <a b c>*8 -> 8 SUB_SEQ events pointing to ALTERNATE sequence
-                    cedar::Sequence alt_seq;
-                    alt_seq.mode = cedar::SequenceMode::ALTERNATE;
-                    alt_seq.duration = 1.0f;
+                    std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::ALTERNATE);
+
+                    // Track sequence index for sample mappings
+                    std::uint16_t saved_seq_idx = current_seq_idx_;
+                    current_seq_idx_ = new_seq_idx;
 
                     NodeIndex alt_child = child_node.first_child;
                     while (alt_child != NULL_NODE) {
-                        compile_into_sequence(alt_child, alt_seq, 0.0f, 1.0f);
+                        compile_into_sequence(alt_child, new_seq_idx, 0.0f, 1.0f);
                         alt_child = arena_[alt_child].next_sibling;
                     }
 
-                    if (alt_seq.num_events > 0) {
-                        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
-                        sequences_.push_back(alt_seq);
+                    current_seq_idx_ = saved_seq_idx;
 
+                    if (!sequence_events_[new_seq_idx].empty()) {
                         // Create N SUB_SEQ events
                         float event_span = time_span / static_cast<float>(count);
                         for (int i = 0; i < count; ++i) {
@@ -414,34 +491,35 @@ private:
                             e.time = time_offset + static_cast<float>(i) * event_span;
                             e.duration = event_span;
                             e.chance = 1.0f;
-                            e.seq_id = seq_id;
-                            seq.add_event(e);
+                            e.seq_id = new_seq_idx;
+                            add_event_to_sequence(seq_idx, e);
                         }
                     }
                 } else {
                     // Regular speed modifier - wrap N fast events in a sub-sequence
                     // so they form ONE element (not N separate elements)
-                    cedar::Sequence speed_seq;
-                    speed_seq.mode = cedar::SequenceMode::NORMAL;
-                    speed_seq.duration = 1.0f;
+                    std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::NORMAL);
+
+                    // Track sequence index for sample mappings
+                    std::uint16_t saved_seq_idx = current_seq_idx_;
+                    current_seq_idx_ = new_seq_idx;
 
                     float event_span = 1.0f / static_cast<float>(count);
                     for (int i = 0; i < count; ++i) {
                         float event_offset = static_cast<float>(i) * event_span;
-                        compile_into_sequence(child, speed_seq, event_offset, event_span);
+                        compile_into_sequence(child, new_seq_idx, event_offset, event_span);
                     }
 
-                    if (speed_seq.num_events > 0) {
-                        std::uint16_t seq_id = static_cast<std::uint16_t>(sequences_.size());
-                        sequences_.push_back(speed_seq);
+                    current_seq_idx_ = saved_seq_idx;
 
+                    if (!sequence_events_[new_seq_idx].empty()) {
                         cedar::Event e;
                         e.type = cedar::EventType::SUB_SEQ;
                         e.time = time_offset;
                         e.duration = time_span;
                         e.chance = 1.0f;
-                        e.seq_id = seq_id;
-                        seq.add_event(e);
+                        e.seq_id = new_seq_idx;
+                        add_event_to_sequence(seq_idx, e);
                     }
                 }
                 break;
@@ -450,34 +528,35 @@ private:
             case Node::MiniModifierType::Repeat: {
                 // !N: Handled by parent enumeration via get_node_repeat()
                 // Just compile the child once with full time span
-                compile_into_sequence(child, seq, time_offset, time_span);
+                compile_into_sequence(child, seq_idx, time_offset, time_span);
                 break;
             }
 
             case Node::MiniModifierType::Chance: {
                 // ?N: Chance modifier - wrap in a sequence that applies chance
                 // For simplicity, we compile the child and then modify the last event's chance
-                std::size_t events_before = seq.num_events;
-                compile_into_sequence(child, seq, time_offset, time_span);
+                std::size_t events_before = sequence_events_[seq_idx].size();
+                compile_into_sequence(child, seq_idx, time_offset, time_span);
 
                 // Apply chance to all new events
                 float chance = mod_data.value;
-                for (std::size_t i = events_before; i < seq.num_events; ++i) {
-                    seq.events[i].chance = chance;
+                auto& events = sequence_events_[seq_idx];
+                for (std::size_t i = events_before; i < events.size(); ++i) {
+                    events[i].chance = chance;
                 }
                 break;
             }
 
             case Node::MiniModifierType::Slow: {
                 // /N: Slow down - just compile with same span (handled at cycle level)
-                compile_into_sequence(child, seq, time_offset, time_span);
+                compile_into_sequence(child, seq_idx, time_offset, time_span);
                 break;
             }
 
             case Node::MiniModifierType::Weight:
             case Node::MiniModifierType::Duration:
                 // Weight and Duration are handled by parent (get_node_weight)
-                compile_into_sequence(child, seq, time_offset, time_span);
+                compile_into_sequence(child, seq_idx, time_offset, time_span);
                 break;
         }
     }
@@ -509,8 +588,13 @@ private:
     const AstArena& arena_;
     SampleRegistry* sample_registry_ = nullptr;
     std::vector<cedar::Sequence> sequences_;
+    std::vector<std::vector<cedar::Event>> sequence_events_;  // Event storage for each sequence
     std::set<std::string> sample_names_;
+    std::vector<SequenceSampleMapping> sample_mappings_;
     bool is_sample_pattern_ = false;
+    std::uint32_t pattern_base_offset_ = 0;
+    std::uint16_t current_seq_idx_ = 0;  // Track current sequence index for sample mappings
+    std::uint32_t total_events_ = 0;     // Total event count across all sequences
 };
 
 // ============================================================================
@@ -539,6 +623,9 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
 
     // Use the SequenceCompiler for lazy queryable patterns
     SequenceCompiler compiler(ast_->arena, sample_registry_);
+    // Set base offset so event source_offset values are pattern-relative
+    const Node& pattern = ast_->arena[pattern_node];
+    compiler.set_pattern_base_offset(pattern.location.offset);
     if (!compiler.compile(pattern_node)) {
         // Fallback: try the old evaluation method for empty patterns
         PatternEventStream events = evaluate_pattern_multi_cycle(pattern_node, ast_->arena);
@@ -617,8 +704,11 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     seq_init.type = StateInitData::Type::SequenceProgram;
     seq_init.cycle_length = cycle_length;
     seq_init.sequences = compiler.sequences();
+    seq_init.sequence_events = compiler.sequence_events();  // Store event vectors
+    seq_init.total_events = compiler.total_events();        // Size hint for arena allocation
     seq_init.is_sample_pattern = is_sample_pattern;
-    seq_init.pattern_location = n.location;  // Store pattern string location for UI
+    seq_init.pattern_location = pattern.location;  // Store pattern content location for UI
+    seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
     state_inits_.push_back(std::move(seq_init));
 
     std::uint16_t result_buf = value_buf;
@@ -1023,7 +1113,10 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     seq_init.type = StateInitData::Type::SequenceProgram;
     seq_init.cycle_length = cycle_length;
     seq_init.sequences = compiler.sequences();
+    seq_init.sequence_events = compiler.sequence_events();  // Store event vectors
+    seq_init.total_events = compiler.total_events();        // Size hint for arena allocation
     seq_init.is_sample_pattern = is_sample_pattern;
+    seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
     state_inits_.push_back(std::move(seq_init));
 
     pop_path();

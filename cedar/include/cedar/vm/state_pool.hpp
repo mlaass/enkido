@@ -231,19 +231,96 @@ public:
         }
     }
 
-    // Initialize a SequenceState with compiled sequences
+    // Initialize a SequenceState with compiled sequences (arena-allocated)
     // Used by compiler to set up the simplified sequence-based patterns
+    //
+    // The sequences parameter contains pointers to compiler-owned event data.
+    // This function allocates arena memory and copies all data.
+    //
+    // @param state_id Unique state ID (FNV-1a hash)
+    // @param sequences Array of compiled sequences (with pointers to compiler memory)
+    // @param seq_count Number of sequences
+    // @param cycle_length Pattern cycle length in beats
+    // @param is_sample_pattern True if pattern contains sample IDs
+    // @param arena AudioArena for allocating sequence/event memory
+    // @param total_events Total event count across all sequences (for output buffer sizing)
     void init_sequence_program(std::uint32_t state_id,
                                const Sequence* sequences, std::size_t seq_count,
-                               float cycle_length, bool is_sample_pattern) {
+                               float cycle_length, bool is_sample_pattern,
+                               AudioArena* arena, std::uint32_t total_events) {
         auto& state = get_or_create<SequenceState>(state_id);
 
-        // Copy sequences
-        state.num_sequences = static_cast<std::uint32_t>(
-            std::min(seq_count, MAX_SEQUENCES));
-        for (std::size_t i = 0; i < state.num_sequences; ++i) {
-            state.sequences[i] = sequences[i];
+        if (!arena || seq_count == 0) {
+            state.sequences = nullptr;
+            state.num_sequences = 0;
+            state.seq_capacity = 0;
+            state.output.events = nullptr;
+            state.output.capacity = 0;
+            return;
         }
+
+        // Allocate sequences array from arena
+        // Need space for Sequence structs (each ~32 bytes)
+        std::size_t seq_bytes = seq_count * sizeof(Sequence);
+        std::size_t seq_floats = (seq_bytes + sizeof(float) - 1) / sizeof(float);
+        float* seq_mem = arena->allocate(seq_floats);
+        if (!seq_mem) {
+            state.sequences = nullptr;
+            state.num_sequences = 0;
+            state.seq_capacity = 0;
+            return;
+        }
+        state.sequences = reinterpret_cast<Sequence*>(seq_mem);
+        state.seq_capacity = static_cast<std::uint32_t>(seq_count);
+        state.num_sequences = static_cast<std::uint32_t>(seq_count);
+
+        // Copy sequences and allocate event arrays for each
+        for (std::size_t i = 0; i < seq_count; ++i) {
+            const Sequence& src = sequences[i];
+            Sequence& dst = state.sequences[i];
+
+            dst.duration = src.duration;
+            dst.mode = src.mode;
+            dst.step = src.step;
+            dst.num_events = src.num_events;
+
+            if (src.num_events > 0 && src.events) {
+                // Allocate events for this sequence
+                std::size_t event_bytes = src.num_events * sizeof(Event);
+                std::size_t event_floats = (event_bytes + sizeof(float) - 1) / sizeof(float);
+                float* event_mem = arena->allocate(event_floats);
+                if (event_mem) {
+                    dst.events = reinterpret_cast<Event*>(event_mem);
+                    dst.capacity = src.num_events;
+                    // Copy events
+                    for (std::uint32_t j = 0; j < src.num_events; ++j) {
+                        dst.events[j] = src.events[j];
+                    }
+                } else {
+                    dst.events = nullptr;
+                    dst.capacity = 0;
+                    dst.num_events = 0;
+                }
+            } else {
+                dst.events = nullptr;
+                dst.capacity = 0;
+            }
+        }
+
+        // Allocate output events buffer
+        // Use total_events * 2 for safety margin (nested sequences can expand)
+        std::uint32_t output_capacity = std::max(32u, total_events * 2);
+        std::size_t output_bytes = output_capacity * sizeof(OutputEvents::OutputEvent);
+        std::size_t output_floats = (output_bytes + sizeof(float) - 1) / sizeof(float);
+        float* output_mem = arena->allocate(output_floats);
+        if (output_mem) {
+            state.output.events = reinterpret_cast<OutputEvents::OutputEvent*>(output_mem);
+            state.output.capacity = output_capacity;
+        } else {
+            state.output.events = nullptr;
+            state.output.capacity = 0;
+        }
+        state.output.num_events = 0;
 
         // Set metadata
         state.cycle_length = cycle_length;
@@ -259,7 +336,6 @@ public:
         state.current_index = 0;
         state.last_beat_pos = -1.0f;
         state.last_queried_cycle = -1.0f;
-        state.output.clear();
     }
 
 private:

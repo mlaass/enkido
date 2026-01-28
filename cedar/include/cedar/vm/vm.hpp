@@ -140,12 +140,16 @@ public:
         state_pool_.init_seq_step(state_id, times, values, velocities, count, cycle_length);
     }
 
-    // Initialize a SequenceState with compiled sequences
+    // Initialize a SequenceState with compiled sequences (arena-allocated)
     // Used by compiler to set up the simplified sequence-based patterns
+    // @param total_events Total event count across all sequences (for output buffer sizing)
     void init_sequence_program_state(std::uint32_t state_id,
                                      const Sequence* sequences, std::size_t seq_count,
-                                     float cycle_length, bool is_sample_pattern) {
-        state_pool_.init_sequence_program(state_id, sequences, seq_count, cycle_length, is_sample_pattern);
+                                     float cycle_length, bool is_sample_pattern,
+                                     std::uint32_t total_events) {
+        state_pool_.init_sequence_program(state_id, sequences, seq_count,
+                                          cycle_length, is_sample_pattern,
+                                          &audio_arena_, total_events);
     }
 
     // =========================================================================

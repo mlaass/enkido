@@ -990,10 +990,12 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         }
         REQUIRE(seq_init != nullptr);
         REQUIRE(seq_init->sequences.size() >= 2);  // Root + alternate
+        REQUIRE(seq_init->sequence_events.size() >= 2);  // Event storage for each sequence
 
         // Root sequence should have 3 elements (c4, SUB_SEQ, a4)
         const auto& root = seq_init->sequences[0];
-        REQUIRE(root.num_events == 3);
+        const auto& root_events = seq_init->sequence_events[0];
+        REQUIRE(root_events.size() == 3);
         CHECK(root.mode == cedar::SequenceMode::NORMAL);
 
         // Check event times and durations
@@ -1001,28 +1003,29 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         const float third = 1.0f / 3.0f;
 
         // Event 0: c4 at time=0
-        CHECK(root.events[0].type == cedar::EventType::DATA);
-        CHECK(root.events[0].time == Catch::Approx(0.0f).margin(0.001f));
-        CHECK(root.events[0].duration == Catch::Approx(third).margin(0.001f));
+        CHECK(root_events[0].type == cedar::EventType::DATA);
+        CHECK(root_events[0].time == Catch::Approx(0.0f).margin(0.001f));
+        CHECK(root_events[0].duration == Catch::Approx(third).margin(0.001f));
 
         // Event 1: SUB_SEQ at time=1/3
-        CHECK(root.events[1].type == cedar::EventType::SUB_SEQ);
-        CHECK(root.events[1].time == Catch::Approx(third).margin(0.001f));
-        CHECK(root.events[1].duration == Catch::Approx(third).margin(0.001f));
+        CHECK(root_events[1].type == cedar::EventType::SUB_SEQ);
+        CHECK(root_events[1].time == Catch::Approx(third).margin(0.001f));
+        CHECK(root_events[1].duration == Catch::Approx(third).margin(0.001f));
 
         // Event 2: a4 at time=2/3
-        CHECK(root.events[2].type == cedar::EventType::DATA);
-        CHECK(root.events[2].time == Catch::Approx(2.0f * third).margin(0.001f));
-        CHECK(root.events[2].duration == Catch::Approx(third).margin(0.001f));
+        CHECK(root_events[2].type == cedar::EventType::DATA);
+        CHECK(root_events[2].time == Catch::Approx(2.0f * third).margin(0.001f));
+        CHECK(root_events[2].duration == Catch::Approx(third).margin(0.001f));
 
         // Alternate sequence (ID 1) should have 2 choices with duration=1.0
-        if (seq_init->sequences.size() > 1) {
+        if (seq_init->sequences.size() > 1 && seq_init->sequence_events.size() > 1) {
             const auto& alt = seq_init->sequences[1];
+            const auto& alt_events = seq_init->sequence_events[1];
             CHECK(alt.mode == cedar::SequenceMode::ALTERNATE);
-            REQUIRE(alt.num_events == 2);
+            REQUIRE(alt_events.size() == 2);
             // Each alternate choice has full span (1.0) within its SUB_SEQ slot
-            CHECK(alt.events[0].duration == Catch::Approx(1.0f).margin(0.001f));
-            CHECK(alt.events[1].duration == Catch::Approx(1.0f).margin(0.001f));
+            CHECK(alt_events[0].duration == Catch::Approx(1.0f).margin(0.001f));
+            CHECK(alt_events[1].duration == Catch::Approx(1.0f).margin(0.001f));
         }
     }
 
@@ -1041,13 +1044,37 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         }
         REQUIRE(seq_init != nullptr);
 
-        // Create a SequenceState and query it
-        cedar::SequenceState state;
-        state.num_sequences = static_cast<std::uint32_t>(
-            std::min(seq_init->sequences.size(), cedar::MAX_SEQUENCES));
-        for (std::size_t i = 0; i < state.num_sequences; ++i) {
-            state.sequences[i] = seq_init->sequences[i];
+        // Create a SequenceState and query it using static buffers for the test
+        static constexpr std::size_t TEST_MAX_SEQUENCES = 16;
+        static constexpr std::size_t TEST_MAX_EVENTS_PER_SEQ = 64;
+        static constexpr std::size_t TEST_MAX_OUTPUT_EVENTS = 64;
+        static cedar::Sequence test_sequences[TEST_MAX_SEQUENCES];
+        static cedar::Event test_events[TEST_MAX_SEQUENCES][TEST_MAX_EVENTS_PER_SEQ];
+        static cedar::OutputEvents::OutputEvent test_output_events[TEST_MAX_OUTPUT_EVENTS];
+
+        std::size_t num_seqs = std::min(seq_init->sequences.size(), TEST_MAX_SEQUENCES);
+
+        // Copy sequences and set up event pointers
+        for (std::size_t i = 0; i < num_seqs; ++i) {
+            test_sequences[i] = seq_init->sequences[i];
+            if (i < seq_init->sequence_events.size() && !seq_init->sequence_events[i].empty()) {
+                std::size_t num_events = std::min(seq_init->sequence_events[i].size(), TEST_MAX_EVENTS_PER_SEQ);
+                for (std::size_t j = 0; j < num_events; ++j) {
+                    test_events[i][j] = seq_init->sequence_events[i][j];
+                }
+                test_sequences[i].events = test_events[i];
+                test_sequences[i].num_events = static_cast<std::uint32_t>(num_events);
+                test_sequences[i].capacity = static_cast<std::uint32_t>(TEST_MAX_EVENTS_PER_SEQ);
+            }
         }
+
+        cedar::SequenceState state;
+        state.sequences = test_sequences;
+        state.num_sequences = static_cast<std::uint32_t>(num_seqs);
+        state.seq_capacity = static_cast<std::uint32_t>(TEST_MAX_SEQUENCES);
+        state.output.events = test_output_events;
+        state.output.num_events = 0;
+        state.output.capacity = static_cast<std::uint32_t>(TEST_MAX_OUTPUT_EVENTS);
         state.cycle_length = seq_init->cycle_length;
 
         // Query cycle 0
@@ -1066,6 +1093,56 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         CHECK(state.output.events[0].time == Catch::Approx(0.0f).margin(0.01f));
         CHECK(state.output.events[1].time == Catch::Approx(expected_duration).margin(0.01f));
         CHECK(state.output.events[2].time == Catch::Approx(2.0f * expected_duration).margin(0.01f));
+    }
+
+    SECTION("long pattern - 16 events (exceeds old MAX_EVENTS_PER_SEQ=8)") {
+        // This pattern has 16 events, which exceeds the old limit of 8
+        auto result = akkado::compile("pat(\"c4 g4 ~ ~ c5 e4 ~ g3 c4 g4 ~ ~ c5 e4 ~ a3\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+        REQUIRE(seq_init->sequence_events.size() >= 1);
+
+        // Count total events (excluding rests which have 0 events)
+        // Pattern: c4 g4 ~ ~ c5 e4 ~ g3 c4 g4 ~ ~ c5 e4 ~ a3
+        // Notes:   1  2     3  4     5  6  7     8  9     10 = 10 note events
+        std::uint32_t total_events = 0;
+        for (const auto& events : seq_init->sequence_events) {
+            total_events += static_cast<std::uint32_t>(events.size());
+        }
+        CHECK(total_events >= 10);  // At least 10 note events
+    }
+
+    SECTION("long pattern with groups - many nested events") {
+        // This creates 10 main events plus nested events
+        auto result = akkado::compile("pat(\"[c4 d4] [e4 f4] [g4 a4] [b4 c5] [d5 e5]\")");
+        REQUIRE(result.success);
+
+        // Find SequenceProgram state init
+        const akkado::StateInitData* seq_init = nullptr;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                seq_init = &init;
+                break;
+            }
+        }
+        REQUIRE(seq_init != nullptr);
+
+        // Count total events across all sequences
+        std::uint32_t total_events = 0;
+        for (const auto& events : seq_init->sequence_events) {
+            total_events += static_cast<std::uint32_t>(events.size());
+        }
+        // Should have 10 note events
+        CHECK(total_events >= 10);
     }
 }
 

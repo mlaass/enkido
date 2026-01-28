@@ -67,17 +67,17 @@ enum class SequenceMode : std::uint8_t {
 // Sequence - A collection of events with a playback mode
 // ============================================================================
 
-static constexpr std::size_t MAX_EVENTS_PER_SEQ = 8;
-
 struct Sequence {
-    Event events[MAX_EVENTS_PER_SEQ]; // Max 16 events per sequence
+    Event* events = nullptr;          // Pointer to arena-allocated events
     std::uint32_t num_events = 0;
+    std::uint32_t capacity = 0;       // Allocated event count
     float duration = 4.0f;            // Total duration in beats
     std::uint32_t step = 0;           // Current step (for ALTERNATE mode)
     SequenceMode mode = SequenceMode::NORMAL;
 
+    // Add event (only during compilation when capacity allows)
     void add_event(const Event& e) {
-        if (num_events < MAX_EVENTS_PER_SEQ) {
+        if (num_events < capacity) {
             events[num_events++] = e;
         }
     }
@@ -86,8 +86,6 @@ struct Sequence {
 // ============================================================================
 // OutputEvents - Collection of events produced by query
 // ============================================================================
-
-static constexpr std::size_t MAX_OUTPUT_EVENTS = 16;
 
 struct OutputEvents {
     struct OutputEvent {
@@ -99,12 +97,13 @@ struct OutputEvents {
         std::uint16_t source_length;
     };
 
-    OutputEvent events[MAX_OUTPUT_EVENTS];
+    OutputEvent* events = nullptr;    // Pointer to arena-allocated output events
     std::uint32_t num_events = 0;
+    std::uint32_t capacity = 0;       // Allocated event count
 
     void add(float time, float duration, const float* vals, std::uint8_t count,
              std::uint16_t src_off = 0, std::uint16_t src_len = 0) {
-        if (num_events < MAX_OUTPUT_EVENTS) {
+        if (num_events < capacity) {
             auto& e = events[num_events++];
             e.time = time;
             e.duration = duration;
@@ -137,12 +136,11 @@ struct OutputEvents {
 // SequenceState - Runtime state for sequence playback
 // ============================================================================
 
-static constexpr std::size_t MAX_SEQUENCES = 4;
-
 struct SequenceState {
     // Compiled sequences (set at init time)
-    Sequence sequences[MAX_SEQUENCES];
+    Sequence* sequences = nullptr;    // Pointer to arena-allocated sequences
     std::uint32_t num_sequences = 0;
+    std::uint32_t seq_capacity = 0;   // Allocated sequence count
 
     // Pattern parameters
     float cycle_length = 4.0f;
@@ -161,9 +159,9 @@ struct SequenceState {
     std::uint16_t active_source_offset = 0;
     std::uint16_t active_source_length = 0;
 
-    // Add a sequence and return its ID
+    // Add a sequence and return its ID (only during initialization when capacity allows)
     std::uint16_t add_sequence(const Sequence& seq) {
-        if (num_sequences < MAX_SEQUENCES) {
+        if (num_sequences < seq_capacity) {
             sequences[num_sequences] = seq;
             return static_cast<std::uint16_t>(num_sequences++);
         }
@@ -171,8 +169,8 @@ struct SequenceState {
     }
 };
 
-// Ensure size is reasonable for state pool
-static_assert(sizeof(SequenceState) < 2000, "SequenceState too large for state pool");
+// SequenceState is now small - just pointers and scalars
+static_assert(sizeof(SequenceState) < 256, "SequenceState too large");
 
 // ============================================================================
 // Deterministic Randomness
