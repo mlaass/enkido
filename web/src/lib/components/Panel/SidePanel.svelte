@@ -6,6 +6,7 @@
 	import { ParamsPanel } from '$lib/components/Params';
 	import DebugPanel from './DebugPanel.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import { audioEngine } from '$lib/stores/audio.svelte';
 
 	interface Props {
 		position?: 'left' | 'right';
@@ -191,25 +192,21 @@
 						<select
 							id="sample-rate"
 							value={settingsStore.sampleRate}
-							onchange={(e) => settingsStore.setSampleRate(parseInt((e.target as HTMLSelectElement).value) as 44100 | 48000)}
+							onchange={(e) => settingsStore.setSampleRate(parseInt((e.target as HTMLSelectElement).value))}
 						>
 							<option value={44100}>44100 Hz</option>
 							<option value={48000}>48000 Hz</option>
+							<option value={88200}>88200 Hz</option>
+							<option value={96000}>96000 Hz</option>
 						</select>
-					</div>
-
-					<div class="setting-group">
-						<label class="setting-label" for="buffer-size">Buffer Size</label>
-						<select
-							id="buffer-size"
-							value={settingsStore.bufferSize}
-							onchange={(e) => settingsStore.setBufferSize(parseInt((e.target as HTMLSelectElement).value) as 128 | 256 | 512 | 1024)}
-						>
-							<option value={128}>128 samples</option>
-							<option value={256}>256 samples</option>
-							<option value={512}>512 samples</option>
-							<option value={1024}>1024 samples</option>
-						</select>
+						{#if audioEngine.activeSampleRate && audioEngine.activeSampleRate !== settingsStore.sampleRate}
+							<div class="restart-notice">
+								<span>Restart required to apply</span>
+								<button class="restart-btn" onclick={() => audioEngine.restartAudio()}>
+									Restart Audio
+								</button>
+							</div>
+						{/if}
 					</div>
 
 					<!-- Developer -->
@@ -416,5 +413,37 @@
 	.reset-button:hover {
 		background-color: var(--bg-hover);
 		color: var(--text-primary);
+	}
+
+	.restart-notice {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-sm);
+		padding: var(--spacing-xs) var(--spacing-sm);
+		background-color: var(--bg-tertiary);
+		border-radius: 4px;
+		font-size: 11px;
+		color: var(--text-secondary);
+	}
+
+	.restart-notice span {
+		flex: 1;
+	}
+
+	.restart-btn {
+		padding: 2px 8px;
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--accent-primary);
+		background-color: transparent;
+		border: 1px solid var(--accent-primary);
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.restart-btn:hover {
+		background-color: var(--accent-primary);
+		color: var(--bg-primary);
 	}
 </style>

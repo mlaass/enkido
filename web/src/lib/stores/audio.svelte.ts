@@ -5,6 +5,7 @@
  */
 
 import { DEFAULT_DRUM_KIT } from '$lib/audio/default-samples';
+import { settingsStore } from './settings.svelte';
 
 interface Diagnostic {
 	severity: number;
@@ -121,6 +122,7 @@ interface AudioState {
 	params: ParamDecl[];
 	paramValues: Map<string, number>;
 	disassembly: DisassemblyInfo | null;
+	activeSampleRate: number | null;
 }
 
 function createAudioEngine() {
@@ -139,7 +141,8 @@ function createAudioEngine() {
 		samplesLoading: false,
 		params: [],
 		paramValues: new Map(),
-		disassembly: null
+		disassembly: null,
+		activeSampleRate: null
 	});
 
 	let audioContext: AudioContext | null = null;
@@ -176,11 +179,12 @@ function createAudioEngine() {
 		state.error = null;
 
 		try {
-			// Create AudioContext
+			// Create AudioContext with sample rate from settings
 			audioContext = new AudioContext({
-				sampleRate: 48000,
+				sampleRate: settingsStore.sampleRate,
 				latencyHint: 'interactive'
 			});
+			state.activeSampleRate = audioContext.sampleRate;
 
 			// Create gain node
 			gainNode = audioContext.createGain();
@@ -399,6 +403,48 @@ function createAudioEngine() {
 		await pause();
 		state.currentBeat = 0;
 		state.currentBar = 0;
+	}
+
+	/**
+	 * Restart the audio engine with updated settings (e.g., new sample rate)
+	 */
+	async function restartAudio() {
+		console.log('[AudioEngine] Restarting audio with new settings...');
+
+		// Stop playback
+		if (state.isPlaying) {
+			await stop();
+		}
+
+		// Close existing audio context
+		if (audioContext) {
+			await audioContext.close();
+			audioContext = null;
+		}
+
+		// Clear references
+		workletNode = null;
+		gainNode = null;
+		analyserNode = null;
+
+		// Reset state
+		state.isInitialized = false;
+		state.isLoading = false;
+		state.hasProgram = false;
+		state.samplesLoaded = false;
+		state.samplesLoading = false;
+		state.activeSampleRate = null;
+		state.params = [];
+		state.paramValues = new Map();
+		state.disassembly = null;
+
+		// Clear sample tracking
+		sampleLoadState.clear();
+		loadedSamples.clear();
+		pendingSampleLoads.clear();
+
+		// Reinitialize
+		await initialize();
 	}
 
 	function setBpm(bpm: number) {
@@ -1048,11 +1094,14 @@ function createAudioEngine() {
 		get paramValues() { return state.paramValues; },
 		// Debug info
 		get disassembly() { return state.disassembly; },
+		// Audio config
+		get activeSampleRate() { return state.activeSampleRate; },
 
 		initialize,
 		play,
 		pause,
 		stop,
+		restartAudio,
 		setBpm,
 		setVolume,
 		toggleVisualizations,

@@ -8,7 +8,7 @@ interface Settings {
 	panelPosition: 'left' | 'right';
 	fontSize: number;
 	bufferSize: 128 | 256 | 512 | 1024;
-	sampleRate: 44100 | 48000;
+	sampleRate: 44100 | 48000 | 88200 | 96000;
 	panelWidth: number;
 	panelCollapsed: boolean;
 	activeTab: TabName;
@@ -64,14 +64,12 @@ function createSettingsStore() {
 		save();
 	}
 
-	function setBufferSize(size: Settings['bufferSize']) {
-		settings.bufferSize = size;
-		save();
-	}
-
-	function setSampleRate(rate: Settings['sampleRate']) {
-		settings.sampleRate = rate;
-		save();
+	function setSampleRate(rate: number) {
+		// Validate the rate is one of the allowed values
+		if (rate === 44100 || rate === 48000 || rate === 88200 || rate === 96000) {
+			settings.sampleRate = rate;
+			save();
+		}
 	}
 
 	function setPanelWidth(width: number) {
@@ -121,7 +119,6 @@ function createSettingsStore() {
 
 		setPanelPosition,
 		setFontSize,
-		setBufferSize,
 		setSampleRate,
 		setPanelWidth,
 		setPanelCollapsed,
