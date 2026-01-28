@@ -12,6 +12,10 @@ VM::VM() {
     ctx_.states = &state_pool_;
     ctx_.arena = &audio_arena_;
     ctx_.env_map = &env_map_;
+
+    // Clear BUFFER_ZERO - this reserved buffer is always 0.0
+    // Used as default for optional inputs (phase, trigger, etc.)
+    buffer_pool_.clear(BUFFER_ZERO);
 }
 
 VM::~VM() = default;

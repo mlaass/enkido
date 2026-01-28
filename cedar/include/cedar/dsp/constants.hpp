@@ -25,6 +25,11 @@ inline constexpr std::size_t MAX_ENV_PARAMS = 256;
 // Special buffer indices
 inline constexpr std::uint16_t BUFFER_UNUSED = 0xFFFF;
 
+// Reserved buffer index for constant zero (always contains 0.0)
+// Used as default for optional inputs like phase offset and trigger
+// This buffer is reserved and should NEVER be used for program data
+inline constexpr std::uint16_t BUFFER_ZERO = 255;  // Last buffer in pool
+
 // Rate flags
 inline constexpr std::uint8_t RATE_AUDIO = 0;    // Process every sample
 inline constexpr std::uint8_t RATE_CONTROL = 1;  // Process once per block

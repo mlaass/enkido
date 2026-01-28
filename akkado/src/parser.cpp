@@ -896,8 +896,15 @@ NodeIndex Parser::parse_mini_literal() {
     Token pattern_tok = advance();
     const std::string& pattern_str = pattern_tok.as_string();
 
+    // Adjust location to point to content start (skip opening quote)
+    // This ensures source offsets in mini-notation AST are relative to content
+    SourceLocation content_loc = pattern_tok.location;
+    content_loc.offset += 1;
+    content_loc.column += 1;
+    content_loc.length = pattern_str.length();  // Content length without quotes
+
     // Parse the mini-notation string into AST nodes
-    auto [pattern_ast, mini_diags] = parse_mini(pattern_str, arena_, pattern_tok.location);
+    auto [pattern_ast, mini_diags] = parse_mini(pattern_str, arena_, content_loc);
 
     // Add mini-notation diagnostics to our diagnostics
     for (auto& diag : mini_diags) {

@@ -19,7 +19,7 @@ using codegen::is_upgradeable_oscillator;
 using codegen::upgrade_for_fm;
 
 std::uint16_t BufferAllocator::allocate() {
-    if (next_ >= MAX_BUFFERS) {
+    if (next_ >= MAX_ALLOCATABLE) {
         return BUFFER_UNUSED;
     }
     return next_++;
