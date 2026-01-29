@@ -346,6 +346,281 @@ TEST_CASE("Lexer chord literals", "[lexer]") {
         CHECK(chord.intervals[1] == 7);  // perfect fifth
     }
 
+    // Additional triads
+    SECTION("explicit major chord") {
+        auto [tokens, diags] = lex("Gmaj4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 67);  // G4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7});
+    }
+
+    SECTION("diminished chord") {
+        auto [tokens, diags] = lex("Ddim3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 50);  // D3
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 6});
+    }
+
+    SECTION("augmented chord") {
+        auto [tokens, diags] = lex("Caug4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 60);  // C4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 8});
+    }
+
+    SECTION("suspended 2nd chord") {
+        auto [tokens, diags] = lex("Asus2_4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 69);  // A4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 2, 7});
+    }
+
+    SECTION("suspended 4th chord") {
+        auto [tokens, diags] = lex("Esus4_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 52);  // E3
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 5, 7});
+    }
+
+    // Seventh chords
+    SECTION("major seventh chord") {
+        auto [tokens, diags] = lex("Cmaj7_4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 60);  // C4
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7, 11});
+    }
+
+    SECTION("minor seventh chord") {
+        auto [tokens, diags] = lex("Amin7_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 57);  // A3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 7, 10});
+    }
+
+    SECTION("diminished seventh chord") {
+        auto [tokens, diags] = lex("Gdim7_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 55);  // G3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 6, 9});
+    }
+
+    SECTION("half-diminished chord (m7b5)") {
+        auto [tokens, diags] = lex("Dm7b5_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 50);  // D3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 6, 10});
+    }
+
+    // Extended chords
+    SECTION("dominant ninth chord") {
+        auto [tokens, diags] = lex("G9_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 55);  // G3
+        REQUIRE(chord.intervals.size() == 5);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7, 10, 14});
+    }
+
+    SECTION("major ninth chord") {
+        auto [tokens, diags] = lex("Fmaj9_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 53);  // F3
+        REQUIRE(chord.intervals.size() == 5);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7, 11, 14});
+    }
+
+    SECTION("add9 chord") {
+        auto [tokens, diags] = lex("Eadd9_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 52);  // E3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7, 14});
+    }
+
+    // Sixth chords
+    SECTION("major sixth chord") {
+        auto [tokens, diags] = lex("C6_4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 60);  // C4
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7, 9});
+    }
+
+    SECTION("minor sixth chord") {
+        auto [tokens, diags] = lex("Amin6_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 57);  // A3
+        REQUIRE(chord.intervals.size() == 4);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 7, 9});
+    }
+
+    // Accidentals
+    SECTION("B-flat major chord") {
+        auto [tokens, diags] = lex("Bb4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 70);  // Bb4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7});
+    }
+
+    SECTION("E-flat major chord") {
+        auto [tokens, diags] = lex("Eb3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 51);  // Eb3
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7});
+    }
+
+    SECTION("G-sharp minor chord") {
+        auto [tokens, diags] = lex("G#m4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 68);  // G#4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 3, 7});
+    }
+
+    SECTION("double sharp chord") {
+        auto [tokens, diags] = lex("C##4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 62);  // C##4 = D4
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals == std::vector<std::int8_t>{0, 4, 7});
+    }
+
+    // Edge cases
+    SECTION("lowest octave chord") {
+        auto [tokens, diags] = lex("A0'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 21);  // A0
+    }
+
+    SECTION("high octave chord clamped to MIDI 127") {
+        auto [tokens, diags] = lex("C10'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        auto& chord = tokens[0].as_chord();
+        CHECK(chord.root_midi == 127);  // Clamped to max MIDI
+    }
+
+    SECTION("lowercase is not a Strudel chord - becomes identifier") {
+        auto [tokens, diags] = lex("c4'");
+        // This should NOT match Strudel syntax (requires uppercase)
+        // The existing quote-based syntax 'c4' would handle it
+        REQUIRE(tokens.size() >= 2);
+        // c4 is an identifier, ' starts a string or pitch
+        CHECK(tokens[0].type == TokenType::Identifier);
+    }
+
+    SECTION("invalid note letter falls back to identifier") {
+        auto [tokens, diags] = lex("X4'");
+        REQUIRE(tokens.size() >= 2);
+        CHECK(tokens[0].type == TokenType::Identifier);
+    }
+
+    SECTION("chord without apostrophe is identifier") {
+        auto [tokens, diags] = lex("CM4");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[0].as_string() == "CM4");
+    }
+
+    SECTION("pitch literal format still works") {
+        auto [tokens, diags] = lex("'c4'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::PitchLit);
+        CHECK(tokens[0].as_pitch() == 60);  // C4
+    }
+
     SECTION("unknown chord type falls back to string") {
         // 'c4xyz' should be a string since 'xyz' is not a known chord
         auto [tokens, diags] = lex("'c4xyz'");

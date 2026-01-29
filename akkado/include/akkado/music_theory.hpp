@@ -10,6 +10,8 @@ namespace akkado {
 /// Common chord intervals (semitones from root)
 inline const std::unordered_map<std::string_view, std::vector<std::int8_t>> CHORD_INTERVALS = {
     // Triads
+    {"",      {0, 4, 7}},        // Major (empty quality - default)
+    {"m",     {0, 3, 7}},        // Minor (short form)
     {"maj",   {0, 4, 7}},        // Major
     {"min",   {0, 3, 7}},        // Minor
     {"dim",   {0, 3, 6}},        // Diminished
