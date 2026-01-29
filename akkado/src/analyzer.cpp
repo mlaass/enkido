@@ -388,8 +388,7 @@ NodeIndex SemanticAnalyzer::substitute_holes(NodeIndex node, NodeIndex replaceme
                 // Create FieldAccess node: replacement.field
                 NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
                 output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
-                NodeIndex cloned_replacement = clone_subtree(replacement);
-                output_arena_[field_access].first_child = cloned_replacement;
+                output_arena_[field_access].first_child = replacement;  // Already in output arena
                 return field_access;
             }
         }
@@ -486,8 +485,7 @@ NodeIndex SemanticAnalyzer::substitute_holes_and_binding(
                 // Create FieldAccess node: replacement.field
                 NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
                 output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
-                NodeIndex cloned_replacement = clone_subtree(replacement);
-                output_arena_[field_access].first_child = cloned_replacement;
+                output_arena_[field_access].first_child = replacement;  // Already in output arena
                 return field_access;
             }
         }
@@ -577,8 +575,7 @@ NodeIndex SemanticAnalyzer::substitute_holes_and_identifier(
                 // Create FieldAccess node: replacement.field
                 NodeIndex field_access = output_arena_.alloc(NodeType::FieldAccess, n.location);
                 output_arena_[field_access].data = Node::FieldAccessData{hole_data.field_name.value()};
-                NodeIndex cloned_replacement = clone_subtree(replacement);
-                output_arena_[field_access].first_child = cloned_replacement;
+                output_arena_[field_access].first_child = replacement;  // Already in output arena
                 return field_access;
             }
         }
