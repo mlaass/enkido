@@ -22,6 +22,7 @@ inline const std::unordered_map<std::string_view, std::vector<std::int8_t>> CHOR
     // Seventh chords
     {"maj7",  {0, 4, 7, 11}},    // Major 7th
     {"min7",  {0, 3, 7, 10}},    // Minor 7th
+    {"m7",    {0, 3, 7, 10}},    // Minor 7th (short form, e.g., Am7)
     {"dom7",  {0, 4, 7, 10}},    // Dominant 7th (also just "7")
     {"7",     {0, 4, 7, 10}},    // Dominant 7th (short form)
     {"dim7",  {0, 3, 6, 9}},     // Diminished 7th

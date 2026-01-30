@@ -92,6 +92,18 @@ public:
         return sample_mappings_;
     }
 
+    // Get maximum number of values per event (for polyphonic chord support)
+    // Returns 1 for monophonic patterns, >1 for patterns with chords
+    std::uint8_t max_voices() const {
+        std::uint8_t max = 1;
+        for (const auto& seq : sequence_events_) {
+            for (const auto& e : seq) {
+                if (e.num_values > max) max = e.num_values;
+            }
+        }
+        return max;
+    }
+
     // Count top-level elements in a pattern (each element = 1 beat)
     // This determines cycle_length: pattern "a <b c> d" has 3 top-level elements
     std::uint32_t count_top_level_elements(NodeIndex node) {
@@ -267,7 +279,7 @@ private:
         }
     }
 
-    // MiniAtom: single note, sample, or rest -> DATA event
+    // MiniAtom: single note, sample, chord, or rest -> DATA event
     void compile_atom_event(const Node& n, std::uint16_t seq_idx,
                             float time_offset, float time_span) {
         const auto& atom_data = n.as_mini_atom();
@@ -291,6 +303,20 @@ private:
             float freq = 440.0f * std::pow(2.0f,
                 (static_cast<float>(atom_data.midi_note) - 69.0f) / 12.0f);
             e.values[0] = freq;
+        } else if (atom_data.kind == Node::MiniAtomKind::Chord) {
+            // Chord symbol: expand intervals to frequencies
+            // Root MIDI is at octave 4 by default
+            int root_midi = static_cast<int>(atom_data.chord_root_midi);
+            std::size_t num_notes = std::min(atom_data.chord_intervals.size(),
+                                              static_cast<std::size_t>(8));  // Max 8 values
+            e.num_values = static_cast<std::uint8_t>(num_notes);
+
+            for (std::size_t i = 0; i < num_notes; ++i) {
+                int midi = root_midi + static_cast<int>(atom_data.chord_intervals[i]);
+                float freq = 440.0f * std::pow(2.0f,
+                    (static_cast<float>(midi) - 69.0f) / 12.0f);
+                e.values[i] = freq;
+            }
         } else {
             // Sample
             is_sample_pattern_ = true;
@@ -645,8 +671,6 @@ private:
 
 // Handle MiniLiteral (pattern) nodes
 std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
-    [[maybe_unused]] PatternType pat_type = n.as_pattern_type();
-
     NodeIndex pattern_node = n.first_child;
     NodeIndex closure_node = NULL_NODE;
 
@@ -669,29 +693,14 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     const Node& pattern = ast_->arena[pattern_node];
     compiler.set_pattern_base_offset(pattern.location.offset);
     if (!compiler.compile(pattern_node)) {
-        // Fallback: try the old evaluation method for empty patterns
-        PatternEventStream events = evaluate_pattern_multi_cycle(pattern_node, ast_->arena);
-        if (events.empty()) {
-            std::uint16_t out = emit_zero(buffers_, instructions_);
-            if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-            }
-            pop_path();
-            node_buffers_[node] = out;
-            return out;
+        // Empty pattern - emit zero
+        std::uint16_t out = emit_zero(buffers_, instructions_);
+        if (out == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
         }
-        // Old evaluation found events but compiler failed - fall back to SEQ_STEP
-        bool is_sample_pattern_old = false;
-        for (const auto& event : events.events) {
-            if (event.type == PatternEventType::Sample) {
-                is_sample_pattern_old = true;
-                break;
-            }
-        }
-        if (is_sample_pattern_old) {
-            return handle_sample_pattern(node, n, events, state_id);
-        }
-        return handle_pitch_pattern(node, n, events, state_id, closure_node);
+        pop_path();
+        node_buffers_[node] = out;
+        return out;
     }
 
     // Collect required samples
@@ -728,17 +737,34 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     query_inst.state_id = state_id;
     emit(query_inst);
 
-    // Emit SEQPAT_STEP instruction (steps through query results)
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;  // value output (freq or sample_id)
-    step_inst.inputs[0] = velocity_buf;  // velocity output
-    step_inst.inputs[1] = trigger_buf;   // trigger output
-    step_inst.inputs[2] = 0xFFFF;
-    step_inst.inputs[3] = 0xFFFF;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
+    // Check for polyphonic patterns (chords with multiple values per event)
+    std::uint8_t max_voices = compiler.max_voices();
+    std::vector<std::uint16_t> voice_buffers;
+
+    // Emit SEQPAT_STEP for each voice
+    for (std::uint8_t voice = 0; voice < max_voices; ++voice) {
+        std::uint16_t voice_value_buf = (voice == 0) ? value_buf : buffers_.allocate();
+        if (voice_value_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        cedar::Instruction step_inst{};
+        step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
+        step_inst.out_buffer = voice_value_buf;
+        // Only first voice outputs velocity and trigger
+        step_inst.inputs[0] = (voice == 0) ? velocity_buf : 0xFFFF;
+        step_inst.inputs[1] = (voice == 0) ? trigger_buf : 0xFFFF;
+        // Voice index for polyphonic selection
+        step_inst.inputs[2] = voice;
+        step_inst.inputs[3] = 0xFFFF;
+        step_inst.inputs[4] = 0xFFFF;
+        step_inst.state_id = state_id;
+        emit(step_inst);
+
+        voice_buffers.push_back(voice_value_buf);
+    }
 
     // Store sequence program initialization data
     StateInitData seq_init;
@@ -835,194 +861,10 @@ std::uint16_t CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) 
     pattern_fields["trig"] = trigger_buf;
     record_fields_[node] = std::move(pattern_fields);
 
-    return result_buf;
-}
-
-// Handle sample patterns (bd, sn, etc.)
-std::uint16_t CodeGenerator::handle_sample_pattern(NodeIndex node, const Node& n,
-                                                    const PatternEventStream& events,
-                                                    std::uint32_t state_id) {
-    std::uint16_t sample_id_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
-    std::uint16_t pitch_buf = buffers_.allocate();
-    std::uint16_t output_buf = buffers_.allocate();
-
-    if (sample_id_buf == BufferAllocator::BUFFER_UNUSED ||
-        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-        trigger_buf == BufferAllocator::BUFFER_UNUSED ||
-        pitch_buf == BufferAllocator::BUFFER_UNUSED ||
-        output_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
-        pop_path();
-        return BufferAllocator::BUFFER_UNUSED;
+    // Register multi-buffer for polyphonic patterns (chords)
+    if (max_voices > 1 && !is_sample_pattern && closure_node == NULL_NODE) {
+        register_multi_buffer(node, std::move(voice_buffers));
     }
-
-    cedar::Instruction seq_inst{};
-    seq_inst.opcode = cedar::Opcode::SEQ_STEP;
-    seq_inst.out_buffer = sample_id_buf;
-    seq_inst.inputs[0] = velocity_buf;
-    seq_inst.inputs[1] = trigger_buf;
-    seq_inst.inputs[2] = 0xFFFF;
-    seq_inst.inputs[3] = 0xFFFF;
-    seq_inst.state_id = state_id;
-    emit(seq_inst);
-
-    StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SeqStep;
-    seq_init.cycle_length = 4.0f * events.cycle_span;  // Scale by pattern's cycle span
-    seq_init.times.reserve(events.size());
-    seq_init.values.reserve(events.size());
-    seq_init.velocities.reserve(events.size());
-
-    for (const auto& event : events.events) {
-        seq_init.times.push_back(event.time * 4.0f);  // Convert normalized time to beats
-
-        if (event.type == PatternEventType::Sample) {
-            if (!event.sample_name.empty()) {
-                required_samples_.insert(event.sample_name);
-            }
-            seq_init.sample_names.push_back(event.sample_name);
-
-            std::uint32_t sample_id = 0;
-            if (sample_registry_) {
-                sample_id = sample_registry_->get_id(event.sample_name);
-            }
-            seq_init.values.push_back(static_cast<float>(sample_id));
-        } else {
-            seq_init.sample_names.push_back("");
-            seq_init.values.push_back(0.0f);
-        }
-        seq_init.velocities.push_back(event.velocity);
-    }
-    state_inits_.push_back(std::move(seq_init));
-
-    cedar::Instruction pitch_inst{};
-    pitch_inst.opcode = cedar::Opcode::PUSH_CONST;
-    pitch_inst.out_buffer = pitch_buf;
-    pitch_inst.inputs[0] = 0xFFFF;
-    pitch_inst.inputs[1] = 0xFFFF;
-    pitch_inst.inputs[2] = 0xFFFF;
-    pitch_inst.inputs[3] = 0xFFFF;
-    encode_const_value(pitch_inst, 1.0f);
-    emit(pitch_inst);
-
-    cedar::Instruction sample_inst{};
-    sample_inst.opcode = cedar::Opcode::SAMPLE_PLAY;
-    sample_inst.out_buffer = output_buf;
-    sample_inst.inputs[0] = trigger_buf;
-    sample_inst.inputs[1] = pitch_buf;
-    sample_inst.inputs[2] = sample_id_buf;
-    sample_inst.inputs[3] = 0xFFFF;
-    sample_inst.state_id = state_id + 1;
-    emit(sample_inst);
-
-    pop_path();
-    node_buffers_[node] = output_buf;
-
-    // Store pattern field buffers for %.field access
-    std::unordered_map<std::string, std::uint16_t> pattern_fields;
-    pattern_fields["freq"] = sample_id_buf;  // sample patterns use sample_id as "freq"
-    pattern_fields["vel"] = velocity_buf;
-    pattern_fields["trig"] = trigger_buf;
-    record_fields_[node] = std::move(pattern_fields);
-
-    return output_buf;
-}
-
-// Handle pitch patterns (c4 e4 g4, etc.)
-std::uint16_t CodeGenerator::handle_pitch_pattern(NodeIndex node, const Node& n,
-                                                   const PatternEventStream& events,
-                                                   std::uint32_t state_id,
-                                                   NodeIndex closure_node) {
-    std::uint16_t pitch_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
-
-    if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
-        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
-        pop_path();
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    cedar::Instruction seq_inst{};
-    seq_inst.opcode = cedar::Opcode::SEQ_STEP;
-    seq_inst.out_buffer = pitch_buf;
-    seq_inst.inputs[0] = velocity_buf;
-    seq_inst.inputs[1] = trigger_buf;
-    seq_inst.inputs[2] = 0xFFFF;
-    seq_inst.inputs[3] = 0xFFFF;
-    seq_inst.state_id = state_id;
-    emit(seq_inst);
-
-    StateInitData pitch_init;
-    pitch_init.state_id = state_id;
-    pitch_init.type = StateInitData::Type::SeqStep;
-    pitch_init.cycle_length = 4.0f * events.cycle_span;  // Scale by pattern's cycle span
-    pitch_init.times.reserve(events.size());
-    pitch_init.values.reserve(events.size());
-    pitch_init.velocities.reserve(events.size());
-
-    for (const auto& event : events.events) {
-        pitch_init.times.push_back(event.time * 4.0f);  // Convert normalized time to beats
-
-        if (event.type == PatternEventType::Pitch) {
-            float freq = 440.0f * std::pow(2.0f, (static_cast<float>(event.midi_note) - 69.0f) / 12.0f);
-            pitch_init.values.push_back(freq);
-        } else {
-            pitch_init.values.push_back(0.0f);
-        }
-        pitch_init.velocities.push_back(event.velocity);
-    }
-    state_inits_.push_back(std::move(pitch_init));
-
-    std::uint16_t result_buf = pitch_buf;
-
-    if (closure_node != NULL_NODE) {
-        const Node& closure = ast_->arena[closure_node];
-        std::vector<std::string> param_names;
-        NodeIndex child = closure.first_child;
-        NodeIndex body = NULL_NODE;
-
-        while (child != NULL_NODE) {
-            const Node& child_node = ast_->arena[child];
-            if (child_node.type == NodeType::Identifier) {
-                if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
-                    param_names.push_back(child_node.as_closure_param().name);
-                } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                    param_names.push_back(child_node.as_identifier());
-                } else {
-                    body = child;
-                    break;
-                }
-            } else {
-                body = child;
-                break;
-            }
-            child = ast_->arena[child].next_sibling;
-        }
-
-        if (param_names.size() >= 1) symbols_->define_variable(param_names[0], trigger_buf);
-        if (param_names.size() >= 2) symbols_->define_variable(param_names[1], velocity_buf);
-        if (param_names.size() >= 3) symbols_->define_variable(param_names[2], pitch_buf);
-
-        if (body != NULL_NODE) {
-            result_buf = visit(body);
-        }
-    }
-
-    pop_path();
-    node_buffers_[node] = result_buf;
-
-    // Store pattern field buffers for %.field access
-    std::unordered_map<std::string, std::uint16_t> pattern_fields;
-    pattern_fields["freq"] = pitch_buf;
-    pattern_fields["vel"] = velocity_buf;
-    pattern_fields["trig"] = trigger_buf;
-    record_fields_[node] = std::move(pattern_fields);
 
     return result_buf;
 }
@@ -1055,77 +897,13 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     // Use the SequenceCompiler
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     if (!compiler.compile(mini_pattern)) {
-        // Fallback to old evaluation
-        PatternEventStream events = evaluate_pattern_multi_cycle(mini_pattern, ast_->arena);
-        if (events.empty()) {
-            std::uint16_t out = emit_zero(buffers_, instructions_);
-            if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", loc);
-            }
-            pop_path();
-            return out;
-        }
-
-        // Use old SEQ_STEP path for fallback
-        bool is_sample = false;
-        for (const auto& event : events.events) {
-            if (event.type == PatternEventType::Sample) {
-                is_sample = true;
-                break;
-            }
-        }
-
-        // Allocate buffers
-        std::uint16_t value_buf = buffers_.allocate();
-        std::uint16_t velocity_buf = buffers_.allocate();
-        std::uint16_t trigger_buf = buffers_.allocate();
-
-        if (value_buf == BufferAllocator::BUFFER_UNUSED ||
-            velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-            trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+        // Empty pattern - emit zero
+        std::uint16_t out = emit_zero(buffers_, instructions_);
+        if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", loc);
-            pop_path();
-            return BufferAllocator::BUFFER_UNUSED;
         }
-
-        cedar::Instruction seq_inst{};
-        seq_inst.opcode = cedar::Opcode::SEQ_STEP;
-        seq_inst.out_buffer = value_buf;
-        seq_inst.inputs[0] = velocity_buf;
-        seq_inst.inputs[1] = trigger_buf;
-        seq_inst.inputs[2] = 0xFFFF;
-        seq_inst.inputs[3] = 0xFFFF;
-        seq_inst.state_id = state_id;
-        emit(seq_inst);
-
-        StateInitData seq_init;
-        seq_init.state_id = state_id;
-        seq_init.type = StateInitData::Type::SeqStep;
-        seq_init.cycle_length = 4.0f * events.cycle_span;
-
-        for (const auto& event : events.events) {
-            seq_init.times.push_back(event.time * 4.0f);
-            if (event.type == PatternEventType::Sample) {
-                if (!event.sample_name.empty()) {
-                    required_samples_.insert(event.sample_name);
-                }
-                seq_init.sample_names.push_back(event.sample_name);
-                std::uint32_t sample_id = sample_registry_ ?
-                    sample_registry_->get_id(event.sample_name) : 0;
-                seq_init.values.push_back(static_cast<float>(sample_id));
-            } else if (event.type == PatternEventType::Pitch) {
-                float freq = 440.0f * std::pow(2.0f,
-                    (static_cast<float>(event.midi_note) - 69.0f) / 12.0f);
-                seq_init.values.push_back(freq);
-            } else {
-                seq_init.values.push_back(0.0f);
-            }
-            seq_init.velocities.push_back(event.velocity);
-        }
-        state_inits_.push_back(std::move(seq_init));
-
         pop_path();
-        return value_buf;
+        return out;
     }
 
     // Collect required samples
@@ -1190,7 +968,7 @@ std::uint16_t CodeGenerator::handle_pattern_reference(const std::string& name,
     return value_buf;
 }
 
-// Handle chord() calls - now uses mini-notation parsing
+// Handle chord() calls - uses SEQPAT system via SequenceCompiler
 std::uint16_t CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     NodeIndex arg = n.first_child;
     if (arg == NULL_NODE) {
@@ -1215,10 +993,10 @@ std::uint16_t CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
 
     std::string chord_str = str_n.as_string();
 
-    // Parse using mini-notation parser with sample_only=true
-    // This ensures "C7" is treated as chord symbol, not pitch C at octave 7
+    // Parse using mini-notation parser with sample_only=false (default)
+    // This enables chord symbol recognition (Am, C7, Fmaj7, etc.)
     auto [pattern_root, diags] = parse_mini(chord_str, const_cast<AstArena&>(ast_->arena),
-                                            str_n.location, /*sample_only=*/true);
+                                            str_n.location, /*sample_only=*/false);
 
     // Report any parse errors
     for (const auto& diag : diags) {
@@ -1232,287 +1010,286 @@ std::uint16_t CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    // Evaluate pattern with chord mode enabled, supporting multi-cycle
-    PatternEvaluator evaluator(ast_->arena);
-    evaluator.set_chord_mode(true);
+    // Use SequenceCompiler to compile the chord pattern (same as pat())
+    std::uint32_t chord_count = call_counters_["chord"]++;
+    push_path("chord#" + std::to_string(chord_count));
+    std::uint32_t state_id = compute_state_id();
 
-    // Determine how many cycles this pattern spans
-    std::uint32_t num_cycles = evaluator.count_cycles(pattern_root);
-    PatternEventStream events;
+    SequenceCompiler compiler(ast_->arena, sample_registry_);
+    const Node& pattern = ast_->arena[pattern_root];
+    compiler.set_pattern_base_offset(pattern.location.offset);
 
-    if (num_cycles <= 1) {
-        events = evaluator.evaluate(pattern_root, 0);
-    } else {
-        // Multi-cycle evaluation for chord progressions
-        for (std::uint32_t cycle = 0; cycle < num_cycles; cycle++) {
-            PatternEventStream cycle_events = evaluator.evaluate(pattern_root, cycle);
-            for (auto& event : cycle_events.events) {
-                event.time += static_cast<float>(cycle);
-            }
-            events.events.insert(events.events.end(),
-                                 cycle_events.events.begin(),
-                                 cycle_events.events.end());
-        }
-        events.cycle_span = static_cast<float>(num_cycles);
-        events.sort_by_time();
-    }
-
-    if (events.empty()) {
-        error("E127", "No valid chords in pattern: \"" + chord_str + "\"", str_n.location);
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    // Count chord events and collect them
-    std::vector<const PatternEvent*> chord_events;
-    for (const auto& event : events.events) {
-        if (event.type == PatternEventType::Chord) {
-            chord_events.push_back(&event);
-        }
-    }
-
-    if (chord_events.empty()) {
-        error("E127", "No valid chord symbols found in: \"" + chord_str + "\"", str_n.location);
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    // Single chord - emit as multi-buffer constant
-    if (chord_events.size() == 1 && chord_events[0]->chord_data.has_value()) {
-        return handle_single_chord(node, n, ChordInfo{
-            .root = chord_events[0]->chord_data->root,
-            .quality = chord_events[0]->chord_data->quality,
-            .root_midi = chord_events[0]->chord_data->root_midi,
-            .intervals = chord_events[0]->chord_data->intervals
-        }, chord_str);
-    }
-
-    // Multiple chords - use mini-notation timing
-    return handle_chord_progression_events(node, n, events, chord_str);
-}
-
-// Handle single chord expansion
-std::uint16_t CodeGenerator::handle_single_chord(NodeIndex node, const Node& n,
-                                                  const ChordInfo& chord,
-                                                  const std::string& chord_str) {
-    auto notes = expand_chord(chord, 4);
-    if (notes.empty()) {
-        error("E128", "Chord expansion failed for: \"" + chord_str + "\"", n.location);
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    std::vector<std::uint16_t> note_buffers;
-    note_buffers.reserve(notes.size());
-
-    for (int midi : notes) {
-        std::uint16_t midi_buf = buffers_.allocate();
-        if (midi_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            return BufferAllocator::BUFFER_UNUSED;
-        }
-
-        cedar::Instruction push_inst{};
-        push_inst.opcode = cedar::Opcode::PUSH_CONST;
-        push_inst.out_buffer = midi_buf;
-        push_inst.inputs[0] = 0xFFFF;
-        push_inst.inputs[1] = 0xFFFF;
-        push_inst.inputs[2] = 0xFFFF;
-        push_inst.inputs[3] = 0xFFFF;
-        encode_const_value(push_inst, static_cast<float>(midi));
-        emit(push_inst);
-
-        note_buffers.push_back(midi_buf);
-    }
-
-    std::uint16_t first_buf = register_multi_buffer(node, std::move(note_buffers));
-    node_buffers_[node] = first_buf;
-    return first_buf;
-}
-
-// Handle chord progression (multiple chords)
-std::uint16_t CodeGenerator::handle_chord_progression(NodeIndex node, const Node& n,
-                                                       const std::vector<ChordInfo>& chords,
-                                                       const std::string& chord_str) {
-    std::size_t max_voices = 0;
-    for (const auto& chord : chords) {
-        auto notes = expand_chord(chord, 4);
-        max_voices = std::max(max_voices, notes.size());
-    }
-
-    if (max_voices == 0) {
-        error("E128", "Chord expansion failed for: \"" + chord_str + "\"", n.location);
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    push_path("chord#" + std::to_string(call_counters_["chord"]++));
-
-    std::vector<std::uint16_t> voice_buffers;
-    voice_buffers.reserve(max_voices);
-    float step = 4.0f / static_cast<float>(chords.size());
-
-    for (std::size_t voice = 0; voice < max_voices; ++voice) {
-        push_path("voice" + std::to_string(voice));
-        std::uint32_t state_id = compute_state_id();
-
-        std::uint16_t pitch_buf = buffers_.allocate();
-        std::uint16_t velocity_buf = buffers_.allocate();
-        std::uint16_t trigger_buf = buffers_.allocate();
-
-        if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
-            velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-            trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            pop_path();
-            pop_path();
-            return BufferAllocator::BUFFER_UNUSED;
-        }
-
-        cedar::Instruction seq_inst{};
-        seq_inst.opcode = cedar::Opcode::SEQ_STEP;
-        seq_inst.out_buffer = pitch_buf;
-        seq_inst.inputs[0] = velocity_buf;
-        seq_inst.inputs[1] = trigger_buf;
-        seq_inst.inputs[2] = 0xFFFF;
-        seq_inst.inputs[3] = 0xFFFF;
-        seq_inst.state_id = state_id;
-        emit(seq_inst);
-
-        StateInitData voice_init;
-        voice_init.state_id = state_id;
-        voice_init.type = StateInitData::Type::SeqStep;
-        voice_init.cycle_length = 4.0f;
-        voice_init.times.reserve(chords.size());
-        voice_init.values.reserve(chords.size());
-        voice_init.velocities.reserve(chords.size());
-
-        for (std::size_t i = 0; i < chords.size(); ++i) {
-            voice_init.times.push_back(step * static_cast<float>(i));
-
-            auto notes = expand_chord(chords[i], 4);
-            int midi = 0;
-            if (voice < notes.size()) {
-                midi = notes[voice];
-            } else if (!notes.empty()) {
-                midi = notes[0];
-            }
-            voice_init.values.push_back(static_cast<float>(midi));
-            voice_init.velocities.push_back(1.0f);
-        }
-        state_inits_.push_back(std::move(voice_init));
-
-        voice_buffers.push_back(pitch_buf);
+    if (!compiler.compile(pattern_root)) {
+        error("E127", "Failed to compile chord pattern: \"" + chord_str + "\"", str_n.location);
         pop_path();
+        return BufferAllocator::BUFFER_UNUSED;
     }
+
+    // Determine cycle length from top-level element count
+    std::uint32_t num_elements = compiler.count_top_level_elements(pattern_root);
+    float cycle_length = static_cast<float>(std::max(1u, num_elements));
+
+    // Allocate buffers for outputs
+    std::uint16_t value_buf = buffers_.allocate();
+    std::uint16_t velocity_buf = buffers_.allocate();
+    std::uint16_t trigger_buf = buffers_.allocate();
+
+    if (value_buf == BufferAllocator::BUFFER_UNUSED ||
+        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        pop_path();
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Emit SEQPAT_QUERY instruction
+    cedar::Instruction query_inst{};
+    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
+    query_inst.out_buffer = 0xFFFF;
+    query_inst.inputs[0] = 0xFFFF;
+    query_inst.inputs[1] = 0xFFFF;
+    query_inst.inputs[2] = 0xFFFF;
+    query_inst.inputs[3] = 0xFFFF;
+    query_inst.inputs[4] = 0xFFFF;
+    query_inst.state_id = state_id;
+    emit(query_inst);
+
+    // Check for polyphonic patterns (chords with multiple values per event)
+    std::uint8_t max_voices = compiler.max_voices();
+    std::vector<std::uint16_t> voice_buffers;
+
+    // Emit SEQPAT_STEP for each voice
+    for (std::uint8_t voice = 0; voice < max_voices; ++voice) {
+        std::uint16_t voice_value_buf = (voice == 0) ? value_buf : buffers_.allocate();
+        if (voice_value_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+
+        cedar::Instruction step_inst{};
+        step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
+        step_inst.out_buffer = voice_value_buf;
+        // Only first voice outputs velocity and trigger
+        step_inst.inputs[0] = (voice == 0) ? velocity_buf : 0xFFFF;
+        step_inst.inputs[1] = (voice == 0) ? trigger_buf : 0xFFFF;
+        // Voice index for polyphonic selection
+        step_inst.inputs[2] = voice;
+        step_inst.inputs[3] = 0xFFFF;
+        step_inst.inputs[4] = 0xFFFF;
+        step_inst.state_id = state_id;
+        emit(step_inst);
+
+        voice_buffers.push_back(voice_value_buf);
+    }
+
+    // Store sequence program initialization data
+    StateInitData seq_init;
+    seq_init.state_id = state_id;
+    seq_init.type = StateInitData::Type::SequenceProgram;
+    seq_init.cycle_length = cycle_length;
+    seq_init.sequences = compiler.sequences();
+    seq_init.sequence_events = compiler.sequence_events();
+    seq_init.total_events = compiler.total_events();
+    seq_init.is_sample_pattern = false;
+    seq_init.pattern_location = str_n.location;
+    seq_init.sequence_sample_mappings = compiler.sample_mappings();
+    state_inits_.push_back(std::move(seq_init));
 
     pop_path();
 
+    // Register multi-buffer for polyphony
     std::uint16_t first_buf = register_multi_buffer(node, std::move(voice_buffers));
     node_buffers_[node] = first_buf;
     return first_buf;
 }
 
-// Handle chord progression using mini-notation event timing
-std::uint16_t CodeGenerator::handle_chord_progression_events(
-    NodeIndex node, const Node& n,
-    const PatternEventStream& events,
-    const std::string& chord_str) {
+// ============================================================================
+// Pattern transformation handlers
+// ============================================================================
 
-    // Collect chord events with their timing
-    std::vector<std::pair<float, const ChordEventData*>> chord_events;
-    for (const auto& event : events.events) {
-        if (event.type == PatternEventType::Chord && event.chord_data.has_value()) {
-            chord_events.emplace_back(event.time, &(*event.chord_data));
-        }
+// Helper: Get pattern argument from a function call
+// Returns the MiniLiteral node or NULL_NODE if not a valid pattern
+static NodeIndex get_pattern_arg(const Ast& ast, const Node& n, std::size_t arg_index) {
+    NodeIndex arg = n.first_child;
+    std::size_t idx = 0;
+    while (arg != NULL_NODE && idx < arg_index) {
+        arg = ast.arena[arg].next_sibling;
+        idx++;
+    }
+    if (arg == NULL_NODE) return NULL_NODE;
+
+    // Unwrap Argument node if present
+    const Node& arg_node = ast.arena[arg];
+    if (arg_node.type == NodeType::Argument) {
+        arg = arg_node.first_child;
     }
 
-    if (chord_events.empty()) {
-        error("E127", "No valid chords in pattern: \"" + chord_str + "\"", n.location);
+    return arg;
+}
+
+// Helper: Get numeric argument from a function call
+// Returns the value or default if not a valid number
+static std::optional<float> get_number_arg(const Ast& ast, const Node& n, std::size_t arg_index) {
+    NodeIndex arg = get_pattern_arg(ast, n, arg_index);
+    if (arg == NULL_NODE) return std::nullopt;
+
+    const Node& arg_node = ast.arena[arg];
+    if (arg_node.type == NodeType::NumberLit) {
+        return static_cast<float>(arg_node.as_number());
+    }
+    return std::nullopt;
+}
+
+// Helper: Check if a node is a pattern-producing expression
+// Returns true for MiniLiteral or Call to pat/seq/timeline
+static bool is_pattern_expr(const Ast& ast, NodeIndex node) {
+    if (node == NULL_NODE) return false;
+
+    const Node& n = ast.arena[node];
+
+    if (n.type == NodeType::MiniLiteral) return true;
+
+    if (n.type == NodeType::Call) {
+        const std::string& func_name = n.as_identifier();
+        return func_name == "pat" || func_name == "seq" || func_name == "timeline" ||
+               func_name == "note" || func_name == "slow" || func_name == "fast" ||
+               func_name == "rev" || func_name == "transpose" || func_name == "velocity";
+    }
+
+    return false;
+}
+
+std::uint16_t CodeGenerator::handle_slow_call(NodeIndex node, const Node& n) {
+    // slow(pattern, factor) - stretch pattern by factor
+    // Equivalent to dividing all event times by factor
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto factor = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "slow() requires a pattern as first argument", n.location);
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    // Find max voices across all chords
-    std::size_t max_voices = 0;
-    for (const auto& [time, chord] : chord_events) {
-        max_voices = std::max(max_voices, chord->intervals.size());
-    }
-
-    if (max_voices == 0) {
-        error("E128", "Chord expansion failed for: \"" + chord_str + "\"", n.location);
+    if (!factor.has_value() || *factor <= 0) {
+        error("E131", "slow() requires a positive number as second argument", n.location);
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    push_path("chord#" + std::to_string(call_counters_["chord"]++));
+    const Node& pat_node = ast_->arena[pattern_arg];
 
-    std::vector<std::uint16_t> voice_buffers;
-    voice_buffers.reserve(max_voices);
-    float cycle_length = 4.0f * events.cycle_span;  // Scale by pattern's cycle span
-
-    for (std::size_t voice = 0; voice < max_voices; ++voice) {
-        push_path("voice" + std::to_string(voice));
-        std::uint32_t state_id = compute_state_id();
-
-        std::uint16_t pitch_buf = buffers_.allocate();
-        std::uint16_t velocity_buf = buffers_.allocate();
-        std::uint16_t trigger_buf = buffers_.allocate();
-
-        if (pitch_buf == BufferAllocator::BUFFER_UNUSED ||
-            velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-            trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            pop_path();
-            pop_path();
-            return BufferAllocator::BUFFER_UNUSED;
-        }
-
-        cedar::Instruction seq_inst{};
-        seq_inst.opcode = cedar::Opcode::SEQ_STEP;
-        seq_inst.out_buffer = pitch_buf;
-        seq_inst.inputs[0] = velocity_buf;
-        seq_inst.inputs[1] = trigger_buf;
-        seq_inst.inputs[2] = 0xFFFF;
-        seq_inst.inputs[3] = 0xFFFF;
-        seq_inst.state_id = state_id;
-        emit(seq_inst);
-
-        StateInitData voice_init;
-        voice_init.state_id = state_id;
-        voice_init.type = StateInitData::Type::SeqStep;
-        voice_init.cycle_length = cycle_length;
-        voice_init.times.reserve(chord_events.size());
-        voice_init.values.reserve(chord_events.size());
-        voice_init.velocities.reserve(chord_events.size());
-
-        for (const auto& [time, chord] : chord_events) {
-            // Use timing from mini-notation evaluation
-            voice_init.times.push_back(time * 4.0f);  // Convert normalized time to beats
-
-            // Expand chord to MIDI notes
-            auto notes = expand_chord(ChordInfo{
-                .root = chord->root,
-                .quality = chord->quality,
-                .root_midi = chord->root_midi,
-                .intervals = chord->intervals
-            }, 4);
-
-            int midi = 0;
-            if (voice < notes.size()) {
-                midi = notes[voice];
-            } else if (!notes.empty()) {
-                // Wrap around for chords with fewer notes
-                midi = notes[0];
-            }
-            voice_init.values.push_back(static_cast<float>(midi));
-            voice_init.velocities.push_back(1.0f);
-        }
-        state_inits_.push_back(std::move(voice_init));
-
-        voice_buffers.push_back(pitch_buf);
-        pop_path();
+    // Accept MiniLiteral or pattern-producing Call nodes
+    if (pat_node.type == NodeType::MiniLiteral || is_pattern_expr(*ast_, pattern_arg)) {
+        // For MVP, emit warning and pass through
+        warn("W130", "slow() not yet fully implemented - pattern will play at normal speed", n.location);
+        return visit(pattern_arg);
     }
 
-    pop_path();
+    // For non-pattern arguments, this is an error
+    error("E133", "slow() first argument must be a pattern", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
+}
 
-    std::uint16_t first_buf = register_multi_buffer(node, std::move(voice_buffers));
-    node_buffers_[node] = first_buf;
-    return first_buf;
+std::uint16_t CodeGenerator::handle_fast_call(NodeIndex node, const Node& n) {
+    // fast(pattern, factor) - compress pattern by factor
+    // Equivalent to multiplying all event times by factor
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto factor = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "fast() requires a pattern as first argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    if (!factor.has_value() || *factor <= 0) {
+        error("E131", "fast() requires a positive number as second argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Accept MiniLiteral or pattern-producing Call nodes
+    if (is_pattern_expr(*ast_, pattern_arg)) {
+        warn("W130", "fast() not yet fully implemented - pattern will play at normal speed", n.location);
+        return visit(pattern_arg);
+    }
+
+    error("E133", "fast() first argument must be a pattern", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
+}
+
+std::uint16_t CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
+    // rev(pattern) - reverse event order in pattern
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "rev() requires a pattern as argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Accept MiniLiteral or pattern-producing Call nodes
+    if (is_pattern_expr(*ast_, pattern_arg)) {
+        warn("W130", "rev() not yet fully implemented - pattern will play normally", n.location);
+        return visit(pattern_arg);
+    }
+
+    error("E133", "rev() argument must be a pattern", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
+}
+
+std::uint16_t CodeGenerator::handle_transpose_call(NodeIndex node, const Node& n) {
+    // transpose(pattern, semitones) - shift all pitches by semitones
+    (void)node;  // Unused for now
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto semitones = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "transpose() requires a pattern as first argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    if (!semitones.has_value()) {
+        error("E131", "transpose() requires a number as second argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Accept MiniLiteral or pattern-producing Call nodes
+    if (is_pattern_expr(*ast_, pattern_arg)) {
+        warn("W130", "transpose() not yet fully implemented - pattern will play at original pitch", n.location);
+        return visit(pattern_arg);
+    }
+
+    error("E133", "transpose() first argument must be a pattern", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
+}
+
+std::uint16_t CodeGenerator::handle_velocity_call(NodeIndex node, const Node& n) {
+    // velocity(pattern, vel) - set velocity on all events
+    (void)node;  // Unused for now
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto vel = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "velocity() requires a pattern as first argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    if (!vel.has_value() || *vel < 0 || *vel > 1) {
+        error("E131", "velocity() requires a number between 0 and 1 as second argument", n.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+
+    // Accept MiniLiteral or pattern-producing Call nodes
+    if (is_pattern_expr(*ast_, pattern_arg)) {
+        warn("W130", "velocity() not yet fully implemented - pattern will use default velocity", n.location);
+        return visit(pattern_arg);
+    }
+
+    error("E133", "velocity() first argument must be a pattern", n.location);
+    return BufferAllocator::BUFFER_UNUSED;
 }
 
 } // namespace akkado

@@ -231,31 +231,24 @@ private:
     /// Handle MiniLiteral (pattern) nodes - pat("c4 e4 g4"), etc.
     std::uint16_t handle_mini_literal(NodeIndex node, const Node& n);
 
-    /// Handle sample patterns (bd, sn, etc.)
-    std::uint16_t handle_sample_pattern(NodeIndex node, const Node& n,
-                                        const struct PatternEventStream& events,
-                                        std::uint32_t state_id);
+    // ============================================================================
+    // Pattern transformation handlers
+    // ============================================================================
 
-    /// Handle pitch patterns (c4 e4 g4, etc.)
-    std::uint16_t handle_pitch_pattern(NodeIndex node, const Node& n,
-                                        const struct PatternEventStream& events,
-                                        std::uint32_t state_id,
-                                        NodeIndex closure_node);
+    /// Handle slow(pattern, factor) - stretch pattern by factor
+    std::uint16_t handle_slow_call(NodeIndex node, const Node& n);
 
-    /// Handle single chord expansion
-    std::uint16_t handle_single_chord(NodeIndex node, const Node& n,
-                                      const struct ChordInfo& chord,
-                                      const std::string& chord_str);
+    /// Handle fast(pattern, factor) - compress pattern by factor
+    std::uint16_t handle_fast_call(NodeIndex node, const Node& n);
 
-    /// Handle chord progression (multiple chords)
-    std::uint16_t handle_chord_progression(NodeIndex node, const Node& n,
-                                           const std::vector<struct ChordInfo>& chords,
-                                           const std::string& chord_str);
+    /// Handle rev(pattern) - reverse event order
+    std::uint16_t handle_rev_call(NodeIndex node, const Node& n);
 
-    /// Handle chord progression using mini-notation event timing
-    std::uint16_t handle_chord_progression_events(NodeIndex node, const Node& n,
-                                                  const struct PatternEventStream& events,
-                                                  const std::string& chord_str);
+    /// Handle transpose(pattern, semitones) - shift pitches by semitones
+    std::uint16_t handle_transpose_call(NodeIndex node, const Node& n);
+
+    /// Handle velocity(pattern, vel) - set velocity on all events
+    std::uint16_t handle_velocity_call(NodeIndex node, const Node& n);
 
     // ============================================================================
     // Parameter exposure handlers

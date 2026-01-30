@@ -401,25 +401,34 @@ inline void op_seqpat_query(ExecutionContext& ctx, const Instruction& inst) {
 // SEQPAT_STEP - Step through sequence query results
 // ============================================================================
 // out_buffer: value output (frequency or sample ID)
-// inputs[0]: velocity output buffer
-// inputs[1]: trigger output buffer
+// inputs[0]: velocity output buffer (0xFFFF to skip writing)
+// inputs[1]: trigger output buffer (0xFFFF to skip writing)
+// inputs[2]: voice index for polyphonic patterns (0-7, default 0 if 0xFFFF)
+//            Selects which value from evt.values[] to output for chords
 // Outputs current event value and trigger when events fire
 [[gnu::always_inline]]
 inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
     float* out_value = ctx.buffers->get(inst.out_buffer);
-    float* out_velocity = ctx.buffers->get(inst.inputs[0]);
-    float* out_trigger = ctx.buffers->get(inst.inputs[1]);
+    // Velocity and trigger output are optional (use 0xFFFF to skip for secondary voices)
+    float* out_velocity = (inst.inputs[0] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[0]) : nullptr;
+    float* out_trigger = (inst.inputs[1] != BUFFER_UNUSED)
+        ? ctx.buffers->get(inst.inputs[1]) : nullptr;
     auto& state = ctx.states->get_or_create<SequenceState>(inst.state_id);
+
+    // Voice index for polyphonic patterns (selects which chord note to output)
+    std::uint8_t voice_index = (inst.inputs[2] != BUFFER_UNUSED)
+        ? static_cast<std::uint8_t>(inst.inputs[2]) : 0;
 
     if (state.output.num_events == 0) {
         std::fill_n(out_value, BLOCK_SIZE, 0.0f);
-        std::fill_n(out_velocity, BLOCK_SIZE, 0.0f);
-        std::fill_n(out_trigger, BLOCK_SIZE, 0.0f);
+        if (out_velocity) std::fill_n(out_velocity, BLOCK_SIZE, 0.0f);
+        if (out_trigger) std::fill_n(out_trigger, BLOCK_SIZE, 0.0f);
         return;
     }
 
-    // Initialize active step from first event if not yet set
-    if (state.active_source_length == 0 && state.output.num_events > 0) {
+    // Initialize active step from first event if not yet set (only for voice 0)
+    if (voice_index == 0 && state.active_source_length == 0 && state.output.num_events > 0) {
         state.active_source_offset = state.output.events[0].source_offset;
         state.active_source_length = state.output.events[0].source_length;
     }
@@ -440,34 +449,42 @@ inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
         }
 
         // Check if we crossed an event time (for trigger)
-        out_trigger[i] = 0.0f;
+        float trigger_val = 0.0f;
         while (state.current_index < state.output.num_events &&
                beat_pos >= state.output.events[state.current_index].time) {
-            out_trigger[i] = 1.0f;
-            // Update active step for UI highlighting
-            const auto& evt = state.output.events[state.current_index];
-            state.active_source_offset = evt.source_offset;
-            state.active_source_length = evt.source_length;
+            trigger_val = 1.0f;
+            // Update active step for UI highlighting (only for voice 0)
+            if (voice_index == 0) {
+                const auto& evt = state.output.events[state.current_index];
+                state.active_source_offset = evt.source_offset;
+                state.active_source_length = evt.source_length;
+            }
             state.current_index++;
         }
 
         // Handle wrap: also trigger if we wrapped and crossed first event
         if (wrapped && state.output.num_events > 0 && beat_pos >= state.output.events[0].time) {
-            out_trigger[i] = 1.0f;
+            trigger_val = 1.0f;
         }
+
+        if (out_trigger) out_trigger[i] = trigger_val;
 
         // Output current value and velocity (from current event)
         std::uint32_t event_index = (state.current_index > 0)
             ? state.current_index - 1
             : state.output.num_events - 1;
-        // Use first value from event (multi-value support for chords)
         const auto& evt = state.output.events[event_index];
-        out_value[i] = evt.num_values > 0 ? evt.values[0] : 0.0f;
-        out_velocity[i] = 1.0f;  // Velocity support TBD
 
-        // Keep active step in sync with current event for UI highlighting
-        state.active_source_offset = evt.source_offset;
-        state.active_source_length = evt.source_length;
+        // Select value based on voice index (for polyphonic chord support)
+        // If voice_index exceeds available values, output 0 (silence that voice)
+        out_value[i] = (voice_index < evt.num_values) ? evt.values[voice_index] : 0.0f;
+        if (out_velocity) out_velocity[i] = 1.0f;  // Velocity support TBD
+
+        // Keep active step in sync with current event for UI highlighting (only voice 0)
+        if (voice_index == 0) {
+            state.active_source_offset = evt.source_offset;
+            state.active_source_length = evt.source_length;
+        }
 
         state.last_beat_pos = beat_pos;
     }
