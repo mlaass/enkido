@@ -472,6 +472,63 @@ TEST_CASE("Parser error handling", "[parser]") {
     }
 }
 
+TEST_CASE("Parser error recovery", "[parser]") {
+    SECTION("recovers after missing closing bracket") {
+        // Parser should recover and continue parsing after error
+        auto [tokens, lex_diags] = lex("[1, 2 \n x = 3");
+        auto [ast, parse_diags] = parse(std::move(tokens), "[1, 2 \n x = 3");
+        // Should have error but possibly continue
+        CHECK(!parse_diags.empty());
+    }
+
+    SECTION("recovers after malformed function call") {
+        auto [tokens, lex_diags] = lex("foo(, )\nbar(1)");
+        auto [ast, parse_diags] = parse(std::move(tokens), "foo(, )\nbar(1)");
+        CHECK(!parse_diags.empty());
+    }
+
+    SECTION("error on multiple consecutive operators") {
+        auto [tokens, lex_diags] = lex("1 + + 2");
+        auto [ast, parse_diags] = parse(std::move(tokens), "1 + + 2");
+        // Depending on implementation, might parse as 1 + (+2) or error
+        // Either way, should not crash
+    }
+
+    SECTION("error on missing match braces") {
+        auto [tokens, lex_diags] = lex("match(x) { \"a\": 1");
+        auto [ast, parse_diags] = parse(std::move(tokens), "match(x) { \"a\": 1");
+        CHECK(!parse_diags.empty());
+    }
+
+    SECTION("error on unclosed string") {
+        auto [tokens, lex_diags] = lex("\"unclosed");
+        // Lexer should produce error
+        CHECK(!lex_diags.empty());
+    }
+
+    SECTION("error on invalid assignment target") {
+        auto [tokens, lex_diags] = lex("42 = x");
+        auto [ast, parse_diags] = parse(std::move(tokens), "42 = x");
+        // Should produce error for invalid LHS
+        bool has_error = !lex_diags.empty() || !parse_diags.empty();
+        CHECK(has_error);
+    }
+
+    SECTION("error on missing arrow in closure") {
+        auto [tokens, lex_diags] = lex("(x) 42");
+        auto [ast, parse_diags] = parse(std::move(tokens), "(x) 42");
+        // Missing -> should produce error or unexpected parse
+        // Just verify no crash
+    }
+
+    SECTION("error on empty braces in non-record context") {
+        // Empty match body
+        auto [tokens, lex_diags] = lex("match(x) {}");
+        auto [ast, parse_diags] = parse(std::move(tokens), "match(x) {}");
+        // Should handle gracefully (either valid empty or error)
+    }
+}
+
 TEST_CASE("Parser post statement", "[parser]") {
     SECTION("post with closure") {
         auto ast = parse_ok("post((x) -> x)");

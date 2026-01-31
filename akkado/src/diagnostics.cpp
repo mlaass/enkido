@@ -29,6 +29,22 @@ std::string_view severity_color(Severity s) {
 constexpr std::string_view RESET = "\033[0m";
 constexpr std::string_view BOLD = "\033[1m";
 
+std::string escape_json(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:   out += c; break;
+        }
+    }
+    return out;
+}
+
 // Get the line from source at the given line number (1-based)
 std::string_view get_line(std::string_view source, std::uint32_t line_num) {
     std::uint32_t current_line = 1;
@@ -112,9 +128,9 @@ std::string format_diagnostic_json(const Diagnostic& diag) {
     std::ostringstream out;
 
     out << R"({"severity":")" << severity_string(diag.severity) << R"(",)";
-    out << R"("code":")" << diag.code << R"(",)";
-    out << R"("message":")" << diag.message << R"(",)";  // TODO: escape
-    out << R"("file":")" << diag.filename << R"(",)";
+    out << R"("code":")" << escape_json(diag.code) << R"(",)";
+    out << R"("message":")" << escape_json(diag.message) << R"(",)";
+    out << R"("file":")" << escape_json(diag.filename) << R"(",)";
     out << R"("range":{"start":{"line":)" << (diag.location.line - 1)
         << R"(,"character":)" << (diag.location.column - 1) << R"(},)";
     out << R"("end":{"line":)" << (diag.location.line - 1)

@@ -28,11 +28,15 @@ public:
         : size_(size)
         , offset_(0)
     {
-        // Allocate aligned memory
-        memory_ = static_cast<float*>(std::aligned_alloc(ALIGNMENT, size_));
-        if (memory_) {
-            std::memset(memory_, 0, size_);
+        // size must be multiple of alignment for aligned_alloc
+        std::size_t aligned_size = (size_ + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
+        memory_ = static_cast<float*>(std::aligned_alloc(ALIGNMENT, aligned_size));
+
+        if (!memory_) {
+            size_ = 0;  // Mark as invalid
+            return;
         }
+        std::memset(memory_, 0, aligned_size);
     }
 
     ~AudioArena() {

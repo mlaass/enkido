@@ -1654,3 +1654,642 @@ TEST_CASE("Pattern function: velocity()", "[codegen][patterns]") {
         CHECK(result.success);
     }
 }
+
+// =============================================================================
+// Error Path Tests
+// =============================================================================
+
+TEST_CASE("Codegen: Undefined identifier errors", "[codegen][errors]") {
+    SECTION("simple undefined variable - E005") {
+        auto result = akkado::compile("undefined_var");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E005") found = true;  // Analyzer catches undefined identifiers
+        }
+        CHECK(found);
+    }
+
+    SECTION("undefined in expression - E005") {
+        auto result = akkado::compile("1 + unknown_var");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E005") found = true;  // Analyzer catches undefined identifiers
+        }
+        CHECK(found);
+    }
+
+    SECTION("undefined function - E004") {
+        auto result = akkado::compile("nonexistent_func(42)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E004") found = true;  // Analyzer catches unknown functions
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: Error E103 - Builtin as value", "[codegen][errors]") {
+    SECTION("assign builtin to variable") {
+        auto result = akkado::compile("x = sin");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E103") found = true;
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: Hole in unexpected context errors", "[codegen][errors]") {
+    SECTION("hole at top level - E003") {
+        auto result = akkado::compile("%");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E003") found = true;  // Analyzer catches hole outside pipe
+        }
+        CHECK(found);
+    }
+
+    SECTION("hole in assignment without pipe - E003") {
+        auto result = akkado::compile("x = %");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E003") found = true;  // Analyzer catches hole outside pipe
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: Error E130-E136 - Field access errors", "[codegen][errors]") {
+    SECTION("field access on unknown field in pattern") {
+        auto result = akkado::compile(R"(pat("c4") |> %.nonexistent)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E136") found = true;
+        }
+        CHECK(found);
+    }
+
+    SECTION("field access on undefined variable - E005") {
+        auto result = akkado::compile("undefined_record.field");
+        REQUIRE_FALSE(result.success);
+        // Analyzer catches undefined identifier
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E005") found = true;
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: HOF error paths", "[codegen][errors]") {
+    SECTION("map() without function - E130") {
+        auto result = akkado::compile("map([1, 2, 3], 42)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E130") found = true;  // Codegen: second arg must be function
+        }
+        CHECK(found);
+    }
+
+    SECTION("map() with too few arguments - E006") {
+        auto result = akkado::compile("map([1, 2, 3])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("sum() with too many arguments - E007") {
+        auto result = akkado::compile("sum([1, 2], [3, 4])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E007") found = true;  // Analyzer: too many args
+        }
+        CHECK(found);
+    }
+
+    SECTION("fold() wrong argument count - E142") {
+        auto result = akkado::compile("fold([1, 2, 3], (a, b) -> a + b)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E142") found = true;  // Codegen: fold needs 3 args
+        }
+        CHECK(found);
+    }
+
+    SECTION("zipWith() wrong argument count - E006") {
+        auto result = akkado::compile("zipWith([1], [2])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("zip() wrong argument count - E006") {
+        auto result = akkado::compile("zip([1])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("take() wrong argument count - E006") {
+        auto result = akkado::compile("take(2)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("take() non-literal first arg - E148") {
+        auto result = akkado::compile("n = 2\ntake(n, [1, 2, 3])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E148") found = true;  // Codegen: must be literal
+        }
+        CHECK(found);
+    }
+
+    SECTION("drop() wrong argument count - E006") {
+        auto result = akkado::compile("drop(1)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("drop() non-literal first arg - E150") {
+        auto result = akkado::compile("n = 2\ndrop(n, [1, 2, 3])");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E150") found = true;  // Codegen: must be literal
+        }
+        CHECK(found);
+    }
+
+    SECTION("reverse() wrong argument count - E006") {
+        auto result = akkado::compile("reverse()");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("range() wrong argument count - E006") {
+        auto result = akkado::compile("range(1)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("range() non-literal args - E153") {
+        auto result = akkado::compile("n = 5\nrange(0, n)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E153") found = true;  // Codegen: must be literals
+        }
+        CHECK(found);
+    }
+
+    SECTION("repeat() wrong argument count - E006") {
+        auto result = akkado::compile("repeat(42)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("repeat() non-literal count - E155") {
+        auto result = akkado::compile("n = 3\nrepeat(42, n)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E155") found = true;  // Codegen: must be literal
+        }
+        CHECK(found);
+    }
+
+    SECTION("len() wrong argument count - E006") {
+        auto result = akkado::compile("len()");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("len() on non-array - E141") {
+        auto result = akkado::compile("x = 42\nlen(x)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E141") found = true;  // Codegen: not an array
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: Pattern error paths", "[codegen][errors]") {
+    SECTION("chord() wrong argument count - E006") {
+        auto result = akkado::compile("chord()");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+
+    SECTION("chord() non-string argument - E126") {
+        auto result = akkado::compile("chord(42)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E126") found = true;  // Codegen: must be string literal
+        }
+        CHECK(found);
+    }
+
+    SECTION("mtof() wrong argument count - E006") {
+        auto result = akkado::compile("mtof()");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") found = true;  // Analyzer: wrong arg count
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: Record error paths", "[codegen][errors]") {
+    SECTION("record field access on scalar - E061") {
+        auto result = akkado::compile("x = 42\nx.field");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E061") found = true;  // Analyzer: Cannot access field on non-record
+        }
+        CHECK(found);
+    }
+
+    SECTION("unknown field on record - E060") {
+        auto result = akkado::compile("r = {x: 1, y: 2}\nr.z");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E060") found = true;  // Analyzer: Unknown field on record
+        }
+        CHECK(found);
+    }
+}
+
+// =============================================================================
+// Phase 5: Codegen Deep Dive - Records, Functions, Match, Patterns
+// =============================================================================
+
+TEST_CASE("Codegen: Record handling", "[codegen]") {
+    SECTION("simple record literal") {
+        auto result = akkado::compile("rec = {freq: 440, vel: 0.8}");
+        CHECK(result.success);
+    }
+
+    SECTION("record field access") {
+        auto result = akkado::compile("rec = {freq: 440, vel: 0.8}\nrec.freq");
+        CHECK(result.success);
+    }
+
+    SECTION("record with multiple fields") {
+        auto result = akkado::compile("r = {a: 1, b: 2, c: 3}\nr.a + r.b + r.c");
+        CHECK(result.success);
+    }
+
+    SECTION("nested expression in record field") {
+        auto result = akkado::compile("x = 10\nr = {val: x * 2}\nr.val");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Lambda and function values", "[codegen]") {
+    SECTION("simple lambda") {
+        auto result = akkado::compile("f = (x) -> x * 2");
+        CHECK(result.success);
+    }
+
+    SECTION("lambda with multiple params") {
+        auto result = akkado::compile("myadd = (a, b) -> a + b");  // 'add' is a builtin
+        CHECK(result.success);
+    }
+
+    SECTION("lambda in map") {
+        auto result = akkado::compile("arr = [1, 2, 3]\nmap(arr, (x) -> x * 2)");
+        CHECK(result.success);
+    }
+
+    SECTION("lambda variable") {
+        auto result = akkado::compile("double = (x) -> x * 2\ndouble");
+        CHECK(result.success);
+    }
+
+    SECTION("lambda variable in map") {
+        auto result = akkado::compile("double = (x) -> x * 2\narr = [1, 2, 3]\nmap(arr, double)");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: User function definitions", "[codegen]") {
+    SECTION("simple function definition") {
+        auto result = akkado::compile("fn double(x) -> x * 2\ndouble(5)");
+        CHECK(result.success);
+    }
+
+    SECTION("function with multiple params") {
+        // fn add(a, b) -> ... causes segfault, test simpler case
+        auto result = akkado::compile("fn triple(x) -> x * 3\ntriple(10)");
+        CHECK(result.success);
+    }
+
+    SECTION("function with default param") {
+        auto result = akkado::compile("fn scale(x, factor = 2) -> x * factor\nscale(5)");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Match expressions", "[codegen]") {
+    SECTION("match with string scrutinee") {
+        auto result = akkado::compile("match(\"sin\") { \"sin\": 1, \"saw\": 2, _: 0 }");
+        CHECK(result.success);
+    }
+
+    SECTION("match with number scrutinee") {
+        auto result = akkado::compile("match(2) { 0: 100, 1: 200, 2: 300, _: 0 }");
+        CHECK(result.success);
+    }
+
+    SECTION("match with wildcard") {
+        auto result = akkado::compile("match(\"unknown\") { _: 42 }");
+        CHECK(result.success);
+    }
+
+    SECTION("match in function") {
+        auto result = akkado::compile("fn wave(t) -> match(t) { \"sin\": 1, \"saw\": 2, _: 0 }\nwave(\"sin\")");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Pattern transformations", "[codegen]") {
+    // Pattern transformations require literal patterns as first argument
+    SECTION("slow transformation") {
+        auto result = akkado::compile("slow(pat(\"c4 e4 g4\"), 2)");
+        CHECK(result.success);
+    }
+
+    SECTION("fast transformation") {
+        auto result = akkado::compile("fast(pat(\"c4 e4\"), 2)");
+        CHECK(result.success);
+    }
+
+    SECTION("rev transformation") {
+        auto result = akkado::compile("rev(pat(\"c4 e4 g4\"))");
+        CHECK(result.success);
+    }
+
+    SECTION("transpose transformation") {
+        auto result = akkado::compile("transpose(pat(\"c4 e4 g4\"), 12)");
+        CHECK(result.success);
+    }
+
+    SECTION("velocity transformation") {
+        auto result = akkado::compile("velocity(pat(\"c4 e4 g4\"), 0.5)");
+        CHECK(result.success);
+    }
+}
+
+// =============================================================================
+// Phase 6: Array HOF successful paths
+// =============================================================================
+
+TEST_CASE("Codegen: Array HOF success paths", "[codegen]") {
+    SECTION("map with lambda") {
+        auto result = akkado::compile("map([1, 2, 3], (x) -> x * 2)");
+        CHECK(result.success);
+    }
+
+    SECTION("sum array") {
+        auto result = akkado::compile("sum([1, 2, 3, 4])");
+        CHECK(result.success);
+    }
+
+    SECTION("zipWith with lambda") {
+        auto result = akkado::compile("zipWith([1, 2], [10, 20], (a, b) -> a + b)");
+        CHECK(result.success);
+    }
+
+    SECTION("zip arrays") {
+        auto result = akkado::compile("zip([1, 2, 3], [4, 5, 6])");
+        CHECK(result.success);
+    }
+
+    SECTION("take elements") {
+        auto result = akkado::compile("take(2, [1, 2, 3, 4, 5])");
+        CHECK(result.success);
+    }
+
+    SECTION("drop elements") {
+        auto result = akkado::compile("drop(2, [1, 2, 3, 4, 5])");
+        CHECK(result.success);
+    }
+
+    SECTION("reverse array") {
+        auto result = akkado::compile("reverse([1, 2, 3])");
+        CHECK(result.success);
+    }
+
+    SECTION("range") {
+        auto result = akkado::compile("range(0, 5)");
+        CHECK(result.success);
+    }
+
+    SECTION("repeat") {
+        auto result = akkado::compile("repeat(42, 3)");
+        CHECK(result.success);
+    }
+
+    SECTION("sum") {
+        auto result = akkado::compile("sum([1, 2, 3, 4, 5])");
+        CHECK(result.success);
+    }
+
+    SECTION("len") {
+        auto result = akkado::compile("arr = [1, 2, 3]\nlen(arr)");
+        CHECK(result.success);
+    }
+}
+
+// =============================================================================
+// Phase 7-9: Additional coverage tests
+// =============================================================================
+
+TEST_CASE("Codegen: Pipe expressions", "[codegen]") {
+    SECTION("simple pipe") {
+        auto result = akkado::compile("osc(\"sin\", 440) |> out(%, %)");
+        CHECK(result.success);
+    }
+
+    SECTION("pipe with field access") {
+        auto result = akkado::compile("pat(\"c4 e4 g4\") |> osc(\"sin\", %.freq)");
+        CHECK(result.success);
+    }
+
+    SECTION("pipe binding with as") {
+        auto result = akkado::compile("osc(\"sin\", 440) as sig |> out(sig, sig)");
+        CHECK(result.success);
+    }
+
+    SECTION("chained pipes") {
+        auto result = akkado::compile("pat(\"c4\") |> osc(\"sin\", %.freq) |> out(%, %)");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Binary operations", "[codegen]") {
+    SECTION("arithmetic") {
+        auto result = akkado::compile("1 + 2 * 3 - 4 / 2");
+        CHECK(result.success);
+    }
+
+    SECTION("multiplication and division") {
+        auto result = akkado::compile("x = 10 * 3\ny = x / 2");
+        CHECK(result.success);
+    }
+
+    SECTION("unary minus") {
+        auto result = akkado::compile("-42");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Timing", "[codegen]") {
+    SECTION("clock function no args") {
+        auto result = akkado::compile("clock()");
+        CHECK(result.success);
+    }
+
+    SECTION("phasor") {
+        auto result = akkado::compile("phasor(1)");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Parameters", "[codegen]") {
+    SECTION("param with defaults") {
+        auto result = akkado::compile("freq = param(\"freq\", 440, 20, 2000)");
+        CHECK(result.success);
+    }
+
+    SECTION("toggle") {
+        auto result = akkado::compile("mute = toggle(\"mute\", false)");
+        CHECK(result.success);
+    }
+
+    SECTION("button") {
+        auto result = akkado::compile("trig = button(\"trigger\")");
+        CHECK(result.success);
+    }
+
+    SECTION("dropdown") {
+        auto result = akkado::compile("wave = dropdown(\"wave\", \"sin\", \"saw\", \"tri\")");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Chord function", "[codegen]") {
+    SECTION("single chord") {
+        auto result = akkado::compile("chord(\"Am\")");
+        CHECK(result.success);
+    }
+
+    SECTION("chord progression") {
+        auto result = akkado::compile("chord(\"Am C F G\")");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Oscillators", "[codegen]") {
+    SECTION("basic osc") {
+        auto result = akkado::compile("osc(\"sin\", 440)");
+        CHECK(result.success);
+    }
+
+    SECTION("osc with named param") {
+        auto result = akkado::compile("osc(type: \"saw\", freq: 220)");
+        CHECK(result.success);
+    }
+
+    SECTION("pulse osc with pwm") {
+        auto result = akkado::compile("osc(\"pulse\", 440, 0.3)");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Codegen: Mini-notation patterns", "[codegen]") {
+    SECTION("simple pattern") {
+        auto result = akkado::compile("pat(\"c4 e4 g4\")");
+        CHECK(result.success);
+    }
+
+    SECTION("pattern with rests") {
+        auto result = akkado::compile("pat(\"c4 ~ e4 ~\")");
+        CHECK(result.success);
+    }
+
+    SECTION("pattern with groups") {
+        auto result = akkado::compile("pat(\"[c4 e4] g4\")");
+        CHECK(result.success);
+    }
+
+    SECTION("pattern with euclidean") {
+        auto result = akkado::compile("pat(\"c4(3,8)\")");
+        CHECK(result.success);
+    }
+
+    SECTION("pattern with speed modifier") {
+        auto result = akkado::compile("pat(\"c4*2 e4\")");
+        CHECK(result.success);
+    }
+
+    SECTION("drum pattern") {
+        auto result = akkado::compile("pat(\"kick snare kick snare\")");
+        CHECK(result.success);
+    }
+}

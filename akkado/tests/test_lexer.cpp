@@ -963,3 +963,130 @@ TEST_CASE("Lexer error recovery", "[lexer]") {
         CHECK(found_bar);
     }
 }
+
+// ============================================================================
+// Token Type Name Tests [lexer]
+// ============================================================================
+
+TEST_CASE("token_type_name returns correct strings", "[lexer]") {
+    CHECK(token_type_name(TokenType::Eof) == "Eof");
+    CHECK(token_type_name(TokenType::Number) == "Number");
+    CHECK(token_type_name(TokenType::String) == "String");
+    CHECK(token_type_name(TokenType::Identifier) == "Identifier");
+    CHECK(token_type_name(TokenType::PitchLit) == "PitchLit");
+    CHECK(token_type_name(TokenType::ChordLit) == "ChordLit");
+    CHECK(token_type_name(TokenType::True) == "True");
+    CHECK(token_type_name(TokenType::False) == "False");
+    CHECK(token_type_name(TokenType::Post) == "Post");
+    CHECK(token_type_name(TokenType::Match) == "Match");
+    CHECK(token_type_name(TokenType::Fn) == "Fn");
+    CHECK(token_type_name(TokenType::As) == "As");
+    CHECK(token_type_name(TokenType::Pat) == "Pat");
+    CHECK(token_type_name(TokenType::Plus) == "Plus");
+    CHECK(token_type_name(TokenType::Minus) == "Minus");
+    CHECK(token_type_name(TokenType::Star) == "Star");
+    CHECK(token_type_name(TokenType::Slash) == "Slash");
+    CHECK(token_type_name(TokenType::Caret) == "Caret");
+    CHECK(token_type_name(TokenType::Dot) == "Dot");
+    CHECK(token_type_name(TokenType::Pipe) == "Pipe");
+    CHECK(token_type_name(TokenType::Equals) == "Equals");
+    CHECK(token_type_name(TokenType::Arrow) == "Arrow");
+    CHECK(token_type_name(TokenType::Less) == "Less");
+    CHECK(token_type_name(TokenType::Greater) == "Greater");
+    CHECK(token_type_name(TokenType::LessEqual) == "LessEqual");
+    CHECK(token_type_name(TokenType::GreaterEqual) == "GreaterEqual");
+    CHECK(token_type_name(TokenType::EqualEqual) == "EqualEqual");
+    CHECK(token_type_name(TokenType::BangEqual) == "BangEqual");
+    CHECK(token_type_name(TokenType::AndAnd) == "AndAnd");
+    CHECK(token_type_name(TokenType::OrOr) == "OrOr");
+    CHECK(token_type_name(TokenType::LParen) == "LParen");
+    CHECK(token_type_name(TokenType::RParen) == "RParen");
+    CHECK(token_type_name(TokenType::LBracket) == "LBracket");
+    CHECK(token_type_name(TokenType::RBracket) == "RBracket");
+    CHECK(token_type_name(TokenType::LBrace) == "LBrace");
+    CHECK(token_type_name(TokenType::RBrace) == "RBrace");
+    CHECK(token_type_name(TokenType::Comma) == "Comma");
+    CHECK(token_type_name(TokenType::Colon) == "Colon");
+    CHECK(token_type_name(TokenType::Semicolon) == "Semicolon");
+    CHECK(token_type_name(TokenType::Hole) == "Hole");
+    CHECK(token_type_name(TokenType::At) == "At");
+    CHECK(token_type_name(TokenType::Bang) == "Bang");
+    CHECK(token_type_name(TokenType::Question) == "Question");
+    CHECK(token_type_name(TokenType::Tilde) == "Tilde");
+    CHECK(token_type_name(TokenType::Underscore) == "Underscore");
+    CHECK(token_type_name(TokenType::MiniString) == "MiniString");
+    CHECK(token_type_name(TokenType::Error) == "Error");
+}
+
+// ============================================================================
+// Token Helper Method Tests [lexer]
+// ============================================================================
+
+TEST_CASE("Token is_error and is_eof helpers", "[lexer]") {
+    SECTION("is_eof on EOF token") {
+        auto [tokens, diags] = lex("");
+        REQUIRE(tokens.size() == 1);
+        CHECK(tokens[0].is_eof());
+        CHECK_FALSE(tokens[0].is_error());
+    }
+
+    SECTION("is_error on error token") {
+        auto [tokens, diags] = lex("\"unterminated");
+        // Find the error token
+        bool found_error = false;
+        for (const auto& tok : tokens) {
+            if (tok.is_error()) {
+                found_error = true;
+                CHECK_FALSE(tok.is_eof());
+                break;
+            }
+        }
+        CHECK(found_error);
+    }
+
+    SECTION("neither eof nor error on normal token") {
+        auto [tokens, diags] = lex("42");
+        REQUIRE(tokens.size() == 2);
+        CHECK_FALSE(tokens[0].is_eof());
+        CHECK_FALSE(tokens[0].is_error());
+    }
+}
+
+// ============================================================================
+// Token Accessor Edge Cases [lexer]
+// ============================================================================
+
+TEST_CASE("Token accessors edge cases", "[lexer]") {
+    SECTION("as_chord for minor seventh") {
+        auto [tokens, diags] = lex("Am7_3'");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() >= 2);
+        CHECK(tokens[0].type == TokenType::ChordLit);
+        const auto& chord = tokens[0].as_chord();
+        REQUIRE(chord.intervals.size() == 4);  // m7 = 4 notes
+    }
+
+    SECTION("as_pitch for extreme octaves") {
+        // Lowest octave
+        auto [tokens1, diags1] = lex("'c0'");
+        REQUIRE(diags1.empty());
+        CHECK(tokens1[0].as_pitch() == 12);  // C0
+
+        // Highest clamped
+        auto [tokens2, diags2] = lex("'c10'");
+        REQUIRE(diags2.empty());
+        CHECK(tokens2[0].as_pitch() == 127);
+    }
+
+    SECTION("as_number for scientific notation") {
+        auto [tokens, diags] = lex("1.5e-3");
+        REQUIRE(diags.empty());
+        CHECK_THAT(tokens[0].as_number(), WithinRel(0.0015));
+    }
+
+    SECTION("as_string for escaped characters") {
+        auto [tokens, diags] = lex(R"("tab\there")");
+        REQUIRE(diags.empty());
+        CHECK(tokens[0].as_string() == "tab\there");
+    }
+}

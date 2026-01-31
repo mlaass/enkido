@@ -60,6 +60,14 @@
                 "ENKIDO_BUILD_AKKADO": "OFF",
                 "ENKIDO_BUILD_TOOLS": "ON"
             }
+        },
+        {
+            "name": "coverage",
+            "displayName": "Debug with Coverage",
+            "inherits": "debug",
+            "cacheVariables": {
+                "ENKIDO_ENABLE_COVERAGE": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -74,6 +82,10 @@
         {
             "name": "wasm",
             "configurePreset": "wasm"
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage"
         }
     ],
     "testPresets": [

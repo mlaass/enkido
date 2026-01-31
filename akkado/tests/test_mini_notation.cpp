@@ -8,6 +8,130 @@ using namespace akkado;
 using Catch::Matchers::WithinRel;
 
 // ============================================================================
+// Mini Token Type Name Tests [mini_lexer]
+// ============================================================================
+
+TEST_CASE("mini_token_type_name returns correct strings", "[mini_lexer]") {
+    CHECK(mini_token_type_name(MiniTokenType::Eof) == "Eof");
+    CHECK(mini_token_type_name(MiniTokenType::PitchToken) == "PitchToken");
+    CHECK(mini_token_type_name(MiniTokenType::SampleToken) == "SampleToken");
+    CHECK(mini_token_type_name(MiniTokenType::ChordToken) == "ChordToken");
+    CHECK(mini_token_type_name(MiniTokenType::Rest) == "Rest");
+    CHECK(mini_token_type_name(MiniTokenType::Number) == "Number");
+    CHECK(mini_token_type_name(MiniTokenType::LBracket) == "LBracket");
+    CHECK(mini_token_type_name(MiniTokenType::RBracket) == "RBracket");
+    CHECK(mini_token_type_name(MiniTokenType::LAngle) == "LAngle");
+    CHECK(mini_token_type_name(MiniTokenType::RAngle) == "RAngle");
+    CHECK(mini_token_type_name(MiniTokenType::LParen) == "LParen");
+    CHECK(mini_token_type_name(MiniTokenType::RParen) == "RParen");
+    CHECK(mini_token_type_name(MiniTokenType::LBrace) == "LBrace");
+    CHECK(mini_token_type_name(MiniTokenType::RBrace) == "RBrace");
+    CHECK(mini_token_type_name(MiniTokenType::Comma) == "Comma");
+    CHECK(mini_token_type_name(MiniTokenType::Star) == "Star");
+    CHECK(mini_token_type_name(MiniTokenType::Slash) == "Slash");
+    CHECK(mini_token_type_name(MiniTokenType::Colon) == "Colon");
+    CHECK(mini_token_type_name(MiniTokenType::At) == "At");
+    CHECK(mini_token_type_name(MiniTokenType::Bang) == "Bang");
+    CHECK(mini_token_type_name(MiniTokenType::Question) == "Question");
+    CHECK(mini_token_type_name(MiniTokenType::Percent) == "Percent");
+    CHECK(mini_token_type_name(MiniTokenType::Pipe) == "Pipe");
+    CHECK(mini_token_type_name(MiniTokenType::Error) == "Error");
+}
+
+// ============================================================================
+// MiniToken Accessor Tests [mini_lexer]
+// ============================================================================
+
+TEST_CASE("MiniToken is_eof and is_error helpers", "[mini_lexer]") {
+    SECTION("is_eof on EOF token") {
+        auto [tokens, diags] = lex_mini("");
+        REQUIRE(tokens.size() == 1);
+        CHECK(tokens[0].is_eof());
+        CHECK_FALSE(tokens[0].is_error());
+    }
+
+    SECTION("neither eof nor error on normal token") {
+        auto [tokens, diags] = lex_mini("c4");
+        REQUIRE(tokens.size() >= 2);
+        CHECK_FALSE(tokens[0].is_eof());
+        CHECK_FALSE(tokens[0].is_error());
+    }
+}
+
+TEST_CASE("MiniToken as_number accessor", "[mini_lexer]") {
+    auto [tokens, diags] = lex_mini("c*2.5");
+    REQUIRE(diags.empty());
+
+    // Find the number token
+    for (const auto& t : tokens) {
+        if (t.type == MiniTokenType::Number) {
+            CHECK_THAT(t.as_number(), WithinRel(2.5, 0.001));
+            break;
+        }
+    }
+}
+
+TEST_CASE("MiniToken as_pitch accessor", "[mini_lexer]") {
+    SECTION("pitch with explicit octave") {
+        auto [tokens, diags] = lex_mini("c4");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens[0].type == MiniTokenType::PitchToken);
+
+        const auto& pitch = tokens[0].as_pitch();
+        CHECK(pitch.midi_note == 60);
+        CHECK(pitch.has_octave == true);
+    }
+
+    SECTION("pitch without octave defaults to 4") {
+        auto [tokens, diags] = lex_mini("e");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens[0].type == MiniTokenType::PitchToken);
+
+        const auto& pitch = tokens[0].as_pitch();
+        CHECK(pitch.midi_note == 64);  // E4
+        CHECK(pitch.has_octave == false);
+    }
+}
+
+TEST_CASE("MiniToken as_sample accessor", "[mini_lexer]") {
+    SECTION("sample without variant") {
+        auto [tokens, diags] = lex_mini("bd");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens[0].type == MiniTokenType::SampleToken);
+
+        const auto& sample = tokens[0].as_sample();
+        CHECK(sample.name == "bd");
+        CHECK(sample.variant == 0);
+    }
+
+    SECTION("sample with variant") {
+        auto [tokens, diags] = lex_mini("kick:3");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens[0].type == MiniTokenType::SampleToken);
+
+        const auto& sample = tokens[0].as_sample();
+        CHECK(sample.name == "kick");
+        CHECK(sample.variant == 3);
+    }
+}
+
+TEST_CASE("MiniToken as_chord accessor", "[mini_lexer]") {
+    auto [tokens, diags] = lex_mini("Am7");
+    REQUIRE(diags.empty());
+    REQUIRE(tokens[0].type == MiniTokenType::ChordToken);
+
+    const auto& chord = tokens[0].as_chord();
+    CHECK(chord.root == "A");
+    CHECK(chord.quality == "m7");
+    CHECK(chord.root_midi == 69);  // A4
+    REQUIRE(chord.intervals.size() == 4);
+    CHECK(chord.intervals[0] == 0);   // root
+    CHECK(chord.intervals[1] == 3);   // minor third
+    CHECK(chord.intervals[2] == 7);   // fifth
+    CHECK(chord.intervals[3] == 10);  // minor seventh
+}
+
+// ============================================================================
 // Mini-Notation Lexer Tests
 // ============================================================================
 

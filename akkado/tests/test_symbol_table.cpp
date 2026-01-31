@@ -377,6 +377,92 @@ TEST_CASE("SymbolTable FNV-1a hash", "[symbol_table]") {
 }
 
 // ============================================================================
+// RecordTypeInfo Tests [symbol_table]
+// ============================================================================
+
+TEST_CASE("RecordTypeInfo find_field", "[symbol_table]") {
+    RecordTypeInfo record_type;
+    record_type.source_node = 0;
+    record_type.fields = {
+        {"x", 0, SymbolKind::Variable, nullptr},
+        {"y", 1, SymbolKind::Variable, nullptr},
+        {"nested", 2, SymbolKind::Record, nullptr}
+    };
+
+    SECTION("find existing field") {
+        const auto* field = record_type.find_field("x");
+        REQUIRE(field != nullptr);
+        CHECK(field->name == "x");
+        CHECK(field->buffer_index == 0);
+    }
+
+    SECTION("find second field") {
+        const auto* field = record_type.find_field("y");
+        REQUIRE(field != nullptr);
+        CHECK(field->name == "y");
+        CHECK(field->buffer_index == 1);
+    }
+
+    SECTION("find nested record field") {
+        const auto* field = record_type.find_field("nested");
+        REQUIRE(field != nullptr);
+        CHECK(field->name == "nested");
+        CHECK(field->field_kind == SymbolKind::Record);
+    }
+
+    SECTION("find non-existent field returns nullptr") {
+        const auto* field = record_type.find_field("z");
+        CHECK(field == nullptr);
+    }
+
+    SECTION("find field in empty record") {
+        RecordTypeInfo empty_record;
+        empty_record.source_node = 0;
+
+        const auto* field = empty_record.find_field("anything");
+        CHECK(field == nullptr);
+    }
+}
+
+TEST_CASE("RecordTypeInfo field_names", "[symbol_table]") {
+    SECTION("record with multiple fields") {
+        RecordTypeInfo record_type;
+        record_type.source_node = 0;
+        record_type.fields = {
+            {"alpha", 0, SymbolKind::Variable, nullptr},
+            {"beta", 1, SymbolKind::Variable, nullptr},
+            {"gamma", 2, SymbolKind::Variable, nullptr}
+        };
+
+        auto names = record_type.field_names();
+        REQUIRE(names.size() == 3);
+        CHECK(names[0] == "alpha");
+        CHECK(names[1] == "beta");
+        CHECK(names[2] == "gamma");
+    }
+
+    SECTION("empty record has no field names") {
+        RecordTypeInfo empty_record;
+        empty_record.source_node = 0;
+
+        auto names = empty_record.field_names();
+        CHECK(names.empty());
+    }
+
+    SECTION("single field record") {
+        RecordTypeInfo record_type;
+        record_type.source_node = 0;
+        record_type.fields = {
+            {"only_field", 0, SymbolKind::Variable, nullptr}
+        };
+
+        auto names = record_type.field_names();
+        REQUIRE(names.size() == 1);
+        CHECK(names[0] == "only_field");
+    }
+}
+
+// ============================================================================
 // Stress Tests [symbol_table][stress]
 // ============================================================================
 
