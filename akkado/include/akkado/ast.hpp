@@ -134,14 +134,6 @@ constexpr const char* binop_function_name(BinOp op) {
     return "unknown";
 }
 
-/// Pattern keyword type
-enum class PatternType : std::uint8_t {
-    Pat,
-    Seq,
-    Timeline,
-    Note,
-};
-
 /// AST Node - stored in contiguous arena
 /// Uses indices instead of pointers for cache efficiency
 struct Node {
@@ -159,7 +151,6 @@ struct Node {
     struct IdentifierData { std::string name; };
     struct BinaryOpData { BinOp op; };
     struct ArgumentData { std::optional<std::string> name; };  // Named arg
-    struct PatternData { PatternType pattern_type; };
     struct PitchData { std::uint8_t midi_note; };
     struct ChordData { std::uint8_t root_midi; std::vector<std::int8_t> intervals; };
     struct ClosureParamData { std::string name; std::optional<double> default_value; };  // Closure param with optional default
@@ -169,6 +160,7 @@ struct Node {
         Pitch,      // Note pitch (MIDI note number)
         Sample,     // Sample name with optional variant
         Rest,       // Rest/silence (~, _)
+        Chord,      // Chord symbol (Am, C7, Fmaj7, etc.)
     };
 
     // Mini-notation modifier types
@@ -187,6 +179,11 @@ struct Node {
         std::uint8_t midi_note;     // For Pitch kind
         std::string sample_name;    // For Sample kind
         std::uint8_t sample_variant; // For Sample kind (e.g., bd:2)
+        // Chord data (for Chord kind)
+        std::string chord_root;             // Root note: "A", "C#", "Bb"
+        std::string chord_quality;          // Quality: "", "m", "7", "maj7", etc.
+        std::uint8_t chord_root_midi;       // MIDI of root (octave 4)
+        std::vector<std::int8_t> chord_intervals;  // Semitone intervals
     };
 
     // Data for mini-notation euclidean patterns
@@ -254,7 +251,6 @@ struct Node {
         IdentifierData,
         BinaryOpData,
         ArgumentData,
-        PatternData,
         PitchData,
         ChordData,
         ClosureParamData,
@@ -294,10 +290,6 @@ struct Node {
 
     [[nodiscard]] const std::optional<std::string>& as_arg_name() const {
         return std::get<ArgumentData>(data).name;
-    }
-
-    [[nodiscard]] PatternType as_pattern_type() const {
-        return std::get<PatternData>(data).pattern_type;
     }
 
     [[nodiscard]] std::uint8_t as_pitch() const {

@@ -1536,3 +1536,121 @@ TEST_CASE("Codegen: dropdown() creates selection parameter", "[codegen][params]"
         REQUIRE_FALSE(result.success);
     }
 }
+
+// =============================================================================
+// Method Desugar Tests
+// =============================================================================
+
+TEST_CASE("Method call desugaring", "[codegen][methods]") {
+    SECTION("method on builtin function") {
+        // sin(440).abs() should become abs(sin(440))
+        // sin and abs are both builtins
+        auto result = akkado::compile(R"(
+            x = sin(440).abs()
+            out(x, x)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("method call produces valid AST") {
+        // Test that method desugar doesn't crash the compiler
+        // Even if the pattern transformation isn't fully implemented
+        auto result = akkado::compile(R"(
+            slow(pat("c4 e4 g4"), 2)
+        )");
+        // Should compile (with warning) since slow() passes through
+        // The result may not be usable with %.freq yet
+        CHECK(result.success);
+    }
+
+    SECTION("chained pattern methods compile without crash") {
+        // Verify the analyzer doesn't crash on chained methods
+        auto result = akkado::compile(R"(
+            slow(fast(pat("c4 e4"), 2), 2)
+        )");
+        CHECK(result.success);
+    }
+}
+
+// =============================================================================
+// Pattern Function Tests
+// =============================================================================
+
+TEST_CASE("Pattern function: slow()", "[codegen][patterns]") {
+    SECTION("slow requires pattern as first argument") {
+        auto result = akkado::compile("slow(42, 2)");
+        REQUIRE_FALSE(result.success);
+        bool found_error = false;
+        for (const auto& diag : result.diagnostics) {
+            if (diag.code == "E133") {
+                found_error = true;
+                break;
+            }
+        }
+        CHECK(found_error);
+    }
+
+    SECTION("slow requires positive number as second argument") {
+        auto result = akkado::compile(R"(slow(pat("c4"), -1))");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("slow with valid pattern compiles") {
+        // Note: slow() currently passes through - full implementation pending
+        auto result = akkado::compile(R"(slow(pat("c4 e4 g4"), 2))");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Pattern function: fast()", "[codegen][patterns]") {
+    SECTION("fast requires pattern as first argument") {
+        auto result = akkado::compile("fast(42, 2)");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("fast with valid pattern compiles") {
+        auto result = akkado::compile(R"(fast(pat("c4 e4"), 2))");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Pattern function: rev()", "[codegen][patterns]") {
+    SECTION("rev requires pattern as argument") {
+        auto result = akkado::compile("rev(42)");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("rev with valid pattern compiles") {
+        auto result = akkado::compile(R"(rev(pat("c4 e4 g4")))");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Pattern function: transpose()", "[codegen][patterns]") {
+    SECTION("transpose requires pattern as first argument") {
+        auto result = akkado::compile("transpose(42, 7)");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("transpose with valid pattern compiles") {
+        auto result = akkado::compile(R"(transpose(pat("c4 e4 g4"), 7))");
+        CHECK(result.success);
+    }
+}
+
+TEST_CASE("Pattern function: velocity()", "[codegen][patterns]") {
+    SECTION("velocity requires pattern as first argument") {
+        auto result = akkado::compile("velocity(42, 0.5)");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("velocity requires value between 0 and 1") {
+        auto result = akkado::compile(R"(velocity(pat("c4"), 1.5))");
+        REQUIRE_FALSE(result.success);
+    }
+
+    SECTION("velocity with valid pattern and value compiles") {
+        auto result = akkado::compile(R"(velocity(pat("c4 e4"), 0.7))");
+        CHECK(result.success);
+    }
+}

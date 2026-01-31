@@ -730,15 +730,12 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         CHECK(tokens[1].type == TokenType::False);
     }
 
-    SECTION("pattern keywords") {
-        auto [tokens, diags] = lex("pat seq timeline note");
+    SECTION("pattern keyword") {
+        auto [tokens, diags] = lex("pat");
         REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 5);
+        REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::Pat);
-        CHECK(tokens[1].type == TokenType::Seq);
-        CHECK(tokens[2].type == TokenType::Timeline);
-        CHECK(tokens[3].type == TokenType::Note);
     }
 
     SECTION("post keyword") {
@@ -926,10 +923,10 @@ TEST_CASE("Lexer complex expressions", "[lexer]") {
     }
 
     SECTION("pattern with closure") {
-        auto [tokens, diags] = lex("seq('c4 e4 g4', (t, v, p) -> saw(p))");
+        auto [tokens, diags] = lex("pat('c4 e4 g4', (t, v, p) -> saw(p))");
         REQUIRE(diags.empty());
 
-        CHECK(tokens[0].type == TokenType::Seq);
+        CHECK(tokens[0].type == TokenType::Pat);
         CHECK(tokens[1].type == TokenType::LParen);
         CHECK(tokens[2].type == TokenType::String);
         CHECK(tokens[2].as_string() == "c4 e4 g4");

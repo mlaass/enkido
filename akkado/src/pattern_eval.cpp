@@ -187,6 +187,17 @@ void PatternEvaluator::eval_atom(NodeIndex node, const PatternEvalContext& ctx,
                 event.sample_variant = atom_data.sample_variant;
             }
             break;
+        case Node::MiniAtomKind::Chord:
+            // Chord token from lexer - convert to chord event
+            event.type = PatternEventType::Chord;
+            event.chord_data = ChordEventData{
+                .root = atom_data.chord_root,
+                .quality = atom_data.chord_quality,
+                .intervals = std::vector<int>(atom_data.chord_intervals.begin(),
+                                               atom_data.chord_intervals.end()),
+                .root_midi = static_cast<int>(atom_data.chord_root_midi)
+            };
+            break;
         case Node::MiniAtomKind::Rest:
             event.type = PatternEventType::Rest;
             break;

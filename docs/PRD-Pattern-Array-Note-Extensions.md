@@ -102,7 +102,7 @@ chord("Am C G F")
 drums = "bd sd [hh hh] cp"
 drums.slow(2).rev() |> sampler(%) |> out(%, %)
 
-"bd*4".lpf("<4000 2000 1000>")  // Methods on string-as-pattern
+"bd*4".lp("<4000 2000 1000>")  // Methods on string-as-pattern
 ```
 
 ### 2.7 String-as-Pattern Parsing
@@ -485,6 +485,6 @@ Method chaining should be designed holistically to work consistently across:
 - Patterns: `pat("bd sd").slow(2)`
 - Arrays: `[1, 2, 3].map(x => x * 2)`
 - Chords: `chord("Am").anchor("c5")`
-- Audio signals: potentially `osc("saw", 440).lpf(1000)`
+- Audio signals: potentially `osc("saw", 440).lp(1000)`
 
 Adding method chaining piecemeal would create inconsistent APIs. Better to defer until the object model is designed to support uniform method dispatch across all value types.

@@ -87,9 +87,6 @@ void Parser::synchronize() {
         switch (current().type) {
             case TokenType::Post:
             case TokenType::Pat:
-            case TokenType::Seq:
-            case TokenType::Timeline:
-            case TokenType::Note:
                 return;
             default:
                 break;
@@ -370,9 +367,6 @@ NodeIndex Parser::parse_prefix() {
         case TokenType::LBrace:
             return parse_record_literal();
         case TokenType::Pat:
-        case TokenType::Seq:
-        case TokenType::Timeline:
-        case TokenType::Note:
             return parse_mini_literal();
         case TokenType::Match:
             return parse_match_expr();
@@ -950,22 +944,15 @@ NodeIndex Parser::parse_argument() {
 
 NodeIndex Parser::parse_mini_literal() {
     Token kw_tok = advance();
-    PatternType pat_type;
 
-    switch (kw_tok.type) {
-        case TokenType::Pat:      pat_type = PatternType::Pat; break;
-        case TokenType::Seq:      pat_type = PatternType::Seq; break;
-        case TokenType::Timeline: pat_type = PatternType::Timeline; break;
-        case TokenType::Note:     pat_type = PatternType::Note; break;
-        default:
-            error("Expected pattern keyword");
-            return NULL_NODE;
+    if (kw_tok.type != TokenType::Pat) {
+        error("Expected 'pat' keyword");
+        return NULL_NODE;
     }
 
     NodeIndex node = make_node(NodeType::MiniLiteral, kw_tok);
-    arena_[node].data = Node::PatternData{pat_type};
 
-    consume(TokenType::LParen, "Expected '(' after pattern keyword");
+    consume(TokenType::LParen, "Expected '(' after 'pat'");
 
     // First argument: the mini-notation string
     if (!check(TokenType::String)) {

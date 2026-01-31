@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 #include <cstdint>
+#include <optional>
 #include "mini_token.hpp"
 #include "diagnostics.hpp"
 
@@ -75,6 +76,9 @@ private:
     // Pitch detection
     [[nodiscard]] bool looks_like_pitch() const;
     [[nodiscard]] std::uint8_t parse_pitch_to_midi(char note, int accidental, int octave) const;
+
+    // Chord symbol detection
+    [[nodiscard]] std::optional<MiniToken> try_lex_chord_symbol();
 
     // Location helpers
     [[nodiscard]] SourceLocation current_location() const;

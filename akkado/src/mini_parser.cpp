@@ -169,7 +169,7 @@ bool MiniParser::is_atom_start() const {
 }
 
 NodeIndex MiniParser::parse_atom() {
-    // atom = pitch | sample | rest | group | sequence
+    // atom = pitch | sample | chord | rest | group | sequence
 
     if (match(MiniTokenType::PitchToken)) {
         return parse_pitch_atom(previous());
@@ -177,6 +177,10 @@ NodeIndex MiniParser::parse_atom() {
 
     if (match(MiniTokenType::SampleToken)) {
         return parse_sample_atom(previous());
+    }
+
+    if (match(MiniTokenType::ChordToken)) {
+        return parse_chord_atom(previous());
     }
 
     if (match(MiniTokenType::Rest)) {
@@ -207,7 +211,11 @@ NodeIndex MiniParser::parse_pitch_atom(const MiniToken& token) {
         .kind = Node::MiniAtomKind::Pitch,
         .midi_note = pitch.midi_note,
         .sample_name = "",
-        .sample_variant = 0
+        .sample_variant = 0,
+        .chord_root = "",
+        .chord_quality = "",
+        .chord_root_midi = 0,
+        .chord_intervals = {}
     };
 
     return node;
@@ -221,7 +229,29 @@ NodeIndex MiniParser::parse_sample_atom(const MiniToken& token) {
         .kind = Node::MiniAtomKind::Sample,
         .midi_note = 0,
         .sample_name = sample.name,
-        .sample_variant = sample.variant
+        .sample_variant = sample.variant,
+        .chord_root = "",
+        .chord_quality = "",
+        .chord_root_midi = 0,
+        .chord_intervals = {}
+    };
+
+    return node;
+}
+
+NodeIndex MiniParser::parse_chord_atom(const MiniToken& token) {
+    NodeIndex node = make_node(NodeType::MiniAtom, token);
+    const MiniChordData& chord = token.as_chord();
+
+    arena_[node].data = Node::MiniAtomData{
+        .kind = Node::MiniAtomKind::Chord,
+        .midi_note = 0,
+        .sample_name = "",
+        .sample_variant = 0,
+        .chord_root = chord.root,
+        .chord_quality = chord.quality,
+        .chord_root_midi = chord.root_midi,
+        .chord_intervals = chord.intervals
     };
 
     return node;
@@ -234,7 +264,11 @@ NodeIndex MiniParser::parse_rest() {
         .kind = Node::MiniAtomKind::Rest,
         .midi_note = 0,
         .sample_name = "",
-        .sample_variant = 0
+        .sample_variant = 0,
+        .chord_root = "",
+        .chord_quality = "",
+        .chord_root_midi = 0,
+        .chord_intervals = {}
     };
 
     return node;

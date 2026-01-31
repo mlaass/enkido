@@ -73,6 +73,10 @@ private:
     NodeIndex create_closure_from_pipe(NodeIndex param_node, NodeIndex body_node,
                                        SourceLocation loc);
 
+    // Helper: Desugar method call to function call
+    // Transforms: receiver.method(a, b) -> method(receiver, a, b)
+    NodeIndex desugar_method_call(NodeIndex method_call_idx);
+
     // Helper: Validate argument count for builtin
     void validate_arguments(const std::string& func_name, const BuiltinInfo& builtin,
                            std::size_t arg_count, SourceLocation loc);

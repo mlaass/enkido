@@ -42,6 +42,7 @@ const char* atom_kind_str(Node::MiniAtomKind kind) {
         case Node::MiniAtomKind::Pitch: return "Pitch";
         case Node::MiniAtomKind::Sample: return "Sample";
         case Node::MiniAtomKind::Rest: return "Rest";
+        case Node::MiniAtomKind::Chord: return "Chord";
     }
     return "Unknown";
 }

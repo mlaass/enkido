@@ -770,3 +770,217 @@ TEST_CASE("Multi-cycle pattern evaluation", "[pattern_eval][multi_cycle]") {
         CHECK_THAT(events.events[2].time, WithinRel(1.0f, 0.001f));
     }
 }
+
+// ============================================================================
+// Chord Symbol Tests
+// ============================================================================
+
+TEST_CASE("Mini lexer chord symbols", "[mini][chord]") {
+    SECTION("basic chord symbols") {
+        auto [tokens, diags] = lex_mini("Am C7 Fmaj7 G");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 5); // 4 chords + eof
+
+        CHECK(tokens[0].type == MiniTokenType::ChordToken);
+        CHECK(tokens[0].as_chord().root == "A");
+        CHECK(tokens[0].as_chord().quality == "m");
+
+        CHECK(tokens[1].type == MiniTokenType::ChordToken);
+        CHECK(tokens[1].as_chord().root == "C");
+        CHECK(tokens[1].as_chord().quality == "7");
+
+        CHECK(tokens[2].type == MiniTokenType::ChordToken);
+        CHECK(tokens[2].as_chord().root == "F");
+        CHECK(tokens[2].as_chord().quality == "maj7");
+
+        CHECK(tokens[3].type == MiniTokenType::ChordToken);
+        CHECK(tokens[3].as_chord().root == "G");
+        CHECK(tokens[3].as_chord().quality == "");
+    }
+
+    SECTION("chord with accidentals") {
+        auto [tokens, diags] = lex_mini("Bb F#m");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3); // 2 chords + eof
+
+        CHECK(tokens[0].type == MiniTokenType::ChordToken);
+        CHECK(tokens[0].as_chord().root == "Bb");
+        CHECK(tokens[0].as_chord().quality == "");
+
+        CHECK(tokens[1].type == MiniTokenType::ChordToken);
+        CHECK(tokens[1].as_chord().root == "F#");
+        CHECK(tokens[1].as_chord().quality == "m");
+    }
+
+    SECTION("pitch with octave vs chord") {
+        // "A4" should be pitch (4 is not a chord quality)
+        // "Am" should be chord
+        // "C7" should be chord (7 is dominant 7th)
+        // "Bb5" should be pitch (accidental + digit = pitch)
+        auto [tokens, diags] = lex_mini("A4 Am C7 Bb5");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 5);
+
+        CHECK(tokens[0].type == MiniTokenType::PitchToken);
+        CHECK(tokens[0].as_pitch().midi_note == 69); // A4
+
+        CHECK(tokens[1].type == MiniTokenType::ChordToken);
+        CHECK(tokens[1].as_chord().root == "A");
+        CHECK(tokens[1].as_chord().quality == "m");
+
+        CHECK(tokens[2].type == MiniTokenType::ChordToken);
+        CHECK(tokens[2].as_chord().root == "C");
+        CHECK(tokens[2].as_chord().quality == "7");
+
+        CHECK(tokens[3].type == MiniTokenType::PitchToken);
+        CHECK(tokens[3].as_pitch().midi_note == 82); // Bb5
+    }
+
+    SECTION("lowercase pitches vs uppercase chords") {
+        // "c4" lowercase is pitch, "C" uppercase is chord
+        auto [tokens, diags] = lex_mini("c4 C");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        CHECK(tokens[0].type == MiniTokenType::PitchToken);
+        CHECK(tokens[1].type == MiniTokenType::ChordToken);
+    }
+
+    SECTION("chord intervals") {
+        auto [tokens, diags] = lex_mini("Am");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        const auto& chord = tokens[0].as_chord();
+        // Minor chord: root, m3, p5 = [0, 3, 7]
+        REQUIRE(chord.intervals.size() == 3);
+        CHECK(chord.intervals[0] == 0);
+        CHECK(chord.intervals[1] == 3);
+        CHECK(chord.intervals[2] == 7);
+    }
+}
+
+TEST_CASE("Mini parser chord symbols", "[mini][chord]") {
+    SECTION("single chord") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("Am", arena);
+        REQUIRE(diags.empty());
+        REQUIRE(root != NULL_NODE);
+        CHECK(arena[root].type == NodeType::MiniPattern);
+        CHECK(arena.child_count(root) == 1);
+
+        NodeIndex atom = arena[root].first_child;
+        CHECK(arena[atom].type == NodeType::MiniAtom);
+        CHECK(arena[atom].as_mini_atom().kind == Node::MiniAtomKind::Chord);
+        CHECK(arena[atom].as_mini_atom().chord_root == "A");
+        CHECK(arena[atom].as_mini_atom().chord_quality == "m");
+    }
+
+    SECTION("chord sequence") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("Am C F G", arena);
+        REQUIRE(diags.empty());
+        REQUIRE(root != NULL_NODE);
+        CHECK(arena.child_count(root) == 4);
+
+        NodeIndex child = arena[root].first_child;
+        while (child != NULL_NODE) {
+            CHECK(arena[child].as_mini_atom().kind == Node::MiniAtomKind::Chord);
+            child = arena[child].next_sibling;
+        }
+    }
+
+    SECTION("mixed pitch and chord") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c4 Am e4 G", arena);
+        REQUIRE(diags.empty());
+        REQUIRE(root != NULL_NODE);
+        CHECK(arena.child_count(root) == 4);
+
+        NodeIndex child1 = arena[root].first_child;
+        CHECK(arena[child1].as_mini_atom().kind == Node::MiniAtomKind::Pitch);
+
+        NodeIndex child2 = arena[child1].next_sibling;
+        CHECK(arena[child2].as_mini_atom().kind == Node::MiniAtomKind::Chord);
+
+        NodeIndex child3 = arena[child2].next_sibling;
+        CHECK(arena[child3].as_mini_atom().kind == Node::MiniAtomKind::Pitch);
+
+        NodeIndex child4 = arena[child3].next_sibling;
+        CHECK(arena[child4].as_mini_atom().kind == Node::MiniAtomKind::Chord);
+    }
+}
+
+TEST_CASE("Pattern evaluation with chords", "[pattern_eval][chord]") {
+    SECTION("single chord produces chord event") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("Am", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 1);
+        CHECK(events.events[0].type == PatternEventType::Chord);
+        REQUIRE(events.events[0].chord_data.has_value());
+        CHECK(events.events[0].chord_data->root == "A");
+        CHECK(events.events[0].chord_data->quality == "m");
+        CHECK(events.events[0].chord_data->intervals.size() == 3);
+    }
+
+    SECTION("chord sequence timing") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("Am C F G", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 4);
+
+        // Events at 0, 0.25, 0.5, 0.75
+        CHECK_THAT(events.events[0].time, WithinRel(0.0f, 0.001f));
+        CHECK_THAT(events.events[1].time, WithinRel(0.25f, 0.001f));
+        CHECK_THAT(events.events[2].time, WithinRel(0.5f, 0.001f));
+        CHECK_THAT(events.events[3].time, WithinRel(0.75f, 0.001f));
+
+        // All are chord events
+        for (const auto& event : events.events) {
+            CHECK(event.type == PatternEventType::Chord);
+        }
+    }
+
+    SECTION("mixed pitch and chord sequence") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c4 Am e4 G", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 4);
+
+        CHECK(events.events[0].type == PatternEventType::Pitch);
+        CHECK(events.events[0].midi_note == 60);
+
+        CHECK(events.events[1].type == PatternEventType::Chord);
+        CHECK(events.events[1].chord_data->root == "A");
+
+        CHECK(events.events[2].type == PatternEventType::Pitch);
+        CHECK(events.events[2].midi_note == 64);
+
+        CHECK(events.events[3].type == PatternEventType::Chord);
+        CHECK(events.events[3].chord_data->root == "G");
+    }
+
+    SECTION("chord with modifiers") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("Am!2 G", arena);
+        REQUIRE(diags.empty());
+
+        PatternEventStream events = evaluate_pattern(root, arena, 0);
+        REQUIRE(events.size() == 3);
+
+        // Am repeated twice + G = 3 events
+        CHECK(events.events[0].type == PatternEventType::Chord);
+        CHECK(events.events[0].chord_data->root == "A");
+        CHECK(events.events[1].type == PatternEventType::Chord);
+        CHECK(events.events[1].chord_data->root == "A");
+        CHECK(events.events[2].type == PatternEventType::Chord);
+        CHECK(events.events[2].chord_data->root == "G");
+    }
+}

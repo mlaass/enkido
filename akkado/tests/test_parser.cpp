@@ -373,7 +373,6 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         auto ast = parse_ok("pat(\"bd sd\")");
         NodeIndex mini = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
-        CHECK(ast.arena[mini].as_pattern_type() == PatternType::Pat);
 
         // First child is the parsed MiniPattern (not StringLit anymore)
         NodeIndex pattern = ast.arena[mini].first_child;
@@ -382,11 +381,10 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         CHECK(ast.arena.child_count(pattern) == 2);
     }
 
-    SECTION("seq with closure") {
-        auto ast = parse_ok("seq(\"c4 e4 g4\", (t, v, p) -> saw(p))");
+    SECTION("pat with closure") {
+        auto ast = parse_ok("pat(\"c4 e4 g4\", (t, v, p) -> saw(p))");
         NodeIndex mini = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
-        CHECK(ast.arena[mini].as_pattern_type() == PatternType::Seq);
 
         // Should have 2 children: MiniPattern and closure
         CHECK(ast.arena.child_count(mini) == 2);

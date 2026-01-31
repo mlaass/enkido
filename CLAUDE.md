@@ -55,12 +55,42 @@ State preservation during code updates:
 ### Core Operators
 - `|>` (pipe): Defines signal flow through the DAG
 - `%` (hole): Explicit input port for signal injection
+- `as` (pipe binding): Named binding for multi-stage access: `expr as name`
 - Mini-notation patterns: `pat()`, `seq()`, `timeline()`, `note()`
 
-### Chord Expansion
+### Records and Field Access
+Record literals allow grouping related values:
+```akkado
+rec = {freq: 440, vel: 0.8}
+rec.freq  // 440
+```
+
+Pattern events are records with fields accessible via `%`:
+- `%.freq` / `%.pitch` / `%.f` - Frequency in Hz
+- `%.vel` / `%.velocity` / `%.v` - Velocity (0-1)
+- `%.trig` / `%.trigger` / `%.t` - Trigger pulse
+- `%.note` / `%.midi` / `%.n` - MIDI note number
+- `%.dur`, `%.chance`, `%.time`, `%.phase` - Extended fields
+
+Example with pipe binding:
+```akkado
+pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+```
+
+### Chord Expansion (Strudel-compatible)
 Chords are signal arrays that auto-expand UGens:
-- `C4'` → `[261.6, 329.6, 392.0]` Hz
-- `'c3e3g3'` → inline chord notation
+- `C4'` → major chord → `[261.6, 329.6, 392.0]` Hz
+- `Am7'` → A minor 7th chord
+- `F#m7_4'` → chord with slash bass
+
+### Parameter Exposure
+Runtime controls exposed in the web UI:
+```akkado
+freq = param("freq", 440, 20, 2000)  // slider with min/max
+on = toggle("mute", false)           // on/off toggle
+hit = button("trigger")              // momentary button
+wave = dropdown("wave", ["sin", "saw", "tri"])
+```
 
 ### Clock System
 - 1 cycle = 4 beats by default
@@ -97,7 +127,7 @@ cmake --build build --target akkado
 ./build/akkado/tests/akkado_tests "[parser]"  # Run by tag
 
 # Run CLI tools
-./build/tools/cedar-cli/cedar-cli --help
+./build/tools/enkido-cli/enkido-cli --help
 ./build/tools/akkado-cli/akkado-cli --help
 
 # Using presets
@@ -124,7 +154,7 @@ enkido/
 │   ├── src/
 │   └── tests/
 ├── tools/
-│   ├── cedar-cli/  # Bytecode player
+│   ├── enkido-cli/ # Bytecode player with audio engine
 │   └── akkado-cli/ # Compiler CLI
 ├── web/            # SvelteKit web app
 │   ├── src/
@@ -159,16 +189,20 @@ bun run build:wasm
 **State Management**: Uses Svelte 5 runes with singleton store pattern.
 
 Stores in `src/lib/stores/`:
-- `audio.svelte.ts` - Audio engine, playback, visualization
+- `audio.svelte.ts` - Audio engine, playback, visualization, pattern info, state inspection
 - `editor.svelte.ts` - Code state, compile status
 - `settings.svelte.ts` - UI preferences (panel position, font size, audio config)
 - `theme.svelte.ts` - Theme selection, custom themes, CSS variable application
 - `docs.svelte.ts` - Documentation system, F1 help lookup
+- `pattern-highlight.svelte.ts` - Pattern preview data and active step highlighting
 
 **Key Components** in `src/lib/components/`:
 - `Transport/` - Play/pause, BPM, volume controls
-- `Editor/` - CodeMirror 6 integration
-- `Panel/` - Resizable sidebar with tabs
+- `Editor/` - CodeMirror 6 integration with instruction-to-source highlighting
+- `Panel/` - Resizable sidebar with tabs, debug panels
+- `Panel/PatternDebugPanel.svelte` - AST visualization, sequence events, source location mapping
+- `Panel/StateInspector.svelte` - Live state inspection for stateful opcodes (20Hz polling)
+- `Params/` - Runtime parameter controls (ParamSlider, ParamButton, ParamToggle, ParamSelect)
 - `Theme/` - Theme selector and color editor
 - `Logo/` - Inline SVG logo component
 
@@ -215,6 +249,13 @@ And generates:
 The generated header is used by:
 - `web/wasm/enkido_wasm.cpp` - for debug disassembly in web UI
 - `tools/enkido-cli/bytecode_dump.cpp` - for CLI bytecode inspection
+
+### Pattern Debug Serialization
+
+The pattern debugging system serializes AST and events as JSON:
+- `akkado::serialize_mini_ast_json()` - Converts mini-notation AST to JSON for web UI
+- `akkado::serialize_sequences_json()` - Exports compiled sequences and events
+- `cedar::StatePool::inspect_state_json()` - JSON representation of all DSP state types
 
 ## Python Experiments
 

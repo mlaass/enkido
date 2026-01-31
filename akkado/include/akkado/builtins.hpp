@@ -582,6 +582,29 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Note pattern. Returns MIDI note values."}},
 
+    // Pattern transformation builtins (handled specially by codegen)
+    // These transform pattern events at compile time
+    {"slow",    {cedar::Opcode::NOP, 2, 0, false,
+                 {"pattern", "factor", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Slow down pattern by factor (stretch time)."}},
+    {"fast",    {cedar::Opcode::NOP, 2, 0, false,
+                 {"pattern", "factor", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Speed up pattern by factor (compress time)."}},
+    {"rev",     {cedar::Opcode::NOP, 1, 0, false,
+                 {"pattern", "", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Reverse pattern event order."}},
+    {"transpose", {cedar::Opcode::NOP, 2, 0, false,
+                 {"pattern", "semitones", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Transpose pattern pitches by semitones."}},
+    {"velocity", {cedar::Opcode::NOP, 2, 0, false,
+                 {"pattern", "vel", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Set velocity on pattern events (0-1)."}},
+
     // Parameter exposure builtins (handled specially by codegen)
     // These extract metadata at compile time for UI generation
     {"param",   {cedar::Opcode::ENV_GET, 2, 2, false,

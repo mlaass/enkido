@@ -80,6 +80,7 @@ private:
     // Atom parsers
     NodeIndex parse_pitch_atom(const MiniToken& token);
     NodeIndex parse_sample_atom(const MiniToken& token);
+    NodeIndex parse_chord_atom(const MiniToken& token);
     NodeIndex parse_rest();
 
     // Helper to check if current token starts an atom

@@ -16,9 +16,6 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
     {"fn",       TokenType::Fn},
     {"as",       TokenType::As},
     {"pat",      TokenType::Pat},
-    {"seq",      TokenType::Seq},
-    {"timeline", TokenType::Timeline},
-    {"note",     TokenType::Note},
 };
 
 } // namespace

@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 #include "diagnostics.hpp"
 
 namespace akkado {
@@ -17,6 +18,7 @@ enum class MiniTokenType : std::uint8_t {
     // Atoms
     PitchToken,     // c4, f#3, Bb5 (note with optional octave, defaults to 4)
     SampleToken,    // bd, sd, hh, cp:2 (sample name with optional variant)
+    ChordToken,     // Am, C7, Fmaj7, G (chord symbol without octave)
     Rest,           // ~ or _
     Number,         // 0.5, 3, 4.0 (for modifiers and euclidean)
 
@@ -53,6 +55,7 @@ constexpr std::string_view mini_token_type_name(MiniTokenType type) {
         case MiniTokenType::Eof:         return "Eof";
         case MiniTokenType::PitchToken:  return "PitchToken";
         case MiniTokenType::SampleToken: return "SampleToken";
+        case MiniTokenType::ChordToken:  return "ChordToken";
         case MiniTokenType::Rest:        return "Rest";
         case MiniTokenType::Number:      return "Number";
         case MiniTokenType::LBracket:    return "LBracket";
@@ -89,12 +92,21 @@ struct MiniSampleData {
     std::uint8_t variant = 0;  // Sample variant (e.g., 2 for "bd:2")
 };
 
+/// Chord data for mini-notation (chord symbol like Am, C7, Fmaj7)
+struct MiniChordData {
+    std::string root;                      // Root note name: "A", "C#", "Bb"
+    std::string quality;                   // Chord quality: "", "m", "7", "maj7", etc.
+    std::uint8_t root_midi;                // MIDI note of root (default octave 4)
+    std::vector<std::int8_t> intervals;    // Semitone intervals from root
+};
+
 /// Token value for mini-notation
 using MiniTokenValue = std::variant<
     std::monostate,     // For punctuation/operators
     double,             // For numbers
     MiniPitchData,      // For pitch tokens
     MiniSampleData,     // For sample tokens
+    MiniChordData,      // For chord tokens
     std::string         // For error messages
 >;
 
@@ -124,6 +136,11 @@ struct MiniToken {
     /// Get sample data (assumes type == SampleToken)
     [[nodiscard]] const MiniSampleData& as_sample() const {
         return std::get<MiniSampleData>(value);
+    }
+
+    /// Get chord data (assumes type == ChordToken)
+    [[nodiscard]] const MiniChordData& as_chord() const {
+        return std::get<MiniChordData>(value);
     }
 
     /// Get error message (assumes type == Error)

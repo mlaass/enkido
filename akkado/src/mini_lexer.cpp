@@ -1,6 +1,8 @@
 #include "akkado/mini_lexer.hpp"
 #include "akkado/music_theory.hpp"
+#include "akkado/chord_parser.hpp"
 #include <charconv>
+#include <cctype>
 
 namespace akkado {
 
@@ -133,13 +135,30 @@ SourceLocation MiniLexer::current_location() const {
 bool MiniLexer::looks_like_pitch() const {
     // Check if current position looks like a pitch: [a-gA-G][#b]?[0-9]?
     // followed by whitespace, modifier, or end
+    //
+    // IMPORTANT: Uppercase letters without octave (A, C, G) or with chord quality (Am, C7)
+    // should NOT be detected as pitches - they will be handled as chords.
+    // Only lowercase (c4, a3) or uppercase WITH explicit octave (A4, C5) are pitches.
     if (!is_pitch_letter(peek())) return false;
+
+    char first = peek();
+    bool is_uppercase = (first >= 'A' && first <= 'G');
 
     std::size_t pos = current_ + 1;
 
     // Optional accidental
     if (pos < pattern_.size() && is_accidental(pattern_[pos])) {
         pos++;
+    }
+
+    // For uppercase letters, REQUIRE an octave digit to be a pitch
+    // This allows "A", "Am", "C7", "G" to fall through to chord detection
+    // while "A4", "C5" are still recognized as pitches
+    if (is_uppercase) {
+        // Must have at least one digit for octave
+        if (pos >= pattern_.size() || !is_digit(pattern_[pos])) {
+            return false;  // No octave -> not a pitch (could be chord)
+        }
     }
 
     // Optional octave digit(s)
@@ -193,7 +212,20 @@ MiniToken MiniLexer::lex_token() {
 
     // In sample_only mode (chord patterns), skip pitch detection
     if (!sample_only_) {
-        // Check for pitch token first (highest priority for a-g)
+        // For uppercase A-G, try chord detection FIRST
+        // This handles "Am", "C7", "Fmaj7", "G" as chords
+        // Only "A4", "C5" (with explicit 2-digit octave-like numbers) should be pitches
+        if (c >= 'A' && c <= 'G') {
+            if (auto chord_tok = try_lex_chord_symbol()) {
+                return *chord_tok;
+            }
+            // Chord detection failed, try as pitch
+            if (looks_like_pitch()) {
+                return lex_pitch_or_sample();
+            }
+        }
+
+        // For lowercase a-g, check if it looks like a pitch
         if (looks_like_pitch()) {
             return lex_pitch_or_sample();
         }
@@ -278,6 +310,133 @@ MiniToken MiniLexer::lex_number() {
     }
 
     return make_token(MiniTokenType::Number, value);
+}
+
+std::optional<MiniToken> MiniLexer::try_lex_chord_symbol() {
+    // Chord symbols start with uppercase A-G
+    // Examples: Am, C7, Fmaj7, Dm7, Bb, G#dim, Esus4
+    //
+    // Pattern: [A-G][#b]?<quality>
+    // where quality is one of: "", "m", "min", "maj", "7", "maj7", "m7", "dim", "aug", etc.
+    //
+    // Chord symbols are distinguished from pitches by:
+    // - Starting with uppercase letter
+    // - Having a quality suffix (letters after optional accidental)
+    // - NOT having an octave number
+    //
+    // Note: We cannot just use parse_chord_symbol because we need to:
+    // 1. Look ahead without consuming
+    // 2. Distinguish from pitches (e.g., "A4" is pitch, "Am" is chord)
+
+    char first = peek();
+    // Must start with uppercase A-G
+    if (first < 'A' || first > 'G') {
+        return std::nullopt;
+    }
+
+    // Scan ahead to see the whole token
+    std::size_t scan_pos = current_ + 1;
+
+    // Optional accidental
+    if (scan_pos < pattern_.size() && (pattern_[scan_pos] == '#' || pattern_[scan_pos] == 'b')) {
+        scan_pos++;
+    }
+
+    // Scan the rest of the token (quality part)
+    // This can include letters and digits (for qualities like "m7", "maj7", "7", "9")
+    while (scan_pos < pattern_.size()) {
+        char c = pattern_[scan_pos];
+        // Chord quality can contain letters, digits (for 7, 9, etc.), and some symbols
+        if (is_alpha(c) || is_digit(c) || c == '^' || c == '-' || c == '+') {
+            scan_pos++;
+        } else {
+            break;
+        }
+    }
+
+    // Extract the potential chord symbol
+    std::string_view chord_text = pattern_.substr(current_, scan_pos - current_);
+
+    // Check if this could be a pitch with octave (e.g., "A4", "C#5", "Bb5")
+    // The heuristic: if the "quality" is JUST a single digit, it's likely an octave
+    // Exception: for chord symbols without accidentals, "5", "6", "7", "9" are valid chord qualities
+    //
+    // Examples:
+    // - "A4" -> pitch (A in octave 4, since 4 is not a chord quality)
+    // - "C7" -> chord (C dominant 7th)
+    // - "Bb5" -> pitch (Bb in octave 5, because with accidental it looks like octave)
+    // - "G5" -> could be either, but prefer pitch for consistency with "Bb5"
+    std::size_t quality_start = current_ + 1;
+    bool has_accidental = false;
+    if (quality_start < pattern_.size() && pattern_[quality_start] == '#') {
+        has_accidental = true;
+        quality_start++;
+    } else if (quality_start < pattern_.size() && pattern_[quality_start] == 'b') {
+        has_accidental = true;
+        quality_start++;
+    }
+
+    // If quality is just a single digit, decide based on context
+    if (scan_pos == quality_start + 1 && is_digit(pattern_[quality_start])) {
+        char digit = pattern_[quality_start];
+        // With accidental (like Bb5, F#4), treat as pitch
+        if (has_accidental) {
+            return std::nullopt;  // Pitch with accidental and octave
+        }
+        // Without accidental: 5, 6, 7, 9 are valid chord qualities; others are octaves
+        if (digit == '0' || digit == '1' || digit == '2' || digit == '3' || digit == '4' || digit == '8') {
+            return std::nullopt;  // Likely a pitch octave
+        }
+        // 5, 6, 7, 9 -> could be chord quality, continue to chord parsing
+    }
+
+    // Empty quality means major chord - valid
+    // But single uppercase letter without any suffix could be ambiguous
+    // "C" alone should be treated as C major chord
+    // "A" alone could be A4 pitch or A major chord - prefer chord for uppercase
+
+    // Try to parse as chord symbol
+    auto chord_info = parse_chord_symbol(chord_text);
+    if (!chord_info.has_value()) {
+        return std::nullopt;
+    }
+
+    // Must be followed by: end, whitespace, modifier, bracket, or other delimiter
+    if (scan_pos < pattern_.size()) {
+        char next = pattern_[scan_pos];
+        if (!is_whitespace(next) &&
+            next != '*' && next != '/' && next != '@' && next != '!' && next != '?' && next != '%' &&
+            next != '[' && next != ']' && next != '<' && next != '>' &&
+            next != '(' && next != ')' && next != '{' && next != '}' &&
+            next != ',' && next != '|' && next != ':') {
+            // Followed by something that's not a valid delimiter
+            return std::nullopt;
+        }
+    }
+
+    // Consume the chord token
+    while (current_ < scan_pos) {
+        advance();
+    }
+
+    // Look up the intervals
+    const auto* intervals = lookup_chord(chord_info->quality);
+    std::vector<std::int8_t> interval_vec;
+    if (intervals) {
+        interval_vec = *intervals;
+    } else {
+        // Default to major triad
+        interval_vec = {0, 4, 7};
+    }
+
+    MiniChordData chord_data{
+        chord_info->root,
+        chord_info->quality,
+        static_cast<std::uint8_t>(chord_info->root_midi),
+        std::move(interval_vec)
+    };
+
+    return make_token(MiniTokenType::ChordToken, std::move(chord_data));
 }
 
 MiniToken MiniLexer::lex_pitch_or_sample() {

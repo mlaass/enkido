@@ -336,6 +336,11 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         return rewrite_pipes(src_idx);
     }
 
+    // Desugar method calls: receiver.method(a, b) -> method(receiver, a, b)
+    if (src.type == NodeType::MethodCall) {
+        return desugar_method_call(src_idx);
+    }
+
     // Clone this node
     NodeIndex dst_idx = clone_node(src_idx);
 
@@ -668,6 +673,49 @@ NodeIndex SemanticAnalyzer::create_closure_from_pipe(
     symbols_.pop_scope();
 
     return closure;
+}
+
+NodeIndex SemanticAnalyzer::desugar_method_call(NodeIndex method_call_idx) {
+    // Desugar: receiver.method(a, b) -> method(receiver, a, b)
+    const Node& src = (*input_ast_).arena[method_call_idx];
+
+    // Create a Call node with the same method name
+    NodeIndex call_idx = output_arena_.alloc(NodeType::Call, src.location);
+    output_arena_[call_idx].data = src.data;  // Copy the method name (IdentifierData)
+
+    // Track mapping
+    node_map_[method_call_idx] = call_idx;
+
+    // Get the receiver (first child of MethodCall)
+    NodeIndex src_receiver = src.first_child;
+    if (src_receiver == NULL_NODE) {
+        error("E008", "Method call missing receiver", src.location);
+        return call_idx;
+    }
+
+    // Clone the receiver and wrap it in an Argument node
+    NodeIndex cloned_receiver = clone_subtree(src_receiver);
+    NodeIndex receiver_arg = output_arena_.alloc(NodeType::Argument, src.location);
+    output_arena_[receiver_arg].data = Node::ArgumentData{std::nullopt};  // Positional arg
+    output_arena_[receiver_arg].first_child = cloned_receiver;
+
+    // Set receiver as first child of the Call
+    output_arena_[call_idx].first_child = receiver_arg;
+
+    // Clone remaining arguments (after the receiver)
+    NodeIndex src_arg = (*input_ast_).arena[src_receiver].next_sibling;
+    NodeIndex prev_dst_arg = receiver_arg;
+
+    while (src_arg != NULL_NODE) {
+        NodeIndex dst_arg = clone_subtree(src_arg);
+        if (dst_arg != NULL_NODE) {
+            output_arena_[prev_dst_arg].next_sibling = dst_arg;
+            prev_dst_arg = dst_arg;
+        }
+        src_arg = (*input_ast_).arena[src_arg].next_sibling;
+    }
+
+    return call_idx;
 }
 
 void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {

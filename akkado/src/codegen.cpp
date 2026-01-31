@@ -377,6 +377,12 @@ std::uint16_t CodeGenerator::visit(NodeIndex node) {
                 {"reverse", &CodeGenerator::handle_reverse_call},
                 {"range",   &CodeGenerator::handle_range_call},
                 {"repeat",  &CodeGenerator::handle_repeat_call},
+                // Pattern transformation builtins
+                {"slow",      &CodeGenerator::handle_slow_call},
+                {"fast",      &CodeGenerator::handle_fast_call},
+                {"rev",       &CodeGenerator::handle_rev_call},
+                {"transpose", &CodeGenerator::handle_transpose_call},
+                {"velocity",  &CodeGenerator::handle_velocity_call},
                 // Parameter exposure builtins
                 {"param",   &CodeGenerator::handle_param_call},
                 {"button",  &CodeGenerator::handle_button_call},
