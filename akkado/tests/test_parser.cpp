@@ -822,8 +822,10 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
 
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 2);
-        CHECK(dd.fields[0] == "a");
-        CHECK(dd.fields[1] == "b");
+        CHECK(dd.fields[0].name == "a");
+        CHECK(dd.fields[1].name == "b");
+        CHECK(dd.fields[0].default_node == NULL_NODE);
+        CHECK(dd.fields[1].default_node == NULL_NODE);
 
         // RHS should be the first child (an Identifier referencing `r`)
         NodeIndex rhs = ast.arena[stmt].first_child;
@@ -844,7 +846,8 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
         REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 1);
-        CHECK(dd.fields[0] == "x");
+        CHECK(dd.fields[0].name == "x");
+        CHECK(dd.fields[0].default_node == NULL_NODE);
     }
 
     SECTION("destructure RHS can be a complex expression") {
@@ -876,6 +879,202 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
             if (d.code == "E188") got_e188 = true;
         }
         CHECK(got_e188);
+    }
+}
+
+TEST_CASE("Parser destructure defaults (statement-level)", "[parser][destructure]") {
+    SECTION("single-field default") {
+        auto ast = parse_ok(R"(
+            r = {a: 1}
+            {a = 99} = r
+        )");
+        // Last top-level statement is the destructure assignment.
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+        const auto& dd = ast.arena[stmt].as_destructure_assignment();
+        REQUIRE(dd.fields.size() == 1);
+        CHECK(dd.fields[0].name == "a");
+        CHECK(dd.fields[0].default_node != NULL_NODE);
+        CHECK(ast.arena[dd.fields[0].default_node].type == NodeType::NumberLit);
+    }
+
+    SECTION("mixed defaults and required fields") {
+        auto ast = parse_ok(R"(
+            r = {a: 1, b: 2}
+            {a = 0, b, c = "hi"} = r
+        )");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+        const auto& dd = ast.arena[stmt].as_destructure_assignment();
+        REQUIRE(dd.fields.size() == 3);
+        CHECK(dd.fields[0].name == "a");
+        CHECK(dd.fields[0].default_node != NULL_NODE);
+        CHECK(dd.fields[1].name == "b");
+        CHECK(dd.fields[1].default_node == NULL_NODE);
+        CHECK(dd.fields[2].name == "c");
+        CHECK(dd.fields[2].default_node != NULL_NODE);
+        CHECK(ast.arena[dd.fields[2].default_node].type == NodeType::StringLit);
+    }
+
+    SECTION("expression default with operator") {
+        auto ast = parse_ok(R"(
+            base = 100
+            r = {a: 1}
+            {a = base + 50} = r
+        )");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+        const auto& dd = ast.arena[stmt].as_destructure_assignment();
+        REQUIRE(dd.fields.size() == 1);
+        // Default is a Call node (binary `+` desugars to `add(...)`).
+        REQUIRE(dd.fields[0].default_node != NULL_NODE);
+        CHECK(ast.arena[dd.fields[0].default_node].type == NodeType::Call);
+    }
+
+    SECTION("disambiguator survives parens in default") {
+        // `(a + b)` inside default — tracking depth is required so the
+        // disambiguator finds the matching `}` followed by `=`.
+        auto ast = parse_ok(R"(
+            a = 2
+            b = 3
+            r = {x: 0}
+            {x = (a + b)} = r
+        )");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+    }
+}
+
+TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
+    SECTION("single destructure parameter") {
+        auto ast = parse_ok(R"(
+            fn f({x, y}) -> x + y
+        )");
+        // Top-level FunctionDef.
+        NodeIndex fn_node = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn_node].type == NodeType::FunctionDef);
+        CHECK(ast.arena[fn_node].as_function_def().param_count == 1);
+
+        NodeIndex param_child = ast.arena[fn_node].first_child;
+        REQUIRE(param_child != NULL_NODE);
+        REQUIRE(ast.arena[param_child].type == NodeType::DestructureParam);
+        const auto& dp = ast.arena[param_child].as_destructure_param();
+        REQUIRE(dp.fields.size() == 2);
+        CHECK(dp.fields[0].name == "x");
+        CHECK(dp.fields[1].name == "y");
+        CHECK(dp.fields[0].default_node == NULL_NODE);
+        CHECK(dp.fields[1].default_node == NULL_NODE);
+    }
+
+    SECTION("destructure parameter with defaults") {
+        auto ast = parse_ok(R"(
+            fn synth({freq = 440, wave = "saw", q = 0.7}) -> osc(wave, freq)
+        )");
+        NodeIndex fn_node = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn_node].type == NodeType::FunctionDef);
+        NodeIndex param_child = ast.arena[fn_node].first_child;
+        REQUIRE(ast.arena[param_child].type == NodeType::DestructureParam);
+        const auto& dp = ast.arena[param_child].as_destructure_param();
+        REQUIRE(dp.fields.size() == 3);
+        CHECK(dp.fields[0].name == "freq");
+        CHECK(dp.fields[0].default_node != NULL_NODE);
+        CHECK(dp.fields[1].name == "wave");
+        CHECK(dp.fields[1].default_node != NULL_NODE);
+        CHECK(dp.fields[2].name == "q");
+        CHECK(dp.fields[2].default_node != NULL_NODE);
+    }
+
+    SECTION("destructure mixed with regular params") {
+        auto ast = parse_ok(R"(
+            fn lp_voice(freq, {cutoff, q = 0.7}) -> osc("saw", freq)
+        )");
+        NodeIndex fn_node = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn_node].type == NodeType::FunctionDef);
+        CHECK(ast.arena[fn_node].as_function_def().param_count == 2);
+
+        NodeIndex first_param = ast.arena[fn_node].first_child;
+        REQUIRE(first_param != NULL_NODE);
+        // First param is a normal Identifier ("freq").
+        CHECK(ast.arena[first_param].type == NodeType::Identifier);
+
+        NodeIndex second_param = ast.arena[first_param].next_sibling;
+        REQUIRE(second_param != NULL_NODE);
+        CHECK(ast.arena[second_param].type == NodeType::DestructureParam);
+        const auto& dp = ast.arena[second_param].as_destructure_param();
+        REQUIRE(dp.fields.size() == 2);
+        CHECK(dp.fields[0].name == "cutoff");
+        CHECK(dp.fields[1].name == "q");
+        CHECK(dp.fields[1].default_node != NULL_NODE);
+    }
+}
+
+TEST_CASE("Parser rejects deferred destructure forms", "[parser][destructure]") {
+    SECTION("defaults in pipe-binding `as {x = 1}` is a parse error") {
+        auto [tokens, lex_diags] = lex(R"(
+            pat("c4") as {freq = 440} |> osc("sin", freq)
+        )");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        // We expect a parse diagnostic flagging the default in this context.
+        bool got_error = false;
+        for (const auto& d : parse_diags) {
+            if (d.severity == Severity::Error &&
+                d.message.find("Default values are not allowed") != std::string::npos) {
+                got_error = true;
+            }
+        }
+        CHECK(got_error);
+    }
+
+    SECTION("defaults in match-arm destructure are a parse error") {
+        auto [tokens, lex_diags] = lex(R"(
+            r = {x: 1}
+            match (r) {
+                {x = 0}: x,
+                _: 0
+            }
+        )");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        bool got_error = false;
+        for (const auto& d : parse_diags) {
+            if (d.severity == Severity::Error &&
+                d.message.find("Default values are not allowed") != std::string::npos) {
+                got_error = true;
+            }
+        }
+        CHECK(got_error);
+    }
+
+    SECTION("destructure parameter in closure does not parse cleanly") {
+        // Phase 3b only enables destructure params in `fn` definitions, not
+        // arrow-style closures. The closure-detection heuristic doesn't
+        // recognize `{` as a param start, so the `({x,y}) -> …` form falls
+        // through to grouped-expression parsing, which fails. The exact
+        // error message is implementation-detail; what matters is the
+        // form doesn't silently compile to something surprising.
+        auto [tokens, lex_diags] = lex(R"(
+            f = ({x, y}) -> x + y
+        )");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        bool any_error = false;
+        for (const auto& d : parse_diags) {
+            if (d.severity == Severity::Error) any_error = true;
+        }
+        CHECK(any_error);
     }
 }
 

@@ -20,6 +20,12 @@ struct FunctionParamInfo {
     std::optional<std::string> default_string;  // String default for match dispatch
     NodeIndex default_node = NULL_NODE;          // AST node for default literal (for param_literals_)
     bool is_rest = false;                        // true for ...param (variadic rest)
+    // Phase 3b: function-parameter destructure `fn f({x, y [= default]})`.
+    // When set, `name` is a synthetic placeholder (`__destr_param_<N>`) and
+    // the per-field bindings live in `destructure_fields`. The corresponding
+    // AST node is `DestructureParam`, not `Identifier`.
+    bool is_destructure = false;
+    std::vector<DestructureField> destructure_fields;
 };
 
 /// Information about a user-defined function

@@ -4269,6 +4269,157 @@ TEST_CASE("Codegen: Statement-level destructure assignment",
     }
 }
 
+TEST_CASE("Codegen: Destructure defaults (statement-level)",
+          "[codegen][destructure]") {
+    SECTION("default fills in for missing field") {
+        // Source has `a` but lacks `b`; default `b = 7` fills the slot.
+        auto result = akkado::compile(R"(
+            r = {a: 5}
+            {a, b = 7} = r
+            out(a + b, a + b)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("present field overrides declared default") {
+        auto result = akkado::compile(R"(
+            r = {a: 5, b: 9}
+            {a = 0, b = 0} = r
+            out(a + b, a + b)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("expression default evaluates lazily and is reachable") {
+        auto result = akkado::compile(R"(
+            base = 100
+            r = {a: 1}
+            {a = 0, b = base + 50} = r
+            out(a + b, a + b)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("missing field with no default still emits E187") {
+        // A required field (no default) missing from source must keep emitting E187
+        // even when a sibling field has a default — the default-aware path must
+        // not silently swallow non-defaulted misses.
+        auto result = akkado::compile(R"(
+            r = {a: 1}
+            {a = 0, b} = r
+            out(a, a)
+        )");
+        bool got_e187 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E187") got_e187 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e187);
+    }
+}
+
+TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
+    SECTION("body can reference destructured fields") {
+        auto result = akkado::compile(R"(
+            fn add_xy({x, y}) -> x + y
+            cfg = {x: 3, y: 4}
+            v = add_xy(cfg)
+            out(v, v)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("inline record literal as the destructure arg") {
+        auto result = akkado::compile(R"(
+            fn add_xy({x, y}) -> x + y
+            v = add_xy({x: 10, y: 20})
+            out(v, v)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("destructure with all defaults — caller passes empty record") {
+        auto result = akkado::compile(R"(
+            fn synth({freq = 440, q = 0.7}) -> osc("sin", freq) * q
+            sig = synth({})
+            out(sig, sig)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("destructure mixed with regular params") {
+        auto result = akkado::compile(R"(
+            fn lp_voice(freq, {cutoff = 1000, q = 0.7}) -> osc("saw", freq)
+            sig = lp_voice(220, {cutoff: 500})
+            out(sig, sig)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("missing required field with no default → E187") {
+        auto result = akkado::compile(R"(
+            fn need_both({a, b}) -> a + b
+            v = need_both({a: 1})
+            out(v, v)
+        )");
+        bool got_e187 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E187") got_e187 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e187);
+    }
+
+    SECTION("non-Record argument → E140") {
+        auto result = akkado::compile(R"(
+            fn need_record({a}) -> a
+            v = need_record(42)
+            out(v, v)
+        )");
+        bool got_e140 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E140") got_e140 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e140);
+    }
+
+    SECTION("missing record argument entirely → arity error E006") {
+        // The analyzer's arity check fires before codegen reaches the per-param
+        // binding loop, so the user sees a uniform "expects at least N args"
+        // diagnostic for every too-few-args call. The destructure slot is
+        // counted as one required slot just like any other formal param.
+        auto result = akkado::compile(R"(
+            fn need_record({a}) -> a
+            v = need_record()
+            out(v, v)
+        )");
+        bool got_e006 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E006") got_e006 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e006);
+    }
+
+    SECTION("spread + destructure-param is rejected with E105") {
+        // Phase 3b deferred: caller `f(..preset)` against `fn f({x, y})` is
+        // not supported; PRD §3.3 says compose later. Reject cleanly.
+        auto result = akkado::compile(R"(
+            fn synth({freq, wave}) -> osc(wave, freq)
+            preset = {freq: 440, wave: "saw"}
+            sig = synth(..preset)
+            out(sig, sig)
+        )");
+        bool got_e105 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E105") got_e105 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e105);
+    }
+}
+
 TEST_CASE("Codegen: Pattern transformations", "[codegen]") {
     // Pattern transformations require literal patterns as first argument
     SECTION("slow transformation") {

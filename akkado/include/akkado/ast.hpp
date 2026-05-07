@@ -13,6 +13,17 @@ namespace akkado {
 using NodeIndex = std::uint32_t;
 constexpr NodeIndex NULL_NODE = 0xFFFFFFFF;
 
+/// One field in a destructure pattern (`{x}`, `{x = 1}`, etc.).
+/// Used by statement-level (`{x, y} = r`) and fn-param (`fn f({x, y})`)
+/// destructure forms. `default_node` points at the AST node for the default
+/// expression, or NULL_NODE if no default is declared. The name is bound as
+/// a local variable (with the source's field buffer, or the default's buffer
+/// when the source is missing the field).
+struct DestructureField {
+    std::string name;
+    NodeIndex default_node = NULL_NODE;
+};
+
 /// AST node types
 enum class NodeType : std::uint8_t {
     // Literals
@@ -58,6 +69,7 @@ enum class NodeType : std::uint8_t {
     Block,          // { statements... expr }
     FunctionDef,    // fn name(params) -> body
     DestructureAssignment,  // {x, y} = expr - statement-level record destructure
+    DestructureParam,       // {x, y [= default]} as a function parameter slot
 
     // Expressions (advanced)
     MatchExpr,      // match(expr) { arm, arm, ... }
@@ -115,6 +127,7 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::Block:       return "Block";
         case NodeType::FunctionDef: return "FunctionDef";
         case NodeType::DestructureAssignment: return "DestructureAssignment";
+        case NodeType::DestructureParam: return "DestructureParam";
         case NodeType::MatchExpr:   return "MatchExpr";
         case NodeType::MatchArm:    return "MatchArm";
         case NodeType::RecordLit:   return "RecordLit";
@@ -291,7 +304,13 @@ struct Node {
     // Data for statement-level destructure assignment ({x, y} = expr).
     // RHS expression is the node's first_child.
     struct DestructureAssignmentData {
-        std::vector<std::string> fields;  // Names to bind from the source record/pattern
+        std::vector<DestructureField> fields;  // Names + optional default-expr nodes
+    };
+
+    // Data for a destructuring function parameter (fn f({x, y [= default]})).
+    // Lives as a child of FunctionDef in place of the usual Identifier child.
+    struct DestructureParamData {
+        std::vector<DestructureField> fields;
     };
 
     // Data for hole with optional field access (%.field)
@@ -335,7 +354,8 @@ struct Node {
         HoleData,
         ImportDeclData,
         DirectiveData,
-        DestructureAssignmentData
+        DestructureAssignmentData,
+        DestructureParamData
     > data;
 
     // Type-safe accessors
@@ -425,6 +445,10 @@ struct Node {
 
     [[nodiscard]] const DestructureAssignmentData& as_destructure_assignment() const {
         return std::get<DestructureAssignmentData>(data);
+    }
+
+    [[nodiscard]] const DestructureParamData& as_destructure_param() const {
+        return std::get<DestructureParamData>(data);
     }
 
     [[nodiscard]] const HoleData& as_hole() const {

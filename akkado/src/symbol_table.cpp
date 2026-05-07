@@ -147,6 +147,14 @@ static void update_symbol_nodes(Symbol& sym, const std::unordered_map<NodeIndex,
                 auto param_it = node_map.find(param.default_node);
                 if (param_it != node_map.end()) param.default_node = param_it->second;
             }
+            // Phase 3b: each destructure field's default expression also
+            // moved during the analyzer's AST clone.
+            for (auto& f : param.destructure_fields) {
+                if (f.default_node != NULL_NODE) {
+                    auto it = node_map.find(f.default_node);
+                    if (it != node_map.end()) f.default_node = it->second;
+                }
+            }
         }
     } else if (sym.kind == SymbolKind::FunctionValue) {
         auto closure_it = node_map.find(sym.function_ref.closure_node);

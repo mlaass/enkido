@@ -2111,39 +2111,53 @@ const TypedValue* CodeGenerator::get_node_type(NodeIndex node) const {
     return nullptr;
 }
 
-// Bind destructured fields from a record/pattern TypedValue into the symbol table
+// Bind destructured fields from a record/pattern TypedValue into the symbol table.
+// Phase 3b: each field may carry a default expression (AST node index) used
+// when the source is missing that field. Pure missing-field (no default)
+// fires `missing_field_code`.
 bool CodeGenerator::bind_destructure_fields(
     const TypedValue& source_tv,
-    const std::vector<std::string>& fields,
+    const std::vector<DestructureField>& fields,
     SourceLocation loc,
     const char* missing_field_code)
 {
-    if (source_tv.type == ValueType::Record && source_tv.record) {
-        for (const auto& field : fields) {
-            auto field_it = source_tv.record->fields.find(field);
-            if (field_it == source_tv.record->fields.end()) {
-                std::string msg = (std::string(missing_field_code) == "E187")
-                    ? "Destructure source missing required field '" + field + "' (no default declared)"
-                    : "Destructure field '" + field + "' not found in record";
-                error(missing_field_code, msg, loc);
+    auto bind_default_or_error = [&](const DestructureField& field,
+                                     const char* missing_msg_for_kind) -> bool {
+        if (field.default_node != NULL_NODE) {
+            TypedValue def_tv = visit(field.default_node);
+            if (def_tv.error) {
                 return false;
             }
-            symbols_->define_variable(field, field_it->second.buffer);
+            symbols_->define_variable(field.name, def_tv.buffer);
+            return true;
+        }
+        std::string msg = (std::string(missing_field_code) == "E187")
+            ? "Destructure source missing required field '" + field.name + "' (no default declared)"
+            : std::string("Destructure field '") + field.name + "' not found in " + missing_msg_for_kind;
+        error(missing_field_code, msg, loc);
+        return false;
+    };
+
+    if (source_tv.type == ValueType::Record && source_tv.record) {
+        for (const auto& field : fields) {
+            auto field_it = source_tv.record->fields.find(field.name);
+            if (field_it == source_tv.record->fields.end()) {
+                if (!bind_default_or_error(field, "record")) return false;
+                continue;
+            }
+            symbols_->define_variable(field.name, field_it->second.buffer);
         }
         return true;
     }
 
     if (source_tv.type == ValueType::Pattern && source_tv.pattern) {
         for (const auto& field : fields) {
-            int idx = pattern_field_index(field);
+            int idx = pattern_field_index(field.name);
             if (idx < 0 || source_tv.pattern->fields[static_cast<std::size_t>(idx)] == 0xFFFF) {
-                std::string msg = (std::string(missing_field_code) == "E187")
-                    ? "Destructure source missing required field '" + field + "' (no default declared)"
-                    : "Destructure field '" + field + "' not found in pattern";
-                error(missing_field_code, msg, loc);
-                return false;
+                if (!bind_default_or_error(field, "pattern")) return false;
+                continue;
             }
-            symbols_->define_variable(field, source_tv.pattern->fields[static_cast<std::size_t>(idx)]);
+            symbols_->define_variable(field.name, source_tv.pattern->fields[static_cast<std::size_t>(idx)]);
         }
         return true;
     }

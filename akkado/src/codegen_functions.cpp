@@ -195,6 +195,21 @@ TypedValue CodeGenerator::handle_user_function_call(
     std::vector<std::uint16_t> rest_buffers;
 
     if (has_spread) {
+        // Phase 3b: spread + destructure-param is deferred. Reject before
+        // expansion so the user gets a clear pointer at the alternative.
+        for (const auto& p : func.params) {
+            if (p.is_destructure) {
+                error("E105",
+                      "Cannot use spread (`..arg`) to fill a destructure parameter "
+                      "in '" + func.name + "'; pass a direct record value instead",
+                      n.location);
+                param_literals_ = std::move(saved_param_literals);
+                param_string_defaults_ = std::move(saved_param_string_defaults);
+                param_multi_buffer_sources_ = std::move(saved_param_multi_buffer_sources);
+                param_function_refs_ = std::move(saved_param_function_refs);
+                return TypedValue::error_val();
+            }
+        }
         // Expand ..record / ..array sources into a flat list of (positional, named) entries.
         auto expanded_opt = expand_call_arguments(node);
         if (!expanded_opt) {
@@ -356,6 +371,27 @@ TypedValue CodeGenerator::handle_user_function_call(
     } else
     for (std::size_t i = 0; i < func.params.size(); ++i) {
         std::uint16_t param_buf;
+
+        if (func.params[i].is_destructure) {
+            // Phase 3b: visit the caller arg so node_types_ gets populated
+            // for the step-2 destructure branch. Buffer here is unused (the
+            // destructure binds per-field buffers, not a record-as-a-whole).
+            // Missing-arg case: emit a friendlier error that doesn't leak
+            // the synthetic placeholder name.
+            if (i < args.size()) {
+                TypedValue arg_tv = visit(args[i]);
+                param_buf = arg_tv.buffer;
+            } else {
+                error("E105",
+                      "Missing required record argument for destructure parameter "
+                      "in '" + func.name + "'", n.location);
+                param_literals_ = std::move(saved_param_literals);
+                param_string_defaults_ = std::move(saved_param_string_defaults);
+                return TypedValue::void_val();
+            }
+            param_bufs.push_back(param_buf);
+            continue;
+        }
 
         if (func.params[i].is_rest) {
             // Rest parameter: collect all remaining arguments
@@ -553,6 +589,33 @@ TypedValue CodeGenerator::handle_user_function_call(
     // NOW push scope for function parameters and bind them
     symbols_->push_scope();
     for (std::size_t i = 0; i < func.params.size(); ++i) {
+        // Phase 3b: destructure param `fn f({x, y [= default]})`. The caller
+        // arg at position i must resolve to a Record TypedValue. Each declared
+        // field becomes a local variable in this fresh scope; missing fields
+        // fall back to declared defaults (or fire E187).
+        if (func.params[i].is_destructure) {
+            const TypedValue* arg_tv = nullptr;
+            if (i < args.size()) {
+                auto type_it = node_types_.find(args[i]);
+                if (type_it != node_types_.end()) {
+                    arg_tv = &type_it->second;
+                }
+            }
+            if (arg_tv == nullptr) {
+                error("E140",
+                      "Cannot destructure: missing or unresolved argument for "
+                      "function '" + func.name + "'", n.location);
+                continue;
+            }
+            // bind_destructure_fields handles the Record/Pattern type check
+            // and emits E140/E187 with the right messages.
+            bind_destructure_fields(*arg_tv,
+                                    func.params[i].destructure_fields,
+                                    n.location,
+                                    "E187");
+            continue;
+        }
+
         if (func.params[i].is_rest) {
             // Bind rest param as synthetic Array
             ArrayInfo arr;
@@ -1260,7 +1323,14 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
 
                 if (guard_passes && body != NULL_NODE) {
                     symbols_->push_scope();
-                    bind_destructure_fields(scrutinee_tv, arm_data.destructure_fields, arm_node.location);
+                    // Match-arm destructure has no default expressions —
+                    // wrap names into DestructureField{name, NULL_NODE}.
+                    std::vector<DestructureField> arm_fields;
+                    arm_fields.reserve(arm_data.destructure_fields.size());
+                    for (const auto& fname : arm_data.destructure_fields) {
+                        arm_fields.push_back(DestructureField{fname, NULL_NODE});
+                    }
+                    bind_destructure_fields(scrutinee_tv, arm_fields, arm_node.location);
                     auto result_tv = visit(body);
                     symbols_->pop_scope();
                     return cache_and_return(node, result_tv);
@@ -1415,7 +1485,13 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                 has_destr_scope = true;
                 auto* scrutinee_type = get_node_type(n.first_child);
                 if (scrutinee_type) {
-                    bind_destructure_fields(*scrutinee_type, arm_data.destructure_fields, arm_node.location);
+                    // Match-arm destructure has no default expressions.
+                    std::vector<DestructureField> arm_fields;
+                    arm_fields.reserve(arm_data.destructure_fields.size());
+                    for (const auto& fname : arm_data.destructure_fields) {
+                        arm_fields.push_back(DestructureField{fname, NULL_NODE});
+                    }
+                    bind_destructure_fields(*scrutinee_type, arm_fields, arm_node.location);
                 }
             }
 

@@ -287,34 +287,44 @@ NodeIndex Parser::parse_statement() {
         }
     }
 
-    // Check for statement-level destructure assignment: { Ident (, Ident)* } = expr
+    // Check for statement-level destructure assignment: { Ident [= default]
+    // (, Ident [= default])* } = expr.
     // Disambiguated from a record-literal expression-statement by the absence
-    // of `:` after the first identifier and the presence of `} =` after the field list.
+    // of `:` after the first identifier, AND the presence of `} =` at the
+    // matching close brace. The lookahead tracks paren/bracket/brace depth so
+    // default expressions like `{x = (a + b)}` don't confuse it.
     if (check(TokenType::LBrace)) {
-        std::size_t i = current_idx_ + 1;
         bool is_destructure_stmt = false;
-        if (i < tokens_.size() && tokens_[i].type == TokenType::Identifier) {
-            ++i;
-            // `{x:` → record literal, not destructure
-            if (i < tokens_.size() && tokens_[i].type != TokenType::Colon) {
-                while (i < tokens_.size() && tokens_[i].type == TokenType::Comma) {
-                    ++i;
-                    if (i < tokens_.size() && tokens_[i].type == TokenType::Identifier) {
-                        ++i;
-                    } else {
-                        break;
+        std::size_t j = current_idx_ + 1;  // first token after `{`
+        if (j < tokens_.size() && tokens_[j].type == TokenType::Identifier) {
+            // `{x:` → record literal, not destructure.
+            bool starts_like_record = (j + 1 < tokens_.size()
+                                       && tokens_[j + 1].type == TokenType::Colon);
+            if (!starts_like_record) {
+                int depth = 1;  // already inside the outer `{`
+                std::size_t k = j;
+                while (k < tokens_.size() && depth > 0) {
+                    TokenType t = tokens_[k].type;
+                    if (t == TokenType::LBrace || t == TokenType::LParen ||
+                        t == TokenType::LBracket) {
+                        ++depth;
+                    } else if (t == TokenType::RBrace || t == TokenType::RParen ||
+                               t == TokenType::RBracket) {
+                        --depth;
+                        if (depth == 0) break;
                     }
+                    ++k;
                 }
-                if (i < tokens_.size() && tokens_[i].type == TokenType::RBrace
-                    && i + 1 < tokens_.size() && tokens_[i + 1].type == TokenType::Equals) {
+                if (depth == 0 && k + 1 < tokens_.size() &&
+                    tokens_[k + 1].type == TokenType::Equals) {
                     is_destructure_stmt = true;
                 }
             }
         }
 
         if (is_destructure_stmt) {
-            Token brace_tok = advance();  // consume '{'
-            std::vector<std::string> fields = parse_destructure_fields();
+            Token brace_tok = current();  // `{` — used for node location
+            std::vector<DestructureField> fields = parse_destructure_fields(true);
             consume(TokenType::Equals, "Expected '=' after destructure pattern");
 
             NodeIndex node = make_node(NodeType::DestructureAssignment, brace_tok);
@@ -408,13 +418,20 @@ NodeIndex Parser::parse_precedence(Precedence prec) {
             Token as_tok = advance();  // consume 'as'
 
             if (check(TokenType::LBrace)) {
-                // as {field1, field2, ...} — destructuring binding
-                advance();  // consume '{'
-                std::vector<std::string> destr_fields = parse_destructure_fields();
+                // as {field1, field2, ...} — destructuring binding.
+                // Defaults (`as {x = 1}`) are deferred — the helper rejects
+                // them when allow_defaults is false.
+                std::vector<DestructureField> destr_fields =
+                    parse_destructure_fields(false);
+                std::vector<std::string> destr_names;
+                destr_names.reserve(destr_fields.size());
+                for (auto& f : destr_fields) {
+                    destr_names.push_back(std::move(f.name));
+                }
 
                 std::string temp_name = "__destr_" + std::to_string(destr_counter_++);
                 NodeIndex binding = make_node(NodeType::PipeBinding, as_tok);
-                arena_[binding].data = Node::PipeBindingData{temp_name, std::move(destr_fields)};
+                arena_[binding].data = Node::PipeBindingData{temp_name, std::move(destr_names)};
                 arena_.add_child(binding, left);
                 left = binding;
             } else if (check(TokenType::Identifier)) {
@@ -838,7 +855,7 @@ NodeIndex Parser::parse_closure() {
     return node;
 }
 
-std::vector<ParsedParam> Parser::parse_param_list() {
+std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     std::vector<ParsedParam> params;
 
     if (check(TokenType::RParen)) {
@@ -846,8 +863,27 @@ std::vector<ParsedParam> Parser::parse_param_list() {
     }
 
     bool seen_default = false;
+    std::size_t destr_param_idx = 0;
 
     do {
+        // Phase 3b: function-parameter destructure `fn f({x, y [= default]})`.
+        // Only enabled in fn-def context (allow_destructure=true). Closures
+        // currently reject destructure slots — this scope decision is
+        // deliberate; revisit if user demand emerges.
+        if (check(TokenType::LBrace)) {
+            if (!allow_destructure) {
+                error("Destructuring parameters are only allowed in `fn` definitions");
+                break;
+            }
+            std::vector<DestructureField> fields = parse_destructure_fields(true);
+            ParsedParam dp;
+            dp.name = "__destr_param_" + std::to_string(destr_param_idx++);
+            dp.is_destructure = true;
+            dp.destructure_fields = std::move(fields);
+            params.push_back(std::move(dp));
+            continue;
+        }
+
         // Check for variadic rest parameter: ...name
         bool is_rest = match(TokenType::DotDotDot);
 
@@ -1301,9 +1337,14 @@ NodeIndex Parser::parse_match_expr() {
             // Pattern: string, number, -number, number..number, bool, {field,...}, or _ (wildcard)
             if (check(TokenType::LBrace)) {
                 // Destructuring pattern: { ident, ident, ... }
-                advance();  // consume '{'
+                // Defaults (`{x = 1}:`) are deferred — `allow_defaults=false`.
                 is_destructure = true;
-                destructure_fields = parse_destructure_fields();
+                std::vector<DestructureField> destr_arm_fields =
+                    parse_destructure_fields(false);
+                destructure_fields.reserve(destr_arm_fields.size());
+                for (auto& f : destr_arm_fields) {
+                    destructure_fields.push_back(std::move(f.name));
+                }
                 // Create a placeholder pattern node
                 pattern = make_node(NodeType::Identifier, arm_tok);
                 arena_[pattern].data = Node::IdentifierData{"_destructure"};
@@ -1455,8 +1496,9 @@ NodeIndex Parser::parse_fn_def(bool is_const) {
 
     consume(TokenType::LParen, "Expected '(' after function name");
 
-    // Parse parameter list (reuse closure param parsing)
-    std::vector<ParsedParam> params = parse_param_list();
+    // Parse parameter list (reuse closure param parsing).
+    // Pass allow_destructure=true so `fn f({x, y})` is accepted (Phase 3b).
+    std::vector<ParsedParam> params = parse_param_list(true);
 
     consume(TokenType::RParen, "Expected ')' after parameters");
     consume(TokenType::Arrow, "Expected '->' after function parameters");
@@ -1481,8 +1523,16 @@ NodeIndex Parser::parse_fn_def(bool is_const) {
         is_const
     };
 
-    // Add parameters as Identifier children (using ClosureParamData for those with defaults/rest)
+    // Add parameters as Identifier children (using ClosureParamData for those with defaults/rest).
+    // Destructure params (`fn f({x, y [= default]})`) get their own AST node type.
     for (const auto& param : params) {
+        if (param.is_destructure) {
+            NodeIndex dp_node = arena_.alloc(NodeType::DestructureParam, name_tok.location);
+            arena_[dp_node].data = Node::DestructureParamData{param.destructure_fields};
+            arena_.add_child(node, dp_node);
+            continue;
+        }
+
         NodeIndex param_node = arena_.alloc(NodeType::Identifier, name_tok.location);
 
         if (param.default_value.has_value() || param.default_string.has_value() ||
@@ -1616,8 +1666,10 @@ NodeIndex Parser::parse_record_literal() {
 // Caller has just consumed '{'. Reads `Ident (, Ident)*`, consumes '}',
 // emits E188 on duplicate names. Used by pipe-binding `as {x, y}`,
 // match-arm `{x, y}` patterns, and statement-level `{x, y} = expr`.
-std::vector<std::string> Parser::parse_destructure_fields() {
-    std::vector<std::string> fields;
+std::vector<DestructureField> Parser::parse_destructure_fields(bool allow_defaults) {
+    consume(TokenType::LBrace, "Expected '{' to begin destructuring pattern");
+
+    std::vector<DestructureField> fields;
     std::set<std::string> seen;
 
     while (!check(TokenType::RBrace) && !is_at_end()) {
@@ -1627,6 +1679,24 @@ std::vector<std::string> Parser::parse_destructure_fields() {
         }
         Token name_tok = current();
         std::string name = std::string(name_tok.lexeme);
+        advance();
+
+        NodeIndex default_idx = NULL_NODE;
+        if (check(TokenType::Equals)) {
+            if (!allow_defaults) {
+                // Defaults in pipe-binding (`as {x = 1}`) and match-arm
+                // (`{x = 1}:`) destructures are deferred — this PRD only
+                // ships them in statement-level and fn-param contexts.
+                error("Default values are not allowed in this destructure context");
+                // Recover: skip the default expression so we can keep parsing.
+                advance();  // consume `=`
+                NodeIndex throwaway = parse_expression();
+                (void)throwaway;
+            } else {
+                advance();  // consume `=`
+                default_idx = parse_expression();
+            }
+        }
 
         if (seen.count(name)) {
             // Push E188 directly so we don't trip panic_mode and keep
@@ -1640,9 +1710,8 @@ std::vector<std::string> Parser::parse_destructure_fields() {
             });
         } else {
             seen.insert(name);
-            fields.push_back(std::move(name));
+            fields.push_back(DestructureField{std::move(name), default_idx});
         }
-        advance();
 
         if (!check(TokenType::RBrace)) {
             consume(TokenType::Comma, "Expected ',' between destructuring fields");

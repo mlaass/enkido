@@ -504,10 +504,10 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         // codegen visits the RHS and runs bind_destructure_fields().
         const auto& dd = n.as_destructure_assignment();
         for (const auto& field : dd.fields) {
-            if (symbols_.is_defined_in_current_scope(field)) {
-                error("E150", "Cannot reassign immutable variable '" + field + "'", n.location);
+            if (symbols_.is_defined_in_current_scope(field.name)) {
+                error("E150", "Cannot reassign immutable variable '" + field.name + "'", n.location);
             } else {
-                symbols_.define_variable(field, 0xFFFF);
+                symbols_.define_variable(field.name, 0xFFFF);
             }
         }
     }
@@ -553,7 +553,14 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         while (child != NULL_NODE && param_idx < fn_data.param_count) {
             const Node& child_node = (*input_ast_).arena[child];
             FunctionParamInfo param;
-            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+            if (child_node.type == NodeType::DestructureParam) {
+                // Phase 3b: `fn f({x, y [= default]})`. Synthetic name; the
+                // actual fields drive per-field local bindings at call time.
+                const auto& dp = child_node.as_destructure_param();
+                param.name = "__destr_param_" + std::to_string(param_idx);
+                param.is_destructure = true;
+                param.destructure_fields = dp.fields;
+            } else if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 const auto& cp = child_node.as_closure_param();
                 param.name = cp.name;
                 param.default_value = cp.default_value;
@@ -892,6 +899,32 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
             NodeIndex cloned_spread = clone_subtree(arg_data.spread_source);
             auto& dst_data = std::get<Node::ArgumentData>(output_arena_[dst_idx].data);
             dst_data.spread_source = cloned_spread;
+        }
+    }
+
+    // Phase 3b: destructure default expressions ride inside the data variant
+    // (one NodeIndex per field), not as child links. Clone each into the
+    // output arena and patch the cloned data so codegen sees valid indices.
+    if (src.type == NodeType::DestructureAssignment &&
+        std::holds_alternative<Node::DestructureAssignmentData>(src.data)) {
+        const auto& dd_src = src.as_destructure_assignment();
+        auto& dst_data = std::get<Node::DestructureAssignmentData>(output_arena_[dst_idx].data);
+        for (std::size_t i = 0; i < dd_src.fields.size(); ++i) {
+            if (dd_src.fields[i].default_node != NULL_NODE) {
+                dst_data.fields[i].default_node =
+                    clone_subtree(dd_src.fields[i].default_node);
+            }
+        }
+    }
+    if (src.type == NodeType::DestructureParam &&
+        std::holds_alternative<Node::DestructureParamData>(src.data)) {
+        const auto& dp_src = src.as_destructure_param();
+        auto& dst_data = std::get<Node::DestructureParamData>(output_arena_[dst_idx].data);
+        for (std::size_t i = 0; i < dp_src.fields.size(); ++i) {
+            if (dp_src.fields[i].default_node != NULL_NODE) {
+                dst_data.fields[i].default_node =
+                    clone_subtree(dp_src.fields[i].default_node);
+            }
         }
     }
 
@@ -1454,7 +1487,23 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         while (child != NULL_NODE && param_idx < fn_data.param_count) {
             const Node& child_node = output_arena_[child];
             std::string param_name;
-            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+            if (child_node.type == NodeType::DestructureParam) {
+                // Phase 3b: each destructured field is bound as a parameter
+                // so the body can reference it by name. The synthetic slot
+                // name `__destr_param_<N>` is intentionally NOT registered
+                // — users can't reference it.
+                const auto& dp = child_node.as_destructure_param();
+                for (const auto& field : dp.fields) {
+                    if (params.count(field.name)) {
+                        error("E188",
+                              "Duplicate parameter name '" + field.name +
+                              "' in destructure pattern", child_node.location);
+                    } else {
+                        params.insert(field.name);
+                        symbols_.define_parameter(field.name, 0xFFFF);
+                    }
+                }
+            } else if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 param_name = child_node.as_closure_param().name;
                 // Verify purity of expression defaults
                 const auto& cp = child_node.as_closure_param();

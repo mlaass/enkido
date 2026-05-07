@@ -32,6 +32,11 @@ struct ParsedParam {
     std::optional<std::string> default_string;  // String default
     NodeIndex default_node = NULL_NODE;          // AST node for default literal
     bool is_rest = false;  // true for ...param (variadic rest)
+    // Phase 3b: function-parameter destructure (`fn f({x, y [= default]})`).
+    // When true, `name` is a synthetic placeholder (`__destr_param_<N>`) and
+    // `destructure_fields` carries the actual field-binding spec.
+    bool is_destructure = false;
+    std::vector<DestructureField> destructure_fields;
 };
 
 /// Parser for the Akkado language
@@ -112,7 +117,9 @@ private:
     std::vector<NodeIndex> parse_argument_list();
 
     // Closure helpers
-    std::vector<ParsedParam> parse_param_list();
+    // `allow_destructure` permits `fn f({x, y})`-style destructure slots; only
+    // fn-defs (Phase 3b) accept them. Closures `(x) -> …` pass false.
+    std::vector<ParsedParam> parse_param_list(bool allow_destructure = false);
     NodeIndex parse_closure_body();
     NodeIndex parse_block();
 
@@ -124,11 +131,16 @@ private:
     NodeIndex parse_directive();
 
     // Destructuring helpers
-    // Parses `{ Ident (, Ident)* }` after the caller has confirmed the leading
-    // `{`. Consumes the opening `{` and the closing `}`. Emits E188 on
-    // duplicates. Used by pipe-binding (`as {x, y}`), match-arm
-    // (`match (r) { {x, y}: … }`), and statement-level (`{x, y} = …`).
-    std::vector<std::string> parse_destructure_fields();
+    // Parses `{ Ident [= default] (, Ident [= default])* }`. The caller has
+    // already confirmed the leading `{`; this helper consumes that `{` AND
+    // the closing `}`. Emits E188 on duplicate field names.
+    //
+    // `allow_defaults` gates the `Ident = expr` form. Statement-level
+    // destructure (`{x = 1} = r`) and fn-param destructure
+    // (`fn f({x = 1})`) pass `true`. Pipe-binding (`as {x, y}`) and match-arm
+    // (`{x, y}:`) destructures pass `false` — defaults in those positions
+    // are deferred and emit a clear parse error.
+    std::vector<DestructureField> parse_destructure_fields(bool allow_defaults);
 
     // Import parsing
     NodeIndex parse_import_decl();

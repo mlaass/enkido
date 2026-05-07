@@ -468,6 +468,37 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         )");
         REQUIRE(result.success);
     }
+
+    SECTION("statement-level destructure with defaults (Phase 3b)") {
+        // Source has `freq` but lacks `q`; the declared default fills the slot
+        // and the program compiles to a real audio program.
+        auto result = akkado::compile(R"(
+            preset = {freq: 220}
+            {freq, q = 0.7} = preset
+            osc("sin", freq) * q |> out(%, %)
+        )");
+        REQUIRE(result.success);
+    }
+
+    SECTION("fn-param destructure with defaults (Phase 3b)") {
+        auto result = akkado::compile(R"(
+            fn synth({freq = 440, wave = "saw", q = 0.7}) ->
+                osc(wave, freq) * q
+            sig = synth({freq: 220})
+            sig |> out(%, %)
+        )");
+        REQUIRE(result.success);
+    }
+
+    SECTION("fn-param destructure mixed with regular params (Phase 3b)") {
+        auto result = akkado::compile(R"(
+            fn lp_voice(freq, {cutoff = 1000, q = 0.7}) ->
+                osc("saw", freq)
+            sig = lp_voice(330, {cutoff: 800})
+            sig |> out(%, %)
+        )");
+        REQUIRE(result.success);
+    }
 }
 
 TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
