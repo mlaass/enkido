@@ -44,6 +44,13 @@ static bool diagnostic_contains(const akkado::CompileResult& r, const std::strin
     return false;
 }
 
+static bool diagnostic_has_code(const akkado::CompileResult& r, const std::string& code) {
+    for (const auto& d : r.diagnostics) {
+        if (d.code == code) return true;
+    }
+    return false;
+}
+
 TEST_CASE("State: state(init) emits STATE_OP rate=0", "[state]") {
     auto r = akkado::compile(
         "s = state(0)\n"
@@ -309,4 +316,293 @@ TEST_CASE("State: empty array stepper produces silence not a crash",
         CHECK(std::isfinite(L[i]));
         CHECK(std::isfinite(R[i]));
     }
+}
+
+// ============================================================================
+// Phase 4a — record-valued state cells
+// (prd-records-system-unification.md §5.6.1, §9 Phase 4a, §10.4)
+//
+// state({x: 1, y: 2}) is fanned out into N scalar STATE_OP slots, one per
+// record field, with state_ids derived from per-field paths. These tests
+// pin the surface (compile shape, type errors, E189 shape mismatch) and the
+// runtime behaviour (per-field round-trip, persistence, cross-shape hot-swap
+// fall-back).
+// ============================================================================
+
+TEST_CASE("State record: state(record) emits one STATE_OP rate=0 per field",
+          "[state][record]") {
+    auto r = akkado::compile(
+        "s = state({x: 1, y: 2})\n"
+        "out(get(s).x, get(s).y)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 0) == 2);
+
+    // Per-field state_ids must differ — they were derived from distinct paths.
+    std::set<std::uint32_t> init_ids;
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::STATE_OP && i.rate == 0) {
+            init_ids.insert(i.state_id);
+        }
+    }
+    CHECK(init_ids.size() == 2);
+}
+
+TEST_CASE("State record: get returns a Record; field access reaches each field",
+          "[state][record][runtime]") {
+    auto r = akkado::compile(
+        "s = state({x: 11, y: 22})\n"
+        "out(get(s).x, get(s).y)\n"
+    );
+    REQUIRE(r.success);
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+
+    // Each field's init value broadcasts to its load buffer.
+    CHECK(L[0] == 11.0f);
+    CHECK(R[0] == 22.0f);
+}
+
+TEST_CASE("State record: set roundtrips per field", "[state][record][runtime]") {
+    auto r = akkado::compile(
+        "s = state({x: 0, y: 0})\n"
+        "set(s, {x: 42, y: 99})\n"
+        "out(get(s).x, get(s).y)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 2);  // one store per field
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+
+    // set() writes the LAST sample of its (constant-broadcast) input buffer
+    // into the slot, then get() broadcasts that value to its output buffer.
+    CHECK(L[cedar::BLOCK_SIZE - 1] == 42.0f);
+    CHECK(R[cedar::BLOCK_SIZE - 1] == 99.0f);
+}
+
+TEST_CASE("State record: E189 on extra field in set value", "[state][record]") {
+    auto r = akkado::compile(
+        "s = state({x: 0})\n"
+        "set(s, {x: 1, y: 2})\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E189"));
+    CHECK(diagnostic_contains(r, "expected"));
+    CHECK(diagnostic_contains(r, "got"));
+}
+
+TEST_CASE("State record: E189 on missing field in set value", "[state][record]") {
+    auto r = akkado::compile(
+        "s = state({x: 0, y: 0})\n"
+        "set(s, {x: 1})\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E189"));
+}
+
+TEST_CASE("State record: E122 widened — scalar value to record cell",
+          "[state][record][types]") {
+    auto r = akkado::compile(
+        "s = state({x: 0})\n"
+        "set(s, 42)\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_contains(r, "record cell requires a record"));
+}
+
+TEST_CASE("State record: E122 widened — record value to scalar cell",
+          "[state][record][types]") {
+    auto r = akkado::compile(
+        "s = state(0)\n"
+        "set(s, {x: 1})\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_contains(r, "scalar cell requires a number or signal"));
+}
+
+TEST_CASE("State record: E122 — nested-record init field rejected",
+          "[state][record][types]") {
+    auto r = akkado::compile(
+        "s = state({inner: {x: 1}})\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_contains(r, "nested record cells deferred"));
+}
+
+TEST_CASE("State record: empty record state({}) compiles with zero STATE_OPs",
+          "[state][record][edge_case]") {
+    auto r = akkado::compile(
+        "s = state({})\n"
+        "set(s, {})\n"
+        "out(0, 0)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 0) == 0);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 0);
+}
+
+TEST_CASE("State record: distinct call sites get distinct per-field slots",
+          "[state][record][slots]") {
+    // Two separate state({x, y}) literals → 4 distinct STATE_OP rate=0 inits.
+    auto r = akkado::compile(
+        "a = state({x: 1, y: 2})\n"
+        "b = state({x: 3, y: 4})\n"
+        "out(get(a).x + get(b).x, get(a).y + get(b).y)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    std::set<std::uint32_t> init_ids;
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::STATE_OP && i.rate == 0) {
+            init_ids.insert(i.state_id);
+        }
+    }
+    CHECK(init_ids.size() == 4);
+}
+
+TEST_CASE("State record: cell value persists across blocks",
+          "[state][record][persistence]") {
+    auto r = akkado::compile(
+        "s = state({x: 7, y: 13})\n"
+        "out(get(s).x, get(s).y)\n"
+    );
+    REQUIRE(r.success);
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (int block = 0; block < 5; ++block) {
+        vm.process_block(L.data(), R.data());
+        CHECK(L[0] == 7.0f);
+        CHECK(L[cedar::BLOCK_SIZE - 1] == 7.0f);
+        CHECK(R[0] == 13.0f);
+        CHECK(R[cedar::BLOCK_SIZE - 1] == 13.0f);
+    }
+}
+
+TEST_CASE("State record: cross-shape hot-swap freshly initializes new fields",
+          "[state][record][hot_swap]") {
+    // Program A holds a one-field record cell; B holds a two-field record cell
+    // at the same source path. After hot-swap, the new field `y` must read its
+    // declared init value (2.0) — the StatePool slot for `y` did not exist
+    // before, so the rate=0 init populates it normally.
+    //
+    // We do not assert anything about the carry-over of `x` — that depends on
+    // crossfade timing and is not a Phase 4a guarantee. The guarantee is:
+    // (a) load_program(B) succeeds, (b) `y` reads 2.0 after the crossfade
+    // settles. Per PRD §10.4: "Cross-shape reloads fall back to the new
+    // initial record (no silent partial-merge)."
+    auto rA = akkado::compile(
+        "s = state({x: 1})\n"
+        "out(get(s).x, get(s).x)\n"
+    );
+    REQUIRE(rA.success);
+    auto rB = akkado::compile(
+        "s = state({x: 1, y: 2})\n"
+        "out(get(s).y, get(s).y)\n"
+    );
+    REQUIRE(rB.success);
+
+    cedar::VM vm;
+    vm.set_crossfade_blocks(3);
+
+    std::span<const cedar::Instruction> bcA(
+        reinterpret_cast<const cedar::Instruction*>(rA.bytecode.data()),
+        rA.bytecode.size() / sizeof(cedar::Instruction));
+    std::span<const cedar::Instruction> bcB(
+        reinterpret_cast<const cedar::Instruction*>(rB.bytecode.data()),
+        rB.bytecode.size() / sizeof(cedar::Instruction));
+
+    REQUIRE(vm.load_program(bcA) == cedar::VM::LoadResult::Success);
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    // Run several blocks so the active-channel swap completes.
+    for (int i = 0; i < 4; ++i) vm.process_block(L.data(), R.data());
+
+    // Hot-swap. Retry until SlotBusy clears.
+    cedar::VM::LoadResult result = cedar::VM::LoadResult::SlotBusy;
+    for (int retry = 0; retry < 32; ++retry) {
+        result = vm.load_program(bcB);
+        if (result == cedar::VM::LoadResult::Success) break;
+        vm.process_block(L.data(), R.data());
+    }
+    REQUIRE(result == cedar::VM::LoadResult::Success);
+
+    // Run enough blocks for the crossfade to fully settle on B.
+    for (int i = 0; i < 16; ++i) vm.process_block(L.data(), R.data());
+
+    // B reads `y` which was freshly initialized to 2.0.
+    CHECK(L[0] == 2.0f);
+    CHECK(R[0] == 2.0f);
+}
+
+TEST_CASE("State record: closure invoking record state cell — independent slots",
+          "[state][record][slots]") {
+    // make_pair builds a record cell internally. Two call sites must produce
+    // 2 × 2 = 4 distinct STATE_OP rate=0 inits, mirroring the scalar
+    // `bump_and_read` test above.
+    auto r = akkado::compile(
+        "make_pair = (a, b) -> {\n"
+        "  s = state({x: a, y: b})\n"
+        "  get(s).x + get(s).y\n"
+        "}\n"
+        "out(make_pair(1, 2), make_pair(10, 20))\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    std::set<std::uint32_t> unique_init_ids;
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::STATE_OP && i.rate == 0) {
+            unique_init_ids.insert(i.state_id);
+        }
+    }
+    // At least 4: each of the two closure invocations produces 2 fields.
+    CHECK(unique_init_ids.size() >= 4);
+}
+
+TEST_CASE("State record: signal-valued field accepted in init and set",
+          "[state][record][types]") {
+    // Parity with scalar cells: a field's init / set value can be Signal
+    // (audio-rate) as well as Number — CellState stores the last sample.
+    auto r = akkado::compile(
+        "carrier = osc(\"sin\", 440)\n"
+        "s = state({sig: carrier, level: 0.5})\n"
+        "set(s, {sig: carrier, level: 0.7})\n"
+        "out(get(s).sig * get(s).level, get(s).sig * get(s).level)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 0) == 2);  // 2 fields, 1 init each
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 2);  // 2 fields, 1 store each
 }

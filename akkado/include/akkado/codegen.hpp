@@ -354,6 +354,36 @@ private:
     /// broadcast as a Signal so set() can be used in expression position.
     TypedValue handle_set_call(NodeIndex node, const Node& n);
 
+    /// Phase 4a (records-system-unification): record-valued state cells.
+    ///
+    /// A `state({x: 1, y: 2})` cell is fanned out into N scalar STATE_OP slots,
+    /// one per record field, keyed by per-field path hashes. The returned
+    /// StateCell TypedValue carries a RecordPayload whose fields map each
+    /// field name to a sub-StateCell carrying that field's state_id.
+    ///
+    /// Field names are sorted alphabetically before fan-out so that codegen
+    /// is deterministic across compiles (unordered_map iteration is not),
+    /// which keeps hot-swap diffs stable.
+    ///
+    /// Caller of handle_state_record_init has already pushed the parent
+    /// `state#N` path; the helper pushes/pops each field name in turn.
+    TypedValue handle_state_record_init(NodeIndex node, const Node& n,
+                                         const TypedValue& init_tv);
+
+    /// Fan out a record-valued cell into N STATE_OP rate=1 loads; assemble
+    /// a Record TypedValue (one Signal per field). Existing field-access
+    /// codegen handles `get(cell).x` through the returned Record.
+    TypedValue handle_get_record_cell(NodeIndex node, const Node& n,
+                                        const TypedValue& cell_tv);
+
+    /// Fan out a record-valued cell `set` into N STATE_OP rate=2 stores.
+    /// Caller has already shape-validated `value_tv` against `cell_tv`.
+    /// Returns a Record TypedValue (one Signal per field) so callers
+    /// chaining on `set()` see the new value's shape.
+    TypedValue handle_set_record_cell(NodeIndex node, const Node& n,
+                                        const TypedValue& cell_tv,
+                                        const TypedValue& value_tv);
+
     /// Argument-spread expansion (record/array spread in function calls).
     /// One entry per logical argument the call site provides. For concrete
     /// args, source_node points at the value AST and resolved is empty. For

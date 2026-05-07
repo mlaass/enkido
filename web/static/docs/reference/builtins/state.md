@@ -92,4 +92,50 @@ step_dir = (arr, trig, dir) -> {
 notes.step(trigger(4)) |> mtof(%) |> sine(%) |> out(%, %)
 ```
 
+## Record-valued state cells
+
+A cell can hold a record instead of a single scalar. Each field becomes its own
+internal slot, but you read and write the whole record as a unit:
+
+```akk
+voice = state({freq: 440, vel: 0.5, gate: 0})
+
+// get(cell) returns the whole record; field access works as usual.
+osc("sin", get(voice).freq) * get(voice).vel * get(voice).gate
+
+// set(cell, new_record) replaces the whole record. The new value's field
+// names must exactly match the cell's declared shape.
+set(voice, {freq: 880, vel: 0.7, gate: 1})
+```
+
+To update a single field while keeping the others, spread the cell's current
+value and override what changes:
+
+```akk
+on_note = button("hit")
+on_note |> set(voice, {..get(voice), gate: 1})
+```
+
+A future `update(cell, patch)` stdlib helper will package this pattern as
+`update(voice, {gate: 1})`; until argument spread lands inside builtin call
+sites it must be written inline as above. Per-field assignment sugar
+(`voice.gate = 1`) is also planned but not yet shipped.
+
+Constraints on record cells:
+
+- Each field's value must be a number or signal; nested record fields are not
+  yet supported.
+- `set()` must pass a record with exactly the same field-name set as the
+  initial record — extra or missing fields produce error E189.
+- A scalar cell rejects record values, and vice versa.
+- Hot-swap preserves cell contents per field. Adding a new field to the cell's
+  shape across a reload freshly initializes that field; removing a field
+  retires its slot.
+
+```akk
+// Whole-record updates compose with ordinary expressions.
+counter = state({n: 0, last: 0})
+button("inc") |> set(counter, {n: get(counter).n + 1, last: get(counter).n})
+```
+
 Related: [counter](edge.md#counter), [gateup](edge.md#gateup), [Method calls](../language/methods.md)
