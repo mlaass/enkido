@@ -807,6 +807,78 @@ TEST_CASE("Parser as destructuring", "[parser][destructure]") {
     }
 }
 
+TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure]") {
+    SECTION("two-field destructure assignment") {
+        auto ast = parse_ok(R"(
+            r = {a: 1, b: 2}
+            {a, b} = r
+        )");
+        // Find the DestructureAssignment node (last top-level statement)
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+
+        const auto& dd = ast.arena[stmt].as_destructure_assignment();
+        REQUIRE(dd.fields.size() == 2);
+        CHECK(dd.fields[0] == "a");
+        CHECK(dd.fields[1] == "b");
+
+        // RHS should be the first child (an Identifier referencing `r`)
+        NodeIndex rhs = ast.arena[stmt].first_child;
+        REQUIRE(rhs != NULL_NODE);
+        REQUIRE(ast.arena[rhs].type == NodeType::Identifier);
+        CHECK(ast.arena[rhs].as_identifier() == "r");
+    }
+
+    SECTION("single-field destructure assignment") {
+        auto ast = parse_ok(R"(
+            r = {x: 5}
+            {x} = r
+        )");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (ast.arena[stmt].next_sibling != NULL_NODE) {
+            stmt = ast.arena[stmt].next_sibling;
+        }
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+        const auto& dd = ast.arena[stmt].as_destructure_assignment();
+        REQUIRE(dd.fields.size() == 1);
+        CHECK(dd.fields[0] == "x");
+    }
+
+    SECTION("destructure RHS can be a complex expression") {
+        auto ast = parse_ok(R"(
+            {x, y} = {x: 1, y: 2}
+        )");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[stmt].type == NodeType::DestructureAssignment);
+        NodeIndex rhs = ast.arena[stmt].first_child;
+        REQUIRE(ast.arena[rhs].type == NodeType::RecordLit);
+    }
+
+    SECTION("record literal as expression-statement is NOT a destructure") {
+        // {a: 1} (with colon) should parse as a record-literal expression statement,
+        // not a destructure assignment.
+        auto ast = parse_ok("{a: 1}");
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        // Whatever it is, it must NOT be DestructureAssignment.
+        CHECK(ast.arena[stmt].type != NodeType::DestructureAssignment);
+    }
+
+    SECTION("duplicate field name emits E188") {
+        auto [tokens, lex_diags] = lex("{x, x} = r");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "{x, x} = r");
+
+        bool got_e188 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E188") got_e188 = true;
+        }
+        CHECK(got_e188);
+    }
+}
+
 TEST_CASE("Parser arrays", "[parser][array]") {
     SECTION("empty array") {
         auto ast = parse_ok("[]");

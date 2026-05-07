@@ -4163,6 +4163,112 @@ TEST_CASE("Codegen: Match destructuring", "[codegen][match][destructure]") {
     }
 }
 
+TEST_CASE("Codegen: Statement-level destructure assignment",
+          "[codegen][destructure]") {
+    SECTION("destructure record into individual variables") {
+        auto result = akkado::compile(R"(
+            r = {a: 100, b: 200}
+            {a, b} = r
+            out(a, a)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("single-field destructure binds the field") {
+        auto result = akkado::compile(R"(
+            r = {x: 42}
+            {x} = r
+            out(x, x)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("destructure pattern source binds fixed pattern fields") {
+        auto result = akkado::compile(R"(
+            p = pat("c4 e4")
+            {freq} = p
+            out(freq, freq)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("missing required field emits E187") {
+        auto result = akkado::compile(R"(
+            r = {a: 1}
+            {a, b} = r
+            out(a, a)
+        )");
+        bool got_e187 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E187") got_e187 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e187);
+    }
+
+    SECTION("non-record source emits E140") {
+        auto result = akkado::compile(R"(
+            x = 42
+            {a, b} = x
+            out(0, 0)
+        )");
+        bool got_e140 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E140") got_e140 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e140);
+    }
+
+    SECTION("destructure with extra fields in source is OK (no warning)") {
+        auto result = akkado::compile(R"(
+            r = {a: 1, b: 2, c: 3}
+            {a, b} = r
+            out(a, b)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("regression: pipe-side as {x,y} does not emit E187") {
+        // E187 is reserved for the new statement-level / fn-param destructure
+        // paths. The pipe-side `as {…}` form lowers via AST rewrite (rewriting
+        // identifiers to FieldAccess nodes), so missing fields surface as the
+        // pre-existing field-access errors — not E187.
+        auto result = akkado::compile(R"(
+            r = {a: 1}
+            r as {a, missing} |> a + missing |> out(%, %)
+        )");
+        bool got_e187 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E187") got_e187 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK_FALSE(got_e187);
+    }
+
+    SECTION("regression: match-arm destructure still emits E141 not E187") {
+        // The match-arm path calls bind_destructure_fields() with the default
+        // "E141" error code; it must not switch to E187 (which is reserved
+        // for statement-level / fn-param destructure).
+        auto result = akkado::compile(R"(
+            r = {a: 1}
+            match(r) {
+                {a, missing}: a + missing
+                _: 0
+            }
+        )");
+        bool got_e141 = false;
+        bool got_e187 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E141") got_e141 = true;
+            if (d.code == "E187") got_e187 = true;
+        }
+        CHECK_FALSE(result.success);
+        CHECK(got_e141);
+        CHECK_FALSE(got_e187);
+    }
+}
+
 TEST_CASE("Codegen: Pattern transformations", "[codegen]") {
     // Pattern transformations require literal patterns as first argument
     SECTION("slow transformation") {

@@ -313,11 +313,17 @@ private:
     /// Returns nullptr if node has no typed value
     const TypedValue* get_node_type(NodeIndex node) const;
 
-    /// Bind destructured fields from a record/pattern TypedValue into the symbol table
-    /// Returns true if all fields were bound, false on error
+    /// Bind destructured fields from a record/pattern TypedValue into the symbol table.
+    /// Returns true if all fields were bound, false on error.
+    /// `missing_field_code` is the diagnostic code emitted when a destructure
+    /// pattern names a field not present on the source. Default `"E141"` is
+    /// used by the existing `as {x, y}` pipe-binding path and the match-arm
+    /// path; the new statement-level (`{x, y} = …`) and fn-param destructure
+    /// paths pass `"E187"` per `prd-records-system-unification.md` §10.0.
     bool bind_destructure_fields(const TypedValue& source_tv,
                                  const std::vector<std::string>& fields,
-                                 SourceLocation loc);
+                                 SourceLocation loc,
+                                 const char* missing_field_code = "E141");
 
     /// FM Detection: Automatically upgrade oscillators to 4x when FM is detected
     /// @param freq_buffer The buffer index containing the frequency input

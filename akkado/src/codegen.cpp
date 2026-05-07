@@ -742,6 +742,25 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             return cache_and_return(node, value_tv);
         }
 
+        case NodeType::DestructureAssignment: {
+            // Statement-level destructure: {x, y} = expr
+            // Evaluate RHS, then bind each named field as an immutable
+            // variable using bind_destructure_fields(...). Emits E187 on
+            // missing required field and E140 on non-Record/non-Pattern source.
+            const auto& dd = n.as_destructure_assignment();
+            NodeIndex value_idx = n.first_child;
+            if (value_idx == NULL_NODE) {
+                error("E104", "Invalid destructure assignment", n.location);
+                return TypedValue::error_val();
+            }
+            TypedValue value_tv = visit(value_idx);
+            if (value_tv.error) {
+                return cache_and_return(node, TypedValue::error_val());
+            }
+            bind_destructure_fields(value_tv, dd.fields, n.location, "E187");
+            return cache_and_return(node, TypedValue::void_val());
+        }
+
         case NodeType::ConstDecl: {
             // Const variable: evaluate RHS at compile time
             const std::string& var_name = n.as_identifier();
@@ -2096,13 +2115,17 @@ const TypedValue* CodeGenerator::get_node_type(NodeIndex node) const {
 bool CodeGenerator::bind_destructure_fields(
     const TypedValue& source_tv,
     const std::vector<std::string>& fields,
-    SourceLocation loc)
+    SourceLocation loc,
+    const char* missing_field_code)
 {
     if (source_tv.type == ValueType::Record && source_tv.record) {
         for (const auto& field : fields) {
             auto field_it = source_tv.record->fields.find(field);
             if (field_it == source_tv.record->fields.end()) {
-                error("E141", "Destructure field '" + field + "' not found in record", loc);
+                std::string msg = (std::string(missing_field_code) == "E187")
+                    ? "Destructure source missing required field '" + field + "' (no default declared)"
+                    : "Destructure field '" + field + "' not found in record";
+                error(missing_field_code, msg, loc);
                 return false;
             }
             symbols_->define_variable(field, field_it->second.buffer);
@@ -2114,7 +2137,10 @@ bool CodeGenerator::bind_destructure_fields(
         for (const auto& field : fields) {
             int idx = pattern_field_index(field);
             if (idx < 0 || source_tv.pattern->fields[static_cast<std::size_t>(idx)] == 0xFFFF) {
-                error("E141", "Destructure field '" + field + "' not found in pattern", loc);
+                std::string msg = (std::string(missing_field_code) == "E187")
+                    ? "Destructure source missing required field '" + field + "' (no default declared)"
+                    : "Destructure field '" + field + "' not found in pattern";
+                error(missing_field_code, msg, loc);
                 return false;
             }
             symbols_->define_variable(field, source_tv.pattern->fields[static_cast<std::size_t>(idx)]);

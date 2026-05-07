@@ -459,6 +459,15 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         )");
         REQUIRE(result.success);
     }
+
+    SECTION("statement-level destructure assignment") {
+        auto result = akkado::compile(R"(
+            r = {a: 100, b: 200}
+            {a, b} = r
+            saw(a) + saw(b) |> out(%, %)
+        )");
+        REQUIRE(result.success);
+    }
 }
 
 TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {

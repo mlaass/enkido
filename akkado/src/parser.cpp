@@ -287,6 +287,47 @@ NodeIndex Parser::parse_statement() {
         }
     }
 
+    // Check for statement-level destructure assignment: { Ident (, Ident)* } = expr
+    // Disambiguated from a record-literal expression-statement by the absence
+    // of `:` after the first identifier and the presence of `} =` after the field list.
+    if (check(TokenType::LBrace)) {
+        std::size_t i = current_idx_ + 1;
+        bool is_destructure_stmt = false;
+        if (i < tokens_.size() && tokens_[i].type == TokenType::Identifier) {
+            ++i;
+            // `{x:` → record literal, not destructure
+            if (i < tokens_.size() && tokens_[i].type != TokenType::Colon) {
+                while (i < tokens_.size() && tokens_[i].type == TokenType::Comma) {
+                    ++i;
+                    if (i < tokens_.size() && tokens_[i].type == TokenType::Identifier) {
+                        ++i;
+                    } else {
+                        break;
+                    }
+                }
+                if (i < tokens_.size() && tokens_[i].type == TokenType::RBrace
+                    && i + 1 < tokens_.size() && tokens_[i + 1].type == TokenType::Equals) {
+                    is_destructure_stmt = true;
+                }
+            }
+        }
+
+        if (is_destructure_stmt) {
+            Token brace_tok = advance();  // consume '{'
+            std::vector<std::string> fields = parse_destructure_fields();
+            consume(TokenType::Equals, "Expected '=' after destructure pattern");
+
+            NodeIndex node = make_node(NodeType::DestructureAssignment, brace_tok);
+            arena_[node].data = Node::DestructureAssignmentData{std::move(fields)};
+
+            NodeIndex value = parse_expression();
+            if (value != NULL_NODE) {
+                arena_.add_child(node, value);
+            }
+            return node;
+        }
+    }
+
     // Otherwise it's an expression statement
     return parse_expression();
 }
@@ -369,19 +410,7 @@ NodeIndex Parser::parse_precedence(Precedence prec) {
             if (check(TokenType::LBrace)) {
                 // as {field1, field2, ...} — destructuring binding
                 advance();  // consume '{'
-                std::vector<std::string> destr_fields;
-                while (!check(TokenType::RBrace) && !is_at_end()) {
-                    if (!check(TokenType::Identifier)) {
-                        error("Expected field name in destructuring binding");
-                        break;
-                    }
-                    destr_fields.push_back(std::string(current().lexeme));
-                    advance();
-                    if (!check(TokenType::RBrace)) {
-                        consume(TokenType::Comma, "Expected ',' between destructuring fields");
-                    }
-                }
-                consume(TokenType::RBrace, "Expected '}' after destructuring fields");
+                std::vector<std::string> destr_fields = parse_destructure_fields();
 
                 std::string temp_name = "__destr_" + std::to_string(destr_counter_++);
                 NodeIndex binding = make_node(NodeType::PipeBinding, as_tok);
@@ -1274,18 +1303,7 @@ NodeIndex Parser::parse_match_expr() {
                 // Destructuring pattern: { ident, ident, ... }
                 advance();  // consume '{'
                 is_destructure = true;
-                while (!check(TokenType::RBrace) && !is_at_end()) {
-                    if (!check(TokenType::Identifier)) {
-                        error("Expected field name in destructuring pattern");
-                        break;
-                    }
-                    destructure_fields.push_back(std::string(current().lexeme));
-                    advance();
-                    if (!check(TokenType::RBrace)) {
-                        consume(TokenType::Comma, "Expected ',' between destructuring fields");
-                    }
-                }
-                consume(TokenType::RBrace, "Expected '}' after destructuring fields");
+                destructure_fields = parse_destructure_fields();
                 // Create a placeholder pattern node
                 pattern = make_node(NodeType::Identifier, arm_tok);
                 arena_[pattern].data = Node::IdentifierData{"_destructure"};
@@ -1592,6 +1610,46 @@ NodeIndex Parser::parse_record_literal() {
 
     consume(TokenType::RBrace, "Expected '}' after record fields");
     return node;
+}
+
+// Shared destructure-pattern field-list parser.
+// Caller has just consumed '{'. Reads `Ident (, Ident)*`, consumes '}',
+// emits E188 on duplicate names. Used by pipe-binding `as {x, y}`,
+// match-arm `{x, y}` patterns, and statement-level `{x, y} = expr`.
+std::vector<std::string> Parser::parse_destructure_fields() {
+    std::vector<std::string> fields;
+    std::set<std::string> seen;
+
+    while (!check(TokenType::RBrace) && !is_at_end()) {
+        if (!check(TokenType::Identifier)) {
+            error("Expected field name in destructuring pattern");
+            break;
+        }
+        Token name_tok = current();
+        std::string name = std::string(name_tok.lexeme);
+
+        if (seen.count(name)) {
+            // Push E188 directly so we don't trip panic_mode and keep
+            // parsing the rest of the field list for recovery.
+            diagnostics_.push_back(Diagnostic{
+                .severity = Severity::Error,
+                .code = "E188",
+                .message = "Duplicate field '" + name + "' in destructure pattern",
+                .filename = filename_,
+                .location = name_tok.location
+            });
+        } else {
+            seen.insert(name);
+            fields.push_back(std::move(name));
+        }
+        advance();
+
+        if (!check(TokenType::RBrace)) {
+            consume(TokenType::Comma, "Expected ',' between destructuring fields");
+        }
+    }
+    consume(TokenType::RBrace, "Expected '}' after destructuring fields");
+    return fields;
 }
 
 // Convenience function

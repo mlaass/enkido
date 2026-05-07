@@ -57,6 +57,7 @@ enum class NodeType : std::uint8_t {
     ConstDecl,      // const x = expr
     Block,          // { statements... expr }
     FunctionDef,    // fn name(params) -> body
+    DestructureAssignment,  // {x, y} = expr - statement-level record destructure
 
     // Expressions (advanced)
     MatchExpr,      // match(expr) { arm, arm, ... }
@@ -113,6 +114,7 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::ConstDecl:      return "ConstDecl";
         case NodeType::Block:       return "Block";
         case NodeType::FunctionDef: return "FunctionDef";
+        case NodeType::DestructureAssignment: return "DestructureAssignment";
         case NodeType::MatchExpr:   return "MatchExpr";
         case NodeType::MatchArm:    return "MatchArm";
         case NodeType::RecordLit:   return "RecordLit";
@@ -286,6 +288,12 @@ struct Node {
         std::vector<std::string> destructure_fields;  // empty for normal binding
     };
 
+    // Data for statement-level destructure assignment ({x, y} = expr).
+    // RHS expression is the node's first_child.
+    struct DestructureAssignmentData {
+        std::vector<std::string> fields;  // Names to bind from the source record/pattern
+    };
+
     // Data for hole with optional field access (%.field)
     struct HoleData {
         std::optional<std::string> field_name;  // Field name if %.field, nullopt for bare %
@@ -326,7 +334,8 @@ struct Node {
         PipeBindingData,
         HoleData,
         ImportDeclData,
-        DirectiveData
+        DirectiveData,
+        DestructureAssignmentData
     > data;
 
     // Type-safe accessors
@@ -412,6 +421,10 @@ struct Node {
 
     [[nodiscard]] const PipeBindingData& as_pipe_binding() const {
         return std::get<PipeBindingData>(data);
+    }
+
+    [[nodiscard]] const DestructureAssignmentData& as_destructure_assignment() const {
+        return std::get<DestructureAssignmentData>(data);
     }
 
     [[nodiscard]] const HoleData& as_hole() const {

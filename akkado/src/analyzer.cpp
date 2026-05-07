@@ -496,6 +496,22 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         }
     }
 
+    if (n.type == NodeType::DestructureAssignment) {
+        // Statement-level destructure: {x, y} = expr
+        // Register each field name as an immutable variable so identifier
+        // resolution during pipe-rewrite (closure detection) and codegen
+        // both find the binding. The actual buffer index is allocated when
+        // codegen visits the RHS and runs bind_destructure_fields().
+        const auto& dd = n.as_destructure_assignment();
+        for (const auto& field : dd.fields) {
+            if (symbols_.is_defined_in_current_scope(field)) {
+                error("E150", "Cannot reassign immutable variable '" + field + "'", n.location);
+            } else {
+                symbols_.define_variable(field, 0xFFFF);
+            }
+        }
+    }
+
     if (n.type == NodeType::ConstDecl) {
         // Const variable declaration: const x = expr
         const std::string& name = n.as_identifier();

@@ -123,6 +123,13 @@ private:
     NodeIndex parse_const_decl(const Token& name_token);
     NodeIndex parse_directive();
 
+    // Destructuring helpers
+    // Parses `{ Ident (, Ident)* }` after the caller has confirmed the leading
+    // `{`. Consumes the opening `{` and the closing `}`. Emits E188 on
+    // duplicates. Used by pipe-binding (`as {x, y}`), match-arm
+    // (`match (r) { {x, y}: … }`), and statement-level (`{x, y} = …`).
+    std::vector<std::string> parse_destructure_fields();
+
     // Import parsing
     NodeIndex parse_import_decl();
 
