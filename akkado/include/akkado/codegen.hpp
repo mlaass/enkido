@@ -948,6 +948,20 @@ private:
     /// Handle field access nodes - resolve to correct field buffer
     TypedValue handle_field_access(NodeIndex node, const Node& n);
 
+    /// Phase 4b (records-system-unification): write sugar for record-valued
+    /// state cells. `receiver.field = value` desugars to
+    /// `set(receiver, {..get(receiver), field: value})`, which (because every
+    /// non-touched field would round-trip through load+store) the codegen
+    /// optimizes to a single STATE_OP rate=2 against the per-field sub-cell.
+    /// Same observable behaviour, fewer instructions.
+    ///
+    /// Receiver type rules:
+    ///   - StateCell holding a Record → write sugar applies (one rate=2 emit).
+    ///   - Scalar StateCell → E135 (use `set(cell, value)` for scalar cells).
+    ///   - Pure value Record → E150, with hint to declare `state({...})`.
+    ///   - FieldAccess receiver (i.e. `cell.outer.x = v`) → E204 nested-write.
+    TypedValue handle_field_assignment(NodeIndex node, const Node& n);
+
     /// Handle access to a qualified symbol from a namespace import (e.g., f.lp)
     TypedValue handle_qualified_symbol_access(NodeIndex node, const Symbol& qsym, SourceLocation loc);
 

@@ -385,6 +385,130 @@ TypedValue CodeGenerator::handle_set_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::signal(out));
 }
 
+TypedValue CodeGenerator::handle_field_assignment(NodeIndex node, const Node& n) {
+    // Phase 4b write sugar: `receiver.field = value` lowers to the moral
+    // equivalent of `set(receiver, {..get(receiver), field: value})`. Since
+    // record cells are already fanned out into per-field scalar slots, the
+    // observable effect is a single store on the targeted slot — emit one
+    // STATE_OP rate=2 directly instead of the literal get+spread+set fan-out.
+    const auto& fa = n.as_field_assignment();
+    const std::string& field_name = fa.field_name;
+
+    NodeIndex receiver_idx = n.first_child;
+    if (receiver_idx == NULL_NODE) {
+        error("E104", "Invalid field assignment", n.location);
+        return TypedValue::error_val();
+    }
+    NodeIndex value_idx = ast_->arena[receiver_idx].next_sibling;
+    if (value_idx == NULL_NODE) {
+        error("E104", "Field assignment missing value", n.location);
+        return TypedValue::error_val();
+    }
+
+    // Reject nested-field writes (`cell.outer.inner = v`) up front. The
+    // analyzer hint is more useful than letting the receiver evaluate to a
+    // Signal and bouncing off "field assignment on non-cell".
+    if (ast_->arena[receiver_idx].type == NodeType::FieldAccess) {
+        error("E204",
+              "Nested field assignment is not supported in v1; rewrite as "
+              "`set(cell, {..get(cell), inner: {..get(cell).inner, " +
+              field_name + ": v}})`.",
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    TypedValue cell_tv = visit(receiver_idx);
+    if (cell_tv.error) return TypedValue::error_val();
+
+    if (cell_tv.type == ValueType::Record) {
+        error("E150",
+              "Cannot assign to field '" + field_name +
+              "' of immutable value record. Declare with `state({...})` to "
+              "allow mutation.",
+              n.location);
+        return TypedValue::error_val();
+    }
+    if (cell_tv.type != ValueType::StateCell) {
+        error("E150",
+              std::string("Cannot assign to field on ") +
+              value_type_name(cell_tv.type) +
+              " value. Field assignment requires a state cell.",
+              n.location);
+        return TypedValue::error_val();
+    }
+    if (!cell_tv.record) {
+        error("E135",
+              "Cannot assign field '" + field_name +
+              "' on scalar state cell. Use `set(cell, value)` for scalar cells.",
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    auto sub_it = cell_tv.record->fields.find(field_name);
+    if (sub_it == cell_tv.record->fields.end()) {
+        std::string available;
+        bool first = true;
+        for (const auto& [name, _] : cell_tv.record->fields) {
+            if (!first) available += ", ";
+            available += name;
+            first = false;
+        }
+        error("E136",
+              "Unknown field '" + field_name +
+              "' on state cell" +
+              (available.empty() ? "" : ". Available: " + available),
+              n.location);
+        return TypedValue::error_val();
+    }
+    const TypedValue& sub_cell = sub_it->second;
+
+    TypedValue value_tv = visit(value_idx);
+    if (value_tv.error) return TypedValue::error_val();
+
+    // Per-field cells store a single float at runtime; reject Record (the
+    // user is reaching for the deferred nested-cell facility) and any other
+    // non-scalar type.
+    if (value_tv.type == ValueType::Record) {
+        error("E204",
+              "Nested field assignment is not supported in v1; assigning a "
+              "record to field '" + field_name + "' would require nested "
+              "record cells. Rewrite as per-field assignments instead.",
+              n.location);
+        return TypedValue::error_val();
+    }
+    if (value_tv.type != ValueType::Signal && value_tv.type != ValueType::Number) {
+        error("E122",
+              "Field assignment value must be a number or signal, got " +
+              std::string(value_type_name(value_tv.type)),
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::error_val();
+    }
+
+    cedar::Instruction inst{};
+    inst.opcode = cedar::Opcode::STATE_OP;
+    inst.rate = 2;  // store mode
+    inst.out_buffer = out;
+    inst.inputs[0] = value_tv.buffer;
+    inst.inputs[1] = 0xFFFF;
+    inst.inputs[2] = 0xFFFF;
+    inst.inputs[3] = 0xFFFF;
+    inst.inputs[4] = 0xFFFF;
+    inst.state_id = sub_cell.cell_state_id;
+    emit(inst);
+
+    // The desugaring of `cell.x = expr` is conceptually
+    //   `set(cell, {..get(cell), x: expr})`
+    // which evaluates to a Record. Statement context discards the result, so
+    // void_val matches both the typical use and the void of plain assignment.
+    return cache_and_return(node, TypedValue::void_val());
+}
+
 TypedValue CodeGenerator::handle_set_record_cell(NodeIndex node, const Node& n,
                                                    const TypedValue& cell_tv,
                                                    const TypedValue& value_tv) {

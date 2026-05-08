@@ -78,6 +78,7 @@ enum class NodeType : std::uint8_t {
     // Records
     RecordLit,      // {field: value, ...} - record literal
     FieldAccess,    // expr.field - field access on record
+    FieldAssignment,// receiver.field = expr - record-state-cell field write (Phase 4b)
     PipeBinding,    // expr as name - named binding in pipe chain
 
     // Imports
@@ -132,6 +133,7 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::MatchArm:    return "MatchArm";
         case NodeType::RecordLit:   return "RecordLit";
         case NodeType::FieldAccess: return "FieldAccess";
+        case NodeType::FieldAssignment: return "FieldAssignment";
         case NodeType::PipeBinding: return "PipeBinding";
         case NodeType::ImportDecl:  return "ImportDecl";
         case NodeType::Directive:   return "Directive";
@@ -290,6 +292,15 @@ struct Node {
         std::string field_name;  // The field being accessed
     };
 
+    // Data for field assignment (Phase 4b: bidirectional sugar over record-
+    // valued state cells). `receiver.field = value` lowers to STATE_OP rate=2
+    // on the per-field sub-cell. Children: [receiver, value]. The receiver
+    // must analyze to a StateCell holding a Record; value records and
+    // FieldAccess receivers (nested writes) are rejected at codegen time.
+    struct FieldAssignmentData {
+        std::string field_name;
+    };
+
     // Data for record literals (with optional spread)
     struct RecordLitData {
         NodeIndex spread_source = NULL_NODE;  // {..expr, ...} — source record to spread
@@ -350,6 +361,7 @@ struct Node {
         RecordFieldData,
         RecordLitData,
         FieldAccessData,
+        FieldAssignmentData,
         PipeBindingData,
         HoleData,
         ImportDeclData,
@@ -437,6 +449,10 @@ struct Node {
 
     [[nodiscard]] const FieldAccessData& as_field_access() const {
         return std::get<FieldAccessData>(data);
+    }
+
+    [[nodiscard]] const FieldAssignmentData& as_field_assignment() const {
+        return std::get<FieldAssignmentData>(data);
     }
 
     [[nodiscard]] const PipeBindingData& as_pipe_binding() const {

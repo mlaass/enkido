@@ -486,9 +486,45 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     FunctionRef func_ref{};
                     func_ref.is_user_function = false;
                     symbols_.define_function_value(name, func_ref);
+                } else if (callee_name == "state") {
+                    // Phase 4b: `v = state({...})` produces a state cell.
+                    // Mark the binding so FieldAccess validation (E061) skips
+                    // its non-record check and lets codegen route the
+                    // `cell.field` read sugar instead. Whether the cell holds
+                    // a record vs a scalar is settled at codegen time; this
+                    // flag just opens the door past the analyzer's gate.
+                    Symbol sym{};
+                    sym.kind = SymbolKind::Variable;
+                    sym.name_hash = fnv1a_hash(name);
+                    sym.name = name;
+                    sym.buffer_index = 0xFFFF;
+                    sym.is_state_cell = true;
+                    symbols_.define(sym);
                 } else {
                     symbols_.define_variable(name, 0xFFFF);
                 }
+            }
+        } else if (rhs != NULL_NODE && (*input_ast_).arena[rhs].type == NodeType::Identifier) {
+            // Phase 4b: alias propagation — `t = v` where `v` is a state cell.
+            // The new binding inherits the cell-handle semantics so `t.field`
+            // works just like `v.field`.
+            std::string rhs_name;
+            if (std::holds_alternative<Node::IdentifierData>(
+                    (*input_ast_).arena[rhs].data)) {
+                rhs_name = (*input_ast_).arena[rhs].as_identifier();
+            }
+            auto rhs_sym = !rhs_name.empty() ? symbols_.lookup(rhs_name)
+                                              : std::nullopt;
+            if (rhs_sym && rhs_sym->is_state_cell) {
+                Symbol sym{};
+                sym.kind = SymbolKind::Variable;
+                sym.name_hash = fnv1a_hash(name);
+                sym.name = name;
+                sym.buffer_index = 0xFFFF;
+                sym.is_state_cell = true;
+                symbols_.define(sym);
+            } else {
+                symbols_.define_variable(name, 0xFFFF);
             }
         } else {
             // Regular variable assignment
@@ -1618,7 +1654,12 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                     } else if (sym && sym->kind != SymbolKind::Record
                              && sym->kind != SymbolKind::Pattern
                              && sym->kind != SymbolKind::Parameter
-                             && sym->kind != SymbolKind::Module) {
+                             && sym->kind != SymbolKind::Module
+                             && !sym->is_state_cell) {
+                        // Phase 4b: state-cell variables surface field access
+                        // through codegen's read sugar; skip the analyzer's
+                        // pre-flight rejection for them. Codegen still emits
+                        // E135 if the cell turns out to be scalar.
                         error("E061", "Cannot access field '" + field_name + "' on non-record value", n.location);
                     }
                 }

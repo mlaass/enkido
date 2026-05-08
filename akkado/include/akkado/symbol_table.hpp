@@ -164,6 +164,12 @@ struct Symbol {
     // Full typed value from codegen (for pipe bindings, patterns, records)
     std::optional<TypedValue> typed_value;
 
+    // Phase 4b: set when this Variable is bound to a record-valued state cell
+    // (`v = state({...})` directly, or `t = v` aliasing such a cell). Lets the
+    // analyzer's FieldAccess validation skip the E061 ("non-record value") check
+    // for state-cell receivers and let codegen route the read sugar instead.
+    bool is_state_cell = false;
+
     // Canonical path of originating module (empty if local)
     std::string origin_module;
 

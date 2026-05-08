@@ -606,3 +606,261 @@ TEST_CASE("State record: signal-valued field accepted in init and set",
     CHECK(count_op(insts, cedar::Opcode::STATE_OP, 0) == 2);  // 2 fields, 1 init each
     CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 2);  // 2 fields, 1 store each
 }
+
+// =========================================================================
+// Phase 4b — field-assignment sugar over record-valued state cells.
+// `cell.field` reads via STATE_OP rate=1 on the per-field sub-cell;
+// `cell.field = expr` writes via STATE_OP rate=2. Both forms compile to
+// the same observable behaviour as the explicit `get(cell).field` /
+// `set(cell, {..get(cell), field: expr})` desugarings.
+// =========================================================================
+
+TEST_CASE("State record sugar: cell.field read emits one STATE_OP rate=1",
+          "[state][record][sugar]") {
+    auto r = akkado::compile(
+        "v = state({freq: 440, vel: 0.5})\n"
+        "tone = osc(\"sin\", v.freq) * v.vel\n"
+        "out(tone, tone)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    // Two field reads (`v.freq`, `v.vel`) → exactly two STATE_OP rate=1
+    // instructions. The optimized sugar avoids fanning out the entire record
+    // on each access (which the explicit `get(v)` form does).
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 1) == 2);
+}
+
+TEST_CASE("State record sugar: cell.field read matches get(cell).field semantics",
+          "[state][record][sugar][runtime]") {
+    auto sugar = akkado::compile(
+        "v = state({freq: 440, vel: 0.5})\n"
+        "out(v.freq, v.vel)\n"
+    );
+    auto explicit_ = akkado::compile(
+        "v = state({freq: 440, vel: 0.5})\n"
+        "out(get(v).freq, get(v).vel)\n"
+    );
+    REQUIRE(sugar.success);
+    REQUIRE(explicit_.success);
+
+    auto run = [](const akkado::CompileResult& r) {
+        cedar::VM vm;
+        REQUIRE(vm.load_program_immediate(
+            std::span<const cedar::Instruction>(
+                reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+                r.bytecode.size() / sizeof(cedar::Instruction))));
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+        return std::pair{L[cedar::BLOCK_SIZE - 1], R[cedar::BLOCK_SIZE - 1]};
+    };
+    auto [sl, sr] = run(sugar);
+    auto [el, er] = run(explicit_);
+    CHECK(sl == el);
+    CHECK(sr == er);
+    CHECK(sl == 440.0f);
+    CHECK(sr == 0.5f);
+}
+
+TEST_CASE("State record sugar: cell.field = expr stores via STATE_OP rate=2",
+          "[state][record][sugar][runtime]") {
+    auto r = akkado::compile(
+        "v = state({freq: 440, vel: 0.5})\n"
+        "v.freq = 880\n"
+        "v.vel = 0.9\n"
+        "out(get(v).freq, get(v).vel)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    // Two writes via sugar → two STATE_OP rate=2 (one per field touched);
+    // a literal `set(v, {..get(v), freq: 880})` would emit one per field of
+    // the cell (here 2). Either way the sugar is no worse than explicit set.
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 2);
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+    CHECK(L[cedar::BLOCK_SIZE - 1] == 880.0f);
+    CHECK(R[cedar::BLOCK_SIZE - 1] == 0.9f);
+}
+
+TEST_CASE("State record sugar: write sugar matches set+spread observably",
+          "[state][record][sugar][runtime]") {
+    // Both forms should land the same per-field values into the cell.
+    auto sugar = akkado::compile(
+        "v = state({freq: 440, gate: 0})\n"
+        "v.gate = 1\n"
+        "out(get(v).freq, get(v).gate)\n"
+    );
+    auto explicit_ = akkado::compile(
+        "v = state({freq: 440, gate: 0})\n"
+        "set(v, {..get(v), gate: 1})\n"
+        "out(get(v).freq, get(v).gate)\n"
+    );
+    REQUIRE(sugar.success);
+    REQUIRE(explicit_.success);
+
+    auto run = [](const akkado::CompileResult& r) {
+        cedar::VM vm;
+        REQUIRE(vm.load_program_immediate(
+            std::span<const cedar::Instruction>(
+                reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+                r.bytecode.size() / sizeof(cedar::Instruction))));
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+        return std::pair{L[cedar::BLOCK_SIZE - 1], R[cedar::BLOCK_SIZE - 1]};
+    };
+    auto [sl, sr] = run(sugar);
+    auto [el, er] = run(explicit_);
+    CHECK(sl == el);
+    CHECK(sr == er);
+    CHECK(sl == 440.0f);  // freq untouched
+    CHECK(sr == 1.0f);    // gate written
+}
+
+TEST_CASE("State record sugar: self-referential update reads then writes",
+          "[state][record][sugar][runtime]") {
+    // `c.n = c.n + 1` lowers to a rate=1 load + add + rate=2 store on the
+    // same slot. The previous-value invariant of STATE_OP guarantees the
+    // load returns the value present at block start, so increment is well-
+    // defined even though source and target are the same slot.
+    auto r = akkado::compile(
+        "c = state({n: 0})\n"
+        "c.n = c.n + 1\n"
+        "c.n = c.n + 1\n"
+        "out(get(c).n, get(c).n)\n"
+    );
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 1) >= 2);  // ≥2 reads
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 2);  // 2 writes
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    // First block: both writes execute against the initial value 0; the
+    // second write reads the pre-block value (still 0) so n ends at 1.
+    // Block 2: writes increment from 1 → 2 → still 1 from pre-block view but
+    // ends at 2. Run a few blocks to observe steady increment.
+    vm.process_block(L.data(), R.data());
+    float after_block1 = L[cedar::BLOCK_SIZE - 1];
+    vm.process_block(L.data(), R.data());
+    float after_block2 = L[cedar::BLOCK_SIZE - 1];
+    CHECK(after_block2 > after_block1);
+}
+
+TEST_CASE("State record sugar: pipe-position field assignment is E205 (parse)",
+          "[state][record][sugar][diagnostics]") {
+    // Field assignment is statement-only — embedding it as a pipe RHS would
+    // require expression-position semantics that don't exist. The parser
+    // catches this and tells the user to move the write to a top-level
+    // statement. (The PRD's "wrap in a block" hint isn't yet a real
+    // workaround because pipes don't currently accept block RHS.)
+    auto r = akkado::compile(
+        "v = state({gate: 0})\n"
+        "button(\"go\") |> v.gate = 1\n"
+        "out(get(v).gate, get(v).gate)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E205"));
+    CHECK(diagnostic_contains(r, "top-level statement"));
+}
+
+TEST_CASE("State record sugar: top-level write next to a pipe is allowed",
+          "[state][record][sugar]") {
+    // The recommended workaround for E205 today: hoist the field assignment
+    // out of the pipe and write it as its own statement. Cell identity flows
+    // through the binding so the effect is the same as if it were inline.
+    auto r = akkado::compile(
+        "v = state({gate: 0})\n"
+        "trig = button(\"go\")\n"
+        "v.gate = trig\n"
+        "out(get(v).gate, get(v).gate)\n"
+    );
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::STATE_OP, 2) == 1);
+}
+
+TEST_CASE("State record sugar: E150 on field assignment to value record",
+          "[state][record][sugar][diagnostics]") {
+    auto r = akkado::compile(
+        "r = {x: 1, y: 2}\n"
+        "r.x = 5\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E150"));
+    CHECK(diagnostic_contains(r, "state("));
+}
+
+TEST_CASE("State record sugar: E136 on unknown field assignment",
+          "[state][record][sugar][diagnostics]") {
+    auto r = akkado::compile(
+        "v = state({x: 0})\n"
+        "v.y = 5\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E136"));
+    CHECK(diagnostic_contains(r, "y"));
+    CHECK(diagnostic_contains(r, "Available"));
+}
+
+TEST_CASE("State record sugar: E135 on field access on scalar cell",
+          "[state][record][sugar][diagnostics]") {
+    auto r = akkado::compile(
+        "s = state(0)\n"
+        "out(s.value, s.value)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E135"));
+}
+
+TEST_CASE("State record sugar: E204 on nested-field write",
+          "[state][record][sugar][diagnostics]") {
+    // The receiver of the outer FieldAssignment is itself a FieldAccess —
+    // codegen rejects this up front rather than trying to load+spread the
+    // intermediate record (which would be deferred-feature territory).
+    auto r = akkado::compile(
+        "v = state({x: 1, y: 2})\n"
+        "v.x.foo = 5\n"
+        "out(0, 0)\n"
+    );
+    CHECK_FALSE(r.success);
+    CHECK(diagnostic_has_code(r, "E204"));
+    CHECK(diagnostic_contains(r, "Nested field assignment"));
+}
+
+TEST_CASE("State record sugar: aliasing — `t = v` shares cell identity",
+          "[state][record][sugar][runtime]") {
+    // Cell identity flows through the binding. Writing through an alias
+    // should be visible through the original handle (same per-field state_id
+    // for both names).
+    auto r = akkado::compile(
+        "v = state({n: 0})\n"
+        "t = v\n"
+        "t.n = 7\n"
+        "out(get(v).n, get(v).n)\n"
+    );
+    REQUIRE(r.success);
+
+    cedar::VM vm;
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(
+            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
+            r.bytecode.size() / sizeof(cedar::Instruction))));
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+    CHECK(L[cedar::BLOCK_SIZE - 1] == 7.0f);
+    CHECK(R[cedar::BLOCK_SIZE - 1] == 7.0f);
+}

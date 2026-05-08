@@ -108,18 +108,48 @@ osc("sin", get(voice).freq) * get(voice).vel * get(voice).gate
 set(voice, {freq: 880, vel: 0.7, gate: 1})
 ```
 
-To update a single field while keeping the others, spread the cell's current
-value and override what changes:
+### Per-field sugar
+
+When a state cell holds a record, you can read and write fields directly on
+the cell handle. Both forms desugar to the explicit `get` / `set` calls and
+are observably equivalent, but the surface is much shorter:
 
 ```akk
-on_note = button("hit")
-on_note |> set(voice, {..get(voice), gate: 1})
+voice = state({freq: 440, vel: 0.5, gate: 0})
+
+// Read sugar: cell.field is shorthand for get(cell).field.
+tone = osc("sin", voice.freq) * voice.vel * voice.gate
+out(tone, tone)
+
+// Write sugar: cell.field = expr is shorthand for
+//   set(cell, {..get(cell), field: expr}).
+voice.gate = 1
+voice.freq = 880
+
+// Self-referential updates are fine — RHS reads land before LHS writes.
+counter = state({n: 0})
+counter.n = counter.n + 1
 ```
 
-A future `update(cell, patch)` stdlib helper will package this pattern as
-`update(voice, {gate: 1})`; until argument spread lands inside builtin call
-sites it must be written inline as above. Per-field assignment sugar
-(`voice.gate = 1`) is also planned but not yet shipped.
+Field assignment is statement-only — it cannot appear as the right-hand side
+of a pipe (E205). Hoist the write to a top-level statement:
+
+```akk
+// Doesn't parse:
+//   button("hit") |> voice.gate = 1     // E205
+// Write it as two statements instead:
+trig = button("hit")
+voice.gate = trig
+```
+
+Plain value records stay immutable; the sugar only applies when the receiver
+is a state cell. `r = {x: 1}; r.x = 5` errors with E150 and a hint pointing
+at `state({...})`. Nested-field writes (`voice.outer.inner = 5`) are deferred
+and rejected with E204 — rewrite as `set(voice, {..get(voice), outer: {..get(voice).outer, inner: v}})`.
+
+A future `update(cell, patch)` stdlib helper will package whole-record updates
+as `update(voice, {gate: 1})`; until argument spread lands inside builtin call
+sites it must be written inline as `set(voice, {..get(voice), gate: 1})`.
 
 Constraints on record cells:
 

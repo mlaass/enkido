@@ -1942,6 +1942,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
         case NodeType::FieldAccess:
             return handle_field_access(node, n);
 
+        case NodeType::FieldAssignment:
+            return handle_field_assignment(node, n);
+
         case NodeType::PipeBinding:
             return handle_pipe_binding(node, n);
 
@@ -2497,6 +2500,59 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
             error("E131", "Unknown field '" + field_name + "'" +
                   (available.empty() ? "" : ". Available: " + available), n.location);
             return TypedValue::error_val();
+        }
+
+        case ValueType::StateCell: {
+            // Phase 4b: read sugar — `cell.field` desugars to `get(cell).field`
+            // when the cell holds a record. Each access emits a single
+            // STATE_OP rate=1 against the per-field sub-cell, observably
+            // identical to the field-pick from a freshly fanned-out get().
+            // Scalar cells reach this branch with `expr_tv.record == nullptr`
+            // and are rejected — those callers must use `get(cell)` explicitly.
+            if (!expr_tv.record) {
+                error("E135",
+                      "Cannot access field '" + field_name +
+                      "' on scalar state cell. Use get(cell) to read it.",
+                      n.location);
+                return TypedValue::error_val();
+            }
+            auto sub_it = expr_tv.record->fields.find(field_name);
+            if (sub_it == expr_tv.record->fields.end()) {
+                std::string available;
+                bool first = true;
+                for (const auto& [name, _] : expr_tv.record->fields) {
+                    if (!first) available += ", ";
+                    available += name;
+                    first = false;
+                }
+                error("E136",
+                      "Unknown field '" + field_name +
+                      "' on state cell" +
+                      (available.empty() ? "" : ". Available: " + available),
+                      n.location);
+                return TypedValue::error_val();
+            }
+            const TypedValue& sub_cell = sub_it->second;
+
+            std::uint16_t out = buffers_.allocate();
+            if (out == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::error_val();
+            }
+
+            cedar::Instruction inst{};
+            inst.opcode = cedar::Opcode::STATE_OP;
+            inst.rate = 1;  // load mode
+            inst.out_buffer = out;
+            inst.inputs[0] = 0xFFFF;
+            inst.inputs[1] = 0xFFFF;
+            inst.inputs[2] = 0xFFFF;
+            inst.inputs[3] = 0xFFFF;
+            inst.inputs[4] = 0xFFFF;
+            inst.state_id = sub_cell.cell_state_id;
+            emit(inst);
+
+            return cache_and_return(node, TypedValue::signal(out));
         }
 
         case ValueType::Signal:

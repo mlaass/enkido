@@ -338,8 +338,67 @@ NodeIndex Parser::parse_statement() {
         }
     }
 
-    // Otherwise it's an expression statement
-    return parse_expression();
+    // Otherwise it's an expression statement.
+    NodeIndex expr = parse_expression();
+
+    // Phase 4b: field-assignment sugar over record-valued state cells.
+    //   `receiver.field = value` parses as `FieldAccess(receiver, field)`
+    //   followed by a stray `=`. Transform into a FieldAssignment statement.
+    //
+    //   `expr |> receiver.field = value` parses as a Pipe whose RHS is the
+    //   FieldAccess; that case is rejected with E205 because field assignment
+    //   is a statement, not an expression — the user must wrap in `{ ... }`.
+    if (expr != NULL_NODE && check(TokenType::Equals)) {
+        const Node& en = arena_[expr];
+
+        if (en.type == NodeType::FieldAccess) {
+            // Steal the FieldAccess's field name and receiver child, build a
+            // FieldAssignment in their place.
+            std::string field_name = en.as_field_access().field_name;
+            NodeIndex receiver = en.first_child;
+            SourceLocation loc = en.location;
+
+            advance();  // consume '='
+            NodeIndex value = parse_expression();
+
+            NodeIndex node = arena_.alloc(NodeType::FieldAssignment, loc);
+            arena_[node].data = Node::FieldAssignmentData{std::move(field_name)};
+            arena_.add_child(node, receiver);
+            if (value != NULL_NODE) {
+                arena_.add_child(node, value);
+            }
+            return node;
+        }
+
+        if (en.type == NodeType::Pipe) {
+            // The pipe's RHS is the second child. If it's a FieldAccess, the
+            // user wrote `expr |> cell.field = value` outside a block.
+            NodeIndex first = en.first_child;
+            NodeIndex pipe_rhs = (first != NULL_NODE)
+                ? arena_[first].next_sibling : NULL_NODE;
+            if (pipe_rhs != NULL_NODE &&
+                arena_[pipe_rhs].type == NodeType::FieldAccess) {
+                Token eq_tok = current();
+                diagnostics_.push_back(Diagnostic{
+                    .severity = Severity::Error,
+                    .code = "E205",
+                    .message = "Field assignment is a statement, not an "
+                               "expression — it cannot be the right-hand "
+                               "side of a pipe. Move the `cell.field = expr` "
+                               "to a top-level statement.",
+                    .filename = filename_,
+                    .location = eq_tok.location
+                });
+                advance();             // consume '='
+                (void)parse_expression();  // recover: discard value
+                return NULL_NODE;
+            }
+        }
+        // Some other LHS — fall through; the leftover '=' will become a
+        // generic parse error at the top-level loop.
+    }
+
+    return expr;
 }
 
 NodeIndex Parser::parse_assignment(const Token& name_token) {
