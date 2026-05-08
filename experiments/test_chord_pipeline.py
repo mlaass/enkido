@@ -97,6 +97,80 @@ def magnitude_at(freq_hz: float, audio_window: np.ndarray, sr: int) -> float:
     return float(mag[band].mean())
 
 
+def count_distinct_pitch_classes(audio_window: np.ndarray, sr: int,
+                                  min_freq: float = 80.0,
+                                  max_freq: float = 4000.0,
+                                  rel_threshold: float = 0.20) -> tuple[int, set[int]]:
+    """Count distinct pitch classes that have a spectral peak above the
+    relative threshold. Used to verify a chord has N voices without needing
+    to predict exactly which octave each one lands in.
+
+    Returns (count, pitch_class_set).
+    """
+    n = len(audio_window)
+    win = audio_window * np.hanning(n)
+    fft = np.fft.rfft(win)
+    mag = np.abs(fft) / (n / 2 + 1)
+    freqs = np.fft.rfftfreq(n, d=1.0 / sr)
+    # Mask to musical band
+    band = (freqs >= min_freq) & (freqs <= max_freq)
+    if not band.any() or mag[band].max() == 0:
+        return 0, set()
+    threshold = rel_threshold * mag[band].max()
+
+    # Local-peak detection: a bin is a peak if it exceeds both neighbors and
+    # crosses the threshold.
+    peaks: list[int] = []
+    for i in range(1, len(mag) - 1):
+        if not band[i]:
+            continue
+        if mag[i] > threshold and mag[i] > mag[i - 1] and mag[i] > mag[i + 1]:
+            peaks.append(i)
+
+    # Map each peak's frequency to a MIDI note → pitch class.
+    pcs: set[int] = set()
+    for p in peaks:
+        f = freqs[p]
+        if f <= 0:
+            continue
+        midi = 69 + 12 * np.log2(f / 440.0)
+        pc = int(round(midi)) % 12
+        pcs.add(pc)
+    return len(pcs), pcs
+
+
+def assert_distinct_pcs(name: str, wav: Path,
+                         expected_pcs_per_chord: list[set[int]],
+                         min_count_per_chord: list[int]) -> bool:
+    """Verify each chord has at least `min_count` distinct pitch classes
+    present, drawn from the expected set. PC-based assertion sidesteps the
+    optimizer's octave choices — we don't need to predict whether voice 4
+    lands in octave 3 or 4.
+    """
+    sr, audio = load_mono(wav)
+    if audio.max() == 0.0:
+        print(f"  ✗ {name}: silent render")
+        return False
+
+    all_ok = True
+    for c, (expected, min_count) in enumerate(
+            zip(expected_pcs_per_chord, min_count_per_chord)):
+        win = chord_window(audio, sr, c, total_chords=len(expected_pcs_per_chord))
+        count, found_pcs = count_distinct_pitch_classes(win, sr)
+        # Restrict to the expected pitch classes (filter out spurious peaks).
+        matched = found_pcs & expected
+        chord_ok = len(matched) >= min_count
+        all_ok = all_ok and chord_ok
+        status = "✓" if chord_ok else "✗"
+        # Render PCs as note names for human readability.
+        pc_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        matched_str = ",".join(pc_names[p] for p in sorted(matched))
+        expected_str = ",".join(pc_names[p] for p in sorted(expected))
+        print(f"  {status} {name} chord{c}: {len(matched)}/{min_count} expected PCs "
+              f"({matched_str}) of {{{expected_str}}}")
+    return all_ok
+
+
 def assert_specific_voices(name: str, wav: Path,
                            expected_voices_per_chord: list[list[float]]) -> bool:
     """Verify each named chord-voice fundamental is energetically present.
@@ -150,19 +224,6 @@ CHORD_VOICES_RAW = [
     [391.995, 493.883, 587.330],   # G   = G4 B4 D5
 ]
 
-# When voicing(...) is applied, apply_voicing() runs the events through
-# voice_chords() which picks an inversion. With default anchor=c4 (MIDI 60)
-# Below mode, the optimizer drops upper voices an octave to fit `hi <= 60`,
-# producing a more grounded sound. These are the voicings observed
-# empirically — re-derive if voicing.cpp's algorithm changes.
-CHORD_VOICES_DEFAULT = [
-    [164.814, 195.998, 261.626],   # CM  → [E3 G3 C4]
-    [164.814, 220.000, 261.626],   # Am  → [E3 A3 C4]
-    [146.832, 174.614, 220.000],   # Dm  → [D3 F3 A3]
-    [146.832, 195.998, 246.942],   # G   → [D3 G3 B3]
-]
-
-
 def main() -> int:
     if not NKIDO_CLI.exists():
         print(f"error: nkido-cli not built — run `cmake --build {REPO_ROOT}/build --target nkido-cli`")
@@ -182,6 +243,12 @@ def main() -> int:
          f'c"CM Am Dm G" .voicing("open")  |> soundfont(@, "{sf_name}", 0) |> out(@, @)'),
         ("transpose_0",
          f'c"CM Am Dm G" .transpose(0) |> soundfont(@, "{sf_name}", 0) |> out(@, @)'),
+        ("custom_dict_jazz5",
+         # addVoicings({M:[0,4,7,11,14], m:[0,3,7,10,14]}) — 5-note dict.
+         # Should expand CM/Am/Dm to 5-voice chords; G (empty quality) falls
+         # back to the chord parser's intrinsic 3-voice triad.
+         f'addVoicings("jazz5", {{M: [0, 4, 7, 11, 14], m: [0, 3, 7, 10, 14]}})\n'
+         f'c"CM Am Dm G" .voicing("jazz5") |> soundfont(@, "{sf_name}", 0) |> out(@, @)'),
         ("note_pattern_baseline",
          f'n"c4 a4 d4 g4" |> soundfont(@, "{sf_name}", 0) |> out(@, @)'),
     ]
@@ -205,16 +272,85 @@ def main() -> int:
     # raw intervals reach soundfont (no voicing optimizer applied). voicing
     # cases run through apply_voicing which picks an inversion under the
     # default anchor.
+    # `direct` and `transpose_0` go through paths where the chord_parser's
+    # raw intervals reach soundfont (no voicing optimizer applied) — exact
+    # frequencies are stable. The voicing cases use PC-based checks below
+    # because the algorithm's octave choices are not part of the user-visible
+    # contract (it's free to evolve to better-sounding voicings).
     case_voices = {
         "direct":         CHORD_VOICES_RAW,
         "transpose_0":    CHORD_VOICES_RAW,
-        "voicing_close":  CHORD_VOICES_DEFAULT,
-        "voicing_open":   CHORD_VOICES_DEFAULT,
     }
     for name, voices in case_voices.items():
         ok = assert_specific_voices(name, wavs[name], voices)
         if not ok:
             all_ok = False
+
+    # voicing_close / voicing_open: verify each chord's pitch classes are
+    # present (regardless of octave). Specific-frequency checks would over-
+    # specify the voicing optimizer's output and break on every algorithm
+    # tweak. The close-vs-open spectral comparison below confirms they
+    # actually differ.
+    voicing_pcs = [
+        {0, 4, 7},      # CM = {C, E, G}
+        {9, 0, 4},      # Am = {A, C, E}
+        {2, 5, 9},      # Dm = {D, F, A}
+        {7, 11, 2},     # G  = {G, B, D}
+    ]
+    voicing_min = [3, 3, 3, 3]
+    for name in ("voicing_close", "voicing_open"):
+        if not assert_distinct_pcs(name, wavs[name], voicing_pcs, voicing_min):
+            all_ok = False
+
+    # custom_dict_jazz5: dict overrides expand CM/Am/Dm to 5-note voicings,
+    # G falls back to the 3-note major triad. Pitch classes (regardless of
+    # octave) must include all dict-defined intervals, so we don't need to
+    # predict which inversion/octave the optimizer chooses.
+    #
+    #   CM with M=[0,4,7,11,14] → PCs {C,E,G,B,D} = {0,4,7,11,2}
+    #   Am with m=[0,3,7,10,14] (root=A=9) → PCs {A,C,E,G,B} = {9,0,4,7,11}
+    #   Dm with m=[0,3,7,10,14] (root=D=2) → PCs {D,F,A,C,E} = {2,5,9,0,4}
+    #   G  (empty quality, intrinsic [0,4,7], root=G=7) → PCs {G,B,D} = {7,11,2}
+    print("\nCustom dict (jazz5) chord-voice expansion:")
+    jazz5_pcs = [
+        {0, 4, 7, 11, 2},   # CM with [0,4,7,11,14]
+        {9, 0, 4, 7, 11},   # Am with [0,3,7,10,14]
+        {2, 5, 9, 0, 4},    # Dm with [0,3,7,10,14]
+        {7, 11, 2},         # G fallback to triad
+    ]
+    jazz5_min = [4, 4, 4, 2]  # tolerance for octave-fold collisions
+    if not assert_distinct_pcs("custom_dict_jazz5", wavs["custom_dict_jazz5"],
+                                jazz5_pcs, jazz5_min):
+        all_ok = False
+
+    # close vs open spectral signature — they must be audibly different.
+    # open's bass-drop transform (apply_builtin runs after inversion now)
+    # pushes energy into a lower band than close. We compare the ratio of
+    # sub-bass (40–150 Hz) vs mid-band (150–800 Hz) energy: open should
+    # have more sub-bass relative to mid-band than close.
+    sr_c, audio_c = load_mono(wavs["voicing_close"])
+    sr_o, audio_o = load_mono(wavs["voicing_open"])
+
+    def band_ratio(audio: np.ndarray, sr: int) -> float:
+        n = len(audio)
+        win = audio * np.hanning(n)
+        fft = np.fft.rfft(win)
+        mag2 = (np.abs(fft) ** 2)
+        freqs = np.fft.rfftfreq(n, d=1.0 / sr)
+        sub = mag2[(freqs >= 40.0) & (freqs <= 150.0)].sum()
+        mid = mag2[(freqs >= 150.0) & (freqs <= 800.0)].sum()
+        return sub / mid if mid > 0 else 0.0
+
+    close_ratio = band_ratio(audio_c, sr_c)
+    open_ratio = band_ratio(audio_o, sr_o)
+    print(f"\nClose vs open spectral signature:")
+    print(f"  close sub/mid ratio = {close_ratio:.3f}")
+    print(f"  open  sub/mid ratio = {open_ratio:.3f}")
+    if open_ratio > close_ratio * 1.2:
+        print(f"  ✓ open has ≥20% more sub-bass relative to mid — voicings differ")
+    else:
+        print(f"  ✗ close and open look spectrally similar — fix may have regressed")
+        all_ok = False
 
     # Sanity: the n"c4 a4 d4 g4" baseline plays one note at a time. For
     # chord 0 (c4 alone), only ~261 Hz should be a strong fundamental;

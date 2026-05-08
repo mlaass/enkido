@@ -1,5 +1,4 @@
 #include "akkado/mini_lexer.hpp"
-#include "akkado/music_theory.hpp"
 #include "akkado/chord_parser.hpp"
 #include <algorithm>
 #include <charconv>
@@ -577,15 +576,10 @@ std::optional<MiniToken> MiniLexer::try_lex_chord_symbol() {
         advance();
     }
 
-    // Look up the intervals
-    const auto* intervals = lookup_chord(chord_info->quality);
-    std::vector<std::int8_t> interval_vec;
-    if (intervals) {
-        interval_vec = *intervals;
-    } else {
-        // Default to major triad
-        interval_vec = {0, 4, 7};
-    }
+    // parse_chord_symbol already populated chord_info->intervals from the
+    // canonical table — convert int → int8_t to match MiniChordData's slot.
+    std::vector<std::int8_t> interval_vec(chord_info->intervals.begin(),
+                                           chord_info->intervals.end());
 
     float velocity = 1.0f;
 

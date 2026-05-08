@@ -99,6 +99,81 @@ TEST_CASE("Chord symbol parsing", "[chord]") {
     }
 }
 
+TEST_CASE("Chord parser knows extended and alt-symbol qualities", "[chord]") {
+    // Regression: these qualities used to round-trip correctly through
+    // parse_chord_symbol but were silently truncated to a major triad by
+    // the mini-notation lexer because music_theory.hpp's lookup table was
+    // a partial subset of chord_parser's. Both tables are now unified;
+    // every quality reachable here must also lex correctly via chord("…")
+    // and c"…" (covered separately in test_codegen.cpp).
+
+    auto check = [](const char* sym, const std::string& expected_quality,
+                    std::vector<int> expected_intervals) {
+        INFO("symbol = " << sym);
+        auto c = akkado::parse_chord_symbol(sym);
+        REQUIRE(c.has_value());
+        CHECK(c->quality == expected_quality);
+        CHECK(c->intervals == expected_intervals);
+    };
+
+    SECTION("major-7th aliases") {
+        check("CM7",  "M7",   {0, 4, 7, 11});
+        check("C^",   "^",    {0, 4, 7, 11});
+        check("C^7",  "^7",   {0, 4, 7, 11});
+        check("Cmaj7","maj7", {0, 4, 7, 11});
+    }
+
+    SECTION("minor-9th and major-9th") {
+        check("Cm9",  "m9",   {0, 3, 7, 10, 14});
+        check("CM9",  "M9",   {0, 4, 7, 11, 14});
+        check("Cmaj9","maj9", {0, 4, 7, 11, 14});
+    }
+
+    SECTION("sixth chords") {
+        check("Cm6",  "m6",   {0, 3, 7, 9});
+        check("Cmin6","min6", {0, 3, 7, 9});
+    }
+
+    SECTION("11th and 13th") {
+        check("C13",  "13",   {0, 4, 7, 10, 14, 21});
+        check("Cm11", "m11",  {0, 3, 7, 10, 14, 17});
+        check("C11",  "11",   {0, 4, 7, 10, 14, 17});
+    }
+
+    SECTION("minor-major 7th aliases") {
+        check("CmM7",    "mM7",     {0, 3, 7, 11});
+        check("Cm^7",    "m^7",     {0, 3, 7, 11});
+        check("Cminmaj7","minmaj7", {0, 3, 7, 11});
+    }
+
+    SECTION("alternate symbols") {
+        check("C-",   "-",  {0, 3, 7});      // minor
+        check("C-7",  "-7", {0, 3, 7, 10});  // minor-7th
+        check("C+",   "+",  {0, 4, 8});      // augmented
+        check("C+7",  "+7", {0, 4, 8, 10});  // augmented-7th
+        check("Co",   "o",  {0, 3, 6});      // diminished
+        check("Co7",  "o7", {0, 3, 6, 9});   // diminished-7th
+    }
+
+    SECTION("add chords") {
+        check("Cadd9","add9", {0, 4, 7, 14});
+        check("Cadd2","add2", {0, 2, 4, 7});
+    }
+
+    SECTION("sus default") {
+        check("Csus", "sus", {0, 5, 7});  // sus alone defaults to sus4
+    }
+
+    SECTION("dominant aliases") {
+        check("Cdom7","dom7", {0, 4, 7, 10});
+    }
+
+    SECTION("half-diminished alternate") {
+        check("Cm7b5","m7b5", {0, 3, 6, 10});
+        check("C0",   "0",    {0, 3, 6, 10});
+    }
+}
+
 TEST_CASE("Chord expansion to MIDI", "[chord]") {
     SECTION("C major at octave 4") {
         auto chord = akkado::parse_chord_symbol("C");

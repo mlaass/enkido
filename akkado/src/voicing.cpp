@@ -76,19 +76,21 @@ int distance_from_anchor_sum(const std::vector<int>& notes, int anchor) {
 // apply built-in transform, and tile across octaves [-2, +2].
 std::vector<std::vector<int>> generate_candidates(const ChordSpec& chord,
                                                   const VoicingDict* dict) {
-    std::vector<std::vector<int>> base_notes;
-
-    // Lookup quality-specific override.
-    if (dict != nullptr && !dict->qualities.empty()) {
-        // Use the dict's quality table only if present. If chord quality is
-        // unknown, fall back to the chord's intrinsic intervals.
-        // (We don't carry the quality string into ChordSpec; the codegen
-        // layer is expected to substitute intervals before calling.)
+    // Resolve which interval set to use. User-registered dicts (addVoicings)
+    // can override per-quality intervals — e.g. {M:[0,4,7,11,14]} for a
+    // 5-note major9 default. Falls back to the chord parser's intrinsic
+    // intervals when the dict has no entry for the chord's quality.
+    const std::vector<int>* intervals = &chord.intervals;
+    if (dict != nullptr && !dict->qualities.empty() && !chord.quality.empty()) {
+        auto it = dict->qualities.find(chord.quality);
+        if (it != dict->qualities.end()) {
+            intervals = &it->second;
+        }
     }
 
     std::vector<int> notes;
-    notes.reserve(chord.intervals.size());
-    for (int iv : chord.intervals) {
+    notes.reserve(intervals->size());
+    for (int iv : *intervals) {
         notes.push_back(chord.root_midi + iv);
     }
     if (notes.empty()) {
@@ -96,15 +98,11 @@ std::vector<std::vector<int>> generate_candidates(const ChordSpec& chord,
     }
     std::sort(notes.begin(), notes.end());
 
-    // Apply built-in transform once on the sorted base set. (Inversions are
-    // handled below by rotating the lowest note up an octave repeatedly.)
-    int kind = dict != nullptr ? dict->builtin_kind : 0;
-    if (kind > 0) {
-        notes = apply_builtin(notes, kind);
-    }
-
-    // Inversions: keep rotating bottom note up an octave; produces N-1 more
-    // distinct voicings of the same chord.
+    // Inversions: rotate the bottom note up an octave to get N rotations of
+    // the chord. The voicing transform is NOT applied yet — applying it
+    // before the rotation would let the rotation undo its effect (open's
+    // bass-drop is re-raised by the next inversion, collapsing close and
+    // open candidate sets).
     std::vector<std::vector<int>> inversions;
     inversions.push_back(notes);
     std::vector<int> inv = notes;
@@ -112,6 +110,17 @@ std::vector<std::vector<int>> generate_candidates(const ChordSpec& chord,
         inv[0] += 12;
         std::sort(inv.begin(), inv.end());
         inversions.push_back(inv);
+    }
+
+    // Apply the voicing transform to each inversion. close=identity, open
+    // drops the bass an octave, drop2 drops 2nd-from-top, drop3 drops
+    // 3rd-from-top — applied per-inversion so each rotation contributes a
+    // distinctly-shaped candidate.
+    int kind = dict != nullptr ? dict->builtin_kind : 0;
+    if (kind > 0) {
+        for (auto& v : inversions) {
+            v = apply_builtin(v, kind);
+        }
     }
 
     // Octave shifts ∈ [-2, +2].

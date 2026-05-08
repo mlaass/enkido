@@ -10,9 +10,11 @@
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <cedar/dsp/constants.hpp>
+#include <cedar/opcodes/sequence.hpp>  // For MAX_VALUES_PER_EVENT
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -3414,6 +3416,112 @@ TEST_CASE("Voicing: addVoicings() registers a custom dictionary", "[codegen][voi
     }
 }
 
+TEST_CASE("Voicing: addVoicings dict.qualities overrides chord intervals",
+          "[codegen][voicing][addVoicings]") {
+    auto freq_to_midi = [](float f) {
+        return static_cast<int>(std::round(69.0f + 12.0f * std::log2(f / 440.0f)));
+    };
+
+    SECTION("5-note M voicing expands a CM triad to 5 voices") {
+        // {M:[0,4,7,11,14]} = major9 default. Without the fix, CM would
+        // voice as the chord parser's intrinsic [0,4,7] triad; with the
+        // fix, the dict's per-quality intervals are honored.
+        auto result = akkado::compile(R"(
+            addVoicings("test_dict_qualities_M", {M: [0, 4, 7, 11, 14]})
+            chord("CM") .voicing("test_dict_qualities_M")
+        )");
+        REQUIRE(result.success);
+        REQUIRE(!result.state_inits.empty());
+        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(events.size() == 1);
+        const auto& ev = events[0];
+        CHECK(ev.num_values == 5);
+        // Voiced MIDI notes for [0,4,7,11,14] from C4 root, modulo octave
+        // shifts the optimizer chooses. We collect the pitch classes (mod
+        // 12) and assert the set matches.
+        std::vector<int> pcs;
+        for (std::uint8_t i = 0; i < ev.num_values; ++i) {
+            int midi = freq_to_midi(ev.values[i]);
+            pcs.push_back(((midi % 12) + 12) % 12);
+        }
+        std::sort(pcs.begin(), pcs.end());
+        // C(0), E(4), G(7), B(11), D(2). Sorted: [0, 2, 4, 7, 11].
+        std::vector<int> expected = {0, 2, 4, 7, 11};
+        CHECK(pcs == expected);
+    }
+
+    SECTION("unknown chord quality falls back to chord-parser intervals") {
+        // Dict has only M:; Am has quality "m" which is absent. Expected:
+        // fall back to intrinsic [0,3,7] (3 voices), not the M dict entry.
+        auto result = akkado::compile(R"(
+            addVoicings("test_dict_qualities_only_M", {M: [0, 4, 7, 11, 14]})
+            chord("Am") .voicing("test_dict_qualities_only_M")
+        )");
+        REQUIRE(result.success);
+        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(events.size() == 1);
+        CHECK(events[0].num_values == 3);
+    }
+
+    SECTION("built-in dict (empty qualities) does not override intrinsic intervals") {
+        // close has empty qualities — should leave a CM7 as a 4-note
+        // intrinsic voicing, not collapse or expand.
+        auto result = akkado::compile(R"(chord("CM7") .voicing("close"))");
+        REQUIRE(result.success);
+        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(events.size() == 1);
+        CHECK(events[0].num_values == 4);
+    }
+}
+
+TEST_CASE("Voicing: close vs open produce distinct candidate sets",
+          "[codegen][voicing][close-open]") {
+    auto freq_to_midi = [](float f) {
+        return static_cast<int>(std::round(69.0f + 12.0f * std::log2(f / 440.0f)));
+    };
+    auto chord_span = [&](const auto& ev) {
+        std::vector<int> midi_notes;
+        for (std::uint8_t i = 0; i < ev.num_values; ++i) {
+            midi_notes.push_back(freq_to_midi(ev.values[i]));
+        }
+        std::sort(midi_notes.begin(), midi_notes.end());
+        return midi_notes.empty() ? 0 : midi_notes.back() - midi_notes.front();
+    };
+
+    SECTION("open spans wider than close on the same chord") {
+        auto close_r = akkado::compile(R"(chord("CM") .voicing("close"))");
+        auto open_r = akkado::compile(R"(chord("CM") .voicing("open"))");
+        REQUIRE(close_r.success);
+        REQUIRE(open_r.success);
+        const auto& close_ev = close_r.state_inits[0].sequence_events[0][0];
+        const auto& open_ev = open_r.state_inits[0].sequence_events[0][0];
+        int close_span = chord_span(close_ev);
+        int open_span = chord_span(open_ev);
+        INFO("close span = " << close_span << ", open span = " << open_span);
+        // close: triad within an octave (span ≤ 11). open: bass dropped an
+        // octave per inversion, so spans land in the high teens.
+        CHECK(close_span <= 11);
+        CHECK(open_span >= 12);
+        CHECK(open_span - close_span >= 5);
+    }
+
+    SECTION("drop2 produces wider spread than close on a 7th chord") {
+        auto close_r = akkado::compile(R"(chord("CM7") .voicing("close"))");
+        auto drop2_r = akkado::compile(R"(chord("CM7") .voicing("drop2"))");
+        REQUIRE(close_r.success);
+        REQUIRE(drop2_r.success);
+        const auto& close_ev = close_r.state_inits[0].sequence_events[0][0];
+        const auto& drop2_ev = drop2_r.state_inits[0].sequence_events[0][0];
+        int close_span = chord_span(close_ev);
+        int drop2_span = chord_span(drop2_ev);
+        INFO("close7 span = " << close_span << ", drop2 span = " << drop2_span);
+        // Standard drop2 voicings of a 7th chord span 14–18 semitones; close
+        // 7th stays within an octave (≤11).
+        CHECK(close_span <= 11);
+        CHECK(drop2_span >= 12);
+    }
+}
+
 TEST_CASE("Voicing: progression voice-leads with bounded movement", "[codegen][voicing][phase2]") {
     // Am C G F voice-led @ c4 below: total semitone movement across 4 chords
     // should be bounded (PRD §10.1: ≤ 6 semitones). We sum |notes[k][i] -
@@ -5077,10 +5185,10 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         CHECK(events[2].values[0] == 4.0f);
     }
 
-    SECTION("[bd, sn, hh, cp, oh] — over-cap polyrhythm truncates to MAX_VALUES_PER_EVENT") {
-        // 5 branches > 4 (MAX_VALUES_PER_EVENT). The 5th voice is silently
-        // dropped to keep playback graceful. Matches the prior convention
-        // from the old emit_merged_sample_polyrhythm.
+    SECTION("[bd, sn, hh, cp, oh] — 5-voice polyrhythm fits under MAX_VALUES_PER_EVENT") {
+        // 5 branches ≤ 16 (MAX_VALUES_PER_EVENT). Previously this truncated
+        // because the cap was 4; bumping to 16 lets all five voices land in
+        // a single event (same convention as the old merged polyrhythm path).
         akkado::SampleRegistry reg2;
         reg2.register_sample("bd", 1);
         reg2.register_sample("sn", 2);
@@ -5092,12 +5200,12 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
-        CHECK(events[0].num_values == 4);  // capped at MAX_VALUES_PER_EVENT
+        CHECK(events[0].num_values == 5);
         CHECK(events[0].values[0] == 1.0f);  // bd
         CHECK(events[0].values[1] == 2.0f);  // sn
         CHECK(events[0].values[2] == 3.0f);  // hh
         CHECK(events[0].values[3] == 4.0f);  // cp
-        // oh dropped (would be slot 4)
+        CHECK(events[0].values[4] == 5.0f);  // oh
     }
 
     SECTION("single SAMPLE_PLAY instruction; in3/in4 link to SEQPAT state") {
@@ -5119,6 +5227,120 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
             static_cast<std::uint32_t>(sample_play->inputs[3]) |
             (static_cast<std::uint32_t>(sample_play->inputs[4]) << 16);
         CHECK(linked_state == query->state_id);
+    }
+}
+
+TEST_CASE("MAX_VALUES_PER_EVENT cap enforced", "[event-cap]") {
+    // Compile-time guard: catch accidental future regression of the cap.
+    // 16 covers full 13th chords plus user-registered jazz voicings, so any
+    // shrink would silently truncate addVoicings() dictionaries again.
+    static_assert(cedar::MAX_VALUES_PER_EVENT == 16,
+                  "Bumping this without updating addVoicings + chord-soundfont "
+                  "tests will silently truncate user voicings.");
+
+    SECTION("17-voice polyrhythm truncates to 16") {
+        akkado::SampleRegistry reg;
+        // Register 17 distinct samples and build a 17-branch polyrhythm.
+        std::string pattern = "pat(\"[";
+        for (int i = 1; i <= 17; ++i) {
+            std::string name = "s" + std::to_string(i);
+            reg.register_sample(name, static_cast<std::uint16_t>(i));
+            if (i > 1) pattern += ", ";
+            pattern += name;
+        }
+        pattern += "]\") |> out(%, %)";
+
+        auto result = akkado::compile(pattern, "<input>", &reg);
+        REQUIRE(result.success);
+        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(events.size() == 1);
+        CHECK(events[0].num_values == 16);
+        for (std::uint8_t i = 0; i < 16; ++i) {
+            CHECK(events[0].values[i] == static_cast<float>(i + 1));
+        }
+        // s17 (id 17) dropped — truncation is silent and graceful, matching
+        // the original cap convention.
+    }
+}
+
+TEST_CASE("Mini-notation chord lexer no longer truncates extended qualities",
+          "[chord-extended-qualities]") {
+    // Pre-fix: mini_lexer.cpp's lookup_chord table was a partial subset of
+    // chord_parser's CHORD_QUALITIES, so qualities like "M7"/"m9"/"13"/"^7"
+    // silently fell back to a major triad inside the lexer even though the
+    // chord parser knew them. Both lexers now read the unified canonical
+    // table in music_theory.hpp.
+    //
+    // Standalone `chord("CM7")` compiles to a polyphonic pattern that needs
+    // `poly()` (or `soundfont(...)`) to consume — without one, codegen
+    // reports E410 with the voice count in the message. We assert via that
+    // message rather than wrapping each chord in poly() to keep the tests
+    // focused on the lexer fix.
+    auto e410_voice_count = [](const akkado::CompileResult& result) -> int {
+        for (const auto& d : result.diagnostics) {
+            if (d.code != "E410") continue;
+            // "Chord pattern has N voices but is not wrapped in poly()..."
+            auto pos = d.message.find("has ");
+            if (pos == std::string::npos) continue;
+            int n = 0;
+            for (auto i = pos + 4; i < d.message.size() && std::isdigit(d.message[i]); ++i) {
+                n = n * 10 + (d.message[i] - '0');
+            }
+            return n;
+        }
+        return -1;
+    };
+
+    SECTION("chord(\"CM7\") emits a 4-voice chord pattern") {
+        auto result = akkado::compile(R"(chord("CM7") |> osc("sin", %.freq) |> out(%, %))");
+        CHECK(e410_voice_count(result) == 4);
+    }
+
+    SECTION("chord(\"Cm9\") emits a 5-voice chord pattern") {
+        auto result = akkado::compile(R"(chord("Cm9") |> osc("sin", %.freq) |> out(%, %))");
+        CHECK(e410_voice_count(result) == 5);
+    }
+
+    SECTION("chord(\"C13\") emits a 6-voice chord pattern") {
+        auto result = akkado::compile(R"(chord("C13") |> osc("sin", %.freq) |> out(%, %))");
+        CHECK(e410_voice_count(result) == 6);
+    }
+
+    SECTION("c\"…\" mini-notation honors extended qualities too") {
+        // Mixed-arity chord pattern. Previously every voice count would
+        // collapse to 3 because of the lexer's partial table; max across
+        // the pattern now matches the largest chord (C13 = 6 voices).
+        auto result = akkado::compile(R"(c"CM7 Cm9 C13" |> osc("sin", %.freq) |> out(%, %))");
+        CHECK(e410_voice_count(result) == 6);
+    }
+
+    SECTION("CM7 voiced through soundfont expands to 4 SF_VOICE slots") {
+        // End-to-end: with the unified table the chord is a true 4-voice
+        // signal, so the soundfont path emits 4 SOUNDFONT_VOICE
+        // instructions (was 3 before the fix, silently dropping the 7th).
+        auto result = akkado::compile(R"(c"CM7" |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count =
+            count_instructions(insts, cedar::Opcode::SOUNDFONT_VOICE);
+        CHECK(sf_count == 4);
+
+        // FFT-style sanity: the four chord pitch classes must all be
+        // represented in the value buffer of event 0.
+        REQUIRE(!result.state_inits.empty());
+        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(events.size() == 1);
+        const auto& ev = events[0];
+        CHECK(ev.num_values == 4);
+        auto freq_to_midi = [](float f) {
+            return static_cast<int>(std::round(69.0f + 12.0f * std::log2(f / 440.0f)));
+        };
+        std::set<int> pcs;
+        for (std::uint8_t i = 0; i < ev.num_values; ++i) {
+            int midi = freq_to_midi(ev.values[i]);
+            pcs.insert(((midi % 12) + 12) % 12);
+        }
+        CHECK(pcs == std::set<int>{0, 4, 7, 11});  // C E G B
     }
 }
 
@@ -8860,16 +9082,14 @@ TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]"
 
 TEST_CASE("user-registered voicing dictionary is recognized and pipes to soundfont",
           "[chord-soundfont][voicing][addVoicings]") {
-    SECTION("addVoicings + .voicing(name) compiles cleanly through soundfont") {
-        // Note: voice_chords() does not currently substitute the dict's
-        // quality table for the chord's intrinsic intervals (see TODO in
-        // akkado/src/voicing.cpp:81-87). So a 5-note dict like
-        // {M:[0,4,7,11,14]} doesn't actually expand a CM triad into a 5-note
-        // voicing today — the chord_parser's [0,4,7] intervals are used.
-        // What this test guards is the integration: addVoicings registers the
-        // name, .voicing(name) accepts it (no E141), and the chord still
-        // dispatches to soundfont as a multi-voice signal (no E410, multiple
-        // SOUNDFONT_VOICE instructions emitted).
+    SECTION("addVoicings + .voicing(name) expands chords to dict-defined voice count") {
+        // voice_chords() now substitutes the dict's quality table for the
+        // chord's intrinsic intervals. With M:[0,4,7,11,14] and
+        // m:[0,3,7,10,14], CM/Am/Dm voice as 5-note chords; G has empty
+        // quality (root-only symbol), so it falls back to the chord parser's
+        // intrinsic [0,4,7] triad. max_voices across the progression = 5,
+        // so soundfont emits 5 SOUNDFONT_VOICE slots (G simply doesn't fire
+        // the upper two slots).
         auto result = akkado::compile(R"(
             addVoicings("piano-jazz", {M: [0, 4, 7, 11, 14], m: [0, 3, 7, 10, 14]})
             c"CM Am Dm G" .voicing("piano-jazz") |> soundfont(@, "gm", 0) |> out(@, @)
@@ -8885,9 +9105,7 @@ TEST_CASE("user-registered voicing dictionary is recognized and pipes to soundfo
             [](const cedar::Instruction& i) {
                 return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
             });
-        // Triads in the chord-parser sense → 3 SOUNDFONT_VOICE; if/when
-        // voice_chords() learns to honor dict.qualities this can grow.
-        CHECK(sf_count == 3);
+        CHECK(sf_count == 5);
     }
 }
 

@@ -464,6 +464,10 @@ private:
             voicing::ChordSpec spec;
             spec.root_midi = root_midi;
             spec.intervals.reserve(num_notes);
+            // Pass the chord quality string ("M", "m7", ...) through so
+            // voice_chords() can look up dict.qualities overrides registered
+            // via addVoicings().
+            spec.quality = atom_data.chord_quality;
 
             for (std::size_t i = 0; i < num_notes; ++i) {
                 int midi = root_midi + static_cast<int>(atom_data.chord_intervals[i]);
@@ -636,7 +640,7 @@ private:
     // values[i] == 0 as "skip this voice slot", so silence-on-empty falls out
     // for free.
     //
-    // Cap: branches > MAX_VALUES_PER_EVENT (4) silently truncate — same
+    // Cap: branches > MAX_VALUES_PER_EVENT silently truncate — same
     // convention as the previous merge path. Pitched / chord / alternation /
     // random subtrees aren't statically flattenable, so we fall back to the
     // older per-child compile in those cases.
@@ -2745,8 +2749,18 @@ static TypedValue emit_pattern_with_state(
     query_inst.state_id = state_id;
     emit_fn(instructions, query_inst);
 
-    // Check for polyphonic patterns
-    std::uint8_t max_voices = compiler.max_voices();
+    // Check for polyphonic patterns. Compute from the local (possibly
+    // post-voicing) sequence_events rather than compiler.max_voices(), since
+    // apply_voicing rewrites events.num_values on the local copy without
+    // touching the compiler's internal state. Reading from compiler would
+    // give stale parser-time voice counts (e.g. 3 for a CM triad) even when
+    // voicing has expanded the chord to 5 voices.
+    std::uint8_t max_voices = 1;
+    for (const auto& seq : sequence_events) {
+        for (const auto& e : seq) {
+            if (e.num_values > max_voices) max_voices = e.num_values;
+        }
+    }
     std::vector<std::uint16_t> voice_buffers;
 
     // Emit SEQPAT_STEP for each voice

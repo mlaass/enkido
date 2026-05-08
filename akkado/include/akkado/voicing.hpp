@@ -45,6 +45,10 @@ std::optional<Mode> parse_mode(std::string_view s);
 struct ChordSpec {
     int root_midi = 60;
     std::vector<int> intervals;  // semitones from root, in source order
+    // Chord quality string ("M", "m", "7", "M7", "m7", "dim", ...) for
+    // dict.qualities lookup in voice_chords. Empty disables the override
+    // (parser intervals are used).
+    std::string quality;
 };
 
 /// Apply mode + anchor + (optional) voicing dict + greedy voice leading

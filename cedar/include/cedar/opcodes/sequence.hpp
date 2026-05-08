@@ -30,8 +30,11 @@ enum class EventType : std::uint8_t {
 // Event - A single occurrence in a sequence
 // ============================================================================
 
-// Maximum values per event (covers single notes and basic chords)
-static constexpr std::size_t MAX_VALUES_PER_EVENT = 4;
+// Maximum values per event. 16 covers full 13th chords (1,3,5,7,9,11,13)
+// plus user-registered jazz voicings with up-to-7-note dictionaries and
+// large polyrhythm sample patterns. Bumped from 4 because the original
+// cap silently truncated 5+ voice voicings registered via addVoicings().
+static constexpr std::size_t MAX_VALUES_PER_EVENT = 16;
 
 // Maximum custom property slots per event (Phase 2.1, PRD §11). Slot
 // assignment is compile-time, pattern-local. Used by SEQPAT_PROP to surface

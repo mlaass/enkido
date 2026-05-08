@@ -1,61 +1,9 @@
 #include "akkado/chord_parser.hpp"
+#include "akkado/music_theory.hpp"  // canonical CHORD_INTERVALS + lookup_chord
 #include <cctype>
 #include <unordered_map>
 
 namespace akkado {
-
-// Chord quality intervals (semitones from root)
-static const std::unordered_map<std::string, std::vector<int>> CHORD_QUALITIES = {
-    // Triads
-    {"", {0, 4, 7}},           // Major
-    {"maj", {0, 4, 7}},        // Major (explicit)
-    {"M", {0, 4, 7}},          // Major (alternate)
-    {"m", {0, 3, 7}},          // Minor
-    {"min", {0, 3, 7}},        // Minor (explicit)
-    {"-", {0, 3, 7}},          // Minor (alternate)
-    {"dim", {0, 3, 6}},        // Diminished
-    {"o", {0, 3, 6}},          // Diminished (alternate)
-    {"aug", {0, 4, 8}},        // Augmented
-    {"+", {0, 4, 8}},          // Augmented (alternate)
-    {"sus2", {0, 2, 7}},       // Suspended 2nd
-    {"sus4", {0, 5, 7}},       // Suspended 4th
-    {"sus", {0, 5, 7}},        // Suspended (defaults to sus4)
-
-    // Seventh chords
-    {"7", {0, 4, 7, 10}},      // Dominant 7th
-    {"dom7", {0, 4, 7, 10}},   // Dominant 7th (explicit)
-    {"M7", {0, 4, 7, 11}},     // Major 7th
-    {"maj7", {0, 4, 7, 11}},   // Major 7th (explicit)
-    {"^", {0, 4, 7, 11}},      // Major 7th (Strudel-style)
-    {"^7", {0, 4, 7, 11}},     // Major 7th (Strudel-style)
-    {"m7", {0, 3, 7, 10}},     // Minor 7th
-    {"min7", {0, 3, 7, 10}},   // Minor 7th (explicit)
-    {"-7", {0, 3, 7, 10}},     // Minor 7th (alternate)
-    {"dim7", {0, 3, 6, 9}},    // Diminished 7th
-    {"o7", {0, 3, 6, 9}},      // Diminished 7th (alternate)
-    {"m7b5", {0, 3, 6, 10}},   // Half-diminished 7th
-    {"0", {0, 3, 6, 10}},      // Half-diminished 7th (alternate)
-    {"aug7", {0, 4, 8, 10}},   // Augmented 7th
-    {"+7", {0, 4, 8, 10}},     // Augmented 7th (alternate)
-    {"mM7", {0, 3, 7, 11}},    // Minor-major 7th
-    {"m^7", {0, 3, 7, 11}},    // Minor-major 7th (alternate)
-
-    // Extended chords
-    {"6", {0, 4, 7, 9}},       // Major 6th
-    {"m6", {0, 3, 7, 9}},      // Minor 6th
-    {"9", {0, 4, 7, 10, 14}},  // Dominant 9th
-    {"M9", {0, 4, 7, 11, 14}}, // Major 9th
-    {"maj9", {0, 4, 7, 11, 14}}, // Major 9th (explicit)
-    {"m9", {0, 3, 7, 10, 14}}, // Minor 9th
-    {"add9", {0, 4, 7, 14}},   // Add 9
-    {"add2", {0, 2, 4, 7}},    // Add 2 (same as add9 but 2nd octave)
-    {"11", {0, 4, 7, 10, 14, 17}}, // Dominant 11th
-    {"m11", {0, 3, 7, 10, 14, 17}}, // Minor 11th
-    {"13", {0, 4, 7, 10, 14, 21}}, // Dominant 13th
-
-    // Power chord
-    {"5", {0, 7}},             // Power chord (no 3rd)
-};
 
 // Note name semitone offsets (relative to C)
 static const std::unordered_map<char, int> NOTE_SEMITONES = {
@@ -129,14 +77,17 @@ std::optional<ChordInfo> parse_chord_symbol(std::string_view symbol) {
     // The rest is the quality
     info.quality = std::string(symbol.substr(pos));
 
-    // Look up the quality intervals
-    auto quality_it = CHORD_QUALITIES.find(info.quality);
-    if (quality_it == CHORD_QUALITIES.end()) {
-        // Unknown quality - default to major triad
+    // Look up the quality intervals from the canonical table.
+    const auto* intervals = lookup_chord(info.quality);
+    if (intervals == nullptr) {
+        // Unknown quality → default major triad. Reset quality to "" so
+        // downstream consumers (voicing dict.qualities lookup, etc.) don't
+        // try to match an override against a phantom string.
         info.quality = "";
         info.intervals = {0, 4, 7};
     } else {
-        info.intervals = quality_it->second;
+        // Convert int8_t (storage) → int (ChordInfo public API).
+        info.intervals.assign(intervals->begin(), intervals->end());
     }
 
     // Calculate root MIDI note (default octave 4)
