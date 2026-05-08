@@ -61,6 +61,7 @@ add_library(akkado STATIC
     src/codegen_patterns.cpp
     src/codegen_stereo.cpp
     src/codegen_viz.cpp
+    src/codegen/options.cpp
     src/builtins_json.cpp
     src/shape_index.cpp
     src/typed_value.cpp

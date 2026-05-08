@@ -1,7 +1,7 @@
 ---
 title: Arrays
 category: language
-order: 5
+order: 6
 index_headings: true
 keywords: [array, list, arrays, indexing, len, length, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension]
 group: language

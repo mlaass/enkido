@@ -7172,21 +7172,152 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
     }
 
     SECTION("mixed types: number, boolean, string") {
+        // Phase 5 (PRD prd-records-system-unification §5.5): schema-aware
+        // extract_options drops fields not declared on the builtin's schema.
+        // pianoroll's schema declares all three types — width (Number),
+        // showGrid (Bool), scale (Enum/string) — so all three round-trip.
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "w", {minDb: -60, logScale: true, gradient: "warm"}) |> out(%, %)
+            pat("c4 e4") |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
         )");
         REQUIRE(result.success);
         bool found = false;
         for (const auto& decl : result.viz_decls) {
-            if (decl.type == akkado::VisualizationType::Waterfall) {
-                CHECK(decl.options_json.find("\"minDb\":-60") != std::string::npos);
-                CHECK(decl.options_json.find("\"logScale\":true") != std::string::npos);
-                CHECK(decl.options_json.find("\"gradient\":\"warm\"") != std::string::npos);
+            if (decl.type == akkado::VisualizationType::PianoRoll) {
+                CHECK(decl.options_json.find("\"width\":200") != std::string::npos);
+                CHECK(decl.options_json.find("\"showGrid\":false") != std::string::npos);
+                CHECK(decl.options_json.find("\"scale\":\"pentatonic\"") != std::string::npos);
                 found = true;
             }
         }
         CHECK(found);
     }
+}
+
+// =============================================================================
+// PRD prd-records-system-unification §5.5 Phase 5 — shared extract_options
+// helper. The helper is exercised end-to-end through the viz pipeline; these
+// tests assert the schema-aware contract observable on VisualizationDecl.
+// =============================================================================
+
+TEST_CASE("Codegen: extract_options preserves recognized fields in source order",
+          "[codegen][viz][options-helper]") {
+    // Waterfall schema declares fft and gradient; both should round-trip.
+    auto result = akkado::compile(R"(
+        osc("saw", 220) |> waterfall(%, "w", {fft: 1024, gradient: "viridis"}) |> out(%, %)
+    )");
+    REQUIRE(result.success);
+    bool found = false;
+    for (const auto& decl : result.viz_decls) {
+        if (decl.type == akkado::VisualizationType::Waterfall) {
+            // Source order preserved (fft before gradient).
+            auto pos_fft = decl.options_json.find("\"fft\":1024");
+            auto pos_grad = decl.options_json.find("\"gradient\":\"viridis\"");
+            REQUIRE(pos_fft != std::string::npos);
+            REQUIRE(pos_grad != std::string::npos);
+            CHECK(pos_fft < pos_grad);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Codegen: extract_options drops unknown fields silently",
+          "[codegen][viz][options-helper]") {
+    // `nonsense` is not declared on the waterfall schema; per the user's
+    // chosen Phase 5 contract the field is dropped from emitted JSON. The
+    // unknown_fields list on OptionsPayload reserves this name for a future
+    // W160 warning pass once the spread PRD lands W160 infrastructure.
+    auto result = akkado::compile(R"(
+        osc("saw", 220) |> waterfall(%, "w", {fft: 1024, nonsense: 7}) |> out(%, %)
+    )");
+    REQUIRE(result.success);
+    bool found = false;
+    for (const auto& decl : result.viz_decls) {
+        if (decl.type == akkado::VisualizationType::Waterfall) {
+            CHECK(decl.options_json.find("\"fft\":1024") != std::string::npos);
+            CHECK(decl.options_json.find("nonsense") == std::string::npos);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Codegen: extract_options yields empty JSON for empty record",
+          "[codegen][viz][options-helper]") {
+    // Pre-Phase-5 contract: empty record literal produces an empty options_json
+    // string. The web UI relies on the empty string as a "no options supplied"
+    // marker — the helper preserves that.
+    auto result = akkado::compile(R"(
+        osc("saw", 220) |> waterfall(%, "w", {}) |> out(%, %)
+    )");
+    REQUIRE(result.success);
+    bool found = false;
+    for (const auto& decl : result.viz_decls) {
+        if (decl.type == akkado::VisualizationType::Waterfall) {
+            CHECK(decl.options_json.empty());
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Codegen: extract_options round-trips Number/Bool/String types",
+          "[codegen][viz][options-helper]") {
+    // pianoroll's schema covers all three OptionFieldType values that the
+    // helper serializes today: Number (width), Bool (showGrid), and Enum
+    // (scale, written as a string literal).
+    auto result = akkado::compile(R"(
+        pat("c4 e4") |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
+    )");
+    REQUIRE(result.success);
+    bool found = false;
+    for (const auto& decl : result.viz_decls) {
+        if (decl.type == akkado::VisualizationType::PianoRoll) {
+            CHECK(decl.options_json.find("\"width\":200") != std::string::npos);
+            CHECK(decl.options_json.find("\"showGrid\":false") != std::string::npos);
+            CHECK(decl.options_json.find("\"scale\":\"pentatonic\"") != std::string::npos);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("Codegen: spectrum/waterfall fft_log2 lookup parity",
+          "[codegen][viz][options-helper]") {
+    // Each accepted fft size lowers to the documented log2 byte. The pre-
+    // Phase-5 path read this by string-searching the JSON; the new path
+    // uses payload.get_number("fft"). Both must produce identical bytes.
+    struct FftCase { const char* fft; std::uint8_t expected; };
+    const FftCase cases[] = {
+        {"256",  8},
+        {"512",  9},
+        {"1024", 10},
+        {"2048", 11},
+    };
+    for (const auto& c : cases) {
+        std::string src = std::string("osc(\"saw\", 220) |> spectrum(%, \"s\", {fft: ")
+                          + c.fft + "}) |> out(%, %)";
+        auto result = akkado::compile(src);
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* fft = find_instruction(insts, cedar::Opcode::FFT_PROBE);
+        REQUIRE(fft != nullptr);
+        CHECK(fft->rate == c.expected);
+    }
+}
+
+TEST_CASE("Codegen: spectrum/waterfall fft default applies when fft absent",
+          "[codegen][viz][options-helper]") {
+    // No fft field on the record — payload.get_number returns nullopt and
+    // fft_log2_from_payload falls back to 10 (=> 1024 bins).
+    auto result = akkado::compile(R"(
+        osc("saw", 220) |> waterfall(%, "w", {gradient: "viridis"}) |> out(%, %)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* fft = find_instruction(insts, cedar::Opcode::FFT_PROBE);
+    REQUIRE(fft != nullptr);
+    CHECK(fft->rate == 10);
 }
 
 TEST_CASE("Codegen: spectrum() now emits FFT_PROBE", "[codegen][viz]") {

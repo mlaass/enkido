@@ -168,4 +168,4 @@ counter = state({n: 0, last: 0})
 button("inc") |> set(counter, {n: get(counter).n + 1, last: get(counter).n})
 ```
 
-Related: [counter](edge.md#counter), [gateup](edge.md#gateup), [Method calls](../language/methods.md)
+Related: [Records](../language/records.md), [counter](edge.md#counter), [gateup](edge.md#gateup), [Method calls](../language/methods.md)

@@ -360,6 +360,11 @@ def test_something():
   ```
 - Never use bit-packing tricks for parameters. Use the 5 input slots and extended params properly.
 
+### Record-as-Options Convention
+Builtins that need more than ~3–4 parameters take a record literal as the last positional argument. Declare the option fields via `OptionSchema` on the `BuiltinInfo` (see `akkado/include/akkado/builtins.hpp` — visualizers like `waterfall` are the worked example). Codegen reads the caller's record through `codegen::extract_options(arena, node, schema)` (`akkado/include/akkado/codegen/options.hpp`); the helper validates field names, drops unknown fields silently into `OptionsPayload::unknown_fields` (reserved for a future `W160` warning pass), and emits canonical compact JSON via `to_json()`. Editor autocomplete picks up the schema automatically through `akkado_get_builtins_json()`.
+
+Adopters today: visualizers (`pianoroll`, `oscilloscope`, `waveform`, `spectrum`, `waterfall`). Recommended next: samplers, filters, delays/reverbs — each owned by its own per-family PRD. See `web/static/docs/concepts/record-as-options.md` for the full convention and authoring guide.
+
 ### Thread Safety
 - Triple-buffer approach: compiler writes to "Next", audio reads from "Current"
 - Lock-free SPSC queues for parameter updates

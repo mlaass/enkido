@@ -198,6 +198,19 @@ struct BuiltinInfo {
         std::size_t default_idx = index - input_count;
         return defaults[default_idx];
     }
+
+    /// Find the option-field schema attached to the parameter at `param_index`,
+    /// or nullptr if no schema is declared for that slot. PRD prd-records-
+    /// system-unification §5.5 — used by codegen::extract_options to validate
+    /// caller-supplied record-literal field names.
+    [[nodiscard]] const OptionSchema* find_option_schema(std::uint8_t param_index) const {
+        for (std::uint8_t i = 0; i < option_schema_count; ++i) {
+            if (option_schemas[i].param_index == param_index) {
+                return &option_schemas[i];
+            }
+        }
+        return nullptr;
+    }
 };
 
 /// Static mapping of Akkado function names to Cedar opcodes

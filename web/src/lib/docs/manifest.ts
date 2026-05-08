@@ -2,6 +2,7 @@
 // Do not edit manually - run: bun run build:docs
 
 export const slugToPath: Record<string, string> = {
+	"record-as-options": "concepts/record-as-options.md",
 	"signals": "concepts/signals.md",
 	"05-testing-progression": "tutorials/05-testing-progression.md",
 	"03-synthesis": "tutorials/03-synthesis.md",
@@ -15,6 +16,7 @@ export const slugToPath: Record<string, string> = {
 	"curve-notation": "reference/mini-notation/curve-notation.md",
 	"literals": "reference/pattern/literals.md",
 	"uri-schemes": "reference/uri-schemes.md",
+	"records": "reference/language/records.md",
 	"methods": "reference/language/methods.md",
 	"conditionals": "reference/language/conditionals.md",
 	"pipes": "reference/language/pipes.md",
@@ -211,6 +213,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 			"title": "Conditionals & Logic"
 		},
 		{
+			"slug": "records",
+			"title": "Records"
+		},
+		{
 			"slug": "arrays",
 			"title": "Arrays"
 		},
@@ -241,6 +247,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "signals",
 			"title": "Mono & Stereo Signals"
+		},
+		{
+			"slug": "record-as-options",
+			"title": "Records as Builtin Options"
 		}
 	]
 };
@@ -255,6 +265,51 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "samplers",
 		"category": "builtins",
 		"title": "Samplers"
+	},
+	"options": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"record": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"builtin": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"convention": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"optionschema": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"params": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"configuration": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"viz": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
+	},
+	"autocomplete": {
+		"slug": "record-as-options",
+		"category": "concepts",
+		"title": "Records as Builtin Options"
 	},
 	"mono": {
 		"slug": "polyphony",
@@ -1098,12 +1153,54 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "reference",
 		"title": "URI Schemes"
 	},
-	"method": {
-		"slug": "methods",
+	"field": {
+		"slug": "records",
 		"category": "language",
-		"title": "Method Calls (UFCS)"
+		"title": "Records"
 	},
 	"dot": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"access": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"destructure": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"spread": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "spread",
+		"anchor": "spread"
+	},
+	"state": {
+		"slug": "state",
+		"category": "builtins",
+		"title": "state",
+		"anchor": "state"
+	},
+	"struct": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"named-fields": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"pattern-event": {
+		"slug": "records",
+		"category": "language",
+		"title": "Records"
+	},
+	"method": {
 		"slug": "methods",
 		"category": "language",
 		"title": "Method Calls (UFCS)"
@@ -1915,12 +2012,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "legato",
 		"anchor": "legato"
 	},
-	"spread": {
-		"slug": "polyphony",
-		"category": "builtins",
-		"title": "spread",
-		"anchor": "spread"
-	},
 	"polyphonic": {
 		"slug": "soundfonts",
 		"category": "builtins",
@@ -2146,11 +2237,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Piano Roll"
 	},
 	"visualization": {
-		"slug": "pianoroll",
-		"category": "builtins",
-		"title": "Piano Roll"
-	},
-	"viz": {
 		"slug": "pianoroll",
 		"category": "builtins",
 		"title": "Piano Roll"
@@ -2472,12 +2558,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Oscillators"
 	},
-	"state": {
-		"slug": "state",
-		"category": "builtins",
-		"title": "state",
-		"anchor": "state"
-	},
 	"get": {
 		"slug": "state",
 		"category": "builtins",
@@ -2495,6 +2575,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Example: writing a stepper in userspace",
 		"anchor": "example-writing-a-stepper-in-userspace"
+	},
+	"record-valued state cells": {
+		"slug": "state",
+		"category": "builtins",
+		"title": "Record-valued state cells",
+		"anchor": "record-valued-state-cells"
 	},
 	"cell": {
 		"slug": "state",
@@ -2916,6 +3002,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 };
 
 export const previews: Record<string, string> = {
+	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. This...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Every expression the compiler sees has a known...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
 	"03-synthesis": "With oscillators and filters in hand, the next step is wrapping them in amplitude envelopes to make actual notes.",
@@ -2929,6 +3016,7 @@ export const previews: Record<string, string> = {
 	"curve-notation": "Curve notation is an ASCII-art syntax for defining automation curves that compile to Cedar's  opcode breakpoints.",
 	"literals": "Patterns can be written as typed string prefixes that disambiguate parse semantics at the literal site:",
 	"uri-schemes": "Every asset loaded by nkido — sample banks, SoundFonts, wavetables, single audio files — is identified by a URI. The same scheme syntax works in...",
+	"records": "A record is a value that bundles named fields together. Records are immutable: each operation that \"modifies\" a record produces a new record. They...",
 	"methods": "Akkado supports method-call syntax for any callable in scope, built-in or user-defined. The form",
 	"conditionals": "Signal-rate decision-making: compare signals, combine boolean signals with AND/OR/NOT, and pick between two signals based on a condition. Every...",
 	"pipes": "The pipe operator () and hole () define Akkado's signal flow model.",

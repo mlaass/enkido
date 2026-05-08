@@ -4,9 +4,10 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/options.hpp"
+#include "akkado/builtins.hpp"
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <algorithm>
-#include <cstdio>  // For snprintf - locale-free alternative to ostringstream
 
 namespace akkado {
 
@@ -35,104 +36,33 @@ static NodeIndex next_arg(const AstArena& arena, NodeIndex arg_node) {
     return arena[arg_node].next_sibling;
 }
 
-// Helper: Extract options record and serialize to JSON
-// Supports: {width: 300, height: 80} - numeric fields only for now
-// Note: Uses manual string building instead of ostringstream to avoid
-// std::locale which requires pthreads (not available in AudioWorklet)
-static std::string extract_options_json(const AstArena& arena, NodeIndex arg_node) {
-    if (arg_node == NULL_NODE) {
-        return "";
+// Helper: Extract a viz builtin's options record into a typed payload using
+// the schema declared on the BuiltinInfo. Falls back to a permissive empty
+// schema if the builtin has none — preserves the pre-Phase-5 behaviour for
+// callers without a registered schema (none today, but defensive).
+static codegen::OptionsPayload extract_viz_options(const AstArena& arena,
+                                                    NodeIndex arg_node,
+                                                    std::string_view builtin_name) {
+    const OptionSchema* schema = nullptr;
+    if (const BuiltinInfo* info = lookup_builtin(builtin_name)) {
+        schema = info->find_option_schema(/* param_index = */ 2);
     }
-
-    NodeIndex value_node = unwrap_argument(arena, arg_node);
-    const Node& n = arena[value_node];
-
-    if (n.type != NodeType::RecordLit) {
-        return "";
-    }
-
-    // Build JSON from record fields using manual string concatenation
-    std::string json = "{";
-
-    bool first = true;
-    NodeIndex field_node = n.first_child;
-    while (field_node != NULL_NODE) {
-        const Node& field = arena[field_node];
-
-        // Field nodes are Argument type with RecordFieldData
-        if (field.type == NodeType::Argument &&
-            std::holds_alternative<Node::RecordFieldData>(field.data)) {
-
-            const auto& field_data = field.as_record_field();
-            NodeIndex value_node_child = field.first_child;
-
-            if (value_node_child != NULL_NODE) {
-                const Node& val = arena[value_node_child];
-
-                // Extract numeric value
-                if (val.type == NodeType::NumberLit) {
-                    if (!first) json += ",";
-                    first = false;
-
-                    // Format: "fieldname":number
-                    // Use snprintf for locale-independent float formatting
-                    char num_buf[32];
-                    std::snprintf(num_buf, sizeof(num_buf), "%g", val.as_number());
-                    json += "\"";
-                    json += field_data.name;
-                    json += "\":";
-                    json += num_buf;
-                }
-                // Extract string value (e.g., {gradient: "magma"})
-                else if (val.type == NodeType::StringLit) {
-                    if (!first) json += ",";
-                    first = false;
-
-                    json += "\"";
-                    json += field_data.name;
-                    json += "\":\"";
-                    json += val.as_string();
-                    json += "\"";
-                }
-                // Extract boolean value (e.g., {logScale: true})
-                else if (val.type == NodeType::BoolLit) {
-                    if (!first) json += ",";
-                    first = false;
-
-                    json += "\"";
-                    json += field_data.name;
-                    json += "\":";
-                    json += val.as_bool() ? "true" : "false";
-                }
-            }
-        }
-
-        field_node = arena[field_node].next_sibling;
-    }
-
-    json += "}";
-
-    // Return empty string if no fields were extracted
-    if (first) {
-        return "";
-    }
-
-    return json;
+    static const OptionSchema empty_schema{};
+    return codegen::extract_options(arena, arg_node,
+                                    schema ? *schema : empty_schema);
 }
 
-// Helper: Extract FFT size from options JSON and return log2 value
-// Returns default_log2 if "fft" key is not found
-static std::uint8_t extract_fft_log2(const std::string& options_json, std::uint8_t default_log2 = 10) {
-    if (options_json.empty()) return default_log2;
-
-    auto pos = options_json.find("\"fft\":");
-    if (pos == std::string::npos) return default_log2;
-
-    int fft_val = std::atoi(options_json.c_str() + pos + 6);
-    if (fft_val == 256)  return 8;
-    if (fft_val == 512)  return 9;
-    if (fft_val == 1024) return 10;
-    if (fft_val == 2048) return 11;
+// Helper: quantize an FFT bin count to log2(N), with N constrained to the
+// FFT_PROBE opcode's accepted set (256/512/1024/2048). Default = 1024.
+static std::uint8_t fft_log2_from_payload(const codegen::OptionsPayload& payload,
+                                           std::uint8_t default_log2 = 10) {
+    auto fft = payload.get_number("fft");
+    if (!fft) return default_log2;
+    int v = static_cast<int>(*fft);
+    if (v == 256)  return 8;
+    if (v == 512)  return 9;
+    if (v == 1024) return 10;
+    if (v == 2048) return 11;
     return default_log2;
 }
 
@@ -162,14 +92,14 @@ TypedValue CodeGenerator::handle_pianoroll_call(NodeIndex node, const Node& n) {
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    std::string options_json = extract_options_json(ast_->arena, options_arg);
+    auto options = extract_viz_options(ast_->arena, options_arg, "pianoroll");
 
     // 5. Create visualization declaration
     VisualizationDecl decl;
     decl.name = name;
     decl.type = VisualizationType::PianoRoll;
     decl.state_id = 0;  // Not used for piano roll
-    decl.options_json = options_json;
+    decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
 
@@ -221,7 +151,7 @@ TypedValue CodeGenerator::handle_oscilloscope_call(NodeIndex node, const Node& n
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    std::string options_json = extract_options_json(ast_->arena, options_arg);
+    auto options = extract_viz_options(ast_->arena, options_arg, "oscilloscope");
 
     // 5. Generate state_id for probe buffer
     // Include source offset for uniqueness when multiple viz with same name exist
@@ -238,7 +168,7 @@ TypedValue CodeGenerator::handle_oscilloscope_call(NodeIndex node, const Node& n
     decl.name = name;
     decl.type = VisualizationType::Oscilloscope;
     decl.state_id = state_id;
-    decl.options_json = options_json;
+    decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
     decl.pattern_state_init_index = -1;
@@ -292,7 +222,7 @@ TypedValue CodeGenerator::handle_waveform_call(NodeIndex node, const Node& n) {
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    std::string options_json = extract_options_json(ast_->arena, options_arg);
+    auto options = extract_viz_options(ast_->arena, options_arg, "waveform");
 
     // 5. Generate state_id for probe buffer
     // Include source offset for uniqueness when multiple viz with same name exist
@@ -309,7 +239,7 @@ TypedValue CodeGenerator::handle_waveform_call(NodeIndex node, const Node& n) {
     decl.name = name;
     decl.type = VisualizationType::Waveform;
     decl.state_id = state_id;
-    decl.options_json = options_json;
+    decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
     decl.pattern_state_init_index = -1;
@@ -363,7 +293,7 @@ TypedValue CodeGenerator::handle_spectrum_call(NodeIndex node, const Node& n) {
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    std::string options_json = extract_options_json(ast_->arena, options_arg);
+    auto options = extract_viz_options(ast_->arena, options_arg, "spectrum");
 
     // 5. Generate state_id for probe buffer
     // Include source offset for uniqueness when multiple viz with same name exist
@@ -380,7 +310,7 @@ TypedValue CodeGenerator::handle_spectrum_call(NodeIndex node, const Node& n) {
     decl.name = name;
     decl.type = VisualizationType::Spectrum;
     decl.state_id = state_id;
-    decl.options_json = options_json;
+    decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
     decl.pattern_state_init_index = -1;
@@ -388,7 +318,7 @@ TypedValue CodeGenerator::handle_spectrum_call(NodeIndex node, const Node& n) {
     viz_decls_.push_back(std::move(decl));
 
     // 7. Emit FFT_PROBE opcode (migrated from PROBE for WASM FFT)
-    std::uint8_t fft_log2 = extract_fft_log2(options_json);
+    std::uint8_t fft_log2 = fft_log2_from_payload(options);
 
     std::uint16_t out_buf = buffers_.allocate();
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
@@ -437,7 +367,7 @@ TypedValue CodeGenerator::handle_waterfall_call(NodeIndex node, const Node& n) {
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    std::string options_json = extract_options_json(ast_->arena, options_arg);
+    auto options = extract_viz_options(ast_->arena, options_arg, "waterfall");
 
     // 5. Generate state_id for FFT probe
     push_path("waterfall");
@@ -453,7 +383,7 @@ TypedValue CodeGenerator::handle_waterfall_call(NodeIndex node, const Node& n) {
     decl.name = name;
     decl.type = VisualizationType::Waterfall;
     decl.state_id = state_id;
-    decl.options_json = options_json;
+    decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
     decl.pattern_state_init_index = -1;
@@ -461,7 +391,7 @@ TypedValue CodeGenerator::handle_waterfall_call(NodeIndex node, const Node& n) {
     viz_decls_.push_back(std::move(decl));
 
     // 7. Emit FFT_PROBE opcode
-    std::uint8_t fft_log2 = extract_fft_log2(options_json);
+    std::uint8_t fft_log2 = fft_log2_from_payload(options);
 
     std::uint16_t out_buf = buffers_.allocate();
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {

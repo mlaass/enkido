@@ -80,4 +80,4 @@ b = a * 2      // a is visible here
 c = a + b      // both a and b visible
 ```
 
-Related: [Operators](operators), [Pipes & Holes](pipes)
+Related: [Operators](operators), [Pipes & Holes](pipes), [Records](records)
