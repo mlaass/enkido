@@ -101,6 +101,18 @@ Chords start with an uppercase note letter followed by an optional accidental an
 | `Root#quality` | `F#m7` | With sharp |
 | `Rootbquality` | `Bbmaj7` | With flat |
 
+**Supported qualities** (full list, with aliases):
+
+| Triad                   | Seventh                        | Sixth / Extended                   |
+|-------------------------|--------------------------------|------------------------------------|
+| (none), `M`, `maj`      | `7`, `dom7`                    | `6`, `m6`, `min6`                  |
+| `m`, `min`, `-`         | `M7`, `maj7`, `^`, `^7`        | `9`, `M9`, `maj9`, `m9`, `min9`    |
+| `dim`, `o`              | `m7`, `min7`, `-7`             | `add9`, `add2`                     |
+| `aug`, `+`              | `dim7`, `o7`                   | `11`, `m11`                        |
+| `sus2`, `sus4`, `sus`   | `m7b5`, `0` (half-dim)         | `13`                               |
+| `5` (power, no 3rd)     | `aug7`, `+7`                   |                                    |
+|                         | `mM7`, `m^7`, `minmaj7`        |                                    |
+
 **Examples:**
 ```
 C           // C major
@@ -109,7 +121,13 @@ F#m7        // F# minor 7th
 Bbmaj7      // Bb major 7th
 Gdim        // G diminished
 Esus4       // E suspended 4th
+Cmaj9       // C major 9th — 5 voices
+D^7         // D major 7th (Strudel-style)
+Am11        // A minor 11th — 6 voices
+G13         // G dominant 13th — 6 voices
 ```
+
+The same quality table backs the `chord()` builtin, the `c"..."` mini-notation prefix, and the apostrophe-literal syntax (`Am'`, `Cmaj7_4'`). See the [Chords reference](../web/static/docs/reference/mini-notation/chords.md) for voicing transforms and the canonical interval lists.
 
 ### Rests
 

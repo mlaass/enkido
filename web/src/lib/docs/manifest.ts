@@ -256,6 +256,41 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 };
 
 export const lookup: Record<string, { slug: string; category: string; title: string; anchor?: string }> = {
+	"0": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"5": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"6": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"9": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"11": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"13": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
 	"808": {
 		"slug": "samplers",
 		"category": "builtins",
@@ -837,42 +872,37 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "mini-notation",
 		"title": "Chords"
 	},
-	"m7": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
-	"maj7": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
-	"dim": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
-	"aug": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
-	"sus2": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
-	"sus4": {
-		"slug": "chords",
-		"category": "mini-notation",
-		"title": "Chords"
-	},
 	"triad": {
 		"slug": "chords",
 		"category": "mini-notation",
 		"title": "Chords"
 	},
 	"seventh": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"sixth": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"ninth": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"eleventh": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"thirteenth": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"extended": {
 		"slug": "chords",
 		"category": "mini-notation",
 		"title": "Chords"
@@ -895,6 +925,181 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"anchor": "soundfont"
 	},
 	"e410": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"maj": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"min": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"dim": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"aug": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"sus": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"sus2": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"sus4": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"power": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m6": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"min6": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"dom7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"maj7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"^": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"^7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"min7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"-7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"dim7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"o7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m7b5": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"aug7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"+7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"mm7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m^7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"minmaj7": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m9": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"maj9": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"min9": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"add9": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"add2": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"m11": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"-": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"+": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"o": {
 		"slug": "chords",
 		"category": "mini-notation",
 		"title": "Chords"
@@ -1708,11 +1913,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Operators"
 	},
-	"power": {
-		"slug": "operators",
-		"category": "language",
-		"title": "Operators"
-	},
 	"in": {
 		"slug": "audio-input",
 		"category": "builtins",
@@ -2347,11 +2547,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Math Functions"
 	},
 	"ceil": {
-		"slug": "math",
-		"category": "builtins",
-		"title": "Math Functions"
-	},
-	"min": {
 		"slug": "math",
 		"category": "builtins",
 		"title": "Math Functions"

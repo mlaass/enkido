@@ -157,15 +157,29 @@ Examples: `'c4'`, `'f#3'`, `'Bb5'`
 
 **Chord Literals:**
 ```ebnf
-chord_literal = pitch_name [ chord_symbol ] [ "_" ] octave "'" ;
-chord_symbol  = [ quality ] [ extension ] ;
-quality       = "m" | "-" | "M" | "^" | "maj" | "o" | "dim" | "aug" | "+" | "sus2" | "sus4" | "5" ;
-extension     = "7" | "9" | "11" | "13" | "6" | "69" ;
+chord_literal = pitch_name [ chord_quality ] [ "_" ] octave "'" ;
+chord_quality = ? any key from akkado::CHORD_INTERVALS ? ;
+              (* triads:    M | maj | m | min | -  | dim | o | aug | +
+                          | sus | sus2 | sus4 | 5
+                 sevenths:  7 | dom7 | M7 | maj7 | ^ | ^7
+                          | m7 | min7 | -7 | dim7 | o7
+                          | m7b5 | 0 | aug7 | +7
+                          | mM7 | m^7 | minmaj7
+                 sixths:    6 | m6 | min6
+                 extended:  9 | M9 | maj9 | m9 | min9 | add9 | add2
+                          | 11 | m11 | 13 *)
 ```
-Uses standard Strudel chord symbol notation: `{Root}{Quality}{Extensions}`.
-Use `_` before octave to disambiguate when symbol ends in a digit (e.g., `A7_3'`).
+Uses standard Strudel chord-symbol notation: `{Root}{Quality}`. The lexer
+greedily matches the longest key from the canonical `CHORD_INTERVALS` table —
+the same table the `chord()` builtin and the `c"..."` mini-notation prefix
+consult, so any quality that works in one syntax works in all three.
 
-Examples: `C4'` (C major), `Am3'` (A minor), `Cmaj7_4'` (C major 7), `E5_2'` (E power chord)
+Use `_` before octave to disambiguate when the symbol ends in a digit
+(e.g., `A7_3'`, `Cm9_4'`, `D13_5'`).
+
+Examples: `C4'` (C major), `Am3'` (A minor), `Cmaj7_4'` (C major 7),
+`Cm9_3'` (C minor 9 — 5 voices), `D13_4'` (D dominant 13 — 6 voices),
+`E5_2'` (E power chord).
 
 **Array Literals:**
 ```ebnf

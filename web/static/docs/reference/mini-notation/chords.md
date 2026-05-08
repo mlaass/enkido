@@ -2,20 +2,24 @@
 title: Chords
 category: mini-notation
 order: 3
-keywords: [chord, chords, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, m7, maj7, dim, aug, sus2, sus4, triad, seventh, polyphony, poly, soundfont, E410]
+keywords: [chord, chords, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, triad, seventh, sixth, ninth, eleventh, thirteenth, extended, polyphony, poly, soundfont, E410, M, maj, m, min, dim, aug, sus, sus2, sus4, "5", power, "6", m6, min6, "7", dom7, M7, maj7, "^", "^7", m7, min7, "-7", dim7, o7, m7b5, "0", aug7, "+7", mM7, "m^7", minmaj7, "9", M9, maj9, m9, min9, add9, add2, "11", m11, "13", "-", "+", o]
 group: sequencing
 subgroup: patterns
 icon: Music2
-tagline: Triads, sevenths, voicings, and drops.
+tagline: Triads, sevenths, sixths, extended chords, and voicings.
 subfeatures:
   - name: Triads
     anchor: triad
-    tagline: Major, minor, dim, aug.
-    snippet: 'c"C"'
+    tagline: Major, minor, dim, aug, sus.
+    snippet: 'c"C Am F G"'
   - name: Sevenths
     anchor: seventh
-    tagline: Maj7, m7, dom7, dim7.
+    tagline: Maj7, m7, dom7, dim7, mM7, m7b5.
     snippet: 'c"Cmaj7 Am7 Dm7 G7"'
+  - name: Extended
+    anchor: extended
+    tagline: 9ths, 11ths, 13ths, adds.
+    snippet: 'c"Cmaj9 Am11 D13"'
   - name: Voicings
     anchor: voicing
     tagline: Inversions and spread voicings.
@@ -36,41 +40,93 @@ Two paths to chordal patterns: the `chord()` function with chord-symbol literals
 
 ```akk
 // Major chord
-chord("C")      // C major triad
+chord("C")          // C major triad
 
 // Minor seventh
-chord("Am7")    // A minor seventh
+chord("Am7")        // A minor seventh
+
+// Extended chord
+chord("Cmaj9")      // C major 9th — 5 voices
 
 // Chord progression
 chord("Am C Dm G")  // One chord per beat
 ```
 
+All three syntaxes — `chord("C^7")`, `c"C^7"` mini-notation, and the
+apostrophe-literal `C^7_4'` — share one canonical quality table
+(`akkado::CHORD_INTERVALS`). Whatever works in one works in all of them.
+
 ## triad
 
-A **triad** is a 3-note chord: root, third, fifth. Bare letter names (`C`, `Am`, `F`) parse as triads. Quality suffixes:
+A **triad** is a 3-note chord: root, third, fifth. Bare letter names (`C`, `Am`, `F`) parse as major triads. All quality aliases:
 
-| Suffix    | Meaning |
-|-----------|---------|
-| (none)    | Major triad |
-| `m`       | Minor triad |
-| `dim`     | Diminished |
-| `aug`     | Augmented |
-| `sus2`    | Suspended 2 |
-| `sus4`    | Suspended 4 |
+| Suffix              | Intervals     | Meaning |
+|---------------------|---------------|---------|
+| (none), `M`, `maj`  | `0 4 7`       | Major triad |
+| `m`, `min`, `-`     | `0 3 7`       | Minor triad |
+| `dim`, `o`          | `0 3 6`       | Diminished |
+| `aug`, `+`          | `0 4 8`       | Augmented |
+| `sus2`              | `0 2 7`       | Suspended 2nd |
+| `sus4`, `sus`       | `0 5 7`       | Suspended 4th (bare `sus` = sus4) |
+| `5`                 | `0 7`         | Power chord (no third) |
+
+```akk
+// Lots of triad flavors
+c"C Dm Eo Faug Gsus4 A- B+ E5" |> soundfont(@, "gm", 0) |> out(@, @)
+```
 
 ## seventh
 
-A **seventh** chord adds a 7th degree. Quality suffixes:
+A **seventh** chord adds a 7th degree:
 
-| Suffix    | Meaning |
-|-----------|---------|
-| `7`       | Dominant 7 |
-| `maj7`    | Major 7 |
-| `m7`      | Minor 7 |
+| Suffix                   | Intervals       | Meaning |
+|--------------------------|-----------------|---------|
+| `7`, `dom7`              | `0 4 7 10`      | Dominant 7 |
+| `M7`, `maj7`, `^`, `^7`  | `0 4 7 11`      | Major 7 |
+| `m7`, `min7`, `-7`       | `0 3 7 10`      | Minor 7 |
+| `dim7`, `o7`             | `0 3 6 9`       | Diminished 7 (fully dim) |
+| `m7b5`, `0`              | `0 3 6 10`      | Half-diminished 7 |
+| `aug7`, `+7`             | `0 4 8 10`      | Augmented 7 |
+| `mM7`, `m^7`, `minmaj7`  | `0 3 7 11`      | Minor-major 7 |
 
 ```akk
-// Jazz progression
-chord("Cmaj7 Am7 Dm7 G7") |> mtof(%) |> osc("saw", %) |> out(%, %)
+// Jazz progression — same chord, three ways
+chord("Cmaj7 Am7 Dm7 G7")
+chord("CM7 A-7 D-7 G7")        // alt-symbol style
+chord("C^7 Am7 Dm7 G7")        // Strudel-style ^
+```
+
+## sixth
+
+A **sixth** chord stacks a 6th instead of a 7th — open, lush, bossa-nova flavor:
+
+| Suffix         | Intervals     | Meaning |
+|----------------|---------------|---------|
+| `6`            | `0 4 7 9`     | Major 6 |
+| `m6`, `min6`   | `0 3 7 9`     | Minor 6 |
+
+```akk
+chord("C6 Am6 Dm6 G6") |> soundfont(@, "gm", 0) |> out(@, @)
+```
+
+## extended
+
+**Extended** chords stack 9ths, 11ths, or 13ths above a 7th. They produce 5–6 voices per step.
+
+| Suffix             | Intervals             | Meaning |
+|--------------------|-----------------------|---------|
+| `9`                | `0 4 7 10 14`         | Dominant 9 |
+| `M9`, `maj9`       | `0 4 7 11 14`         | Major 9 |
+| `m9`, `min9`       | `0 3 7 10 14`         | Minor 9 |
+| `add9`             | `0 4 7 14`            | Major triad + 9 (no 7th) |
+| `add2`             | `0 2 4 7`             | Major triad + 2 (close-voiced) |
+| `11`               | `0 4 7 10 14 17`      | Dominant 11 |
+| `m11`              | `0 3 7 10 14 17`      | Minor 11 |
+| `13`               | `0 4 7 10 14 21`      | Dominant 13 |
+
+```akk
+// Modal jazz vamp — full extensions
+c"Cmaj9 Am11 D13 G13" |> soundfont(@, "gm", 0) |> out(@, @)
 ```
 
 ## inline
@@ -109,7 +165,7 @@ Chord patterns produce events with multiple voices per step. How those voices re
   c"CM Am Dm G" |> poly(@, lead, 8) |> out(@, @)
   ```
 
-> **Voice limit**: chord events carry up to **4 voices** per step (`MAX_VALUES_PER_EVENT`). Quality dictionaries with more than 4 intervals (e.g. a 5-note maj9 voicing) are truncated. Bumping this constant is tracked as a follow-up.
+> **Voice limit**: chord events carry up to **16 voices** per step (`MAX_VALUES_PER_EVENT`). The largest built-in quality is `13` at 6 voices, so every chord in the standard table fits comfortably. Custom voicings registered via `addVoicings()` are truncated past 16 intervals.
 
 ## anchor
 
