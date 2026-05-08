@@ -1,9 +1,9 @@
-> **Status: PHASES 1–2 COMPLETE (2026-05-07)** — Phase 1: static option-field schema landed for the 5 visualizers; editor now surfaces field-name completions inside record-typed builtin args. Phase 2: `akkado_get_shape_index(source, cursor)` WASM export ships an analyzer-driven shape JSON (top-level Record / Pattern / Array-of-Record bindings + `patternHole` for the cursor's enclosing pipe); editor pulls on idle (300 ms debounce) and surfaces field completions on `r.` and `%.`. Phases 3–6 (destructuring, mutability, viz migration, audit) not started. Spread (soft prerequisite) decision deferred until Phase 3.
+> **Status: DONE (2026-05-08)** — All 6 phases shipped. Phase 1: static option-field schema for the 5 visualizers (`cd11ffe`). Phase 2: `akkado_get_shape_index(source, cursor)` WASM export + editor pull-on-idle (`56c2fa9`). Phase 3: statement-level `{x, y} = r`, fn-param `fn f({x, y})`, defaults `{x = 1}`, with E187/E188 (`47e2556`, `997449cd`). Phase 4a: record-valued state cells with E122 widened + E189 shape mismatch (`cf7f81d`). Phase 4b: `cell.field` read/write sugar with E150/E204/E205 (`5b9358c`). Phase 5: shared `extract_options(arena, node, schema)` helper + viz handler migration + records reference docs + record-as-options convention doc (`52ce223`). Phase 6: audit at `docs/audits/prd-records-system-unification_audit_2026-05-08.md` recommends DONE.
 
 # PRD: Records System Unification — Editor Visibility, Destructuring, Options Convention, Mutability
 
 **Version:** 1.0
-**Status:** Phases 1–2 Complete (2026-05-07)
+**Status:** DONE (2026-05-08)
 **Author:** Claude (drafted with Moritz)
 **Date:** 2026-05-07
 
