@@ -1479,6 +1479,33 @@ std::shared_ptr<PatternPayload> CodeGenerator::emit_per_voice_seqpat(NodeIndex n
     step_inst.state_id = state_id;
     emit(step_inst);
 
+    // Per-voice freq buffers for chord polyphony. voice_freqs[0] = value_buf
+    // (voice 0 already emitted above). Allocate and emit one extra SEQPAT_STEP
+    // per chord voice so consumers like soundfont can read every voice's freq.
+    std::vector<std::uint16_t> voice_freqs;
+    if (max_voices > 1 && !is_sample_pattern) {
+        voice_freqs.reserve(max_voices);
+        voice_freqs.push_back(value_buf);
+        for (std::uint8_t v = 1; v < max_voices; ++v) {
+            std::uint16_t v_buf = buffers_.allocate();
+            if (v_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", loc);
+                return nullptr;
+            }
+            cedar::Instruction v_step{};
+            v_step.opcode = cedar::Opcode::SEQPAT_STEP;
+            v_step.out_buffer = v_buf;
+            v_step.inputs[0] = 0xFFFF;          // velocity already on voice 0
+            v_step.inputs[1] = 0xFFFF;          // trigger already on voice 0
+            v_step.inputs[2] = v;               // voice index
+            v_step.inputs[3] = clock_override;
+            v_step.inputs[4] = 0xFFFF;
+            v_step.state_id = state_id;
+            emit(v_step);
+            voice_freqs.push_back(v_buf);
+        }
+    }
+
     cedar::Instruction gate_inst{};
     gate_inst.opcode = cedar::Opcode::SEQPAT_GATE;
     gate_inst.out_buffer = gate_buf;
@@ -1548,6 +1575,7 @@ std::shared_ptr<PatternPayload> CodeGenerator::emit_per_voice_seqpat(NodeIndex n
     payload->fields[PatternPayload::SAMPLE_ID] = sample_id_buf;
     payload->is_sample_pattern = is_sample_pattern;
     payload->max_voices = max_voices;
+    payload->voice_freqs = std::move(voice_freqs);
     return payload;
 }
 
@@ -1804,54 +1832,23 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     // Check for polyphonic patterns (chords with multiple values per event)
     std::uint8_t max_voices = compiler.max_voices();
 
-    // Track polyphonic patterns for error reporting (must be consumed by poly())
+    // Track polyphonic patterns for error reporting. Consumers that handle
+    // chord polyphony natively (e.g. soundfont) erase this entry; mono synth
+    // chains still produce E410.
     if (max_voices > 1) {
         polyphonic_pattern_nodes_[node] = {n.location, max_voices};
     }
 
-    // Emit single-voice SEQPAT_STEP (voice 0 only)
-    std::uint16_t gate_buf = buffers_.allocate();
-    std::uint16_t type_buf = buffers_.allocate();
-
-    if (gate_buf == BufferAllocator::BUFFER_UNUSED ||
-        type_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
+    // Emit per-voice SEQPAT_STEP plus the voice-0 GATE/TYPE/FIELD/PHASE block.
+    // emit_per_voice_seqpat populates payload->voice_freqs when max_voices > 1
+    // so consumers can iterate every chord voice.
+    auto payload = emit_per_voice_seqpat(node, state_id, max_voices, value_buf,
+                                          velocity_buf, trigger_buf,
+                                          /*is_sample_pattern=*/false, n.location);
+    if (!payload) {
         pop_path();
         return TypedValue::void_val();
     }
-
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;
-    step_inst.inputs[0] = velocity_buf;
-    step_inst.inputs[1] = trigger_buf;
-    step_inst.inputs[2] = 0;  // voice 0
-    step_inst.inputs[3] = 0xFFFF;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
-
-    cedar::Instruction gate_inst{};
-    gate_inst.opcode = cedar::Opcode::SEQPAT_GATE;
-    gate_inst.out_buffer = gate_buf;
-    gate_inst.inputs[0] = 0;  // voice 0
-    gate_inst.inputs[1] = 0xFFFF;
-    gate_inst.inputs[2] = 0xFFFF;
-    gate_inst.inputs[3] = 0xFFFF;
-    gate_inst.inputs[4] = 0xFFFF;
-    gate_inst.state_id = state_id;
-    emit(gate_inst);
-
-    cedar::Instruction type_inst{};
-    type_inst.opcode = cedar::Opcode::SEQPAT_TYPE;
-    type_inst.out_buffer = type_buf;
-    type_inst.inputs[0] = 0;  // voice 0
-    type_inst.inputs[1] = 0xFFFF;
-    type_inst.inputs[2] = 0xFFFF;
-    type_inst.inputs[3] = 0xFFFF;
-    type_inst.inputs[4] = 0xFFFF;
-    type_inst.state_id = state_id;
-    emit(type_inst);
 
     // Store sequence program initialization data
     StateInitData seq_init;
@@ -1866,17 +1863,8 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     seq_init.sequence_sample_mappings = compiler.sample_mappings();
     state_inits_.push_back(std::move(seq_init));
 
-    // Build PatternPayload with monophonic fields
-    auto payload = std::make_shared<PatternPayload>();
-    payload->fields[PatternPayload::FREQ] = value_buf;
-    payload->fields[PatternPayload::VEL] = velocity_buf;
-    payload->fields[PatternPayload::TRIG] = trigger_buf;
-    payload->fields[PatternPayload::GATE] = gate_buf;
-    // TYPE stays 0xFFFF
     payload->state_id = state_id;
     payload->cycle_length = cycle_length;
-    payload->is_sample_pattern = false;
-    payload->max_voices = max_voices;
 
     // Phase 2.1 PRD §11: chord patterns can carry record-suffix properties too
     // (e.g. `chord("Am{velmod:0.5}")`). Surface them via SEQPAT_PROP.
@@ -2860,6 +2848,9 @@ static TypedValue emit_pattern_with_state(
     payload->cycle_length = cycle_length;
     payload->is_sample_pattern = is_sample_pattern;
     payload->max_voices = max_voices;
+    if (max_voices > 1 && !is_sample_pattern) {
+        payload->voice_freqs = std::move(voice_buffers);
+    }
 
     // Phase 2.1 PRD §11: emit per-key SEQPAT_PROP buffers for custom properties
     // collected by SequenceCompiler. Covers all transforms going through this
@@ -5585,6 +5576,21 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
+    // soundfont natively dispatches chord polyphony: each chord voice goes to
+    // its own SoundFontVoiceState (with its own internal 32-voice allocator),
+    // and the per-voice outputs are summed. Clear the E410 tracking entry —
+    // poly() is not required for soundfont.
+    polyphonic_pattern_nodes_.erase(pattern_arg);
+
+    const auto& voice_freqs = pattern_tv.pattern->voice_freqs;
+    std::vector<std::uint16_t> freq_per_voice;
+    if (voice_freqs.empty()) {
+        freq_per_voice.push_back(freq_buf);
+    } else {
+        freq_per_voice = voice_freqs;
+    }
+    std::uint16_t trig_buf = pat_fields[PatternPayload::TRIG];
+
     // Find or assign SF2 slot index (deduplicate by filename)
     std::uint8_t sf_slot = 0;
     bool found_slot = false;
@@ -5600,12 +5606,10 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         required_soundfonts_.push_back(RequiredSoundFont{*filename, preset_index});
     }
 
-    // Create unique state ID
     std::uint32_t sf_count = call_counters_["soundfont"]++;
     push_path("soundfont#" + std::to_string(sf_count));
-    std::uint32_t state_id = compute_state_id();
 
-    // Emit constant for preset index
+    // Emit constant for preset index (shared across voices)
     std::uint16_t preset_buf = codegen::emit_push_const(buffers_, instructions_,
                                                          static_cast<float>(preset_index));
     if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
@@ -5615,29 +5619,55 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     }
     source_locations_.push_back(current_source_loc_);
 
-    // Allocate output buffer
-    std::uint16_t out_buf = buffers_.allocate();
-    if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
+    // Emit one SOUNDFONT_VOICE per chord voice. Each gets its own state_id
+    // (and therefore its own SoundFontVoiceState with 32 internal voices)
+    // so simultaneous chord notes don't fight over one allocator.
+    std::vector<std::uint16_t> per_voice_outs;
+    per_voice_outs.reserve(freq_per_voice.size());
+    for (std::size_t v = 0; v < freq_per_voice.size(); ++v) {
+        push_path("voice#" + std::to_string(v));
+        std::uint32_t state_id = compute_state_id();
+
+        std::uint16_t out_buf = buffers_.allocate();
+        if (out_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            pop_path();
+            return TypedValue::void_val();
+        }
+
+        cedar::Instruction sf_inst{};
+        sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
+        sf_inst.out_buffer = out_buf;
+        sf_inst.inputs[0] = gate_buf;
+        sf_inst.inputs[1] = freq_per_voice[v];
+        sf_inst.inputs[2] = vel_buf;
+        sf_inst.inputs[3] = preset_buf;
+        sf_inst.inputs[4] = trig_buf;
+        sf_inst.state_id = state_id;
+        sf_inst.rate = sf_slot;
+        emit(sf_inst);
+
+        per_voice_outs.push_back(out_buf);
         pop_path();
-        return TypedValue::void_val();
     }
 
-    // Emit SOUNDFONT_VOICE instruction
-    cedar::Instruction sf_inst{};
-    sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
-    sf_inst.out_buffer = out_buf;
-    sf_inst.inputs[0] = gate_buf;     // Gate signal (sustained)
-    sf_inst.inputs[1] = freq_buf;     // Frequency in Hz
-    sf_inst.inputs[2] = vel_buf;      // Velocity (0-1)
-    sf_inst.inputs[3] = preset_buf;   // Preset index (constant)
-    sf_inst.inputs[4] = pat_fields[PatternPayload::TRIG];  // Trigger pulse from SEQPAT_STEP
-    sf_inst.state_id = state_id;
-    sf_inst.rate = sf_slot;           // SF2 file index (resolved to sf_id at runtime)
-    emit(sf_inst);
+    // Sum per-voice outputs into one buffer. Single voice = no sum needed.
+    std::uint16_t mixed = per_voice_outs[0];
+    for (std::size_t v = 1; v < per_voice_outs.size(); ++v) {
+        std::uint16_t sum_buf = buffers_.allocate();
+        if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return TypedValue::void_val();
+        }
+        emit(cedar::Instruction::make_binary(cedar::Opcode::ADD, sum_buf,
+                                              mixed, per_voice_outs[v]));
+        mixed = sum_buf;
+    }
 
     pop_path();
-    return cache_and_return(node, TypedValue::signal(out_buf));
+    return cache_and_return(node, TypedValue::signal(mixed));
 }
 
 TypedValue CodeGenerator::handle_input_call(NodeIndex node, const Node& n) {

@@ -2,7 +2,7 @@
 title: Chords
 category: mini-notation
 order: 3
-keywords: [chord, chords, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, m7, maj7, dim, aug, sus2, sus4, triad, seventh]
+keywords: [chord, chords, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, m7, maj7, dim, aug, sus2, sus4, triad, seventh, polyphony, poly, soundfont, E410]
 group: sequencing
 subgroup: patterns
 icon: Music2
@@ -86,6 +86,30 @@ pat("[c4 e4 g4]")
 // Mixed sequence and chord
 pat("c4 [c4 e4 g4] e4 g4")
 ```
+
+## polyphony
+
+Chord patterns produce events with multiple voices per step. How those voices reach the audio output depends on what consumes the pattern:
+
+- **Internally polyphonic instruments** (`soundfont`) accept chord patterns directly. Every chord voice is dispatched to a separate voice slot inside the instrument, and the per-voice outputs are summed automatically.
+
+  ```akk
+  c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@, @)
+  ```
+
+- **Mono synths** (oscillators, filters, single-voice DSP) require an explicit `poly(N, instrument_fn)` wrapper to allocate voices. A chord patched directly into a mono synth raises **E410** because there is no implicit voice allocation:
+
+  ```akk
+  // ✗ E410 — chord into a mono synth has no voice allocator
+  c"CM Am Dm G" |> osc("saw", @.freq) |> out(@, @)
+
+  // ✓ poly() wraps the synth in N parallel voices
+  fn lead(freq, gate, vel) =
+    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
+  c"CM Am Dm G" |> poly(@, lead, 8) |> out(@, @)
+  ```
+
+> **Voice limit**: chord events carry up to **4 voices** per step (`MAX_VALUES_PER_EVENT`). Quality dictionaries with more than 4 intervals (e.g. a 5-note maj9 voicing) are truncated. Bumping this constant is tracked as a follow-up.
 
 ## anchor
 

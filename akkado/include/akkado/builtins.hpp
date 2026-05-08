@@ -161,6 +161,14 @@ struct BuiltinInfo {
     std::array<OptionSchema, MAX_OPTION_SCHEMAS_PER_BUILTIN> option_schemas = {};
     std::uint8_t option_schema_count = 0;
 
+    // True for instruments that natively dispatch chord polyphony — i.e. they
+    // accept a polyphonic pattern (max_voices > 1) without an enclosing
+    // `poly()` because they have an internal voice allocator. When set, the
+    // builtin's handler is responsible for erasing the pattern node from
+    // CodeGenerator::polyphonic_pattern_nodes_ so the E410 warning doesn't
+    // fire. Today: `soundfont`. Future: SF_PLAY / SAMPLE_VOICE.
+    bool consumes_polyphonic_pattern = false;
+
     /// Get total parameter count (required + optional)
     [[nodiscard]] std::uint8_t total_params() const {
         return input_count + optional_count;
@@ -384,10 +392,11 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                      {"gate", "pitch", "id", "", "", ""},
                      {NAN, NAN, NAN},
                      "Looping sample playback. id accepts a sample name or numeric sample-bank ID."}},
-    {"soundfont", {cedar::Opcode::NOP, 2, 1, false,
-                   {"input", "file", "preset", "", "", ""},
-                   {NAN, NAN, NAN, NAN, NAN},
-                   "SoundFont playback: soundfont(pattern, \"file.sf2\", preset)"}},
+    {"soundfont", {.opcode = cedar::Opcode::NOP, .input_count = 2, .optional_count = 1, .requires_state = false,
+                   .param_names = {"input", "file", "preset", "", "", ""},
+                   .defaults = {NAN, NAN, NAN, NAN, NAN},
+                   .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset)",
+                   .consumes_polyphonic_pattern = true}},
 
     // Delays - time in seconds (default, intuitive)
     // Optional dry/wet parameters for mix control (defaults: dry=0.0, wet=1.0 = 100% wet)

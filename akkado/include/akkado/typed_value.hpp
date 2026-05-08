@@ -47,6 +47,14 @@ struct PatternPayload {
         0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF
     };
 
+    /// Per-voice frequency buffers for polyphonic patterns (chord patterns and
+    /// mini-notation `[c4,e4,g4]`). voice_freqs[0] mirrors fields[FREQ] for the
+    /// mono/voice-0 fast path; voice_freqs[1..N-1] hold the upper chord voices
+    /// emitted by SEQPAT_STEP with the matching voice index. Empty for
+    /// monophonic patterns. Consumers that handle chord polyphony natively
+    /// (e.g. `soundfont`) iterate this vector to emit one instruction per voice.
+    std::vector<std::uint16_t> voice_freqs;
+
     /// Phase 2.1 PRD §11: custom property buffers populated by SEQPAT_PROP.
     /// Keyed by source name (e.g. "cutoff"); value is the buffer index.
     /// Resolved by `pattern_field()` after the fixed-field check fails.

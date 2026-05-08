@@ -13,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 #include <vector>
 
 // Helper to decode float from PUSH_CONST instruction
@@ -8663,5 +8664,232 @@ TEST_CASE("Spread integration: edge cases", "[codegen][spread][integration]") {
         REQUIRE(result.success);
     }
 }
+
+// ============================================================================
+// Chord patterns into soundfont (and other internally-polyphonic instruments)
+// ============================================================================
+// Regression tests for the bug where:
+//   1) c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@) errored with E410
+//      ("wrap in poly()") even though soundfont has internal 32-voice polyphony.
+//   2) c"…" .voicing("open") |> soundfont(…) ignored upper voices because only
+//      voice 0's freq buffer was published on PatternPayload.
+//   3) c"…" .transpose(0) |> soundfont(…) collapsed the chord to its root.
+//
+// All three traced to a single root cause: emit_pattern_with_state /
+// emit_per_voice_seqpat / handle_chord_call only published voice 0 to
+// PatternPayload::FREQ even when max_voices > 1. The fix publishes per-voice
+// freq buffers via PatternPayload::voice_freqs and makes handle_soundfont_call
+// emit one SOUNDFONT_VOICE per voice (each with its own state_id) summed
+// into the final output.
+//
+// Helper: count instructions matching a predicate.
+namespace {
+template <typename Pred>
+std::size_t count_insts(const std::vector<cedar::Instruction>& insts, Pred p) {
+    std::size_t n = 0;
+    for (const auto& i : insts) if (p(i)) ++n;
+    return n;
+}
+}  // namespace
+
+TEST_CASE("chord pattern pipes directly into soundfont", "[chord-soundfont]") {
+    SECTION("c\"CM Am Dm G\" |> soundfont compiles without E410") {
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@, @))");
+        // Inspect diagnostics for E410 even if other unrelated errors crept in.
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.code != "E410");
+        }
+        REQUIRE(result.success);
+    }
+
+    SECTION("emits one SOUNDFONT_VOICE per chord voice (3 for triads)") {
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count = count_insts(insts,
+            [](const cedar::Instruction& i) {
+                return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
+            });
+        // CM/Am/Dm/G are all triads → 3 voices → 3 SOUNDFONT_VOICE instructions.
+        CHECK(sf_count == 3);
+    }
+
+    SECTION("each per-voice SOUNDFONT_VOICE has a unique state_id and freq input") {
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::vector<std::uint32_t> state_ids;
+        std::vector<std::uint16_t> freq_bufs;
+        std::vector<std::uint8_t> sf_slots;
+        for (const auto& i : insts) {
+            if (i.opcode == cedar::Opcode::SOUNDFONT_VOICE) {
+                state_ids.push_back(i.state_id);
+                freq_bufs.push_back(i.inputs[1]);
+                sf_slots.push_back(i.rate);
+            }
+        }
+        REQUIRE(state_ids.size() == 3);
+        // All voices share the same SF2 slot (one file load).
+        CHECK(sf_slots[0] == sf_slots[1]);
+        CHECK(sf_slots[1] == sf_slots[2]);
+        // But different state_ids (separate SoundFontVoiceState instances).
+        CHECK(state_ids[0] != state_ids[1]);
+        CHECK(state_ids[1] != state_ids[2]);
+        CHECK(state_ids[0] != state_ids[2]);
+        // And different freq buffers (one per chord voice).
+        CHECK(freq_bufs[0] != freq_bufs[1]);
+        CHECK(freq_bufs[1] != freq_bufs[2]);
+        CHECK(freq_bufs[0] != freq_bufs[2]);
+    }
+
+    SECTION("mono synth chain still rejects polyphonic chord pattern (E410)") {
+        // Regression guard: the strict 'wrap in poly()' rule must still fire
+        // for anything that doesn't have its own voice allocator.
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" |> osc("saw", @.freq) |> out(@, @))");
+        // Either E410 fires (preferred) or some other error — but the rule
+        // is that a chord chord into a mono UGen must NOT silently work.
+        bool has_e410 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E410") { has_e410 = true; break; }
+        }
+        CHECK(has_e410);
+    }
+}
+
+TEST_CASE("voicing on chord pattern preserves multi-voice soundfont path",
+          "[chord-soundfont][voicing]") {
+    // The bug the user reported: c"…" .voicing(…) |> soundfont fed only voice
+    // 0 to soundfont. After the fix, voicing must keep emitting one
+    // SOUNDFONT_VOICE per voice. (This test does NOT assert that close vs
+    // open produce different event values — the voicing optimizer can
+    // legitimately converge to the same inversion when its candidate set
+    // spans the chord space; that quirk is separate from the soundfont path.)
+    SECTION(".voicing(\"close\") still emits 3 SOUNDFONT_VOICE for a triad") {
+        auto result = akkado::compile(
+            R"(c"CM" .voicing("close") |> soundfont(@, "gm", 0) |> out(@, @))");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.code != "E410");
+        }
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count = count_insts(insts,
+            [](const cedar::Instruction& i) {
+                return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
+            });
+        CHECK(sf_count == 3);
+    }
+
+    SECTION(".voicing(\"open\") still emits 3 SOUNDFONT_VOICE for a triad") {
+        auto result = akkado::compile(
+            R"(c"CM" .voicing("open") |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count = count_insts(insts,
+            [](const cedar::Instruction& i) {
+                return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
+            });
+        CHECK(sf_count == 3);
+    }
+
+    SECTION("voicing event payload still has num_values == 3 for triads") {
+        auto result = akkado::compile(
+            R"(c"CM" .voicing("close") |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        REQUIRE_FALSE(result.state_inits.empty());
+        const auto& events = result.state_inits[0].sequence_events;
+        REQUIRE_FALSE(events.empty());
+        REQUIRE_FALSE(events[0].empty());
+        CHECK(events[0][0].num_values == 3);
+    }
+}
+
+TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]") {
+    SECTION("transpose(0) on c\"CM Am Dm G\" keeps num_values == 3") {
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" .transpose(0) |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        REQUIRE_FALSE(result.state_inits.empty());
+        const auto& events = result.state_inits[0].sequence_events;
+        REQUIRE_FALSE(events.empty());
+        // Each of the 4 chord events is a triad; voices must not collapse.
+        for (const auto& evlist : events) {
+            for (const auto& ev : evlist) {
+                if (ev.type == cedar::EventType::DATA) {
+                    CHECK(ev.num_values == 3);
+                }
+            }
+        }
+    }
+
+    SECTION("transpose(0) emits 3 SOUNDFONT_VOICE — chord reaches consumer") {
+        auto result = akkado::compile(
+            R"(c"CM Am Dm G" .transpose(0) |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count = count_insts(insts,
+            [](const cedar::Instruction& i) {
+                return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
+            });
+        CHECK(sf_count == 3);
+    }
+
+    SECTION("transpose(12) doubles every voice frequency, preserving voices") {
+        auto base = akkado::compile(
+            R"(c"CM" |> soundfont(@, "gm", 0) |> out(@, @))");
+        auto up = akkado::compile(
+            R"(c"CM" .transpose(12) |> soundfont(@, "gm", 0) |> out(@, @))");
+        REQUIRE(base.success);
+        REQUIRE(up.success);
+        REQUIRE_FALSE(base.state_inits.empty());
+        REQUIRE_FALSE(up.state_inits.empty());
+        const auto& bev = base.state_inits[0].sequence_events[0][0];
+        const auto& uev = up.state_inits[0].sequence_events[0][0];
+        REQUIRE(bev.num_values == 3);
+        REQUIRE(uev.num_values == 3);
+        for (std::uint8_t v = 0; v < 3; ++v) {
+            CHECK(uev.values[v] == Catch::Approx(bev.values[v] * 2.0f).margin(1.0f));
+        }
+    }
+}
+
+TEST_CASE("user-registered voicing dictionary is recognized and pipes to soundfont",
+          "[chord-soundfont][voicing][addVoicings]") {
+    SECTION("addVoicings + .voicing(name) compiles cleanly through soundfont") {
+        // Note: voice_chords() does not currently substitute the dict's
+        // quality table for the chord's intrinsic intervals (see TODO in
+        // akkado/src/voicing.cpp:81-87). So a 5-note dict like
+        // {M:[0,4,7,11,14]} doesn't actually expand a CM triad into a 5-note
+        // voicing today — the chord_parser's [0,4,7] intervals are used.
+        // What this test guards is the integration: addVoicings registers the
+        // name, .voicing(name) accepts it (no E141), and the chord still
+        // dispatches to soundfont as a multi-voice signal (no E410, multiple
+        // SOUNDFONT_VOICE instructions emitted).
+        auto result = akkado::compile(R"(
+            addVoicings("piano-jazz", {M: [0, 4, 7, 11, 14], m: [0, 3, 7, 10, 14]})
+            c"CM Am Dm G" .voicing("piano-jazz") |> soundfont(@, "gm", 0) |> out(@, @)
+        )");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.code != "E410");
+            CHECK(d.code != "E141");
+        }
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count = count_insts(insts,
+            [](const cedar::Instruction& i) {
+                return i.opcode == cedar::Opcode::SOUNDFONT_VOICE;
+            });
+        // Triads in the chord-parser sense → 3 SOUNDFONT_VOICE; if/when
+        // voice_chords() learns to honor dict.qualities this can grow.
+        CHECK(sf_count == 3);
+    }
+}
+
 
 

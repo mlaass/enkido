@@ -877,6 +877,28 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "mini-notation",
 		"title": "Chords"
 	},
+	"polyphony": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"poly": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "poly",
+		"anchor": "poly"
+	},
+	"soundfont": {
+		"slug": "soundfonts",
+		"category": "builtins",
+		"title": "soundfont",
+		"anchor": "soundfont"
+	},
+	"e410": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
 	"microtonal": {
 		"slug": "microtonal",
 		"category": "mini-notation",
@@ -1098,12 +1120,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "uri-schemes",
 		"category": "reference",
 		"title": "URI Schemes"
-	},
-	"soundfont": {
-		"slug": "soundfonts",
-		"category": "builtins",
-		"title": "soundfont",
-		"anchor": "soundfont"
 	},
 	"wavetable": {
 		"slug": "uri-schemes",
@@ -1555,11 +1571,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Arrays"
 	},
-	"polyphony": {
-		"slug": "arrays",
-		"category": "language",
-		"title": "Arrays"
-	},
 	"voices": {
 		"slug": "polyphony",
 		"category": "builtins",
@@ -1999,12 +2010,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "samples-loading",
 		"category": "builtins",
 		"title": "Samples Loading"
-	},
-	"poly": {
-		"slug": "polyphony",
-		"category": "builtins",
-		"title": "poly",
-		"anchor": "poly"
 	},
 	"legato": {
 		"slug": "polyphony",
