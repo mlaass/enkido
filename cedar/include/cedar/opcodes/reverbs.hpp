@@ -33,8 +33,20 @@ constexpr float FREEVERB_ROOM_OFFSET_DEFAULT = 0.7f;
 
 [[gnu::always_inline]]
 inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    // Stereo-native: writes out_buffer (L) and out_buffer+1 (R) in one call.
+    // When STEREO_INPUT is set in inst.flags, the primary signal input is a
+    // stereo pair (inputs[0] = L, inputs[0]+1 = R). When unset, the mono input
+    // is auto-broadcast to both internal lanes. Each lane has its own full
+    // 8-comb + 4-allpass network with Schroeder +23-sample length offsets on
+    // the R lane for L/R decorrelation. See prd-stereo-native-opcodes.md for
+    // the flag truth table.
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* room_size = ctx.buffers->get(inst.inputs[1]);
     const float* damping = ctx.buffers->get(inst.inputs[2]);
     const float* room_scale_in = ctx.buffers->get(inst.inputs[3]);
@@ -44,8 +56,11 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
+    constexpr float ALLPASS_GAIN = 0.5f;
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
+        float x_l = input[i];
+        float x_r = stereo_in ? input_r[i] : x_l;
         float room = std::clamp(room_size[i], 0.0f, 1.0f);
         float damp = std::clamp(damping[i], 0.0f, 1.0f);
 
@@ -56,49 +71,57 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
         // Feedback coefficient from room size
         float feedback = room * room_scale + room_offset;
 
-        // Sum output from all 8 comb filters in parallel
-        float comb_sum = 0.0f;
-        for (std::size_t c = 0; c < FreeverbState::NUM_COMBS; ++c) {
-            float* buffer = state.comb_buffers[c];
-            std::size_t size = FreeverbState::COMB_SIZES[c];
+        // Process L and R lanes with per-channel state and Schroeder-offset
+        // delay-line sizes. The two lanes are otherwise structurally identical.
+        float y_lr[2] = {0.0f, 0.0f};
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? x_l : x_r;
 
-            // Read from delay line
-            float delayed = buffer[state.comb_pos[c]];
+            // Sum output from all 8 comb filters in parallel
+            float comb_sum = 0.0f;
+            for (std::size_t c = 0; c < FreeverbState::NUM_COMBS; ++c) {
+                float* buffer = state.comb_buffers[ch][c];
+                std::size_t size = FreeverbState::COMB_SIZES_LR[ch][c];
 
-            // Lowpass filter in feedback path (damping)
-            state.comb_filter_state[c] = delayed * (1.0f - damp) + state.comb_filter_state[c] * damp;
+                // Read from delay line
+                float delayed = buffer[state.comb_pos[ch][c]];
 
-            // DC blocker in feedback path to prevent low-frequency buildup
-            float dc_in = state.comb_filter_state[c];
-            float dc_out = dc_in - state.dc_x1[c] + DC_BLOCKER_R * state.dc_y1[c];
-            state.dc_x1[c] = dc_in;
-            state.dc_y1[c] = dc_out;
+                // Lowpass filter in feedback path (damping)
+                state.comb_filter_state[ch][c] =
+                    delayed * (1.0f - damp) + state.comb_filter_state[ch][c] * damp;
 
-            // Write with feedback
-            buffer[state.comb_pos[c]] = x + feedback * dc_out;
-            state.comb_pos[c] = (state.comb_pos[c] + 1) % size;
+                // DC blocker in feedback path to prevent low-frequency buildup
+                float dc_in = state.comb_filter_state[ch][c];
+                float dc_out = dc_in - state.dc_x1[ch][c] +
+                               DC_BLOCKER_R * state.dc_y1[ch][c];
+                state.dc_x1[ch][c] = dc_in;
+                state.dc_y1[ch][c] = dc_out;
 
-            comb_sum += delayed;
+                // Write with feedback
+                buffer[state.comb_pos[ch][c]] = x + feedback * dc_out;
+                state.comb_pos[ch][c] = (state.comb_pos[ch][c] + 1) % size;
+
+                comb_sum += delayed;
+            }
+
+            // Series allpass filters for diffusion
+            float y = comb_sum;
+            for (std::size_t a = 0; a < FreeverbState::NUM_ALLPASSES; ++a) {
+                float* buffer = state.allpass_buffers[ch][a];
+                std::size_t size = FreeverbState::ALLPASS_SIZES_LR[ch][a];
+
+                float delayed = buffer[state.allpass_pos[ch][a]];
+                float output = delayed - ALLPASS_GAIN * y;
+                buffer[state.allpass_pos[ch][a]] = y + ALLPASS_GAIN * output;
+                state.allpass_pos[ch][a] = (state.allpass_pos[ch][a] + 1) % size;
+
+                y = output;
+            }
+            y_lr[ch] = y;
         }
 
-        // Comb output — allpass chain provides ~16x peak reduction
-        float y = comb_sum;
-
-        // Series allpass filters for diffusion
-        constexpr float ALLPASS_GAIN = 0.5f;
-        for (std::size_t a = 0; a < FreeverbState::NUM_ALLPASSES; ++a) {
-            float* buffer = state.allpass_buffers[a];
-            std::size_t size = FreeverbState::ALLPASS_SIZES[a];
-
-            float delayed = buffer[state.allpass_pos[a]];
-            float output = delayed - ALLPASS_GAIN * y;
-            buffer[state.allpass_pos[a]] = y + ALLPASS_GAIN * output;
-            state.allpass_pos[a] = (state.allpass_pos[a] + 1) % size;
-
-            y = output;
-        }
-
-        out[i] = y;
+        out_l[i] = y_lr[0];
+        out_r[i] = y_lr[1];
     }
 }
 
@@ -301,8 +324,21 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
 
 [[gnu::always_inline]]
 inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    // Stereo-native: writes out_buffer (L) and out_buffer+1 (R) in one call.
+    // FDN keeps a single shared 4-line state pool; stereo is produced at the
+    // output stage by emitting two diagonal Hadamard taps (delayed[0] → L,
+    // delayed[1] → R). Decorrelation comes from the prime-ratio spacing
+    // between those delay lines (1931 vs 2473 samples). When STEREO_INPUT is
+    // set the L and R primary-input lanes are averaged into a single injection
+    // signal — FDN has no per-channel topology to carry separate inputs
+    // through. See prd-stereo-native-opcodes.md for the flag truth table.
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* decay = ctx.buffers->get(inst.inputs[1]);
     const float* damping = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<FDNState>(inst.state_id);
@@ -316,7 +352,9 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
     constexpr float H = 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
+        // Fold stereo input to a single injection sample (preserves total
+        // energy: rms of (L+R)*0.5 ≈ rms(mono)).
+        float x = stereo_in ? 0.5f * (input[i] + input_r[i]) : input[i];
         float dec = std::clamp(decay[i], 0.0f, 0.99f);
         float damp = std::clamp(damping[i], 0.0f, 1.0f);
 
@@ -350,15 +388,16 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
         mixed[3] = H * (delayed[0] - delayed[1] - delayed[2] + delayed[3]);
 
         // Write to delay lines with input injection and decay
-        float output_sum = 0.0f;
         for (std::size_t d = 0; d < FDNState::NUM_DELAYS; ++d) {
             state.delay_buffers[d][state.write_pos[d]] = x + mixed[d] * dec;
             state.write_pos[d] = (state.write_pos[d] + 1) % FDNState::MAX_DELAY_SIZE;
-            output_sum += delayed[d];
         }
 
-        // Output is sum of all delay taps, normalized by number of delays
-        out[i] = output_sum * 0.25f;
+        // Stereo output: diagonal Hadamard taps. The 0.5 factor matches the
+        // historic 0.25 sum normalization in total energy when summed back to
+        // mono ((L+R)*0.5 ≈ output_sum*0.25 for uncorrelated taps).
+        out_l[i] = delayed[0] * 0.5f;
+        out_r[i] = delayed[1] * 0.5f;
     }
 }
 

@@ -679,58 +679,83 @@ struct GateState {
 // Reverb States
 // ============================================================================
 
-// Freeverb state (Schroeder-Moorer algorithm) with arena-allocated buffers
+// Freeverb state (Schroeder-Moorer algorithm) with arena-allocated buffers.
+//
+// Per-channel duplicated for prd-stereo-native-opcodes Phase 2: index [0] = L
+// lane, [1] = R lane. Each lane has its own full 8-comb + 4-allpass network.
+// L/R decorrelation comes from the classic Schroeder +23-sample offset on the
+// R lane buffer sizes — Freeverb is a parallel network (not figure-8), so the
+// lanes do not cross-couple; the buffer-length offset is the entire source of
+// width.
 struct FreeverbState {
     static constexpr std::size_t NUM_COMBS = 8;
     static constexpr std::size_t NUM_ALLPASSES = 4;
 
-    // Comb filter delay times (samples at 48kHz, prime-like spacing)
-    static constexpr std::size_t COMB_SIZES[NUM_COMBS] = {
-        1557, 1617, 1491, 1422, 1277, 1356, 1188, 1116
-    };
-    // Allpass delay times
-    static constexpr std::size_t ALLPASS_SIZES[NUM_ALLPASSES] = {225, 556, 441, 341};
+    // Classic Schroeder stereo-spread offset (samples) added to the R lane
+    // delay-line sizes. This is the canonical Freeverb stereo trick.
+    static constexpr std::size_t STEREO_SPREAD = 23;
 
-    // Arena-allocated buffers
-    float* comb_buffers[NUM_COMBS] = {};
-    std::size_t comb_pos[NUM_COMBS] = {};
-    float comb_filter_state[NUM_COMBS] = {};
+    // Comb filter delay times (samples at 48kHz, prime-like spacing).
+    // L lane uses COMB_SIZES_LR[0], R lane uses COMB_SIZES_LR[1] (+spread).
+    static constexpr std::size_t COMB_SIZES_LR[2][NUM_COMBS] = {
+        {1557, 1617, 1491, 1422, 1277, 1356, 1188, 1116},
+        {1557 + STEREO_SPREAD, 1617 + STEREO_SPREAD, 1491 + STEREO_SPREAD,
+         1422 + STEREO_SPREAD, 1277 + STEREO_SPREAD, 1356 + STEREO_SPREAD,
+         1188 + STEREO_SPREAD, 1116 + STEREO_SPREAD}
+    };
+    // Allpass delay times (same stereo-spread treatment).
+    static constexpr std::size_t ALLPASS_SIZES_LR[2][NUM_ALLPASSES] = {
+        {225, 556, 441, 341},
+        {225 + STEREO_SPREAD, 556 + STEREO_SPREAD, 441 + STEREO_SPREAD,
+         341 + STEREO_SPREAD}
+    };
+
+    // Arena-allocated buffers: [channel][filter_index]
+    float* comb_buffers[2][NUM_COMBS] = {};
+    std::size_t comb_pos[2][NUM_COMBS] = {};
+    float comb_filter_state[2][NUM_COMBS] = {};
 
     // DC blocker state per comb (in feedback path)
-    float dc_x1[NUM_COMBS] = {};
-    float dc_y1[NUM_COMBS] = {};
+    float dc_x1[2][NUM_COMBS] = {};
+    float dc_y1[2][NUM_COMBS] = {};
 
-    float* allpass_buffers[NUM_ALLPASSES] = {};
-    std::size_t allpass_pos[NUM_ALLPASSES] = {};
+    float* allpass_buffers[2][NUM_ALLPASSES] = {};
+    std::size_t allpass_pos[2][NUM_ALLPASSES] = {};
 
     void ensure_buffers(AudioArena* arena) {
         if (!arena) return;
-        for (std::size_t i = 0; i < NUM_COMBS; ++i) {
-            if (!comb_buffers[i]) {
-                comb_buffers[i] = arena->allocate(COMB_SIZES[i]);
+        for (std::size_t c = 0; c < 2; ++c) {
+            for (std::size_t i = 0; i < NUM_COMBS; ++i) {
+                if (!comb_buffers[c][i]) {
+                    comb_buffers[c][i] = arena->allocate(COMB_SIZES_LR[c][i]);
+                }
             }
-        }
-        for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) {
-            if (!allpass_buffers[i]) {
-                allpass_buffers[i] = arena->allocate(ALLPASS_SIZES[i]);
+            for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) {
+                if (!allpass_buffers[c][i]) {
+                    allpass_buffers[c][i] = arena->allocate(ALLPASS_SIZES_LR[c][i]);
+                }
             }
         }
     }
 
     void reset() {
-        for (std::size_t i = 0; i < NUM_COMBS; ++i) {
-            if (comb_buffers[i]) {
-                std::memset(comb_buffers[i], 0, COMB_SIZES[i] * sizeof(float));
-                comb_pos[i] = 0;
-                comb_filter_state[i] = 0.0f;
-                dc_x1[i] = 0.0f;
-                dc_y1[i] = 0.0f;
+        for (std::size_t c = 0; c < 2; ++c) {
+            for (std::size_t i = 0; i < NUM_COMBS; ++i) {
+                if (comb_buffers[c][i]) {
+                    std::memset(comb_buffers[c][i], 0,
+                                COMB_SIZES_LR[c][i] * sizeof(float));
+                    comb_pos[c][i] = 0;
+                    comb_filter_state[c][i] = 0.0f;
+                    dc_x1[c][i] = 0.0f;
+                    dc_y1[c][i] = 0.0f;
+                }
             }
-        }
-        for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) {
-            if (allpass_buffers[i]) {
-                std::memset(allpass_buffers[i], 0, ALLPASS_SIZES[i] * sizeof(float));
-                allpass_pos[i] = 0;
+            for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) {
+                if (allpass_buffers[c][i]) {
+                    std::memset(allpass_buffers[c][i], 0,
+                                ALLPASS_SIZES_LR[c][i] * sizeof(float));
+                    allpass_pos[c][i] = 0;
+                }
             }
         }
     }

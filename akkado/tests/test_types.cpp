@@ -213,18 +213,9 @@ TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lif
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
 
-    SECTION("freeverb (REVERB_FREEVERB) auto-lifts on stereo") {
-        auto result = akkado::compile(R"(
-            s = stereo(saw(218), saw(222))
-            freeverb(s, 0.85, 0.5) |> out(%)
-        )");
-        REQUIRE(result.success);
-        auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::REVERB_FREEVERB) == 1);
-        auto* op = find_instruction(insts, cedar::Opcode::REVERB_FREEVERB);
-        REQUIRE(op != nullptr);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
-    }
+    // freeverb and fdn used to live here as auto-lifted opcodes. They moved
+    // to stereo-native in prd-stereo-native-opcodes Phase 2; their tests are
+    // in the "Stereo-native opcodes" section below.
 
     SECTION("comp (DYNAMICS_COMP) auto-lifts on stereo") {
         auto result = akkado::compile(R"(
@@ -331,13 +322,95 @@ TEST_CASE("Types: stereo-native opcode rejects array/chord expansion without pol
     // E187: a multi-voice array (or chord) flowing into a stereo-native
     // opcode requires explicit poly() — they don't silently auto-expand
     // into per-voice instantiation here. Use a 3-element array so the
-    // expansion is unambiguously not a stereo pair.
+    // expansion is unambiguously not a stereo pair. The codegen guard is
+    // generic across stereo-native opcodes; exercising one per phase is
+    // enough to confirm the path stays wired up.
+    SECTION("dattorro rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> dattorro(%, 0.85, 30) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+
+    SECTION("freeverb rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> freeverb(%, 0.85, 0.5) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+
+    SECTION("fdn rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> fdn(%, 0.85, 0.3) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+}
+
+// =============================================================================
+// Stereo-native reverbs (prd-stereo-native-opcodes Phase 2)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native freeverb produces stereo output from mono input", "[types][stereo][stereo-native]") {
     auto result = akkado::compile(R"(
-        voices = [saw(110), saw(220), saw(330)]
-        voices |> dattorro(%, 0.85, 30) |> out(%)
+        saw(110) |> freeverb(%, 0.85, 0.5) |> out(%)
     )");
-    CHECK_FALSE(result.success);
-    CHECK(has_diagnostic(result, "E187"));
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_FREEVERB) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::REVERB_FREEVERB);
+    REQUIRE(op != nullptr);
+    // STEREO_OUTPUT set, STEREO_INPUT clear (mono primary input).
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native freeverb reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        freeverb(s, 0.85, 0.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    // Exactly one instruction: no auto-lift double-emission.
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_FREEVERB) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::REVERB_FREEVERB);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native fdn produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(110) |> fdn(%, 0.85, 0.3) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_FDN) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::REVERB_FDN);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native fdn reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        fdn(s, 0.85, 0.3) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_FDN) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::REVERB_FDN);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
 }
 
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {

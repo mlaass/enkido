@@ -447,16 +447,16 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                        "Tap delay with feedback chain (time in samples)"}},
 
     // Reverbs (stateful - large delay networks)
+    // All three reverbs are stereo-native (prd-stereo-native-opcodes Phases 0–2):
+    // they produce a stereo output pair natively, auto-escalate mono input,
+    // and read stereo primary input from inputs[0] (L) / inputs[0]+1 (R).
     // freeverb: room_scale (density factor), room_offset (decay baseline)
     {"freeverb", {cedar::Opcode::REVERB_FREEVERB, 1, 4, true,
                   {"in", "room", "damp", "room_scale", "room_offset", ""},
                   {0.5f, 0.5f, 0.28f, 0.7f, NAN},
                   "Freeverb algorithmic reverb",
-                  0, {}, {}, ChannelCount::Mono, true}},
-    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing).
-    // Stereo-native opcode (Phase 0+1 of prd-stereo-native-opcodes): produces a
-    // stereo output pair natively, auto-escalates mono input, cross-couples
-    // L/R when input is stereo.
+                  0, {}, {}, ChannelCount::Stereo, false, true}},
+    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing)
     {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 4, true,
                   {"in", "decay", "predelay", "in_diff", "dec_diff", ""},
                   {0.7f, 20.0f, 0.75f, 0.625f, NAN},
@@ -466,7 +466,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "decay", "damp", "", "", ""},
                   {0.8f, 0.3f, NAN},
                   "Feedback delay network reverb",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, false, true}},
 
     // Modulation Effects (stateful - delay lines with LFOs)
     // chorus: base_delay (ms), depth_range (ms)
