@@ -150,19 +150,27 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
 // Extracts the amplitude envelope from an incoming audio signal.
 // Useful for dynamics processing, sidechain effects, and envelope-following modulation.
 // Uses peak detection with separate attack/release time constants.
+// Stereo-native (prd-stereo-native-opcodes Phase 4d): per-channel envelope
+// levels in a dedicated EnvFollowerState (separated from adsr/ar's mono
+// EnvState). Mono input auto-broadcasts to L=R envelopes; stereo input
+// produces per-channel envelopes (useful for per-channel sidechain).
 [[gnu::always_inline]]
 inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* attack_buf = ctx.buffers->get(inst.inputs[1]);
     const float* release_buf = ctx.buffers->get(inst.inputs[2]);
-    auto& state = ctx.states->get_or_create<EnvState>(inst.state_id);
+    auto& state = ctx.states->get_or_create<EnvFollowerState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float attack_time = attack_buf[i];
         float release_time = release_buf[i];
 
-        // Update coefficients if parameters changed
         if (attack_time != state.last_attack) {
             state.last_attack = attack_time;
             float attack_samples = std::max(0.001f, attack_time) * ctx.sample_rate;
@@ -175,18 +183,18 @@ inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
             state.release_coeff = 1.0f - std::exp(-1.0f / release_samples);
         }
 
-        // Envelope follower: track absolute value with attack/release
-        float abs_input = std::abs(input[i]);
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            float abs_input = std::abs(x);
 
-        if (abs_input > state.level) {
-            // Attack: signal is rising
-            state.level += state.attack_coeff * (abs_input - state.level);
-        } else {
-            // Release: signal is falling
-            state.level += state.release_coeff * (abs_input - state.level);
+            if (abs_input > state.level[ch]) {
+                state.level[ch] += state.attack_coeff * (abs_input - state.level[ch]);
+            } else {
+                state.level[ch] += state.release_coeff * (abs_input - state.level[ch]);
+            }
+
+            (ch == 0 ? out_l : out_r)[i] = state.level[ch];
         }
-
-        out[i] = state.level;
     }
 }
 

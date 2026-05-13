@@ -895,6 +895,79 @@ TEST_CASE("Types: stereo-native comb produces stereo output", "[types][stereo][s
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
 
+// =============================================================================
+// Stereo-native dynamics + env_follower (prd-stereo-native-opcodes Phase 4d)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native comp produces stereo output", "[types][stereo][stereo-native]") {
+    SECTION("mono in") {
+        auto result = akkado::compile(R"( saw(220) |> comp(%, -12, 4) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_COMP);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+    }
+    SECTION("stereo in") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(218), saw(222))
+            comp(s, -12, 4) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_COMP);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native limiter and gate produce stereo output", "[types][stereo][stereo-native]") {
+    SECTION("limiter") {
+        auto result = akkado::compile(R"( saw(220) |> limiter(%, -0.1, 0.1) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_LIMITER);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("gate") {
+        auto result = akkado::compile(R"( saw(220) |> gate(%, -40, -40) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_GATE);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native env_follower produces stereo envelope", "[types][stereo][stereo-native]") {
+    SECTION("mono in produces L=R envelope (Stereo output)") {
+        auto result = akkado::compile(R"( saw(220) |> env_follower(%, 0.01, 0.1) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::ENV_FOLLOWER);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+    }
+    SECTION("stereo in produces per-channel envelopes") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(218), saw(222))
+            env_follower(s, 0.01, 0.1) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::ENV_FOLLOWER);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: full Phase 4 stereo chain — filter+distortion+comp+limiter", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> lp(%, 1000) |> saturate(%, 2.0) |> comp(%, -12, 4)
+                 |> limiter(%, -0.1, 0.1) |> out(%)
+    )");
+    CHECK(result.success);
+}
+
 TEST_CASE("Types: stereo-native tap_delay runs closure on stereo signal pair", "[types][stereo][stereo-native]") {
     // tap_delay's closure body operates on a stereo signal pair (not per-
     // channel closure execution). Inner stereo-native ops (lp/saturate)

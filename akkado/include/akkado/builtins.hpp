@@ -423,11 +423,15 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"trig", "attack", "release", "", "", ""},
                  {0.01f, 0.3f, NAN},
                  "Attack-release envelope (one-shot)"}},
+    // env_follower — stereo-native (prd-stereo-native-opcodes Phase 4d).
+    // Per-channel envelope levels in a dedicated EnvFollowerState.
+    // Mono input auto-broadcasts; stereo input drives per-channel envelopes
+    // (per-channel sidechain). adsr/ar stay mono per PRD §3.2 (control-domain).
     {"env_follower", {cedar::Opcode::ENV_FOLLOWER, 1, 2, true,
                       {"in", "attack", "release", "", "", ""},
                       {0.01f, 0.1f, NAN},
                       "Amplitude envelope follower",
-                      0, {}, {}, ChannelCount::Mono, true}},
+                      0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
 
     // Samplers (stereo-native, prd-stereo-native-opcodes Phase 3): mono files
     // broadcast L=R; stereo files preserve channels; 3+ channel files keep the
@@ -615,23 +619,24 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   "Aural exciter (harmonic enhancer)",
                   0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
 
-    // Dynamics (stateful - envelope followers)
+    // Dynamics — stereo-native (prd-stereo-native-opcodes Phase 4d).
+    // Per-channel envelope/gain state; coefficient cache shared.
     {"comp",     {cedar::Opcode::DYNAMICS_COMP, 1, 2, true,
                   {"in", "thresh", "ratio", "", "", ""},
                   {-12.0f, 4.0f, NAN},
                   "Dynamic range compressor",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     {"limiter",  {cedar::Opcode::DYNAMICS_LIMITER, 1, 2, true,
                   {"in", "ceiling", "release", "", "", ""},
                   {-0.1f, 0.1f, NAN},
                   "Peak limiter with lookahead",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // gate: hysteresis (dB open/close diff), close_time (ms fade-out)
     {"gate",     {cedar::Opcode::DYNAMICS_GATE, 1, 4, true,
                   {"in", "thresh", "range", "hyst", "close_time", ""},
                   {-40.0f, -40.0f, 6.0f, 5.0f, NAN},
                   "Noise gate with hysteresis",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
 
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false,

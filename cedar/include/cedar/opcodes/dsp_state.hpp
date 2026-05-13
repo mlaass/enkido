@@ -676,35 +676,51 @@ struct SoundFontVoiceState {
 // Dynamics States
 // ============================================================================
 
-// Compressor state
+// Compressor state — stereo-native (prd-stereo-native-opcodes Phase 4d).
+// Per-channel envelope and gain-reduction state; rate-encoded attack/release
+// coefficients shared.
 struct CompressorState {
-    float envelope = 0.0f;
-    float gain_reduction = 1.0f;
+    float envelope[2] = {0.0f, 0.0f};
+    float gain_reduction[2] = {1.0f, 1.0f};
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels)
     float attack_coeff = 0.0f;
     float release_coeff = 0.0f;
     float last_attack = -1.0f;
     float last_release = -1.0f;
 };
 
-// Limiter state with lookahead
+// Limiter state with lookahead — stereo-native (prd-stereo-native-opcodes
+// Phase 4d). Per-channel lookahead buffer, write position, and gain state.
 struct LimiterState {
     static constexpr std::size_t LOOKAHEAD_SAMPLES = 48;  // 1ms at 48kHz
 
-    float lookahead_buffer[LOOKAHEAD_SAMPLES] = {};
-    std::size_t write_pos = 0;
-    float gain = 1.0f;
+    float lookahead_buffer[2][LOOKAHEAD_SAMPLES] = {};
+    std::size_t write_pos[2] = {0, 0};
+    float gain[2] = {1.0f, 1.0f};
 };
 
-// Gate state
+// Gate state — stereo-native (prd-stereo-native-opcodes Phase 4d).
+// Per-channel envelope, gain, open-state, and hold counter; coefficients shared.
 struct GateState {
-    float envelope = 0.0f;
-    float gain = 1.0f;   // Start at unity (gate open by default)
-    bool is_open = true; // Match initial gain state
-    float hold_counter = 0.0f;
+    float envelope[2] = {0.0f, 0.0f};
+    float gain[2] = {1.0f, 1.0f};       // Start at unity (gate open by default)
+    bool is_open[2] = {true, true};
+    float hold_counter[2] = {0.0f, 0.0f};
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels)
+    float attack_coeff = 0.0f;
+    float release_coeff = 0.0f;
+    float last_attack = -1.0f;
+    float last_release = -1.0f;
+};
+
+// Envelope-follower state — stereo-native (prd-stereo-native-opcodes Phase 4d).
+// Separated from EnvState (used by adsr/ar) because env_follower's *input* is
+// audio so its level state is per-channel; adsr/ar remain mono per PRD §3.2
+// (control-domain stay mono).
+struct EnvFollowerState {
+    float level[2] = {0.0f, 0.0f};
     float attack_coeff = 0.0f;
     float release_coeff = 0.0f;
     float last_attack = -1.0f;
@@ -1366,6 +1382,7 @@ using DSPState = std::variant<
     CompressorState,
     LimiterState,
     GateState,
+    EnvFollowerState,
     // Reverb states
     FreeverbState,
     DattorroState,

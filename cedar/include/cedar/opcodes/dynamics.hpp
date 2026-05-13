@@ -21,19 +21,26 @@ namespace cedar {
 // Classic feedforward compressor with RMS envelope detection.
 // Reduces dynamic range by attenuating signals above threshold.
 
+// Stereo-native (prd-stereo-native-opcodes Phase 4d): per-channel envelope
+// and gain-reduction state. Each channel processes its own dynamics independently
+// (matches today's auto-lift behavior).
 [[gnu::always_inline]]
 inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* threshold_db = ctx.buffers->get(inst.inputs[1]);
     const float* ratio = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<CompressorState>(inst.state_id);
 
-    // Decode attack/release times from rate field (4 bits each)
+    // Decode attack/release times from rate field (4 bits each, shared)
     float attack_ms = 0.1f + static_cast<float>((inst.rate >> 4) & 0x0F) * (100.0f - 0.1f) / 15.0f;
     float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (1000.0f - 10.0f) / 15.0f;
 
-    // Update coefficients if parameters changed
     if (attack_ms != state.last_attack || release_ms != state.last_release) {
         state.last_attack = attack_ms;
         state.last_release = release_ms;
@@ -42,36 +49,33 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
     }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
-
-        // Envelope follower (peak detection)
-        float abs_x = std::abs(x);
-        if (abs_x > state.envelope) {
-            state.envelope += state.attack_coeff * (abs_x - state.envelope);
-        } else {
-            state.envelope += state.release_coeff * (abs_x - state.envelope);
-        }
-
-        // Convert to dB
-        float env_db = linear_to_db(state.envelope + 1e-10f);
-
-        // Calculate gain reduction
         float thresh = std::clamp(threshold_db[i], -60.0f, 0.0f);
         float r = std::clamp(ratio[i], 1.0f, 20.0f);
 
-        float gain_db = 0.0f;
-        if (env_db > thresh) {
-            // Compression: reduce by (1 - 1/ratio) of the amount over threshold
-            float over_db = env_db - thresh;
-            float compressed_db = thresh + over_db / r;
-            gain_db = compressed_db - env_db;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+
+            float abs_x = std::abs(x);
+            if (abs_x > state.envelope[ch]) {
+                state.envelope[ch] += state.attack_coeff * (abs_x - state.envelope[ch]);
+            } else {
+                state.envelope[ch] += state.release_coeff * (abs_x - state.envelope[ch]);
+            }
+
+            float env_db = linear_to_db(state.envelope[ch] + 1e-10f);
+
+            float gain_db = 0.0f;
+            if (env_db > thresh) {
+                float over_db = env_db - thresh;
+                float compressed_db = thresh + over_db / r;
+                gain_db = compressed_db - env_db;
+            }
+
+            float gain = db_to_linear(gain_db);
+            state.gain_reduction[ch] = gain;
+
+            (ch == 0 ? out_l : out_r)[i] = x * gain;
         }
-
-        // Convert gain to linear and apply
-        float gain = db_to_linear(gain_db);
-        state.gain_reduction = gain;  // Store for metering
-
-        out[i] = x * gain;
     }
 }
 
@@ -86,10 +90,18 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
 // True peak limiter that prevents signal from exceeding ceiling.
 // Optional lookahead allows smoother limiting with no overshoot.
 
+// Stereo-native (prd-stereo-native-opcodes Phase 4d): per-channel lookahead
+// buffer, write_pos, and gain. Independent per-channel limiting (matches
+// today's auto-lift behavior).
 [[gnu::always_inline]]
 inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* ceiling_db = ctx.buffers->get(inst.inputs[1]);
     const float* release_ms = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<LimiterState>(inst.state_id);
@@ -97,45 +109,40 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
     bool use_lookahead = inst.rate != 0;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
-
-        // Write to lookahead buffer
-        state.lookahead_buffer[state.write_pos] = x;
-
-        // Get signal to analyze (current or lookahead)
-        float analyze_sample;
-        if (use_lookahead) {
-            // Read ahead in buffer
-            std::size_t read_pos = (state.write_pos + 1) % LimiterState::LOOKAHEAD_SAMPLES;
-            analyze_sample = state.lookahead_buffer[read_pos];
-            x = analyze_sample;  // Output the delayed signal
-        } else {
-            analyze_sample = x;
-        }
-
-        state.write_pos = (state.write_pos + 1) % LimiterState::LOOKAHEAD_SAMPLES;
-
-        // Calculate release coefficient
         float rel_ms = std::clamp(release_ms[i], 10.0f, 500.0f);
         float release_coeff = time_to_coeff(rel_ms * 0.001f, ctx.sample_rate);
-
-        // Calculate required gain
         float ceiling = db_to_linear(std::clamp(ceiling_db[i], -12.0f, 0.0f));
-        float abs_x = std::abs(analyze_sample);
 
-        float target_gain = 1.0f;
-        if (abs_x > ceiling) {
-            target_gain = ceiling / abs_x;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+
+            state.lookahead_buffer[ch][state.write_pos[ch]] = x;
+
+            float analyze_sample;
+            if (use_lookahead) {
+                std::size_t read_pos = (state.write_pos[ch] + 1) % LimiterState::LOOKAHEAD_SAMPLES;
+                analyze_sample = state.lookahead_buffer[ch][read_pos];
+                x = analyze_sample;
+            } else {
+                analyze_sample = x;
+            }
+
+            state.write_pos[ch] = (state.write_pos[ch] + 1) % LimiterState::LOOKAHEAD_SAMPLES;
+
+            float abs_x = std::abs(analyze_sample);
+            float target_gain = 1.0f;
+            if (abs_x > ceiling) {
+                target_gain = ceiling / abs_x;
+            }
+
+            if (target_gain < state.gain[ch]) {
+                state.gain[ch] = target_gain;
+            } else {
+                state.gain[ch] += release_coeff * (target_gain - state.gain[ch]);
+            }
+
+            (ch == 0 ? out_l : out_r)[i] = x * state.gain[ch];
         }
-
-        // Smooth gain changes (instant attack, smooth release)
-        if (target_gain < state.gain) {
-            state.gain = target_gain;  // Instant attack
-        } else {
-            state.gain += release_coeff * (target_gain - state.gain);  // Smooth release
-        }
-
-        out[i] = x * state.gain;
     }
 }
 
@@ -156,25 +163,27 @@ constexpr float GATE_CLOSE_TIME_DEFAULT = 5.0f;    // ms
 // Attenuates signal when it falls below threshold.
 // Hysteresis prevents chatter at the threshold.
 
+// Stereo-native (prd-stereo-native-opcodes Phase 4d): per-channel gate
+// envelope/gain/open-state/hold-counter; coefficients shared.
 [[gnu::always_inline]]
 inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* threshold_db = ctx.buffers->get(inst.inputs[1]);
     const float* range_db = ctx.buffers->get(inst.inputs[2]);
     const float* hysteresis_in = ctx.buffers->get(inst.inputs[3]);
     const float* close_time_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<GateState>(inst.state_id);
 
-    // Decode timing parameters from rate field
-    // Attack: 0.1-10ms (2 bits -> 4 values)
     float attack_ms = 0.1f + static_cast<float>((inst.rate >> 6) & 0x3) * (10.0f - 0.1f) / 3.0f;
-    // Hold: 0-200ms (2 bits -> 4 values)
     float hold_ms = static_cast<float>((inst.rate >> 4) & 0x3) * 200.0f / 3.0f;
-    // Release: 10-500ms (4 bits -> 16 values)
     float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (500.0f - 10.0f) / 15.0f;
 
-    // Update coefficients if needed
     if (attack_ms != state.last_attack || release_ms != state.last_release) {
         state.last_attack = attack_ms;
         state.last_release = release_ms;
@@ -185,61 +194,50 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     float hold_samples = hold_ms * 0.001f * ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
-
-        // Runtime tunable parameters (use defaults if zero/negative)
         float hysteresis_db = hysteresis_in[i] > 0.0f ? hysteresis_in[i] : GATE_HYSTERESIS_DEFAULT;
         float close_time_ms = close_time_in[i] > 0.0f ? close_time_in[i] : GATE_CLOSE_TIME_DEFAULT;
-
-        // Envelope follower (very fast detection for both attack and release)
-        // Using 10x multiplier ensures envelope responds quickly to signal changes
-        // while the gain smoothing (below) uses the user-configured release time
-        float abs_x = std::abs(x);
-        float coeff = abs_x > state.envelope ? state.attack_coeff * 10.0f : state.release_coeff * 10.0f;
-        state.envelope += coeff * (abs_x - state.envelope);
-
-        float env_db = linear_to_db(state.envelope + 1e-10f);
         float thresh = std::clamp(threshold_db[i], -80.0f, 0.0f);
         float range = std::clamp(range_db[i], -80.0f, 0.0f);
-
-        // Gate state machine with hysteresis
-        if (state.is_open) {
-            // Gate is open - check if we should close
-            if (env_db < thresh - hysteresis_db) {
-                // Start hold period
-                state.hold_counter += 1.0f;
-                if (state.hold_counter > hold_samples) {
-                    state.is_open = false;
-                    state.hold_counter = 0.0f;
-                }
-            } else {
-                state.hold_counter = 0.0f;
-            }
-        } else {
-            // Gate is closed - check if we should open
-            if (env_db > thresh) {
-                state.is_open = true;
-                state.hold_counter = 0.0f;
-            }
-        }
-
-        // Calculate target gain
-        float target_gain = state.is_open ? 1.0f : db_to_linear(range);
-
-        // Smooth gain transitions
-        // When closing gate, use fast transition to avoid clicks
-        // but don't use the slow user-configured release time
         float close_coeff = 1.0f - std::exp(-1.0f / (close_time_ms * 0.001f * ctx.sample_rate));
 
-        float gain_coeff;
-        if (target_gain > state.gain) {
-            gain_coeff = state.attack_coeff;  // Opening: use attack
-        } else {
-            gain_coeff = close_coeff;  // Closing: use fast fixed time
-        }
-        state.gain += gain_coeff * (target_gain - state.gain);
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        out[i] = x * state.gain;
+            float abs_x = std::abs(x);
+            float coeff = abs_x > state.envelope[ch] ? state.attack_coeff * 10.0f : state.release_coeff * 10.0f;
+            state.envelope[ch] += coeff * (abs_x - state.envelope[ch]);
+
+            float env_db = linear_to_db(state.envelope[ch] + 1e-10f);
+
+            if (state.is_open[ch]) {
+                if (env_db < thresh - hysteresis_db) {
+                    state.hold_counter[ch] += 1.0f;
+                    if (state.hold_counter[ch] > hold_samples) {
+                        state.is_open[ch] = false;
+                        state.hold_counter[ch] = 0.0f;
+                    }
+                } else {
+                    state.hold_counter[ch] = 0.0f;
+                }
+            } else {
+                if (env_db > thresh) {
+                    state.is_open[ch] = true;
+                    state.hold_counter[ch] = 0.0f;
+                }
+            }
+
+            float target_gain = state.is_open[ch] ? 1.0f : db_to_linear(range);
+
+            float gain_coeff;
+            if (target_gain > state.gain[ch]) {
+                gain_coeff = state.attack_coeff;
+            } else {
+                gain_coeff = close_coeff;
+            }
+            state.gain[ch] += gain_coeff * (target_gain - state.gain[ch]);
+
+            (ch == 0 ? out_l : out_r)[i] = x * state.gain[ch];
+        }
     }
 }
 

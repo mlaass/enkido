@@ -496,21 +496,34 @@ public:
             }
             else if constexpr (std::is_same_v<T, CompressorState>) {
                 json << R"({"type":"CompressorState")";
-                json << R"(,"envelope":)" << state.envelope;
-                json << R"(,"gain_reduction":)" << state.gain_reduction;
+                json << R"(,"envelope_l":)" << state.envelope[0];
+                json << R"(,"envelope_r":)" << state.envelope[1];
+                json << R"(,"gain_reduction_l":)" << state.gain_reduction[0];
+                json << R"(,"gain_reduction_r":)" << state.gain_reduction[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, LimiterState>) {
                 json << R"({"type":"LimiterState")";
-                json << R"(,"write_pos":)" << state.write_pos;
-                json << R"(,"gain":)" << state.gain;
+                json << R"(,"write_pos_l":)" << state.write_pos[0];
+                json << R"(,"write_pos_r":)" << state.write_pos[1];
+                json << R"(,"gain_l":)" << state.gain[0];
+                json << R"(,"gain_r":)" << state.gain[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, GateState>) {
                 json << R"({"type":"GateState")";
-                json << R"(,"envelope":)" << state.envelope;
-                json << R"(,"gain":)" << state.gain;
-                json << R"(,"is_open":)" << (state.is_open ? "true" : "false");
+                json << R"(,"envelope_l":)" << state.envelope[0];
+                json << R"(,"envelope_r":)" << state.envelope[1];
+                json << R"(,"gain_l":)" << state.gain[0];
+                json << R"(,"gain_r":)" << state.gain[1];
+                json << R"(,"is_open_l":)" << (state.is_open[0] ? "true" : "false");
+                json << R"(,"is_open_r":)" << (state.is_open[1] ? "true" : "false");
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, EnvFollowerState>) {
+                json << R"({"type":"EnvFollowerState")";
+                json << R"(,"level_l":)" << state.level[0];
+                json << R"(,"level_r":)" << state.level[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, FreeverbState>) {
