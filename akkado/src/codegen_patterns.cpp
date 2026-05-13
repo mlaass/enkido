@@ -5693,6 +5693,32 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         mixed = sum_buf;
     }
 
+    // Chord-polyphony RMS normalization: scale the summed N voices by
+    // 1/sqrt(N) so an N-note chord has the same perceived loudness as a
+    // single note. Without this, e.g. `c"Am" |> soundfont(@, "gm", 0)` would
+    // sum 3 full-amplitude voices and clip in the WAV output stage.
+    const std::size_t n_voices = per_voice_outs.size();
+    if (n_voices > 1) {
+        const float scale = 1.0f / std::sqrt(static_cast<float>(n_voices));
+        std::uint16_t scale_buf = codegen::emit_push_const(
+            buffers_, instructions_, scale);
+        if (scale_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return TypedValue::void_val();
+        }
+        source_locations_.push_back(current_source_loc_);
+        std::uint16_t scaled_buf = buffers_.allocate();
+        if (scaled_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return TypedValue::void_val();
+        }
+        emit(cedar::Instruction::make_binary(cedar::Opcode::MUL, scaled_buf,
+                                              mixed, scale_buf));
+        mixed = scaled_buf;
+    }
+
     pop_path();
     return cache_and_return(node, TypedValue::signal(mixed));
 }

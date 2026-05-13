@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cedar/vm/state_pool.hpp>
+#include <cedar/vm/audio_arena.hpp>
+#include <cedar/opcodes/sequence.hpp>
 #include <cedar/dsp/constants.hpp>
 
 #include <array>
@@ -360,6 +362,151 @@ TEST_CASE("FNV-1a hash function", "[state_pool]") {
         CHECK(h1 == h2);
         CHECK(h2 == h3);
     }
+}
+
+// ============================================================================
+// Hot-Swap Preservation Tests [state_pool][hot_swap]
+// ============================================================================
+
+namespace {
+
+// Build a small test Sequence with N DATA events in ALTERNATE mode. Events
+// are stack-owned by the caller; the resulting Sequence struct only holds a
+// pointer.
+struct TestSeq {
+    std::vector<Event> events;
+    Sequence seq{};
+
+    explicit TestSeq(std::size_t n, SequenceMode mode = SequenceMode::ALTERNATE) {
+        events.resize(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            events[i].type = EventType::DATA;
+            events[i].time = 0.0f;
+            events[i].duration = 1.0f;
+            events[i].num_values = 1;
+            events[i].values[0] = static_cast<float>(i + 1) * 100.0f;
+        }
+        seq.events = events.data();
+        seq.num_events = static_cast<std::uint32_t>(n);
+        seq.capacity = static_cast<std::uint32_t>(n);
+        seq.duration = static_cast<float>(n);
+        seq.mode = mode;
+        seq.step = 0;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("init_sequence_program preserves playback counters across hot-swap",
+          "[state_pool][hot_swap][determinism]") {
+    // Regression for live-coding bug: recompiling the same program reset the
+    // alternation cycle counter to 0, so a `<a b c d>` pattern would jump back
+    // to `a` whenever the user re-evaluated the buffer. We need the playback
+    // counters preserved so live recompiles are audibly silent for unchanged
+    // source.
+    StatePool pool;
+    AudioArena arena;
+    const std::uint32_t state_id = fnv1a_hash("test/alt_pattern");
+
+    // First load: 4 events in ALTERNATE mode (simulates `<a b c d>`).
+    TestSeq first(4);
+    pool.init_sequence_program(state_id, &first.seq, 1, /*cycle_length=*/4.0f,
+                               /*is_sample_pattern=*/false, &arena,
+                               /*total_events=*/4);
+
+    // Audio thread advances playback: alternation has run 7 times, cycle
+    // counter is at 5, beat tracking has caught up.
+    {
+        auto& s = pool.get<SequenceState>(state_id);
+        REQUIRE(s.num_sequences == 1);
+        s.sequences[0].step = 7;
+        s.cycle_index = 5;
+        s.current_index = 3;
+        s.last_beat_pos = 12.5f;
+        s.last_queried_cycle = 5.0f;
+    }
+
+    // Live-coding recompile: same source, same state_id, fresh Sequence with
+    // step=0 in the compile result.
+    TestSeq second(4);
+    pool.init_sequence_program(state_id, &second.seq, 1, /*cycle_length=*/4.0f,
+                               /*is_sample_pattern=*/false, &arena,
+                               /*total_events=*/4);
+
+    auto& s = pool.get<SequenceState>(state_id);
+
+    SECTION("alternation step persists") {
+        CHECK(s.sequences[0].step == 7);
+    }
+    SECTION("cycle index persists") {
+        CHECK(s.cycle_index == 5);
+    }
+    SECTION("current index persists") {
+        CHECK(s.current_index == 3);
+    }
+    SECTION("last beat position persists") {
+        CHECK_THAT(s.last_beat_pos, WithinAbs(12.5f, 1e-6f));
+    }
+    SECTION("last queried cycle persists") {
+        CHECK_THAT(s.last_queried_cycle, WithinAbs(5.0f, 1e-6f));
+    }
+    SECTION("events are still applied (refreshed from new program)") {
+        REQUIRE(s.sequences[0].num_events == 4);
+        // Events should reflect the *new* program's content, even though
+        // they happen to match. Verify by checking the value.
+        CHECK_THAT(s.sequences[0].events[0].values[0], WithinAbs(100.0f, 1e-6f));
+        CHECK_THAT(s.sequences[0].events[3].values[0], WithinAbs(400.0f, 1e-6f));
+    }
+}
+
+TEST_CASE("init_sequence_program initializes counters on first load",
+          "[state_pool][hot_swap]") {
+    // First-time init must NOT preserve uninitialized counters — they should
+    // start at the documented defaults. Only an existing state_id should
+    // trigger the hot-swap preservation path.
+    StatePool pool;
+    AudioArena arena;
+    const std::uint32_t state_id = fnv1a_hash("test/fresh");
+
+    TestSeq first(3);
+    pool.init_sequence_program(state_id, &first.seq, 1, 4.0f, false, &arena, 3);
+
+    auto& s = pool.get<SequenceState>(state_id);
+    CHECK(s.sequences[0].step == 0);
+    CHECK(s.cycle_index == 0);
+    CHECK(s.current_index == 0);
+    CHECK_THAT(s.last_beat_pos, WithinAbs(-1.0f, 1e-6f));
+    CHECK_THAT(s.last_queried_cycle, WithinAbs(-1.0f, 1e-6f));
+}
+
+TEST_CASE("init_sequence_program resets counters when sequence count differs",
+          "[state_pool][hot_swap]") {
+    // Structural change (e.g., user changed `<a b c d>` to `<a b>`) should
+    // not blindly preserve counters that index into a different-shaped state.
+    // The contract: if the new program has a different number of sequences,
+    // start playback fresh.
+    StatePool pool;
+    AudioArena arena;
+    const std::uint32_t state_id = fnv1a_hash("test/restructured");
+
+    TestSeq first(4);
+    pool.init_sequence_program(state_id, &first.seq, 1, 4.0f, false, &arena, 4);
+    {
+        auto& s = pool.get<SequenceState>(state_id);
+        s.sequences[0].step = 7;
+        s.cycle_index = 5;
+        s.current_index = 3;
+    }
+
+    // Reload as a TWO-sequence program: structural difference.
+    TestSeq a(4), b(4);
+    Sequence sequences_arr[2] = {a.seq, b.seq};
+    pool.init_sequence_program(state_id, sequences_arr, 2, 4.0f, false, &arena, 8);
+
+    auto& s = pool.get<SequenceState>(state_id);
+    CHECK(s.num_sequences == 2);
+    CHECK(s.cycle_index == 0);
+    CHECK(s.current_index == 0);
 }
 
 // ============================================================================

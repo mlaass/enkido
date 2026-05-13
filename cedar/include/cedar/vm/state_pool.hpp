@@ -633,6 +633,36 @@ public:
                                const Sequence* sequences, std::size_t seq_count,
                                float cycle_length, bool is_sample_pattern,
                                AudioArena* arena, std::uint32_t total_events) {
+        // Snapshot any existing playback state before we overwrite, so that
+        // hot-swap recompiles preserve `<...>` alternation, cycle index, and
+        // beat-tracking continuity. Without this, every recompile restarts
+        // pattern playback (live-coding determinism bug).
+        constexpr std::size_t SNAPSHOT_MAX_SEQS = 64;
+        struct PlaybackSnapshot {
+            bool valid = false;
+            std::uint32_t num_sequences = 0;
+            std::uint32_t current_index = 0;
+            float last_beat_pos = -1.0f;
+            float last_queried_cycle = -1.0f;
+            std::uint32_t cycle_index = 0;
+            std::uint32_t seq_steps[SNAPSHOT_MAX_SEQS] = {};
+        };
+        PlaybackSnapshot snap{};
+        if (auto* existing = get_if<SequenceState>(state_id)) {
+            snap.valid = true;
+            snap.num_sequences = existing->num_sequences;
+            snap.current_index = existing->current_index;
+            snap.last_beat_pos = existing->last_beat_pos;
+            snap.last_queried_cycle = existing->last_queried_cycle;
+            snap.cycle_index = existing->cycle_index;
+            const std::uint32_t copy_count = std::min(
+                existing->num_sequences,
+                static_cast<std::uint32_t>(SNAPSHOT_MAX_SEQS));
+            for (std::uint32_t i = 0; i < copy_count; ++i) {
+                snap.seq_steps[i] = existing->sequences[i].step;
+            }
+        }
+
         auto& state = get_or_create<SequenceState>(state_id);
 
         if (!arena || seq_count == 0) {
@@ -717,7 +747,9 @@ public:
         seed = (seed ^ (seed >> 27)) * 0x94D049BB133111EBull;
         state.pattern_seed = seed ^ (seed >> 31);
 
-        // Reset playback state
+        // Reset playback state — by default. The hot-swap preservation
+        // path below restores these when the same state_id is re-init'd with
+        // a structurally compatible program.
         state.current_index = 0;
         state.last_beat_pos = -1.0f;
         state.last_queried_cycle = -1.0f;
@@ -725,6 +757,29 @@ public:
         state.cycle_index = 0;
         state.iter_n = 0;
         state.iter_dir = 0;
+
+        // Hot-swap continuity: when a state with this state_id already
+        // existed and the new program has the same number of sequences,
+        // restore the per-sequence alternation step counters and overall
+        // beat/cycle tracking. Recompiling unchanged source must not
+        // restart the pattern. We modulo the alternation step by the new
+        // event count so a structural-event-count change still produces a
+        // well-defined index.
+        if (snap.valid && snap.num_sequences == state.num_sequences) {
+            state.current_index = snap.current_index;
+            state.last_beat_pos = snap.last_beat_pos;
+            state.last_queried_cycle = snap.last_queried_cycle;
+            state.cycle_index = snap.cycle_index;
+            const std::uint32_t restore_count = std::min(
+                state.num_sequences,
+                static_cast<std::uint32_t>(SNAPSHOT_MAX_SEQS));
+            for (std::uint32_t i = 0; i < restore_count; ++i) {
+                // Preserve the raw step counter — the ALTERNATE query path
+                // applies `step % num_events` itself, so the counter stays
+                // monotonic even when num_events changes between compiles.
+                state.sequences[i].step = snap.seq_steps[i];
+            }
+        }
     }
 
     // Configure iter()/iterBack() rotation on a SequenceState. Called after

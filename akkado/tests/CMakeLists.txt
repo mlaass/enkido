@@ -45,6 +45,8 @@ add_executable(akkado_tests
     test_state.cpp
     test_pattern_scalar.cpp
     test_sample_emission_golden.cpp
+    test_hot_swap_determinism.cpp
+    test_fuzz_determinism.cpp
 )
 
 target_link_libraries(akkado_tests
