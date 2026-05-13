@@ -122,8 +122,18 @@ constexpr float DATTORRO_LFO_RATE_DEFAULT = 0.5f;
 
 [[gnu::always_inline]]
 inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    // Stereo-native: writes out_buffer (L) and out_buffer+1 (R) in one call.
+    // When STEREO_INPUT is set in inst.flags, the primary signal input is a
+    // stereo pair (inputs[0] = L, inputs[0]+1 = R). When unset, the mono input
+    // is auto-broadcast to both internal lanes. See
+    // prd-stereo-native-opcodes.md for the flag truth table.
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(inst.out_buffer + 1);
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* decay = ctx.buffers->get(inst.inputs[1]);
     const float* predelay_ms = ctx.buffers->get(inst.inputs[2]);
     const float* input_diffusion_in = ctx.buffers->get(inst.inputs[3]);
@@ -139,7 +149,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        float x = input[i];
+        float x_in_l = input[i];
+        float x_in_r = stereo_in ? input_r[i] : x_in_l;
         float dec = std::clamp(decay[i], 0.0f, 0.99f);
         float pre_ms = std::clamp(predelay_ms[i], 0.0f, 100.0f);
 
@@ -148,25 +159,44 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
         float decay_diffusion = decay_diffusion_in[i] > 0.0f ? decay_diffusion_in[i] : DATTORRO_DECAY_DIFFUSION_DEFAULT;
         float lfo_rate = DATTORRO_LFO_RATE_DEFAULT;  // Fixed at default
 
-        // Pre-delay
+        // Pre-delay (per-channel duplicated path)
         float predelay_samples = pre_ms * 0.001f * ctx.sample_rate;
         predelay_samples = std::min(predelay_samples, static_cast<float>(DattorroState::PREDELAY_SIZE - 1));
-        state.predelay_buffer[state.predelay_pos] = x;
-        std::size_t read_pos = (state.predelay_pos + DattorroState::PREDELAY_SIZE -
-                                static_cast<std::size_t>(predelay_samples)) % DattorroState::PREDELAY_SIZE;
-        x = state.predelay_buffer[read_pos];
-        state.predelay_pos = (state.predelay_pos + 1) % DattorroState::PREDELAY_SIZE;
 
-        // Input diffusion: 4 allpass filters
+        float x_l;
+        float x_r;
+        {
+            state.predelay_buffer[0][state.predelay_pos[0]] = x_in_l;
+            std::size_t read_pos = (state.predelay_pos[0] + DattorroState::PREDELAY_SIZE -
+                                    static_cast<std::size_t>(predelay_samples)) % DattorroState::PREDELAY_SIZE;
+            x_l = state.predelay_buffer[0][read_pos];
+            state.predelay_pos[0] = (state.predelay_pos[0] + 1) % DattorroState::PREDELAY_SIZE;
+        }
+        {
+            state.predelay_buffer[1][state.predelay_pos[1]] = x_in_r;
+            std::size_t read_pos = (state.predelay_pos[1] + DattorroState::PREDELAY_SIZE -
+                                    static_cast<std::size_t>(predelay_samples)) % DattorroState::PREDELAY_SIZE;
+            x_r = state.predelay_buffer[1][read_pos];
+            state.predelay_pos[1] = (state.predelay_pos[1] + 1) % DattorroState::PREDELAY_SIZE;
+        }
+
+        // Input diffusion: 4 allpass filters per channel
         for (std::size_t d = 0; d < DattorroState::NUM_INPUT_DIFFUSERS; ++d) {
-            float* buffer = state.input_diffusers[d];
             std::size_t size = DattorroState::INPUT_DIFFUSER_SIZES[d];
 
-            float delayed = buffer[state.input_pos[d]];
-            float output = delayed - input_diffusion * x;
-            buffer[state.input_pos[d]] = x + input_diffusion * output;
-            state.input_pos[d] = (state.input_pos[d] + 1) % size;
-            x = output;
+            float* buf_l = state.input_diffusers[0][d];
+            float delayed_l = buf_l[state.input_pos[0][d]];
+            float output_l = delayed_l - input_diffusion * x_l;
+            buf_l[state.input_pos[0][d]] = x_l + input_diffusion * output_l;
+            state.input_pos[0][d] = (state.input_pos[0][d] + 1) % size;
+            x_l = output_l;
+
+            float* buf_r = state.input_diffusers[1][d];
+            float delayed_r = buf_r[state.input_pos[1][d]];
+            float output_r = delayed_r - input_diffusion * x_r;
+            buf_r[state.input_pos[1][d]] = x_r + input_diffusion * output_r;
+            state.input_pos[1][d] = (state.input_pos[1][d] + 1) % size;
+            x_r = output_r;
         }
 
         // Update modulation LFO
@@ -174,12 +204,13 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
         if (state.mod_phase >= 1.0f) state.mod_phase -= 1.0f;
 
         // Tank processing (figure-8 topology)
-        // Left branch: decay diffuser 1 -> delay 1 -> damp -> decay diffuser 2 -> delay 2
-        // Right branch: same but feeds back to left
+        // Branch 0 ("left tank"): decay diffuser 0 -> delay 0 -> damp 0 -> DC blocker 0
+        // Branch 1 ("right tank"): decay diffuser 1 -> delay 1 -> damp 1 -> DC blocker 1
+        // Each branch's feedback drives the OTHER branch's input (figure-8).
 
-        // Get feedback from opposite branch
-        float left_in = x + dec * state.tank_feedback[1];
-        float right_in = x + dec * state.tank_feedback[0];
+        // Get feedback from opposite branch + per-channel diffused signal
+        float left_in = x_l + dec * state.tank_feedback[1];
+        float right_in = x_r + dec * state.tank_feedback[0];
 
         // Process left branch
         {
@@ -249,8 +280,11 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
             state.tank_feedback[1] = right_in;
         }
 
-        // Output is sum of taps from both tank branches
-        out[i] = (state.tank_feedback[0] + state.tank_feedback[1]) * 0.5f;
+        // Stereo output: L tap = branch-0 feedback, R tap = branch-1 feedback.
+        // (Mono pre-PRD output was the 0.5*(L+R) average; recover with
+        // (out_l + out_r) * 0.5 if needed.)
+        out_l[i] = state.tank_feedback[0];
+        out_r[i] = state.tank_feedback[1];
     }
 }
 

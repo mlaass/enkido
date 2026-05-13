@@ -1,15 +1,18 @@
 """
 Test: REVERB_DATTORRO (Dattorro Reverb)
 =======================================
-Tests Dattorro reverb impulse response and decay characteristics.
+Tests Dattorro reverb impulse response, decay characteristics, AND the
+Phase 0+1 stereo-native conversion (prd-stereo-native-opcodes).
 
 Expected behavior:
-- Impulse response should show a smooth decay tail
-- Higher decay values should produce longer reverb tails
-- Predelay should introduce a gap before the reverb onset
-- The decay should be roughly exponential
+- Impulse response shows a smooth decay tail (per channel)
+- Higher decay values produce longer reverb tails
+- Predelay introduces a gap before the reverb onset
+- Output is STEREO: writes to out_buffer (L) and out_buffer + 1 (R)
+- L/R are decorrelated for non-trivial input (cross-correlation < 1.0)
+- Cross-coupling: STEREO_OUTPUT | STEREO_INPUT feeds opposing tanks
 
-If this test fails, check the implementation in cedar/include/cedar/opcodes/reverb.hpp
+If this test fails, check the implementation in cedar/include/cedar/opcodes/reverbs.hpp
 """
 
 import os
@@ -25,7 +28,8 @@ OUT = output_dir("op_dattorro")
 
 
 def test_reverb_decay():
-    print("Test: Reverb Impulse Response")
+    """Mono impulse → stereo-native Dattorro → stereo decay tail."""
+    print("Test: Reverb Impulse Response (stereo-native)")
 
     sr = 48000
     host = CedarTestHost(sr)
@@ -40,35 +44,76 @@ def test_reverb_decay():
     buf_indiff = host.set_param("input_diffusion", 0.75)
     buf_decdiff = host.set_param("decay_diffusion", 0.625)
 
-    # Dattorro(out, in, decay, predelay, input_diffusion, decay_diffusion)
-    # Rate: damping | mod_depth
+    # Dattorro is stereo-native: writes out_buffer (L) and out_buffer+1 (R).
+    # Allocate two contiguous output buffers (1 = L, 2 = R) and tag the
+    # instruction with STEREO_OUTPUT. STEREO_INPUT is NOT set because the
+    # primary input is mono (the impulse buffer in slot 0).
     inst = cedar.Instruction.make_quinary(
         cedar.Opcode.REVERB_DATTORRO, 1, buf_in, buf_decay, buf_predelay,
         buf_indiff, buf_decdiff, cedar.hash("verb") & 0xFFFF
     )
     inst.rate = (0 << 4) | 0  # No mod, no damping for clear tail
+    inst.flags = cedar.STEREO_OUTPUT_FLAG
 
     host.load_instruction(inst)
-    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+    # OUTPUT: inputs[0] = L (buf 1), inputs[1] = R (buf 2)
+    out_inst = cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2)
+    host.load_instruction(out_inst)
 
-    output = host.process(impulse)
+    # Custom block loop that collects both L and R from the stereo output bus
+    host.vm.load_program(host.program)
+    n_samples = len(impulse)
+    n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+    padded_len = n_blocks * cedar.BLOCK_SIZE
+    input_padded = np.zeros(padded_len, dtype=np.float32)
+    input_padded[:n_samples] = impulse
+    out_l_chunks, out_r_chunks = [], []
+    for i in range(n_blocks):
+        start = i * cedar.BLOCK_SIZE
+        end = start + cedar.BLOCK_SIZE
+        host.vm.set_buffer(0, input_padded[start:end])
+        l, r = host.vm.process()
+        out_l_chunks.append(l)
+        out_r_chunks.append(r)
+    output_l = np.concatenate(out_l_chunks)[:n_samples]
+    output_r = np.concatenate(out_r_chunks)[:n_samples]
 
     # Save WAV for human evaluation
     wav_path = os.path.join(OUT, "dattorro_impulse.wav")
-    save_wav(wav_path, output, sr)
-    print(f"  Saved {wav_path} - Listen for smooth reverb tail")
+    stereo_arr = np.stack([output_l, output_r], axis=1)
+    save_wav(wav_path, stereo_arr, sr)
+    print(f"  Saved {wav_path} - Listen for stereo reverb tail with width")
 
-    # Plot log-magnitude envelope
-    time = np.arange(len(output)) / sr
-    env = np.abs(output)
-    env_db = 20 * np.log10(env + 1e-6)
+    # L and R should be decorrelated for non-trivial decay tail
+    # (mono input but tank cross-coupling produces L != R).
+    nonzero = (np.abs(output_l) > 1e-6) | (np.abs(output_r) > 1e-6)
+    if np.any(nonzero):
+        l = output_l[nonzero]
+        r = output_r[nonzero]
+        # Pearson correlation
+        if np.std(l) > 1e-9 and np.std(r) > 1e-9:
+            corr = float(np.corrcoef(l, r)[0, 1])
+        else:
+            corr = 1.0
+        print(f"  L/R Pearson correlation: {corr:.4f}")
+        if corr < 0.999:
+            print("  ✓ PASS: L and R are non-trivially decorrelated")
+        else:
+            print("  ✗ FAIL: L and R are virtually identical")
+
+    # Plot log-magnitude envelope, L and R overlaid
+    time = np.arange(len(output_l)) / sr
+    env_l_db = 20 * np.log10(np.abs(output_l) + 1e-6)
+    env_r_db = 20 * np.log10(np.abs(output_r) + 1e-6)
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(time, env_db, linewidth=0.5, color='purple')
-    ax.set_title("Dattorro Reverb Impulse Response (Decay 0.95)")
+    ax.plot(time, env_l_db, linewidth=0.5, color='purple', label='L')
+    ax.plot(time, env_r_db, linewidth=0.5, color='orange', alpha=0.7, label='R')
+    ax.set_title("Dattorro Reverb Impulse Response (Decay 0.95, stereo-native)")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude (dB)")
     ax.set_ylim(-100, 0)
+    ax.legend()
     ax.grid(True, alpha=0.3)
 
     save_figure(fig, os.path.join(OUT, "reverb_ir.png"))
@@ -127,15 +172,36 @@ def test_tail_length():
             buf_indiff, buf_decdiff, cedar.hash("dat_tail") & 0xFFFF
         )
         inst.rate = (0 << 4) | 0  # No mod, no damping
+        inst.flags = cedar.STEREO_OUTPUT_FLAG
         host.load_instruction(inst)
-        host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+        # OUTPUT both L (buf 1) and R (buf 2) so the bus contains the full mix
+        host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2))
 
-        output = host.process(noise_pulse)
+        # RT60 is measured on the average of L and R to approximate the
+        # historic mono (L+R)*0.5 output. Inline block loop because
+        # process() only returns L from the stereo bus.
+        host.vm.load_program(host.program)
+        n_samples = len(noise_pulse)
+        n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+        padded_len = n_blocks * cedar.BLOCK_SIZE
+        in_padded = np.zeros(padded_len, dtype=np.float32)
+        in_padded[:n_samples] = noise_pulse
+        l_chunks, r_chunks = [], []
+        for k in range(n_blocks):
+            s = k * cedar.BLOCK_SIZE
+            e = s + cedar.BLOCK_SIZE
+            host.vm.set_buffer(0, in_padded[s:e])
+            l, r = host.vm.process()
+            l_chunks.append(l)
+            r_chunks.append(r)
+        out_l = np.concatenate(l_chunks)[:n_samples]
+        out_r = np.concatenate(r_chunks)[:n_samples]
+        output = 0.5 * (out_l + out_r)
         rt60 = estimate_rt60(output, sr)
         rt60s.append(rt60)
 
         wav_path = os.path.join(OUT, f"dattorro_tail_decay{decay}.wav")
-        save_wav(wav_path, output, sr)
+        save_wav(wav_path, np.stack([out_l, out_r], axis=1), sr)
 
         time = np.arange(len(output)) / sr
         env_db = 20 * np.log10(np.abs(output) + 1e-10)
@@ -161,6 +227,75 @@ def test_tail_length():
         print(f"  ✗ FAIL: RT60 not monotonic: {rt60s}")
 
 
+def test_stereo_input_cross_coupling():
+    """
+    Stereo input → cross-coupled figure-8 tanks. Inject an impulse on L only
+    (R = silence); the R output should pick up energy through the
+    tank_feedback[0] → right_in feedback path within a few blocks.
+    """
+    print("Test: Stereo Input Cross-Coupling")
+
+    sr = 48000
+    host = CedarTestHost(sr)
+
+    # L impulse, R silence
+    n_samples = 2 * sr
+    left = np.zeros(n_samples, dtype=np.float32)
+    left[0] = 1.0
+    right = np.zeros(n_samples, dtype=np.float32)
+
+    # Dattorro reads L from buf 0 and R from buf 1 (adjacency convention).
+    # set_param returns buffer indices ≥ 10 so this is safe.
+    buf_in = 0
+    buf_decay = host.set_param("decay", 0.85)
+    buf_predelay = host.set_param("predelay", 10.0)
+    buf_indiff = host.set_param("input_diffusion", 0.75)
+    buf_decdiff = host.set_param("decay_diffusion", 0.625)
+
+    # Output to buf 2 (L) and buf 3 (R) — keep clear of the stereo INPUT pair.
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.REVERB_DATTORRO, 2, buf_in, buf_decay, buf_predelay,
+        buf_indiff, buf_decdiff, cedar.hash("dat_xc") & 0xFFFF
+    )
+    inst.rate = 0
+    inst.flags = cedar.STEREO_OUTPUT_FLAG | cedar.STEREO_INPUT_FLAG
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 2, 3))
+
+    # Run block-by-block feeding both inputs
+    host.vm.load_program(host.program)
+    n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+    padded_len = n_blocks * cedar.BLOCK_SIZE
+    l_in = np.zeros(padded_len, dtype=np.float32); l_in[:n_samples] = left
+    r_in = np.zeros(padded_len, dtype=np.float32); r_in[:n_samples] = right
+    l_chunks, r_chunks = [], []
+    for i in range(n_blocks):
+        s = i * cedar.BLOCK_SIZE
+        e = s + cedar.BLOCK_SIZE
+        host.vm.set_buffer(0, l_in[s:e])
+        host.vm.set_buffer(1, r_in[s:e])
+        l, r = host.vm.process()
+        l_chunks.append(l)
+        r_chunks.append(r)
+    out_l = np.concatenate(l_chunks)[:n_samples]
+    out_r = np.concatenate(r_chunks)[:n_samples]
+
+    # Save WAV
+    wav_path = os.path.join(OUT, "dattorro_cross_coupling.wav")
+    save_wav(wav_path, np.stack([out_l, out_r], axis=1), sr)
+    print(f"  Saved {wav_path} - Listen for energy in BOTH L and R from a left-only impulse")
+
+    # Energy in R should be substantial despite R input being silent —
+    # cross-coupling via tank_feedback[0] → right_in feeds it.
+    rms_l = float(np.sqrt(np.mean(out_l ** 2)))
+    rms_r = float(np.sqrt(np.mean(out_r ** 2)))
+    if rms_r > 0.01 * rms_l:
+        print(f"  ✓ PASS: cross-coupling visible — rms_l={rms_l:.5f}, rms_r={rms_r:.5f}")
+    else:
+        print(f"  ✗ FAIL: R channel near silent — rms_l={rms_l:.5f}, rms_r={rms_r:.5f}")
+
+
 if __name__ == "__main__":
     test_reverb_decay()
     test_tail_length()
+    test_stereo_input_cross_coupling()

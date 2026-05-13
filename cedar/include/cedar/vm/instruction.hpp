@@ -207,12 +207,30 @@ enum class Opcode : std::uint8_t {
 };
 
 // Instruction flag bits (16-bit field, room for future per-instruction attributes).
-// STEREO_INPUT: run the opcode twice with independent per-channel state (see
-// prd-stereo-support.md §6). Left-channel pass reads inputs[i] and writes
-// out_buffer; right-channel pass reads inputs[i]+1 (for stereo inputs) and
-// writes out_buffer+1, with state_id XOR'd by STEREO_STATE_XOR_R.
+//
+// Two bits cooperate to describe stereo behaviour (see
+// prd-stereo-native-opcodes.md):
+//
+//   bit 0 = STEREO_INPUT, bit 1 = STEREO_OUTPUT
+//
+//   00: classic mono dispatch — opcode runs once on inputs[i], writes out_buffer.
+//   01: legacy auto-lift (STEREO_INPUT only). VM re-executes the opcode with
+//       inputs[0]+1 (when stereo), out_buffer+1, and state_id XOR'd by
+//       STEREO_STATE_XOR_R. Used for mono opcodes lifted onto stereo input
+//       during the per-PRD migration from auto-lift to stereo-native (retires
+//       in Phase 5 of prd-stereo-native-opcodes).
+//   10: stereo-native opcode (STEREO_OUTPUT only). The opcode handles both
+//       channels in one dispatch. Primary input is mono — the opcode reads
+//       inputs[0] once and uses it for both internal L and R lanes. Output is
+//       written to out_buffer (L) and out_buffer+1 (R) in a single call;
+//       per-channel state lives inside one state struct.
+//   11: stereo-native opcode with stereo primary input. The opcode reads
+//       inputs[0] for L and inputs[0]+1 for R (adjacent-buffer convention).
+//       Output as in case 10. No auto-lift dispatch — the opcode body owns
+//       per-channel processing.
 namespace InstructionFlag {
-    constexpr std::uint16_t STEREO_INPUT = 1u << 0;
+    constexpr std::uint16_t STEREO_INPUT  = 1u << 0;  // see truth table above
+    constexpr std::uint16_t STEREO_OUTPUT = 1u << 1;  // see truth table above
 }
 
 // XOR mask applied to state_id on the right-channel pass of a STEREO_INPUT

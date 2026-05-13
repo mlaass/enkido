@@ -1341,28 +1341,61 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // `right(s)` extractions that legitimately reuse the pair's
             // left/right buffer as a mono signal.
             if (func_name == "out" && arg_buffers.size() == 2) {
-                NodeIndex ch = n.first_child;
-                for (std::size_t ai = 0; ai < 2 && ch != NULL_NODE; ++ai,
-                         ch = ast_->arena[ch].next_sibling) {
-                    const Node& arg_node = ast_->arena[ch];
-                    NodeIndex arg_value = (arg_node.type == NodeType::Argument) ?
-                                         arg_node.first_child : ch;
-                    // Rely on TypedValue.channels — node-level
-                    // is_stereo() has a buffer-pair fallback that false-
-                    // positives on an explicit `left(s)` extraction.
-                    // Re-visit (cache-hit cheap) to resolve identifiers.
-                    TypedValue resolved = visit(arg_value);
-                    bool this_is_stereo = resolved.is_stereo()
-                                          && resolved.right_buffer != 0xFFFF;
-                    if (this_is_stereo) {
-                        error("E185",
-                              "out() expects Mono for argument " + std::to_string(ai + 1) +
-                              ", got Stereo. Use `out(stereo_sig)` for a stereo signal, "
-                              "or `out(left(s), right(s))` to route channels explicitly.",
-                              ast_->arena[ch].location);
-                        if (pushed_path) pop_path();
-                        return TypedValue::error_val();
+                // PRD prd-stereo-native-opcodes §5.6, §9.4: out() argument
+                // shape mismatch is no longer E185 — it auto-escalates.
+                // For each arg, we route a (L, R) contribution to the
+                // accumulating OUTPUT bus:
+                //   - Mono arg  → broadcast (L = R = arg)
+                //   - Stereo arg → split (L = arg.left, R = arg.right)
+                // The two contributions sum at the bus since OUTPUT does
+                // `output_left += L; output_right += R;` (utility.hpp:55-56).
+                //
+                // Detect a mismatch first so we can avoid the per-arg
+                // emission path when both args are mono (the existing
+                // single-OUTPUT emission below is unchanged for that case).
+                bool any_stereo = false;
+                std::array<TypedValue, 2> resolved{};
+                {
+                    NodeIndex ch = n.first_child;
+                    for (std::size_t ai = 0; ai < 2 && ch != NULL_NODE; ++ai,
+                             ch = ast_->arena[ch].next_sibling) {
+                        const Node& arg_node = ast_->arena[ch];
+                        NodeIndex arg_value = (arg_node.type == NodeType::Argument) ?
+                                             arg_node.first_child : ch;
+                        resolved[ai] = visit(arg_value);
+                        if (resolved[ai].is_stereo() &&
+                            resolved[ai].right_buffer != 0xFFFF) {
+                            any_stereo = true;
+                        }
                     }
+                }
+                if (any_stereo) {
+                    warn("W185",
+                         "out() with mixed channel shapes — auto-escalating: "
+                         "mono args broadcast to both buses, stereo args drive "
+                         "both buses; contributions sum.",
+                         n.location);
+                    for (std::size_t ai = 0; ai < 2; ++ai) {
+                        std::uint16_t left_in  = arg_buffers[ai];
+                        std::uint16_t right_in = arg_buffers[ai];
+                        if (resolved[ai].is_stereo() &&
+                            resolved[ai].right_buffer != 0xFFFF) {
+                            left_in  = resolved[ai].buffer;
+                            right_in = resolved[ai].right_buffer;
+                        }
+                        cedar::Instruction out_inst{};
+                        out_inst.opcode = cedar::Opcode::OUTPUT;
+                        out_inst.out_buffer = 0xFFFF;
+                        out_inst.inputs[0] = left_in;
+                        out_inst.inputs[1] = right_in;
+                        out_inst.inputs[2] = 0xFFFF;
+                        out_inst.inputs[3] = 0xFFFF;
+                        out_inst.inputs[4] = 0xFFFF;
+                        out_inst.state_id = 0;
+                        emit(out_inst);
+                    }
+                    if (pushed_path) pop_path();
+                    return cache_and_return(node, TypedValue::void_val());
                 }
             }
 
@@ -1400,13 +1433,17 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // PRD §5.3 rule 1 / §5.2 (G1): declarative channel-type mismatch.
-            // For builtins that do not opt into auto-lift, a stereo signal in
-            // a Mono slot (or vice versa) is a compile error E186. Special-
-            // handler builtins (stereo/mono/left/right/pan/width/ms_encode/
-            // ms_decode/pingpong) never reach this path — they enforce their
-            // own signatures with E181–E184. `out()` is handled above via
-            // E185 and the single-arg expansion branch.
-            if (func_name != "out" && !builtin->auto_lift) {
+            // For builtins that do not opt into auto-lift or stereo_native, a
+            // stereo signal in a Mono slot (or vice versa) is a compile error
+            // E186. Special-handler builtins (stereo/mono/left/right/pan/
+            // width/ms_encode/ms_decode/pingpong) never reach this path —
+            // they enforce their own signatures with E181–E184. `out()` is
+            // handled above via E185 and the single-arg expansion branch.
+            //
+            // Stereo-native opcodes (prd-stereo-native-opcodes Phase 1) skip
+            // this check because they auto-escalate mono → stereo at the
+            // boundary (mono input is broadcast inside the opcode body).
+            if (func_name != "out" && !builtin->auto_lift && !builtin->stereo_native) {
                 NodeIndex ch = n.first_child;
                 for (std::size_t ai = 0; ai < arg_buffers.size() &&
                         ai < MAX_BUILTIN_PARAMS && ch != NULL_NODE; ++ai,
@@ -1495,6 +1532,122 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                                       expansion_arg_idx >= 0 &&
                                       expansion_buffers.size() == 2 &&
                                       is_stereo(arg_nodes[static_cast<std::size_t>(expansion_arg_idx)]));
+            }
+
+            // PRD prd-stereo-native-opcodes Phase 1: declarative stereo-native
+            // emission. Builtins that opt in produce a stereo output pair in a
+            // single dispatch, regardless of input channel count (mono auto-
+            // escalates to L=R inside the opcode body). Stereo primary input
+            // adds STEREO_INPUT to the flag combo so the opcode reads
+            // inputs[0]+1 for R. Chord/polyphonic expansion onto a stereo-
+            // native opcode is rejected — user must wrap explicitly in poly().
+            if (builtin->stereo_native) {
+                bool primary_stereo =
+                    expansion_arg_idx >= 0 &&
+                    expansion_buffers.size() == 2 &&
+                    is_stereo(arg_nodes[static_cast<std::size_t>(expansion_arg_idx)]);
+
+                // Chord/poly expansion into stereo-native = E187. Stereo input
+                // (size == 2 + is_stereo) is fine; >2 voices, or 2 voices that
+                // aren't a stereo pair, indicate a chord that needs poly().
+                bool is_chord_expansion =
+                    expansion_arg_idx >= 0 &&
+                    expansion_buffers.size() > 1 &&
+                    !primary_stereo;
+                if (is_chord_expansion) {
+                    error("E187",
+                          "Chord/polyphonic expansion into stereo-native opcode '" +
+                          std::string(func_name) +
+                          "' requires explicit poly() wrapping.",
+                          call_loc);
+                    if (pushed_path) pop_path();
+                    return TypedValue::error_val();
+                }
+
+                current_source_loc_ = call_loc;
+
+                std::size_t n_params = builtin->total_params();
+                auto expanded_args = arg_buffers;
+
+                // For stereo primary input: ensure the primary signal arg
+                // points at the LEFT buffer of the stereo pair — opcode reads
+                // inputs[0]+1 for R when STEREO_INPUT is set.
+                if (primary_stereo) {
+                    expanded_args[static_cast<std::size_t>(expansion_arg_idx)] =
+                        expansion_buffers[0];
+                }
+
+                // Fill in any remaining defaults with control-rate constants
+                for (std::size_t j = expanded_args.size(); j < n_params; ++j) {
+                    if (builtin->has_default(j)) {
+                        std::uint16_t default_buf = buffers_.allocate();
+                        if (default_buf == BufferAllocator::BUFFER_UNUSED) {
+                            error("E101", "Buffer pool exhausted", n.location);
+                            if (pushed_path) pop_path();
+                            return TypedValue::error_val();
+                        }
+                        cedar::Instruction push_inst{};
+                        push_inst.opcode = cedar::Opcode::PUSH_CONST;
+                        push_inst.out_buffer = default_buf;
+                        push_inst.inputs[0] = 0xFFFF;
+                        push_inst.inputs[1] = 0xFFFF;
+                        push_inst.inputs[2] = 0xFFFF;
+                        push_inst.inputs[3] = 0xFFFF;
+                        encode_const_value(push_inst, builtin->get_default(j));
+                        emit(push_inst);
+                        expanded_args.push_back(default_buf);
+                    }
+                }
+
+                // Allocate adjacent L/R output pair (BufferAllocator is linear
+                // so two back-to-back allocations are guaranteed adjacent).
+                std::uint16_t out_left = buffers_.allocate();
+                std::uint16_t out_right = buffers_.allocate();
+                if (out_left == BufferAllocator::BUFFER_UNUSED ||
+                    out_right == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    if (pushed_path) pop_path();
+                    return TypedValue::error_val();
+                }
+                if (out_right != out_left + 1) {
+                    error("E166", "Internal error: stereo buffer allocation not adjacent",
+                          n.location);
+                    if (pushed_path) pop_path();
+                    return TypedValue::error_val();
+                }
+
+                cedar::Instruction inst{};
+                inst.opcode = builtin->opcode;
+                inst.out_buffer = out_left;
+                inst.inputs[0] = expanded_args.size() > 0 ? expanded_args[0] : 0xFFFF;
+                inst.inputs[1] = expanded_args.size() > 1 ? expanded_args[1] : 0xFFFF;
+                inst.inputs[2] = expanded_args.size() > 2 ? expanded_args[2] : 0xFFFF;
+                inst.inputs[3] = expanded_args.size() > 3 ? expanded_args[3] : 0xFFFF;
+                inst.inputs[4] = expanded_args.size() > 4 ? expanded_args[4] : 0xFFFF;
+                inst.rate = builtin->inst_rate;
+                inst.flags = static_cast<std::uint16_t>(
+                    cedar::InstructionFlag::STEREO_OUTPUT |
+                    (primary_stereo ? cedar::InstructionFlag::STEREO_INPUT : 0u));
+
+                // FM detection on stereo-native oscillators (currently no
+                // stereo-native oscillators exist, but keep the path uniform).
+                if (is_upgradeable_oscillator(inst.opcode) && !expanded_args.empty()) {
+                    if (is_fm_modulated(expanded_args[0])) {
+                        inst.opcode = upgrade_for_fm(inst.opcode);
+                    }
+                }
+
+                // Stereo-native state ID uses plain fnv1a(semantic_path) — no
+                // /L suffix, no XOR. Per-channel fields live inside one state
+                // struct (see DattorroState predelay_buffer[2], etc.).
+                inst.state_id = compute_state_id();
+                emit(inst);
+
+                if (pushed_path) pop_path();
+
+                register_stereo(node, out_left, out_right);
+                return cache_and_return(node,
+                    TypedValue::stereo_signal(out_left, out_right));
             }
 
             if (is_stereo_expansion) {

@@ -749,12 +749,17 @@ struct DattorroState {
     // Tank delay sizes
     static constexpr std::size_t DELAY_SIZES[2] = {4453, 4217};
 
-    // All buffers arena-allocated to keep variant size small
-    float* predelay_buffer = nullptr;
-    std::size_t predelay_pos = 0;
+    // All buffers arena-allocated to keep variant size small.
+    //
+    // Predelay + input-diffuser network are duplicated per channel
+    // (prd-stereo-native-opcodes Phase 0): index [0] = L lane, [1] = R lane.
+    // On mono input the lanes receive identical samples and stay
+    // synchronized; on stereo input they diverge naturally.
+    float* predelay_buffer[2] = {};
+    std::size_t predelay_pos[2] = {};
 
-    float* input_diffusers[NUM_INPUT_DIFFUSERS] = {};
-    std::size_t input_pos[NUM_INPUT_DIFFUSERS] = {};
+    float* input_diffusers[2][NUM_INPUT_DIFFUSERS] = {};
+    std::size_t input_pos[2][NUM_INPUT_DIFFUSERS] = {};
 
     float* decay_diffusers[2] = {};
     std::size_t decay_pos[2] = {};
@@ -772,17 +777,20 @@ struct DattorroState {
     // Tank feedback (for figure-8 topology)
     float tank_feedback[2] = {};
 
-    // Modulation
+    // Modulation. Shared across L/R lanes — L/R decorrelation comes from the
+    // existing 180° tank offset between delay 0 and delay 1.
     float mod_phase = 0.0f;
 
     void ensure_buffers(AudioArena* arena) {
         if (!arena) return;
-        if (!predelay_buffer) {
-            predelay_buffer = arena->allocate(PREDELAY_SIZE);
-        }
-        for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
-            if (!input_diffusers[i]) {
-                input_diffusers[i] = arena->allocate(INPUT_DIFFUSER_SIZES[i]);
+        for (std::size_t c = 0; c < 2; ++c) {
+            if (!predelay_buffer[c]) {
+                predelay_buffer[c] = arena->allocate(PREDELAY_SIZE);
+            }
+            for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
+                if (!input_diffusers[c][i]) {
+                    input_diffusers[c][i] = arena->allocate(INPUT_DIFFUSER_SIZES[i]);
+                }
             }
         }
         for (std::size_t i = 0; i < 2; ++i) {
@@ -796,14 +804,17 @@ struct DattorroState {
     }
 
     void reset() {
-        if (predelay_buffer) {
-            std::memset(predelay_buffer, 0, PREDELAY_SIZE * sizeof(float));
-        }
-        predelay_pos = 0;
-        for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
-            if (input_diffusers[i]) {
-                std::memset(input_diffusers[i], 0, INPUT_DIFFUSER_SIZES[i] * sizeof(float));
-                input_pos[i] = 0;
+        for (std::size_t c = 0; c < 2; ++c) {
+            if (predelay_buffer[c]) {
+                std::memset(predelay_buffer[c], 0, PREDELAY_SIZE * sizeof(float));
+            }
+            predelay_pos[c] = 0;
+            for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
+                if (input_diffusers[c][i]) {
+                    std::memset(input_diffusers[c][i], 0,
+                                INPUT_DIFFUSER_SIZES[i] * sizeof(float));
+                    input_pos[c][i] = 0;
+                }
             }
         }
         for (std::size_t i = 0; i < 2; ++i) {

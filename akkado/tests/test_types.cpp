@@ -49,20 +49,26 @@ static bool has_diagnostic(const akkado::CompileResult& result, const std::strin
 }
 
 // =============================================================================
-// Error cases (PRD §4.4 / §10)
+// Channel-mismatch warnings (prd-stereo-native-opcodes §5.6, §9.4)
+//
+// Pre-PRD, these cases emitted hard errors E181–E185. Post-PRD they auto-
+// escalate at the boundary: compilation succeeds, a W18x warning logs the
+// redundant/mismatched call at the source location. Type-safety is preserved
+// via the still-erroring E186 (non-signal channel mismatch on a non-stereo-
+// native builtin).
 // =============================================================================
 
-TEST_CASE("Types: left()/right() reject mono input", "[types][stereo][errors]") {
-    SECTION("left(mono) is E183") {
+TEST_CASE("Types: left()/right() on mono auto-escalates with warning", "[types][stereo][warnings]") {
+    SECTION("left(mono) warns W183 and returns the mono input") {
         auto result = akkado::compile("left(saw(220)) |> out(%)");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E183"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W183"));
     }
 
-    SECTION("right(mono) is E184") {
+    SECTION("right(mono) warns W184 and returns the mono input") {
         auto result = akkado::compile("right(saw(220)) |> out(%)");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E184"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W184"));
     }
 
     SECTION("left(stereo) still compiles") {
@@ -74,14 +80,14 @@ TEST_CASE("Types: left()/right() reject mono input", "[types][stereo][errors]") 
     }
 }
 
-TEST_CASE("Types: stereo() rejects already-stereo input", "[types][stereo][errors]") {
-    SECTION("stereo(stereo) is E182") {
+TEST_CASE("Types: stereo() on already-stereo input auto-escalates with warning", "[types][stereo][warnings]") {
+    SECTION("stereo(stereo) warns W182 and returns the stereo input") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             stereo(s) |> out(%)
         )");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E182"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W182"));
     }
 
     SECTION("stereo(mono) still compiles") {
@@ -95,23 +101,23 @@ TEST_CASE("Types: stereo() rejects already-stereo input", "[types][stereo][error
     }
 }
 
-TEST_CASE("Types: out(L, R) rejects stereo in either slot", "[types][stereo][errors]") {
-    SECTION("out(stereo, mono) is E185") {
+TEST_CASE("Types: out(L, R) with mixed channels auto-escalates with warning", "[types][stereo][warnings]") {
+    SECTION("out(stereo, mono) warns W185 and routes both to the output bus") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             out(s, saw(330))
         )");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E185"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W185"));
     }
 
-    SECTION("out(mono, stereo) is E185") {
+    SECTION("out(mono, stereo) warns W185 and routes both to the output bus") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             out(saw(330), s)
         )");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E185"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W185"));
     }
 
     SECTION("out(mono, mono) still compiles") {
@@ -128,11 +134,10 @@ TEST_CASE("Types: out(L, R) rejects stereo in either slot", "[types][stereo][err
     }
 }
 
-TEST_CASE("Types: mono() rejects mono input", "[types][stereo][errors]") {
-    // E181 is established in test_codegen.cpp; re-assert here for completeness.
+TEST_CASE("Types: mono() on mono auto-escalates with warning", "[types][stereo][warnings]") {
     auto result = akkado::compile("mono(saw(220)) |> out(%)");
-    CHECK_FALSE(result.success);
-    CHECK(has_diagnostic(result, "E181"));
+    CHECK(result.success);
+    CHECK(has_diagnostic(result, "W181"));
 }
 
 // =============================================================================
@@ -277,14 +282,62 @@ TEST_CASE("Types: E186 rejects stereo on non-auto-lift builtins", "[types][stere
         CHECK(has_diagnostic(result, "E186"));
     }
 
-    SECTION("mono(mono) still emits E181, not E186") {
-        // Special-handler builtins keep their specific error codes so the user
-        // gets the precise "this is a stereo-only function" message.
+    SECTION("mono(mono) emits W181 (not E181 anymore), and never E186") {
+        // Special-handler builtins now auto-escalate at the boundary with a
+        // W18x warning; the channel-mismatch error path (E186) is reserved
+        // for non-stereo-native, non-auto-lift builtins like saw().
         auto result = akkado::compile("mono(saw(220)) |> out(%)");
-        CHECK_FALSE(result.success);
-        CHECK(has_diagnostic(result, "E181"));
+        CHECK(result.success);
+        CHECK(has_diagnostic(result, "W181"));
         CHECK_FALSE(has_diagnostic(result, "E186"));
     }
+}
+
+// =============================================================================
+// Stereo-native opcodes (prd-stereo-native-opcodes Phase 0+1)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native dattorro produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(110) |> dattorro(%, 0.85, 30) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    // Exactly one DATTORRO instruction (no auto-lift double emission)
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_DATTORRO) == 1);
+    auto* dat = find_instruction(insts, cedar::Opcode::REVERB_DATTORRO);
+    REQUIRE(dat != nullptr);
+    // STEREO_OUTPUT set, STEREO_INPUT clear (mono primary input)
+    CHECK((dat->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((dat->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native dattorro reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(110), saw(111))
+        dattorro(s, 0.85, 30) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::REVERB_DATTORRO) == 1);
+    auto* dat = find_instruction(insts, cedar::Opcode::REVERB_DATTORRO);
+    REQUIRE(dat != nullptr);
+    // Both STEREO_OUTPUT and STEREO_INPUT set
+    CHECK((dat->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((dat->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native opcode rejects array/chord expansion without poly()", "[types][stereo][stereo-native][errors]") {
+    // E187: a multi-voice array (or chord) flowing into a stereo-native
+    // opcode requires explicit poly() — they don't silently auto-expand
+    // into per-voice instantiation here. Use a 3-element array so the
+    // expansion is unambiguously not a stereo pair.
+    auto result = akkado::compile(R"(
+        voices = [saw(110), saw(220), saw(330)]
+        voices |> dattorro(%, 0.85, 30) |> out(%)
+    )");
+    CHECK_FALSE(result.success);
+    CHECK(has_diagnostic(result, "E187"));
 }
 
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {

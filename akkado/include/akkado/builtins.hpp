@@ -142,6 +142,19 @@ struct BuiltinInfo {
     // which enforce their own signatures.
     bool auto_lift = false;
 
+    // PRD prd-stereo-native-opcodes §5.1: when true, this opcode handles both
+    // stereo channels in one dispatch with one state struct. The codegen
+    // allocates an adjacent L/R output buffer pair and emits a single
+    // instruction with the STEREO_OUTPUT flag set; STEREO_INPUT is added when
+    // the primary signal argument is stereo. The opcode body itself splits
+    // L/R internally (per-channel arrays in the state struct). Auto-escalates
+    // mono inputs by reading the same buffer for both internal lanes.
+    //
+    // Mutually exclusive with auto_lift: stereo_native opcodes own their L/R
+    // processing and never invoke the VM's auto-lift dispatch. See the
+    // STEREO_INPUT / STEREO_OUTPUT truth table in cedar/vm/instruction.hpp.
+    bool stereo_native = false;
+
     // Static value to assign to inst.rate when this builtin lowers to its opcode.
     // Used by mode-dispatched opcodes (EDGE_OP modes 0-3, etc.) so multiple
     // builtin names share one opcode. Defaults to 0 — most opcodes ignore rate.
@@ -440,12 +453,15 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {0.5f, 0.5f, 0.28f, 0.7f, NAN},
                   "Freeverb algorithmic reverb",
                   0, {}, {}, ChannelCount::Mono, true}},
-    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing)
+    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing).
+    // Stereo-native opcode (Phase 0+1 of prd-stereo-native-opcodes): produces a
+    // stereo output pair natively, auto-escalates mono input, cross-couples
+    // L/R when input is stereo.
     {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 4, true,
                   {"in", "decay", "predelay", "in_diff", "dec_diff", ""},
                   {0.7f, 20.0f, 0.75f, 0.625f, NAN},
                   "Dattorro plate reverb algorithm",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, false, true}},
     {"fdn",      {cedar::Opcode::REVERB_FDN, 1, 2, true,
                   {"in", "decay", "damp", "", "", ""},
                   {0.8f, 0.3f, NAN},
@@ -472,6 +488,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {0.5f, 0.8f, 200.0f, 4000.0f, 4.0f, 0.5f},
                   "Multi-stage phaser effect",
                   0, {}, {}, ChannelCount::Mono, true,
+                  /*stereo_native=*/false,
                   /*inst_rate=*/static_cast<std::uint8_t>((8u << 4) | 4u)}},
     {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 0, true,
                   {"in", "time", "fb", "", "", ""},
@@ -751,22 +768,22 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"in", "trig", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Sample and hold",
-                 0, {}, {}, ChannelCount::Mono, true, /*inst_rate=*/0}},
+                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/0}},
     {"gateup",   {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "1.0 on rising edge of sig",
-                 0, {}, {}, ChannelCount::Mono, true, /*inst_rate=*/1}},
+                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/1}},
     {"gatedown", {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "1.0 on falling edge of sig",
-                 0, {}, {}, ChannelCount::Mono, true, /*inst_rate=*/2}},
+                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/2}},
     {"counter",  {cedar::Opcode::EDGE_OP, 1, 2, true,
                  {"trig", "reset", "start", "", "", ""},
                  {NAN, NAN},
                  "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset",
-                 0, {}, {}, ChannelCount::Mono, true, /*inst_rate=*/3}},
+                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/3}},
 
     // Output (1 required for mono, 2 for stereo)
     {"out",     {cedar::Opcode::OUTPUT, 1, 1, false,

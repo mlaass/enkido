@@ -151,6 +151,7 @@ PYBIND11_MODULE(cedar_core, m) {
 
     // Instruction flag constants (bit values)
     m.attr("STEREO_INPUT_FLAG") = cedar::InstructionFlag::STEREO_INPUT;
+    m.attr("STEREO_OUTPUT_FLAG") = cedar::InstructionFlag::STEREO_OUTPUT;
 
     // --- Instruction ---
     py::class_<cedar::Instruction>(m, "Instruction")

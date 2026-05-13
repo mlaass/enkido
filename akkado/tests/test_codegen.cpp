@@ -6164,14 +6164,16 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
         CHECK((lp->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
     }
 
-    SECTION("mono(mono) is an error") {
+    SECTION("mono(mono) auto-escalates with W181 warning") {
+        // prd-stereo-native-opcodes §5.6: mono(mono) is a silent no-op that
+        // returns the input unchanged and emits W181 at source location.
         auto result = akkado::compile("mono(saw(220))");
-        CHECK(!result.success);
-        bool found_e181 = false;
+        CHECK(result.success);
+        bool found_w181 = false;
         for (const auto& d : result.diagnostics) {
-            if (d.code == "E181") found_e181 = true;
+            if (d.code == "W181") found_w181 = true;
         }
-        CHECK(found_e181);
+        CHECK(found_w181);
     }
 
     SECTION("mono(fn) still dispatches to voice manager") {

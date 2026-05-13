@@ -506,7 +506,12 @@ void VM::execute(const Instruction& inst) {
     // signal input (inputs[0]) and out_buffer to the adjacent right buffer
     // and XORs state_id so left and right have independent DSP memory.
     // Scalar/control inputs (inputs[1..4]) are shared between passes.
-    if (inst.flags & InstructionFlag::STEREO_INPUT) [[unlikely]] {
+    //
+    // Skipped when STEREO_OUTPUT is also set: that bit combo means the opcode
+    // is stereo-native (handles both channels in one dispatch with one state
+    // struct). See prd-stereo-native-opcodes.md for the 4-state truth table.
+    if ((inst.flags & InstructionFlag::STEREO_INPUT) &&
+        !(inst.flags & InstructionFlag::STEREO_OUTPUT)) [[unlikely]] {
         Instruction left = inst;
         left.flags = static_cast<std::uint16_t>(inst.flags & ~InstructionFlag::STEREO_INPUT);
         execute(left);

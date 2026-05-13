@@ -110,10 +110,12 @@ TypedValue CodeGenerator::handle_mono_call(NodeIndex node, const Node& n) {
                            || is_stereo(signal_node)
                            || is_stereo_buffer(input.buffer);
     if (!input_is_stereo) {
-        error("E181", "mono() expects Stereo, got Mono. Call mono() only on "
-                      "stereo signals — use stereo() to convert mono to stereo.",
-              n.location);
-        return TypedValue::error_val();
+        // PRD prd-stereo-native-opcodes §5.6: mono(mono) is a silent no-op
+        // returning the input unchanged. Warning surfaces the redundant call
+        // at the source location.
+        warn("W181", "mono() called on a mono signal — returning the input unchanged.",
+             n.location);
+        return cache_and_return(node, input);
     }
 
     std::uint16_t left_buf = input.buffer;
@@ -162,20 +164,32 @@ TypedValue CodeGenerator::handle_stereo_call(NodeIndex node, const Node& n) {
     if (args.nodes.size() == 1) {
         // stereo(mono) - check if input is already stereo
         NodeIndex mono_node = args.nodes[0];
-        std::uint16_t mono_buf = visit(mono_node).buffer;
+        TypedValue mono_tv = visit(mono_node);
+        std::uint16_t mono_buf = mono_tv.buffer;
 
         // Check stereo by both node and buffer (buffer fallback for pipe chains)
-        bool input_is_stereo = is_stereo(mono_node) || is_stereo_buffer(mono_buf);
+        bool input_is_stereo = mono_tv.is_stereo()
+                               || is_stereo(mono_node)
+                               || is_stereo_buffer(mono_buf);
 
         if (input_is_stereo) {
-            // PRD §10.3: calling stereo() on an already-stereo signal is a
-            // compile error. Rationale: silent pass-through hides bugs where
-            // the user thought something upstream was still mono.
-            error("E182",
-                  "stereo() got a Stereo argument; value is already stereo. "
-                  "stereo() takes a mono signal or two mono signals.",
-                  n.location);
-            return TypedValue::error_val();
+            // PRD prd-stereo-native-opcodes §5.6: stereo(stereo) is a silent
+            // no-op returning the input unchanged. Warning surfaces the
+            // redundant call. Resolve full L/R via legacy maps if the
+            // TypedValue itself doesn't carry them (variable/alias path).
+            warn("W182",
+                 "stereo() called on a stereo signal — returning the input unchanged.",
+                 n.location);
+            if (mono_tv.right_buffer != 0xFFFF) {
+                register_stereo(node, mono_tv.buffer, mono_tv.right_buffer);
+                return cache_and_return(node, mono_tv);
+            }
+            StereoBuffers sb = is_stereo(mono_node)
+                ? get_stereo_buffers(mono_node)
+                : get_stereo_buffers_by_buffer(mono_buf);
+            register_stereo(node, sb.left, sb.right);
+            return cache_and_return(node,
+                TypedValue::stereo_signal(sb.left, sb.right));
         }
 
         // Mono input - allocate two new buffers and copy
@@ -226,10 +240,12 @@ TypedValue CodeGenerator::handle_left_call(NodeIndex node, const Node& n) {
         return cache_and_return(node, TypedValue::signal(stereo.left));
     }
 
-    // PRD §4.4: left() requires a Stereo argument — silently passing a mono
-    // signal through would hide bugs and contradict the documented contract.
-    error("E183", "left() expects Stereo, got Mono", n.location);
-    return TypedValue::error_val();
+    // PRD prd-stereo-native-opcodes §5.6: left(mono) returns the input
+    // unchanged with W183 — "the channel being extracted is the only one
+    // that exists." Surfaces the redundant call at source location.
+    warn("W183", "left() called on a mono signal — returning the input unchanged.",
+         n.location);
+    return cache_and_return(node, TypedValue::signal(buf));
 }
 
 // right(stereo) -> extract right channel
@@ -257,9 +273,11 @@ TypedValue CodeGenerator::handle_right_call(NodeIndex node, const Node& n) {
         return cache_and_return(node, TypedValue::signal(stereo.right));
     }
 
-    // PRD §4.4: right() requires a Stereo argument — see left() for rationale.
-    error("E184", "right() expects Stereo, got Mono", n.location);
-    return TypedValue::error_val();
+    // PRD prd-stereo-native-opcodes §5.6: right(mono) returns the input
+    // unchanged with W184. See left() for the symmetric rationale.
+    warn("W184", "right() called on a mono signal — returning the input unchanged.",
+         n.location);
+    return cache_and_return(node, TypedValue::signal(buf));
 }
 
 // pan(mono, pos) -> equal-power mono → stereo pan (PAN opcode)
