@@ -1,11 +1,11 @@
-> **Status: DONE** — All §3 fields shipped (2026-05-07) except `voice` (deferred under the polyphony pivot recorded in the audit) and `sample` as a String (Signal buffers are numeric only; `sample`/`s` alias to the numeric `sample_id`). Last audit: `docs/audits/prd-records-and-field-access_audit_2026-05-05.md`.
+> **Status: DONE** — All §3 fields work uniformly across every pattern producer (bare `pat()` and every transform: `fast`/`slow`/`rev`/`velocity`/`bank`/`variant`/`transpose`/`early`/`late`/`palindrome`/`tune`/`zoom`/`segment`/`iter`/`ply`/etc.). `voice` removed from spec under the polyphony pivot — polyphonic dispatch is opt-in via `poly()`/`sampler()` wrappers. `sample` aliases to the numeric `sample_id` (Signal buffers are numeric only). Bare-`%` auto-detection (§3.6) deferred to a follow-up PRD. Last audit: `docs/audits/prd-records-and-field-access_audit_2026-05-13.md`.
 
 # PRD: Records and Field Access in Akkado
 
-**Version:** 1.0
-**Status:** Done (§3 extended fields shipped 2026-05-07; `voice` deferred — see audit)
+**Version:** 1.1
+**Status:** Done (§3 extended fields wired through every pattern producer 2026-05-13)
 **Author:** Claude
-**Date:** 2026-01-28
+**Date:** 2026-01-28 (revised 2026-05-13)
 
 ---
 
@@ -205,17 +205,30 @@ chord("C") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | String | Event type: `"pitch"`, `"sample"`, `"rest"` |
+| `type` | Signal (int) | Event type discriminator (`0` rest, `1` pitch, `2` sample) |
 | `freq` | Signal (Hz) | Note frequency (0 for samples unless pitched) |
 | `note` | Signal (0-127) | MIDI note number (for pitch or pitched sample playback) |
 | `vel` | Signal (0-1) | Note/sample velocity |
 | `trig` | Signal (0/1) | Trigger pulse at event onset |
+| `gate` | Signal (0/1) | Event is currently active |
 | `dur` | Signal (cycles) | Event duration |
+| `chance` | Signal (0-1) | Per-event probability (resolved at compile time) |
 | `time` | Signal (cycles) | Event start time within cycle |
 | `phase` | Signal (0-1) | Current position within event |
-| `voice` | Signal (int) | Voice index (0, 1, 2, ...) for polyphony |
-| `sample` | String | Sample name (`""` for pitch events) |
 | `sample_id` | Signal (int) | Numeric sample ID (0 for pitch events) |
+
+> The `voice` field was removed from this PRD on 2026-05-13. The polyphony model pivoted to opt-in per-voice routing via the `poly()`/`sampler()` wrappers; standalone `%.voice` no longer fits the scalar event model. See [§3.4](#34-polyphony-and-voice-control) and the 2026-05-13 audit.
+>
+> Canonical aliases (single source of truth: `pattern_field_aliases()` in `akkado/src/typed_value.cpp:30–49`):
+> - `freq`: `frequency`, `pitch`, `f`, `p`
+> - `vel`: `velocity`, `v`
+> - `trig`: `trigger`, `t`
+> - `gate`: `g`
+> - `note`: `midi`, `n`
+> - `dur`: `duration`
+> - `time`: `t0`, `start`
+> - `phase`: `cycle`, `co`
+> - `sample_id`: `sample`, `s`
 
 **Event types:**
 - `"pitch"`: Melodic note with `freq`/`note` set, `sample` empty
@@ -231,35 +244,21 @@ pat("bd'c4 bd'e4 bd'g4") as e |>
 
 ### 3.4 Polyphony and Voice Control
 
-**Default behavior:** Multiple simultaneous events are processed independently and auto-summed. A configurable `voices:` parameter limits polyphony.
+**Updated 2026-05-13 — polyphony pivot.** This section originally described an array-returning `%.freq` for chords with `match(e.voice) { 0: …, 1: … }` per-voice routing. The implementation took a different shape: polyphonic dispatch is **opt-in via the `poly()`/`sampler()` wrappers**, and polyphonic patterns reject scalar coercion (E160) rather than auto-summing. The standalone `%.voice` field has been removed from this PRD; `PatternPayload` exposes 11 fields, not 12.
 
 ```akkado
-// Default: up to 16 voices, auto-summed
-chord("C Am7") as e |> osc("sin", e.freq) * e.vel
+// Mono pattern — every %.<field> is scalar across the pipe.
+pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel |> out(%, %)
 
-// Explicit voice limit
-chord("C Am7", voices: 4) as e |> osc("sin", e.freq) * e.vel
+// Chord pattern wrapped in poly() — explicit per-voice fan-out.
+poly(pat("Cmaj7")) |> osc("sin", %.freq) |> out(%, %)
+//      └─ poly() handles voice allocation; each voice has its own %.freq.
+
+// Scalar coercion of a polyphonic pattern errors E160 by design.
+// chord("C") |> osc("sin", %.freq)   // E160: polyphonic pattern needs poly()/sampler()
 ```
 
-**Per-voice control:** Use the `.voice` field with `match` or `select` to route voices differently:
-
-```akkado
-// Different oscillator per voice
-chord("C") as e |> match(e.voice) {
-    0: osc("sin", e.freq),   // root gets sine
-    1: osc("saw", e.freq),   // third gets saw
-    _: osc("tri", e.freq),   // fifth gets triangle
-} * e.vel |> out(%, %)
-
-// Simple branching with select
-chord("C") as e |>
-    select(e.voice == 0, osc("sin", e.freq), osc("saw", e.freq)) * e.vel
-
-// Spread voices in stereo
-chord("C") as e |>
-    osc("sin", e.freq) * e.vel |>
-    out(% * (1 - e.voice * 0.3), % * (e.voice * 0.3))
-```
+If per-voice routing returns, it will arrive in a follow-up PRD that resolves how the chosen voice index is exposed under the wrapper model.
 
 ### 3.5 Sample Patterns
 
@@ -288,20 +287,19 @@ pat("bd'c2 bd'e2 bd'g2") as e |>
 - Uniform model works for any note source (mini-notation, MIDI, OSC, etc.)
 - No special handling for chords vs single notes or samples vs pitches
 - `.type` field enables routing when mixing event types
-- Auto-sum is the common case; `.voice` enables advanced routing
+- Polyphony is explicit via `poly()`/`sampler()` (see §3.4)
 - Compile-time voice allocation enables efficient buffer management
 
-### 3.6 Default Field for Bare `%`
+### 3.6 Default Field for Bare `%` (deferred)
 
-When `%` is used without a field in a pattern pipe:
-- **Pitch patterns:** Defaults to `%.freq`
-- **Sample patterns:** Defaults to `%.sample_id`
-- **Note patterns:** Defaults to `%.note`
-
-**Pattern type detection** (auto-detect from content):
-- Contains pitch tokens (`c4`, `f#3`, etc.) → pitch pattern
-- Contains sample tokens (`bd`, `sd`, `hh`, etc.) → sample pattern
-- Explicit: `note("c4 e4")` always pitch, `samp("bd sd")` always sample
+> **Deferred to a follow-up PRD (2026-05-13).** Bare `%` currently resolves to the pattern's primary buffer (`freq` for pitch patterns, `sample_id` for sample patterns built through the sample chain). Content-based auto-dispatch is not implemented and is no longer in scope here. In practice, typed pattern prefixes cover the use case:
+>
+> - `c"c4 e4 g4"` — chord/pitch pattern, primary = `freq`
+> - `n"60 64 67"` — note (MIDI) pattern, primary = `note`
+> - `s"bd sd"` — sample pattern, primary = `sample_id`
+> - `v"0.5 0.8 1.0"` — velocity pattern, primary = `vel`
+>
+> If full bare-`%` auto-detection is revived, it will arrive as its own PRD.
 
 ---
 
@@ -451,43 +449,54 @@ hole           = "%" [ "." identifier ] ;
 
 ## 6. Edge Cases & Error Handling
 
-### 6.1 Unknown Field Access
+> Diagnostic codes match what the implementation actually emits. The original draft used `E062`–`E065` placeholders; reconciled 2026-05-13 to match `akkado/src/analyzer.cpp` and `akkado/src/codegen.cpp`.
+
+### 6.1 Unknown Field on Record
 
 ```akkado
 pos = {x: 1, y: 2}
-pos.z  // Error: E060 - Unknown field 'z' on record. Available: x, y
+pos.z  // E060 — Unknown field 'z' on record. Available: x, y
 ```
+
+Emit site: `akkado/src/analyzer.cpp:1652`.
 
 ### 6.2 Field Access on Non-Record
 
 ```akkado
 x = 42
-x.field  // Error: E061 - Cannot access field on non-record value
+x.field  // E061 — Cannot access field on non-record value
 ```
 
-### 6.3 Pattern Field Outside Pattern Pipe
+Emit site: `akkado/src/analyzer.cpp:1663`.
+
+### 6.3 Unknown Pattern Field
 
 ```akkado
-%.freq  // Error: E062 - Pattern field access '%.freq' outside pattern pipe
-x = %.vel  // Error: E062
+pat("c4") |> %.foo  // E136 — Unknown field 'foo' on pattern. Available: freq, vel, trig, gate, type, note, dur, chance, time, phase, sample_id
 ```
 
-### 6.4 Unknown Pattern Field
+Emit site: `akkado/src/codegen.cpp:2598` and `:2631`. The `Available:` list is generated by `available_fields()` (`akkado/src/typed_value.cpp:80`), which walks the populated slots of the current `PatternPayload` plus any `custom_fields` registered by `bend()`/`aftertouch()`/record-suffix keys.
+
+### 6.4 Pattern Field on Non-Pattern Pipe
 
 ```akkado
-pat("c4") |> %.foo  // Error: E063 - Unknown pattern field 'foo'. Available: trig, vel, freq, ...
+saw(440) |> %.freq  // E136 — Unknown field 'freq' on … (or earlier E135 on type mismatch)
 ```
+
+When the pipe LHS is not a `ValueType::Pattern`, `handle_field_access` falls through to the generic non-record branch (E061) or a type-specific E135.
 
 ### 6.5 Duplicate Field Names
 
 ```akkado
-r = {x: 1, x: 2}  // Error: E064 - Duplicate field 'x' in record literal
+r = {x: 1, x: 2}  // Parser error — Duplicate field 'x' in record literal
 ```
+
+Emit site: `akkado/src/parser.cpp:1686` (raised via the parser's generic `error_at`, without an explicit numeric code; the message text is asserted by tests).
 
 ### 6.6 Empty Field Name
 
 ```akkado
-r = {: 1}  // Syntax error: Expected field name
+r = {: 1}  // Syntax error — Expected field name
 ```
 
 ### 6.7 Shadowing in Nested Records
@@ -508,24 +517,17 @@ map(points, p -> p.x + p.y)  // Valid: each element is a record
 ### 6.9 Mixing Bare % and %.field
 
 ```akkado
-pat("c4") |> % + %.vel  // % defaults to %.freq, so: %.freq + %.vel
+pat("c4") |> % + %.vel  // % resolves to the primary buffer (freq for pitch patterns)
 ```
 
-### 6.10 Pattern Field on Non-Pattern Pipe
-
-```akkado
-saw(440) |> %.freq  // Error: E065 - Pattern field '%.freq' used but LHS is not a pattern
-```
-
-### 6.11 Chained Pipes with Pattern Fields
+### 6.10 Chained Pipes with Pattern Fields
 
 ```akkado
 pat("c4") |> lp(osc("sin", %.freq), 1000) |> % * %.vel
-//                                           ^-- Error: %.vel not valid here
-// The second pipe's LHS is the lp() output, not a pattern
+//                                           ^^^^^ E136 — %.vel on non-pattern (the lp() output)
+// Use `as` binding to forward fields across stages:
+pat("c4") as e |> lp(osc("sin", e.freq), 1000) |> % * e.vel
 ```
-
-Clarification needed: Should field references "flow through" multiple pipe stages, or only work in the immediate RHS of a pattern?
 
 ---
 
@@ -543,14 +545,11 @@ pat("c4") |> osc("sin", %.freq) * %.vel
 pat("c4") as e |> osc("sin", e.freq) |> % * e.vel
 ```
 
-### D2: Chord Field Access ✓
+### D2: Chord Field Access — pivoted 2026-05-13 ✓
 
-**Decision:** `%.freq` always returns an array (unified model).
+**Original decision:** `%.freq` always returns an array (`[261.6, 329.6, 392.0]` for chords). Use `map()`/`sum()`.
 
-- Single note: `%.freq` = `[440.0]`
-- Chord: `%.freq` = `[261.6, 329.6, 392.0]`
-
-Use `map()` and `sum()` to handle uniformly.
+**Revised decision (2026-05-13):** Scalar event model. `%.freq` is always a scalar. Polyphonic patterns reject scalar coercion (`E160`) and must be wrapped with `poly()`/`sampler()` for per-voice fan-out. See §3.4 and the [polyphony pivot](audits/prd-records-and-field-access_audit_2026-05-05.md) note in the 2026-05-05 audit.
 
 ### D3: Shorthand Field Syntax ✓
 

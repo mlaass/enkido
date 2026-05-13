@@ -328,6 +328,17 @@ MiniToken MiniLexer::lex_token() {
         // Fall through to standard punctuation lexing for [, <, {, etc.
     }
 
+    // Note mode (n"…"): accept raw MIDI numbers as pitch atoms in addition
+    // to note names — per the token comment "note name + bare-MIDI pattern".
+    // Letter-leading atoms still fall through to standard pitch detection so
+    // `n"c4 e4 g4"` continues to work alongside `n"60 64 67"`.
+    if (note_mode_) {
+        bool starts_numeric = is_digit(c) || (c == '.' && is_digit(peek_next()));
+        if (starts_numeric) {
+            return lex_note_atom();
+        }
+    }
+
     // In sample_only mode (chord patterns), skip pitch detection
     if (!sample_only_) {
         // For uppercase A-G, try chord detection FIRST
@@ -431,6 +442,61 @@ MiniToken MiniLexer::lex_value_atom() {
         return make_error_token("invalid numeric atom in v\"…\" mode (E163)");
     }
     return make_token(MiniTokenType::ValueAtom, value);
+}
+
+MiniToken MiniLexer::lex_note_atom() {
+    // Lex a numeric MIDI note for n"…" mode atoms. Mirrors lex_value_atom()
+    // but emits a PitchToken so the rest of the mini-AST treats `n"60"` the
+    // same as `n"c4"` (both become MIDI 60 pitch events with full extended
+    // field wiring).
+    bool has_digit = false;
+    while (is_digit(peek())) { advance(); has_digit = true; }
+    if (peek() == '.') {
+        advance();
+        while (is_digit(peek())) { advance(); has_digit = true; }
+    }
+    if (!has_digit) {
+        return make_error_token("expected MIDI note number in n\"…\" mode");
+    }
+    std::string_view text = pattern_.substr(start_, current_ - start_);
+    std::string buf(text);
+    char* end = nullptr;
+    double value = std::strtod(buf.c_str(), &end);
+    if (end == buf.c_str() || !std::isfinite(value) || value < 0.0 || value > 127.0) {
+        return make_error_token("MIDI note out of range 0..127 in n\"…\" mode");
+    }
+
+    // Optional :velocity suffix matches lex_pitch().
+    float velocity = 1.0f;
+    if (peek() == ':' && (is_digit(peek_next()) || peek_next() == '.')) {
+        advance();
+        std::size_t vel_start = current_;
+        if (peek() == '.') advance();
+        while (is_digit(peek())) advance();
+        if (pattern_[vel_start] != '.' && peek() == '.' && is_digit(peek_next())) {
+            advance();
+            while (is_digit(peek())) advance();
+        }
+        std::string_view vel_text = pattern_.substr(vel_start, current_ - vel_start);
+        std::string vel_buf(vel_text);
+        char* vel_end = nullptr;
+        double vel_val = std::strtod(vel_buf.c_str(), &vel_end);
+        if (vel_end == vel_buf.c_str()) vel_val = 0.0;
+        velocity = static_cast<float>(std::clamp(vel_val, 0.0, 1.0));
+    }
+
+    auto props = try_lex_record_suffix();
+
+    // Fractional MIDI notes round to the nearest semitone for the integer
+    // midi_note slot; cents-level microtonal expressivity remains via the
+    // ^v+\ modifiers on note-name pitches (e.g. `n"c4^"`).
+    int integer_midi = static_cast<int>(std::round(value));
+    if (integer_midi < 0) integer_midi = 0;
+    if (integer_midi > 127) integer_midi = 127;
+    return make_token(
+        MiniTokenType::PitchToken,
+        MiniPitchData{static_cast<std::uint8_t>(integer_midi),
+                      true, velocity, /*micro_offset=*/0, std::move(props)});
 }
 
 MiniToken MiniLexer::lex_number() {

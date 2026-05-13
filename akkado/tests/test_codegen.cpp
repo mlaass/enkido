@@ -4808,6 +4808,282 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 }
 
+// PRD docs/prd-records-and-field-access.md §3: extended pattern fields must
+// resolve on every pattern producer, not just the bare pat() literal. Before
+// this coverage, the four transform construction sites in codegen_patterns.cpp
+// (emit_pattern_with_state, handle_velocity_call, handle_bank_call,
+// handle_variant_call) only populated FREQ/VEL/TRIG, so %.note on
+// `fast(pat(...), 2)` failed E136 silently. See
+// docs/audits/prd-records-and-field-access_audit_2026-05-13.md.
+TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-extended]") {
+    static constexpr std::array<const char*, 18> kCanonicalFields = {
+        "freq", "vel", "trig", "gate", "type",
+        "note", "dur", "chance", "time", "phase", "sample_id",
+        "frequency", "pitch", "velocity", "trigger",
+        "midi", "duration", "cycle",
+    };
+
+    SECTION("fast() preserves every extended field") {
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("fast(pat(\"c4 e4 g4\"), 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("slow() preserves every extended field") {
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("slow(pat(\"c4 e4 g4\"), 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("rev() preserves every extended field") {
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("rev(pat(\"c4 e4 g4\")) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("velocity() preserves every extended field") {
+        // handle_velocity_call construction site (line ~3470). Previously
+        // left GATE/TYPE plus all extended slots at 0xFFFF.
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("velocity(pat(\"c4 e4 g4\"), 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("bank() preserves every extended field on sample patterns") {
+        // handle_bank_call construction site (line ~3863).
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("bank(s\"bd sd\", \"808\") |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("variant() preserves every extended field on sample patterns") {
+        // handle_variant_call construction site (line ~4070).
+        for (const char* f : kCanonicalFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("variant(s\"bd sd\", 0) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("SEQPAT opcodes emitted on transformed pattern") {
+        // The transform path (emit_pattern_with_state) must now emit the same
+        // 5 SEQPAT_FIELD instructions + 1 SEQPAT_PHASE as the bare-pat path.
+        auto r = akkado::compile(R"(fast(pat("c4 e4 g4"), 2) |> osc("sin", %.note) |> out(%, %))");
+        REQUIRE(r.success);
+        auto insts = get_instructions(r);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_FIELD) == 5);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_PHASE) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_GATE)  == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_TYPE)  == 1);
+    }
+
+    SECTION("E136 lists canonical names from transformed pattern context") {
+        auto r = akkado::compile(R"(fast(pat("c4"), 2) |> osc("sin", %.bogus) |> out(%, %))");
+        REQUIRE_FALSE(r.success);
+        bool saw_e136 = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.code != "E136") continue;
+            saw_e136 = true;
+            for (const char* canonical : {"note", "dur", "chance", "time",
+                                          "phase", "sample_id"}) {
+                CAPTURE(canonical);
+                CHECK(d.message.find(canonical) != std::string::npos);
+            }
+        }
+        CHECK(saw_e136);
+    }
+
+    SECTION("chained transforms (fast |> velocity) still expose extended fields") {
+        // Stack two transforms to make sure each one's PatternPayload
+        // construction site picks up the helper.
+        for (const char* f : {"note", "dur", "phase", "sample_id", "gate"}) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("velocity(fast(pat(\"c4 e4 g4\"), 2), 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+}
+
+// PRD docs/prd-records-and-field-access.md §3 + docs/prd-patterns-as-scalar-values.md
+// §5: every typed pattern prefix (n"…", v"…", s"…", c"…") must expose the same
+// 11 extended fields as `pat(…)`. Before this coverage, n"60 64 67" silently
+// returned a Signal scalar because the mini-lexer never consulted note_mode_
+// for numeric atoms — see akkado/src/mini_lexer.cpp lex_note_atom().
+TEST_CASE("Codegen: Extended pattern fields on typed prefixes", "[codegen][records-extended]") {
+    // Canonical names + representative alias per group. Mirrors
+    // kCanonicalFields in the "on transforms" case so the same field set
+    // is exercised across pat() and every typed prefix.
+    static constexpr std::array<const char*, 18> kFields = {
+        "freq", "vel", "trig", "gate", "type",
+        "note", "dur", "chance", "time", "phase", "sample_id",
+        "frequency", "pitch", "velocity", "trigger",
+        "midi", "duration", "cycle",
+    };
+
+    SECTION("n\"…\" with note names exposes every extended field (bare)") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("n\"c4 e4 g4\" |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("n\"…\" with bare MIDI numbers exposes every extended field (bare)") {
+        // The form that revealed the bug: numeric atoms in Note mode.
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("n\"60 64 67\" |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("n\"…\" exposes every extended field through fast() transform") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("fast(n\"60 64 67\", 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("v\"…\" exposes every extended field (bare)") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("v\"0.5 0.8 1.0\" |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("v\"…\" exposes every extended field through fast() transform") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("fast(v\"0.5 0.8 1.0\", 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("s\"…\" exposes every extended field (bare)") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("s\"bd sd bd sd\" |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("s\"…\" exposes every extended field through fast() transform") {
+        for (const char* f : kFields) {
+            CAPTURE(f);
+            auto r = akkado::compile(
+                std::string("fast(s\"bd sd bd sd\", 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+            );
+            CHECK(r.success);
+        }
+    }
+
+    SECTION("symbol-bound typed prefixes propagate fields") {
+        // This is the exact form that revealed the n"…" bug:
+        //   x = n"60 64 67"
+        //   y = x.note     // E136 "Available: freq, vel, trig, gate, type"
+        // After the lex_note_atom() fix every prefix produces a Pattern with
+        // all 11 fields populated, so field access through a named binding
+        // resolves identically to bare-pipe access.
+        for (const char* f : kFields) {
+            for (const char* prefix : {
+                "n\"60 64 67\"", "n\"c4 e4 g4\"",
+                "v\"0.5 0.8 1.0\"", "s\"bd sd\"",
+            }) {
+                CAPTURE(f);
+                CAPTURE(prefix);
+                auto r = akkado::compile(
+                    std::string("x = ") + prefix + "\n" +
+                    "osc(\"sin\", x." + f + ") |> out(%, %)"
+                );
+                CHECK(r.success);
+            }
+        }
+    }
+
+    SECTION("n\"…\" bytecode matches pat() for SEQPAT opcode counts") {
+        // After the fix, n"60 64 67" and pat("60 64 67") should emit the
+        // same SEQPAT-family instruction counts: 1×STEP + 1×GATE + 1×TYPE +
+        // 5×FIELD + 1×PHASE + 1×QUERY for a monophonic non-sample pattern.
+        auto r = akkado::compile(R"(n"60 64 67" |> osc("sin", %.note) |> out(%, %))");
+        REQUIRE(r.success);
+        auto insts = get_instructions(r);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_QUERY) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_STEP)  == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_GATE)  == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_TYPE)  == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_FIELD) == 5);
+        CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_PHASE) == 1);
+    }
+
+    SECTION("c\"…\" bare use is rejected per the polyphony pivot") {
+        // The polyphony pivot replaced auto-sum with explicit poly()/sampler()
+        // wrapping. Bare c"…" used as a scalar must error so a silent
+        // voice-dropping regression can't sneak in.
+        auto r = akkado::compile(R"(c"Cmaj7" |> osc("sin", %.freq) |> out(%, %))");
+        REQUIRE_FALSE(r.success);
+        bool saw_polyphony_reject = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.code == "E160" || d.code == "E410") {
+                saw_polyphony_reject = true;
+            }
+        }
+        CHECK(saw_polyphony_reject);
+    }
+
+    SECTION("c\"…\" inside poly() — current closure-param Signal binding is locked down") {
+        // Documents current polyphony-pivot behavior: poly()'s closure params
+        // are Signal scalars (freq/gate/vel buffers), not a Pattern, so
+        // e.freq / e.note errors E061. Per-voice field access is intentionally
+        // deferred to a separate PRD; this SECTION is the regression marker
+        // that will need to flip if that PRD lands.
+        auto r = akkado::compile(R"(poly(c"Cmaj7", (e) -> osc("sin", e.note)) |> out(%, %))");
+        REQUIRE_FALSE(r.success);
+        bool saw_e061 = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.code == "E061") saw_e061 = true;
+        }
+        CHECK(saw_e061);
+    }
+}
+
 TEST_CASE("Codegen: >> and @ aliases", "[codegen]") {
     SECTION(">> and @ produce same bytecode as |> and %") {
         auto r1 = akkado::compile("osc(\"sin\", 440) |> out(%, %)");

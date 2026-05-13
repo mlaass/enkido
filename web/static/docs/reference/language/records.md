@@ -158,21 +158,34 @@ voice.gate = 1            // sugar over set(voice, {..get(voice), gate: 1})
 
 ## Pattern events are records
 
-Every event a pattern produces is a record. Five fixed fields ship today; six more are reserved for the polyphony / extended-event work and surface as soon as they're populated.
+Every event a pattern produces is a record. All eleven fields work on every pattern producer — bare `pat()` and every transform (`fast`, `slow`, `rev`, `velocity`, `bank`, `variant`, `transpose`, `early`, `late`, `palindrome`, …).
 
 | Field | Aliases | Meaning |
 |---|---|---|
-| `freq` | `pitch`, `f`, `frequency` | Frequency in Hz |
+| `freq` | `frequency`, `pitch`, `f`, `p` | Frequency in Hz |
 | `vel` | `velocity`, `v` | Velocity, 0–1 |
-| `trig` | `trigger`, `t` | Trigger pulse |
-| `gate` | — | Gate signal (sustain) |
-| `type` | — | Event-type tag |
+| `trig` | `trigger`, `t` | Trigger pulse at event onset |
+| `gate` | `g` | Event is currently active (sustain) |
+| `type` | — | Event-type discriminator (0 rest, 1 pitch, 2 sample) |
 | `note` | `midi`, `n` | MIDI note number |
-| `dur` | — | Duration in beats |
-| `chance` | — | Probability multiplier |
-| `time` | — | Local time within the cycle |
-| `phase` | `p` | Cycle phase (0–1) |
-| `sample_id` | `sample`, `s` | Sampler bank index |
+| `dur` | `duration` | Event duration in beats |
+| `chance` | — | Per-event probability (0–1) |
+| `time` | `t0`, `start` | Event start time within the cycle |
+| `phase` | `cycle`, `co` | Event-scoped phasor (0–1, ramps once per event) |
+| `sample_id` | `sample`, `s` | Numeric sample ID (0 for pitch events) |
+
+Examples — every field works in pipes and after transforms:
+
+```akk
+// %.dur picks up event duration; great for pitch-from-velocity tricks
+pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel * %.gate |> out(%, %)
+
+// Event-scoped phase ramps 0→1 once per note — perfect for built-in envelopes
+fast(pat("c4 e4 g4"), 2) |> osc("sin", %.freq) * (1 - %.phase) |> out(%, %)
+
+// MIDI note number flows through transforms
+slow(pat("c4 e4 g4"), 2) |> osc("sin", mtof(%.note)) |> out(%, %)
+```
 
 Custom fields attached via `.set("name", value)` chains live alongside these and are visible in autocomplete:
 

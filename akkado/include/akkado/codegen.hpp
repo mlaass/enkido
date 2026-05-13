@@ -483,6 +483,18 @@ public:
         std::uint32_t state_id,
         std::uint16_t clock_override = 0xFFFF);
 
+    /// Allocate the 8 extended pattern-field buffers (gate, type, note, dur,
+    /// chance, time, phase, sample_id), emit SEQPAT_GATE/TYPE/FIELD/PHASE for
+    /// voice 0, and assign them into payload->fields[]. Closes records-and-
+    /// field-access PRD §3 by making the extended fields available on every
+    /// pattern producer, not just mini-notation literals.
+    /// Returns false on buffer exhaustion (caller should emit E101).
+    bool emit_extended_field_buffers(
+        PatternPayload& payload,
+        std::uint32_t state_id,
+        SourceLocation loc,
+        std::uint16_t clock_override = 0xFFFF);
+
     /// Read-only access to the symbol table for free helpers in
     /// codegen_patterns.cpp (e.g. compile_pattern_for_transform resolving
     /// identifier-bound patterns through PatternInfo.pattern_node).

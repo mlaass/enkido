@@ -76,6 +76,7 @@ private:
     MiniToken lex_pitch();          // Character-by-character pitch parsing (handles ^v+x modifiers)
     MiniToken lex_sample_only();    // For sample_only mode
     MiniToken lex_value_atom();     // For value mode: numeric literal (incl. negative, scientific)
+    MiniToken lex_note_atom();      // For note mode: numeric MIDI note (e.g., "60" → midi_note 60)
 
     // Pitch detection
     [[nodiscard]] bool looks_like_pitch() const;
