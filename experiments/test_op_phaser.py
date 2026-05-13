@@ -1,20 +1,22 @@
 """
-Test: EFFECT_PHASER (Phaser)
-============================
-Verifies the phaser produces audible swept notches in the spectrum.
+Test: EFFECT_PHASER (Stereo-Native Phaser)
+==========================================
+Verifies the phaser produces audible swept notches and stereo-decorrelates
+on mono input.
 
-Expected behavior (per implementation in cedar/include/cedar/opcodes/modulation.hpp):
-- Output is dry + allpass_cascade — interference creates spectral notches
-  (an allpass cascade alone has flat magnitude response, so this sum is
-  what defines the audible phaser sound).
-- LFO sweeps the notch frequency over time. With depth=0.8 and min/max =
-  200/4000 Hz, the notch should traverse at least ~1 octave per LFO period.
-- Notch depth should be ≥ 12 dB below adjacent frequencies — strong
-  cancellation indicates the dry+wet sum is wired correctly. A flat
-  spectrum (no notch) means the dry path is missing.
+After prd-stereo-native-opcodes Phase 3, phaser is stereo-native: writes both
+out_buffer (L) and out_buffer+1 (R). The L lane is bit-identical to the
+legacy mono behavior (same state struct fields at index [0], same LFO phase
+read at offset 0). The R lane reads the LFO at +90° for L/R decorrelation.
 
-If this test fails, check the implementation in
-cedar/include/cedar/opcodes/modulation.hpp (op_effect_phaser).
+Expected behavior:
+- Output is dry + allpass_cascade — interference creates spectral notches.
+- LFO sweeps notch frequency. With depth=0.8 and 200/4000 Hz range, the
+  notch should traverse ≥1 octave per LFO period.
+- Notch depth ≥ 12 dB.
+- L and R decorrelate on mono input (Pearson |corr| < 0.95).
+
+If this test fails, check cedar/include/cedar/opcodes/modulation.hpp.
 """
 
 import os
@@ -31,24 +33,26 @@ OUT = output_dir("op_phaser")
 
 
 def _build_phaser_program(host, lfo_rate, depth, min_freq, max_freq, stages, feedback_int):
-    """Configure host with a PHASER instruction. Returns nothing — mutates host."""
+    """Configure host with a PHASER instruction. Returns nothing — mutates host.
+
+    Sets STEREO_OUTPUT flag so the opcode writes both buffer 1 (L) and 2 (R).
+    OUTPUT reads both and writes to ctx.output_left / ctx.output_right.
+    """
     buf_in = 0
     buf_rate = host.set_param("rate", lfo_rate)
     buf_depth = host.set_param("depth", depth)
     buf_min = host.set_param("min_freq", min_freq)
     buf_max = host.set_param("max_freq", max_freq)
 
-    # 5 inputs to match the C++ opcode (it dereferences inputs[3] and [4]
-    # unconditionally — make_ternary leaves those as 0xFFFF which would be
-    # undefined behavior).
     inst = cedar.Instruction.make_quinary(
         cedar.Opcode.EFFECT_PHASER, 1,
         buf_in, buf_rate, buf_depth, buf_min, buf_max,
         cedar.hash("phaser") & 0xFFFF,
     )
     inst.rate = ((feedback_int & 0x0F) << 4) | (stages & 0x0F)
+    inst.flags = cedar.STEREO_OUTPUT_FLAG
     host.load_instruction(inst)
-    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+    host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2))
 
 
 def _find_notch(freqs, psd_db, search_lo=100.0, search_hi=8000.0):
@@ -240,10 +244,48 @@ def test_phaser_no_sweep_at_zero_depth():
         return False
 
 
+def test_stereo_decorrelation():
+    """Mono input → stereo-native phaser → L and R must decorrelate.
+
+    Uses process_stereo to capture both buses. The mono input on buf 0 is
+    auto-broadcast inside the opcode (STEREO_INPUT clear), but the R lane's
+    +90° LFO offset produces different notch frequencies over time, which
+    visibly decorrelates the output.
+    """
+    print("Test: Phaser Stereo Decorrelation")
+
+    sr = 48000
+    duration = 2.0
+    host = CedarTestHost(sr)
+    noise = gen_white_noise(duration, sr)
+
+    _build_phaser_program(host, lfo_rate=2.0, depth=0.9,
+                          min_freq=200.0, max_freq=4000.0,
+                          stages=4, feedback_int=8)
+
+    # process() returns only L; use process_stereo to capture both even though
+    # the input is mono.
+    output_l, output_r = host.process_stereo(noise, noise)
+
+    steady = int(0.5 * sr)
+    if np.std(output_l[steady:]) > 1e-6 and np.std(output_r[steady:]) > 1e-6:
+        corr = float(np.corrcoef(output_l[steady:], output_r[steady:])[0, 1])
+    else:
+        corr = 1.0
+    print(f"  Pearson corr(L, R) over steady-state = {corr:+.4f}")
+    if abs(corr) < 0.95:
+        print(f"  ✓ PASS: L and R decorrelated (|corr|={abs(corr):.4f} < 0.95)")
+        return True
+    else:
+        print(f"  ✗ FAIL: L and R too correlated (|corr|={abs(corr):.4f} ≥ 0.95)")
+        return False
+
+
 if __name__ == "__main__":
     results = []
     results.append(test_phaser_notch_sweep())
     results.append(test_phaser_no_sweep_at_zero_depth())
+    results.append(test_stereo_decorrelation())
     if all(results):
         print("\nAll phaser tests passed.")
     else:

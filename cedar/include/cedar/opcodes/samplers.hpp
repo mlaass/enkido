@@ -32,10 +32,15 @@ class SampleBank;
 // Polyphonic sampler with up to 32 simultaneous voices.
 // Trigger detection on rising edge (0 -> positive).
 // Uses linear interpolation for pitch shifting.
-// Outputs stereo (mono samples are duplicated to both channels).
+//
+// Stereo-native (prd-stereo-native-opcodes Phase 3): writes out_buffer (L) and
+// out_buffer+1 (R) in one call. Mono sample files broadcast (L=R=ch[0]);
+// stereo files preserve channels (L=ch[0], R=ch[1]); ≥3-channel files take the
+// first two channels and drop the rest.
 [[gnu::always_inline]]
 inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, SampleBank* sample_bank) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* trigger = ctx.buffers->get(inst.inputs[0]);
     const float* pitch = ctx.buffers->get(inst.inputs[1]);
     const float* sample_id_buf = ctx.buffers->get(inst.inputs[2]);
@@ -109,8 +114,11 @@ inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, Sampl
             }
         }
 
-        // Mix all active voices (each voice plays its own sample_id)
-        float output = 0.0f;
+        // Mix all active voices (each voice plays its own sample_id).
+        // Stereo split per-voice: mono file → L=R=ch[0]; stereo file →
+        // L=ch[0], R=ch[1]; 3+ channels → first two channels, drop rest.
+        float output_l = 0.0f;
+        float output_r = 0.0f;
 
         for (std::size_t v = 0; v < SamplerState::MAX_VOICES; ++v) {
             SamplerVoice& voice = state.voices[v];
@@ -126,12 +134,16 @@ inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, Sampl
                 continue;
             }
 
-            // Read sample with interpolation (mix down to mono for now)
-            float sample_value = 0.0f;
-            for (std::uint32_t ch = 0; ch < sample->channels; ++ch) {
-                sample_value += sample->get_interpolated(voice.position, ch);
+            // Read per-channel samples for stereo split.
+            float sample_l;
+            float sample_r;
+            if (sample->channels == 1) {
+                sample_l = sample->get_interpolated(voice.position, 0);
+                sample_r = sample_l;
+            } else {
+                sample_l = sample->get_interpolated(voice.position, 0);
+                sample_r = sample->get_interpolated(voice.position, 1);
             }
-            sample_value /= static_cast<float>(sample->channels);
 
             // Apply micro-fade attack envelope (prevents DC click on start)
             float attack_env = (voice.attack_counter < ATTACK_SAMPLES)
@@ -141,7 +153,9 @@ inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, Sampl
                 voice.attack_counter++;
             }
 
-            output += sample_value * attack_env * voice.velocity;
+            float voice_gain = attack_env * voice.velocity;
+            output_l += sample_l * voice_gain;
+            output_r += sample_r * voice_gain;
 
             // Advance playback position
             // Account for sample rate difference
@@ -155,7 +169,8 @@ inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, Sampl
         }
 
         // Clamp output to prevent clipping with many voices
-        out[i] = std::clamp(output, -2.0f, 2.0f);
+        out_l[i] = std::clamp(output_l, -2.0f, 2.0f);
+        out_r[i] = std::clamp(output_r, -2.0f, 2.0f);
     }
 }
 
@@ -168,9 +183,13 @@ inline void op_sample_play(ExecutionContext& ctx, const Instruction& inst, Sampl
 //
 // Similar to SAMPLE_PLAY but loops the sample while gate is high.
 // Useful for sustained sounds, loops, and textures.
+//
+// Stereo-native (prd-stereo-native-opcodes Phase 3): same L/R split rules as
+// op_sample_play. Mono files broadcast; stereo files preserve channels.
 [[gnu::always_inline]]
 inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, SampleBank* sample_bank) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* gate = ctx.buffers->get(inst.inputs[0]);
     const float* pitch = ctx.buffers->get(inst.inputs[1]);
     const float* sample_id_buf = ctx.buffers->get(inst.inputs[2]);
@@ -194,7 +213,8 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
     if (!sample || sample->frames == 0 || ctx.sample_rate <= 0.0f) {
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
             state.prev_trigger = gate[i];
-            out[i] = 0.0f;
+            out_l[i] = 0.0f;
+            out_r[i] = 0.0f;
         }
         return;
     }
@@ -234,8 +254,9 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
             }
         }
 
-        // Mix active voices
-        float output = 0.0f;
+        // Mix active voices. Stereo split per voice: mono → L=R, stereo → L/R.
+        float output_l = 0.0f;
+        float output_r = 0.0f;
 
         for (std::size_t v = 0; v < SamplerState::MAX_VOICES; ++v) {
             SamplerVoice& voice = state.voices[v];
@@ -244,12 +265,18 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
                 continue;
             }
 
-            // Read sample with looped interpolation (wraps at boundary for seamless loop)
-            float sample_value = 0.0f;
-            for (std::uint32_t ch = 0; ch < sample->channels; ++ch) {
-                sample_value += sample->get_interpolated_looped(voice.position, ch);
+            // Read per-channel samples (looped interpolation wraps at the
+            // boundary for seamless playback). Mono files broadcast L=R;
+            // 2+ channel files take channels 0 and 1.
+            float sample_l;
+            float sample_r;
+            if (sample->channels == 1) {
+                sample_l = sample->get_interpolated_looped(voice.position, 0);
+                sample_r = sample_l;
+            } else {
+                sample_l = sample->get_interpolated_looped(voice.position, 0);
+                sample_r = sample->get_interpolated_looped(voice.position, 1);
             }
-            sample_value /= static_cast<float>(sample->channels);
 
             // Apply envelope
             float env = 1.0f;
@@ -270,7 +297,8 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
                 }
             }
 
-            output += sample_value * env;
+            output_l += sample_l * env;
+            output_r += sample_r * env;
 
             // Advance with looping
             float speed_factor = voice.speed * (sample->sample_rate / ctx.sample_rate);
@@ -282,7 +310,8 @@ inline void op_sample_play_loop(ExecutionContext& ctx, const Instruction& inst, 
             }
         }
 
-        out[i] = std::clamp(output, -2.0f, 2.0f);
+        out_l[i] = std::clamp(output_l, -2.0f, 2.0f);
+        out_r[i] = std::clamp(output_r, -2.0f, 2.0f);
     }
 }
 

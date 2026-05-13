@@ -59,24 +59,35 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
 constexpr float FLANGER_MIN_DELAY_DEFAULT = 0.1f;   // ms
 constexpr float FLANGER_MAX_DELAY_DEFAULT = 10.0f;  // ms
 
+// Per-channel LFO phase offset for stereo decorrelation (90° = quarter-cycle).
+// Fixed at codegen for Phase 3; user-tunable lfo_phase parameter is deferred
+// (would require StateInitData + VM init plumbing for ExtendedParams).
+constexpr float STEREO_LFO_OFFSET_TURNS = 0.25f;
+
 // ============================================================================
-// EFFECT_FLANGER: Flanger Effect
+// EFFECT_FLANGER: Stereo-Native Flanger
 // ============================================================================
-// in0: input signal
+// in0: input signal (mono auto-broadcasts to L=R; stereo via STEREO_INPUT)
 // in1: LFO rate (Hz, 0.1-10)
 // in2: depth (0.0-1.0)
 // in3: min_delay - minimum sweep point in ms (default 0.1)
 // in4: max_delay - maximum sweep point in ms (default 10.0)
 // rate: feedback (high 4 bits 0-15 -> -0.99 to 0.99)
 //
-// Short modulated delay (0.1-10ms) with feedback. Creates metallic,
-// jet-plane-like sweeping effect. Classic for guitars and synths.
-// Outputs 100% wet signal - user can mix dry/wet manually if needed.
+// Short modulated delay (0.1-10ms) with feedback. Stereo-native: per-channel
+// delay lines + write_pos. Shared master LFO phase; R lane reads LFO at base +
+// 90° for audible L/R decorrelation on mono input. With STEREO_INPUT, L and R
+// process their respective input channels.
 
 [[gnu::always_inline]]
 inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* rate = ctx.buffers->get(inst.inputs[1]);
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     const float* min_delay_in = ctx.buffers->get(inst.inputs[3]);
@@ -87,40 +98,54 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
     float feedback = (static_cast<float>((inst.rate >> 4) & 0x0F) / 7.5f) - 1.0f;
     feedback = std::clamp(feedback, -0.99f, 0.99f);
 
-    // Ensure buffer is allocated from arena
-    state.ensure_buffer(ctx.arena);
+    // Ensure both per-channel buffers are allocated from arena
+    state.ensure_buffers(ctx.arena);
 
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float x_l = input[i];
+        float x_r = stereo_in ? input_r[i] : x_l;
+
         // Runtime tunable parameters (use defaults if zero/negative)
         float min_delay_ms = min_delay_in[i] > 0.0f ? min_delay_in[i] : FLANGER_MIN_DELAY_DEFAULT;
         float max_delay_ms = max_delay_in[i] > 0.0f ? max_delay_in[i] : FLANGER_MAX_DELAY_DEFAULT;
         float center_delay_ms = (min_delay_ms + max_delay_ms) * 0.5f;
         float depth_range_ms = (max_delay_ms - min_delay_ms) * 0.5f;
 
-        // Update LFO phase
+        // Update shared LFO phase (master timebase)
         float lfo_rate = std::clamp(rate[i], 0.1f, 10.0f);
         state.lfo_phase += lfo_rate * inv_sample_rate;
         if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
 
-        // Calculate modulated delay time
-        float lfo = std::sin(state.lfo_phase * TWO_PI);
         float d = std::clamp(depth[i], 0.0f, 1.0f);
-        float delay_ms = center_delay_ms + lfo * d * depth_range_ms;
-        float delay_samples = delay_ms * 0.001f * ctx.sample_rate;
-        delay_samples = std::min(delay_samples, static_cast<float>(FlangerState::MAX_FLANGER_SAMPLES - 1));
 
-        // Read from delay line
-        float delayed = delay_read_linear(state.buffer, FlangerState::MAX_FLANGER_SAMPLES,
-                                          state.write_pos, delay_samples);
+        // L lane: LFO at master phase. Bit-identical to legacy mono path
+        // when input is mono.
+        float lfo_l = std::sin(state.lfo_phase * TWO_PI);
+        float delay_ms_l = center_delay_ms + lfo_l * d * depth_range_ms;
+        float delay_smp_l = delay_ms_l * 0.001f * ctx.sample_rate;
+        delay_smp_l = std::min(delay_smp_l, static_cast<float>(FlangerState::MAX_FLANGER_SAMPLES - 1));
+        float delayed_l = delay_read_linear(state.buffer[0], FlangerState::MAX_FLANGER_SAMPLES,
+                                            state.write_pos[0], delay_smp_l);
+        state.buffer[0][state.write_pos[0]] = x_l + feedback * delayed_l;
+        state.write_pos[0] = (state.write_pos[0] + 1) % FlangerState::MAX_FLANGER_SAMPLES;
+        out_l[i] = delayed_l;
 
-        // Write with feedback
-        state.buffer[state.write_pos] = input[i] + feedback * delayed;
-        state.write_pos = (state.write_pos + 1) % FlangerState::MAX_FLANGER_SAMPLES;
-
-        // Output 100% wet (user can mix dry/wet manually if needed)
-        out[i] = delayed;
+        // R lane: LFO offset by 90° turns. Decorrelates L/R on mono input;
+        // on stereo input adds spatial movement on top of per-channel
+        // processing.
+        float r_phase = state.lfo_phase + STEREO_LFO_OFFSET_TURNS;
+        if (r_phase >= 1.0f) r_phase -= 1.0f;
+        float lfo_r = std::sin(r_phase * TWO_PI);
+        float delay_ms_r = center_delay_ms + lfo_r * d * depth_range_ms;
+        float delay_smp_r = delay_ms_r * 0.001f * ctx.sample_rate;
+        delay_smp_r = std::min(delay_smp_r, static_cast<float>(FlangerState::MAX_FLANGER_SAMPLES - 1));
+        float delayed_r = delay_read_linear(state.buffer[1], FlangerState::MAX_FLANGER_SAMPLES,
+                                            state.write_pos[1], delay_smp_r);
+        state.buffer[1][state.write_pos[1]] = x_r + feedback * delayed_r;
+        state.write_pos[1] = (state.write_pos[1] + 1) % FlangerState::MAX_FLANGER_SAMPLES;
+        out_r[i] = delayed_r;
     }
 }
 
@@ -129,30 +154,34 @@ constexpr float CHORUS_BASE_DELAY_DEFAULT = 20.0f;  // ms
 constexpr float CHORUS_DEPTH_RANGE_DEFAULT = 10.0f; // ms
 
 // ============================================================================
-// EFFECT_CHORUS: Multi-Voice Chorus
+// EFFECT_CHORUS: Stereo-Native Multi-Voice Chorus
 // ============================================================================
-// in0: input signal
+// in0: input signal (mono auto-broadcasts; stereo via STEREO_INPUT)
 // in1: LFO rate (Hz, 0.1-5)
 // in2: depth (0.0-1.0)
 // in3: base_delay - base chorus delay in ms (default 20)
 // in4: depth_range - modulation depth in ms (default 10)
 //
-// Multiple detuned delay lines create a rich, thick sound.
-// Uses 3 voices with slightly offset LFO phases for maximum width.
-// Outputs 100% wet signal - user can mix dry/wet manually if needed.
+// Three detuned delay lines per channel create rich, thick stereo. Stereo-
+// native: per-channel delay lines + write_pos. Master LFO phase shared; R lane
+// reads LFO at +90° so mono input widens to a true stereo image.
 
 [[gnu::always_inline]]
 inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* rate = ctx.buffers->get(inst.inputs[1]);
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     const float* base_delay_in = ctx.buffers->get(inst.inputs[3]);
     const float* depth_range_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<ChorusState>(inst.state_id);
 
-    // Ensure buffer is allocated from arena
-    state.ensure_buffer(ctx.arena);
+    state.ensure_buffers(ctx.arena);
 
     // LFO phase offsets for each voice (spread across cycle)
     constexpr float PHASE_OFFSETS[ChorusState::NUM_VOICES] = {0.0f, 0.33f, 0.67f};
@@ -160,40 +189,52 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float x_l = input[i];
+        float x_r = stereo_in ? input_r[i] : x_l;
+
         // Runtime tunable parameters (use defaults if zero/negative)
         float base_delay_ms = base_delay_in[i] > 0.0f ? base_delay_in[i] : CHORUS_BASE_DELAY_DEFAULT;
         float depth_range_ms = depth_range_in[i] > 0.0f ? depth_range_in[i] : CHORUS_DEPTH_RANGE_DEFAULT;
 
-        // Update master LFO phase
+        // Update shared master LFO phase
         float lfo_rate = std::clamp(rate[i], 0.1f, 5.0f);
         state.lfo_phase += lfo_rate * inv_sample_rate;
         if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
 
         float d = std::clamp(depth[i], 0.0f, 1.0f);
 
-        // Sum contributions from all voices
-        float wet = 0.0f;
-        for (std::size_t v = 0; v < ChorusState::NUM_VOICES; ++v) {
-            // Each voice has offset LFO phase
-            float voice_phase = state.lfo_phase + PHASE_OFFSETS[v];
-            if (voice_phase >= 1.0f) voice_phase -= 1.0f;
+        // Process each lane independently with per-channel buffer/write_pos.
+        // L reads LFO at master phase; R reads at master + 90° (turns).
+        float wet_lr[2] = {0.0f, 0.0f};
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? x_l : x_r;
+            float ch_phase_offset = (ch == 0) ? 0.0f : STEREO_LFO_OFFSET_TURNS;
 
-            float lfo = std::sin(voice_phase * TWO_PI);
-            float delay_ms = base_delay_ms + lfo * d * depth_range_ms;
-            float delay_samples = delay_ms * 0.001f * ctx.sample_rate;
-            delay_samples = std::clamp(delay_samples, 1.0f, static_cast<float>(ChorusState::MAX_CHORUS_SAMPLES - 1));
+            float wet = 0.0f;
+            for (std::size_t v = 0; v < ChorusState::NUM_VOICES; ++v) {
+                float voice_phase = state.lfo_phase + PHASE_OFFSETS[v] + ch_phase_offset;
+                voice_phase -= std::floor(voice_phase);  // wrap to [0,1)
 
-            wet += delay_read_linear(state.buffer, ChorusState::MAX_CHORUS_SAMPLES,
-                                     state.write_pos, delay_samples);
+                float lfo = std::sin(voice_phase * TWO_PI);
+                float delay_ms = base_delay_ms + lfo * d * depth_range_ms;
+                float delay_samples = delay_ms * 0.001f * ctx.sample_rate;
+                delay_samples = std::clamp(delay_samples, 1.0f,
+                                           static_cast<float>(ChorusState::MAX_CHORUS_SAMPLES - 1));
+
+                wet += delay_read_linear(state.buffer[ch], ChorusState::MAX_CHORUS_SAMPLES,
+                                         state.write_pos[ch], delay_samples);
+            }
+            wet /= static_cast<float>(ChorusState::NUM_VOICES);
+
+            // Write dry input to per-channel delay line
+            state.buffer[ch][state.write_pos[ch]] = x;
+            state.write_pos[ch] = (state.write_pos[ch] + 1) % ChorusState::MAX_CHORUS_SAMPLES;
+
+            wet_lr[ch] = wet;
         }
-        wet /= static_cast<float>(ChorusState::NUM_VOICES);
 
-        // Write dry signal to delay line
-        state.buffer[state.write_pos] = input[i];
-        state.write_pos = (state.write_pos + 1) % ChorusState::MAX_CHORUS_SAMPLES;
-
-        // Output 100% wet (user can mix dry/wet manually if needed)
-        out[i] = wet;
+        out_l[i] = wet_lr[0];
+        out_r[i] = wet_lr[1];
     }
 }
 
@@ -202,26 +243,28 @@ constexpr float PHASER_MIN_FREQ_DEFAULT = 200.0f;   // Hz
 constexpr float PHASER_MAX_FREQ_DEFAULT = 4000.0f;  // Hz
 
 // ============================================================================
-// EFFECT_PHASER: All-Pass Phaser
+// EFFECT_PHASER: Stereo-Native All-Pass Phaser
 // ============================================================================
-// in0: input signal
+// in0: input signal (mono auto-broadcasts; stereo via STEREO_INPUT)
 // in1: LFO rate (Hz, 0.1-5)
 // in2: depth (0.0-1.0)
 // in3: min_freq - sweep range low in Hz (default 200)
 // in4: max_freq - sweep range high in Hz (default 4000)
-// rate: feedback (high 4 bits 0-15 -> 0.0-0.99), stages (low 4 bits, clamped 2-12)
+// rate: feedback (high 4 bits 0-15 -> 0.0-0.99), stages (low 4 bits, 2-12)
 //
 // Cascaded first-order allpass filters with modulated center frequencies.
-// Output is dry + allpass_cascade — interference between the two paths is
-// what creates the swept notches. (An allpass cascade alone has unity
-// magnitude response and produces no audible spectral effect.) This is the
-// canonical Bode/MXR-style topology; expect up to +6 dB peak gain at
-// constructive interference points.
+// Stereo-native: per-channel allpass state arrays. Shared master LFO phase;
+// R lane reads LFO at +90° for stereo notch sweep.
 
 [[gnu::always_inline]]
 inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* rate = ctx.buffers->get(inst.inputs[1]);
     const float* depth = ctx.buffers->get(inst.inputs[2]);
     const float* min_freq_in = ctx.buffers->get(inst.inputs[3]);
@@ -236,45 +279,51 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float x_in_l = input[i];
+        float x_in_r = stereo_in ? input_r[i] : x_in_l;
+
         // Runtime tunable parameters (use defaults if zero/negative)
         float min_freq = min_freq_in[i] > 0.0f ? min_freq_in[i] : PHASER_MIN_FREQ_DEFAULT;
         float max_freq = max_freq_in[i] > 0.0f ? max_freq_in[i] : PHASER_MAX_FREQ_DEFAULT;
 
-        // Update LFO phase
+        // Update shared LFO phase
         float lfo_rate = std::clamp(rate[i], 0.1f, 5.0f);
         state.lfo_phase += lfo_rate * inv_sample_rate;
         if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
 
-        // Calculate center frequency for allpass filters
-        float lfo = std::sin(state.lfo_phase * TWO_PI);
         float d = std::clamp(depth[i], 0.0f, 1.0f);
 
-        // Logarithmic frequency sweep
-        float freq_factor = std::exp(lfo * d * 2.0f);  // ~0.13 to ~7.4 range
-        float center_freq = std::sqrt(min_freq * max_freq) * freq_factor;
-        center_freq = std::clamp(center_freq, min_freq, max_freq);
+        // Per-channel processing. L uses master phase; R uses master + 90°.
+        float y_lr[2] = {0.0f, 0.0f};
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float ch_phase_offset = (ch == 0) ? 0.0f : STEREO_LFO_OFFSET_TURNS;
+            float ch_phase = state.lfo_phase + ch_phase_offset;
+            ch_phase -= std::floor(ch_phase);
 
-        // Calculate allpass coefficient
-        // First-order allpass: y[n] = a * x[n] + x[n-1] - a * y[n-1]
-        // Where a = (tan(pi*f/fs) - 1) / (tan(pi*f/fs) + 1)
-        float tan_val = std::tan(PI * center_freq * inv_sample_rate);
-        float a = (tan_val - 1.0f) / (tan_val + 1.0f);
+            float lfo = std::sin(ch_phase * TWO_PI);
+            float freq_factor = std::exp(lfo * d * 2.0f);
+            float center_freq = std::sqrt(min_freq * max_freq) * freq_factor;
+            center_freq = std::clamp(center_freq, min_freq, max_freq);
 
-        // Apply feedback from last stage
-        float x = input[i] + feedback * state.last_output;
+            float tan_val = std::tan(PI * center_freq * inv_sample_rate);
+            float a = (tan_val - 1.0f) / (tan_val + 1.0f);
 
-        // Cascade allpass stages
-        for (std::size_t s = 0; s < num_stages; ++s) {
-            float y = a * x + state.allpass_state[s] - a * state.allpass_delay[s];
-            state.allpass_state[s] = x;
-            state.allpass_delay[s] = y;
-            x = y;
+            float x_in = (ch == 0) ? x_in_l : x_in_r;
+            float x = x_in + feedback * state.last_output[ch];
+
+            for (std::size_t s = 0; s < num_stages; ++s) {
+                float y = a * x + state.allpass_state[ch][s] - a * state.allpass_delay[ch][s];
+                state.allpass_state[ch][s] = x;
+                state.allpass_delay[ch][s] = y;
+                x = y;
+            }
+
+            state.last_output[ch] = x;
+            y_lr[ch] = x_in + x;  // dry + allpass cascade
         }
 
-        state.last_output = x;
-
-        // dry + allpass output — the sum is what creates the audible notches
-        out[i] = input[i] + x;
+        out_l[i] = y_lr[0];
+        out_r[i] = y_lr[1];
     }
 }
 

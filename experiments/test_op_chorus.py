@@ -1,15 +1,19 @@
 """
-Test: EFFECT_CHORUS (Chorus)
-============================
-Tests chorus spectral spread and pitch modulation.
+Test: EFFECT_CHORUS (Stereo-Native Chorus)
+==========================================
+Tests chorus spectral spread and L/R decorrelation.
+
+After prd-stereo-native-opcodes Phase 3, chorus is stereo-native: writes both
+out_buffer (L) and out_buffer+1 (R). Mono input auto-escalates internally; the
+R lane reads the shared master LFO at +90° for L/R decorrelation.
 
 Expected behavior:
-- Chorus should create pitch-modulated copies of the input
-- Spectral sidebands should appear around the fundamental frequency
-- Rate parameter controls the LFO speed
-- Depth parameter controls the amount of pitch modulation
+- Chorus creates pitch-modulated copies of the input
+- Spectral sidebands appear around the fundamental frequency
+- L and R outputs differ on mono input (Pearson |corr| < 0.95)
+- Rate / depth parameters control modulation as before
 
-If this test fails, check the implementation in cedar/include/cedar/opcodes/effects.hpp
+If this test fails, check cedar/include/cedar/opcodes/modulation.hpp.
 """
 
 import os
@@ -24,91 +28,111 @@ from visualize import save_figure
 OUT = output_dir("op_chorus")
 
 
+def _run_stereo_chorus(host, n_samples, input_signal, *, rate=0.5, depth=0.5,
+                       base_delay=20.0, depth_range=10.0,
+                       hash_name="chorus", stereo_input=False,
+                       input_right=None):
+    """Set up a stereo-native chorus chain and run the block loop."""
+    buf_in = 0
+    buf_rate = host.set_param("rate", rate)
+    buf_depth = host.set_param("depth", depth)
+    buf_base = host.set_param("base_delay", base_delay)
+    buf_range = host.set_param("depth_range", depth_range)
+
+    out_buf = 2 if stereo_input else 1
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.EFFECT_CHORUS, out_buf, buf_in, buf_rate, buf_depth,
+        buf_base, buf_range, cedar.hash(hash_name) & 0xFFFF
+    )
+    inst.flags = cedar.STEREO_OUTPUT_FLAG | (
+        cedar.STEREO_INPUT_FLAG if stereo_input else 0
+    )
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_binary(
+        cedar.Opcode.OUTPUT, 0, out_buf, out_buf + 1
+    ))
+
+    host.vm.load_program(host.program)
+    n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+    padded_len = n_blocks * cedar.BLOCK_SIZE
+    in_l = np.zeros(padded_len, dtype=np.float32)
+    in_l[:n_samples] = input_signal
+    if stereo_input:
+        in_r = np.zeros(padded_len, dtype=np.float32)
+        in_r[:n_samples] = (input_right if input_right is not None
+                            else input_signal)
+
+    l_chunks, r_chunks = [], []
+    for k in range(n_blocks):
+        s = k * cedar.BLOCK_SIZE
+        e = s + cedar.BLOCK_SIZE
+        host.vm.set_buffer(0, in_l[s:e])
+        if stereo_input:
+            host.vm.set_buffer(1, in_r[s:e])
+        l, r = host.vm.process()
+        l_chunks.append(l)
+        r_chunks.append(r)
+    return (np.concatenate(l_chunks)[:n_samples],
+            np.concatenate(r_chunks)[:n_samples])
+
+
 def test_chorus_spectrum():
     """
-    Test chorus creates pitch-modulated copies.
-    - Input: sine wave at 440Hz
-    - Measure spectral sidebands around fundamental
+    Chorus on 440Hz sine should create spectral sidebands.
     """
-    print("Test: Chorus Spectral Spread")
+    print("Test: Chorus Spectral Spread (stereo-native)")
 
     sr = 48000
     duration = 3.0
-
     host = CedarTestHost(sr)
 
-    # Generate 440Hz sine
     t = np.arange(int(duration * sr)) / sr
-    sine_input = np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5
+    sine_input = (np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5)
 
-    # Chorus parameters
-    buf_in = 0
-    buf_rate = host.set_param("rate", 0.5)  # 0.5 Hz LFO
-    buf_depth = host.set_param("depth", 0.5)
-    buf_out = 1
+    output_l, output_r = _run_stereo_chorus(host, len(sine_input), sine_input)
 
-    # EFFECT_CHORUS: out = chorus(in, rate, depth)
-    # Rate field encodes mix
-    inst = cedar.Instruction.make_ternary(
-        cedar.Opcode.EFFECT_CHORUS, buf_out, buf_in, buf_rate, buf_depth, cedar.hash("chorus") & 0xFFFF
-    )
-    inst.rate = 128  # 50% wet/dry mix
-    host.load_instruction(inst)
-    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out))
-
-    output = host.process(sine_input)
-
-    # Save WAV for human evaluation
+    # Save stereo WAV
+    stereo = np.column_stack([output_l, output_r]).astype(np.float32)
     wav_path = os.path.join(OUT, "chorus_440hz.wav")
-    save_wav(wav_path, output, sr)
-    print(f"  Saved {wav_path} - Listen for gentle pitch modulation / thickening")
+    save_wav(wav_path, stereo, sr)
+    print(f"  Saved {wav_path} - Listen for stereo chorus shimmer")
 
-    # Analyze spectrum
+    # Spectrum from the L channel
     fft_size = 8192
-    # Use steady-state portion
     steady_start = int(1.0 * sr)
-    steady_output = output[steady_start:steady_start + fft_size]
+    steady_output = output_l[steady_start:steady_start + fft_size]
 
     freqs = np.fft.rfftfreq(fft_size, 1/sr)
     spectrum = np.abs(np.fft.rfft(steady_output))
     spectrum_db = 20 * np.log10(spectrum + 1e-10)
 
-    # Find fundamental and sidebands
     fundamental_idx = np.argmin(np.abs(freqs - 440))
     fundamental_level = spectrum_db[fundamental_idx]
 
-    # Look for sidebands (detuned copies) within +-20Hz of fundamental
     sideband_region = (freqs > 420) & (freqs < 460) & (np.abs(freqs - 440) > 2)
     if np.any(sideband_region):
         sideband_level = np.max(spectrum_db[sideband_region])
-        sideband_spread = np.sum(spectrum[sideband_region]) / (spectrum[fundamental_idx] + 1e-10)
-        print(f"  Fundamental: {fundamental_level:.1f}dB at 440Hz")
-        print(f"  Max sideband: {sideband_level:.1f}dB")
-        print(f"  Spectral spread ratio: {sideband_spread:.3f}")
-    else:
-        print("  No sidebands detected")
+        print(f"  Fundamental L: {fundamental_level:.1f}dB at 440Hz")
+        print(f"  Max sideband L: {sideband_level:.1f}dB")
 
-    # Plot spectrum around fundamental
     fig, axes = plt.subplots(2, 1, figsize=(12, 8))
-
     ax1 = axes[0]
     mask = (freqs > 100) & (freqs < 1000)
     ax1.plot(freqs[mask], spectrum_db[mask], linewidth=1)
-    ax1.axvline(440, color='red', linestyle='--', alpha=0.5, label='Fundamental (440Hz)')
+    ax1.axvline(440, color='red', linestyle='--', alpha=0.5, label='Fundamental')
     ax1.set_xlabel('Frequency (Hz)')
     ax1.set_ylabel('Magnitude (dB)')
-    ax1.set_title('Chorus Spectrum (100-1000Hz)')
+    ax1.set_title('Chorus L Spectrum (100-1000Hz)')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # Zoomed view
     ax2 = axes[1]
     mask_zoom = (freqs > 400) & (freqs < 500)
     ax2.plot(freqs[mask_zoom], spectrum_db[mask_zoom], linewidth=1)
     ax2.axvline(440, color='red', linestyle='--', alpha=0.5, label='Fundamental')
     ax2.set_xlabel('Frequency (Hz)')
     ax2.set_ylabel('Magnitude (dB)')
-    ax2.set_title('Chorus Spectrum Detail (400-500Hz)')
+    ax2.set_title('Chorus L Spectrum Detail (400-500Hz)')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
@@ -117,5 +141,41 @@ def test_chorus_spectrum():
     print(f"  Saved {os.path.join(OUT, 'chorus_spectrum.png')}")
 
 
+def test_stereo_decorrelation():
+    """
+    Mono input → stereo-native chorus → decorrelated L/R output.
+
+    Expected: Pearson |corr(L, R)| < 0.95 over the steady-state region.
+    Random chance for two arbitrary signals is ~0.0, but two voices reading
+    the same delay line with offset LFOs should still be highly similar in
+    the low frequencies. The decorrelation comes from the LFO offset (+90°)
+    producing time-varying delays that differ between L and R.
+    """
+    print("Test: Chorus Stereo Decorrelation")
+
+    sr = 48000
+    duration = 2.0
+    host = CedarTestHost(sr)
+
+    t = np.arange(int(duration * sr)) / sr
+    sine_input = (np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5)
+
+    output_l, output_r = _run_stereo_chorus(
+        host, len(sine_input), sine_input, rate=2.0, depth=0.8
+    )
+
+    steady = int(0.5 * sr)
+    if np.std(output_l[steady:]) > 1e-6 and np.std(output_r[steady:]) > 1e-6:
+        corr = float(np.corrcoef(output_l[steady:], output_r[steady:])[0, 1])
+    else:
+        corr = 1.0
+    print(f"  Pearson corr(L, R) over steady-state = {corr:+.4f}")
+    if abs(corr) < 0.95:
+        print(f"  ✓ PASS: L and R decorrelated (|corr|={abs(corr):.4f} < 0.95)")
+    else:
+        print(f"  ✗ FAIL: L and R too correlated (|corr|={abs(corr):.4f} ≥ 0.95)")
+
+
 if __name__ == "__main__":
     test_chorus_spectrum()
+    test_stereo_decorrelation()

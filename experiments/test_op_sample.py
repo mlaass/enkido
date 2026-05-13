@@ -1618,6 +1618,92 @@ def test_first_trigger_after_idle():
 # Main
 # =============================================================================
 
+def test_stereo_file_preserves_channels():
+    """
+    Stereo-native sampler (prd-stereo-native-opcodes Phase 3): a stereo
+    sample file plays back with channels intact — L bus carries ch[0], R bus
+    carries ch[1]. Verify by loading a programmatically generated stereo
+    WAV with L = 440Hz and R = 880Hz sines, triggering once, and inspecting
+    the FFT peaks on each output bus.
+    """
+    print("\nTest 10: Stereo File Preservation (stereo-native sampler)")
+    print("=" * 60)
+
+    sr = 48000
+    duration = 0.5
+    host = SamplerTestHost(sr)
+
+    # Build a stereo (interleaved) sample: L=440Hz, R=880Hz.
+    num_frames = int(duration * sr)
+    t = np.arange(num_frames) / sr
+    left = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    right = np.sin(2 * np.pi * 880 * t).astype(np.float32)
+    interleaved = np.empty(num_frames * 2, dtype=np.float32)
+    interleaved[0::2] = left
+    interleaved[1::2] = right
+
+    sample_id = host.load_custom_sample("stereo_test", interleaved,
+                                        channels=2, sample_rate=sr)
+
+    # Build a sampler program that sets STEREO_OUTPUT and emits a binary
+    # OUTPUT so we can read both buses.
+    host.vm.set_param("pitch", 1.0)
+    host.vm.set_param("sample_id", float(sample_id))
+    program = []
+    program.append(cedar.Instruction.make_nullary(
+        cedar.Opcode.ENV_GET, 1, cedar.hash("pitch")))
+    program.append(cedar.Instruction.make_nullary(
+        cedar.Opcode.ENV_GET, 2, cedar.hash("sample_id")))
+    sample_inst = cedar.Instruction.make_ternary(
+        cedar.Opcode.SAMPLE_PLAY, 10, 0, 1, 2,
+        cedar.hash("stereo_sampler_test"),
+    )
+    sample_inst.flags = cedar.STEREO_OUTPUT_FLAG
+    program.append(sample_inst)
+    program.append(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 10, 11))
+    host.vm.load_program(program)
+
+    # Render: trigger on first block, then let the sample play out.
+    n_blocks = int(0.4 * sr / cedar.BLOCK_SIZE)
+    out_l_chunks, out_r_chunks = [], []
+    for k in range(n_blocks):
+        trig = np.zeros(cedar.BLOCK_SIZE, dtype=np.float32)
+        if k == 0:
+            trig[0] = 1.0
+        host.vm.set_buffer(0, trig)
+        l, r = host.vm.process()
+        out_l_chunks.append(l)
+        out_r_chunks.append(r)
+    out_l = np.concatenate(out_l_chunks)
+    out_r = np.concatenate(out_r_chunks)
+
+    # FFT to confirm 440Hz dominance in L and 880Hz dominance in R.
+    fft_size = 8192
+    skip = 1024  # skip startup transient
+    seg_l = out_l[skip:skip + fft_size]
+    seg_r = out_r[skip:skip + fft_size]
+    freqs = np.fft.rfftfreq(fft_size, 1 / sr)
+    mag_l = np.abs(np.fft.rfft(seg_l))
+    mag_r = np.abs(np.fft.rfft(seg_r))
+    peak_l = freqs[int(np.argmax(mag_l))]
+    peak_r = freqs[int(np.argmax(mag_r))]
+    print(f"  Stereo sample: L=440Hz sine, R=880Hz sine, expecting same on output buses.")
+    print(f"  L bus peak: {peak_l:.1f} Hz (expect ~440)")
+    print(f"  R bus peak: {peak_r:.1f} Hz (expect ~880)")
+
+    # Save WAVs for inspection (local save_wav prepends OUT directory).
+    save_wav("stereo_sample_L_bus.wav", out_l, sr)
+    save_wav("stereo_sample_R_bus.wav", out_r, sr)
+
+    passed_l = abs(peak_l - 440.0) < 12.0  # ≤ 1 FFT bin tolerance
+    passed_r = abs(peak_r - 880.0) < 12.0
+    if passed_l and passed_r:
+        print(f"  ✓ PASS: Stereo channels preserved (L=ch[0], R=ch[1])")
+    else:
+        print(f"  ✗ FAIL: Channel preservation broken — check op_sample_play "
+              f"stereo split in cedar/include/cedar/opcodes/samplers.hpp")
+
+
 if __name__ == "__main__":
     # Change to script directory so all paths work correctly
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1636,6 +1722,7 @@ if __name__ == "__main__":
     test_sequencer_timing()
     test_timing_drift()
     test_first_trigger_after_idle()
+    test_stereo_file_preserves_channels()
 
     print()
     print("=" * 60)

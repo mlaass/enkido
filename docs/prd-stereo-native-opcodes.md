@@ -1,4 +1,12 @@
-> **Status: NOT STARTED** — Successor to `prd-stereo-support.md` (COMPLETE 2026-04-21). Implements the never-written "Stereo-Native VM Opcodes" companion referenced in §13 of that PRD.
+> **Status: IN PROGRESS** — Phases 0–3 landed (2026-05-13). Reverbs (Phase 2)
+> and spatializing modulation FX + sampler (Phase 3) are stereo-native; phaser
+> stationary-notch flake on master is now fixed by the rewrite. Phase 3 ships
+> with hardcoded R-LFO offset π/2; the user-tunable `lfo_phase` parameter
+> deferred until ExtendedParams VM init plumbing lands (see plan note in
+> §5.5 and the Phase 5 cleanup list).
+> Successor to `prd-stereo-support.md` (COMPLETE 2026-04-21). Implements the
+> never-written "Stereo-Native VM Opcodes" companion referenced in §13 of that
+> PRD.
 
 # PRD: Stereo-Native DSP Opcodes
 

@@ -403,59 +403,69 @@ struct CombFilterState {
     }
 };
 
-// Flanger state with arena-allocated buffer
+// Flanger state with per-channel arena-allocated buffers (stereo-native).
+// L/R lanes share a master LFO phase advanced once per sample; the R lane
+// reads the LFO at base + 90° for stereo decorrelation. See
+// prd-stereo-native-opcodes Phase 3.
 struct FlangerState {
     static constexpr std::size_t MAX_FLANGER_SAMPLES = 960;  // 20ms at 48kHz
 
-    float* buffer = nullptr;
-    std::size_t write_pos = 0;
+    float* buffer[2] = {nullptr, nullptr};   // [0] = L, [1] = R
+    std::size_t write_pos[2] = {0, 0};
     float lfo_phase = 0.0f;
 
-    void ensure_buffer(AudioArena* arena) {
-        if (buffer) return;
+    void ensure_buffers(AudioArena* arena) {
         if (!arena) return;
-        buffer = arena->allocate(MAX_FLANGER_SAMPLES);
+        if (!buffer[0]) buffer[0] = arena->allocate(MAX_FLANGER_SAMPLES);
+        if (!buffer[1]) buffer[1] = arena->allocate(MAX_FLANGER_SAMPLES);
     }
 
     void reset() {
-        if (buffer) {
-            std::memset(buffer, 0, MAX_FLANGER_SAMPLES * sizeof(float));
-            write_pos = 0;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) {
+                std::memset(buffer[ch], 0, MAX_FLANGER_SAMPLES * sizeof(float));
+                write_pos[ch] = 0;
+            }
         }
+        lfo_phase = 0.0f;
     }
 };
 
-// Chorus state (multi-voice) with arena-allocated buffer
+// Chorus state (multi-voice) with per-channel arena-allocated buffers
+// (stereo-native). Master LFO phase shared; R lane reads at base + 90°.
 struct ChorusState {
     static constexpr std::size_t MAX_CHORUS_SAMPLES = 2400;  // 50ms at 48kHz
     static constexpr std::size_t NUM_VOICES = 3;
 
-    float* buffer = nullptr;
-    std::size_t write_pos = 0;
+    float* buffer[2] = {nullptr, nullptr};
+    std::size_t write_pos[2] = {0, 0};
     float lfo_phase = 0.0f;
 
-    void ensure_buffer(AudioArena* arena) {
-        if (buffer) return;
+    void ensure_buffers(AudioArena* arena) {
         if (!arena) return;
-        buffer = arena->allocate(MAX_CHORUS_SAMPLES);
+        if (!buffer[0]) buffer[0] = arena->allocate(MAX_CHORUS_SAMPLES);
+        if (!buffer[1]) buffer[1] = arena->allocate(MAX_CHORUS_SAMPLES);
     }
 
     void reset() {
-        if (buffer) {
-            std::memset(buffer, 0, MAX_CHORUS_SAMPLES * sizeof(float));
-            write_pos = 0;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) {
+                std::memset(buffer[ch], 0, MAX_CHORUS_SAMPLES * sizeof(float));
+                write_pos[ch] = 0;
+            }
         }
+        lfo_phase = 0.0f;
     }
 };
 
-// Phaser state (cascaded allpass filters)
+// Phaser state (per-channel cascaded allpass filters, stereo-native).
 struct PhaserState {
     static constexpr std::size_t NUM_STAGES = 12;  // Max stages
 
-    float allpass_state[NUM_STAGES] = {};
-    float allpass_delay[NUM_STAGES] = {};
+    float allpass_state[2][NUM_STAGES] = {};  // [ch][stage]
+    float allpass_delay[2][NUM_STAGES] = {};
     float lfo_phase = 0.0f;
-    float last_output = 0.0f;
+    float last_output[2] = {0.0f, 0.0f};
 };
 
 // ============================================================================

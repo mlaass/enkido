@@ -396,15 +396,24 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                       "Amplitude envelope follower",
                       0, {}, {}, ChannelCount::Mono, true}},
 
-    // Samplers
+    // Samplers (stereo-native, prd-stereo-native-opcodes Phase 3): mono files
+    // broadcast L=R; stereo files preserve channels; 3+ channel files keep the
+    // first two and drop the rest.
     {"sample",  {cedar::Opcode::SAMPLE_PLAY, 3, 0, true,
                  {"trig", "pitch", "id", "", "", ""},
                  {NAN, NAN, NAN},
-                 "One-shot sample playback. id accepts a sample name (\"bd\", \"bd:3\", \"Bank/name:variant\") or numeric sample-bank ID."}},
+                 "Stereo-native one-shot sample playback. id accepts a sample "
+                 "name (\"bd\", \"bd:3\", \"Bank/name:variant\") or numeric "
+                 "sample-bank ID.",
+                 0, {}, {}, ChannelCount::Stereo,
+                 /*auto_lift=*/false, /*stereo_native=*/true}},
     {"sample_loop", {cedar::Opcode::SAMPLE_PLAY_LOOP, 3, 0, true,
                      {"gate", "pitch", "id", "", "", ""},
                      {NAN, NAN, NAN},
-                     "Looping sample playback. id accepts a sample name or numeric sample-bank ID."}},
+                     "Stereo-native looping sample playback. id accepts a "
+                     "sample name or numeric sample-bank ID.",
+                     0, {}, {}, ChannelCount::Stereo,
+                     /*auto_lift=*/false, /*stereo_native=*/true}},
     {"soundfont", {.opcode = cedar::Opcode::NOP, .input_count = 2, .optional_count = 1, .requires_state = false,
                    .param_names = {"input", "file", "preset", "", "", ""},
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -469,26 +478,30 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   0, {}, {}, ChannelCount::Stereo, false, true}},
 
     // Modulation Effects (stateful - delay lines with LFOs)
+    // All three are stereo-native (prd-stereo-native-opcodes Phase 3): mono
+    // input auto-escalates to L=R; stereo input drives per-channel processing.
+    // R lane reads the shared master LFO at +90° for L/R decorrelation.
     // chorus: base_delay (ms), depth_range (ms)
     {"chorus",   {cedar::Opcode::EFFECT_CHORUS, 1, 4, true,
                   {"in", "rate", "depth", "base_delay", "depth_range", ""},
                   {0.5f, 0.5f, 20.0f, 10.0f, NAN},
-                  "Stereo chorus effect",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  "Stereo-native chorus (mono input widens; stereo input "
+                  "processes per channel)",
+                  0, {}, {}, ChannelCount::Stereo, false, true}},
     // flanger: min_delay (ms), max_delay (ms)
     {"flanger",  {cedar::Opcode::EFFECT_FLANGER, 1, 4, true,
                   {"in", "rate", "depth", "min_delay", "max_delay", ""},
                   {1.0f, 0.7f, 0.1f, 10.0f, NAN},
-                  "Classic flanger effect",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  "Stereo-native flanger",
+                  0, {}, {}, ChannelCount::Stereo, false, true}},
     // phaser: min_freq (Hz), max_freq (Hz), stages (compile-time literal int 2-12),
     //         feedback (compile-time literal float 0-1, packed into rate field)
     {"phaser",   {cedar::Opcode::EFFECT_PHASER, 1, 6, true,
                   {"in", "rate", "depth", "min_freq", "max_freq", "stages", "feedback", ""},
                   {0.5f, 0.8f, 200.0f, 4000.0f, 4.0f, 0.5f},
-                  "Multi-stage phaser effect",
-                  0, {}, {}, ChannelCount::Mono, true,
-                  /*stereo_native=*/false,
+                  "Stereo-native multi-stage phaser",
+                  0, {}, {}, ChannelCount::Stereo, false,
+                  /*stereo_native=*/true,
                   /*inst_rate=*/static_cast<std::uint8_t>((8u << 4) | 4u)}},
     {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 0, true,
                   {"in", "time", "fb", "", "", ""},

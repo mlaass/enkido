@@ -413,6 +413,176 @@ TEST_CASE("Types: stereo-native fdn reads stereo primary input", "[types][stereo
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
 }
 
+// =============================================================================
+// Stereo-native modulation FX + sampler (prd-stereo-native-opcodes Phase 3)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native chorus produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> chorus(%, 0.5, 0.4) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_CHORUS) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native chorus reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        chorus(s, 0.5, 0.4) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_CHORUS) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native flanger produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> flanger(%, 1.0, 0.7) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_FLANGER) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_FLANGER);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native flanger reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        flanger(s, 1.0, 0.7) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_FLANGER) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_FLANGER);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native phaser produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> phaser(%, 0.5, 0.8) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_PHASER) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_PHASER);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native phaser reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        phaser(s, 0.5, 0.8) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EFFECT_PHASER) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_PHASER);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native modulation FX reject chord/array expansion", "[types][stereo][stereo-native][errors]") {
+    SECTION("chorus rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> chorus(%, 0.5, 0.4) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+    SECTION("flanger rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> flanger(%, 1.0, 0.7) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+    SECTION("phaser rejects 3-voice array") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> phaser(%, 0.5, 0.8) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+}
+
+TEST_CASE("Types: stereo-native sample emits SAMPLE_PLAY with STEREO_OUTPUT flag", "[types][stereo][stereo-native]") {
+    // Scalar sample() call. The 3rd arg "bd" resolves to a sample name; we
+    // only care that SAMPLE_PLAY is emitted with the correct flags.
+    auto result = akkado::compile(R"(
+        sample(1.0, 1.0, "bd") |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::SAMPLE_PLAY) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::SAMPLE_PLAY);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native sample_loop emits SAMPLE_PLAY_LOOP with STEREO_OUTPUT flag", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        sample_loop(1.0, 1.0, "bd") |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::SAMPLE_PLAY_LOOP) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::SAMPLE_PLAY_LOOP);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+// Step D — re-validation of pre-existing stereo helpers (pan/width/ms/pingpong)
+// in chain with the newly stereo-native Phase 3 opcodes. These helpers use a
+// different codegen path (handle_*_call dispatch + register_stereo memory
+// tracking) than the stereo_native flag; this test simply confirms that the
+// two mechanisms compose cleanly.
+TEST_CASE("Types: stereo-native FX chain through existing stereo helpers", "[types][stereo][stereo-native]") {
+    SECTION("chorus → width") {
+        auto result = akkado::compile(R"(
+            saw(220) |> chorus(%, 0.5, 0.4) |> width(%, 1.5) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("flanger → pan") {
+        auto result = akkado::compile(R"(
+            saw(220) |> flanger(%, 1.0, 0.7) |> pan(%, 0.3) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("phaser → pingpong") {
+        auto result = akkado::compile(R"(
+            saw(220) |> phaser(%, 0.5, 0.8) |> pingpong(%, 0.25, 0.5) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("chorus → ms_encode → ms_decode round-trip") {
+        auto result = akkado::compile(R"(
+            saw(220) |> chorus(%, 0.5, 0.4) |> ms_encode(%) |> ms_decode(%) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+}
+
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {
     // mono + stereo broadcasts the mono operand across both channels.
     // Array-broadcasting in the binary-op path naturally produces 2 output

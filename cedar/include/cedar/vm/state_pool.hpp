@@ -446,20 +446,23 @@ public:
             }
             else if constexpr (std::is_same_v<T, FlangerState>) {
                 json << R"({"type":"FlangerState")";
-                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"write_pos_l":)" << state.write_pos[0];
+                json << R"(,"write_pos_r":)" << state.write_pos[1];
                 json << R"(,"lfo_phase":)" << state.lfo_phase;
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, ChorusState>) {
                 json << R"({"type":"ChorusState")";
-                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"write_pos_l":)" << state.write_pos[0];
+                json << R"(,"write_pos_r":)" << state.write_pos[1];
                 json << R"(,"lfo_phase":)" << state.lfo_phase;
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, PhaserState>) {
                 json << R"({"type":"PhaserState")";
                 json << R"(,"lfo_phase":)" << state.lfo_phase;
-                json << R"(,"last_output":)" << state.last_output;
+                json << R"(,"last_output_l":)" << state.last_output[0];
+                json << R"(,"last_output_r":)" << state.last_output[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, SamplerState>) {

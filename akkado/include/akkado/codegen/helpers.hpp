@@ -217,11 +217,17 @@ inline std::uint16_t emit_sample_chain(
         emit(pitch_inst);
     }
 
-    // 2. SAMPLE_PLAY. inputs[3]/[4] split the linked SequenceState id in half
-    //    (Pattern mode) or BUFFER_UNUSED (Scalar mode, falls back to the
-    //    scalar sample_id buffer in op_sample_play).
+    // 2. SAMPLE_PLAY. Stereo-native (prd-stereo-native-opcodes Phase 3):
+    //    allocate an adjacent L/R output pair and set the STEREO_OUTPUT flag
+    //    so the opcode writes both channels in one call. inputs[3]/[4] split
+    //    the linked SequenceState id in half (Pattern mode) or BUFFER_UNUSED
+    //    (Scalar mode, falls back to the scalar sample_id buffer in
+    //    op_sample_play).
     std::uint16_t output_buf = buffers.allocate();
-    if (output_buf == BufferAllocator::BUFFER_UNUSED) {
+    std::uint16_t output_buf_r = buffers.allocate();
+    if (output_buf == BufferAllocator::BUFFER_UNUSED ||
+        output_buf_r == BufferAllocator::BUFFER_UNUSED ||
+        output_buf_r != output_buf + 1) {
         return BufferAllocator::BUFFER_UNUSED;
     }
     cedar::Instruction sample_inst{};
@@ -231,6 +237,7 @@ inline std::uint16_t emit_sample_chain(
     sample_inst.inputs[1] = pitch_buf;
     sample_inst.inputs[2] = ctx.value_buf;
     sample_inst.rate      = ctx.rate;
+    sample_inst.flags     = cedar::InstructionFlag::STEREO_OUTPUT;
     if (ctx.kind == SamplePatternEmitCtx::Kind::Pattern) {
         sample_inst.inputs[3] = static_cast<std::uint16_t>(ctx.seq_state_id & 0xFFFFu);
         sample_inst.inputs[4] = static_cast<std::uint16_t>((ctx.seq_state_id >> 16) & 0xFFFFu);
@@ -247,22 +254,40 @@ inline std::uint16_t emit_sample_chain(
     //    op_sample_play via evt.velocities[v]; the post-MUL exists only to
     //    let `velocity(pat, runtime_expr)` scale the sampler output at
     //    runtime via velocity_buf.
+    //
+    //    Stereo-native sampler emits a stereo pair (out, out+1). The post-MUL
+    //    scales both channels by the same velocity buffer (mono control). The
+    //    scaling produces a second stereo pair (scaled, scaled+1).
     if (ctx.velocity_buf == BufferAllocator::BUFFER_UNUSED) {
         return output_buf;
     }
     std::uint16_t scaled_buf = buffers.allocate();
-    if (scaled_buf == BufferAllocator::BUFFER_UNUSED) {
+    std::uint16_t scaled_buf_r = buffers.allocate();
+    if (scaled_buf == BufferAllocator::BUFFER_UNUSED ||
+        scaled_buf_r == BufferAllocator::BUFFER_UNUSED ||
+        scaled_buf_r != scaled_buf + 1) {
         return BufferAllocator::BUFFER_UNUSED;
     }
-    cedar::Instruction mul_inst{};
-    mul_inst.opcode = cedar::Opcode::MUL;
-    mul_inst.out_buffer = scaled_buf;
-    mul_inst.inputs[0] = output_buf;
-    mul_inst.inputs[1] = ctx.velocity_buf;
-    mul_inst.inputs[2] = 0xFFFF;
-    mul_inst.inputs[3] = 0xFFFF;
-    mul_inst.inputs[4] = 0xFFFF;
-    emit(mul_inst);
+    // Scale L channel
+    cedar::Instruction mul_l{};
+    mul_l.opcode = cedar::Opcode::MUL;
+    mul_l.out_buffer = scaled_buf;
+    mul_l.inputs[0] = output_buf;
+    mul_l.inputs[1] = ctx.velocity_buf;
+    mul_l.inputs[2] = 0xFFFF;
+    mul_l.inputs[3] = 0xFFFF;
+    mul_l.inputs[4] = 0xFFFF;
+    emit(mul_l);
+    // Scale R channel
+    cedar::Instruction mul_r{};
+    mul_r.opcode = cedar::Opcode::MUL;
+    mul_r.out_buffer = scaled_buf_r;
+    mul_r.inputs[0] = output_buf_r;
+    mul_r.inputs[1] = ctx.velocity_buf;
+    mul_r.inputs[2] = 0xFFFF;
+    mul_r.inputs[3] = 0xFFFF;
+    mul_r.inputs[4] = 0xFFFF;
+    emit(mul_r);
     return scaled_buf;
 }
 
