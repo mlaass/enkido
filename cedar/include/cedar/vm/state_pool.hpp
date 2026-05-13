@@ -327,7 +327,8 @@ public:
             else if constexpr (std::is_same_v<T, DelayState>) {
                 json << R"({"type":"DelayState")";
                 json << R"(,"buffer_size":)" << state.buffer_size;
-                json << R"(,"write_pos":)" << state.write_pos;
+                json << R"(,"write_pos_l":)" << state.write_pos[0];
+                json << R"(,"write_pos_r":)" << state.write_pos[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, EnvState>) {
@@ -455,8 +456,10 @@ public:
             }
             else if constexpr (std::is_same_v<T, CombFilterState>) {
                 json << R"({"type":"CombFilterState")";
-                json << R"(,"write_pos":)" << state.write_pos;
-                json << R"(,"filter_state":)" << state.filter_state;
+                json << R"(,"write_pos_l":)" << state.write_pos[0];
+                json << R"(,"write_pos_r":)" << state.write_pos[1];
+                json << R"(,"filter_state_l":)" << state.filter_state[0];
+                json << R"(,"filter_state_r":)" << state.filter_state[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, FlangerState>) {

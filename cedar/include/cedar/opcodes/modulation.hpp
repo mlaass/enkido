@@ -21,37 +21,51 @@ namespace cedar {
 // Fundamental building block for many effects. Creates resonances at
 // multiples of the fundamental frequency (1000/delay_ms Hz).
 
+// Stereo-native (prd-stereo-native-opcodes Phase 4c): per-channel delay
+// lines, write positions, and damping-lowpass state. Mono input
+// auto-broadcasts; stereo input drives per-channel comb filters.
 [[gnu::always_inline]]
 inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* delay_ms = ctx.buffers->get(inst.inputs[1]);
     const float* feedback = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<CombFilterState>(inst.state_id);
 
     float damp = static_cast<float>(inst.rate) / 255.0f;
 
-    // Ensure buffer is allocated from arena
     state.ensure_buffer(ctx.arena);
+    if (!state.buffer[0] || !state.buffer[1]) {
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            out_l[i] = 0.0f;
+            out_r[i] = 0.0f;
+        }
+        return;
+    }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // Calculate delay in samples
         float delay_samples = std::clamp(delay_ms[i], 0.1f, 100.0f) * 0.001f * ctx.sample_rate;
         delay_samples = std::min(delay_samples, static_cast<float>(CombFilterState::MAX_COMB_SAMPLES - 1));
-
-        // Read from delay line with interpolation
-        float delayed = delay_read_linear(state.buffer, CombFilterState::MAX_COMB_SAMPLES,
-                                          state.write_pos, delay_samples);
-
-        // Apply damping (lowpass in feedback path)
         float fb = std::clamp(feedback[i], -0.99f, 0.99f);
-        state.filter_state = delayed * (1.0f - damp) + state.filter_state * damp;
 
-        // Write to delay line
-        state.buffer[state.write_pos] = input[i] + fb * state.filter_state;
-        state.write_pos = (state.write_pos + 1) % CombFilterState::MAX_COMB_SAMPLES;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        out[i] = delayed;
+            float delayed = delay_read_linear(state.buffer[ch], CombFilterState::MAX_COMB_SAMPLES,
+                                              state.write_pos[ch], delay_samples);
+
+            state.filter_state[ch] = delayed * (1.0f - damp) + state.filter_state[ch] * damp;
+
+            state.buffer[ch][state.write_pos[ch]] = x + fb * state.filter_state[ch];
+            state.write_pos[ch] = (state.write_pos[ch] + 1) % CombFilterState::MAX_COMB_SAMPLES;
+
+            (ch == 0 ? out_l : out_r)[i] = delayed;
+        }
     }
 }
 

@@ -453,24 +453,25 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset)",
                    .consumes_polyphonic_pattern = true}},
 
-    // Delays - time in seconds (default, intuitive)
+    // Delays — stereo-native (prd-stereo-native-opcodes Phase 4c).
+    // Per-channel ring buffers; mono control inputs (time/fb/dry/wet) shared.
     // Optional dry/wet parameters for mix control (defaults: dry=0.0, wet=1.0 = 100% wet)
     {"delay",   {cedar::Opcode::DELAY, 3, 2, true,
                  {"in", "time", "fb", "dry", "wet", ""},
                  {0.0f, 1.0f, NAN, NAN, NAN},
                  "Delay line (time in seconds, 0-10)",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // Delay variants with different time units
     {"delay_ms",    {cedar::Opcode::DELAY, 3, 2, true,
                      {"in", "time_ms", "fb", "dry", "wet", ""},
                      {0.0f, 1.0f, NAN, NAN, NAN},
                      "Delay line (time in milliseconds, 0-10000)",
-                     0, {}, {}, ChannelCount::Mono, true}},
+                     0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true, /*inst_rate=*/1}},
     {"delay_smp",   {cedar::Opcode::DELAY, 3, 2, true,
                      {"in", "time_smp", "fb", "dry", "wet", ""},
                      {0.0f, 1.0f, NAN, NAN, NAN},
                      "Delay line (time in samples, direct control)",
-                     0, {}, {}, ChannelCount::Mono, true}},
+                     0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true, /*inst_rate=*/2}},
     // Tap delay with configurable feedback processing (handled specially by codegen)
     // tap_delay(in, time, fb, processor) where processor is a closure: (x) -> ...
     // The closure receives the delayed signal and its output is mixed back with feedback.
@@ -559,7 +560,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "time", "fb", "", "", ""},
                   {NAN, NAN, NAN},
                   "Comb filter (resonant delay)",
-                  0, {}, {}, ChannelCount::Mono, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
 
     // Distortion — all stereo-native (prd-stereo-native-opcodes Phase 4b).
     // Per-channel state arrays inside one state struct; runtime params (drive,

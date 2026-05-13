@@ -843,6 +843,92 @@ TEST_CASE("Types: stereo-native filter+distortion chain", "[types][stereo][stere
     CHECK(result.success);
 }
 
+// =============================================================================
+// Stereo-native delays + comb (prd-stereo-native-opcodes Phase 4c)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native delay produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"( saw(220) |> delay(%, 0.25, 0.5) |> out(%) )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native delay reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        delay(s, 0.25, 0.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native delay_ms and delay_smp inherit inst_rate", "[types][stereo][stereo-native]") {
+    SECTION("delay_ms encodes rate=1") {
+        auto result = akkado::compile(R"( saw(220) |> delay_ms(%, 250, 0.5) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 1);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("delay_smp encodes rate=2") {
+        auto result = akkado::compile(R"( saw(220) |> delay_smp(%, 12000, 0.5) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 2);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native comb produces stereo output", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"( saw(220) |> comb(%, 5, 0.7) |> out(%) )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::EFFECT_COMB);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native tap_delay runs closure on stereo signal pair", "[types][stereo][stereo-native]") {
+    // tap_delay's closure body operates on a stereo signal pair (not per-
+    // channel closure execution). Inner stereo-native ops (lp/saturate)
+    // consume the stereo pair and produce a stereo pair.
+    SECTION("tap_delay with saturate closure") {
+        auto result = akkado::compile(R"(
+            saw(220) |> tap_delay(%, 0.25, 0.5, (x) -> saturate(x, 2.0)) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* tap = find_instruction(insts, cedar::Opcode::DELAY_TAP);
+        auto* write = find_instruction(insts, cedar::Opcode::DELAY_WRITE);
+        REQUIRE(tap != nullptr);
+        REQUIRE(write != nullptr);
+        CHECK((tap->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((write->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("tap_delay with lp closure") {
+        auto result = akkado::compile(R"(
+            saw(220) |> tap_delay(%, 0.25, 0.5, (x) -> lp(x, 800)) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("tap_delay_ms passes time unit through to TAP rate field") {
+        auto result = akkado::compile(R"(
+            saw(220) |> tap_delay_ms(%, 250, 0.5, (x) -> lp(x, 800)) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto* tap = find_instruction(get_instructions(result), cedar::Opcode::DELAY_TAP);
+        REQUIRE(tap != nullptr);
+        CHECK(tap->rate == 1);
+    }
+}
+
 // ============================================================================
 // Extended params (prd-extended-params §5–§6) — canonical mechanism for
 // opcode parameters beyond the 5 input-buffer slots.

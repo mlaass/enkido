@@ -130,52 +130,61 @@ struct CellState {
     bool initialized = false;
 };
 
-// Delay state with arena-allocated ring buffer
-// Buffer is allocated from AudioArena on first use (zero heap allocation during audio)
+// Delay state with arena-allocated ring buffer — stereo-native
+// (prd-stereo-native-opcodes Phase 4c). Per-channel ring buffers, write
+// positions, smoothed-delay state, and tap_cache; buffer_size is shared
+// because both lanes allocate together to the same length.
 struct DelayState {
     // Maximum delay time: 10 seconds at 96kHz = 960000 samples
     static constexpr std::size_t MAX_DELAY_SAMPLES = 960000;
 
-    // Ring buffer (allocated from arena)
-    float* buffer = nullptr;
-    std::size_t buffer_size = 0;    // Allocated size in floats
-    std::size_t write_pos = 0;
+    // Per-channel ring buffers (allocated from arena), shared size
+    float* buffer[2] = {nullptr, nullptr};
+    std::size_t buffer_size = 0;    // Allocated size in floats (per channel)
+    std::size_t write_pos[2] = {0, 0};
 
     // Smoothed delay time (prevents clicks when delay time changes)
-    float smoothed_delay = 0.0f;       // Current smoothed delay time in samples
-    bool delay_initialized = false;    // For first-sample initialization
+    float smoothed_delay[2] = {0.0f, 0.0f};  // Current smoothed delay time in samples
+    bool delay_initialized[2] = {false, false};
 
     // Tap delay coordination (used by DELAY_TAP/DELAY_WRITE pair)
-    // Caches delayed samples between TAP and WRITE so feedback chain can process them
+    // Caches per-channel delayed samples between TAP and WRITE so the closure
+    // body can process them. tap_delay's closure body operates on a stereo
+    // signal pair (prd-stereo-native-opcodes Phase 4c plan).
     static constexpr std::size_t BLOCK_SIZE = 128;
-    std::array<float, BLOCK_SIZE> tap_cache{};
+    std::array<float, BLOCK_SIZE> tap_cache[2]{};
 
-    // Ensure buffer is allocated with requested size
+    // Ensure per-channel buffers are allocated with requested size
     // arena: AudioArena to allocate from (from ExecutionContext)
     void ensure_buffer(std::size_t samples, AudioArena* arena) {
-        if (buffer && buffer_size >= samples) {
+        if (buffer[0] && buffer[1] && buffer_size >= samples) {
             return;  // Already have enough space
         }
         if (!arena) return;
 
         std::size_t new_size = std::min(samples, MAX_DELAY_SAMPLES);
-        float* new_buffer = arena->allocate(new_size);
-        if (new_buffer) {
-            buffer = new_buffer;
+        float* new_buffer_l = buffer[0] && buffer_size >= new_size ? buffer[0] : arena->allocate(new_size);
+        float* new_buffer_r = buffer[1] && buffer_size >= new_size ? buffer[1] : arena->allocate(new_size);
+        if (new_buffer_l && new_buffer_r) {
+            buffer[0] = new_buffer_l;
+            buffer[1] = new_buffer_r;
             buffer_size = new_size;
-            write_pos = 0;
+            write_pos[0] = 0;
+            write_pos[1] = 0;
         }
     }
 
-    // Reset buffer to silence (for seek)
+    // Reset both buffers to silence (for seek)
     void reset() {
-        if (buffer && buffer_size > 0) {
-            std::memset(buffer, 0, buffer_size * sizeof(float));
-            write_pos = 0;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch] && buffer_size > 0) {
+                std::memset(buffer[ch], 0, buffer_size * sizeof(float));
+            }
+            write_pos[ch] = 0;
+            tap_cache[ch].fill(0.0f);
+            smoothed_delay[ch] = 0.0f;
+            delay_initialized[ch] = false;
         }
-        tap_cache.fill(0.0f);
-        smoothed_delay = 0.0f;
-        delay_initialized = false;
     }
 };
 
@@ -392,25 +401,30 @@ struct ExciterState {
 // Modulation Effect States
 // ============================================================================
 
-// Comb filter state with arena-allocated buffer
+// Comb filter state with arena-allocated buffer — stereo-native
+// (prd-stereo-native-opcodes Phase 4c). Per-channel delay lines, write
+// positions, and damping-lowpass state.
 struct CombFilterState {
     static constexpr std::size_t MAX_COMB_SAMPLES = 4800;  // 100ms at 48kHz
 
-    float* buffer = nullptr;
-    std::size_t write_pos = 0;
-    float filter_state = 0.0f;  // For damping lowpass
+    float* buffer[2] = {nullptr, nullptr};
+    std::size_t write_pos[2] = {0, 0};
+    float filter_state[2] = {0.0f, 0.0f};  // For damping lowpass, per channel
 
     void ensure_buffer(AudioArena* arena) {
-        if (buffer) return;
+        if (buffer[0] && buffer[1]) return;
         if (!arena) return;
-        buffer = arena->allocate(MAX_COMB_SAMPLES);
+        if (!buffer[0]) buffer[0] = arena->allocate(MAX_COMB_SAMPLES);
+        if (!buffer[1]) buffer[1] = arena->allocate(MAX_COMB_SAMPLES);
     }
 
     void reset() {
-        if (buffer) {
-            std::memset(buffer, 0, MAX_COMB_SAMPLES * sizeof(float));
-            write_pos = 0;
-            filter_state = 0.0f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) {
+                std::memset(buffer[ch], 0, MAX_COMB_SAMPLES * sizeof(float));
+            }
+            write_pos[ch] = 0;
+            filter_state[ch] = 0.0f;
         }
     }
 };
