@@ -1790,11 +1790,14 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
     }
 
     SECTION("chained dot-calls: a.f().g() == g(f(a))") {
+        // lp is stereo-native (prd-stereo-native-opcodes Phase 4a) so chain
+        // through another stereo-aware opcode (hp) for syntactic-equivalence
+        // verification.
         auto dot = akkado::compile(R"(
-            osc("saw", 440).lp(800).abs() |> out(%, %)
+            osc("saw", 440).lp(800).hp(2000) |> out(%)
         )");
         auto direct = akkado::compile(R"(
-            abs(lp(osc("saw", 440), 800)) |> out(%, %)
+            hp(lp(osc("saw", 440), 800), 2000) |> out(%)
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
@@ -1906,11 +1909,12 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
     }
 
     SECTION("chained dot-calls on hole") {
+        // lp is stereo-native (Phase 4a); chain through hp instead of abs.
         auto dot = akkado::compile(R"(
-            osc("saw", 440) |> %.lp(800).abs() |> out(%, %)
+            osc("saw", 440) |> %.lp(800).hp(2000) |> out(%)
         )");
         auto pipe = akkado::compile(R"(
-            osc("saw", 440) |> abs(lp(%, 800)) |> out(%, %)
+            osc("saw", 440) |> hp(lp(%, 800), 2000) |> out(%)
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
@@ -6463,11 +6467,12 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
     }
 }
 
-TEST_CASE("Codegen: stereo auto-lift state IDs", "[codegen][stereo][auto-lift]") {
-    SECTION("auto-lift keeps single state_id — VM XORs for R pass") {
-        // The auto-lifted instruction carries one state_id (the L side). The
-        // VM derives the R-channel state_id at dispatch via XOR with
-        // STEREO_STATE_XOR_R, so each channel has independent DSP memory.
+TEST_CASE("Codegen: stereo-native filter state IDs", "[codegen][stereo][stereo-native]") {
+    // lp is stereo-native post-prd-stereo-native-opcodes Phase 4a: per-channel
+    // fields live inside one state struct keyed by fnv1a(semantic_path) — no
+    // /L suffix, no XOR. Same path → same state_id whether input is mono or
+    // stereo (the channels parallel-process inside the opcode body).
+    SECTION("stereo input emits STEREO_OUTPUT|STEREO_INPUT, single state_id") {
         auto result = akkado::compile(R"(
             stereo(saw(218), saw(222)) |> lp(%, 500)
         )");
@@ -6475,13 +6480,15 @@ TEST_CASE("Codegen: stereo auto-lift state IDs", "[codegen][stereo][auto-lift]")
         auto insts = get_instructions(result);
         auto* lp = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
         REQUIRE(lp != nullptr);
+        CHECK((lp->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((lp->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
         CHECK(lp->state_id != 0);
     }
 
-    SECTION("mono path state_id differs from auto-lifted state_id") {
-        // Mono: fnv1a(path). Stereo auto-lift: fnv1a(path + "/L").
-        // Different hashes → hot-swap correctly treats them as distinct ops.
+    SECTION("mono and stereo paths share the same fnv1a(path) state_id") {
+        // Both compile to a stereo-native lp at the same semantic path; the
+        // state_id is the plain fnv1a(path) hash, so hot-swap correctly
+        // rebinds across mono→stereo input changes (and vice-versa).
         auto mono_result = akkado::compile("saw(220) |> lp(%, 500) |> out(%)");
         auto stereo_result = akkado::compile(
             "stereo(saw(220)) |> lp(%, 500) |> out(%)");
@@ -6495,7 +6502,7 @@ TEST_CASE("Codegen: stereo auto-lift state IDs", "[codegen][stereo][auto-lift]")
         auto* stereo_lp = find_instruction(stereo_insts, cedar::Opcode::FILTER_SVF_LP);
         REQUIRE(mono_lp != nullptr);
         REQUIRE(stereo_lp != nullptr);
-        CHECK(mono_lp->state_id != stereo_lp->state_id);
+        CHECK(mono_lp->state_id == stereo_lp->state_id);
     }
 }
 

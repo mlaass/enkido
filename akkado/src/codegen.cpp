@@ -1581,20 +1581,33 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // adds STEREO_INPUT to the flag combo so the opcode reads
             // inputs[0]+1 for R. Chord/polyphonic expansion onto a stereo-
             // native opcode is rejected — user must wrap explicitly in poly().
-            if (builtin->stereo_native) {
-                bool primary_stereo =
-                    expansion_arg_idx >= 0 &&
-                    expansion_buffers.size() == 2 &&
-                    is_stereo(arg_nodes[static_cast<std::size_t>(expansion_arg_idx)]);
+            // Array expansion on a non-signal (control) slot of a stereo-native
+            // opcode — e.g. `lp(sig, [500, 1000, 2000])` — falls through to
+            // the chord/array expansion loop below. The loop emits N stereo-
+            // native instances (one per expanded element); see
+            // prd-stereo-native-opcodes §9.10 (pattern/array events on control
+            // slots are unaffected by stereo-native processing).
+            const bool stereo_native_control_expansion =
+                builtin->stereo_native &&
+                expansion_arg_idx > 0 &&
+                expansion_buffers.size() > 1;
 
-                // Chord/poly expansion into stereo-native = E187. Stereo input
-                // (size == 2 + is_stereo) is fine; >2 voices, or 2 voices that
-                // aren't a stereo pair, indicate a chord that needs poly().
-                bool is_chord_expansion =
-                    expansion_arg_idx >= 0 &&
+            if (builtin->stereo_native && !stereo_native_control_expansion) {
+                bool primary_stereo =
+                    expansion_arg_idx == 0 &&
+                    expansion_buffers.size() == 2 &&
+                    is_stereo(arg_nodes[0]);
+
+                // Chord/poly expansion onto the PRIMARY SIGNAL slot of a
+                // stereo-native opcode = E187. Each voice would carry its own
+                // stereo pair, ambiguous without poly(). Stereo input (size==2
+                // + is_stereo on slot 0) is fine; >2 voices or 2 non-stereo
+                // voices indicate a chord that needs poly().
+                bool is_chord_expansion_on_signal =
+                    expansion_arg_idx == 0 &&
                     expansion_buffers.size() > 1 &&
                     !primary_stereo;
-                if (is_chord_expansion) {
+                if (is_chord_expansion_on_signal) {
                     error("E187",
                           "Chord/polyphonic expansion into stereo-native opcode '" +
                           std::string(func_name) +
@@ -1780,6 +1793,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // Chord expansion to N instances (stateful UGens only — per-voice state).
+            // For stereo-native builtins, each instance allocates an adjacent L/R
+            // output pair and sets STEREO_OUTPUT (prd-stereo-native-opcodes §9.10).
             if (builtin->requires_state && expansion_arg_idx >= 0 && expansion_buffers.size() > 1) {
                     std::vector<TypedValue> result_elements;
                     std::size_t n_params = builtin->total_params();
@@ -1815,13 +1830,31 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                             }
                         }
 
-                        // Allocate output buffer for this instance
+                        // Allocate output buffer(s): adjacent L/R pair for
+                        // stereo-native, single buffer otherwise.
                         std::uint16_t inst_out = buffers_.allocate();
+                        std::uint16_t inst_out_r = 0xFFFF;
                         if (inst_out == BufferAllocator::BUFFER_UNUSED) {
                             error("E101", "Buffer pool exhausted", n.location);
                             pop_path();
                             if (pushed_path) pop_path();
                             return TypedValue::error_val();
+                        }
+                        if (builtin->stereo_native) {
+                            inst_out_r = buffers_.allocate();
+                            if (inst_out_r == BufferAllocator::BUFFER_UNUSED) {
+                                error("E101", "Buffer pool exhausted", n.location);
+                                pop_path();
+                                if (pushed_path) pop_path();
+                                return TypedValue::error_val();
+                            }
+                            if (inst_out_r != inst_out + 1) {
+                                error("E166", "Internal error: stereo buffer allocation not adjacent",
+                                      n.location);
+                                pop_path();
+                                if (pushed_path) pop_path();
+                                return TypedValue::error_val();
+                            }
                         }
 
                         // Build instruction for this instance
@@ -1834,6 +1867,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         inst.inputs[3] = expanded_args.size() > 3 ? expanded_args[3] : 0xFFFF;
                         inst.inputs[4] = expanded_args.size() > 4 ? expanded_args[4] : 0xFFFF;
                         inst.rate = builtin->inst_rate;
+                        if (builtin->stereo_native) {
+                            inst.flags = static_cast<std::uint16_t>(
+                                cedar::InstructionFlag::STEREO_OUTPUT);
+                            // (Stereo input through array expansion on a control
+                            // slot is not currently expressible — the expansion
+                            // arg occupies slot >0; slot 0 stays single-buffer.)
+                        }
 
                         // FM detection for this instance
                         if (is_upgradeable_oscillator(inst.opcode) && !expanded_args.empty()) {
@@ -1847,7 +1887,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         emit_extended_params_init(inst.state_id, *builtin, expanded_args);
                         emit(inst);
 
-                        result_elements.push_back(TypedValue::signal(inst_out));
+                        if (builtin->stereo_native) {
+                            register_stereo(node, inst_out, inst_out_r);
+                            result_elements.push_back(
+                                TypedValue::stereo_signal(inst_out, inst_out_r));
+                        } else {
+                            result_elements.push_back(TypedValue::signal(inst_out));
+                        }
                         pop_path();
                     }
 

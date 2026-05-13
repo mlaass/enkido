@@ -287,8 +287,10 @@ public:
 #endif
             else if constexpr (std::is_same_v<T, SVFState>) {
                 json << R"({"type":"SVFState")";
-                json << R"(,"ic1eq":)" << state.ic1eq;
-                json << R"(,"ic2eq":)" << state.ic2eq;
+                json << R"(,"ic1eq_l":)" << state.ic1eq[0];
+                json << R"(,"ic1eq_r":)" << state.ic1eq[1];
+                json << R"(,"ic2eq_l":)" << state.ic2eq[0];
+                json << R"(,"ic2eq_r":)" << state.ic2eq[1];
                 json << R"(,"g":)" << state.g;
                 json << R"(,"k":)" << state.k;
                 json << R"(,"last_freq":)" << state.last_freq;
@@ -380,8 +382,10 @@ public:
             }
             else if constexpr (std::is_same_v<T, MoogState>) {
                 json << R"({"type":"MoogState")";
-                json << R"(,"stage":[)" << state.stage[0] << "," << state.stage[1] << ","
-                     << state.stage[2] << "," << state.stage[3] << "]";
+                json << R"(,"stage_l":[)" << state.stage[0][0] << "," << state.stage[0][1] << ","
+                     << state.stage[0][2] << "," << state.stage[0][3] << "]";
+                json << R"(,"stage_r":[)" << state.stage[1][0] << "," << state.stage[1][1] << ","
+                     << state.stage[1][2] << "," << state.stage[1][3] << "]";
                 json << R"(,"g":)" << state.g;
                 json << R"(,"k":)" << state.k;
                 json << R"(,"last_freq":)" << state.last_freq;
@@ -390,8 +394,10 @@ public:
             }
             else if constexpr (std::is_same_v<T, DiodeState>) {
                 json << R"({"type":"DiodeState")";
-                json << R"(,"cap":[)" << state.cap[0] << "," << state.cap[1] << ","
-                     << state.cap[2] << "," << state.cap[3] << "]";
+                json << R"(,"cap_l":[)" << state.cap[0][0] << "," << state.cap[0][1] << ","
+                     << state.cap[0][2] << "," << state.cap[0][3] << "]";
+                json << R"(,"cap_r":[)" << state.cap[1][0] << "," << state.cap[1][1] << ","
+                     << state.cap[1][2] << "," << state.cap[1][3] << "]";
                 json << R"(,"g":)" << state.g;
                 json << R"(,"k":)" << state.k;
                 json << R"(,"last_freq":)" << state.last_freq;
@@ -408,8 +414,10 @@ public:
             }
             else if constexpr (std::is_same_v<T, SallenkeyState>) {
                 json << R"({"type":"SallenkeyState")";
-                json << R"(,"cap1":)" << state.cap1;
-                json << R"(,"cap2":)" << state.cap2;
+                json << R"(,"cap1_l":)" << state.cap1[0];
+                json << R"(,"cap1_r":)" << state.cap1[1];
+                json << R"(,"cap2_l":)" << state.cap2[0];
+                json << R"(,"cap2_r":)" << state.cap2[1];
                 json << R"(,"g":)" << state.g;
                 json << R"(,"k":)" << state.k;
                 json << "}";

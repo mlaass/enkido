@@ -80,12 +80,14 @@ struct OscState4x {
     }
 };
 
-// SVF (State Variable Filter) state
+// SVF (State Variable Filter) state — stereo-native (prd-stereo-native-opcodes
+// Phase 4a). Integrator memory is per-channel [0]=L, [1]=R; coefficient cache
+// is shared because freq/q are mono control signals.
 struct SVFState {
-    float ic1eq = 0.0f;
-    float ic2eq = 0.0f;
+    float ic1eq[2] = {0.0f, 0.0f};
+    float ic2eq[2] = {0.0f, 0.0f};
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels — driven by mono ctrl freq/q)
     float g = 0.0f;
     float k = 0.0f;
     float a1 = 0.0f;
@@ -249,41 +251,47 @@ struct TimelineState {
     float loop_length = 0.0f;  // Loop length in beats (0 = no loop)
 };
 
-// Moog-style 4-pole ladder filter state
+// Moog-style 4-pole ladder filter state — stereo-native
+// (prd-stereo-native-opcodes Phase 4a). Per-channel stage/delay arrays;
+// coefficients shared across channels (mono ctrl freq/res).
 struct MoogState {
-    // 4 cascaded 1-pole lowpass stages
-    float stage[4] = {};
-    float delay[4] = {};  // Unit delays for trapezoidal integration
+    // 4 cascaded 1-pole lowpass stages per channel [ch][stage]
+    float stage[2][4] = {};
+    float delay[2][4] = {};  // Unit delays for trapezoidal integration
 
     // Cached parameters for coefficient invalidation
     float last_freq = -1.0f;
     float last_res = -1.0f;
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels)
     float g = 0.0f;  // Cutoff coefficient (tan-based)
     float k = 0.0f;  // Resonance coefficient (0-4 range)
 };
 
-// ZDF Diode ladder filter state (TB-303 acid)
+// ZDF Diode ladder filter state (TB-303 acid) — stereo-native
+// (prd-stereo-native-opcodes Phase 4a). Per-channel capacitor states;
+// coefficients shared.
 struct DiodeState {
-    // 4 capacitor states for cascade stages
-    float cap[4] = {};
+    // 4 capacitor states for cascade stages, per channel [ch][stage]
+    float cap[2][4] = {};
 
     // Cached parameters for coefficient invalidation
     float last_freq = -1.0f;
     float last_res = -1.0f;
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels)
     float g = 0.0f;  // Cutoff coefficient
     float k = 0.0f;  // Resonance coefficient (0-4)
 };
 
-// Formant (vowel) filter state - 3 parallel bandpass filters
+// Formant (vowel) filter state - 3 parallel bandpass filters — stereo-native
+// (prd-stereo-native-opcodes Phase 4a). Per-channel biquad memory;
+// vowel-derived formant targets and gains are shared (mono ctrl).
 struct FormantState {
-    // 3 Chamberlin SVF bandpass filter states (2 integrators each)
-    float bp1_z1 = 0.0f, bp1_z2 = 0.0f;
-    float bp2_z1 = 0.0f, bp2_z2 = 0.0f;
-    float bp3_z1 = 0.0f, bp3_z2 = 0.0f;
+    // 3 Chamberlin SVF bandpass filter states (2 integrators each), per channel
+    float bp1_z1[2] = {0.0f, 0.0f}, bp1_z2[2] = {0.0f, 0.0f};
+    float bp2_z1[2] = {0.0f, 0.0f}, bp2_z2[2] = {0.0f, 0.0f};
+    float bp3_z1[2] = {0.0f, 0.0f}, bp3_z2[2] = {0.0f, 0.0f};
 
     // Cached parameters for coefficient invalidation
     float last_morph = -1.0f;
@@ -297,20 +305,22 @@ struct FormantState {
     float g1 = 1.0f, g2 = 0.5f, g3 = 0.25f;
 };
 
-// Sallen-Key (MS-20 style) filter state
+// Sallen-Key (MS-20 style) filter state — stereo-native
+// (prd-stereo-native-opcodes Phase 4a). Per-channel capacitor & diode-clip
+// memory; coefficients shared.
 struct SallenkeyState {
-    // 2 capacitor states
-    float cap1 = 0.0f;
-    float cap2 = 0.0f;
+    // 2 capacitor states per channel [0]=L, [1]=R
+    float cap1[2] = {0.0f, 0.0f};
+    float cap2[2] = {0.0f, 0.0f};
 
-    // Diode clipper state in feedback path
-    float diode_state = 0.0f;
+    // Diode clipper state in feedback path, per channel
+    float diode_state[2] = {0.0f, 0.0f};
 
     // Cached parameters
     float last_freq = -1.0f;
     float last_res = -1.0f;
 
-    // Cached coefficients
+    // Cached coefficients (shared across channels)
     float g = 0.0f;
     float k = 0.0f;
 };

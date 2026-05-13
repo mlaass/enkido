@@ -126,8 +126,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         CHECK(inst[2].inputs[1] == inst[1].out_buffer);
     }
 
-    SECTION("pipe chain: saw(440) |> lp(%, 1000, 0.7) |> out(%, %)") {
-        auto result = akkado::compile("saw(440) |> lp(%, 1000, 0.7) |> out(%, %)");
+    SECTION("pipe chain: saw(440) |> lp(%, 1000, 0.7) |> out(%)") {
+        // lp is stereo-native (prd-stereo-native-opcodes Phase 4a) so it
+        // produces a stereo output pair. out(%) takes the stereo pair.
+        auto result = akkado::compile("saw(440) |> lp(%, 1000, 0.7) |> out(%)");
 
         REQUIRE(result.success);
         // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7), FILTER_SVF_LP, OUTPUT
@@ -146,8 +148,9 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         // Filter input is saw output
         CHECK(inst[4].inputs[0] == inst[1].out_buffer);
-        // Output input is filter output
+        // Output left input is filter L output; right is L+1
         CHECK(inst[5].inputs[0] == inst[4].out_buffer);
+        CHECK(inst[5].inputs[1] == inst[4].out_buffer + 1);
     }
 
     SECTION("variable assignment") {

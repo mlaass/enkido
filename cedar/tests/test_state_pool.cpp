@@ -36,12 +36,12 @@ TEST_CASE("StatePool basic operations", "[state_pool]") {
         constexpr std::uint32_t id = fnv1a_hash("filter1");
 
         auto& state1 = pool.get_or_create<SVFState>(id);
-        state1.ic1eq = 1.0f;
-        state1.ic2eq = 2.0f;
+        state1.ic1eq[0] = 1.0f;
+        state1.ic2eq[0] = 2.0f;
 
         auto& state2 = pool.get_or_create<SVFState>(id);
-        CHECK_THAT(state2.ic1eq, WithinAbs(1.0f, 1e-6f));
-        CHECK_THAT(state2.ic2eq, WithinAbs(2.0f, 1e-6f));
+        CHECK_THAT(state2.ic1eq[0], WithinAbs(1.0f, 1e-6f));
+        CHECK_THAT(state2.ic2eq[0], WithinAbs(2.0f, 1e-6f));
         CHECK(&state1 == &state2);
     }
 
@@ -179,9 +179,9 @@ TEST_CASE("StatePool type replacement", "[state_pool]") {
 
         pool.reset();
 
-        pool.get_or_create<SVFState>(id).ic1eq = 99.0f;
+        pool.get_or_create<SVFState>(id).ic1eq[0] = 99.0f;
         auto& filter = pool.get<SVFState>(id);
-        CHECK_THAT(filter.ic1eq, WithinAbs(99.0f, 1e-6f));
+        CHECK_THAT(filter.ic1eq[0], WithinAbs(99.0f, 1e-6f));
     }
 
     SECTION("type change with get_or_create replaces state") {
@@ -190,10 +190,10 @@ TEST_CASE("StatePool type replacement", "[state_pool]") {
 
         // Request different type - should replace
         auto& filter = pool.get_or_create<SVFState>(id);
-        filter.ic1eq = 42.0f;
+        filter.ic1eq[0] = 42.0f;
 
         CHECK(pool.exists(id));
-        CHECK_THAT(pool.get<SVFState>(id).ic1eq, WithinAbs(42.0f, 1e-6f));
+        CHECK_THAT(pool.get<SVFState>(id).ic1eq[0], WithinAbs(42.0f, 1e-6f));
     }
 }
 

@@ -584,6 +584,169 @@ TEST_CASE("Types: stereo-native FX chain through existing stereo helpers", "[typ
     }
 }
 
+// =============================================================================
+// Stereo-native filters (prd-stereo-native-opcodes Phase 4a)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native lp produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> lp(%, 800, 0.7) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_LP);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native lp reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        lp(s, 800, 0.7) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_LP);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native hp produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> hp(%, 800, 0.7) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_HP);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native bp produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> bp(%, 800, 2.0) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_BP);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native moog produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> moog(%, 1000, 1.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_MOOG);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native moog reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        moog(s, 1000, 1.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_MOOG);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native diode produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> diode(%, 800, 2.0) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_DIODE);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native formant produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> formant(%, 0.0, 1.0, 0.5, 10.0) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_FORMANT);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native sallenkey produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> sallenkey(%, 800, 1.5, 0.0) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SALLENKEY);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native filters reject chord/array on signal slot", "[types][stereo][stereo-native][errors]") {
+    SECTION("lp rejects 3-voice chord on signal slot") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> lp(%, 800) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+    SECTION("moog rejects 3-voice chord on signal slot") {
+        auto result = akkado::compile(R"(
+            voices = [saw(110), saw(220), saw(330)]
+            voices |> moog(%, 1000, 1.5) |> out(%)
+        )");
+        CHECK_FALSE(result.success);
+        CHECK(has_diagnostic(result, "E187"));
+    }
+}
+
+TEST_CASE("Types: stereo-native filters accept array on control slot (UGen expansion)", "[types][stereo][stereo-native]") {
+    // Array expansion on a non-signal slot (cutoff here) is UGen auto-expansion,
+    // not chord expansion — emits N stereo-native filter instances. See
+    // prd-stereo-native-opcodes §9.10.
+    auto result = akkado::compile(R"(
+        ns = noise()
+        freqs = [500, 1000, 2000]
+        freqs |> lp(ns, %)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::FILTER_SVF_LP) == 3);
+    // Each emitted instance carries STEREO_OUTPUT.
+    int stereo_out_count = 0;
+    for (const auto& inst : insts) {
+        if (inst.opcode == cedar::Opcode::FILTER_SVF_LP &&
+            (inst.flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0) {
+            ++stereo_out_count;
+        }
+    }
+    CHECK(stereo_out_count == 3);
+}
+
+TEST_CASE("Types: stereo-native filter chain through existing stereo helpers", "[types][stereo][stereo-native]") {
+    SECTION("lp → width") {
+        auto result = akkado::compile(R"(
+            saw(220) |> lp(%, 800) |> width(%, 1.5) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("moog → pan") {
+        auto result = akkado::compile(R"(
+            saw(220) |> moog(%, 1000, 1.5) |> pan(%, 0.3) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+    SECTION("formant → ms_encode → ms_decode") {
+        auto result = akkado::compile(R"(
+            saw(220) |> formant(%, 0.0, 1.0, 0.5, 10.0) |> ms_encode(%) |> ms_decode(%) |> out(%)
+        )");
+        CHECK(result.success);
+    }
+}
+
 // ============================================================================
 // Extended params (prd-extended-params §5–§6) — canonical mechanism for
 // opcode parameters beyond the 5 input-buffer slots.

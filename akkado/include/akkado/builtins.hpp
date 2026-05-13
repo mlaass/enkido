@@ -368,48 +368,51 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    "Declare a sample-bank URI (compile-time): samples(\"github:user/repo\")."}},
 
     // Filters (signal, cutoff required; q optional with default 0.707)
+    // Stereo-native (prd-stereo-native-opcodes Phase 4a): per-channel filter
+    // memory inside one state struct; coefficient cache shared across L/R
+    // because freq/q are mono control signals. Mono input auto-escalates.
     // SVF (State Variable Filter) - stable under modulation
     {"lp",      {cedar::Opcode::FILTER_SVF_LP, 2, 1, true,
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable lowpass filter",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     {"hp",      {cedar::Opcode::FILTER_SVF_HP, 2, 1, true,
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable highpass filter",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     {"bp",      {cedar::Opcode::FILTER_SVF_BP, 2, 1, true,
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable bandpass filter",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // Moog ladder filter (4-pole with resonance)
     // Optional: max_resonance (self-oscillation threshold), input_scale (preamp drive)
     {"moog",    {cedar::Opcode::FILTER_MOOG, 2, 3, true,
                  {"in", "cut", "res", "max_res", "input_scale", ""},
                  {1.0f, 4.0f, 0.5f, NAN, NAN},
                  "Moog 4-pole ladder filter with resonance",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // Diode ladder filter (TB-303 acid) - 5 inputs: in, cut, res, vt, fb_gain
     {"diode",   {cedar::Opcode::FILTER_DIODE, 2, 3, true,
                  {"in", "cut", "res", "vt", "fb_gain", ""},
                  {1.0f, 0.026f, 10.0f},
                  "TB-303 style diode ladder filter",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // Formant filter (vowel morphing) - 5 inputs: in, vowel_a, vowel_b, morph, q
     {"formant", {cedar::Opcode::FILTER_FORMANT, 2, 3, true,
                  {"in", "vowel_a", "vowel_b", "morph", "q", ""},
                  {0.0f, 0.5f, 10.0f},
                  "Vowel formant filter with morphing",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
     // Sallen-Key filter (MS-20 style) - 5 inputs: in, cut, res, mode, clip_threshold
     // Optional: clip_threshold (feedback clipping point)
     {"sallenkey", {cedar::Opcode::FILTER_SALLENKEY, 2, 3, true,
                    {"in", "cut", "res", "mode", "clip_thresh", ""},
                    {1.0f, 0.0f, 0.7f, NAN, NAN},
                    "MS-20 style Sallen-Key filter",
-                   0, {}, {}, ChannelCount::Mono, true}},
+                   0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
 
     // Envelopes
     {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 4, true,
