@@ -1353,7 +1353,12 @@ using DSPState = std::variant<
 #ifndef CEDAR_NO_FFT
     FFTProbeState,
 #endif
-    // Extended parameters (for opcodes with 7+ params)
+    // Extended parameters (for opcodes with 6+ params). The runtime
+    // dispatch helper picks the smallest variant that fits ext_count, so
+    // small migrations (e.g. one tunable param like chorus lfo_phase) don't
+    // pay for an 8-slot allocation.
+    ExtendedParams<1>,   // 6-param opcodes (5 inputs + 1 extended)
+    ExtendedParams<2>,   // 7-param opcodes (5 inputs + 2 extended)
     ExtendedParams<3>,   // 8-param opcodes (5 inputs + 3 extended)
     ExtendedParams<5>,   // 10-param opcodes (5 inputs + 5 extended)
     ExtendedParams<8>    // 13-param opcodes (5 inputs + 8 extended)

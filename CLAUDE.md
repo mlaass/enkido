@@ -377,62 +377,63 @@ Adopters today: visualizers (`pianoroll`, `oscilloscope`, `waveform`, `spectrum`
 
 ### Extended Parameter Patterns
 
-The instruction format has 5 input buffer slots (`inst.inputs[0..4]`). When a builtin needs more than 5 parameters, use these mechanisms:
+The instruction format has 5 input buffer slots (`inst.inputs[0..4]`).
+When a builtin needs more than 5 runtime-tunable parameters, use
+`ExtendedParams<N>` — the canonical mechanism. Full design + worked
+migration: **`docs/extended-params-mechanism.md`**.
 
-| Mechanism | Capacity | Use Case |
-|-----------|----------|----------|
-| **Default constants** | Unlimited | Optional parameters with fallback values |
-| **Rate field** | 8 bits (2×4-bit or 1×8-bit) | Packed enum/int params |
-| **State ID bit_cast** | 32-bit float | Single compile-time constant |
-| **ExtendedParams<N>** | N additional params | Complex opcodes with 7+ params |
+#### Quick reference
 
-#### 1. Default Constants (preferred for optional tuning params)
+Declare the parameter on the builtin:
+
 ```cpp
-// In builtin definition
-{"myop", {cedar::Opcode::MY_OP, 3, 2, true,  // 3 required + 2 optional
-          {"in", "freq", "res", "drive", "mix", ""},
-          {1.0f, 0.5f, NAN, NAN, NAN},  // defaults for params 3, 4
-          "My operation"}}
-
-// In opcode implementation
-float drive = inst.inputs[3] != 0xFFFF ? ctx.get_input(inst, 3)[i] : 1.0f;
-float mix = inst.inputs[4] != 0xFFFF ? ctx.get_input(inst, 4)[i] : 0.5f;
+{"phaser", {.opcode = cedar::Opcode::EFFECT_PHASER,
+            .input_count = 1, .optional_count = 4, .requires_state = true,
+            .param_names = {"in", "rate", "depth", "min_freq", "max_freq", ""},
+            .defaults = {0.5f, 0.8f, 200.0f, 4000.0f, NAN},
+            .description = "...",
+            .extended_param_count = 3,
+            .output_channels = ChannelCount::Stereo,
+            .stereo_native = true,
+            .extended_param_names = {"feedback", "stages", "lfo_phase"},
+            .extended_defaults = {0.5f, 4.0f, 0.25f}}},
 ```
 
-#### 2. Rate Field Packing (for enum/int params, 4-8 bits)
+Read the slot in the opcode body. The companion `ExtendedParams<N>`
+lives at `ext_params_state_id(inst.state_id)` (XOR'd to avoid colliding
+with the opcode's primary DSP state):
+
 ```cpp
-// Low 4 bits: inst.rate & 0x0F (0-15)
-// High 4 bits: (inst.rate >> 4) & 0x0F (0-15)
-// Full byte: inst.rate (0-255)
-
-// Example: DELAY uses rate for time unit (0=seconds, 1=ms, 2=samples)
-std::uint8_t time_unit = inst.rate;
-```
-
-#### 3. State ID bit_cast (for single compile-time float)
-```cpp
-// Codegen:
-inst.state_id = std::bit_cast<std::uint32_t>(compile_time_value);
-
-// Opcode:
-float value = std::bit_cast<float>(inst.state_id);
-```
-Note: Only use when opcode doesn't need state (is stateless), as this overwrites the state ID.
-
-#### 4. ExtendedParams<N> (for 7+ params)
-For complex opcodes needing many parameters, use StatePool's `ExtendedParams<N>`:
-```cpp
-// In opcode implementation
-auto& ext = ctx.states->get_or_create<ExtendedParams<3>>(inst.state_id);
-for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-    float param5 = ext.get(0, i, ctx.buffers);  // 6th param
-    float param6 = ext.get(1, i, ctx.buffers);  // 7th param
-    // ...
+const auto* ext = ctx.states->get_if<ExtendedParams<3>>(
+    ext_params_state_id(inst.state_id));
+const float* feedback_buf = nullptr; float feedback_const = 0.5f;
+if (ext) {
+    const auto& slot = ext->params[0];
+    if (slot.is_constant()) feedback_const = slot.constant;
+    else                    feedback_buf   = ctx.buffers->get(slot.buffer_idx);
 }
+// Per-sample read inside the BLOCK_SIZE loop:
+float feedback = feedback_buf ? feedback_buf[i] : feedback_const;
 ```
 
-**Decision guide:**
-- Rarely changed from default? → Default constant
-- Enum/mode/small int? → Rate field
-- Single compile-time float on stateless opcode? → State ID bit_cast
-- 7+ params or complex parameter groups? → ExtendedParams
+#### `inst.rate` is reserved, NOT deprecated
+
+`inst.rate` is the right tool for:
+- audio-rate vs control-rate dispatch (its original purpose)
+- small fixed enum modes ≤4 values (CLOCK 0/1/2, EDGE_OP 0-3, LFO shape)
+- compile-time count fields with no audio meaning (ARRAY_PACK count, etc.)
+
+**Do not bit-pack runtime-tunable params into `inst.rate` in new
+opcodes.** Existing usages (compressor attack/release, limiter, freeverb
+damping/mod_depth, dattorro size_mod, distort_comb damp, delays
+ping-pong mix) will migrate per-family.
+
+#### Deprecated workarounds — do not use in new code
+
+- `std::bit_cast<float>(state_id)` — clobbers state_id, blocks stateful
+  upgrade. Migrate any new use to ExtendedParams.
+- `inputs[3]/inputs[4]` halving to encode a 32-bit float — sacrifices
+  real signal slots. Migrate to ExtendedParams.
+
+The "default constant" pattern (`defaults[]` array on `BuiltinInfo`) is
+still fine and is the right thing for any optional input slot ≤5.

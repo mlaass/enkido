@@ -238,6 +238,18 @@ namespace InstructionFlag {
 // Value is a non-zero FNV-1a-style odd constant (golden ratio).
 constexpr std::uint32_t STEREO_STATE_XOR_R = 0x9E3779B9u;
 
+// XOR mask applied to state_id when storing/reading the ExtendedParams<N>
+// companion state of an opcode. The opcode's own DSP state (e.g.
+// ChorusState) lives at slot[state_id]; its ExtendedParams<N> lives at
+// slot[state_id ^ EXT_PARAMS_STATE_XOR]. Apply via the
+// `ext_params_state_id()` helper below so both codegen and opcode bodies
+// stay in sync. PRD prd-extended-params §5.
+constexpr std::uint32_t EXT_PARAMS_STATE_XOR = 0xB9D2A1C7u;
+
+[[nodiscard]] constexpr std::uint32_t ext_params_state_id(std::uint32_t state_id) noexcept {
+    return state_id ^ EXT_PARAMS_STATE_XOR;
+}
+
 // 160-bit (20 byte) fixed-width instruction for fast decoding
 // Layout: [opcode:8][rate:8][out:16][in0:16][in1:16][in2:16][in3:16][in4:16][flags:16][state_id:32]
 // The 2-byte `flags` field occupies what was previously padding inserted by

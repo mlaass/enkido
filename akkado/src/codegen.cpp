@@ -30,6 +30,46 @@ std::uint16_t BufferAllocator::allocate() {
     return next_++;
 }
 
+void CodeGenerator::emit_extended_params_init(std::uint32_t state_id,
+                                              const BuiltinInfo& info,
+                                              const std::vector<std::uint16_t>& arg_buffers) {
+    if (info.extended_param_count == 0) return;
+
+    const std::size_t base = info.total_params();
+    StateInitData ext{};
+    // ExtendedParams lives in a sibling StatePool slot keyed off the
+    // opcode's state_id XOR'd with EXT_PARAMS_STATE_XOR. This keeps the
+    // opcode's primary DSP state (e.g. ChorusState) and its ExtendedParams
+    // in distinct slots — get_or_create<DSPState> would otherwise overwrite
+    // the ExtendedParams.
+    ext.state_id = cedar::ext_params_state_id(state_id);
+    ext.type = StateInitData::Type::ExtendedParams;
+    ext.ext_count = info.extended_param_count;
+    ext.ext_buffer_indices.fill(static_cast<std::uint16_t>(0xFFFF));
+
+    for (std::uint8_t i = 0; i < info.extended_param_count && i < MAX_EXTENDED_PARAMS; ++i) {
+        const std::size_t arg_idx = base + i;
+        if (arg_idx < arg_buffers.size() &&
+            arg_buffers[arg_idx] != BufferAllocator::BUFFER_UNUSED) {
+            // Caller supplied an argument — read from its buffer at runtime.
+            ext.ext_buffer_indices[i] = arg_buffers[arg_idx];
+            ext.ext_constants[i] = 0.0f;
+        } else if (i < info.extended_param_count &&
+                   !std::isnan(info.extended_defaults[i])) {
+            // Use the declared default as a constant slot.
+            ext.ext_constants[i] = info.extended_defaults[i];
+            ext.ext_buffer_indices[i] = 0xFFFFu;
+        } else {
+            // Required ext param missing — emit zero constant. The analyzer
+            // is responsible for surfacing the missing-arg error upstream.
+            ext.ext_constants[i] = 0.0f;
+            ext.ext_buffer_indices[i] = 0xFFFFu;
+        }
+    }
+
+    state_inits_.push_back(std::move(ext));
+}
+
 CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
                                        std::string_view filename,
                                        SampleRegistry* sample_registry,
@@ -1641,6 +1681,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // /L suffix, no XOR. Per-channel fields live inside one state
                 // struct (see DattorroState predelay_buffer[2], etc.).
                 inst.state_id = compute_state_id();
+                emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
                 emit(inst);
 
                 if (pushed_path) pop_path();
@@ -1728,6 +1769,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 push_path("L");
                 inst.state_id = compute_state_id();
                 pop_path();
+                emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
                 emit(inst);
 
                 if (pushed_path) pop_path();
@@ -1802,6 +1844,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
                         // Compute state_id with unique path
                         inst.state_id = compute_state_id();
+                        emit_extended_params_init(inst.state_id, *builtin, expanded_args);
                         emit(inst);
 
                         result_elements.push_back(TypedValue::signal(inst_out));
@@ -1943,40 +1986,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 inst.rate = 2;  // samples
             }
 
-            // Special handling for phaser: pack stages (arg 5, low 4 bits) and
-            // feedback (arg 6, high 4 bits) into the rate field. Both must be
-            // compile-time literals — they configure topology, not signal flow.
-            // Default (set in BuiltinInfo::inst_rate) is stages=4, feedback≈0.5.
-            // Note: walks AST positionally; named-arg use for these slots falls
-            // through to the inst_rate default.
-            if (func_name == "phaser") {
-                std::uint8_t stages_bits = inst.rate & 0x0F;
-                std::uint8_t fb_bits = (inst.rate >> 4) & 0x0F;
-                NodeIndex phaser_arg = n.first_child;
-                for (std::size_t idx = 0; phaser_arg != NULL_NODE && idx < 7; ++idx) {
-                    if (idx == 5 || idx == 6) {
-                        const Node& arg_node = ast_->arena[phaser_arg];
-                        NodeIndex arg_value = (arg_node.type == NodeType::Argument)
-                                                ? arg_node.first_child
-                                                : phaser_arg;
-                        if (arg_value != NULL_NODE) {
-                            const Node& val_node = ast_->arena[arg_value];
-                            if (val_node.type == NodeType::NumberLit) {
-                                float v = static_cast<float>(val_node.as_number());
-                                if (idx == 5) {
-                                    stages_bits = static_cast<std::uint8_t>(
-                                        std::clamp(static_cast<int>(std::lround(v)), 2, 12)) & 0x0F;
-                                } else {
-                                    fb_bits = static_cast<std::uint8_t>(
-                                        std::clamp(static_cast<int>(std::lround(v * 15.0f)), 0, 15)) & 0x0F;
-                                }
-                            }
-                        }
-                    }
-                    phaser_arg = ast_->arena[phaser_arg].next_sibling;
-                }
-                inst.rate = static_cast<std::uint8_t>((fb_bits << 4) | stages_bits);
-            }
+            // PRD prd-extended-params §6b — phaser's `feedback` and `stages`
+            // are now full extended params (ExtendedParams<3>, slots 0/1),
+            // along with `lfo_phase` (slot 2). The legacy rate-field bit
+            // packing is gone; emit_extended_params_init below handles them.
 
             // Generate state_id from current path (already pushed if stateful)
             if (pushed_path) {
@@ -1995,6 +2008,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
             }
 
+            emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
             emit(inst);
             // Propagate the builtin's declared output channel count (PRD §5.2).
             // For the common mono-in/mono-out case this stays Mono. It is the

@@ -152,6 +152,11 @@ PYBIND11_MODULE(cedar_core, m) {
     // Instruction flag constants (bit values)
     m.attr("STEREO_INPUT_FLAG") = cedar::InstructionFlag::STEREO_INPUT;
     m.attr("STEREO_OUTPUT_FLAG") = cedar::InstructionFlag::STEREO_OUTPUT;
+    m.attr("EXT_PARAMS_STATE_XOR") = cedar::EXT_PARAMS_STATE_XOR;
+    m.def("ext_params_state_id", &cedar::ext_params_state_id,
+          py::arg("state_id"),
+          "Sibling state_id for ExtendedParams<N> storage (XOR'd to avoid "
+          "collision with the opcode's primary DSP state).");
 
     // --- Instruction ---
     py::class_<cedar::Instruction>(m, "Instruction")
@@ -232,6 +237,26 @@ PYBIND11_MODULE(cedar_core, m) {
         .def("init_poly_state", &cedar::VM::init_poly_state,
             py::arg("state_id"), py::arg("seq_state_id"),
             py::arg("max_voices"), py::arg("mode"), py::arg("steal_strategy"))
+
+        // Extended-params initialization (PRD prd-extended-params §5).
+        // `constants` and `buffer_indices` must be equal-length arrays of
+        // `count` entries. A buffer_index of 0xFFFF means "use the constant".
+        .def("init_extended_params",
+            [](cedar::VM& vm, std::uint32_t state_id,
+               py::array_t<float> constants,
+               py::array_t<std::uint16_t> buffer_indices,
+               std::uint8_t count) {
+                auto c = constants.unchecked<1>();
+                auto b = buffer_indices.unchecked<1>();
+                if (static_cast<std::size_t>(c.size()) < count ||
+                    static_cast<std::size_t>(b.size()) < count) {
+                    throw std::length_error(
+                        "init_extended_params: arrays must hold at least `count` entries");
+                }
+                vm.init_extended_params(state_id, c.data(0), b.data(0), count);
+            },
+            py::arg("state_id"), py::arg("constants"),
+            py::arg("buffer_indices"), py::arg("count"))
 
         // Sample loading for sampler opcodes
         .def("load_sample", [](cedar::VM& vm, const std::string& name, py::array_t<float> data,

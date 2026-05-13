@@ -59,10 +59,12 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
 constexpr float FLANGER_MIN_DELAY_DEFAULT = 0.1f;   // ms
 constexpr float FLANGER_MAX_DELAY_DEFAULT = 10.0f;  // ms
 
-// Per-channel LFO phase offset for stereo decorrelation (90° = quarter-cycle).
-// Fixed at codegen for Phase 3; user-tunable lfo_phase parameter is deferred
-// (would require StateInitData + VM init plumbing for ExtendedParams).
-constexpr float STEREO_LFO_OFFSET_TURNS = 0.25f;
+// Default per-channel LFO phase offset for stereo decorrelation (90° =
+// quarter-cycle). The actual offset is supplied by an ExtendedParams<N>
+// slot keyed on the opcode's state_id, populated by codegen from the
+// user-facing `lfo_phase` parameter (turns, default 0.25). See
+// docs/extended-params-mechanism.md.
+constexpr float STEREO_LFO_OFFSET_DEFAULT_TURNS = 0.25f;
 
 // ============================================================================
 // EFFECT_FLANGER: Stereo-Native Flanger
@@ -94,9 +96,25 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
     const float* max_delay_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<FlangerState>(inst.state_id);
 
-    // Decode feedback from high 4 bits
+    // Decode feedback from high 4 bits (legacy phaser-style packing kept
+    // until flanger feedback is migrated to ExtendedParams in a follow-up).
     float feedback = (static_cast<float>((inst.rate >> 4) & 0x0F) / 7.5f) - 1.0f;
     feedback = std::clamp(feedback, -0.99f, 0.99f);
+
+    // Extended params: ext[0] = lfo_phase (turns, default 0.25). Resolve
+    // the slot once — at audio rate the slot is a const buffer pointer,
+    // at control rate it's a constant scalar.
+    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    const float* lfo_phase_buf = nullptr;
+    float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    if (ext) {
+        const auto& slot = ext->params[0];
+        if (slot.is_constant()) {
+            lfo_phase_const = slot.constant;
+        } else {
+            lfo_phase_buf = ctx.buffers->get(slot.buffer_idx);
+        }
+    }
 
     // Ensure both per-channel buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
@@ -132,11 +150,12 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
         state.write_pos[0] = (state.write_pos[0] + 1) % FlangerState::MAX_FLANGER_SAMPLES;
         out_l[i] = delayed_l;
 
-        // R lane: LFO offset by 90° turns. Decorrelates L/R on mono input;
-        // on stereo input adds spatial movement on top of per-channel
-        // processing.
-        float r_phase = state.lfo_phase + STEREO_LFO_OFFSET_TURNS;
-        if (r_phase >= 1.0f) r_phase -= 1.0f;
+        // R lane: LFO offset by user-tunable lfo_phase turns (default 0.25
+        // = 90°). Decorrelates L/R on mono input; on stereo input adds
+        // spatial movement on top of per-channel processing.
+        const float lfo_offset = lfo_phase_buf ? lfo_phase_buf[i] : lfo_phase_const;
+        float r_phase = state.lfo_phase + lfo_offset;
+        r_phase -= std::floor(r_phase);
         float lfo_r = std::sin(r_phase * TWO_PI);
         float delay_ms_r = center_delay_ms + lfo_r * d * depth_range_ms;
         float delay_smp_r = delay_ms_r * 0.001f * ctx.sample_rate;
@@ -183,6 +202,19 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
 
     state.ensure_buffers(ctx.arena);
 
+    // Extended params: ext[0] = lfo_phase (turns, default 0.25).
+    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    const float* lfo_phase_buf = nullptr;
+    float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    if (ext) {
+        const auto& slot = ext->params[0];
+        if (slot.is_constant()) {
+            lfo_phase_const = slot.constant;
+        } else {
+            lfo_phase_buf = ctx.buffers->get(slot.buffer_idx);
+        }
+    }
+
     // LFO phase offsets for each voice (spread across cycle)
     constexpr float PHASE_OFFSETS[ChorusState::NUM_VOICES] = {0.0f, 0.33f, 0.67f};
 
@@ -204,11 +236,13 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
         float d = std::clamp(depth[i], 0.0f, 1.0f);
 
         // Process each lane independently with per-channel buffer/write_pos.
-        // L reads LFO at master phase; R reads at master + 90° (turns).
+        // L reads LFO at master phase; R reads at master + lfo_phase turns
+        // (default 0.25 = 90°, user-tunable via extended params).
+        const float r_offset = lfo_phase_buf ? lfo_phase_buf[i] : lfo_phase_const;
         float wet_lr[2] = {0.0f, 0.0f};
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? x_l : x_r;
-            float ch_phase_offset = (ch == 0) ? 0.0f : STEREO_LFO_OFFSET_TURNS;
+            float ch_phase_offset = (ch == 0) ? 0.0f : r_offset;
 
             float wet = 0.0f;
             for (std::size_t v = 0; v < ChorusState::NUM_VOICES; ++v) {
@@ -250,11 +284,17 @@ constexpr float PHASER_MAX_FREQ_DEFAULT = 4000.0f;  // Hz
 // in2: depth (0.0-1.0)
 // in3: min_freq - sweep range low in Hz (default 200)
 // in4: max_freq - sweep range high in Hz (default 4000)
-// rate: feedback (high 4 bits 0-15 -> 0.0-0.99), stages (low 4 bits, 2-12)
+// ext params (ExtendedParams<3>):
+//   ext[0]: feedback (0.0-0.99, default 0.5)
+//   ext[1]: stages   (2-12, default 4)
+//   ext[2]: lfo_phase (turns, default 0.25 = 90°)
 //
 // Cascaded first-order allpass filters with modulated center frequencies.
 // Stereo-native: per-channel allpass state arrays. Shared master LFO phase;
-// R lane reads LFO at +90° for stereo notch sweep.
+// R lane reads LFO at the user-tunable lfo_phase offset for stereo notch
+// sweep. Phaser was the proof migration for the unified extended-param
+// mechanism (PRD prd-extended-params §6b) — feedback and stages were
+// previously bit-packed into inst.rate.
 
 [[gnu::always_inline]]
 inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
@@ -271,10 +311,28 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
     const float* max_freq_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<PhaserState>(inst.state_id);
 
-    // Decode rate field parameters (4 bits each)
-    float feedback = static_cast<float>((inst.rate >> 4) & 0x0F) / 15.0f * 0.99f;
-    std::size_t num_stages = std::clamp(static_cast<std::size_t>(inst.rate & 0x0F),
-                                         std::size_t{2}, PhaserState::NUM_STAGES);
+    // Extended params: ext[0]=feedback, ext[1]=stages, ext[2]=lfo_phase.
+    // Resolve each slot once outside the sample loop; slots are either a
+    // constant scalar or a buffer pointer.
+    const auto* ext = ctx.states->get_if<ExtendedParams<3>>(ext_params_state_id(inst.state_id));
+    auto resolve_slot = [&](std::size_t idx, float default_val,
+                            const float*& out_buf, float& out_const) {
+        out_buf = nullptr;
+        out_const = default_val;
+        if (!ext) return;
+        const auto& slot = ext->params[idx];
+        if (slot.is_constant()) {
+            out_const = slot.constant;
+        } else {
+            out_buf = ctx.buffers->get(slot.buffer_idx);
+        }
+    };
+    const float* feedback_buf = nullptr; float feedback_const = 0.5f;
+    const float* stages_buf   = nullptr; float stages_const   = 4.0f;
+    const float* lfo_phase_buf = nullptr; float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    resolve_slot(0, 0.5f,  feedback_buf,  feedback_const);
+    resolve_slot(1, 4.0f,  stages_buf,    stages_const);
+    resolve_slot(2, STEREO_LFO_OFFSET_DEFAULT_TURNS, lfo_phase_buf, lfo_phase_const);
 
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
@@ -286,6 +344,14 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
         float min_freq = min_freq_in[i] > 0.0f ? min_freq_in[i] : PHASER_MIN_FREQ_DEFAULT;
         float max_freq = max_freq_in[i] > 0.0f ? max_freq_in[i] : PHASER_MAX_FREQ_DEFAULT;
 
+        const float feedback = std::clamp(
+            feedback_buf ? feedback_buf[i] : feedback_const, 0.0f, 0.99f);
+        const float stages_f = stages_buf ? stages_buf[i] : stages_const;
+        const std::size_t num_stages = std::clamp(
+            static_cast<std::size_t>(stages_f + 0.5f),
+            std::size_t{2}, PhaserState::NUM_STAGES);
+        const float r_offset = lfo_phase_buf ? lfo_phase_buf[i] : lfo_phase_const;
+
         // Update shared LFO phase
         float lfo_rate = std::clamp(rate[i], 0.1f, 5.0f);
         state.lfo_phase += lfo_rate * inv_sample_rate;
@@ -293,10 +359,11 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
 
         float d = std::clamp(depth[i], 0.0f, 1.0f);
 
-        // Per-channel processing. L uses master phase; R uses master + 90°.
+        // Per-channel processing. L uses master phase; R uses master +
+        // lfo_phase turns (default 0.25 = 90°, user-tunable).
         float y_lr[2] = {0.0f, 0.0f};
         for (std::size_t ch = 0; ch < 2; ++ch) {
-            float ch_phase_offset = (ch == 0) ? 0.0f : STEREO_LFO_OFFSET_TURNS;
+            float ch_phase_offset = (ch == 0) ? 0.0f : r_offset;
             float ch_phase = state.lfo_phase + ch_phase_offset;
             ch_phase -= std::floor(ch_phase);
 

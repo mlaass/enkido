@@ -258,6 +258,11 @@ void apply_state_inits(cedar::VM& vm,
             vm.init_poly_state(init.state_id, init.poly_seq_state_id,
                                init.poly_max_voices, init.poly_mode,
                                init.poly_steal_strategy);
+        } else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
+            vm.init_extended_params(init.state_id,
+                                    init.ext_constants.data(),
+                                    init.ext_buffer_indices.data(),
+                                    init.ext_count);
         } else if (init.type == akkado::StateInitData::Type::Timeline) {
             auto& state = vm.states().get_or_create<cedar::TimelineState>(init.state_id);
             state.num_points = std::min(

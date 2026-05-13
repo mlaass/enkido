@@ -2395,6 +2395,21 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Modulation Effects"
 	},
+	"lfo_phase": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"decorrelation": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
+	"extended-params": {
+		"slug": "modulation",
+		"category": "builtins",
+		"title": "Modulation Effects"
+	},
 	"pianoroll": {
 		"slug": "visualizations",
 		"category": "builtins",

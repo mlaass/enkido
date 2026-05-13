@@ -949,6 +949,15 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             );
             count++;
         }
+        else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
+            g_vm->init_extended_params(
+                init.state_id,
+                init.ext_constants.data(),
+                init.ext_buffer_indices.data(),
+                init.ext_count
+            );
+            count++;
+        }
         else if (init.type == akkado::StateInitData::Type::Timeline) {
             auto& state = g_vm->states().get_or_create<cedar::TimelineState>(init.state_id);
             state.num_points = std::min(

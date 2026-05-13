@@ -31,8 +31,13 @@ OUT = output_dir("op_chorus")
 def _run_stereo_chorus(host, n_samples, input_signal, *, rate=0.5, depth=0.5,
                        base_delay=20.0, depth_range=10.0,
                        hash_name="chorus", stereo_input=False,
-                       input_right=None):
-    """Set up a stereo-native chorus chain and run the block loop."""
+                       input_right=None, lfo_phase=0.25):
+    """Set up a stereo-native chorus chain and run the block loop.
+
+    `lfo_phase` (turns, default 0.25 = 90°) tunes the R-LFO offset via the
+    ExtendedParams<1> state init. 0.0 collapses to mono-equivalent; 0.5
+    produces an anti-phase R lane.
+    """
     buf_in = 0
     buf_rate = host.set_param("rate", rate)
     buf_depth = host.set_param("depth", depth)
@@ -40,9 +45,10 @@ def _run_stereo_chorus(host, n_samples, input_signal, *, rate=0.5, depth=0.5,
     buf_range = host.set_param("depth_range", depth_range)
 
     out_buf = 2 if stereo_input else 1
+    state_id = cedar.hash(hash_name) & 0xFFFF
     inst = cedar.Instruction.make_quinary(
         cedar.Opcode.EFFECT_CHORUS, out_buf, buf_in, buf_rate, buf_depth,
-        buf_base, buf_range, cedar.hash(hash_name) & 0xFFFF
+        buf_base, buf_range, state_id
     )
     inst.flags = cedar.STEREO_OUTPUT_FLAG | (
         cedar.STEREO_INPUT_FLAG if stereo_input else 0
@@ -53,6 +59,16 @@ def _run_stereo_chorus(host, n_samples, input_signal, *, rate=0.5, depth=0.5,
     ))
 
     host.vm.load_program(host.program)
+    # Init ExtendedParams AFTER load_program so the state survives
+    # (load_program resets the active state pool slot for new program ids).
+    # ExtendedParams<1> slot 0 = lfo_phase (turns, default 0.25 = 90°).
+    # Companion state lives at state_id XOR EXT_PARAMS_STATE_XOR.
+    host.vm.init_extended_params(
+        cedar.ext_params_state_id(state_id),
+        np.array([float(lfo_phase)], dtype=np.float32),
+        np.array([0xFFFF], dtype=np.uint16),
+        1,
+    )
     n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
     padded_len = n_blocks * cedar.BLOCK_SIZE
     in_l = np.zeros(padded_len, dtype=np.float32)
@@ -176,6 +192,53 @@ def test_stereo_decorrelation():
         print(f"  ✗ FAIL: L and R too correlated (|corr|={abs(corr):.4f} ≥ 0.95)")
 
 
+def test_lfo_phase_tunable():
+    """
+    lfo_phase ExtendedParams slot controls R-LFO decorrelation amount.
+
+    Expected behavior (per implementation):
+    - lfo_phase = 0.0  → R-LFO matches L-LFO, mono input produces L≈R
+                         (Pearson corr > 0.95 over steady state).
+    - lfo_phase = 0.25 → default 90° offset, |corr| < 0.5 in practice.
+    - lfo_phase = 0.5  → anti-phase R-LFO, still decorrelated.
+
+    If this fails, check cedar/include/cedar/opcodes/modulation.hpp
+    (op_effect_chorus reads ExtendedParams<1> slot 0 for lfo_phase).
+    """
+    print("Test: Chorus lfo_phase tunable via ExtendedParams")
+    sr = 48000
+    duration = 2.0
+    t = np.arange(int(duration * sr)) / sr
+    sine_input = (np.sin(2 * np.pi * 440 * t).astype(np.float32) * 0.5)
+
+    results = {}
+    for label, phase in (("zero", 0.0), ("quarter", 0.25), ("half", 0.5)):
+        host = CedarTestHost(sr)
+        l, r = _run_stereo_chorus(
+            host, len(sine_input), sine_input,
+            rate=2.0, depth=0.8,
+            hash_name=f"chorus_phase_{label}", lfo_phase=phase,
+        )
+        steady = int(0.5 * sr)
+        if np.std(l[steady:]) > 1e-6 and np.std(r[steady:]) > 1e-6:
+            corr = float(np.corrcoef(l[steady:], r[steady:])[0, 1])
+        else:
+            corr = 1.0
+        results[label] = corr
+        print(f"  lfo_phase={phase:.2f} → corr(L,R) = {corr:+.4f}")
+
+    if results["zero"] > 0.95:
+        print(f"  ✓ PASS: lfo_phase=0 gives mono-equivalent L=R")
+    else:
+        print(f"  ✗ FAIL: lfo_phase=0 should give corr>0.95, got {results['zero']:.4f}")
+
+    if abs(results["quarter"]) < 0.95:
+        print(f"  ✓ PASS: lfo_phase=0.25 decorrelates (|corr|<0.95)")
+    else:
+        print(f"  ✗ FAIL: lfo_phase=0.25 should decorrelate")
+
+
 if __name__ == "__main__":
     test_chorus_spectrum()
     test_stereo_decorrelation()
+    test_lfo_phase_tunable()

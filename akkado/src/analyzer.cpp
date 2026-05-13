@@ -1907,7 +1907,8 @@ void SemanticAnalyzer::validate_arguments(const std::string& func_name,
                                           std::size_t arg_count,
                                           SourceLocation loc) {
     std::size_t min_args = builtin.input_count;
-    std::size_t max_args = builtin.input_count + builtin.optional_count;
+    std::size_t max_args = builtin.input_count + builtin.optional_count
+                         + builtin.extended_param_count;
 
     if (arg_count < min_args) {
         error("E006", "Function '" + func_name + "' expects at least " +
@@ -2199,6 +2200,20 @@ bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
                 arg_node.data = Node::ArgumentData{std::nullopt};
             }
         }
+    }
+
+    // Fill gaps (skipped positionals between named args) with `_` placeholder
+    // identifiers so the codegen default-filling path still runs for those
+    // slots. Without this, `phaser(sig, 0.5, 0.8, 200, 4000, lfo_phase: 0.3)`
+    // would collapse to a 6-arg call and the user's lfo_phase value would
+    // bind to feedback instead of lfo_phase.
+    const SourceLocation call_loc = call.location;
+    for (std::size_t i = 0; i < reordered.size(); ++i) {
+        if (reordered[i] != NULL_NODE) continue;
+        NodeIndex underscore = output_arena_.alloc(NodeType::Identifier, call_loc);
+        output_arena_[underscore].data = Node::IdentifierData{"_"};
+        output_arena_[underscore].next_sibling = NULL_NODE;
+        reordered[i] = underscore;
     }
 
     // Rebuild child list in new order

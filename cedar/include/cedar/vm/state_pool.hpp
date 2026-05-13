@@ -515,11 +515,16 @@ public:
                 json << R"(,"initialized":)" << (state.osc.initialized ? "true" : "false");
                 json << "}";
             }
-            else if constexpr (std::is_same_v<T, ExtendedParams<3>> ||
+            else if constexpr (std::is_same_v<T, ExtendedParams<1>> ||
+                               std::is_same_v<T, ExtendedParams<2>> ||
+                               std::is_same_v<T, ExtendedParams<3>> ||
                                std::is_same_v<T, ExtendedParams<5>> ||
                                std::is_same_v<T, ExtendedParams<8>>) {
-                constexpr std::size_t N = std::is_same_v<T, ExtendedParams<3>> ? 3 :
-                                          (std::is_same_v<T, ExtendedParams<5>> ? 5 : 8);
+                constexpr std::size_t N =
+                    std::is_same_v<T, ExtendedParams<1>> ? 1 :
+                    (std::is_same_v<T, ExtendedParams<2>> ? 2 :
+                    (std::is_same_v<T, ExtendedParams<3>> ? 3 :
+                    (std::is_same_v<T, ExtendedParams<5>> ? 5 : 8)));
                 json << R"({"type":"ExtendedParams")";
                 json << R"(,"count":)" << N;
                 json << R"(,"params":[)";
@@ -617,6 +622,39 @@ public:
         std::array<std::uint16_t, N> buffer_indices;
         buffer_indices.fill(0xFFFF);
         init_extended_params<N>(state_id, constants, buffer_indices);
+    }
+
+    /**
+     * Runtime dispatch over the supported ExtendedParams<N> variants. The
+     * loader / WASM apply-state-inits path only knows `count` at runtime, so
+     * this helper packs the constants/buffer-indices pair into the smallest
+     * variant that fits. Supported N values are {1, 2, 3, 5, 8} — counts
+     * between those round up (e.g. count=4 uses ExtendedParams<5>). Counts
+     * above 8 are clamped to 8 with the tail truncated.
+     */
+    void init_extended_params_runtime(std::uint32_t state_id,
+                                      const float* constants,
+                                      const std::uint16_t* buffer_indices,
+                                      std::uint8_t count) {
+        if (count == 0) return;
+
+        auto run = [&]<std::size_t N>() {
+            std::array<float, N> c{};
+            std::array<std::uint16_t, N> b{};
+            b.fill(0xFFFF);
+            const std::size_t copy_n = std::min<std::size_t>(count, N);
+            for (std::size_t i = 0; i < copy_n; ++i) {
+                c[i] = constants[i];
+                b[i] = buffer_indices[i];
+            }
+            init_extended_params<N>(state_id, c, b);
+        };
+
+        if (count == 1)      { run.template operator()<1>(); }
+        else if (count == 2) { run.template operator()<2>(); }
+        else if (count == 3) { run.template operator()<3>(); }
+        else if (count <= 5) { run.template operator()<5>(); }
+        else                 { run.template operator()<8>(); }
     }
 
     // Initialize a SequenceState with compiled sequences (arena-allocated)

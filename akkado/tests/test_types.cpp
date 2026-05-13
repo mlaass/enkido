@@ -13,6 +13,7 @@
 //   - akkado/src/codegen.cpp          (out() validation, stereo auto-lift)
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include "akkado/akkado.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cstring>
@@ -581,6 +582,124 @@ TEST_CASE("Types: stereo-native FX chain through existing stereo helpers", "[typ
         )");
         CHECK(result.success);
     }
+}
+
+// ============================================================================
+// Extended params (prd-extended-params §5–§6) — canonical mechanism for
+// opcode parameters beyond the 5 input-buffer slots.
+// ============================================================================
+
+static const akkado::StateInitData* find_ext_params_init(const akkado::CompileResult& r) {
+    for (const auto& s : r.state_inits) {
+        if (s.type == akkado::StateInitData::Type::ExtendedParams) return &s;
+    }
+    return nullptr;
+}
+
+TEST_CASE("ExtendedParams: chorus emits StateInit with default lfo_phase=0.25",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> chorus(%, 0.5, 0.4) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.25f));
+}
+
+TEST_CASE("ExtendedParams: chorus accepts named lfo_phase literal",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> chorus(%, 0.5, 0.4, lfo_phase: 0.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    // Literal lowers via PUSH_CONST + buffer — buffer_idx != 0xFFFF.
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: flanger default lfo_phase",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> flanger(%, 1.0, 0.5) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.25f));
+}
+
+TEST_CASE("ExtendedParams: phaser emits 3-slot StateInit with defaults",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> phaser(%, 0.5, 0.8) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 3);
+    // Defaults: feedback=0.5, stages=4, lfo_phase=0.25
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.5f));
+    CHECK(ext->ext_constants[1] == Catch::Approx(4.0f));
+    CHECK(ext->ext_constants[2] == Catch::Approx(0.25f));
+    CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[1] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[2] == 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: phaser feedback/stages/lfo_phase all customizable by name",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> phaser(%, 0.5, 0.8, feedback: 0.7, stages: 6, lfo_phase: 0.4) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 3);
+    // All three should now be buffer-backed (lowered from literals via PUSH_CONST).
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: phaser drops rate-field bit-packing entirely",
+          "[types][stereo-native][extended-params]") {
+    // Phaser used to pack feedback/stages into inst.rate. After the
+    // ExtendedParams migration the rate field must be zero — the param
+    // values now live in the ExtendedParams<3> state init.
+    auto result = akkado::compile(R"(
+        saw(220) |> phaser(%, 0.5, 0.8, feedback: 0.7, stages: 6) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_PHASER);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
+}
+
+TEST_CASE("ExtendedParams: skipping intermediate ext params keeps named arg aligned",
+          "[types][stereo-native][extended-params]") {
+    // `phaser(..., lfo_phase: 0.3)` skips feedback/stages — the analyzer's
+    // gap-fill inserts placeholders so lfo_phase still lands in ext slot 2,
+    // and feedback/stages take their defaults.
+    auto result = akkado::compile(R"(
+        saw(220) |> phaser(%, 0.5, 0.8, lfo_phase: 0.3) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 3);
+    // ext[0]=feedback, ext[1]=stages get defaults via the `_` placeholder
+    // PUSH_CONST path so they're buffer-backed with the default value.
+    // ext[2]=lfo_phase is also buffer-backed from the user's 0.3 literal.
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);
 }
 
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {

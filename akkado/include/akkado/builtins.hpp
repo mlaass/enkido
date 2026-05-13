@@ -182,6 +182,17 @@ struct BuiltinInfo {
     // fire. Today: `soundfont`. Future: SF_PLAY / SAMPLE_VOICE.
     bool consumes_polyphonic_pattern = false;
 
+    // PRD prd-extended-params §5 (canonical extended-param mechanism). When
+    // extended_param_count > 0, args at positions
+    // [total_params() .. total_params() + extended_param_count) lower into
+    // an ExtendedParams<N> state init rather than inst.inputs[]. Names are
+    // searched by reorder_named_arguments() just like the input names;
+    // defaults are emitted as constant slots when the caller omits the arg.
+    // These live at the end of the struct so existing positional aggregate-
+    // init call sites do not need to change.
+    std::array<std::string_view, MAX_EXTENDED_PARAMS> extended_param_names = {};
+    std::array<float, MAX_EXTENDED_PARAMS> extended_defaults = {};  // NaN = required (rare)
+
     /// Get total parameter count (required + optional)
     [[nodiscard]] std::uint8_t total_params() const {
         return input_count + optional_count;
@@ -197,27 +208,46 @@ struct BuiltinInfo {
         return total_params() + extended_param_count;
     }
 
-    /// Find parameter index by name, returns -1 if not found
+    /// Find parameter index by name, returns -1 if not found. Searches
+    /// regular input names first, then extended-param names; extended
+    /// matches return total_params() + ext_idx (so callers can use the
+    /// same index space for reordering).
     [[nodiscard]] int find_param(std::string_view name) const {
         for (std::size_t i = 0; i < MAX_BUILTIN_PARAMS; ++i) {
             if (param_names[i].empty()) break;
             if (param_names[i] == name) return static_cast<int>(i);
         }
+        const std::size_t base = total_params();
+        for (std::size_t i = 0; i < extended_param_count && i < MAX_EXTENDED_PARAMS; ++i) {
+            if (extended_param_names[i].empty()) break;
+            if (extended_param_names[i] == name) return static_cast<int>(base + i);
+        }
         return -1;
     }
 
-    /// Check if parameter at index has a default value
+    /// Check if parameter at index has a default value (covers both input
+    /// slots and extended-param slots).
     [[nodiscard]] bool has_default(std::size_t index) const {
-        if (index < input_count) return false;  // Required params don't have defaults
-        std::size_t default_idx = index - input_count;
-        if (default_idx >= MAX_BUILTIN_DEFAULTS) return false;
-        return !std::isnan(defaults[default_idx]);
+        if (index < input_count) return false;  // Required input params don't have defaults
+        if (index < total_params()) {
+            std::size_t default_idx = index - input_count;
+            if (default_idx >= MAX_BUILTIN_DEFAULTS) return false;
+            return !std::isnan(defaults[default_idx]);
+        }
+        // Extended-param slot
+        std::size_t ext_idx = index - total_params();
+        if (ext_idx >= extended_param_count || ext_idx >= MAX_EXTENDED_PARAMS) return false;
+        return !std::isnan(extended_defaults[ext_idx]);
     }
 
-    /// Get default value for parameter at index (must check has_default first)
+    /// Get default value for parameter at index (must check has_default first).
     [[nodiscard]] float get_default(std::size_t index) const {
-        std::size_t default_idx = index - input_count;
-        return defaults[default_idx];
+        if (index < total_params()) {
+            std::size_t default_idx = index - input_count;
+            return defaults[default_idx];
+        }
+        std::size_t ext_idx = index - total_params();
+        return extended_defaults[ext_idx];
     }
 
     /// Find the option-field schema attached to the parameter at `param_index`,
@@ -480,29 +510,48 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // Modulation Effects (stateful - delay lines with LFOs)
     // All three are stereo-native (prd-stereo-native-opcodes Phase 3): mono
     // input auto-escalates to L=R; stereo input drives per-channel processing.
-    // R lane reads the shared master LFO at +90° for L/R decorrelation.
-    // chorus: base_delay (ms), depth_range (ms)
-    {"chorus",   {cedar::Opcode::EFFECT_CHORUS, 1, 4, true,
-                  {"in", "rate", "depth", "base_delay", "depth_range", ""},
-                  {0.5f, 0.5f, 20.0f, 10.0f, NAN},
-                  "Stereo-native chorus (mono input widens; stereo input "
-                  "processes per channel)",
-                  0, {}, {}, ChannelCount::Stereo, false, true}},
-    // flanger: min_delay (ms), max_delay (ms)
-    {"flanger",  {cedar::Opcode::EFFECT_FLANGER, 1, 4, true,
-                  {"in", "rate", "depth", "min_delay", "max_delay", ""},
-                  {1.0f, 0.7f, 0.1f, 10.0f, NAN},
-                  "Stereo-native flanger",
-                  0, {}, {}, ChannelCount::Stereo, false, true}},
-    // phaser: min_freq (Hz), max_freq (Hz), stages (compile-time literal int 2-12),
-    //         feedback (compile-time literal float 0-1, packed into rate field)
-    {"phaser",   {cedar::Opcode::EFFECT_PHASER, 1, 6, true,
-                  {"in", "rate", "depth", "min_freq", "max_freq", "stages", "feedback", ""},
-                  {0.5f, 0.8f, 200.0f, 4000.0f, 4.0f, 0.5f},
-                  "Stereo-native multi-stage phaser",
-                  0, {}, {}, ChannelCount::Stereo, false,
-                  /*stereo_native=*/true,
-                  /*inst_rate=*/static_cast<std::uint8_t>((8u << 4) | 4u)}},
+    // R lane reads the shared master LFO at the user-tunable `lfo_phase`
+    // offset (turns, default 0.25 = 90°) for L/R decorrelation.
+    // chorus: base_delay (ms), depth_range (ms), lfo_phase (turns)
+    {"chorus",   {.opcode = cedar::Opcode::EFFECT_CHORUS,
+                  .input_count = 1, .optional_count = 4, .requires_state = true,
+                  .param_names = {"in", "rate", "depth", "base_delay", "depth_range", ""},
+                  .defaults = {0.5f, 0.5f, 20.0f, 10.0f, NAN},
+                  .description = "Stereo-native chorus (mono input widens; stereo input "
+                                 "processes per channel). lfo_phase tunes the R-LFO offset.",
+                  .extended_param_count = 1,
+                  .output_channels = ChannelCount::Stereo,
+                  .auto_lift = false,
+                  .stereo_native = true,
+                  .extended_param_names = {"lfo_phase"},
+                  .extended_defaults = {0.25f}}},
+    // flanger: min_delay (ms), max_delay (ms), lfo_phase (turns)
+    {"flanger",  {.opcode = cedar::Opcode::EFFECT_FLANGER,
+                  .input_count = 1, .optional_count = 4, .requires_state = true,
+                  .param_names = {"in", "rate", "depth", "min_delay", "max_delay", ""},
+                  .defaults = {1.0f, 0.7f, 0.1f, 10.0f, NAN},
+                  .description = "Stereo-native flanger. lfo_phase tunes the R-LFO offset.",
+                  .extended_param_count = 1,
+                  .output_channels = ChannelCount::Stereo,
+                  .auto_lift = false,
+                  .stereo_native = true,
+                  .extended_param_names = {"lfo_phase"},
+                  .extended_defaults = {0.25f}}},
+    // phaser: min_freq, max_freq, plus 3 extended params (feedback, stages,
+    // lfo_phase). Feedback/stages used to be packed into inst.rate; they are
+    // now full first-class extended params (PRD prd-extended-params §6b).
+    {"phaser",   {.opcode = cedar::Opcode::EFFECT_PHASER,
+                  .input_count = 1, .optional_count = 4, .requires_state = true,
+                  .param_names = {"in", "rate", "depth", "min_freq", "max_freq", ""},
+                  .defaults = {0.5f, 0.8f, 200.0f, 4000.0f, NAN},
+                  .description = "Stereo-native multi-stage phaser. "
+                                 "feedback (0-0.99), stages (2-12), lfo_phase (turns).",
+                  .extended_param_count = 3,
+                  .output_channels = ChannelCount::Stereo,
+                  .auto_lift = false,
+                  .stereo_native = true,
+                  .extended_param_names = {"feedback", "stages", "lfo_phase"},
+                  .extended_defaults = {0.5f, 4.0f, 0.25f}}},
     {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 0, true,
                   {"in", "time", "fb", "", "", ""},
                   {NAN, NAN, NAN},

@@ -32,11 +32,14 @@ from visualize import save_figure
 OUT = output_dir("op_phaser")
 
 
-def _build_phaser_program(host, lfo_rate, depth, min_freq, max_freq, stages, feedback_int):
+def _build_phaser_program(host, lfo_rate, depth, min_freq, max_freq, stages, feedback_int,
+                          lfo_phase=0.25):
     """Configure host with a PHASER instruction. Returns nothing — mutates host.
 
-    Sets STEREO_OUTPUT flag so the opcode writes both buffer 1 (L) and 2 (R).
-    OUTPUT reads both and writes to ctx.output_left / ctx.output_right.
+    After the prd-extended-params migration phaser uses
+    `ExtendedParams<3>` for feedback / stages / lfo_phase. The legacy
+    `feedback_int` argument is kept (0-15) and converted to a float
+    [0.0, 0.99] for the ext slot, so existing tests can stay the same.
     """
     buf_in = 0
     buf_rate = host.set_param("rate", lfo_rate)
@@ -44,15 +47,26 @@ def _build_phaser_program(host, lfo_rate, depth, min_freq, max_freq, stages, fee
     buf_min = host.set_param("min_freq", min_freq)
     buf_max = host.set_param("max_freq", max_freq)
 
+    state_id = cedar.hash("phaser") & 0xFFFF
     inst = cedar.Instruction.make_quinary(
         cedar.Opcode.EFFECT_PHASER, 1,
         buf_in, buf_rate, buf_depth, buf_min, buf_max,
-        cedar.hash("phaser") & 0xFFFF,
+        state_id,
     )
-    inst.rate = ((feedback_int & 0x0F) << 4) | (stages & 0x0F)
+    inst.rate = 0  # rate field no longer carries feedback/stages
     inst.flags = cedar.STEREO_OUTPUT_FLAG
     host.load_instruction(inst)
     host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2))
+    host.vm.load_program(host.program)
+
+    # ExtendedParams<3>: [feedback, stages, lfo_phase].
+    feedback_f = float(feedback_int) / 15.0 * 0.99
+    host.vm.init_extended_params(
+        cedar.ext_params_state_id(state_id),
+        np.array([feedback_f, float(stages), float(lfo_phase)], dtype=np.float32),
+        np.array([0xFFFF, 0xFFFF, 0xFFFF], dtype=np.uint16),
+        3,
+    )
 
 
 def _find_notch(freqs, psd_db, search_lo=100.0, search_hi=8000.0):
@@ -281,11 +295,65 @@ def test_stereo_decorrelation():
         return False
 
 
+def test_lfo_phase_tunable():
+    """
+    lfo_phase via ExtendedParams<3>[2] tunes the R-LFO decorrelation.
+
+    Phaser has a wet+dry sum in the body so the L/R correlation never goes
+    to ±1 even with lfo_phase=0 (the dry component is identical). But the
+    lfo_phase=0 case should be NOTICEABLY more correlated than the default.
+
+    See cedar/include/cedar/opcodes/modulation.hpp op_effect_phaser.
+    """
+    print("Test: Phaser lfo_phase tunable via ExtendedParams")
+    sr = 48000
+    duration = 2.0
+    rng = np.random.default_rng(0xBA5E)
+    noise = rng.standard_normal(int(duration * sr)).astype(np.float32) * 0.4
+
+    results = {}
+    for label, phase in (("zero", 0.0), ("quarter", 0.25), ("half", 0.5)):
+        host = CedarTestHost(sr)
+        _build_phaser_program(host, lfo_rate=2.0, depth=0.9,
+                              min_freq=200.0, max_freq=4000.0,
+                              stages=4, feedback_int=8, lfo_phase=phase)
+        # Manually drive the block loop since _build_phaser_program leaves
+        # state init in place and load_program already happened.
+        n_samples = len(noise)
+        n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+        padded = np.zeros(n_blocks * cedar.BLOCK_SIZE, dtype=np.float32)
+        padded[:n_samples] = noise
+        l_chunks, r_chunks = [], []
+        for k in range(n_blocks):
+            s = k * cedar.BLOCK_SIZE
+            host.vm.set_buffer(0, padded[s:s + cedar.BLOCK_SIZE])
+            l, r = host.vm.process()
+            l_chunks.append(l)
+            r_chunks.append(r)
+        l = np.concatenate(l_chunks)[:n_samples]
+        r = np.concatenate(r_chunks)[:n_samples]
+        steady = int(0.5 * sr)
+        corr = float(np.corrcoef(l[steady:], r[steady:])[0, 1])
+        results[label] = corr
+        print(f"  lfo_phase={phase:.2f} → corr(L,R) = {corr:+.4f}")
+
+    # lfo_phase=0 should be more correlated than the default 0.25 case.
+    if results["zero"] > results["quarter"]:
+        print(f"  ✓ PASS: lfo_phase=0 ({results['zero']:.3f}) more correlated than "
+              f"0.25 ({results['quarter']:.3f})")
+        return True
+    else:
+        print(f"  ✗ FAIL: expected lfo_phase=0 > lfo_phase=0.25 in correlation, "
+              f"got {results['zero']:.3f} vs {results['quarter']:.3f}")
+        return False
+
+
 if __name__ == "__main__":
     results = []
     results.append(test_phaser_notch_sweep())
     results.append(test_phaser_no_sweep_at_zero_depth())
     results.append(test_stereo_decorrelation())
+    results.append(test_lfo_phase_tunable())
     if all(results):
         print("\nAll phaser tests passed.")
     else:

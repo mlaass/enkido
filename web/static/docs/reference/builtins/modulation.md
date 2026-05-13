@@ -2,7 +2,7 @@
 title: Modulation Effects
 category: builtins
 order: 7
-keywords: [modulation, chorus, flanger, phaser, comb, effect, rate, depth, sweep]
+keywords: [modulation, chorus, flanger, phaser, comb, effect, rate, depth, sweep, lfo_phase, stereo, decorrelation, extended-params]
 group: effects
 subgroup: time-based
 icon: Wand2
@@ -49,10 +49,13 @@ dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(%, %)
 | depth | number | 0.5     | Modulation depth (0-1) |
 | base_delay | number | 20.0 | Base chorus delay (ms) |
 | depth_range | number | 10.0 | Modulation depth range (ms) |
+| lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default stereo widening); 0.5 = anti-phase. |
 
 Mixes the input with delayed copies that are slightly pitch-shifted by an LFO, producing a thicker, wider sound.
 
 The `base_delay` parameter sets the center delay time, while `depth_range` controls how far the modulation sweeps from the base. Larger values produce more pronounced detuning.
+
+Chorus is stereo-native: mono input widens to a true stereo image with the right channel reading the LFO at the `lfo_phase` offset; stereo input gets independent per-channel processing.
 
 ```akk
 // Classic chorus
@@ -74,6 +77,16 @@ osc("sin", 440) |> chorus(%, 2, 0.3) |> out(%, %)
 osc("saw", 220) |> chorus(%, 0.3, 0.6, 30, 15) |> out(%, %)
 ```
 
+```akk
+// Anti-phase R LFO for maximum stereo width
+osc("saw", 220) |> chorus(%, 0.5, 0.6, lfo_phase: 0.5) |> out(%, %)
+```
+
+```akk
+// lfo_phase: 0 = mono-equivalent (L=R)
+osc("saw", 220) |> chorus(%, 0.5, 0.6, lfo_phase: 0) |> out(%, %)
+```
+
 Related: [flanger](#flanger), [phaser](#phaser)
 
 ---
@@ -89,8 +102,9 @@ Related: [flanger](#flanger), [phaser](#phaser)
 | depth | number | 0.7     | Modulation depth (0-1) |
 | min_delay | number | 0.1 | Minimum sweep delay (ms) |
 | max_delay | number | 10.0 | Maximum sweep delay (ms) |
+| lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default); 0.5 = anti-phase. |
 
-Similar to chorus but with shorter delay times and feedback, creating the characteristic "jet plane" sweep effect.
+Similar to chorus but with shorter delay times and feedback, creating the characteristic "jet plane" sweep effect. Flanger is stereo-native: mono input widens via the `lfo_phase` offset on the right channel.
 
 The `min_delay` and `max_delay` parameters define the sweep range. Shorter delays create more metallic tones, longer delays sound more like chorus.
 
@@ -129,16 +143,15 @@ Related: [chorus](#chorus), [phaser](#phaser), [comb](#comb)
 | depth    | number | 0.8     | Modulation depth (0-1) |
 | min_freq | number | 200.0   | Sweep range low (Hz) |
 | max_freq | number | 4000.0  | Sweep range high (Hz) |
-| stages   | literal int | 4 | Number of allpass stages, 2-12 (compile-time constant) |
-| feedback | literal float | 0.5 | Feedback amount, 0-1 (compile-time constant) |
+| feedback | number | 0.5     | Feedback amount (0–0.99). Higher = sharper resonance. |
+| stages   | number | 4       | Number of allpass stages (2–12). Each pair of stages = one notch. |
+| lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default stereo notch sweep); 0.5 = anti-phase. |
 
 Sweeps a chain of allpass-derived notches through the spectrum, producing a
 swirling effect distinct from chorus or flanger.
 
-`stages` and `feedback` shape the topology and must be **literal constants**;
-they're packed into instruction metadata at compile time, not driven by signals.
-More stages give more notches (each pair of stages = one notch); higher feedback
-sharpens the resonance.
+More stages give more notches; higher feedback sharpens the resonance. Both
+parameters are full runtime params — you can wire a signal to either one.
 
 The phaser output is the canonical Bode/MXR sum (dry + allpass cascade), so
 expect up to +6 dB peak gain at constructive interference points.
@@ -165,7 +178,12 @@ osc("saw", 110) |> phaser(%, 0.2, 0.8, 100, 8000) |> out(%, %)
 
 ```akk
 // Deep, resonant 6-stage phaser with strong feedback
-osc("saw", 110) |> phaser(%, 0.5, 0.9, 100, 5000, 6, 0.7) |> out(%, %)
+osc("saw", 110) |> phaser(%, 0.5, 0.9, 100, 5000, feedback: 0.7, stages: 6) |> out(%, %)
+```
+
+```akk
+// Wide stereo phaser — anti-phase R LFO
+osc("saw", 110) |> phaser(%, 0.3, 0.8, lfo_phase: 0.5) |> out(%, %)
 ```
 
 Related: [flanger](#flanger), [chorus](#chorus)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "builtins.hpp"
 #include "diagnostics.hpp"
 #include "mini_token.hpp"
 #include "required_sample.hpp"
@@ -10,6 +11,7 @@
 #include <cedar/vm/instruction.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <set>
@@ -113,13 +115,16 @@ struct SequenceSampleMapping {
     std::uint8_t variant = 0; // Variant index (0 = first variant)
 };
 
-/// State initialization data for TIMELINE and SEQPAT_QUERY opcodes
+/// State initialization data for TIMELINE / SEQPAT_QUERY / poly / extended-
+/// parameter opcodes. Emitted by codegen, consumed by program_loader and
+/// the WASM `cedar_apply_state_inits` shim after the program is loaded.
 struct StateInitData {
     std::uint32_t state_id;  // Must match Instruction::state_id (32-bit FNV-1a hash)
     enum class Type : std::uint8_t {
         Timeline = 1,     // Initialize TimelineState with breakpoints
         SequenceProgram,  // Initialize SequenceState with compiled sequences
-        PolyAlloc         // Initialize PolyAllocState for poly/mono/legato
+        PolyAlloc,        // Initialize PolyAllocState for poly/mono/legato
+        ExtendedParams,   // Initialize ExtendedParams<N> with constants/buffer refs
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -162,6 +167,14 @@ struct StateInitData {
     // init_sequence_program_state() when iter_n > 0.
     std::uint8_t iter_n = 0;
     std::int8_t iter_dir = 0;
+
+    // For ExtendedParams: per-slot constant value + buffer index. A slot
+    // with buffer_idx == 0xFFFF reads the constant; otherwise the runtime
+    // reads from the buffer at each sample. Mirrors how inputs[] work.
+    // See cedar/include/cedar/opcodes/dsp_state.hpp ExtendedParams<N>.
+    std::array<float, MAX_EXTENDED_PARAMS> ext_constants = {};
+    std::array<std::uint16_t, MAX_EXTENDED_PARAMS> ext_buffer_indices = {};
+    std::uint8_t ext_count = 0;
 };
 
 /// Required SoundFont from compile-time soundfont() calls
@@ -722,6 +735,18 @@ private:
 
     /// Handle compose(f, g, ...) - function composition
     TypedValue handle_compose_call(NodeIndex node, const Node& n);
+
+    /// Emit an ExtendedParams StateInitData entry for a builtin whose
+    /// `extended_param_count > 0`. `arg_buffers` is the codegen-collected
+    /// per-argument buffer list (positions 0..N-1 correspond to the
+    /// builtin's parameter list, after reorder_named_arguments has run
+    /// in the analyzer). Args past `total_params()` are routed into the
+    /// ExtendedParams slot table; missing trailing args fall back to
+    /// `extended_defaults[]` as constant slots. No-op when
+    /// extended_param_count == 0.
+    void emit_extended_params_init(std::uint32_t state_id,
+                                   const BuiltinInfo& info,
+                                   const std::vector<std::uint16_t>& arg_buffers);
 
     // ============================================================================
     // Directive handlers

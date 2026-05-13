@@ -176,6 +176,18 @@ public:
         state_pool_.init_sequence_iter(state_id, n, dir);
     }
 
+    // Initialize ExtendedParams<N> state for an opcode that uses more
+    // than 5 input slots. The loader / WASM apply-state-inits path calls
+    // this with a runtime-known count; the StatePool helper picks the
+    // smallest variant that fits. See docs/extended-params-mechanism.md.
+    void init_extended_params(std::uint32_t state_id,
+                              const float* constants,
+                              const std::uint16_t* buffer_indices,
+                              std::uint8_t count) {
+        state_pool_.init_extended_params_runtime(state_id, constants,
+                                                 buffer_indices, count);
+    }
+
     // Initialize polyphony state for a POLY_BEGIN opcode
     void init_poly_state(std::uint32_t state_id, std::uint32_t seq_state_id,
                          std::uint8_t max_voices, std::uint8_t mode,
