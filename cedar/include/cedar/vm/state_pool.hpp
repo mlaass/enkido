@@ -424,26 +424,33 @@ public:
             }
             else if constexpr (std::is_same_v<T, BitcrushState>) {
                 json << R"({"type":"BitcrushState")";
-                json << R"(,"held_sample":)" << state.held_sample;
-                json << R"(,"phase":)" << state.phase;
+                json << R"(,"held_sample_l":)" << state.held_sample[0];
+                json << R"(,"held_sample_r":)" << state.held_sample[1];
+                json << R"(,"phase_l":)" << state.phase[0];
+                json << R"(,"phase_r":)" << state.phase[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, SmoothSatState>) {
                 json << R"({"type":"SmoothSatState")";
-                json << R"(,"x_prev":)" << state.x_prev;
-                json << R"(,"ad_prev":)" << state.ad_prev;
+                json << R"(,"x_prev_l":)" << state.x_prev[0];
+                json << R"(,"x_prev_r":)" << state.x_prev[1];
+                json << R"(,"ad_prev_l":)" << state.ad_prev[0];
+                json << R"(,"ad_prev_r":)" << state.ad_prev[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, FoldADAAState>) {
                 json << R"({"type":"FoldADAAState")";
-                json << R"(,"x_prev":)" << state.x_prev;
-                json << R"(,"ad_prev":)" << state.ad_prev;
+                json << R"(,"x_prev_l":)" << state.x_prev[0];
+                json << R"(,"x_prev_r":)" << state.x_prev[1];
+                json << R"(,"ad_prev_l":)" << state.ad_prev[0];
+                json << R"(,"ad_prev_r":)" << state.ad_prev[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, TubeState> || std::is_same_v<T, TapeState> ||
                                std::is_same_v<T, XfmrState> || std::is_same_v<T, ExciterState>) {
                 json << R"({"type":"OversamplingSatState")";
-                json << R"(,"os_idx":)" << state.os_idx;
+                json << R"(,"os_idx_l":)" << state.os_idx[0];
+                json << R"(,"os_idx_r":)" << state.os_idx[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, CombFilterState>) {

@@ -325,65 +325,67 @@ struct SallenkeyState {
     float k = 0.0f;
 };
 
-// ADAA wavefolder state
+// ADAA wavefolder state — stereo-native (prd-stereo-native-opcodes Phase 4b).
 struct FoldADAAState {
-    float x_prev = 0.0f;    // Previous input sample
-    float ad_prev = 0.0f;   // Previous antiderivative value
+    float x_prev[2] = {0.0f, 0.0f};   // Previous input sample, per channel
+    float ad_prev[2] = {0.0f, 0.0f};  // Previous antiderivative value, per channel
 };
 
 // ============================================================================
-// Distortion States
+// Distortion States — all stereo-native (prd-stereo-native-opcodes Phase 4b).
+// Per-channel memory inside one state struct; runtime parameters (drive,
+// threshold, frequency, etc.) are mono control signals shared across L/R.
 // ============================================================================
 
 // Bitcrusher state (sample rate reduction)
 struct BitcrushState {
-    float held_sample = 0.0f;
-    float phase = 0.0f;
+    float held_sample[2] = {0.0f, 0.0f};
+    float phase[2] = {0.0f, 0.0f};
 };
 
 // ADAA (Antiderivative Antialiasing) saturation state
 // Used for alias-free tanh saturation without oversampling
 struct SmoothSatState {
-    float x_prev = 0.0f;      // Previous input sample
-    float ad_prev = 0.0f;     // Previous antiderivative value F₁(x_prev)
-    bool initialized = false;  // First sample uses direct tanh to avoid ADAA startup discontinuity
+    float x_prev[2] = {0.0f, 0.0f};      // Previous input sample
+    float ad_prev[2] = {0.0f, 0.0f};     // Previous antiderivative value F₁(x_prev)
+    bool initialized[2] = {false, false};  // First-sample direct-tanh guard
 };
 
 // Tube saturation state (with oversampling)
 struct TubeState {
-    // 2x oversampling delay lines
-    float os_delay[4] = {};
-    int os_idx = 0;
+    // 2x oversampling delay lines, per channel
+    float os_delay[2][4] = {};
+    int os_idx[2] = {0, 0};
 };
 
 // Tape saturation state (with oversampling and high-shelf filter)
 struct TapeState {
-    // 2x oversampling delay lines
-    float os_delay[4] = {};
-    int os_idx = 0;
+    // 2x oversampling delay lines, per channel
+    float os_delay[2][4] = {};
+    int os_idx[2] = {0, 0};
 
-    // High-shelf filter state for warmth control
-    float hs_z1 = 0.0f;
+    // High-shelf filter state for warmth control, per channel
+    float hs_z1[2] = {0.0f, 0.0f};
 };
 
 // Transformer saturation state (bass-emphasis saturation)
 struct XfmrState {
-    // 2x oversampling delay lines
-    float os_delay[4] = {};
-    int os_idx = 0;
+    // 2x oversampling delay lines, per channel
+    float os_delay[2][4] = {};
+    int os_idx[2] = {0, 0};
 
-    // Leaky integrator for bass extraction
-    float integrator = 0.0f;
+    // Leaky integrator for bass extraction, per channel
+    float integrator[2] = {0.0f, 0.0f};
 };
 
 // Harmonic exciter state
 struct ExciterState {
-    // 2x oversampling delay lines
-    float os_delay[4] = {};
-    int os_idx = 0;
+    // 2x oversampling delay lines, per channel
+    float os_delay[2][4] = {};
+    int os_idx[2] = {0, 0};
 
-    // High-pass filter state (~3kHz)
-    float hp_z1 = 0.0f;
+    // High-pass filter state (~3kHz), per channel
+    float hp_z1[2] = {0.0f, 0.0f};
 };
 
 // ============================================================================

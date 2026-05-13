@@ -21,14 +21,19 @@ namespace cedar {
 
 [[gnu::always_inline]]
 inline void op_distort_tanh(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::max(0.1f, drive[i]);
-        float x = input[i] * d;
-        out[i] = std::tanh(x);
+        out_l[i] = std::tanh(input[i] * d);
+        out_r[i] = std::tanh((stereo_in ? input_r[i] : input[i]) * d);
     }
 }
 
@@ -43,26 +48,26 @@ inline void op_distort_tanh(ExecutionContext& ctx, const Instruction& inst) {
 
 [[gnu::always_inline]]
 inline void op_distort_soft(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* threshold = ctx.buffers->get(inst.inputs[1]);
+
+    auto soft = [](float x) {
+        if (x > 3.0f) return 1.0f;
+        if (x < -3.0f) return -1.0f;
+        float x2 = x * x;
+        return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+    };
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float t = std::clamp(threshold[i], 0.1f, 2.0f);
-        float x = input[i] / t;
-
-        // Polynomial soft clip (same as Moog filter uses)
-        float y;
-        if (x > 3.0f) {
-            y = 1.0f;
-        } else if (x < -3.0f) {
-            y = -1.0f;
-        } else {
-            float x2 = x * x;
-            y = x * (27.0f + x2) / (27.0f + 9.0f * x2);
-        }
-
-        out[i] = y * t;
+        out_l[i] = soft(input[i] / t) * t;
+        out_r[i] = soft((stereo_in ? input_r[i] : input[i]) / t) * t;
     }
 }
 
@@ -78,29 +83,32 @@ inline void op_distort_soft(ExecutionContext& ctx, const Instruction& inst) {
 
 [[gnu::always_inline]]
 inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* bits = ctx.buffers->get(inst.inputs[1]);
     const float* rate = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<BitcrushState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // Sample rate reduction: only sample when phase wraps
+        // Mono control inputs (shared across channels)
         float rate_factor = std::clamp(rate[i], 0.01f, 1.0f);
-        state.phase += rate_factor;
+        float depth = std::clamp(bits[i], 1.0f, 16.0f);
+        float levels = std::pow(2.0f, depth);
 
-        if (state.phase >= 1.0f) {
-            state.phase -= 1.0f;
-
-            // Bit depth reduction
-            float depth = std::clamp(bits[i], 1.0f, 16.0f);
-            float levels = std::pow(2.0f, depth);
-
-            // Quantize to discrete levels
-            state.held_sample = std::round(input[i] * levels) / levels;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            state.phase[ch] += rate_factor;
+            if (state.phase[ch] >= 1.0f) {
+                state.phase[ch] -= 1.0f;
+                state.held_sample[ch] = std::round(x * levels) / levels;
+            }
+            (ch == 0 ? out_l : out_r)[i] = state.held_sample[ch];
         }
-
-        out[i] = state.held_sample;
     }
 }
 
@@ -119,47 +127,41 @@ inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) 
 
 [[gnu::always_inline]]
 inline void op_distort_fold(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive_in = ctx.buffers->get(inst.inputs[1]);
     const float* symmetry = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<FoldADAAState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        // Mono control inputs (shared across channels)
         float drive = std::clamp(drive_in[i], 1.0f, 10.0f);
         float sym = std::clamp(symmetry[i], 0.0f, 1.0f);
 
-        // Apply asymmetry bias (shifts the fold point)
-        float x = input[i] + (sym - 0.5f) * 0.5f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float xin = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            float x = xin + (sym - 0.5f) * 0.5f;
+            float x_scaled = x * drive;
+            float ad = -std::cos(x_scaled) / drive;
 
-        // Scale by drive
-        float x_scaled = x * drive;
+            float diff = x_scaled - state.x_prev[ch];
+            float y;
+            if (std::abs(diff) < 1e-5f) {
+                float mid = (x_scaled + state.x_prev[ch]) * 0.5f;
+                y = std::sin(mid);
+            } else {
+                y = (ad - state.ad_prev[ch]) / (diff / drive);
+            }
 
-        // Antiderivative of sin(x) is -cos(x)
-        // For sin(drive * x), antiderivative is -cos(drive * x) / drive
-        float ad = -std::cos(x_scaled) / drive;
-
-        // ADAA formula: y[n] = (F₁(x[n]) - F₁(x[n-1])) / (x[n] - x[n-1])
-        float diff = x_scaled - state.x_prev;
-        float y;
-
-        if (std::abs(diff) < 1e-5f) {
-            // When samples are very close, use Taylor expansion fallback
-            // sin(x) ≈ x - x³/6 near the singularity point
-            // Actually just evaluate the function at the midpoint
-            float mid = (x_scaled + state.x_prev) * 0.5f;
-            y = std::sin(mid);
-        } else {
-            // Normal ADAA calculation
-            y = (ad - state.ad_prev) / (diff / drive);
+            state.x_prev[ch] = x_scaled;
+            state.ad_prev[ch] = ad;
+            (ch == 0 ? out_l : out_r)[i] = std::clamp(y, -1.0f, 1.0f);
         }
-
-        // Update state for next sample
-        state.x_prev = x_scaled;
-        state.ad_prev = ad;
-
-        // Output with soft limiting
-        out[i] = std::clamp(y, -1.0f, 1.0f);
     }
 }
 
@@ -176,8 +178,13 @@ inline void op_distort_fold(ExecutionContext& ctx, const Instruction& inst) {
 
 [[gnu::always_inline]]
 inline void op_distort_tube(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* bias = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<TubeState>(inst.state_id);
@@ -185,39 +192,31 @@ inline void op_distort_tube(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 20.0f);
         float b = std::clamp(bias[i], 0.0f, 0.3f);
-        float x = input[i];
-
-        // 2x oversampling: upsample
-        state.os_delay[state.os_idx] = x;
-        float x0 = x;
-        float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
 
         auto tube_core = [d, b](float s) {
-            // Apply drive and bias (bias creates asymmetry -> even harmonics)
             float driven = s * d + b;
-
-            // Asymmetric transfer function
-            // Positive: softer compression (tube-like)
-            // Negative: slightly harder compression
             float y;
             if (driven >= 0.0f) {
-                // Soft knee positive saturation: 1 - exp(-x)
                 y = 1.0f - std::exp(-driven);
             } else {
-                // Slightly harder negative saturation: tanh-based
                 y = std::tanh(driven * 1.2f);
             }
-
-            // Soft clip to prevent overshoot
             return std::clamp(y, -1.0f, 1.0f);
         };
 
-        // Process at 2x rate and average back down
-        float y0 = tube_core(x0);
-        float y1 = tube_core(x1);
-        out[i] = (y0 + y1) * 0.5f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        state.os_idx = (state.os_idx + 1) & 3;
+            // 2x oversampling using per-channel delay line
+            state.os_delay[ch][state.os_idx[ch]] = x;
+            float x0 = x;
+            float x1 = (x + state.os_delay[ch][(state.os_idx[ch] + 3) & 3]) * 0.5f;
+
+            float y0 = tube_core(x0);
+            float y1 = tube_core(x1);
+            (ch == 0 ? out_l : out_r)[i] = (y0 + y1) * 0.5f;
+            state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
+        }
     }
 }
 
@@ -233,63 +232,53 @@ inline void op_distort_tube(ExecutionContext& ctx, const Instruction& inst) {
 
 [[gnu::always_inline]]
 inline void op_distort_smooth(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<SmoothSatState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 20.0f);
-        float x = input[i] * d;
 
-        // Antiderivative of tanh(x) is log(cosh(x))
-        // Use numerically stable formula valid for all x without branching:
-        // log(cosh(x)) = |x| + log(1 + exp(-2|x|)) - log(2)
-        // log1p avoids precision loss when exp(-2|x|) is small
-        float abs_x = std::abs(x);
-        float ad = abs_x + std::log1p(std::exp(-2.0f * abs_x)) - 0.693147f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float xin = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            float x = xin * d;
 
-        float y;
+            float abs_x = std::abs(x);
+            float ad = abs_x + std::log1p(std::exp(-2.0f * abs_x)) - 0.693147f;
 
-        if (!state.initialized) {
-            // First sample: use direct tanh to avoid ADAA startup discontinuity
-            // (state starts at x_prev=0, ad_prev=0 which is far from actual input)
-            y = std::tanh(x);
-            state.initialized = true;
-        } else {
-            // ADAA formula: y[n] = (F₁(x[n]) - F₁(x[n-1])) / (x[n] - x[n-1])
-            float diff = x - state.x_prev;
-
-            if (std::abs(diff) < 1e-4f) {
-                // When samples are very close, use direct evaluation (midpoint rule)
-                y = std::tanh((x + state.x_prev) * 0.5f);
+            float y;
+            if (!state.initialized[ch]) {
+                y = std::tanh(x);
+                state.initialized[ch] = true;
             } else {
-                // Compute antiderivative difference with precision guard:
-                // F₁(x) = |x| + log1p(exp(-2|x|)) - ln2
-                // When both samples have the same sign and are in saturation,
-                // the |x| terms dominate and partially cancel, causing precision loss.
-                // Split: F₁(x) - F₁(x_prev) = (|x|-|x_prev|) + (log1p terms diff)
-                float ad_diff;
-                float abs_xp = std::abs(state.x_prev);
-                if (abs_x > 0.5f && abs_xp > 0.5f && (x > 0) == (state.x_prev > 0)) {
-                    // Same sign: |x| - |x_prev| = sign(x) * (x - x_prev) = sign(x) * diff
-                    float abs_diff = (x > 0) ? diff : -diff;
-                    float log_diff = std::log1p(std::exp(-2.0f * abs_x))
-                                   - std::log1p(std::exp(-2.0f * abs_xp));
-                    ad_diff = abs_diff + log_diff;
+                float diff = x - state.x_prev[ch];
+                if (std::abs(diff) < 1e-4f) {
+                    y = std::tanh((x + state.x_prev[ch]) * 0.5f);
                 } else {
-                    ad_diff = ad - state.ad_prev;
+                    float ad_diff;
+                    float abs_xp = std::abs(state.x_prev[ch]);
+                    if (abs_x > 0.5f && abs_xp > 0.5f && (x > 0) == (state.x_prev[ch] > 0)) {
+                        float abs_diff = (x > 0) ? diff : -diff;
+                        float log_diff = std::log1p(std::exp(-2.0f * abs_x))
+                                       - std::log1p(std::exp(-2.0f * abs_xp));
+                        ad_diff = abs_diff + log_diff;
+                    } else {
+                        ad_diff = ad - state.ad_prev[ch];
+                    }
+                    y = ad_diff / diff;
                 }
-                y = ad_diff / diff;
             }
+
+            state.x_prev[ch] = x;
+            state.ad_prev[ch] = ad;
+            (ch == 0 ? out_l : out_r)[i] = y;
         }
-
-        // Update state for next sample
-        state.x_prev = x;
-        state.ad_prev = ad;
-
-        // tanh output is naturally bounded to [-1,1]; ADAA preserves this
-        out[i] = y;
     }
 }
 
@@ -313,8 +302,13 @@ constexpr float TAPE_WARMTH_SCALE_DEFAULT = 0.7f;
 
 [[gnu::always_inline]]
 inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* warmth = ctx.buffers->get(inst.inputs[2]);
     const float* soft_threshold_in = ctx.buffers->get(inst.inputs[3]);
@@ -324,54 +318,46 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 10.0f);
         float w = std::clamp(warmth[i], 0.0f, 1.0f);
-        float x = input[i];
-
-        // Runtime tunable parameters (use defaults if zero/negative)
         float soft_threshold = soft_threshold_in[i] > 0.0f ? soft_threshold_in[i] : TAPE_SOFT_THRESHOLD_DEFAULT;
         float warmth_scale = warmth_scale_in[i] > 0.0f ? warmth_scale_in[i] : TAPE_WARMTH_SCALE_DEFAULT;
-
-        // 2x oversampling
-        state.os_delay[state.os_idx] = x;
-        float x0 = x;
-        float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
 
         auto tape_core = [d, soft_threshold](float s) {
             float driven = s * d;
             float abs_d = std::abs(driven);
-
-            // Tape-style soft saturation with wide linear region
-            // Uses smooth polynomial knee transitioning to tanh limiting
             float y;
             if (abs_d < soft_threshold) {
-                // Linear region (unity gain below threshold)
                 y = driven;
             } else if (abs_d < 2.0f) {
-                // Soft knee: polynomial transition
-                float t = (abs_d - soft_threshold) / (2.0f - soft_threshold);  // 0 to 1 in transition region
-                float knee = 1.0f - t * t * 0.3f;  // Gentle compression curve
+                float t = (abs_d - soft_threshold) / (2.0f - soft_threshold);
+                float knee = 1.0f - t * t * 0.3f;
                 y = driven * knee;
             } else {
-                // Hard saturation region: tanh limiting
                 float sign = driven >= 0.0f ? 1.0f : -1.0f;
                 y = sign * (0.85f + 0.15f * std::tanh((abs_d - 2.0f) * 0.5f));
             }
-
             return y;
         };
 
-        // Process at 2x rate
-        float y0 = tape_core(x0);
-        float y1 = tape_core(x1);
-        float y = (y0 + y1) * 0.5f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        // High-shelf filter for warmth (subtle HF rolloff)
-        // One-pole lowpass on the difference signal
-        float hf = y - state.hs_z1;
-        state.hs_z1 = state.hs_z1 + hf * (1.0f - w * warmth_scale);
-        y = state.hs_z1 + hf * (1.0f - w);
+            // 2x oversampling using per-channel delay line
+            state.os_delay[ch][state.os_idx[ch]] = x;
+            float x0 = x;
+            float x1 = (x + state.os_delay[ch][(state.os_idx[ch] + 3) & 3]) * 0.5f;
 
-        out[i] = std::clamp(y, -1.0f, 1.0f);
-        state.os_idx = (state.os_idx + 1) & 3;
+            float y0 = tape_core(x0);
+            float y1 = tape_core(x1);
+            float y = (y0 + y1) * 0.5f;
+
+            // Per-channel high-shelf warmth filter
+            float hf = y - state.hs_z1[ch];
+            state.hs_z1[ch] = state.hs_z1[ch] + hf * (1.0f - w * warmth_scale);
+            y = state.hs_z1[ch] + hf * (1.0f - w);
+
+            (ch == 0 ? out_l : out_r)[i] = std::clamp(y, -1.0f, 1.0f);
+            state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
+        }
     }
 }
 
@@ -392,8 +378,13 @@ constexpr float XFMR_BASS_FREQ_DEFAULT = 60.0f;
 
 [[gnu::always_inline]]
 inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* bass_sat = ctx.buffers->get(inst.inputs[2]);
     const float* bass_freq_in = ctx.buffers->get(inst.inputs[3]);
@@ -402,48 +393,40 @@ inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 10.0f);
         float bs = std::clamp(bass_sat[i], 1.0f, 10.0f);
-        float x = input[i];
-
-        // Runtime tunable parameters (use defaults if zero/negative)
         float bass_freq = bass_freq_in[i] > 0.0f ? bass_freq_in[i] : XFMR_BASS_FREQ_DEFAULT;
-
-        // Leaky integrator coefficient from frequency
-        // coeff = exp(-2 * pi * freq / sample_rate) ≈ 1 - (2 * pi * freq / sample_rate) for small freqs
         float lp_coeff = std::exp(-6.283185f * bass_freq / ctx.sample_rate);
 
-        // 2x oversampling
-        state.os_delay[state.os_idx] = x;
-        float x0 = x;
-        float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        auto xfmr_core = [d, bs, &state, lp_coeff](float s) {
-            // Extract bass via leaky integrator
-            state.integrator = state.integrator * lp_coeff + s * (1.0f - lp_coeff);
-            float bass = state.integrator;
-            float highs = s - bass;
+            // Per-channel 2x oversampling delay line
+            state.os_delay[ch][state.os_idx[ch]] = x;
+            float x0 = x;
+            float x1 = (x + state.os_delay[ch][(state.os_idx[ch] + 3) & 3]) * 0.5f;
 
-            // Saturate bass more heavily (transformer core saturation)
-            float sat_bass = std::tanh(bass * bs);
+            auto xfmr_core = [d, bs, &state, ch, lp_coeff](float s) {
+                state.integrator[ch] = state.integrator[ch] * lp_coeff + s * (1.0f - lp_coeff);
+                float bass = state.integrator[ch];
+                float highs = s - bass;
 
-            // Lighter saturation on highs (winding saturation is gentler)
-            float sat_highs = highs;
-            if (std::abs(highs * d) > 0.7f) {
-                float sign = highs >= 0.0f ? 1.0f : -1.0f;
-                sat_highs = sign * 0.7f + std::tanh((highs * d - sign * 0.7f) * 0.5f) * 0.3f;
-                sat_highs /= d;  // Normalize
-            }
+                float sat_bass = std::tanh(bass * bs);
 
-            // Recombine with overall drive
-            float combined = sat_bass + sat_highs * 0.9f;
-            return std::tanh(combined * d * 0.5f);
-        };
+                float sat_highs = highs;
+                if (std::abs(highs * d) > 0.7f) {
+                    float sign = highs >= 0.0f ? 1.0f : -1.0f;
+                    sat_highs = sign * 0.7f + std::tanh((highs * d - sign * 0.7f) * 0.5f) * 0.3f;
+                    sat_highs /= d;
+                }
 
-        // Process at 2x rate
-        float y0 = xfmr_core(x0);
-        float y1 = xfmr_core(x1);
-        out[i] = (y0 + y1) * 0.5f;
+                float combined = sat_bass + sat_highs * 0.9f;
+                return std::tanh(combined * d * 0.5f);
+            };
 
-        state.os_idx = (state.os_idx + 1) & 3;
+            float y0 = xfmr_core(x0);
+            float y1 = xfmr_core(x1);
+            (ch == 0 ? out_l : out_r)[i] = (y0 + y1) * 0.5f;
+            state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
+        }
     }
 }
 
@@ -466,8 +449,13 @@ constexpr float EXCITE_HARMONIC_EVEN_DEFAULT = 0.6f;
 
 [[gnu::always_inline]]
 inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* input = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* input_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : nullptr;
     const float* amount = ctx.buffers->get(inst.inputs[1]);
     const float* freq = ctx.buffers->get(inst.inputs[2]);
     const float* harmonic_odd_in = ctx.buffers->get(inst.inputs[3]);
@@ -477,45 +465,33 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float amt = std::clamp(amount[i], 0.0f, 1.0f);
         float f = std::clamp(freq[i], 1000.0f, 10000.0f);
-        float x = input[i];
-
-        // Runtime tunable parameters (use defaults if zero/negative)
         float harmonic_odd = harmonic_odd_in[i] > 0.0f ? harmonic_odd_in[i] : EXCITE_HARMONIC_ODD_DEFAULT;
         float harmonic_even = harmonic_even_in[i] > 0.0f ? harmonic_even_in[i] : EXCITE_HARMONIC_EVEN_DEFAULT;
-
-        // High-pass filter coefficient (one-pole)
-        // coeff = exp(-2 * pi * freq / sample_rate)
         float coeff = std::exp(-6.283185f * f / ctx.sample_rate);
 
-        // 2x oversampling for harmonic generation
-        state.os_delay[state.os_idx] = x;
-        float x0 = x;
-        float x1 = (x + state.os_delay[(state.os_idx + 3) & 3]) * 0.5f;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
 
-        auto excite_core = [amt, coeff, harmonic_odd, harmonic_even, &state](float s) {
-            // High-pass filter to extract high frequencies
-            float hp = s - state.hp_z1;
-            state.hp_z1 = state.hp_z1 + hp * (1.0f - coeff);
+            state.os_delay[ch][state.os_idx[ch]] = x;
+            float x0 = x;
+            float x1 = (x + state.os_delay[ch][(state.os_idx[ch] + 3) & 3]) * 0.5f;
 
-            // Generate harmonics from highs only
-            // Odd harmonics: cubic
-            float odd = hp * hp * hp;
-            // Even harmonics: quadratic (rectified)
-            float even = hp * std::abs(hp);
+            auto excite_core = [amt, coeff, harmonic_odd, harmonic_even, &state, ch](float s) {
+                float hp = s - state.hp_z1[ch];
+                state.hp_z1[ch] = state.hp_z1[ch] + hp * (1.0f - coeff);
 
-            // Mix harmonics (2nd harmonic emphasis for musicality)
-            float harmonics = odd * harmonic_odd + even * harmonic_even;
+                float odd = hp * hp * hp;
+                float even = hp * std::abs(hp);
 
-            // Return original + harmonics
-            return s + harmonics * amt * 1.5f;
-        };
+                float harmonics = odd * harmonic_odd + even * harmonic_even;
+                return s + harmonics * amt * 1.5f;
+            };
 
-        // Process at 2x rate
-        float y0 = excite_core(x0);
-        float y1 = excite_core(x1);
-        out[i] = std::clamp((y0 + y1) * 0.5f, -1.0f, 1.0f);
-
-        state.os_idx = (state.os_idx + 1) & 3;
+            float y0 = excite_core(x0);
+            float y1 = excite_core(x1);
+            (ch == 0 ? out_l : out_r)[i] = std::clamp((y0 + y1) * 0.5f, -1.0f, 1.0f);
+            state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
+        }
     }
 }
 

@@ -747,6 +747,102 @@ TEST_CASE("Types: stereo-native filter chain through existing stereo helpers", "
     }
 }
 
+// =============================================================================
+// Stereo-native distortion (prd-stereo-native-opcodes Phase 4b)
+// =============================================================================
+
+TEST_CASE("Types: stereo-native saturate produces stereo output", "[types][stereo][stereo-native]") {
+    SECTION("mono in") {
+        auto result = akkado::compile(R"( saw(220) |> saturate(%, 2.0) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TANH);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+    }
+    SECTION("stereo in") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(218), saw(222))
+            saturate(s, 2.0) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TANH);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native softclip/fold/bitcrush produce stereo output", "[types][stereo][stereo-native]") {
+    SECTION("softclip mono in") {
+        auto result = akkado::compile(R"( saw(220) |> softclip(%, 0.5) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_SOFT);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("fold mono in") {
+        auto result = akkado::compile(R"( saw(220) |> fold(%, 0.5) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_FOLD);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("bitcrush mono in") {
+        auto result = akkado::compile(R"( saw(220) |> bitcrush(%, 8, 0.5) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_BITCRUSH);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native oversampled distortion (tube/smooth/tape/xfmr/excite)", "[types][stereo][stereo-native]") {
+    SECTION("tube") {
+        auto result = akkado::compile(R"( saw(220) |> tube(%, 5.0, 0.1) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TUBE);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("smooth") {
+        auto result = akkado::compile(R"( saw(220) |> smooth(%, 5.0) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_SMOOTH);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("tape") {
+        auto result = akkado::compile(R"( saw(220) |> tape(%, 3.0, 0.3) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TAPE);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("xfmr") {
+        auto result = akkado::compile(R"( saw(220) |> xfmr(%, 3.0, 5.0) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_XFMR);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("excite") {
+        auto result = akkado::compile(R"( saw(220) |> excite(%, 0.5, 3000) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_EXCITE);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+}
+
+TEST_CASE("Types: stereo-native filter+distortion chain", "[types][stereo][stereo-native]") {
+    // End-to-end: stereo-native chains through filters + distortion + helpers.
+    auto result = akkado::compile(R"(
+        saw(220) |> lp(%, 1000) |> saturate(%, 2.0) |> width(%, 1.4) |> out(%)
+    )");
+    CHECK(result.success);
+}
+
 // ============================================================================
 // Extended params (prd-extended-params §5–§6) — canonical mechanism for
 // opcode parameters beyond the 5 input-buffer slots.
