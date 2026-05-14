@@ -1419,6 +1419,17 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 if (arg_count < 2) {
                     error("E006", "Function 'compose' expects at least 2 arguments", n.location);
                 }
+            } else if (func_name == "sum") {
+                // sum() is variadic: sum(array) or sum(a, b, ...), arity >= 1.
+                std::size_t arg_count = 0;
+                NodeIndex arg = output_arena_[node].first_child;
+                while (arg != NULL_NODE) {
+                    arg_count++;
+                    arg = output_arena_[arg].next_sibling;
+                }
+                if (arg_count < 1) {
+                    error("E006", "Function 'sum' expects at least 1 argument", n.location);
+                }
             } else {
                 // Reorder named arguments if any
                 reorder_named_arguments(node, sym->builtin, func_name);

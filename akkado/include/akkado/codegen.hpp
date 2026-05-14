@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -885,13 +886,17 @@ private:
     /// @return FunctionRef if valid, nullopt otherwise
     std::optional<FunctionRef> resolve_function_arg(NodeIndex func_node);
 
-    /// Apply a resolved function reference with captures
+    /// Apply a resolved function reference with captures.
+    /// Generalized N-arity helper: binds `arg_bufs[i]` to `ref.params[i].name`
+    /// for each supplied argument. Errors (E132) if the closure declares fewer
+    /// parameters than arguments supplied, or if arity exceeds 32.
     /// @param ref The function reference containing closure/body info and captures
-    /// @param arg_buf The buffer to bind to the function's first parameter
+    /// @param arg_bufs The buffers to bind to the function's leading parameters
     /// @param loc Source location for error reporting
     /// @return Output buffer from the function body
-    std::uint16_t apply_function_ref(const FunctionRef& ref, std::uint16_t arg_buf,
-                                      SourceLocation loc);
+    std::uint16_t apply_function_ref(const FunctionRef& ref,
+                                     std::span<const std::uint16_t> arg_bufs,
+                                     SourceLocation loc);
 
     /// Handle map(array, fn) call - apply function to each element
     TypedValue handle_map_call(NodeIndex node, const Node& n);
@@ -1015,17 +1020,6 @@ private:
         std::uint8_t max_voices;
     };
     std::unordered_map<NodeIndex, PolyPatternInfo> polyphonic_pattern_nodes_;
-
-    /// Apply a binary function reference to two buffer arguments
-    /// @param ref The function reference containing closure/body info
-    /// @param arg_buf1 The first argument buffer
-    /// @param arg_buf2 The second argument buffer
-    /// @param loc Source location for error reporting
-    /// @return Output buffer from the function body
-    std::uint16_t apply_binary_function_ref(const FunctionRef& ref,
-                                            std::uint16_t arg_buf1,
-                                            std::uint16_t arg_buf2,
-                                            SourceLocation loc);
 };
 
 } // namespace akkado

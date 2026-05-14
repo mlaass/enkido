@@ -168,11 +168,19 @@ std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_no
     return std::nullopt;
 }
 
-// Apply unary function ref
-std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref, std::uint16_t arg_buf,
-                                                  SourceLocation loc) {
-    if (ref.params.empty()) {
-        error("E132", "Function must have at least one parameter", loc);
+// Apply a function ref to N argument buffers.
+// Binds arg_bufs[i] to ref.params[i].name; the closure may declare more
+// parameters than supplied (defaults/unused), but not fewer.
+std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref,
+                                                std::span<const std::uint16_t> arg_bufs,
+                                                SourceLocation loc) {
+    // Arity cap guards against pathological / recursive closure bodies.
+    if (arg_bufs.size() > 32) {
+        error("E132", "Closure arity exceeds maximum of 32", loc);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    if (ref.params.size() < arg_bufs.size()) {
+        error("E132", "Closure has fewer parameters than arguments supplied", loc);
         return BufferAllocator::BUFFER_UNUSED;
     }
 
@@ -180,56 +188,9 @@ std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref, std::uin
     for (const auto& capture : ref.captures) {
         symbols_->define_variable(capture.name, capture.buffer_index);
     }
-    symbols_->define_variable(ref.params[0].name, arg_buf);
-
-    auto saved_node_types = std::move(node_types_);
-    node_types_.clear();
-
-    std::uint16_t result = BufferAllocator::BUFFER_UNUSED;
-
-    if (ref.is_user_function) {
-        if (ref.closure_node != NULL_NODE) result = visit(ref.closure_node).buffer;
-    } else {
-        const Node& closure = ast_->arena[ref.closure_node];
-        NodeIndex child = closure.first_child;
-        NodeIndex body = NULL_NODE;
-
-        while (child != NULL_NODE) {
-            const Node& child_node = ast_->arena[child];
-            if (child_node.type == NodeType::Identifier &&
-                (std::holds_alternative<Node::ClosureParamData>(child_node.data) ||
-                 std::holds_alternative<Node::IdentifierData>(child_node.data))) {
-                child = child_node.next_sibling;
-                continue;
-            }
-            body = child;
-            break;
-        }
-        if (body != NULL_NODE) result = visit(body).buffer;
+    for (std::size_t i = 0; i < arg_bufs.size(); ++i) {
+        symbols_->define_variable(ref.params[i].name, arg_bufs[i]);
     }
-
-    node_types_ = std::move(saved_node_types);
-    symbols_->pop_scope();
-
-    return result;
-}
-
-// Apply binary function ref
-std::uint16_t CodeGenerator::apply_binary_function_ref(const FunctionRef& ref,
-                                                        std::uint16_t arg_buf1,
-                                                        std::uint16_t arg_buf2,
-                                                        SourceLocation loc) {
-    if (ref.params.size() < 2) {
-        error("E140", "Binary function must have at least two parameters", loc);
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    symbols_->push_scope();
-    for (const auto& capture : ref.captures) {
-        symbols_->define_variable(capture.name, capture.buffer_index);
-    }
-    symbols_->define_variable(ref.params[0].name, arg_buf1);
-    symbols_->define_variable(ref.params[1].name, arg_buf2);
 
     auto saved_node_types = std::move(node_types_);
     node_types_.clear();
@@ -293,7 +254,7 @@ static TypedValue finalize_result(
     return tv;
 }
 
-// map(array, fn)
+// map(array, fn) — fn is (val) -> ... or (val, idx) -> ...
 TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     auto args = extract_call_args(ast_->arena, n.first_child, 2);
     if (!args.valid) {
@@ -307,12 +268,40 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
+    // Dispatch on closure arity: (val) keeps the legacy behavior; (val, idx)
+    // additionally receives a per-element index const buffer.
+    const std::size_t arity = func_ref->params.size();
+    if (arity == 0) {
+        error("E132", "map closure must take at least one parameter (the element)",
+              n.location);
+        return TypedValue::void_val();
+    }
+    if (arity > 2) {
+        error("E146", "map closure takes 1 or 2 parameters: (val) or (val, idx)",
+              n.location);
+        return TypedValue::void_val();
+    }
+    const bool with_index = (arity == 2);
+
     std::uint16_t array_buf = visit(args.nodes[0]).buffer;
 
     if (!is_multi_buffer(args.nodes[0])) {
         push_path("map#" + std::to_string(call_counters_["map"]++));
         push_path("elem0");
-        std::uint16_t result = apply_function_ref(*func_ref, array_buf, n.location);
+        std::uint16_t result;
+        if (with_index) {
+            // A non-multi-buffer signal is a 1-element sequence: its index is 0.
+            std::uint16_t idx_buf = emit_push_const(buffers_, instructions_, 0.0f);
+            if (idx_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::void_val();
+            }
+            std::array<std::uint16_t, 2> arg_bufs{array_buf, idx_buf};
+            result = apply_function_ref(*func_ref, arg_bufs, n.location);
+        } else {
+            std::array<std::uint16_t, 1> arg_bufs{array_buf};
+            result = apply_function_ref(*func_ref, arg_bufs, n.location);
+        }
         pop_path();
         pop_path();
         return cache_and_return(node, TypedValue::signal(result));
@@ -324,7 +313,19 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     push_path("map#" + std::to_string(call_counters_["map"]++));
     for (std::size_t i = 0; i < element_buffers.size(); ++i) {
         push_path("elem" + std::to_string(i));
-        result_buffers.push_back(apply_function_ref(*func_ref, element_buffers[i], n.location));
+        if (with_index) {
+            std::uint16_t idx_buf =
+                emit_push_const(buffers_, instructions_, static_cast<float>(i));
+            if (idx_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::void_val();
+            }
+            std::array<std::uint16_t, 2> arg_bufs{element_buffers[i], idx_buf};
+            result_buffers.push_back(apply_function_ref(*func_ref, arg_bufs, n.location));
+        } else {
+            std::array<std::uint16_t, 1> arg_bufs{element_buffers[i]};
+            result_buffers.push_back(apply_function_ref(*func_ref, arg_bufs, n.location));
+        }
         pop_path();
     }
     pop_path();
@@ -332,51 +333,160 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     return finalize_result(node, std::move(result_buffers), node_types_, buffers_, instructions_);
 }
 
-// sum(array)
+// sum(array) or sum(a, b, ...) — variadic, stereo-preserving.
+// Sums signals per-channel; if any operand is stereo, the result is stereo
+// (mono operands broadcast into both channels). A single array argument is
+// summed over its elements (backward-compatible with the old sum(array)).
 TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
-    auto args = extract_call_args(ast_->arena, n.first_child, 1);
-    if (!args.valid) {
-        error("E134", "sum() requires 1 argument: sum(array)", n.location);
+    // Collect all argument nodes (variadic): sum is special-cased in the
+    // analyzer to allow any arity >= 1, so extract them directly.
+    std::vector<NodeIndex> arg_nodes;
+    for (NodeIndex arg = n.first_child; arg != NULL_NODE;
+         arg = ast_->arena[arg].next_sibling) {
+        arg_nodes.push_back(unwrap_argument(ast_->arena, arg));
+    }
+    if (arg_nodes.empty()) {
+        error("E134", "sum() requires at least 1 argument: sum(array) or sum(a, b, ...)",
+              n.location);
         return TypedValue::void_val();
     }
 
-    std::uint16_t array_buf = visit(args.nodes[0]).buffer;
+    // Flatten every argument into a list of per-channel operands. A mono
+    // operand has l == r; a stereo operand carries distinct L/R buffers.
+    struct Operand { std::uint16_t l; std::uint16_t r; };
+    std::vector<Operand> operands;
+    bool any_stereo = false;
 
-    if (!is_multi_buffer(args.nodes[0])) {
-        return cache_and_return(node, TypedValue::signal(array_buf));
+    for (NodeIndex arg_node : arg_nodes) {
+        TypedValue tv = visit(arg_node);
+
+        if (tv.type == ValueType::Array && tv.array) {
+            // Sum over the array's elements.
+            for (const TypedValue& elem : tv.array->elements) {
+                std::uint16_t eb = elem.buffer;
+                bool elem_stereo = elem.is_stereo() || is_stereo_buffer(eb);
+                if (elem_stereo) {
+                    std::uint16_t er = elem.is_stereo() && elem.right_buffer != 0xFFFF
+                        ? elem.right_buffer
+                        : get_stereo_buffers_by_buffer(eb).right;
+                    operands.push_back({eb, er});
+                    any_stereo = true;
+                } else {
+                    operands.push_back({eb, eb});
+                }
+            }
+            continue;
+        }
+
+        // Single signal argument (mono or stereo).
+        bool stereo = tv.is_stereo() || is_stereo(arg_node) || is_stereo_buffer(tv.buffer);
+        std::uint16_t l = tv.buffer;
+        std::uint16_t r = tv.right_buffer;
+        if (stereo && r == 0xFFFF) {
+            StereoBuffers sb = is_stereo(arg_node)
+                ? get_stereo_buffers(arg_node)
+                : get_stereo_buffers_by_buffer(l);
+            l = sb.left;
+            r = sb.right;
+        }
+        if (stereo) {
+            operands.push_back({l, r});
+            any_stereo = true;
+        } else {
+            operands.push_back({l, l});
+        }
     }
 
-    auto elem_bufs = get_multi_buffers(args.nodes[0]);
-    if (elem_bufs.empty()) {
+    // Empty operand list (e.g. sum([])) → zero, matching legacy behavior.
+    if (operands.empty()) {
         std::uint16_t zero = emit_zero(buffers_, instructions_);
         return cache_and_return(node, TypedValue::signal(zero));
     }
-    if (elem_bufs.size() == 1) {
-        return cache_and_return(node, TypedValue::signal(elem_bufs[0]));
+    // Single operand → passthrough (stereo preserved).
+    if (operands.size() == 1) {
+        const Operand& o = operands[0];
+        if (any_stereo) {
+            register_stereo(node, o.l, o.r);
+            return cache_and_return(node, TypedValue::stereo_signal(o.l, o.r));
+        }
+        return cache_and_return(node, TypedValue::signal(o.l));
     }
 
-    std::uint16_t result = elem_bufs[0];
-    for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        std::uint16_t sum_buf = buffers_.allocate();
-        if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            return TypedValue::void_val();
-        }
+    // Mono path — bit-identical to the legacy sum(array) ADD chain.
+    if (!any_stereo) {
+        std::uint16_t result = operands[0].l;
+        for (std::size_t i = 1; i < operands.size(); ++i) {
+            std::uint16_t sum_buf = buffers_.allocate();
+            if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::void_val();
+            }
 
+            cedar::Instruction add_inst{};
+            add_inst.opcode = cedar::Opcode::ADD;
+            add_inst.out_buffer = sum_buf;
+            add_inst.inputs[0] = result;
+            add_inst.inputs[1] = operands[i].l;
+            add_inst.inputs[2] = 0xFFFF;
+            add_inst.inputs[3] = 0xFFFF;
+            add_inst.state_id = 0;
+            emit(add_inst);
+
+            result = sum_buf;
+        }
+        return cache_and_return(node, TypedValue::signal(result));
+    }
+
+    // Stereo path — sum L and R independently into an adjacent output pair.
+    std::uint16_t out_left = buffers_.allocate();
+    std::uint16_t out_right = buffers_.allocate();
+    if (out_left == BufferAllocator::BUFFER_UNUSED ||
+        out_right == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+    if (out_right != out_left + 1) {
+        error("E166", "Internal error: stereo buffer allocation not adjacent", n.location);
+        return TypedValue::void_val();
+    }
+
+    auto emit_add = [&](std::uint16_t out, std::uint16_t in0, std::uint16_t in1) {
         cedar::Instruction add_inst{};
         add_inst.opcode = cedar::Opcode::ADD;
-        add_inst.out_buffer = sum_buf;
-        add_inst.inputs[0] = result;
-        add_inst.inputs[1] = elem_bufs[i];
+        add_inst.out_buffer = out;
+        add_inst.inputs[0] = in0;
+        add_inst.inputs[1] = in1;
         add_inst.inputs[2] = 0xFFFF;
         add_inst.inputs[3] = 0xFFFF;
         add_inst.state_id = 0;
         emit(add_inst);
+    };
 
-        result = sum_buf;
-    }
+    // ADD-chain one channel; the final ADD writes into `final_out` so the
+    // result lands in the adjacent (out_left, out_right) pair.
+    auto sum_channel = [&](std::uint16_t final_out, bool right) -> bool {
+        auto pick = [&](std::size_t i) {
+            return right ? operands[i].r : operands[i].l;
+        };
+        std::uint16_t acc = pick(0);
+        for (std::size_t i = 1; i + 1 < operands.size(); ++i) {
+            std::uint16_t tmp = buffers_.allocate();
+            if (tmp == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return false;
+            }
+            emit_add(tmp, acc, pick(i));
+            acc = tmp;
+        }
+        emit_add(final_out, acc, pick(operands.size() - 1));
+        return true;
+    };
 
-    return cache_and_return(node, TypedValue::signal(result));
+    if (!sum_channel(out_left, /*right=*/false)) return TypedValue::void_val();
+    if (!sum_channel(out_right, /*right=*/true)) return TypedValue::void_val();
+
+    register_stereo(node, out_left, out_right);
+    return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
 }
 
 // reduce(array, fn, init)
@@ -407,7 +517,8 @@ TypedValue CodeGenerator::handle_reduce_call(NodeIndex node, const Node& n) {
     std::uint16_t result = init_buf;
     for (std::size_t i = 0; i < elem_bufs.size(); ++i) {
         push_path("step" + std::to_string(i));
-        result = apply_binary_function_ref(*func_ref, result, elem_bufs[i], n.location);
+        std::array<std::uint16_t, 2> arg_bufs{result, elem_bufs[i]};
+        result = apply_function_ref(*func_ref, arg_bufs, n.location);
         pop_path();
     }
     pop_path();
@@ -447,7 +558,8 @@ TypedValue CodeGenerator::handle_zipWith_call(NodeIndex node, const Node& n) {
     std::vector<std::uint16_t> result_buffers;
     for (std::size_t i = 0; i < len; ++i) {
         push_path("elem" + std::to_string(i));
-        result_buffers.push_back(apply_binary_function_ref(*func_ref, buffers_a[i], buffers_b[i], n.location));
+        std::array<std::uint16_t, 2> arg_bufs{buffers_a[i], buffers_b[i]};
+        result_buffers.push_back(apply_function_ref(*func_ref, arg_bufs, n.location));
         pop_path();
     }
     pop_path();

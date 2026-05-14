@@ -344,6 +344,119 @@ TEST_CASE("Codegen: sum()", "[codegen][hof]") {
         }
         CHECK(found_zero);
     }
+
+    SECTION("variadic mono sum") {
+        auto result = akkado::compile("sum(saw(220), saw(330), saw(440)) |> out(%)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // 3 mono operands → 2 ADDs, mono output.
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 2);
+        auto* out = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(out != nullptr);
+        CHECK(out->inputs[0] == out->inputs[1]);  // mono
+    }
+
+    SECTION("sum preserves stereo when any input is stereo") {
+        auto result = akkado::compile(R"(
+            a = stereo(saw(220), saw(221))
+            b = stereo(saw(330), saw(331))
+            sum(a, b) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* out = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(out != nullptr);
+        CHECK(out->inputs[0] != out->inputs[1]);  // stereo: L != R
+    }
+
+    SECTION("sum mixes mono and stereo (mono broadcasts)") {
+        auto result = akkado::compile(R"(
+            m = saw(220)
+            s = stereo(saw(330), saw(440))
+            sum(m, s) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* out = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(out != nullptr);
+        CHECK(out->inputs[0] != out->inputs[1]);  // stereo
+    }
+
+    SECTION("sum of single stereo arg passes through as stereo") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(220), saw(330))
+            sum(s) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* out = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(out != nullptr);
+        CHECK(out->inputs[0] != out->inputs[1]);  // stereo passthrough
+    }
+}
+
+TEST_CASE("Codegen: map() closure arity dispatch", "[codegen][hof][map]") {
+    SECTION("map with 2-arg closure receives per-element index") {
+        // [10,20,30] mapped with (v, i) -> v + i should yield [10, 21, 32].
+        auto result = akkado::compile("map([10, 20, 30], (v, i) -> v + i) |> out(sum(%))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // 3 index PUSH_CONSTs (0,1,2) emitted, one per element.
+        bool found_idx1 = false, found_idx2 = false;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::PUSH_CONST) {
+                float v = decode_const_float(inst);
+                if (v == 1.0f) found_idx1 = true;
+                if (v == 2.0f) found_idx2 = true;
+            }
+        }
+        CHECK(found_idx1);
+        CHECK(found_idx2);
+    }
+
+    SECTION("map with 1-arg closure unchanged (no extra index consts)") {
+        auto result = akkado::compile("map([1, 2, 3], (v) -> v * 2) |> out(sum(%))");
+        REQUIRE(result.success);
+    }
+
+    SECTION("map with 3-arg closure errors with E146") {
+        auto result = akkado::compile("map([1, 2, 3], (a, b, c) -> a)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E146") found = true;
+        }
+        CHECK(found);
+    }
+
+    SECTION("map with 0-arg closure errors with E132") {
+        auto result = akkado::compile("map([1, 2, 3], () -> 1)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E132") found = true;
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE("Codegen: N-arity closure helper", "[codegen][hof]") {
+    SECTION("reduce with under-arity closure errors with E132") {
+        auto result = akkado::compile("reduce([1, 2, 3], (a) -> a, 0)");
+        REQUIRE_FALSE(result.success);
+        bool found = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E132") found = true;
+        }
+        CHECK(found);
+    }
+
+    SECTION("reduce with 2-arg closure still works") {
+        auto result = akkado::compile("reduce([1, 2, 3], (a, b) -> a + b, 0)");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 3);
+    }
 }
 
 // Higher-order reducer is named reduce() since 'fold' is taken by the wavefolding
@@ -3868,12 +3981,21 @@ TEST_CASE("Codegen: HOF error paths", "[codegen][errors]") {
         CHECK(found);
     }
 
-    SECTION("sum() with too many arguments - E007") {
+    SECTION("sum() is variadic - multiple arguments compile") {
+        // sum is now variadic: sum(a, b, ...) sums all operands per-channel.
         auto result = akkado::compile("sum([1, 2], [3, 4])");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // 4 elements total → 3 ADDs in the mono fold chain.
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 3);
+    }
+
+    SECTION("sum() with zero arguments - error") {
+        auto result = akkado::compile("sum()");
         REQUIRE_FALSE(result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
-            if (d.code == "E007") found = true;  // Analyzer: too many args
+            if (d.code == "E006" || d.code == "E134") found = true;
         }
         CHECK(found);
     }

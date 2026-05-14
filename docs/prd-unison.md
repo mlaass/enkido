@@ -1,6 +1,6 @@
 # PRD: Unison — Userspace Voice Multiplication with Detune, Width, and Phase Variation
 
-> **Status: NOT STARTED** — Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. Several compiler prerequisites land first: a stereo-preserving variadic `sum(...)`, stereo support in `poly()`, generalized N-arity closures, and `map(arr, fn)` dispatching on closure arity (`(val)`, `(val, idx)`, …).
+> **Status: PREREQUISITES DONE — Phase 1 not started.** Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. All four compiler prerequisites have landed: stereo support in `poly()` (Phase 0b, commit `6b44b4b`), generalized N-arity closures (Phase 0c), `map(arr, fn)` dispatching on closure arity (Phase 0d), and a stereo-preserving variadic `sum(...)` (Phase 0a). Remaining: Phase 1 (`unison` stdlib fn), Phase 2 (docs/demo), Phase 3 (Python smoke test).
 
 ## 1. Overview
 
@@ -381,8 +381,10 @@ Phases 0a–0d are independent prerequisites that can ship separately. Phases 0a
 
 ### Phase 0a — Stereo-preserving variadic `sum(...)`
 
-**Status**: TODO  
+**Status**: DONE  
 **Goal**: Replace `sum(array)` with `sum(...)`. The new builtin accepts any number of signal arguments, sums per-channel, and returns stereo if any input is stereo.
+
+**Implementation note**: Shipped as a *backward-compatible* variadic (per user decision) — `sum` accepts both the legacy single-array form (`sum(array)`, still bit-identical bytecode for mono arrays) **and** the new N-arg form (`sum(a, b, ...)`). The only behavior change is stereo preservation. This avoids breaking ~80 internal test sites / the chord-summing code and matches this PRD's own unison examples (§5.1, §4.6), which pass a single array to `sum`. `sum` is special-cased in `analyzer.cpp` (arity ≥ 1, alongside `compose`) and rewritten in `handle_sum_call`.
 
 Files to modify:
 - `akkado/src/codegen_arrays.cpp` — rewrite `handle_sum_call`.
@@ -399,8 +401,8 @@ Tasks:
 
 ### Phase 0b — Stereo support in `poly()`
 
-**Status**: TODO  
-**Goal**: `handle_poly_call` accepts a stereo-returning instrument body and routes per-channel through `POLY_BEGIN` / `POLY_END`.
+**Status**: DONE (commit `6b44b4b`)  
+**Goal**: `handle_poly_call` accepts a stereo-returning instrument body and routes per-channel through `POLY_BEGIN` / `POLY_END`. Landed as a broader stereo-native migration: `poly` always outputs stereo, `voice_out`/`mix` are adjacent L/R pairs, `POLY_BEGIN` carries `STEREO_OUTPUT`, mono bodies broadcast dual-mono.
 
 Files to modify:
 - `akkado/src/codegen_functions.cpp` — `handle_poly_call`.
@@ -416,8 +418,10 @@ Tasks:
 
 ### Phase 0c — Generalized N-arity closure helper
 
-**Status**: TODO  
+**Status**: DONE  
 **Goal**: Replace `apply_function_ref` (1 param) and `apply_binary_function_ref` (2 params) with a single `apply_function_ref(ref, std::span<const std::uint16_t>, loc)` that handles N arguments.
+
+**Implementation note**: Single helper with a 32-arity cap; under-arity now errors **E132** at the call site (the old `apply_binary_function_ref` E140 is retired from this path — E140 stays defined, it's used elsewhere). All 5 call sites updated (`map` ×2, `reduce`, `zipWith`, `compose` chain). 1-arg and 2-arg paths produce identical bytecode.
 
 Files to modify:
 - `akkado/src/codegen_arrays.cpp` — refactor the helpers; update all current call sites (`handle_map_call`, `handle_reduce_call`, `handle_zipwith_call`, etc.).
@@ -433,8 +437,10 @@ Tasks:
 
 ### Phase 0d — `map(arr, fn)` dispatches on closure arity
 
-**Status**: TODO  
-**Goal**: `map(arr, (v) -> body)` keeps current behavior; `map(arr, (v, idx) -> body)` receives a per-element index buffer; `map(arr, (a, b, c) -> body)` errors clearly (E141).
+**Status**: DONE  
+**Goal**: `map(arr, (v) -> body)` keeps current behavior; `map(arr, (v, idx) -> body)` receives a per-element index buffer; `map(arr, (a, b, c) -> body)` errors clearly.
+
+**Implementation note**: The PRD specified `E141` for the >2-arity error, but `E141` is already in use (compose, `len`, `voicing`, destructure). The ">2 params" error uses **E146** instead; arity 0 uses **E132**. For a single-buffer (scalar-signal) input, a 2-arg closure receives index `0`.
 
 Depends on: Phase 0c.
 

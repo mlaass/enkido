@@ -1018,7 +1018,8 @@ TypedValue CodeGenerator::handle_function_value_call(
             result = param_bufs[0];
         }
         for (const auto& chain_ref : func.compose_chain) {
-            result = apply_function_ref(chain_ref, result, n.location);
+            std::array<std::uint16_t, 1> arg_bufs{result};
+            result = apply_function_ref(chain_ref, arg_bufs, n.location);
         }
         result_tv = TypedValue::signal(result);
     } else {

@@ -964,11 +964,13 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"map",     {cedar::Opcode::NOP, 2, 0, false,
                  {"array", "fn", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Apply function to each element of array"}},
+                 "Apply function to each element: map(array, (val) -> ...) or map(array, (val, idx) -> ...)"}},
+    // sum() is variadic and handled specially in the analyzer + codegen
+    // (arity >= 1, not bounded by input_count/optional_count below).
     {"sum",     {cedar::Opcode::NOP, 1, 0, false,
                  {"array", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Sum all elements of array"}},
+                 "Sum signals per-channel, preserving stereo: sum(array) or sum(a, b, ...)"}},
     {"reduce",  {cedar::Opcode::NOP, 3, 0, false,
                  {"array", "fn", "init", "", "", ""},
                  {NAN, NAN, NAN},
