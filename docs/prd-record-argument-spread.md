@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — Record-to-record spread (`{..base, field: value}`) exists for merging records at compile time. Array-to-array spread in literals (`[..arr, x]`) and argument spread (`f(..record)`, `f(..array)`) are not implemented.
+> **Status: IMPLEMENTED** — Record/array argument spread (`f(..record)`, `f(..array)`) and array-literal spread (`[..arr, x]`) are shipped, alongside the pre-existing record-to-record spread (`{..base, field: value}`). Key code: `ArgumentData.spread_source` (`akkado/include/akkado/ast.hpp:185`), parser `..` handling (`akkado/src/parser.cpp:1229`, `:719`), `expand_call_arguments()` with E140/E180 (`akkado/src/codegen.cpp:2291-2385`), name/positional binding + W160 (`akkado/src/codegen_functions.cpp`), array-literal flattening (`akkado/src/codegen.cpp:316-341`). Tests: `[parser][spread]`, `[analyzer][spread]`, `[codegen][spread]`.
 
 # PRD: Spread Arguments and Array Spread in Akkado
 
