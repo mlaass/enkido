@@ -51,6 +51,26 @@ static std::optional<double> resolve_const_scalar(
     return std::nullopt;
 }
 
+NodeIndex CodeGenerator::resolve_param_literal(NodeIndex node) const {
+    if (node == NULL_NODE) return node;
+    const Node& n = ast_->arena[node];
+    if (n.type != NodeType::Identifier) return node;
+
+    std::string name;
+    if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+        name = n.as_identifier();
+    } else if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
+        name = n.as_closure_param().name;
+    }
+    if (name.empty()) return node;
+
+    auto it = param_literals_.find(fnv1a_hash(name));
+    if (it != param_literals_.end()) {
+        return it->second;
+    }
+    return node;
+}
+
 // Apply lambda to single buffer
 std::uint16_t CodeGenerator::apply_lambda(NodeIndex lambda_node, std::uint16_t arg_buf) {
     const Node& lambda = ast_->arena[lambda_node];
@@ -1437,9 +1457,9 @@ TypedValue CodeGenerator::handle_linspace_call(NodeIndex node, const Node& n) {
     }
 
     // start/end/n must be compile-time constants
-    auto start_val = resolve_const_scalar(ast_->arena, args.nodes[0], *symbols_);
-    auto end_val = resolve_const_scalar(ast_->arena, args.nodes[1], *symbols_);
-    auto n_val = resolve_const_scalar(ast_->arena, args.nodes[2], *symbols_);
+    auto start_val = resolve_const_scalar(ast_->arena, resolve_param_literal(args.nodes[0]), *symbols_);
+    auto end_val = resolve_const_scalar(ast_->arena, resolve_param_literal(args.nodes[1]), *symbols_);
+    auto n_val = resolve_const_scalar(ast_->arena, resolve_param_literal(args.nodes[2]), *symbols_);
 
     if (!start_val || !end_val || !n_val) {
         error("E173", "linspace() arguments must be compile-time constants", n.location);

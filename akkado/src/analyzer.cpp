@@ -160,6 +160,15 @@ void SemanticAnalyzer::hide_namespaced_definitions() {
                     if (sym) {
                         // Register qualified name (e.g., "f.lp")
                         Symbol qsym = *sym;
+                        // Deep-copy the RecordTypeInfo: it is held by shared_ptr,
+                        // so a shallow copy would alias the original symbol's
+                        // type. Pass 2.5 (update_function_nodes) then remaps
+                        // `record_type->source_node` once per symbol — aliasing
+                        // would remap the shared node index twice and corrupt it.
+                        if (qsym.record_type) {
+                            qsym.record_type =
+                                std::make_shared<RecordTypeInfo>(*qsym.record_type);
+                        }
                         std::string qname = alias + "." + def_name;
                         qsym.name_hash = fnv1a_hash(qname);
                         qsym.name = qname;
@@ -321,9 +330,10 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                         param.default_value = cp.default_value;
                         param.default_string = cp.default_string;
                         param.is_rest = cp.is_rest;
-                        // Expression default is stored as child of param node
+                        // Expression/numeric default is stored as child of param
+                        // node (string defaults are carried in ClosureParamData).
                         if (child_node.first_child != NULL_NODE &&
-                            !cp.default_value.has_value() && !cp.default_string.has_value()) {
+                            !cp.default_string.has_value()) {
                             param.default_node = child_node.first_child;
                         }
                     } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
@@ -602,9 +612,10 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 param.default_value = cp.default_value;
                 param.default_string = cp.default_string;
                 param.is_rest = cp.is_rest;
-                // Expression default is stored as child of param node
+                // Expression/numeric default is stored as child of param node
+                // (string defaults are carried in ClosureParamData).
                 if (child_node.first_child != NULL_NODE &&
-                    !cp.default_value.has_value() && !cp.default_string.has_value()) {
+                    !cp.default_string.has_value()) {
                     param.default_node = child_node.first_child;
                 }
             } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {

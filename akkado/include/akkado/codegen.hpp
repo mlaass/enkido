@@ -886,6 +886,13 @@ private:
     /// @return FunctionRef if valid, nullopt otherwise
     std::optional<FunctionRef> resolve_function_arg(NodeIndex func_node);
 
+    /// If `node` is an Identifier bound to a literal function-parameter argument
+    /// (recorded in `param_literals_` during a user-function call), return the
+    /// caller's literal node; otherwise return `node` unchanged. Lets builtins
+    /// that need compile-time-constant args (e.g. linspace) see literals passed
+    /// through a stdlib/user function parameter.
+    NodeIndex resolve_param_literal(NodeIndex node) const;
+
     /// Apply a resolved function reference with captures.
     /// Generalized N-arity helper: binds `arg_bufs[i]` to `ref.params[i].name`
     /// for each supplied argument. Errors (E132) if the closure declares fewer

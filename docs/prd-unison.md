@@ -1,6 +1,6 @@
 # PRD: Unison — Userspace Voice Multiplication with Detune, Width, and Phase Variation
 
-> **Status: PREREQUISITES DONE — Phase 1 not started.** Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. All four compiler prerequisites have landed: stereo support in `poly()` (Phase 0b, commit `6b44b4b`), generalized N-arity closures (Phase 0c), `map(arr, fn)` dispatching on closure arity (Phase 0d), and a stereo-preserving variadic `sum(...)` (Phase 0a). Remaining: Phase 1 (`unison` stdlib fn), Phase 2 (docs/demo), Phase 3 (Python smoke test).
+> **Status: PHASE 1 DONE — `unison` ships.** Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. All four compiler prerequisites landed earlier: stereo support in `poly()` (Phase 0b, commit `6b44b4b`), generalized N-arity closures (Phase 0c), `map(arr, fn)` dispatching on closure arity (Phase 0d), and a stereo-preserving variadic `sum(...)` (Phase 0a). Phase 1 (the `unison` stdlib fn + the compiler glue it turned out to need — see the Phase 1 notes) is now done with an `[unison]` test case. Remaining: Phase 2 (docs/demo), Phase 3 (Python smoke test).
 
 ## 1. Overview
 
@@ -460,25 +460,77 @@ Tasks:
 
 ### Phase 1 — `unison` stdlib function
 
-**Status**: TODO  
+**Status**: DONE  
 **Goal**: `unison(freq, gate, vel, instrument, voices=2, detune=0.5, width=0.5, phase=0)` compiles and produces a stereo signal matching expected spectral content.
 
 Depends on: Phase 0a, 0b, 0c, 0d.
 
-Files to modify:
-- `akkado/include/akkado/stdlib.hpp` — add `fn unison` (with the voices=1 special case).
-- `akkado/tests/test_codegen.cpp` — `[unison]` tag with compile + bytecode snapshot tests.
+**Implementation notes / deviations from the PRD draft:**
+
+- **Q2 resolved — semitones.** `v_freq = freq * pow(2, (u * detune) / 12)`.
+- **Q5 resolved — kept `phase`** as the arg name (documents as a spread amount).
+- **Q6 resolved — `pan()` is equal-power** (verified `codegen_stereo.cpp`); no
+  unison-specific panning math needed.
+- **`if`/`let` don't exist in Akkado.** The §5.1 draft is pseudocode. The
+  shipped stdlib uses `match(voices) { 1: …, _: … }` (scrutinee form, which
+  const-folds because `voices` is a compile-time literal) and plain block-local
+  `x = expr` assignments instead of `let`.
+- **Named call args use `:` not `=`.** `unison(…, voices: 5, detune: 0.3)`.
+  The `=` form in the PRD's §4 target syntax does not parse; `:` is Akkado's
+  named-argument syntax. (Function *definitions* still use `=` for defaults.)
+- **`voices` bounds — soft limits (per user decision).** `unison` is pure
+  userspace Akkado and has no `error()` primitive, so `voices = 0` / `voices > 16`
+  are *not* hard compile errors. `voices <= 0` collapses `linspace` to a single
+  centered voice; large counts compile but grow the AST. The §9 edge-case rows
+  for `voices = 0` / `voices = 17` are downgraded to soft behavior; the
+  corresponding error tests are dropped. `voices` not a literal still errors
+  E173 from `linspace`.
+- **Compiler prerequisites beyond Phases 0a–0d** (the userspace expansion
+  needed these to actually work — all landed in this phase):
+  - `resolve_param_literal()` + `handle_linspace_call` now resolve a `linspace`
+    `n` arg that is a function parameter bound to a literal (previously E173).
+  - Parser/analyzer/codegen: numeric param defaults (`voices = 2`) now
+    materialise a backing `NumberLit` node (`default_node`), so `match(param)`
+    const-folds and `linspace` resolves the param even when left at its
+    default. Previously only *explicitly-passed* literal args were tracked in
+    `param_literals_`.
+  - `handle_function_value_call` now binds **record arguments** as records
+    (mirrors `handle_user_function_call`) — required for the `ext` record to
+    reach the instrument closure. It reuses an existing record symbol's
+    `record_type` when the arg is an identifier (pointing `source_node` at the
+    identifier would make `visit()` recurse infinitely).
+  - Fixed a latent double-remap bug in `hide_namespaced_definitions`: the
+    qualified-symbol copy shared the original's `record_type` `shared_ptr`, so
+    Pass 2.5 remapped `source_node` twice and corrupted it. Now deep-copies
+    `RecordTypeInfo`. (Exposed because `unison` is the first stdlib fn
+    containing a `|>` pipe, which enlarges the pipe-rewrite `node_map`.)
+- **3-arg instruments compile rather than erroring.** §9 expected an arity
+  error for a 3-param instrument; in practice a call to a function-ref
+  parameter can't be arity-checked statically, so the 4th `ext` arg is
+  silently dropped. This is *more* permissive than the PRD (the §4.4 manual
+  wrapper still works but is no longer strictly required). Strict arity
+  checking for function-ref-param calls is out of scope.
+- **`unison` returns stereo, so `out(%)` is the idiom** — `out(%, %)` (used in
+  some PRD examples) triggers a W185 mixed-channel warning.
+
+Files modified:
+- `akkado/include/akkado/stdlib.hpp` — added `fn unison` (with the voices=1 special case).
+- `akkado/src/parser.cpp`, `akkado/src/analyzer.cpp`, `akkado/src/codegen_functions.cpp`,
+  `akkado/src/codegen_arrays.cpp`, `akkado/include/akkado/codegen.hpp` — the
+  compiler prerequisites above.
+- `akkado/tests/test_codegen.cpp` — `[unison]` test case (8 sections).
 
 Tasks:
-- [ ] Confirm Q2 (semitone unit) before locking in the formula.
-- [ ] Add `unison` to `STDLIB_SOURCE`.
-- [ ] Test: `unison(440, 1, 1, (f,g,v,e) -> sine(f))` compiles with all defaults.
-- [ ] Test: `unison(..., voices = 5, detune = 0.3)` compiles; bytecode contains 5 sine instances at distinct semantic-IDs.
-- [ ] Test: `unison(..., voices = 1)` produces a single centered voice (the special-case branch).
-- [ ] Test: error on `voices = 0` (rejected by the stdlib `if/else` plus a guard, or surfaced from `linspace` for non-positive `n`).
-- [ ] Test: error on `voices > 16`.
-- [ ] Test: `voices` not a compile-time literal → error from `linspace`.
-- [ ] Test: composing with `poly` — `pat("c4 e4") |> poly(%, fat_voice, 2)` where `fat_voice` calls `unison(... voices=4)` internally — compiles and produces stereo output.
+- [x] Confirm Q2 (semitone unit) before locking in the formula.
+- [x] Add `unison` to `STDLIB_SOURCE`.
+- [x] Test: `unison(440, 1, 1, (f,g,v,e) -> sine(f))` compiles with all defaults.
+- [x] Test: `unison(..., voices: 5)` compiles; bytecode contains 5 sine instances at distinct state-IDs.
+- [x] Test: `unison(..., voices: 1)` produces a single centered voice (the special-case branch).
+- [~] ~~Test: error on `voices = 0`~~ — N/A, soft limits (see note above).
+- [~] ~~Test: error on `voices > 16`~~ — N/A, soft limits (see note above).
+- [x] Test: `voices` not a compile-time literal → error from `linspace` (E173).
+- [x] Test: composing with `poly` — `pat("c4 e4") |> poly(%, fat, 2)` where `fat` calls `unison(… voices: 4)` internally — compiles and produces stereo output.
+- [x] Extra: `ext` record fields accessible inside the instrument; runtime-modulatable `detune`; defaulted-`voices` const-folding regression test.
 
 ### Phase 2 — Documentation and demo
 

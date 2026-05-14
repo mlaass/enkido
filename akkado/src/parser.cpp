@@ -888,9 +888,10 @@ NodeIndex Parser::parse_closure() {
                 arena_[param_node].data = Node::IdentifierData{param.name};
             }
 
-            // Attach expression default as child of param node
-            if (param.default_node != NULL_NODE && !param.default_value.has_value() &&
-                !param.default_string.has_value()) {
+            // Attach expression/numeric default as child of param node. String
+            // defaults stay carried only in ClosureParamData (their node is
+            // synthetic and routed through match string-dispatch instead).
+            if (param.default_node != NULL_NODE && !param.default_string.has_value()) {
                 arena_[param_node].first_child = param.default_node;
             }
 
@@ -975,8 +976,16 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
                 (tokens_[current_idx_ + 1].type == TokenType::Comma ||
                  tokens_[current_idx_ + 1].type == TokenType::RParen)) {
                 Token num_tok = advance();
-                default_value = std::get<NumericValue>(num_tok.value).value;
+                auto& num_val = std::get<NumericValue>(num_tok.value);
+                default_value = num_val.value;
                 seen_default = true;
+                // Also materialise a NumberLit node so the default is
+                // discoverable as a compile-time literal (param_literals_):
+                // lets `match(param)` const-fold and builtins like linspace
+                // see the literal when the param is left at its default.
+                default_node_idx = arena_.alloc(NodeType::NumberLit, num_tok.location);
+                arena_[default_node_idx].data =
+                    Node::NumberData{num_val.value, num_val.is_integer};
             }
             // Fast path: simple string literal (not followed by an operator)
             else if (check(TokenType::String) &&
@@ -1602,9 +1611,9 @@ NodeIndex Parser::parse_fn_def(bool is_const) {
             arena_[param_node].data = Node::IdentifierData{param.name};
         }
 
-        // Attach expression default as child of param node
-        if (param.default_node != NULL_NODE && !param.default_value.has_value() &&
-            !param.default_string.has_value()) {
+        // Attach expression/numeric default as child of param node. String
+        // defaults stay carried only in ClosureParamData.
+        if (param.default_node != NULL_NODE && !param.default_string.has_value()) {
             arena_[param_node].first_child = param.default_node;
         }
 

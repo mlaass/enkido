@@ -515,7 +515,13 @@ TypedValue CodeGenerator::handle_user_function_call(
                 }
             }
         } else if (func.params[i].default_value.has_value()) {
-            // Use numeric default value
+            // Use numeric default value. Record the backing NumberLit node as a
+            // param literal so `match(param)` const-folds and builtins like
+            // linspace can resolve the param when left at its default.
+            if (func.params[i].default_node != NULL_NODE) {
+                std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
+                param_literals_[param_hash] = func.params[i].default_node;
+            }
             param_buf = buffers_.allocate();
             if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
@@ -911,7 +917,13 @@ TypedValue CodeGenerator::handle_function_value_call(
                 param_multi_bufs[i] = buffers_of(arg_tv);
             }
         } else if (func.params[i].default_value.has_value()) {
-            // Use numeric default value
+            // Use numeric default value. Record the backing NumberLit node as a
+            // param literal so `match(param)` const-folds and builtins like
+            // linspace can resolve the param when left at its default.
+            if (func.params[i].default_node != NULL_NODE) {
+                std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
+                param_literals_[param_hash] = func.params[i].default_node;
+            }
             param_buf = buffers_.allocate();
             if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
@@ -988,7 +1000,44 @@ TypedValue CodeGenerator::handle_function_value_call(
         symbols_->define_variable(capture.name, capture.buffer_index);
     }
     for (std::size_t i = 0; i < func.params.size(); ++i) {
-        if (!param_multi_bufs[i].empty()) {
+        // Record argument: bind as a record so `param.field` resolves inside
+        // the closure body (mirrors handle_user_function_call). Needed for the
+        // unison `ext` record passed to instrument closures.
+        const TypedValue* arg_tv = nullptr;
+        if (i < args.size()) {
+            auto type_it = node_types_.find(args[i]);
+            if (type_it != node_types_.end()) arg_tv = &type_it->second;
+        }
+        if (arg_tv != nullptr && arg_tv->type == ValueType::Record) {
+            std::shared_ptr<RecordTypeInfo> record_type;
+            // If the arg is a plain identifier bound to a record, reuse that
+            // symbol's record_type: its source_node points at the real record
+            // literal. Pointing source_node at the identifier itself would make
+            // visit() recurse infinitely (the identifier resolves back to the
+            // record we're about to define).
+            const Node& arg_node = ast_->arena[args[i]];
+            if (arg_node.type == NodeType::Identifier &&
+                std::holds_alternative<Node::IdentifierData>(arg_node.data)) {
+                auto asym = symbols_->lookup(arg_node.as_identifier());
+                if (asym && asym->kind == SymbolKind::Record && asym->record_type) {
+                    record_type = asym->record_type;
+                }
+            }
+            if (!record_type) {
+                record_type = std::make_shared<RecordTypeInfo>();
+                record_type->source_node = args[i];
+                if (arg_tv->record) {
+                    for (const auto& [name, field_tv] : arg_tv->record->fields) {
+                        RecordFieldInfo field_info;
+                        field_info.name = name;
+                        field_info.buffer_index = field_tv.buffer;
+                        field_info.field_kind = SymbolKind::Variable;
+                        record_type->fields.push_back(std::move(field_info));
+                    }
+                }
+            }
+            symbols_->define_record(func.params[i].name, record_type);
+        } else if (!param_multi_bufs[i].empty()) {
             ArrayInfo arr;
             arr.source_node = NULL_NODE;
             arr.buffer_indices = param_multi_bufs[i];

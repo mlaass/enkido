@@ -9599,3 +9599,123 @@ TEST_CASE("user-registered voicing dictionary is recognized and pipes to soundfo
 
 
 
+
+// =============================================================================
+// Unison Tests (prd-unison Phase 1)
+// =============================================================================
+
+TEST_CASE("Codegen: unison stdlib function", "[codegen][unison]") {
+    SECTION("compiles with default args") {
+        auto result = akkado::compile(R"(
+            fn voice(f, g, v, e) -> sine(f)
+            unison(440, 1, 1, voice) |> out(%)
+        )");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.severity != akkado::Severity::Error);
+        }
+        REQUIRE(result.success);
+        // Default voices=2 → 2 voice instances.
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SIN) == 2);
+        CHECK(count_instructions(insts, cedar::Opcode::PAN) == 2);
+    }
+
+    SECTION("voices=N emits N voice instances at distinct state_ids") {
+        auto result = akkado::compile(R"(
+            unison(440, 1, 1, (f, g, v, e) -> sine(f), voices: 5) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SIN) == 5);
+        CHECK(count_instructions(insts, cedar::Opcode::PAN) == 5);
+        // Each voice's oscillator must get a distinct state_id so hot-swap
+        // state preservation tracks them independently.
+        std::set<std::uint32_t> state_ids;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::OSC_SIN) state_ids.insert(inst.state_id);
+        }
+        CHECK(state_ids.size() == 5);
+    }
+
+    SECTION("voices=1 takes the centered special-case branch") {
+        auto result = akkado::compile(R"(
+            unison(440, 1, 1, (f, g, v, e) -> sine(f), voices: 1) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        // Special-case branch: a single centered voice, no linspace unroll.
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SIN) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::PAN) == 1);
+    }
+
+    SECTION("voices left at default still const-folds the match arm") {
+        // Regression: a defaulted `voices` param must resolve as a compile-time
+        // literal so match(voices) folds and linspace sees a constant.
+        auto result = akkado::compile(R"(
+            fn voice(f, g, v, e) -> saw(f)
+            unison(220, 1, 1, voice) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) == 2);
+    }
+
+    SECTION("voices not a compile-time literal errors") {
+        auto result = akkado::compile(R"(
+            fn voice(f, g, v, e) -> sine(f)
+            n = param("n", 4, 1, 16)
+            unison(440, 1, 1, voice, voices: n) |> out(%)
+        )");
+        REQUIRE_FALSE(result.success);
+        bool has_e173 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E173") has_e173 = true;
+        }
+        CHECK(has_e173);
+    }
+
+    SECTION("ext record fields are accessible inside the instrument") {
+        auto result = akkado::compile(R"(
+            fn rich(freq, gate, vel, ext) ->
+                saw(freq, ext.phase) * ar(gate, 0.05 + ext.idx * 0.005, 0.4) * vel
+            unison(440, 1, 1, rich, voices: 4, detune: 0.3, phase: 0.25) |> out(%)
+        )");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.severity != akkado::Severity::Error);
+        }
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) == 4);
+    }
+
+    SECTION("unison detune is runtime-modulatable") {
+        auto result = akkado::compile(R"(
+            fn voice(f, g, v, e) -> saw(f)
+            d = param("detune", 0.3, 0, 1)
+            unison(440, 1, 1, voice, voices: 4, detune: d) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) == 4);
+    }
+
+    SECTION("composes with poly (stereo poly required)") {
+        auto result = akkado::compile(R"(
+            fn voice(f, g, v, e) -> saw(f)
+            fn fat(f, g, v) -> unison(f, g, v, voice, voices: 4)
+            pat("c4 e4") |> poly(%, fat, 2) |> out(%)
+        )");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.severity != akkado::Severity::Error);
+        }
+        REQUIRE(result.success);
+        // poly is a runtime voice allocator: the unison body is compiled once
+        // and runtime-multiplexed across poly slots, so it contributes exactly
+        // unison_voices (4) saw instances.
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) == 4);
+    }
+}

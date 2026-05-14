@@ -41,6 +41,42 @@ fn multiband3fx(sig, f1, f2, fx_lo, fx_mid, fx_hi) -> {
 
 fn beat(n) -> {trigger(1/n)}
 
+// unison(freq, gate, vel, instrument, voices, detune, width, phase)
+// Multiplies a single note across N detuned, panned, phase-shifted voices.
+// Returns a stereo signal. `instrument` is a 4-arg function (freq, gate, vel, ext)
+// where ext = {idx, count, detune_st, pan, phase}.
+//   voices  - compile-time integer literal, sane range 1..16 (soft limit:
+//             larger values compile but grow the AST; voices<=0 collapses
+//             linspace to a single centered voice).
+//   detune  - per-voice frequency spread in SEMITONES (runtime signal/const).
+//   width   - per-voice stereo pan spread, -width..+width (runtime).
+//   phase   - per-voice initial-phase spread, 0..phase cycles (runtime).
+fn unison(freq, gate, vel, instrument,
+          voices = 2, detune = 0.5, width = 0.5, phase = 0) -> match(voices) {
+    // voices == 1: linspace(-1,1,1) collapses to [-1] rather than [0], so the
+    // general path would produce an off-center detuned voice. Special-case it
+    // to a single centered, undetuned, in-phase voice.
+    1: pan(instrument(freq, gate, vel,
+                      { idx: 0, count: 1, detune_st: 0, pan: 0, phase: 0 }), 0)
+    _: {
+        unit = linspace(-1, 1, voices)
+        map(unit, (u, idx) -> {
+            d_st = u * detune
+            v_freq = freq * pow(2, d_st / 12)
+            v_pan = u * width
+            v_phase = (idx / voices) * phase
+            ext = {
+                idx: idx,
+                count: voices,
+                detune_st: d_st,
+                pan: v_pan,
+                phase: v_phase
+            }
+            pan(instrument(v_freq, gate, vel, ext), v_pan)
+        }) |> sum(%)
+    }
+}
+
 )akkado";
 
 /// Line count for diagnostic offset calculation (computed at compile time)
