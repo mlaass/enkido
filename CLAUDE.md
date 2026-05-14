@@ -141,6 +141,30 @@ cmake -B build-cedar cedar/
 cmake --build build-cedar
 ```
 
+## Releases
+
+Version bumps go through `scripts/bump-version.sh` — **never edit `VERSION`
+or `web/package.json` versions by hand, and never create a `vX.Y.Z` tag
+manually.**
+
+```bash
+./scripts/bump-version.sh <major|minor|patch>
+```
+
+The script reads the current version from `VERSION`, computes the new one,
+and refuses to run unless:
+- the working tree is clean,
+- the tag `vX.Y.Z` does not already exist,
+- `CHANGELOG.md` has a matching `## [X.Y.Z]` section (add it first via the
+  `/update-changelog` skill).
+
+On success it updates `VERSION` + `web/package.json`, commits `Release vX.Y.Z`,
+and creates the `vX.Y.Z` tag. Push with `git push origin master --tags`.
+
+The correct release order is: (1) write the CHANGELOG entry, (2) run
+`bump-version.sh`, (3) push. Tagging before the script runs leaves `VERSION`
+out of sync with the tag.
+
 ## Project Structure
 
 ```
