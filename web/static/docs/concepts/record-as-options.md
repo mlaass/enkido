@@ -17,7 +17,7 @@ osc("saw", 220) |> waterfall(%, "scope", {
     fft: 1024,
     gradient: "viridis",
     angle: 270,
-}) |> out(%, %)
+}) |> out(%)
 ```
 
 Three pieces have to line up:
@@ -110,8 +110,8 @@ Once `prd-record-argument-spread.md` lands, callers can build option presets and
 ```akkado
 // Future — pending the spread PRD.
 default_scope = {fft: 1024, gradient: "viridis", angle: 270}
-osc("saw", 220) |> waterfall(%, "left",  ..default_scope)              |> out(%, %)
-osc("saw", 110) |> waterfall(%, "right", ..default_scope, angle: 90)   |> out(%, %)
+osc("saw", 220) |> waterfall(%, "left",  ..default_scope)              |> out(%)
+osc("saw", 110) |> waterfall(%, "right", ..default_scope, angle: 90)   |> out(%)
 ```
 
 The `accepts_spread` bit on `OptionSchema` already marks each schema as spread-compatible; the editor will surface remaining unfilled options once the syntax is live.

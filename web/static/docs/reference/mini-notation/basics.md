@@ -61,7 +61,7 @@ Space-separated notes play in sequence over one cycle:
 
 ```akk
 // Four notes per cycle
-pat("c4 e4 g4 c5") |> ((f) -> osc("sin", f) * ar(trigger(4))) |> out(%, %)
+pat("c4 e4 g4 c5") |> ((f) -> osc("sin", f) * ar(trigger(4))) |> out(%)
 ```
 
 ## Rests
@@ -196,7 +196,7 @@ pat("bd sn")/2     // This divides the SIGNAL by 2, not the pattern!
 Basic pattern playback:
 
 ```akk
-pat("c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(%, %)
+pat("c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(%)
 ```
 
 ## Practical examples
@@ -205,21 +205,21 @@ pat("c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(%, %)
 // Simple melody
 pat("c4 e4 g4 e4") |> ((f) ->
     osc("saw", f) |> lp(%, 1500) * ar(trigger(4))
-) |> out(%, %)
+) |> out(%)
 ```
 
 ```akk
 // Chord progression
 chord("C Em Am G") |> ((f) ->
     osc("saw", f) |> lp(%, 800) * ar(trigger(1), 0.1, 0.5)
-) |> out(%, %)
+) |> out(%)
 ```
 
 ```akk
 // Rhythmic pattern with rests
 pat("c4 ~ e4 ~ g4 ~ e4 ~") |> ((f) ->
     osc("tri", f) * ar(trigger(8), 0.01, 0.1)
-) |> out(%, %)
+) |> out(%)
 ```
 
 Related: [Sequencing](../builtins/sequencing), [Closures](../language/closures)

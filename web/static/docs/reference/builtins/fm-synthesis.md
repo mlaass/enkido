@@ -19,7 +19,7 @@ The **carrier** is the oscillator whose pitch you hear. It runs at the perceived
 
 ```akk
 // Sine carrier at 440 Hz, no modulation yet
-osc("sin", 440) |> out(%, %)
+osc("sin", 440) |> out(%)
 ```
 
 ## modulator
@@ -28,7 +28,7 @@ The **modulator** is a second oscillator whose output is added to the carrier's 
 
 ```akk
 // Slow vibrato. Modulator at 5 Hz, ±10 Hz swing
-osc("sin", 440 + osc("sin", 5) * 10) |> out(%, %)
+osc("sin", 440 + osc("sin", 5) * 10) |> out(%)
 ```
 
 ## index
@@ -37,7 +37,7 @@ The **modulation index** is the modulator's amplitude. Low values give subtle vi
 
 ```akk
 // Bell-like timbre with a high modulation index
-osc("sin", 440 + osc("sin", 660) * 200) |> out(%, %)
+osc("sin", 440 + osc("sin", 660) * 200) |> out(%)
 ```
 
 ## ratio
@@ -47,13 +47,13 @@ The **frequency ratio** between modulator and carrier determines harmonic conten
 ```akk
 // 2:1 ratio carrier:modulator (classic harmonic FM)
 freq = 220
-osc("sin", freq + osc("sin", freq * 2) * 100) |> out(%, %)
+osc("sin", freq + osc("sin", freq * 2) * 100) |> out(%)
 ```
 
 ```akk
 // Inharmonic ratio for a bell
 freq = 220
-osc("sin", freq + osc("sin", freq * 1.41) * 300) |> out(%, %)
+osc("sin", freq + osc("sin", freq * 1.41) * 300) |> out(%)
 ```
 
 ## sideband
@@ -62,7 +62,7 @@ FM produces **sidebands** at carrier ± n·modulator for integer n. The modulati
 
 ```akk
 // FM using phasor as modulator (sawtooth-shaped sweep)
-osc("sin", 440 + osc("phasor", 5) * 100) |> out(%, %)
+osc("sin", 440 + osc("phasor", 5) * 100) |> out(%)
 ```
 
 ## harmonic
@@ -71,7 +71,7 @@ For **harmonic** FM, the modulator's frequency is an integer multiple of the car
 
 ```akk
 // Harmonic FM with modulator at 2x carrier frequency
-osc("sin", 110 + osc("sin", 220) * 80) |> out(%, %)
+osc("sin", 110 + osc("sin", 220) * 80) |> out(%)
 ```
 
 Related: [oscillators](oscillators), [modulation](modulation), [math](math)

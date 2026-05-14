@@ -522,7 +522,7 @@ This enables efficient polyphonic synthesis:
 
 ```
 // Three parallel oscillators, summed together
-[220, 330, 440] |> map(%, f -> saw(f)) |> sum(%) |> out(%, %)
+[220, 330, 440] |> map(%, f -> saw(f)) |> sum(%) |> out(%)
 ```
 
 The compiler expands this into:
@@ -532,7 +532,7 @@ The compiler expands this into:
 temp1 = saw(220)
 temp2 = saw(330)
 temp3 = saw(440)
-add(temp1, add(temp2, temp3)) |> out(%, %)
+add(temp1, add(temp2, temp3)) |> out(%)
 ```
 
 **Constraints:**
@@ -551,7 +551,7 @@ fn poly(freqs, voice_fn) -> {
 }
 
 // Usage:
-poly([220, 330, 440], f -> saw(f) |> lp(%, 1000)) |> out(%, %)
+poly([220, 330, 440], f -> saw(f) |> lp(%, 1000)) |> out(%)
 ```
 
 ## 7. Match Expressions

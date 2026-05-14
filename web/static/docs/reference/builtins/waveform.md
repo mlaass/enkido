@@ -35,7 +35,7 @@ Displays the signal as a min/max envelope over time. In filled mode (default), s
 
 ```akk
 // Basic waveform
-osc("saw", 110) |> waveform(%) |> out(%, %)
+osc("saw", 110) |> waveform(%) |> out(%)
 ```
 
 ## scale
@@ -44,7 +44,7 @@ Amplitude multiplier for the displayed envelope. Useful when the signal is quiet
 
 ```akk
 // Zoomed in for a quiet signal
-osc("sin", 440) * 0.3 |> waveform(%, "quiet signal", {scale: 3.0}) |> out(%, %)
+osc("sin", 440) * 0.3 |> waveform(%, "quiet signal", {scale: 3.0}) |> out(%)
 ```
 
 ## filled
@@ -53,12 +53,12 @@ Toggle between filled-envelope mode (`true`, default) and line-waveform mode (`f
 
 ```akk
 // Line waveform
-osc("sin", 440) |> waveform(%, {filled: false}) |> out(%, %)
+osc("sin", 440) |> waveform(%, {filled: false}) |> out(%)
 ```
 
 ```akk
 // Wide filled envelope
-osc("saw", 55) |> lp(%, 400) |> waveform(%, "bass", {width: 400, height: 80}) |> out(%, %)
+osc("saw", 55) |> lp(%, 400) |> waveform(%, "bass", {width: 400, height: 80}) |> out(%)
 ```
 
 Related: [oscilloscope](oscilloscope), [spectrum](spectrum)

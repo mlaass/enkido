@@ -47,17 +47,17 @@ bun run dev
 
 ```akkado
 // Simple oscillator patch
-osc("sin", 440) |> out(%, %)
+osc("sin", 440) |> out(%)
 
 // Pattern with field access
-pat("c4 e4 g4") as e |> osc("saw", e.freq) |> % * e.vel |> out(%, %)
+pat("c4 e4 g4") as e |> osc("saw", e.freq) |> % * e.vel |> out(%)
 
 // Chord with envelope
-C4' |> osc("tri", %) |> adsr(%.trig, 0.01, 0.2) |> out(%, %)
+C4' |> osc("tri", %) |> adsr(%.trig, 0.01, 0.2) |> out(%)
 
 // Runtime parameters exposed in UI
 freq = param("freq", 440, 20, 2000)
-osc("sin", freq) |> out(%, %)
+osc("sin", freq) |> out(%)
 ```
 
 ## Architecture

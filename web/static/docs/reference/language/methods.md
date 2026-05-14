@@ -58,7 +58,7 @@ This is what makes [userspace operators](../builtins/state.md) like `step` read 
 ```akk
 step = (arr, trig) -> arr[counter(trig)]
 
-[60, 64, 67, 72].step(trigger(4)) |> mtof(%) |> sine(%) |> out(%, %)
+[60, 64, 67, 72].step(trigger(4)) |> mtof(%) |> sine(%) |> out(%)
 ```
 
 ## Mixing pipes and methods

@@ -36,19 +36,19 @@ All arithmetic operators work on signals at audio rate:
 
 ```akk
 // Addition - mix two oscillators
-osc("sin", 220) + osc("sin", 330) |> out(%, %)
+osc("sin", 220) + osc("sin", 330) |> out(%)
 
 // Subtraction - phase cancellation
-osc("sin", 220) - osc("sin", 220.5) |> out(%, %)
+osc("sin", 220) - osc("sin", 220.5) |> out(%)
 
 // Multiplication - amplitude modulation
-osc("sin", 220) * osc("sin", 5) |> out(%, %)
+osc("sin", 220) * osc("sin", 5) |> out(%)
 
 // Division - scaling
-osc("saw", 110) / 2 |> out(%, %)
+osc("saw", 110) / 2 |> out(%)
 
 // Power - exponential curves
-lfo(0.5) ^ 2 |> out(%, %)
+lfo(0.5) ^ 2 |> out(%)
 ```
 
 ## Comparison operators
@@ -57,10 +57,10 @@ Compare two signals sample-by-sample. Output is `1.0` (true) or `0.0` (false).
 
 ```akk
 // Gate from a continuous signal
-lfo(0.5) > 0 |> ar(%, 0.01, 0.1) |> out(%, %)
+lfo(0.5) > 0 |> ar(%, 0.01, 0.1) |> out(%)
 
 // Square wave from a sine via threshold
-osc("sin", 440) > 0 |> out(%, %)
+osc("sin", 440) > 0 |> out(%)
 
 // Range detection
 freq = lfo(0.5) * 1000
@@ -95,7 +95,7 @@ There is no infix ternary; use the `select` function:
 ```akk
 // Switch oscillators based on a gate
 gate = pat("1 0 1 0")
-select(gate, osc("saw", 440), osc("sqr", 220)) |> out(%, %)
+select(gate, osc("saw", 440), osc("sqr", 220)) |> out(%)
 ```
 
 ## Operator desugaring
@@ -125,7 +125,7 @@ The `|>` operator defines signal flow. It has the lowest precedence so it always
 
 ```akk
 // Signal flows left to right
-osc("saw", 110) |> lp(%, 800) |> out(%, %)
+osc("saw", 110) |> lp(%, 800) |> out(%)
 ```
 
 See [Pipes & Holes](pipes) for full details.
@@ -136,7 +136,7 @@ The `%` symbol is an explicit input port:
 
 ```akk
 // % refers to the left-hand side of |>
-osc("saw", 110) |> lp(%, 500) |> out(%, %)
+osc("saw", 110) |> lp(%, 500) |> out(%)
 ```
 
 ## Combining operators
@@ -169,10 +169,10 @@ Negation works on numbers and signals:
 saw(-110)   // Won't work - use neg()
 
 // Correct way
-osc("saw", 110) |> neg(%) |> out(%, %)
+osc("saw", 110) |> neg(%) |> out(%)
 
 // Or multiply by -1
-osc("saw", 110) * -1 |> out(%, %)
+osc("saw", 110) * -1 |> out(%)
 ```
 
 Related: [Pipes & Holes](pipes), [Math Functions](../builtins/math), [Conditionals & Logic](conditionals)

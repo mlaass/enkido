@@ -56,7 +56,7 @@ Description of how the filter works...
 
 ```akk
 // Example code
-saw(220) |> lp(%, 800) |> out(%, %)
+saw(220) |> lp(%, 800) |> out(%)
 ```
 
 Related: [hp](#hp), [bp](#bp)

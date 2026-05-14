@@ -55,7 +55,7 @@ Equivalent to the `+` operator.
 
 ```akk
 // Mixing two oscillators
-add(osc("sin", 220), osc("sin", 330)) * 0.5 |> out(%, %)
+add(osc("sin", 220), osc("sin", 330)) * 0.5 |> out(%)
 ```
 
 ---
@@ -73,7 +73,7 @@ Equivalent to the `-` operator.
 
 ```akk
 // Difference of oscillators
-sub(osc("sin", 220), osc("sin", 221)) |> out(%, %)
+sub(osc("sin", 220), osc("sin", 221)) |> out(%)
 ```
 
 ---
@@ -91,7 +91,7 @@ Equivalent to the `*` operator. Commonly used for amplitude modulation.
 
 ```akk
 // Ring modulation
-mul(osc("sin", 220), osc("sin", 30)) |> out(%, %)
+mul(osc("sin", 220), osc("sin", 30)) |> out(%)
 ```
 
 ---
@@ -122,7 +122,7 @@ Equivalent to the `^` operator.
 
 ```akk
 // Exponential curve
-pow(lfo(0.5), 2) |> out(%, %)
+pow(lfo(0.5), 2) |> out(%)
 ```
 
 ---
@@ -139,7 +139,7 @@ pow(lfo(0.5), 2) |> out(%, %)
 
 ```akk
 // Invert phase
-neg(osc("sin", 220)) |> out(%, %)
+neg(osc("sin", 220)) |> out(%)
 ```
 
 ---
@@ -156,7 +156,7 @@ Useful for full-wave rectification or envelope following.
 
 ```akk
 // Full-wave rectification
-abs(osc("sin", 110)) |> lp(%, 50) |> out(%, %)
+abs(osc("sin", 110)) |> lp(%, 50) |> out(%)
 ```
 
 ---
@@ -203,7 +203,7 @@ Useful for exponential envelopes and frequency scaling.
 
 ```akk
 // Quantize an LFO
-floor(lfo(0.5) * 8) / 8 |> out(%, %)
+floor(lfo(0.5) * 8) / 8 |> out(%)
 ```
 
 ---
@@ -231,7 +231,7 @@ floor(lfo(0.5) * 8) / 8 |> out(%, %)
 
 ```akk
 // Limit signal to 0.5
-min(osc("sin", 220), 0.5) |> out(%, %)
+min(osc("sin", 220), 0.5) |> out(%)
 ```
 
 ---
@@ -247,7 +247,7 @@ min(osc("sin", 220), 0.5) |> out(%, %)
 
 ```akk
 // Ensure signal doesn't go below 0
-max(osc("sin", 220), 0) |> out(%, %)
+max(osc("sin", 220), 0) |> out(%)
 ```
 
 ---
@@ -266,7 +266,7 @@ max(osc("sin", 220), 0) |> out(%, %)
 
 ```akk
 // Keep signal in -0.5 to 0.5 range
-clamp(osc("saw", 110), -0.5, 0.5) |> out(%, %)
+clamp(osc("saw", 110), -0.5, 0.5) |> out(%)
 ```
 
 ---
@@ -285,7 +285,7 @@ When the value exceeds hi, it wraps to lo (and vice versa). Useful for creating 
 
 ```akk
 // Wrapped phasor
-wrap(osc("phasor", 1) * 3, 0, 1) |> out(%, %)
+wrap(osc("phasor", 1) * 3, 0, 1) |> out(%)
 ```
 
 ---
@@ -306,12 +306,12 @@ These functions operate on values in **radians**. They are pure math functions, 
 
 ```akk
 // Create a sine wave manually from a phasor
-sin(osc("phasor", 440) * 2 * 3.14159) |> out(%, %)
+sin(osc("phasor", 440) * 2 * 3.14159) |> out(%)
 ```
 
 ```akk
 // Waveshaping with sine
-osc("saw", 110) |> sin(% * 3.14159) |> out(%, %)
+osc("saw", 110) |> sin(% * 3.14159) |> out(%)
 ```
 
 ---
@@ -326,7 +326,7 @@ osc("saw", 110) |> sin(% * 3.14159) |> out(%, %)
 
 ```akk
 // Cosine is sine shifted by 90 degrees
-cos(osc("phasor", 440) * 2 * 3.14159) |> out(%, %)
+cos(osc("phasor", 440) * 2 * 3.14159) |> out(%)
 ```
 
 ---
@@ -341,7 +341,7 @@ cos(osc("phasor", 440) * 2 * 3.14159) |> out(%, %)
 
 ```akk
 // Tangent waveshaping (careful - goes to infinity!)
-osc("sin", 110) * 0.3 |> tan(%) |> clamp(%, -1, 1) |> out(%, %)
+osc("sin", 110) * 0.3 |> tan(%) |> clamp(%, -1, 1) |> out(%)
 ```
 
 ---
@@ -378,7 +378,7 @@ Useful for soft saturation effects.
 
 ```akk
 // Soft saturation using atan
-osc("saw", 110) * 3 |> atan(%) / 1.57 |> out(%, %)
+osc("saw", 110) * 3 |> atan(%) / 1.57 |> out(%)
 ```
 
 ---
@@ -432,12 +432,12 @@ The `tanh` function outputs values between -1 and 1, making it useful for custom
 
 ```akk
 // Manual saturation using tanh
-osc("saw", 110) * 3 |> tanh(%) |> out(%, %)
+osc("saw", 110) * 3 |> tanh(%) |> out(%)
 ```
 
 ```akk
 // Adjustable saturation (multiply input for more drive)
-osc("saw", 110) |> tanh(% * 5) |> out(%, %)
+osc("saw", 110) |> tanh(% * 5) |> out(%)
 ```
 
 Related: [saturate](distortion#saturate)

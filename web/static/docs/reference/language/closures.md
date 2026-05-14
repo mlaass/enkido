@@ -35,7 +35,7 @@ Closures are commonly used with patterns and higher-order functions:
 
 ```akk
 // Pattern triggers closure for each note
-pat("c4 e4 g4") |> ((freq) -> osc("sin", freq) * ar(trigger(4))) |> out(%, %)
+pat("c4 e4 g4") |> ((freq) -> osc("sin", freq) * ar(trigger(4))) |> out(%)
 ```
 
 ## Closures as voices
@@ -48,7 +48,7 @@ voice = (freq) ->
     osc("saw", freq) |> lp(%, 1000) * ar(trigger(4))
 
 // Use with a pattern
-pat("c3 e3 g3 c4") |> voice |> out(%, %)
+pat("c3 e3 g3 c4") |> voice |> out(%)
 ```
 
 ## Multiple parameters
@@ -70,7 +70,7 @@ synth = (f) ->
     |> lp(%, 800 + osc("sin", 2) * 400)
     |> saturate(%, 2)
 
-synth(110) |> out(%, %)
+synth(110) |> out(%)
 ```
 
 ## Capturing variables
@@ -81,7 +81,7 @@ Closures capture variables from their surrounding scope:
 cutoff = 1200
 filter_voice = (freq) -> osc("saw", freq) |> lp(%, cutoff)
 
-filter_voice(220) |> out(%, %)
+filter_voice(220) |> out(%)
 ```
 
 ## Returning closures from `fn`
@@ -92,7 +92,7 @@ A `fn` whose body is a closure expression returns a function value that captures
 fn make_filter(cut) -> (sig) -> lp(sig, cut, 0.7, 0.5, 0.5)
 
 filt = make_filter(1000)
-noise() |> filt(%) |> out(%, %)
+noise() |> filt(%) |> out(%)
 ```
 
 The captured params are bound when the factory is called and remain read-only inside the returned closure. Nested factories work too: `fn f(a) -> (b) -> (c) -> a + b + c`.
@@ -107,7 +107,7 @@ add3 = add(3, _)         // (x) -> add(3, x)
 add3(4)                  // 7
 
 soft_lp = lp(_, 500, 0.7, 0.5, 0.5)
-noise() |> soft_lp(%) |> out(%, %)
+noise() |> soft_lp(%) |> out(%)
 ```
 
 Each `_` becomes a parameter of the resulting closure in left-to-right order. Works for both builtins and user-defined functions. Useful with higher-order helpers: `map(arr, add(3, _))`.
@@ -123,7 +123,7 @@ f = compose(double, inc)   // (x) -> inc(double(x))
 f(5)                       // 11
 
 pipeline = compose(lp(_, 1000, 0.7, 0.5, 0.5), hp(_, 200, 0.7, 0.5, 0.5))
-saw(440) |> pipeline(%) |> out(%, %)
+saw(440) |> pipeline(%) |> out(%)
 ```
 
 `compose()` accepts 2 or more function-valued arguments: closures, fn refs, or partial applications. The result is itself a function value.

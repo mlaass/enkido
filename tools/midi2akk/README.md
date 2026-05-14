@@ -54,7 +54,7 @@ drums = pat("[c2 _ _ _ d2 _ _ _ c2 _ _ _ d2 _ _ _]")
   |> soundfont(%, "GM.sf3", 128)
 
 // Mix down to stereo with even gain per track
-(piano_lead + bass + drums) * (1.0 / 3) |> out(%, %)
+(piano_lead + bass + drums) * (1.0 / 3) |> out(%)
 ```
 
 Polyphonic tracks are split into monophonic voices (`<name>_v1`, `<name>_v2`,

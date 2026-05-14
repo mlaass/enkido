@@ -352,7 +352,7 @@ When using patterns with pipe binding (`as`), event fields are accessible.
 
 **Example:**
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
 ```
 
 ## Chord Qualities

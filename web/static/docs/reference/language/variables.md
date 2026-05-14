@@ -22,7 +22,7 @@ Use `=` to bind a value to a name:
 freq = 440
 
 // Use it in oscillators
-osc("sin", freq) |> out(%, %)
+osc("sin", freq) |> out(%)
 ```
 
 ## Signal variables
@@ -34,7 +34,7 @@ Variables can store entire signal chains:
 osc = osc("saw", 110) |> lp(%, 800)
 
 // Use it multiple times
-osc |> out(%, %)
+osc |> out(%)
 ```
 
 ## Modular patching
@@ -48,7 +48,7 @@ base_freq = 110
 filter_cutoff = 400 + lfo_mod
 
 // Build the patch
-osc("saw", base_freq) |> lp(%, filter_cutoff) |> out(%, %)
+osc("saw", base_freq) |> lp(%, filter_cutoff) |> out(%)
 ```
 
 ## Naming rules

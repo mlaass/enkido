@@ -49,8 +49,8 @@ osc("sin", n"60 64 67")            // bare ints = MIDI notes
 Atoms are sample names. Use with the sampler / out() audio path:
 
 ```akk
-s"bd ~ bd ~" |> out(%, %)
-s"hh*8 [bd sd]" |> out(%, %)
+s"bd ~ bd ~" |> out(%)
+s"hh*8 [bd sd]" |> out(%)
 ```
 
 ## c"…" chord patterns
@@ -58,7 +58,7 @@ s"hh*8 [bd sd]" |> out(%, %)
 Atoms are chord symbols (`Am`, `C7`, `Fmaj7`, …). Multi-voice; consume via `poly()`:
 
 ```akk
-c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) ) |> out(%, %)
+c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) ) |> out(%)
 ```
 
 A chord pattern in a scalar slot errors `E160`. Silently dropping voices is not implicit.
@@ -94,5 +94,5 @@ The `as e` pipe binding does not coerce. `e` remains a Pattern, and `e.freq`, `e
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
   |> osc("saw", e.freq)
   |> lp(%, 200 + e.cutoff * 4000)
-  |> out(%, %)
+  |> out(%)
 ```

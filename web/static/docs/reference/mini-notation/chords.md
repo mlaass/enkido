@@ -72,7 +72,7 @@ A **triad** is a 3-note chord: root, third, fifth. Bare letter names (`C`, `Am`,
 
 ```akk
 // Lots of triad flavors
-c"C Dm Eo Faug Gsus4 A- B+ E5" |> soundfont(@, "gm", 0) |> out(@, @)
+c"C Dm Eo Faug Gsus4 A- B+ E5" |> soundfont(@, "gm", 0) |> out(@)
 ```
 
 ## seventh
@@ -106,7 +106,7 @@ A **sixth** chord stacks a 6th instead of a 7th — open, lush, bossa-nova flavo
 | `m6`, `min6`   | `0 3 7 9`     | Minor 6 |
 
 ```akk
-chord("C6 Am6 Dm6 G6") |> soundfont(@, "gm", 0) |> out(@, @)
+chord("C6 Am6 Dm6 G6") |> soundfont(@, "gm", 0) |> out(@)
 ```
 
 ## extended
@@ -126,7 +126,7 @@ chord("C6 Am6 Dm6 G6") |> soundfont(@, "gm", 0) |> out(@, @)
 
 ```akk
 // Modal jazz vamp — full extensions
-c"Cmaj9 Am11 D13 G13" |> soundfont(@, "gm", 0) |> out(@, @)
+c"Cmaj9 Am11 D13 G13" |> soundfont(@, "gm", 0) |> out(@)
 ```
 
 ## inline
@@ -150,19 +150,19 @@ Chord patterns produce events with multiple voices per step. How those voices re
 - **Internally polyphonic instruments** (`soundfont`) accept chord patterns directly. Every chord voice is dispatched to a separate voice slot inside the instrument, and the per-voice outputs are summed automatically.
 
   ```akk
-  c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@, @)
+  c"CM Am Dm G" |> soundfont(@, "gm", 0) |> out(@)
   ```
 
 - **Mono synths** (oscillators, filters, single-voice DSP) require an explicit `poly(N, instrument_fn)` wrapper to allocate voices. A chord patched directly into a mono synth raises **E410** because there is no implicit voice allocation:
 
   ```akk
   // ✗ E410 — chord into a mono synth has no voice allocator
-  c"CM Am Dm G" |> osc("saw", @.freq) |> out(@, @)
+  c"CM Am Dm G" |> osc("saw", @.freq) |> out(@)
 
   // ✓ poly() wraps the synth in N parallel voices
   fn lead(freq, gate, vel) =
     osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
-  c"CM Am Dm G" |> poly(@, lead, 8) |> out(@, @)
+  c"CM Am Dm G" |> poly(@, lead, 8) |> out(@)
   ```
 
 > **Voice limit**: chord events carry up to **16 voices** per step (`MAX_VALUES_PER_EVENT`). The largest built-in quality is `13` at 6 voices, so every chord in the standard table fits comfortably. Custom voicings registered via `addVoicings()` are truncated past 16 intervals.
@@ -190,7 +190,7 @@ chord("Am C G F").anchor("c4")
 chord("Am C G F").anchor("c4").mode("below")
   |> mtof(%)
   |> osc("saw", %)
-  |> out(%, %)
+  |> out(%)
 ```
 
 ## voicing

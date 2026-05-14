@@ -74,7 +74,7 @@ Pattern events are records with fields accessible via `%`:
 
 Example with pipe binding:
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
 ```
 
 ### Chord Expansion (Strudel-compatible)
@@ -356,7 +356,7 @@ def test_something():
 - Effects without dry/wet params (chorus, flanger, phaser, reverbs) output 100% wet signal. Users mix manually:
   ```akkado
   dry = osc("saw", 220)
-  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(%, %)  // 30% dry, 70% wet
+  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(%)  // 30% dry, 70% wet
   ```
 - Never use bit-packing tricks for parameters. Use the 5 input slots and extended params properly.
 

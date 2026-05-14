@@ -63,7 +63,7 @@ The compiler emits no audio-time instruction for `samples()` — it's a compile-
 ```bash
 # Sample bank from GitHub
 nkido-cli render --bank github:tidalcycles/Dirt-Samples \
-  --seconds 5 -o out.wav --source 'sin(440) |> out(%, %)'
+  --seconds 5 -o out.wav --source 'sin(440) |> out(%)'
 
 # SoundFont from a local path
 nkido-cli render --soundfont ~/Music/gm.sf2 \
@@ -71,7 +71,7 @@ nkido-cli render --soundfont ~/Music/gm.sf2 \
 
 # Single sample from HTTPS, with explicit registry name
 nkido-cli render --sample 'kick=https://example.com/kick.wav' \
-  --seconds 1 -o out.wav --source '0 |> out(%, %)'
+  --seconds 1 -o out.wav --source '0 |> out(%)'
 ```
 
 Every flag accepts any registered scheme. Bare paths are `file://`. Multiple `--bank` / `--soundfont` / `--sample` flags may be combined; banks accumulate in declaration order and are searched first-hit-wins for default-bank `RequiredSample` lookups.

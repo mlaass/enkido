@@ -28,7 +28,7 @@ The directive emits no audio-time instruction. It adds a `UriRequest{kind=Sample
 samples("github:tidalcycles/Dirt-Samples")
 
 // Now sample names from that bank are available in patterns
-pat("bd sd cp ~") |> out(%, %)
+pat("bd sd cp ~") |> out(%)
 ```
 
 ## bank
@@ -40,7 +40,7 @@ Use `.bank("Name")` on a sample pattern to route events to a specific bank inste
 ```akk
 samples("github:tidalcycles/Dirt-Samples")
 
-pat("ho:0 ho:2 ho:4 ho:6").bank("Dirt-Samples") |> out(%, %)
+pat("ho:0 ho:2 ho:4 ho:6").bank("Dirt-Samples") |> out(%)
 ```
 
 ## github
@@ -73,7 +73,7 @@ In the web IDE, dragging a folder onto the editor stores its contents in Indexed
 
 ```akk
 samples("idb:my-kit")
-pat("kick snare hat").bank("my-kit") |> out(%, %)
+pat("kick snare hat").bank("my-kit") |> out(%)
 ```
 
 ## asset
