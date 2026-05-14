@@ -269,13 +269,21 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
     std::uint16_t voice_trig_buf = poly_inst.inputs[3];
     std::uint16_t voice_out_buf = poly_inst.inputs[4];
 
+    // poly is stereo-native: voice_out and mix are adjacent L/R pairs. POLY_BEGIN
+    // has no free input slots, so the R buffers are derived via the +1 adjacency
+    // convention (codegen guarantees the pairs are adjacent).
+    std::uint16_t mix_buf_r = mix_buf + 1;
+    std::uint16_t voice_out_buf_r = voice_out_buf + 1;
+
     // Get PolyAllocState
     auto& poly_state = state_pool_.get_or_create<PolyAllocState>(poly_inst.state_id);
     poly_state.ensure_voices(ctx_.arena);
 
-    // Clear mix buffer to zero
+    // Clear both mix channels to zero
     float* mix = buffer_pool_.get(mix_buf);
+    float* mix_r = buffer_pool_.get(mix_buf_r);
     std::fill_n(mix, BLOCK_SIZE, 0.0f);
+    std::fill_n(mix_r, BLOCK_SIZE, 0.0f);
 
     // =========================================================================
     // Event processing: read OutputEvents from linked SequenceState
@@ -485,11 +493,15 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
             execute(program[ip + 1 + bi]);
         }
 
-        // Accumulate voice output into mix buffer, gated by gate signal
+        // Accumulate voice output into the stereo mix, gated by the (mono)
+        // gate signal applied identically to both channels.
         const float* voice_out = buffer_pool_.get(voice_out_buf);
+        const float* voice_out_r = buffer_pool_.get(voice_out_buf_r);
         const float* gate = buffer_pool_.get(voice_gate_buf);
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            mix[i] += voice_out[i] * gate[i];
+            const float g = gate[i];
+            mix[i]   += voice_out[i]   * g;
+            mix_r[i] += voice_out_r[i] * g;
         }
     }
 

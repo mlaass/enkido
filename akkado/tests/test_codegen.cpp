@@ -6890,11 +6890,93 @@ TEST_CASE("Codegen: velocity suffix in pattern events", "[codegen][pattern][velo
 // Polyphony Tests (poly / mono / legato)
 // =============================================================================
 
-TEST_CASE("Codegen: poly()", "[codegen][poly]") {
-    SECTION("basic poly with named function") {
+TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
+    // poly always outputs a stereo L/R pair (adjacency: R = L+1). A mono voice
+    // body is broadcast into both channels; a stereo body (pan) is preserved.
+
+    SECTION("POLY_BEGIN carries the STEREO_OUTPUT flag") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("c4") |> poly(%, lead, 4) |> out(%, %)
+            pat("c4") |> poly(%, lead, 4) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+
+        auto* poly = find_instruction(insts, cedar::Opcode::POLY_BEGIN);
+        REQUIRE(poly != nullptr);
+        CHECK((poly->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+
+    SECTION("mono voice body broadcasts into both voice-out channels") {
+        // A mono body (osc, no pan) still yields a stereo poly: codegen emits
+        // two COPYs into the adjacent voice-out pair (L and L+1).
+        auto result = akkado::compile(R"(
+            fn lead(freq, gate, vel) -> osc("sin", freq)
+            pat("c4") |> poly(%, lead, 4) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+
+        std::size_t poly_idx = insts.size();
+        for (std::size_t i = 0; i < insts.size(); ++i) {
+            if (insts[i].opcode == cedar::Opcode::POLY_BEGIN) { poly_idx = i; break; }
+        }
+        REQUIRE(poly_idx < insts.size());
+        const auto& poly = insts[poly_idx];
+        std::uint16_t voice_out_l = poly.inputs[4];
+        std::uint16_t voice_out_r = static_cast<std::uint16_t>(voice_out_l + 1);
+
+        bool copy_to_l = false, copy_to_r = false;
+        for (std::size_t i = poly_idx + 1; i < poly_idx + 1 + poly.rate; ++i) {
+            if (insts[i].opcode == cedar::Opcode::COPY) {
+                if (insts[i].out_buffer == voice_out_l) copy_to_l = true;
+                if (insts[i].out_buffer == voice_out_r) copy_to_r = true;
+            }
+        }
+        CHECK(copy_to_l);
+        CHECK(copy_to_r);
+    }
+
+    SECTION("poly output is stereo — out(%) receives an adjacent L/R pair") {
+        auto result = akkado::compile(R"(
+            fn lead(freq, gate, vel) -> osc("sin", freq)
+            pat("c4") |> poly(%, lead, 4) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+
+        auto* output = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(output != nullptr);
+        // out(%) on a stereo signal wires both channels: inputs[1] = inputs[0]+1.
+        CHECK(output->inputs[1] != 0xFFFF);
+        CHECK(output->inputs[1] == output->inputs[0] + 1);
+    }
+
+    SECTION("stereo voice body (pan) keeps both channels through poly") {
+        auto result = akkado::compile(R"(
+            fn lead(freq, gate, vel) -> osc("sin", freq) |> pan(%, 0.5)
+            pat("c4") |> poly(%, lead, 4) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+
+        auto* poly = find_instruction(insts, cedar::Opcode::POLY_BEGIN);
+        auto* output = find_instruction(insts, cedar::Opcode::OUTPUT);
+        REQUIRE(poly != nullptr);
+        REQUIRE(output != nullptr);
+        CHECK((poly->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK(output->inputs[1] == output->inputs[0] + 1);
+    }
+}
+
+TEST_CASE("Codegen: poly()", "[codegen][poly]") {
+    SECTION("basic poly with named function") {
+        // poly is stereo-native, so the correct sink idiom is out(%) — a
+        // single stereo arg. (out(%, %) would auto-escalate per W185 and emit
+        // two OUTPUTs.)
+        auto result = akkado::compile(R"(
+            fn lead(freq, gate, vel) -> osc("sin", freq)
+            pat("c4") |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);

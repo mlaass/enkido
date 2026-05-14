@@ -1034,7 +1034,8 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"poly",      {cedar::Opcode::NOP, 2, 1, true,
                    {"input", "instrument", "voices", "", "", ""},
                    {NAN, NAN, 64.0f, NAN, NAN},
-                   "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128."}},
+                   "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128.",
+                   0, {}, {}, ChannelCount::Stereo, true}},
     // Dual-role builtin: mono(stereo_signal) downmixes stereo→mono via (L+R)*0.5,
     // while mono(instrument) is the monophonic voice manager. The codegen
     // dispatcher routes based on argument type (see handle_mono_call).

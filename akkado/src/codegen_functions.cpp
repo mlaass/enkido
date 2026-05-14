@@ -2023,16 +2023,31 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Allocate scratch buffers for voice parameters and output
+    // Allocate scratch buffers for voice parameters and output.
+    // poly is stereo-native: voice_out and mix are adjacent L/R pairs (R = L+1),
+    // and the VM derives the R buffers via +1 (POLY_BEGIN has no free slots).
     std::uint16_t voice_freq_buf = buffers_.allocate();
     std::uint16_t voice_gate_buf = buffers_.allocate();
     std::uint16_t voice_vel_buf = buffers_.allocate();
     std::uint16_t voice_trig_buf = buffers_.allocate();
     std::uint16_t voice_out_buf = buffers_.allocate();
+    std::uint16_t voice_out_buf_r = buffers_.allocate();
     std::uint16_t mix_buf = buffers_.allocate();
+    std::uint16_t mix_buf_r = buffers_.allocate();
 
-    if (mix_buf == BufferAllocator::BUFFER_UNUSED) {
+    if (voice_freq_buf == BufferAllocator::BUFFER_UNUSED ||
+        voice_gate_buf == BufferAllocator::BUFFER_UNUSED ||
+        voice_vel_buf == BufferAllocator::BUFFER_UNUSED ||
+        voice_trig_buf == BufferAllocator::BUFFER_UNUSED ||
+        voice_out_buf == BufferAllocator::BUFFER_UNUSED ||
+        voice_out_buf_r == BufferAllocator::BUFFER_UNUSED ||
+        mix_buf == BufferAllocator::BUFFER_UNUSED ||
+        mix_buf_r == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+    if (voice_out_buf_r != voice_out_buf + 1 || mix_buf_r != mix_buf + 1) {
+        error("E166", "Internal error: poly stereo buffer allocation not adjacent", n.location);
         return TypedValue::void_val();
     }
 
@@ -2045,12 +2060,13 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     std::size_t poly_begin_idx = instructions_.size();
     cedar::Instruction poly_begin{};
     poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
-    poly_begin.out_buffer = mix_buf;
+    poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
     poly_begin.inputs[0] = voice_freq_buf;
     poly_begin.inputs[1] = voice_gate_buf;
     poly_begin.inputs[2] = voice_vel_buf;
     poly_begin.inputs[3] = voice_trig_buf;
-    poly_begin.inputs[4] = voice_out_buf;
+    poly_begin.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
+    poly_begin.flags = cedar::InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 0;  // Patched after body emission
     poly_begin.state_id = poly_state_id;
     emit(poly_begin);
@@ -2074,43 +2090,62 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // Record body start instruction index
     std::size_t body_start = instructions_.size();
 
-    // Visit body
+    // Visit body — capture the full TypedValue so a stereo body (e.g. a voice
+    // that ends in pan()) keeps both channels.
     std::uint16_t body_result = BufferAllocator::BUFFER_UNUSED;
-    if (func_ref->is_user_function) {
-        // User function: body is directly the body_node
-        body_result = visit(func_ref->closure_node).buffer;
-    } else {
-        // Closure: find body (last child of closure node)
-        const Node& closure_node = ast_->arena[func_ref->closure_node];
-        NodeIndex child = closure_node.first_child;
-        NodeIndex body = NULL_NODE;
-        while (child != NULL_NODE) {
-            const Node& child_node = ast_->arena[child];
-            if (child_node.type == NodeType::Identifier) {
-                // parameter — skip
-            } else {
-                body = child;
-                break;
+    std::uint16_t body_result_r = 0xFFFF;
+    bool body_is_stereo = false;
+    {
+        TypedValue body_tv = TypedValue::void_val();
+        if (func_ref->is_user_function) {
+            // User function: body is directly the body_node
+            body_tv = visit(func_ref->closure_node);
+        } else {
+            // Closure: find body (last child of closure node)
+            const Node& closure_node = ast_->arena[func_ref->closure_node];
+            NodeIndex child = closure_node.first_child;
+            NodeIndex body = NULL_NODE;
+            while (child != NULL_NODE) {
+                const Node& child_node = ast_->arena[child];
+                if (child_node.type == NodeType::Identifier) {
+                    // parameter — skip
+                } else {
+                    body = child;
+                    break;
+                }
+                child = ast_->arena[child].next_sibling;
             }
-            child = ast_->arena[child].next_sibling;
+            if (body != NULL_NODE) {
+                body_tv = visit(body);
+            }
         }
-        if (body != NULL_NODE) {
-            body_result = visit(body).buffer;
+        body_result = body_tv.buffer;
+        body_result_r = body_tv.right_buffer;
+        body_is_stereo = body_tv.is_stereo() || is_stereo_buffer(body_result);
+        // Pipe-alias path: the TypedValue may not carry the R buffer itself
+        // (variable/alias lookups). Resolve it via the legacy stereo map.
+        if (body_is_stereo && body_result_r == 0xFFFF &&
+            body_result != BufferAllocator::BUFFER_UNUSED) {
+            StereoBuffers sb = get_stereo_buffers_by_buffer(body_result);
+            body_result = sb.left;
+            body_result_r = sb.right;
         }
     }
 
-    // If body result != voice_out_buf, emit COPY to wire it
-    if (body_result != BufferAllocator::BUFFER_UNUSED && body_result != voice_out_buf) {
-        cedar::Instruction copy_inst{};
-        copy_inst.opcode = cedar::Opcode::COPY;
-        copy_inst.out_buffer = voice_out_buf;
-        copy_inst.inputs[0] = body_result;
-        copy_inst.inputs[1] = 0xFFFF;
-        copy_inst.inputs[2] = 0xFFFF;
-        copy_inst.inputs[3] = 0xFFFF;
-        copy_inst.inputs[4] = 0xFFFF;
-        copy_inst.state_id = 0;
-        emit(copy_inst);
+    // Wire the body result into the stereo voice-out pair. op_copy is
+    // mono-only, so a stereo body needs two COPYs (L and R); a mono body is
+    // broadcast (dual-mono) into both channels. These COPYs are inside the
+    // inlined body and re-run per voice.
+    if (body_is_stereo) {
+        emit(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, voice_out_buf, body_result));
+        emit(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, voice_out_buf_r, body_result_r));
+    } else if (body_result != BufferAllocator::BUFFER_UNUSED) {
+        emit(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, voice_out_buf, body_result));
+        emit(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, voice_out_buf_r, body_result));
     }
 
     // Record body end
@@ -2160,7 +2195,8 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     poly_init.poly_steal_strategy = 0;  // oldest
     state_inits_.push_back(std::move(poly_init));
 
-    return cache_and_return(node, TypedValue::signal(mix_buf));
+    register_stereo(node, mix_buf, mix_buf_r);
+    return cache_and_return(node, TypedValue::stereo_signal(mix_buf, mix_buf_r));
 }
 
 } // namespace akkado

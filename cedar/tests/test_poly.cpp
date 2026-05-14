@@ -19,22 +19,27 @@ using Catch::Matchers::WithinAbs;
 // Helper: Build a POLY program with OSC_SIN body
 // ============================================================================
 
-// Buffer layout for poly tests:
+// Buffer layout for poly tests. poly is stereo-native: voice_out and mix are
+// adjacent L/R pairs (R = L+1), and POLY_BEGIN derives the R buffers via +1.
 //   0 = voice freq (written by POLY_BEGIN per-voice)
 //   1 = voice gate
 //   2 = voice vel
 //   3 = voice trig
-//   4 = voice output (osc writes here, POLY_BEGIN reads for mix)
-//   5 = mix output (POLY_BEGIN accumulates here)
-//   6 = left output
-//   7 = right output
+//   4 = voice output L (body writes here, POLY_BEGIN reads for mix)
+//   5 = voice output R (= 4 + 1)
+//   6 = mix output L (POLY_BEGIN accumulates here)
+//   7 = mix output R (= 6 + 1)
+//   8 = left output
+//   9 = right output
 
 static constexpr std::uint16_t BUF_FREQ = 0;
 static constexpr std::uint16_t BUF_GATE = 1;
 static constexpr std::uint16_t BUF_VEL  = 2;
 static constexpr std::uint16_t BUF_TRIG = 3;
-static constexpr std::uint16_t BUF_VOICE_OUT = 4;
-static constexpr std::uint16_t BUF_MIX  = 5;
+static constexpr std::uint16_t BUF_VOICE_OUT   = 4;
+static constexpr std::uint16_t BUF_VOICE_OUT_R = 5;
+static constexpr std::uint16_t BUF_MIX   = 6;
+static constexpr std::uint16_t BUF_MIX_R = 7;
 
 static constexpr std::uint32_t POLY_STATE_ID = 0x10000;
 static constexpr std::uint32_t OSC_STATE_ID  = 0x20000;
@@ -48,18 +53,21 @@ TEST_CASE("POLY basic execution with active voices", "[poly]") {
     // Body: OSC_SIN reads freq from BUF_FREQ, writes to BUF_VOICE_OUT
     std::vector<Instruction> program;
 
-    // POLY_BEGIN: rate=1 (body length), out=BUF_MIX,
+    // POLY_BEGIN: rate=2 (body length), out=BUF_MIX (L; R derived as +1),
     //   in0=BUF_FREQ, in1=BUF_GATE, in2=BUF_VEL, in3=BUF_TRIG, in4=BUF_VOICE_OUT
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
         BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
         POLY_STATE_ID);
-    poly_begin.rate = 1; // body length = 1 instruction
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2; // body length = 2 instructions
     program.push_back(poly_begin);
 
-    // Body: OSC_SIN(freq=BUF_FREQ) -> BUF_VOICE_OUT
+    // Body: OSC_SIN(freq=BUF_FREQ) -> BUF_VOICE_OUT, then broadcast mono into R
     program.push_back(Instruction::make_unary(
         Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_VOICE_OUT));
 
     // POLY_END
     program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
@@ -115,11 +123,14 @@ TEST_CASE("POLY XOR state isolation", "[poly]") {
         Opcode::POLY_BEGIN, BUF_MIX,
         BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
         POLY_STATE_ID);
-    poly_begin.rate = 1;
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
     program.push_back(poly_begin);
 
     program.push_back(Instruction::make_unary(
         Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_VOICE_OUT));
 
     program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
     program.push_back(Instruction::make_unary(Opcode::OUTPUT, 0, BUF_MIX));
@@ -217,11 +228,14 @@ TEST_CASE("POLY empty block produces silence", "[poly]") {
         Opcode::POLY_BEGIN, BUF_MIX,
         BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
         POLY_STATE_ID);
-    poly_begin.rate = 1;
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
     program.push_back(poly_begin);
 
     program.push_back(Instruction::make_unary(
         Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_VOICE_OUT));
 
     program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
     program.push_back(Instruction::make_unary(Opcode::OUTPUT, 0, BUF_MIX));
@@ -234,10 +248,12 @@ TEST_CASE("POLY empty block produces silence", "[poly]") {
     std::array<float, BLOCK_SIZE> left{}, right{};
     vm.process_block(left.data(), right.data());
 
-    // Mix buffer should be all zeros
+    // Both mix channels should be all zeros
     const float* mix = vm.buffers().get(BUF_MIX);
+    const float* mix_r = vm.buffers().get(BUF_MIX_R);
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         CHECK(mix[i] == 0.0f);
+        CHECK(mix_r[i] == 0.0f);
     }
 
     // Output should also be silence
@@ -245,6 +261,162 @@ TEST_CASE("POLY empty block produces silence", "[poly]") {
         CHECK(left[i] == 0.0f);
         CHECK(right[i] == 0.0f);
     }
+}
+
+// ============================================================================
+// Stereo: poly is stereo-native — voice_out and mix are L/R pairs (R = L+1)
+// ============================================================================
+
+TEST_CASE("POLY stereo body: distinct L/R channels", "[poly][stereo]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    // Body writes an oscillator into voice_out L and a constant into voice_out
+    // R, so the two mix channels must differ.
+    std::vector<Instruction> program;
+
+    auto poly_begin = Instruction::make_quinary(
+        Opcode::POLY_BEGIN, BUF_MIX,
+        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        POLY_STATE_ID);
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
+    program.push_back(poly_begin);
+
+    program.push_back(Instruction::make_unary(
+        Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(make_const_instruction(
+        Opcode::PUSH_CONST, BUF_VOICE_OUT_R, 0.3f));
+
+    program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
+
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_poly_state(POLY_STATE_ID, 0, 8, 0, 0);
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    poly.voices[0].active = true;
+    poly.voices[0].freq = 440.0f;
+    poly.voices[0].gate = 1.0f;
+    poly.voices[0].vel = 1.0f;
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    const float* mix = vm.buffers().get(BUF_MIX);
+    const float* mix_r = vm.buffers().get(BUF_MIX_R);
+
+    bool channels_differ = false;
+    float l_max = 0.0f, r_max = 0.0f;
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        if (std::abs(mix[i] - mix_r[i]) > 1e-4f) channels_differ = true;
+        l_max = std::max(l_max, std::abs(mix[i]));
+        r_max = std::max(r_max, std::abs(mix_r[i]));
+    }
+    CHECK(channels_differ);
+    CHECK(l_max > 0.1f);
+    CHECK(r_max > 0.1f);
+    // R is a constant 0.3 (one voice, gate 1).
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK_THAT(mix_r[i], WithinAbs(0.3f, 1e-4f));
+    }
+}
+
+TEST_CASE("POLY stereo: multi-voice sums each channel independently",
+          "[poly][stereo]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    // Body copies the per-voice vel into L and the per-voice freq into R, so
+    // each mix channel is the independent sum of a distinct per-voice value.
+    std::vector<Instruction> program;
+
+    auto poly_begin = Instruction::make_quinary(
+        Opcode::POLY_BEGIN, BUF_MIX,
+        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        POLY_STATE_ID);
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
+    program.push_back(poly_begin);
+
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT, BUF_VEL));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_FREQ));
+
+    program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
+
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_poly_state(POLY_STATE_ID, 0, 8, 0, 0);
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    poly.voices[0].active = true;
+    poly.voices[0].freq = 440.0f;
+    poly.voices[0].gate = 1.0f;
+    poly.voices[0].vel = 0.5f;
+
+    poly.voices[1].active = true;
+    poly.voices[1].freq = 880.0f;
+    poly.voices[1].gate = 1.0f;
+    poly.voices[1].vel = 0.25f;
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    const float* mix = vm.buffers().get(BUF_MIX);
+    const float* mix_r = vm.buffers().get(BUF_MIX_R);
+
+    // L = sum of vels = 0.75; R = sum of freqs = 1320. gate is 1 for both.
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK_THAT(mix[i], WithinAbs(0.75f, 1e-3f));
+        CHECK_THAT(mix_r[i], WithinAbs(1320.0f, 0.1f));
+    }
+}
+
+TEST_CASE("POLY mono-equivalent body broadcasts into both channels",
+          "[poly][stereo]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+
+    // Body writes identical content to both voice-out slots — the dual-mono
+    // broadcast real codegen emits for a mono voice body.
+    std::vector<Instruction> program;
+
+    auto poly_begin = Instruction::make_quinary(
+        Opcode::POLY_BEGIN, BUF_MIX,
+        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        POLY_STATE_ID);
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
+    program.push_back(poly_begin);
+
+    program.push_back(Instruction::make_unary(
+        Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_VOICE_OUT));
+
+    program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
+
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_poly_state(POLY_STATE_ID, 0, 8, 0, 0);
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    poly.voices[0].active = true;
+    poly.voices[0].freq = 440.0f;
+    poly.voices[0].gate = 1.0f;
+    poly.voices[0].vel = 1.0f;
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    const float* mix = vm.buffers().get(BUF_MIX);
+    const float* mix_r = vm.buffers().get(BUF_MIX_R);
+
+    float max_abs = 0.0f;
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK(mix[i] == mix_r[i]);  // dual-mono: L and R identical
+        max_abs = std::max(max_abs, std::abs(mix[i]));
+    }
+    CHECK(max_abs > 0.1f);
 }
 
 // ============================================================================
@@ -259,17 +431,20 @@ static std::vector<Instruction> build_seq_poly_program() {
     program.push_back(Instruction::make_nullary(
         Opcode::SEQPAT_QUERY, 0, SEQ_STATE_ID));
 
-    // POLY_BEGIN: rate=1 (body length), out=BUF_MIX
+    // POLY_BEGIN: rate=2 (body length), out=BUF_MIX (L; R derived as +1)
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
         BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
         POLY_STATE_ID);
-    poly_begin.rate = 1;
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
     program.push_back(poly_begin);
 
-    // Body: OSC_SIN(freq=BUF_FREQ) -> BUF_VOICE_OUT
+    // Body: OSC_SIN(freq=BUF_FREQ) -> BUF_VOICE_OUT, then broadcast mono into R
     program.push_back(Instruction::make_unary(
         Opcode::OSC_SIN, BUF_VOICE_OUT, BUF_FREQ, OSC_STATE_ID));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOICE_OUT_R, BUF_VOICE_OUT));
 
     // POLY_END
     program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
