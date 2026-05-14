@@ -1,4 +1,4 @@
-> **Status: COMPLETE** — Implemented and audited 2026-04-21; §5.2 `BuiltinSignature` catalog landed 2026-04-22 as G1 completion. See `docs/audits/prd-stereo-support_audit_2026-04-21.md`. A companion VM-level PRD (stereo-native opcodes) remains a separate, independent track.
+> **Status: COMPLETE** — Implemented and audited 2026-04-21; §5.2 `BuiltinSignature` catalog landed 2026-04-22 as G1 completion. See `docs/audits/prd-stereo-support_audit_2026-04-21.md`. The companion VM-level PRD, [`prd-stereo-native-opcodes.md`](prd-stereo-native-opcodes.md), is now also COMPLETE (2026-05-14): every audio opcode is stereo-native and the auto-lift mechanism is retired.
 >
 > **Intended final location**: `docs/prd-stereo-support.md` (matches the project's newer lowercase convention).
 
@@ -576,7 +576,7 @@ cd experiments && uv run python test_op_mono_downmix.py
 
 ## 13. Related Work
 
-- **Companion PRD (separate, to-be-written)**: "Stereo-Native VM Opcodes" — makes every opcode output a stereo pair at the VM level, treating mono as a degraded-stereo optimisation and retiring dedicated stereo opcodes. Motivated by avoiding opcode duplication for stereo-aware variants. This PRD is designed to be forward-compatible: the language-level type system and auto-lift semantics described here are unchanged by the VM refactor; only the internal codegen path shifts.
+- **Companion PRD (COMPLETE)**: [`prd-stereo-native-opcodes.md`](prd-stereo-native-opcodes.md) — "Stereo-Native VM Opcodes" makes every audio opcode handle a stereo pair in one VM dispatch, treating mono as a widen-on-entry case and retiring the auto-lift mechanism entirely. The language-level type system described here is unchanged by that refactor; the internal codegen path and VM dispatch shifted, and the E181–E185 channel-mismatch errors were relaxed to W181–W185 warnings.
 - **Dependent PRD**: [`prd-audio-input.md`](prd-audio-input.md) — adds `in()` as a stereo-native audio source. That PRD's signature declaration (`output_channels = Stereo`) relies on the type system and stereo-native generator category defined here (§5.2).
 - **Existing work referenced**:
   - `prd-crossfade-audio-fixes.md` — crossfade machinery, relevant for hot-swap edge cases in §10.6

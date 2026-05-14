@@ -26,6 +26,8 @@ subfeatures:
 
 Reverbs simulate acoustic spaces by generating many delayed, filtered reflections. Each algorithm has its own character.
 
+All reverbs are **stereo-native**: a mono input widens into a genuinely stereo tail (cross-coupled tanks, decorrelated comb networks) — no `stereo()` wrapper needed. A stereo input is processed with real inter-channel coupling rather than as two independent mono reverbs.
+
 ## freeverb
 
 **Freeverb** - Classic Schroeder-style algorithmic reverb.

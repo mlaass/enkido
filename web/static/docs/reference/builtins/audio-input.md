@@ -21,7 +21,7 @@ The `in()` builtin exposes external audio as a signal source (microphone, tab/sy
 |--------|--------|---------|-------------|
 | source | string | (UI default) | Optional override: `"mic"`, `"tab"`, or `"file:NAME"` |
 
-Output: **Stereo** signal. Mono effects automatically run per-channel via auto-lift, so `in() |> lp(%, 2000)` is a stereo lowpass with independent state per side.
+Output: **Stereo** signal. Every audio effect is stereo-native, so `in() |> lp(%, 2000)` is a stereo lowpass with independent state per side.
 
 ### Examples
 

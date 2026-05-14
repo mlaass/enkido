@@ -1,21 +1,23 @@
 """
 Test: STEREO_INPUT dispatch flag
 =================================
-Verifies that setting Instruction.flags = STEREO_INPUT_FLAG on a stateful
-unary DSP op makes the VM run the op twice — once for L (buf N → buf M) and
-once for R (buf N+1 → buf M+1) — with independent per-channel state.
+Verifies that setting Instruction.flags = STEREO_INPUT_FLAG on a stereo-native
+DSP op makes the opcode read inputs[0] for L and inputs[0]+1 for R, writing
+out_buffer (M) and out_buffer+1 (M+1) with independent per-channel state in a
+single dispatch.
 
-Expected behavior (per prd-stereo-support.md §6.2 and cedar/src/vm/vm.cpp):
-- When STEREO_INPUT is set, the VM produces two output buffers (M and M+1)
-  from two input buffers (N and N+1).
+Expected behavior (per prd-stereo-native-opcodes.md — auto-lift retired in
+Phase 5; STEREO_INPUT is now only ever paired with STEREO_OUTPUT):
+- When STEREO_INPUT is set, the opcode reads two input buffers (N and N+1)
+  and writes two output buffers (M and M+1) in one stereo-native dispatch.
 - Left and right have distinct filter memory: if L gets a sine and R gets
   silence, the right output remains silent (filter state doesn't leak
   across channels).
-- Bypassing the flag (running the same op plainly on L) should match the
-  L side of the stereo-lifted run, sample for sample.
+- A mono primary input (flag clear) reads inputs[0] for both internal lanes;
+  its L lane matches the stereo run's L lane sample-for-sample.
 
-If this test fails, check the STEREO_INPUT handling at the top of
-VM::execute in cedar/src/vm/vm.cpp.
+If this test fails, check the stereo-native FILTER_SVF_LP body in
+cedar/include/cedar/opcodes/filters.hpp.
 """
 
 import os
@@ -29,7 +31,7 @@ OUT = output_dir("op_stereo_input_flag")
 
 
 def test_independent_channel_state():
-    print("Test: STEREO_INPUT → independent per-channel state")
+    print("Test: STEREO_INPUT → independent per-channel state (single dispatch)")
     sr = 48000
 
     # Build inputs: left gets sine, right gets silence. Adjacent buffers (4, 5).
@@ -100,8 +102,8 @@ def test_independent_channel_state():
 
 
 def test_plain_vs_lifted_left_match():
-    """L side of STEREO_INPUT run should match a plain non-lifted run sample-for-sample."""
-    print("Test: L side of STEREO_INPUT matches plain mono run")
+    """L lane of a STEREO_INPUT run matches a mono-primary-input run sample-for-sample."""
+    print("Test: L lane of STEREO_INPUT matches mono-primary-input run")
     sr = 48000
 
     def run(stereo_flag: bool) -> np.ndarray:

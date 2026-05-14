@@ -2,7 +2,7 @@
 title: Stereo
 category: builtins
 order: 12
-keywords: [stereo, mono, left, right, pan, width, ms_encode, ms_decode, pingpong, downmix, channels, auto-lift]
+keywords: [stereo, mono, left, right, pan, width, ms_encode, ms_decode, pingpong, downmix, channels, stereo-native]
 group: tools
 subgroup: audio-plumbing
 icon: Headphones
@@ -12,9 +12,9 @@ tagline: Pan, width, M/S encoding, and stereo plumbing.
 # Stereo
 
 Stereo signal operations. Akkado tracks channel count (Mono vs Stereo) on every
-signal; mono DSP ops applied to a stereo signal **auto-lift**: a single
-instruction runs twice at dispatch with independent per-channel state, so you
-don't have to duplicate a chain for L and R.
+signal; every audio DSP op is **stereo-native** — one instruction handles both
+channels with independent per-channel state, and a mono input widens
+automatically, so you don't have to duplicate a chain for L and R.
 
 ## stereo
 
@@ -143,23 +143,23 @@ osc("saw", 110)
 
 ---
 
-## Auto-lift
+## Stereo-native effects
 
-Any mono DSP op (`lp`, `hp`, `delay`, `freeverb`, `saturate`, ...) applied
-to a stereo signal **auto-lifts**: the compiler emits one instruction
-flagged `STEREO_INPUT`, and the VM runs the op twice at dispatch (once per
-channel) with independent per-channel DSP state.
+Every audio DSP op (`lp`, `hp`, `delay`, `freeverb`, `saturate`, ...) is
+**stereo-native**: the compiler emits one instruction flagged
+`STEREO_OUTPUT`, and the opcode handles both channels in a single dispatch
+with independent per-channel DSP state. A mono input widens automatically —
+no `stereo()` wrapper needed.
 
 ```akk
-// One instruction per effect; VM runs each op twice at dispatch.
-osc("saw", 220)
-  |> stereo()
+// One instruction per effect; each handles L and R in one dispatch.
+osc("saw", 220)               // mono — widens automatically
   |> lp(%, 500, 0.7)          // stereo lowpass, independent filter state
   |> delay(%, 0.25, 0.5)      // stereo delay lines per channel
-  |> freeverb(%, 0.85, 0.5)   // stereo reverb
+  |> freeverb(%, 0.85, 0.5)   // stereo reverb with cross-coupling
   |> out(%)
 ```
 
 Scalar / control-rate parameters (cutoff, Q, feedback, ...) are shared
-between the L and R passes. If you want independent parameters per
+between the L and R channels. If you want independent parameters per
 channel, split the chain manually with `stereo(lp(left(s), cutL), lp(right(s), cutR))`.

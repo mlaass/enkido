@@ -363,11 +363,10 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Mono & Stereo Signals"
 	},
-	"auto-lift": {
-		"slug": "stereo",
-		"category": "builtins",
-		"title": "Auto-lift",
-		"anchor": "auto-lift"
+	"stereo-native": {
+		"slug": "signals",
+		"category": "concepts",
+		"title": "Mono & Stereo Signals"
 	},
 	"conversion": {
 		"slug": "signals",
@@ -1989,6 +1988,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "pingpong",
 		"anchor": "pingpong"
 	},
+	"stereo-native effects": {
+		"slug": "stereo",
+		"category": "builtins",
+		"title": "Stereo-native effects",
+		"anchor": "stereo-native-effects"
+	},
 	"left": {
 		"slug": "stereo",
 		"category": "builtins",
@@ -3240,7 +3245,7 @@ export const previews: Record<string, string> = {
 	"closures": "Closures are anonymous functions that capture their environment. They connect patterns to synthesis.",
 	"operators": "Akkado uses operators for arithmetic, comparison, logic, and signal flow.",
 	"audio-input": "The  builtin exposes external audio as a signal source (microphone, tab/system audio, or an uploaded file) so any Cedar effect can process it. The...",
-	"stereo": "Stereo signal operations. Akkado tracks channel count (Mono vs Stereo) on every signal; mono DSP ops applied to a stereo signal auto-lift: a...",
+	"stereo": "Stereo signal operations. Akkado tracks channel count (Mono vs Stereo) on every signal; every audio DSP op is stereo-native — one instruction...",
 	"sequencing": "Timing and sequencing functions create rhythmic patterns, triggers, and automation curves synchronized to the global clock.",
 	"delays": "Delay effects create copies of a signal offset in time for echoes, rhythmic effects, and spatial depth.",
 	"samples-loading": "How user-supplied audio reaches the sampler at runtime. The  directive declares a bank URI to fetch before the program runs; the IDE also accepts...",

@@ -1134,9 +1134,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // Most handlers cache via cache_and_return on success, but
                 // several pattern-transform handlers (handle_fast_call et al.)
                 // leave error paths uncached. Without this defensive write a
-                // re-visit (e.g. the channel-type check below at the
-                // !auto_lift loop) cache-misses, re-runs the handler, and
-                // duplicates its diagnostics.
+                // re-visit (e.g. the E186 channel-type check below)
+                // cache-misses, re-runs the handler, and duplicates its
+                // diagnostics.
                 if (node_types_.find(node) == node_types_.end()) {
                     node_types_[node] = tv;
                 }
@@ -1473,17 +1473,18 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // PRD §5.3 rule 1 / §5.2 (G1): declarative channel-type mismatch.
-            // For builtins that do not opt into auto-lift or stereo_native, a
-            // stereo signal in a Mono slot (or vice versa) is a compile error
-            // E186. Special-handler builtins (stereo/mono/left/right/pan/
-            // width/ms_encode/ms_decode/pingpong) never reach this path —
-            // they enforce their own signatures with E181–E184. `out()` is
-            // handled above via E185 and the single-arg expansion branch.
+            // For builtins that are not stereo_native, a stereo signal in a
+            // Mono slot (or vice versa) is a compile error E186. Special-handler
+            // builtins (stereo/mono/left/right/pan/width/ms_encode/ms_decode/
+            // pingpong) never reach this path — they enforce their own
+            // signatures with E181–E184. `out()` is handled above via E185 and
+            // the single-arg expansion branch.
             //
-            // Stereo-native opcodes (prd-stereo-native-opcodes Phase 1) skip
-            // this check because they auto-escalate mono → stereo at the
-            // boundary (mono input is broadcast inside the opcode body).
-            if (func_name != "out" && !builtin->auto_lift && !builtin->stereo_native) {
+            // Stereo-native opcodes (prd-stereo-native-opcodes) skip this check
+            // because they auto-escalate mono → stereo at the boundary (mono
+            // input is broadcast inside the opcode body). As of Phase 5 every
+            // audio-signal opcode is stereo-native; auto-lift is retired.
+            if (func_name != "out" && !builtin->stereo_native) {
                 NodeIndex ch = n.first_child;
                 for (std::size_t ai = 0; ai < arg_buffers.size() &&
                         ai < MAX_BUILTIN_PARAMS && ch != NULL_NODE; ++ai,
@@ -1520,14 +1521,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // Multi-buffer argument detection (stereo or chord expansion).
-            // Stereo auto-lift runs regardless of `requires_state` — stateless
-            // ops (fold, saturate, distort_tanh, ...) must also run twice on
-            // stereo input per PRD §5.2. Chord expansion-to-N still only
+            // Stereo input is consumed by the stereo-native emission path
+            // below (single dispatch, STEREO_INPUT flag). Chord expansion-to-N
             // applies to stateful UGens (per-voice state).
             int expansion_arg_idx = -1;
             std::vector<std::uint16_t> expansion_buffers;
             std::vector<NodeIndex> arg_nodes;
-            bool is_stereo_expansion = false;
 
             if (!arg_buffers.empty()) {
                 NodeIndex arg_iter = n.first_child;
@@ -1561,17 +1560,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     }
                 }
 
-                // Stereo auto-lift is driven by the builtin's declarative
-                // `auto_lift` flag (PRD §5.2, G1 — declarative BuiltinSignature
-                // catalog). Builtins that don't opt in (oscillators, math,
-                // non-lift operations) are NOT silently lifted on stereo input;
-                // mismatches are caught by the E186 channel-type check
-                // downstream. Chord expansion (>2 voices) still fires on its
-                // own branch regardless of `auto_lift`.
-                is_stereo_expansion = (builtin->auto_lift &&
-                                      expansion_arg_idx >= 0 &&
-                                      expansion_buffers.size() == 2 &&
-                                      is_stereo(arg_nodes[static_cast<std::size_t>(expansion_arg_idx)]));
             }
 
             // PRD prd-stereo-native-opcodes Phase 1: declarative stereo-native
@@ -1704,94 +1692,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     TypedValue::stereo_signal(out_left, out_right));
             }
 
-            if (is_stereo_expansion) {
-                current_source_loc_ = call_loc;
-
-                std::size_t n_params = builtin->total_params();
-                auto expanded_args = arg_buffers;
-
-                // Make sure the primary signal arg points at the LEFT buffer
-                // of the stereo pair — the VM computes R as left+1 at dispatch.
-                expanded_args[static_cast<std::size_t>(expansion_arg_idx)] =
-                    expansion_buffers[0];
-
-                // Fill in any remaining defaults with control-rate constants
-                for (std::size_t j = expanded_args.size(); j < n_params; ++j) {
-                    if (builtin->has_default(j)) {
-                        std::uint16_t default_buf = buffers_.allocate();
-                        if (default_buf == BufferAllocator::BUFFER_UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
-                            if (pushed_path) pop_path();
-                            return TypedValue::error_val();
-                        }
-                        cedar::Instruction push_inst{};
-                        push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                        push_inst.out_buffer = default_buf;
-                        push_inst.inputs[0] = 0xFFFF;
-                        push_inst.inputs[1] = 0xFFFF;
-                        push_inst.inputs[2] = 0xFFFF;
-                        push_inst.inputs[3] = 0xFFFF;
-                        encode_const_value(push_inst, builtin->get_default(j));
-                        emit(push_inst);
-                        expanded_args.push_back(default_buf);
-                    }
-                }
-
-                // Allocate adjacent L/R output pair (BufferAllocator is linear
-                // so two back-to-back allocations are guaranteed adjacent).
-                std::uint16_t out_left = buffers_.allocate();
-                std::uint16_t out_right = buffers_.allocate();
-                if (out_left == BufferAllocator::BUFFER_UNUSED ||
-                    out_right == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
-                    if (pushed_path) pop_path();
-                    return TypedValue::error_val();
-                }
-                if (out_right != out_left + 1) {
-                    error("E166", "Internal error: stereo buffer allocation not adjacent",
-                          n.location);
-                    if (pushed_path) pop_path();
-                    return TypedValue::error_val();
-                }
-
-                cedar::Instruction inst{};
-                inst.opcode = builtin->opcode;
-                inst.out_buffer = out_left;
-                inst.inputs[0] = expanded_args.size() > 0 ? expanded_args[0] : 0xFFFF;
-                inst.inputs[1] = expanded_args.size() > 1 ? expanded_args[1] : 0xFFFF;
-                inst.inputs[2] = expanded_args.size() > 2 ? expanded_args[2] : 0xFFFF;
-                inst.inputs[3] = expanded_args.size() > 3 ? expanded_args[3] : 0xFFFF;
-                inst.inputs[4] = expanded_args.size() > 4 ? expanded_args[4] : 0xFFFF;
-                inst.rate = builtin->inst_rate;
-                inst.flags = cedar::InstructionFlag::STEREO_INPUT;
-
-                // FM detection operates on the L pass's frequency input; the R
-                // pass sees the same buffer (VM only shifts inputs[0]).
-                if (is_upgradeable_oscillator(inst.opcode) && !expanded_args.empty()) {
-                    if (is_fm_modulated(expanded_args[0])) {
-                        inst.opcode = upgrade_for_fm(inst.opcode);
-                    }
-                }
-
-                // State ID uses the /L suffix so the mono path
-                // (fnv1a(semantic_path)) stays backward-compatible for
-                // hot-swap (PRD §5.4). The VM XORs this with
-                // STEREO_STATE_XOR_R for the R-channel pass. Stateless
-                // opcodes simply ignore state_id, so the /L path is
-                // harmless there.
-                push_path("L");
-                inst.state_id = compute_state_id();
-                pop_path();
-                emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
-                emit(inst);
-
-                if (pushed_path) pop_path();
-
-                register_stereo(node, out_left, out_right);
-                return cache_and_return(node,
-                    TypedValue::stereo_signal(out_left, out_right));
-            }
-
             // Chord expansion to N instances (stateful UGens only — per-voice state).
             // For stereo-native builtins, each instance allocates an adjacent L/R
             // output pair and sets STEREO_OUTPUT (prd-stereo-native-opcodes §9.10).
@@ -1900,9 +1800,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // Pop the outer stateful path
                 if (pushed_path) pop_path();
 
-                // Build array result. Stereo-source expansion is already
-                // routed through the STEREO_INPUT path above, so we never
-                // hit this branch with is_stereo_expansion==true.
+                // Build array result. Stereo-source primary input is handled
+                // by the stereo-native emission path above (single dispatch),
+                // so this branch only ever sees chord/array expansion.
                 std::uint16_t first_buf = result_elements[0].buffer;
                 auto tv = TypedValue::make_array(std::move(result_elements), first_buf);
 

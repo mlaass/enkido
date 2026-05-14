@@ -6310,12 +6310,11 @@ TEST_CASE("Codegen: out() with stereo signal", "[codegen][stereo]") {
     }
 }
 
-TEST_CASE("Codegen: stereo propagation through mono effects", "[codegen][stereo]") {
-    // With auto-lift (prd-stereo-support §4.2, §6.2), a stereo signal flowing
-    // into a mono DSP op emits a SINGLE instruction carrying the
-    // STEREO_INPUT flag. The VM runs the opcode twice at dispatch, once per
-    // channel, with independent per-channel state — producing the same audio
-    // as two separate instructions but with half the bytecode.
+TEST_CASE("Codegen: stereo propagation through stereo-native effects", "[codegen][stereo]") {
+    // A stereo signal flowing into a stereo-native DSP op emits a SINGLE
+    // instruction carrying STEREO_OUTPUT | STEREO_INPUT. The opcode body
+    // handles both channels in one dispatch with one per-channel state struct
+    // (prd-stereo-native-opcodes; auto-lift retired in Phase 5).
     SECTION("stereo through filter emits one instruction with STEREO_INPUT flag") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
@@ -6401,7 +6400,7 @@ TEST_CASE("Codegen: stereo pipeline examples", "[codegen][stereo]") {
         CHECK(find_instruction(insts, cedar::Opcode::OSC_SAW) != nullptr);
         // stereo() from mono creates 2 COPYs
         CHECK(count_instructions(insts, cedar::Opcode::COPY) == 2);
-        // lp() auto-lifts to 1 stereo-flagged instruction (was 2 before §6.2)
+        // lp() is stereo-native: 1 stereo-flagged instruction for the pair
         CHECK(count_instructions(insts, cedar::Opcode::FILTER_SVF_LP) == 1);
         auto* lp = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
         REQUIRE(lp != nullptr);
@@ -6412,7 +6411,7 @@ TEST_CASE("Codegen: stereo pipeline examples", "[codegen][stereo]") {
 }
 
 // =============================================================================
-// prd-stereo-support: mono() downmix and auto-lift behavior
+// prd-stereo-support: mono() downmix and stereo-native dispatch behavior
 // =============================================================================
 
 TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
@@ -6427,9 +6426,9 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
         REQUIRE(dm != nullptr);
     }
 
-    SECTION("mono() followed by mono DSP does not auto-lift") {
-        // mono(s) produces a Mono signal; lp() takes mono in, emits one
-        // plain (non-STEREO_INPUT) FILTER_SVF_LP instruction.
+    SECTION("mono() followed by mono DSP stays mono-primary-input") {
+        // mono(s) produces a Mono signal; lp() is stereo-native but with a
+        // mono primary input emits STEREO_OUTPUT without STEREO_INPUT.
         auto result = akkado::compile(R"(
             stereo(saw(218), saw(222))
             |> mono(%)
@@ -8554,7 +8553,7 @@ TEST_CASE("Codegen: in() with explicit source string", "[codegen][input]") {
     }
 }
 
-TEST_CASE("Codegen: in() into mono DSP auto-lifts to stereo", "[codegen][input][stereo]") {
+TEST_CASE("Codegen: in() into stereo-native DSP carries stereo through", "[codegen][input][stereo]") {
     SECTION("in() |> lp(%, 2000) emits a STEREO_INPUT-flagged filter") {
         auto result = akkado::compile("in() |> lp(%, 2000) |> out(%)");
         REQUIRE(result.success);
@@ -8565,7 +8564,7 @@ TEST_CASE("Codegen: in() into mono DSP auto-lifts to stereo", "[codegen][input][
 
         auto* lp = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
         REQUIRE(lp != nullptr);
-        // Auto-lift fires when the input is Stereo: filter runs both channels.
+        // Stereo primary input: the stereo-native filter reads both channels.
         CHECK((lp->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
 

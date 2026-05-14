@@ -1,12 +1,15 @@
-> **Status: IN PROGRESS** — Phases 0–3 landed (2026-05-13). Reverbs (Phase 2)
-> and spatializing modulation FX + sampler (Phase 3) are stereo-native; phaser
-> stationary-notch flake on master is now fixed by the rewrite. Phase 3 ships
-> with hardcoded R-LFO offset π/2; the user-tunable `lfo_phase` parameter
-> deferred until ExtendedParams VM init plumbing lands (see plan note in
-> §5.5 and the Phase 5 cleanup list).
-> Successor to `prd-stereo-support.md` (COMPLETE 2026-04-21). Implements the
-> never-written "Stereo-Native VM Opcodes" companion referenced in §13 of that
-> PRD.
+> **Status: COMPLETE** — All phases landed (Phases 0–4 by 2026-05-13; Phase 5
+> on 2026-05-14). Every audio-signal opcode is stereo-native. Phase 5 retired
+> the auto-lift mechanism: the last `auto_lift = true` holdouts (`slew` and the
+> `EDGE_OP` family — `sah`/`gateup`/`gatedown`/`counter`) are now stereo-native,
+> the `STEREO_INPUT`-only auto-lift dispatch branch and `STEREO_STATE_XOR_R`
+> constant are deleted from `vm.cpp`/`instruction.hpp`, and the `auto_lift` field
+> is gone from `BuiltinInfo`. The `STEREO_INPUT` flag itself is kept — it is now
+> the `11` truth-table bit (stereo-native opcode with stereo primary input);
+> only the dispatch branch was removed. The user-tunable `lfo_phase` parameter
+> shipped in Phase 4 via ExtendedParams. Successor to `prd-stereo-support.md`
+> (COMPLETE 2026-04-21); implements the never-written "Stereo-Native VM Opcodes"
+> companion referenced in §13 of that PRD.
 
 # PRD: Stereo-Native DSP Opcodes
 

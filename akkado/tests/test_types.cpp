@@ -3,14 +3,14 @@
 // Covers prd-stereo-support:
 //   §4.4 Error cases — left(mono), right(mono), out(stereo, mono), stereo(stereo)
 //   §5.3 Type-checking rules (partial: out(L,R) validation, mono() dispatch)
-//   §5.2 Auto-lift for stateless opcodes (PRD §5.2 classifies fold/saturate/etc.
-//          as auto_lift=true — this used to require stateful ops)
+//   §5.2 Stereo-native opcodes (fold/saturate/etc. handle both channels in one
+//          dispatch; auto-lift retired in prd-stereo-native-opcodes Phase 5)
 //   §10   Edge cases (mono(mono), stereo(stereo), left/right on mono)
 //
 // These tests complement test_codegen.cpp's [stereo] tag by focusing on the
 // *type* discipline rather than codegen output. If a test fails here, check:
 //   - akkado/src/codegen_stereo.cpp  (handle_{stereo,mono,left,right}_call)
-//   - akkado/src/codegen.cpp          (out() validation, stereo auto-lift)
+//   - akkado/src/codegen.cpp          (out() validation, stereo-native emit)
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -142,14 +142,14 @@ TEST_CASE("Types: mono() on mono auto-escalates with warning", "[types][stereo][
 }
 
 // =============================================================================
-// Auto-lift for stateless opcodes (PRD §5.2 — "Mono-in, mono-out DSP" auto_lift=true)
+// Stereo-native stateless opcodes (PRD §5.2 — "Mono-in, mono-out DSP")
 // =============================================================================
 
-TEST_CASE("Types: stateless opcodes auto-lift on stereo input", "[types][stereo][auto-lift]") {
+TEST_CASE("Types: stateless opcodes are stereo-native on stereo input", "[types][stereo][stereo-native]") {
     // Both saturate (DISTORT_TANH) and softclip (DISTORT_SOFT) are declared
-    // with requires_state=false in builtins.hpp — before the G2 fix these
-    // stateless ops silently dropped the right channel, contrary to PRD §5.2.
-    SECTION("saturate auto-lifts (DISTORT_TANH, stateless)") {
+    // with requires_state=false in builtins.hpp — they still process both
+    // channels in a single stereo-native dispatch (STEREO_INPUT flag set).
+    SECTION("saturate is stereo-native (DISTORT_TANH, stateless)") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             saturate(s) |> out(%)
@@ -162,7 +162,7 @@ TEST_CASE("Types: stateless opcodes auto-lift on stereo input", "[types][stereo]
         CHECK((tanh->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
 
-    SECTION("softclip auto-lifts (DISTORT_SOFT, stateless)") {
+    SECTION("softclip is stereo-native (DISTORT_SOFT, stateless)") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             softclip(s) |> out(%)
@@ -182,13 +182,13 @@ TEST_CASE("Types: stateless opcodes auto-lift on stereo input", "[types][stereo]
 // =============================================================================
 // Declarative BuiltinSignature catalog (PRD §5.2, G1)
 //
-// Each auto_lift=true builtin category gets one representative: a stereo input
+// Each stereo-native builtin category gets one representative: a stereo input
 // must produce a single instruction of the builtin's opcode carrying the
-// STEREO_INPUT flag, not two separately-emitted mono passes.
+// STEREO_INPUT flag (handled in one stereo-native dispatch).
 // =============================================================================
 
-TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lift]") {
-    SECTION("filter lp (FILTER_SVF_LP) auto-lifts on stereo") {
+TEST_CASE("Types: declarative stereo-native per category", "[types][stereo][stereo-native]") {
+    SECTION("filter lp (FILTER_SVF_LP) is stereo-native on stereo") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             lp(s, 800, 0.7) |> out(%)
@@ -201,7 +201,7 @@ TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lif
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
 
-    SECTION("delay (DELAY) auto-lifts on stereo") {
+    SECTION("delay (DELAY) is stereo-native on stereo") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             delay(s, 0.25, 0.5) |> out(%)
@@ -218,7 +218,7 @@ TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lif
     // to stereo-native in prd-stereo-native-opcodes Phase 2; their tests are
     // in the "Stereo-native opcodes" section below.
 
-    SECTION("comp (DYNAMICS_COMP) auto-lifts on stereo") {
+    SECTION("comp (DYNAMICS_COMP) is stereo-native on stereo") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             comp(s, -12, 4) |> out(%)
@@ -230,7 +230,7 @@ TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lif
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
 
-    SECTION("chorus (EFFECT_CHORUS) auto-lifts on stereo") {
+    SECTION("chorus (EFFECT_CHORUS) is stereo-native on stereo") {
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             chorus(s, 0.5, 0.5) |> out(%)
@@ -246,15 +246,15 @@ TEST_CASE("Types: declarative auto-lift per category", "[types][stereo][auto-lif
 // =============================================================================
 // E186 — declarative channel-type mismatch (PRD §5.3 rule 1)
 //
-// Non-auto-lift builtins reject a stereo signal in a Mono slot with E186.
+// Non-stereo-native builtins reject a stereo signal in a Mono slot with E186.
 // Special-handler builtins continue to emit E181–E185; E186 is for the generic
 // dispatch path only.
 // =============================================================================
 
-TEST_CASE("Types: E186 rejects stereo on non-auto-lift builtins", "[types][stereo][errors]") {
+TEST_CASE("Types: E186 rejects stereo on non-stereo-native builtins", "[types][stereo][errors]") {
     SECTION("adsr with stereo gate is E186") {
-        // adsr is intentionally NOT auto-lifted: a stereo gate is a code smell.
-        // See plan: `adsr`/`ar` declare their gate slot as Mono, auto_lift=false.
+        // adsr is intentionally NOT stereo-native: a stereo gate is a code
+        // smell. `adsr`/`ar` declare their gate slot as Mono (PRD §3.2).
         auto result = akkado::compile(R"(
             s = stereo(saw(218), saw(222))
             adsr(s, 0.01, 0.1, 0.5, 0.3) |> out(%)
@@ -277,7 +277,7 @@ TEST_CASE("Types: E186 rejects stereo on non-auto-lift builtins", "[types][stere
     SECTION("mono(mono) emits W181 (not E181 anymore), and never E186") {
         // Special-handler builtins now auto-escalate at the boundary with a
         // W18x warning; the channel-mismatch error path (E186) is reserved
-        // for non-stereo-native, non-auto-lift builtins like saw().
+        // for non-stereo-native builtins like saw().
         auto result = akkado::compile("mono(saw(220)) |> out(%)");
         CHECK(result.success);
         CHECK(has_diagnostic(result, "W181"));
@@ -1002,6 +1002,85 @@ TEST_CASE("Types: stereo-native tap_delay runs closure on stereo signal pair", "
     }
 }
 
+// =============================================================================
+// Stereo-native control primitives (prd-stereo-native-opcodes Phase 5)
+// slew + the EDGE_OP family (sah/gateup/gatedown/counter) — the last auto_lift
+// holdouts, now stereo-native. Auto-lift is fully retired.
+// =============================================================================
+
+TEST_CASE("Types: stereo-native slew produces stereo output from mono input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"( saw(220) |> slew(%, 10.0) |> out(%) )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::SLEW) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::SLEW);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+}
+
+TEST_CASE("Types: stereo-native slew reads stereo primary input", "[types][stereo][stereo-native]") {
+    auto result = akkado::compile(R"(
+        s = stereo(saw(218), saw(222))
+        slew(s, 10.0) |> out(%)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::SLEW) == 1);
+    auto* op = find_instruction(insts, cedar::Opcode::SLEW);
+    REQUIRE(op != nullptr);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+}
+
+TEST_CASE("Types: stereo-native EDGE_OP family produces stereo output", "[types][stereo][stereo-native]") {
+    // All four edge primitives share Opcode::EDGE_OP, mode-dispatched on rate.
+    SECTION("sah — mono in, stereo out") {
+        auto result = akkado::compile(R"( saw(220) |> sah(%, beat(1)) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
+    }
+    SECTION("gateup — mono in, stereo out") {
+        auto result = akkado::compile(R"( saw(220) |> gateup(%) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 1);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("gatedown — mono in, stereo out") {
+        auto result = akkado::compile(R"( saw(220) |> gatedown(%) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 2);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("counter — mono in, stereo out") {
+        auto result = akkado::compile(R"( beat(1) |> counter(%) |> out(%) )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        REQUIRE(op != nullptr);
+        CHECK(op->rate == 3);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    }
+    SECTION("sah reads stereo primary input") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(218), saw(222))
+            sah(s, beat(1)) |> out(%)
+        )");
+        REQUIRE(result.success);
+        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        REQUIRE(op != nullptr);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
+    }
+}
+
 // ============================================================================
 // Extended params (prd-extended-params §5–§6) — canonical mechanism for
 // opcode parameters beyond the 5 input-buffer slots.
@@ -1124,8 +1203,8 @@ TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") 
     // mono + stereo broadcasts the mono operand across both channels.
     // Array-broadcasting in the binary-op path naturally produces 2 output
     // buffers; the current result type is Array(2). A follow-up could tag
-    // this explicitly as Stereo for downstream auto-lift, but the audio
-    // result is already correct and the test just confirms the program
+    // this explicitly as Stereo for downstream stereo-native ops, but the
+    // audio result is already correct and the test just confirms the program
     // compiles and emits one ADD per channel.
     SECTION("mono * stereo compiles and produces 2 multiplies") {
         auto result = akkado::compile(R"(

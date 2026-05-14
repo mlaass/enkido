@@ -110,18 +110,21 @@ struct NoiseState {
     bool initialized = false;           // First-time init flag
 };
 
-// Slew rate limiter state
+// Slew rate limiter state — stereo-native (prd-stereo-native-opcodes Phase 5).
+// Per-channel `current`; [0] = L, [1] = R. `initialized` is shared because both
+// lanes init together on the first block.
 struct SlewState {
-    float current = 0.0f;
+    float current[2] = {0.0f, 0.0f};
     bool initialized = false;
 };
 
-// Edge-detection / sample-and-hold / counter state (EDGE_OP, all modes)
-//   prev_reset_trigger is only used in counter mode (rate=3)
+// Edge-detection / sample-and-hold / counter state (EDGE_OP, all modes) —
+// stereo-native (prd-stereo-native-opcodes Phase 5). Per-channel fields;
+// [0] = L, [1] = R. prev_reset_trigger is only used in counter mode (rate=3).
 struct EdgeState {
-    float held_value = 0.0f;
-    float prev_trigger = 0.0f;
-    float prev_reset_trigger = 0.0f;
+    float held_value[2] = {0.0f, 0.0f};
+    float prev_trigger[2] = {0.0f, 0.0f};
+    float prev_reset_trigger[2] = {0.0f, 0.0f};
 };
 
 // User-cell state (STATE_OP) — single float slot for state(init)/.get()/.set()

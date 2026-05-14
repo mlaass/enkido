@@ -209,16 +209,16 @@ enum class Opcode : std::uint8_t {
 // Instruction flag bits (16-bit field, room for future per-instruction attributes).
 //
 // Two bits cooperate to describe stereo behaviour (see
-// prd-stereo-native-opcodes.md):
+// prd-stereo-native-opcodes.md). As of Phase 5 the legacy auto-lift mechanism
+// is retired — every audio-signal opcode is stereo-native, so STEREO_INPUT is
+// only ever set together with STEREO_OUTPUT:
 //
 //   bit 0 = STEREO_INPUT, bit 1 = STEREO_OUTPUT
 //
 //   00: classic mono dispatch — opcode runs once on inputs[i], writes out_buffer.
-//   01: legacy auto-lift (STEREO_INPUT only). VM re-executes the opcode with
-//       inputs[0]+1 (when stereo), out_buffer+1, and state_id XOR'd by
-//       STEREO_STATE_XOR_R. Used for mono opcodes lifted onto stereo input
-//       during the per-PRD migration from auto-lift to stereo-native (retires
-//       in Phase 5 of prd-stereo-native-opcodes).
+//       Used by generators (osc/noise/...) and control/non-audio opcodes.
+//   01: unused. STEREO_INPUT without STEREO_OUTPUT no longer occurs (auto-lift
+//       retired in Phase 5 of prd-stereo-native-opcodes).
 //   10: stereo-native opcode (STEREO_OUTPUT only). The opcode handles both
 //       channels in one dispatch. Primary input is mono — the opcode reads
 //       inputs[0] once and uses it for both internal L and R lanes. Output is
@@ -226,17 +226,11 @@ enum class Opcode : std::uint8_t {
 //       per-channel state lives inside one state struct.
 //   11: stereo-native opcode with stereo primary input. The opcode reads
 //       inputs[0] for L and inputs[0]+1 for R (adjacent-buffer convention).
-//       Output as in case 10. No auto-lift dispatch — the opcode body owns
-//       per-channel processing.
+//       Output as in case 10. The opcode body owns per-channel processing.
 namespace InstructionFlag {
     constexpr std::uint16_t STEREO_INPUT  = 1u << 0;  // see truth table above
     constexpr std::uint16_t STEREO_OUTPUT = 1u << 1;  // see truth table above
 }
-
-// XOR mask applied to state_id on the right-channel pass of a STEREO_INPUT
-// instruction, so left and right have independent per-channel DSP state.
-// Value is a non-zero FNV-1a-style odd constant (golden ratio).
-constexpr std::uint32_t STEREO_STATE_XOR_R = 0x9E3779B9u;
 
 // XOR mask applied to state_id when storing/reading the ExtendedParams<N>
 // companion state of an opcode. The opcode's own DSP state (e.g.

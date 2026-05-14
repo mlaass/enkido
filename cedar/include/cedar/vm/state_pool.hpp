@@ -307,15 +307,19 @@ public:
             }
             else if constexpr (std::is_same_v<T, SlewState>) {
                 json << R"({"type":"SlewState")";
-                json << R"(,"current":)" << state.current;
+                json << R"(,"current_l":)" << state.current[0];
+                json << R"(,"current_r":)" << state.current[1];
                 json << R"(,"initialized":)" << (state.initialized ? "true" : "false");
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, EdgeState>) {
                 json << R"({"type":"EdgeState")";
-                json << R"(,"held_value":)" << state.held_value;
-                json << R"(,"prev_trigger":)" << state.prev_trigger;
-                json << R"(,"prev_reset_trigger":)" << state.prev_reset_trigger;
+                json << R"(,"held_value_l":)" << state.held_value[0];
+                json << R"(,"held_value_r":)" << state.held_value[1];
+                json << R"(,"prev_trigger_l":)" << state.prev_trigger[0];
+                json << R"(,"prev_trigger_r":)" << state.prev_trigger[1];
+                json << R"(,"prev_reset_trigger_l":)" << state.prev_reset_trigger[0];
+                json << R"(,"prev_reset_trigger_r":)" << state.prev_reset_trigger[1];
                 json << "}";
             }
             else if constexpr (std::is_same_v<T, CellState>) {

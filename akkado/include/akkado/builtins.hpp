@@ -130,17 +130,10 @@ struct BuiltinInfo {
 
     // Channel-type signature (PRD prd-stereo-support §5.2, G1).
     // Only consulted for slots where param_types[i] == Signal; non-signal slots ignore.
-    // Default-initialized = all Mono, output Mono, auto_lift disabled — matches
-    // the mono-only contract most builtins have.
+    // Default-initialized = all Mono, output Mono — matches the mono-only
+    // contract most non-audio builtins have.
     std::array<ChannelCount, MAX_BUILTIN_PARAMS> input_channels = {};
     ChannelCount output_channels = ChannelCount::Mono;
-    // When true and any Signal-typed argument is Stereo, the generic dispatch
-    // emits a single instruction with STEREO_INPUT flag (per-channel independent
-    // state) producing a Stereo result. When false, a Stereo argument in a Mono
-    // slot is a compile error (E186), with the exception of special-handler
-    // builtins (mono/left/right/stereo/pan/width/ms_encode/ms_decode/pingpong)
-    // which enforce their own signatures.
-    bool auto_lift = false;
 
     // PRD prd-stereo-native-opcodes §5.1: when true, this opcode handles both
     // stereo channels in one dispatch with one state struct. The codegen
@@ -150,9 +143,11 @@ struct BuiltinInfo {
     // L/R internally (per-channel arrays in the state struct). Auto-escalates
     // mono inputs by reading the same buffer for both internal lanes.
     //
-    // Mutually exclusive with auto_lift: stereo_native opcodes own their L/R
-    // processing and never invoke the VM's auto-lift dispatch. See the
-    // STEREO_INPUT / STEREO_OUTPUT truth table in cedar/vm/instruction.hpp.
+    // Every audio-signal builtin is stereo_native as of Phase 5; the legacy
+    // auto-lift mechanism (run-the-opcode-twice via STEREO_INPUT) is retired.
+    // A Stereo signal in a Mono slot of a non-stereo_native builtin is a
+    // compile error (E186). See the STEREO_INPUT / STEREO_OUTPUT truth table
+    // in cedar/vm/instruction.hpp.
     bool stereo_native = false;
 
     // Static value to assign to inst.rate when this builtin lowers to its opcode.
@@ -164,7 +159,7 @@ struct BuiltinInfo {
     // dispatcher coerces any Pattern arg to Signal (via the freq buffer)
     // before this builtin runs. Pattern-aware builtins (`pat`, `slow`,
     // `transpose`, `bend`, ...) opt out by setting `args_are_signal = false`
-    // in their entry. Orthogonal to `auto_lift` (Mono→Stereo).
+    // in their entry. Orthogonal to `stereo_native` (Mono→Stereo).
     bool args_are_signal = true;
 
     // PRD prd-records-system-unification §5.1: option-field schemas for any
@@ -376,43 +371,43 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable lowpass filter",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"hp",      {cedar::Opcode::FILTER_SVF_HP, 2, 1, true,
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable highpass filter",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"bp",      {cedar::Opcode::FILTER_SVF_BP, 2, 1, true,
                  {"in", "cut", "q", "", "", ""},
                  {0.707f, NAN, NAN},
                  "State-variable bandpass filter",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Moog ladder filter (4-pole with resonance)
     // Optional: max_resonance (self-oscillation threshold), input_scale (preamp drive)
     {"moog",    {cedar::Opcode::FILTER_MOOG, 2, 3, true,
                  {"in", "cut", "res", "max_res", "input_scale", ""},
                  {1.0f, 4.0f, 0.5f, NAN, NAN},
                  "Moog 4-pole ladder filter with resonance",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Diode ladder filter (TB-303 acid) - 5 inputs: in, cut, res, vt, fb_gain
     {"diode",   {cedar::Opcode::FILTER_DIODE, 2, 3, true,
                  {"in", "cut", "res", "vt", "fb_gain", ""},
                  {1.0f, 0.026f, 10.0f},
                  "TB-303 style diode ladder filter",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Formant filter (vowel morphing) - 5 inputs: in, vowel_a, vowel_b, morph, q
     {"formant", {cedar::Opcode::FILTER_FORMANT, 2, 3, true,
                  {"in", "vowel_a", "vowel_b", "morph", "q", ""},
                  {0.0f, 0.5f, 10.0f},
                  "Vowel formant filter with morphing",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Sallen-Key filter (MS-20 style) - 5 inputs: in, cut, res, mode, clip_threshold
     // Optional: clip_threshold (feedback clipping point)
     {"sallenkey", {cedar::Opcode::FILTER_SALLENKEY, 2, 3, true,
                    {"in", "cut", "res", "mode", "clip_thresh", ""},
                    {1.0f, 0.0f, 0.7f, NAN, NAN},
                    "MS-20 style Sallen-Key filter",
-                   0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                   0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Envelopes
     {"adsr",    {cedar::Opcode::ENV_ADSR, 1, 4, true,
@@ -431,7 +426,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                       {"in", "attack", "release", "", "", ""},
                       {0.01f, 0.1f, NAN},
                       "Amplitude envelope follower",
-                      0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                      0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Samplers (stereo-native, prd-stereo-native-opcodes Phase 3): mono files
     // broadcast L=R; stereo files preserve channels; 3+ channel files keep the
@@ -443,14 +438,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  "name (\"bd\", \"bd:3\", \"Bank/name:variant\") or numeric "
                  "sample-bank ID.",
                  0, {}, {}, ChannelCount::Stereo,
-                 /*auto_lift=*/false, /*stereo_native=*/true}},
+                 /*stereo_native=*/true}},
     {"sample_loop", {cedar::Opcode::SAMPLE_PLAY_LOOP, 3, 0, true,
                      {"gate", "pitch", "id", "", "", ""},
                      {NAN, NAN, NAN},
                      "Stereo-native looping sample playback. id accepts a "
                      "sample name or numeric sample-bank ID.",
                      0, {}, {}, ChannelCount::Stereo,
-                     /*auto_lift=*/false, /*stereo_native=*/true}},
+                     /*stereo_native=*/true}},
     {"soundfont", {.opcode = cedar::Opcode::NOP, .input_count = 2, .optional_count = 1, .requires_state = false,
                    .param_names = {"input", "file", "preset", "", "", ""},
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -464,18 +459,18 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"in", "time", "fb", "dry", "wet", ""},
                  {0.0f, 1.0f, NAN, NAN, NAN},
                  "Delay line (time in seconds, 0-10)",
-                 0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Delay variants with different time units
     {"delay_ms",    {cedar::Opcode::DELAY, 3, 2, true,
                      {"in", "time_ms", "fb", "dry", "wet", ""},
                      {0.0f, 1.0f, NAN, NAN, NAN},
                      "Delay line (time in milliseconds, 0-10000)",
-                     0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true, /*inst_rate=*/1}},
+                     0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/1}},
     {"delay_smp",   {cedar::Opcode::DELAY, 3, 2, true,
                      {"in", "time_smp", "fb", "dry", "wet", ""},
                      {0.0f, 1.0f, NAN, NAN, NAN},
                      "Delay line (time in samples, direct control)",
-                     0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true, /*inst_rate=*/2}},
+                     0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/2}},
     // Tap delay with configurable feedback processing (handled specially by codegen)
     // tap_delay(in, time, fb, processor) where processor is a closure: (x) -> ...
     // The closure receives the delayed signal and its output is mixed back with feedback.
@@ -502,18 +497,18 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "room", "damp", "room_scale", "room_offset", ""},
                   {0.5f, 0.5f, 0.28f, 0.7f, NAN},
                   "Freeverb algorithmic reverb",
-                  0, {}, {}, ChannelCount::Stereo, false, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing)
     {"dattorro", {cedar::Opcode::REVERB_DATTORRO, 1, 4, true,
                   {"in", "decay", "predelay", "in_diff", "dec_diff", ""},
                   {0.7f, 20.0f, 0.75f, 0.625f, NAN},
                   "Dattorro plate reverb algorithm",
-                  0, {}, {}, ChannelCount::Stereo, false, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"fdn",      {cedar::Opcode::REVERB_FDN, 1, 2, true,
                   {"in", "decay", "damp", "", "", ""},
                   {0.8f, 0.3f, NAN},
                   "Feedback delay network reverb",
-                  0, {}, {}, ChannelCount::Stereo, false, true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Modulation Effects (stateful - delay lines with LFOs)
     // All three are stereo-native (prd-stereo-native-opcodes Phase 3): mono
@@ -529,7 +524,6 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                                  "processes per channel). lfo_phase tunes the R-LFO offset.",
                   .extended_param_count = 1,
                   .output_channels = ChannelCount::Stereo,
-                  .auto_lift = false,
                   .stereo_native = true,
                   .extended_param_names = {"lfo_phase"},
                   .extended_defaults = {0.25f}}},
@@ -541,7 +535,6 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   .description = "Stereo-native flanger. lfo_phase tunes the R-LFO offset.",
                   .extended_param_count = 1,
                   .output_channels = ChannelCount::Stereo,
-                  .auto_lift = false,
                   .stereo_native = true,
                   .extended_param_names = {"lfo_phase"},
                   .extended_defaults = {0.25f}}},
@@ -556,7 +549,6 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                                  "feedback (0-0.99), stages (2-12), lfo_phase (turns).",
                   .extended_param_count = 3,
                   .output_channels = ChannelCount::Stereo,
-                  .auto_lift = false,
                   .stereo_native = true,
                   .extended_param_names = {"feedback", "stages", "lfo_phase"},
                   .extended_defaults = {0.5f, 4.0f, 0.25f}}},
@@ -564,7 +556,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "time", "fb", "", "", ""},
                   {NAN, NAN, NAN},
                   "Comb filter (resonant delay)",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Distortion — all stereo-native (prd-stereo-native-opcodes Phase 4b).
     // Per-channel state arrays inside one state struct; runtime params (drive,
@@ -574,50 +566,50 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "drive", "", "", "", ""},
                   {2.0f, NAN, NAN},
                   "Soft saturation (tanh) distortion",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"softclip", {cedar::Opcode::DISTORT_SOFT, 1, 1, false,
                   {"in", "thresh", "", "", "", ""},
                   {0.5f, NAN, NAN},
                   "Soft clipper distortion",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"bitcrush", {cedar::Opcode::DISTORT_BITCRUSH, 1, 2, true,
                   {"in", "bits", "rate", "", "", ""},
                   {8.0f, 0.5f, NAN},
                   "Bit depth and sample rate reducer",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"fold",     {cedar::Opcode::DISTORT_FOLD, 1, 1, false,
                   {"in", "thresh", "", "", "", ""},
                   {0.5f, NAN, NAN},
                   "Wavefolding distortion",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"tube",     {cedar::Opcode::DISTORT_TUBE, 1, 2, true,
                   {"in", "drive", "bias", "", "", ""},
                   {5.0f, 0.1f, NAN},
                   "Tube amp emulation with bias",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"smooth",   {cedar::Opcode::DISTORT_SMOOTH, 1, 1, true,
                   {"in", "drive", "", "", "", ""},
                   {5.0f, NAN, NAN},
                   "ADAA alias-free saturation",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // tape: soft_threshold (saturation onset), warmth_scale (HF rolloff amount)
     {"tape",     {cedar::Opcode::DISTORT_TAPE, 1, 4, true,
                   {"in", "drive", "warmth", "soft_thresh", "warmth_scale", ""},
                   {3.0f, 0.3f, 0.5f, 0.7f, NAN},
                   "Tape saturation with warmth",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // xfmr: bass_freq (bass extraction cutoff Hz)
     {"xfmr",     {cedar::Opcode::DISTORT_XFMR, 1, 3, true,
                   {"in", "drive", "bass", "bass_freq", "", ""},
                   {3.0f, 5.0f, 60.0f, NAN, NAN},
                   "Transformer saturation with bass boost",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // excite: harmonic_odd (odd harmonic mix), harmonic_even (even harmonic mix)
     {"excite",   {cedar::Opcode::DISTORT_EXCITE, 1, 4, true,
                   {"in", "amount", "freq", "harm_odd", "harm_even", ""},
                   {0.5f, 3000.0f, 0.4f, 0.6f, NAN},
                   "Aural exciter (harmonic enhancer)",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Dynamics — stereo-native (prd-stereo-native-opcodes Phase 4d).
     // Per-channel envelope/gain state; coefficient cache shared.
@@ -625,18 +617,18 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"in", "thresh", "ratio", "", "", ""},
                   {-12.0f, 4.0f, NAN},
                   "Dynamic range compressor",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     {"limiter",  {cedar::Opcode::DYNAMICS_LIMITER, 1, 2, true,
                   {"in", "ceiling", "release", "", "", ""},
                   {-0.1f, 0.1f, NAN},
                   "Peak limiter with lookahead",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // gate: hysteresis (dB open/close diff), close_time (ms fade-out)
     {"gate",     {cedar::Opcode::DYNAMICS_GATE, 1, 4, true,
                   {"in", "thresh", "range", "hyst", "close_time", ""},
                   {-40.0f, -40.0f, 6.0f, 5.0f, NAN},
                   "Noise gate with hysteresis",
-                  0, {}, {}, ChannelCount::Stereo, /*auto_lift=*/false, /*stereo_native=*/true}},
+                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
 
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false,
@@ -816,7 +808,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  "Live audio input. Optional source: 'mic' (default), 'tab', 'file:NAME'.",
                  0,
                  {ParamValueType::String, {}, {}, {}, {}, {}},
-                 {}, ChannelCount::Stereo, false}},
+                 {}, ChannelCount::Stereo}},
 
     // Utility
     {"noise",   {cedar::Opcode::NOISE, 0, 3, true,
@@ -834,29 +826,31 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"slew",    {cedar::Opcode::SLEW,  2, 0, true,
                  {"target", "rate", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Slew rate limiter (portamento)",
-                 0, {}, {}, ChannelCount::Mono, true}},
+                 "Slew rate limiter (portamento) — stereo-native",
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
     // Edge primitives — share Opcode::EDGE_OP, dispatched by inst_rate (0..3).
+    // All stereo-native (prd-stereo-native-opcodes Phase 5): inputs[0] is the
+    // stereo-capable primary; trig/reset/start are shared control signals.
     {"sah",      {cedar::Opcode::EDGE_OP, 2, 0, true,
                  {"in", "trig", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Sample and hold",
-                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/0}},
+                 "Sample and hold — stereo-native",
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/0}},
     {"gateup",   {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "1.0 on rising edge of sig",
-                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/1}},
+                 "1.0 on rising edge of sig — stereo-native",
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/1}},
     {"gatedown", {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "1.0 on falling edge of sig",
-                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/2}},
+                 "1.0 on falling edge of sig — stereo-native",
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/2}},
     {"counter",  {cedar::Opcode::EDGE_OP, 1, 2, true,
                  {"trig", "reset", "start", "", "", ""},
                  {NAN, NAN},
-                 "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset",
-                 0, {}, {}, ChannelCount::Mono, true, /*stereo_native=*/false, /*inst_rate=*/3}},
+                 "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset — stereo-native",
+                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/3}},
 
     // Output (1 required for mono, 2 for stereo)
     {"out",     {cedar::Opcode::OUTPUT, 1, 1, false,
@@ -872,53 +866,53 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"L", "R", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Create stereo signal from mono or L/R pair",
-                 0, {}, {}, ChannelCount::Stereo, false}},
+                 0, {}, {}, ChannelCount::Stereo}},
     // Extract left channel from stereo signal
     {"left",    {cedar::Opcode::NOP, 1, 0, false,
                  {"stereo", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Extract left channel from stereo signal",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono, false}},
+                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
     // Extract right channel from stereo signal
     {"right",   {cedar::Opcode::NOP, 1, 0, false,
                  {"stereo", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Extract right channel from stereo signal",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono, false}},
+                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
     // Pan mono signal to stereo position (-1=L, 0=center, 1=R)
     {"pan",     {cedar::Opcode::PAN, 2, 0, false,
                  {"mono", "pos", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Pan mono to stereo (-1=L, 0=center, 1=R)",
-                 0, {}, {}, ChannelCount::Stereo, false}},
+                 0, {}, {}, ChannelCount::Stereo}},
     // Stereo width control (0=mono, 1=normal, >1=wide)
     // Convenience: width(stereo, amount) or explicit: width(L, R, amount)
     {"width",   {cedar::Opcode::WIDTH, 2, 0, false,
                  {"stereo/L", "amount/R", "amount?", "", "", ""},
                  {NAN, NAN, NAN},
                  "Stereo width (0=mono, 1=normal, >1=wide)",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo, false}},
+                 0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // Mid/side encoding
     // Convenience: ms_encode(stereo) or explicit: ms_encode(L, R)
     {"ms_encode", {cedar::Opcode::MS_ENCODE, 1, 0, false,
                    {"stereo/L", "R?", "", "", "", ""},
                    {NAN, NAN, NAN},
                    "Convert stereo to mid/side",
-                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo, false}},
+                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // Mid/side decoding
     // Convenience: ms_decode(ms) or explicit: ms_decode(M, S)
     {"ms_decode", {cedar::Opcode::MS_DECODE, 1, 0, false,
                    {"ms/M", "S?", "", "", "", ""},
                    {NAN, NAN, NAN},
                    "Convert mid/side to stereo",
-                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo, false}},
+                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // True stereo ping-pong delay
     // Convenience: pingpong(stereo, time, fb) or explicit: pingpong(L, R, time, fb, width?)
     {"pingpong", {cedar::Opcode::DELAY_PINGPONG, 3, 1, true,
                   {"stereo/L", "time/R", "fb/time", "fb?", "width?", ""},
                   {1.0f, NAN, NAN, NAN, NAN},
                   "Ping-pong stereo delay",
-                  0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo, false}},
+                  0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
 
     // Timing/Sequencing
     {"clock",   {cedar::Opcode::CLOCK,   0, 0, false,
@@ -1048,7 +1042,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    {"signal_or_instrument", "input", "", "", "", ""},
                    {NAN, NAN, NAN, NAN, NAN},
                    "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager",
-                   0, {}, {ChannelCount::Stereo}, ChannelCount::Mono, false}},
+                   0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
     {"legato",    {cedar::Opcode::NOP, 1, 1, false,
                    {"instrument", "input", "", "", "", ""},
                    {NAN, NAN, NAN, NAN, NAN},

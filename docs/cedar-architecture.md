@@ -67,7 +67,7 @@ Byte:  0       1       2-3          4-5     6-7     8-9    10-11   12-13   14-15
 | `rate` | 8 bits | `0` = audio-rate (per-sample), `1` = control-rate (per-block), or packed enum parameters (LFO shape, clock mode, array length) |
 | `out_buffer` | 16 bits | Destination buffer index (0–254). Buffer 255 is reserved as `BUFFER_ZERO` (always 0.0) |
 | `inputs[0–4]` | 5 × 16 bits | Input buffer indices. `0xFFFF` = unused |
-| `flags` | 16 bits | Per-instruction attribute bits. Currently defined: `STEREO_INPUT` (bit 0) |
+| `flags` | 16 bits | Per-instruction attribute bits. Currently defined: `STEREO_INPUT` (bit 0), `STEREO_OUTPUT` (bit 1) |
 | `state_id` | 32 bits | FNV-1a hash for persistent DSP state lookup. `0` = stateless |
 
 Design notes:
@@ -76,15 +76,17 @@ Design notes:
 - 32-bit `state_id` avoids birthday-paradox collisions at 512 states (16-bit would collide at ~256)
 - Convenience constructors: `make_nullary` through `make_quinary` for 0–5 input arities
 
-#### `STEREO_INPUT` flag
+#### `STEREO_OUTPUT` / `STEREO_INPUT` flags — stereo-native opcodes
 
-When `flags & InstructionFlag::STEREO_INPUT` is set, the VM runs the opcode *twice* per invocation — once for the left channel, once for the right — with independent per-channel DSP state. This is how Akkado's auto-lift (prd-stereo-support §6) turns any mono opcode into a stereo variant at zero opcode-table cost:
+Every audio-signal opcode is **stereo-native** (prd-stereo-native-opcodes): it handles both channels in a single dispatch with one per-channel state struct. The two flag bits describe the channel shape:
 
-- **Left pass:** reads `inputs[i]`, writes `out_buffer`, uses `state_id`.
-- **Right pass:** reads `inputs[0] + 1` (the adjacent right buffer), writes `out_buffer + 1`, uses `state_id XOR STEREO_STATE_XOR_R` (a golden-ratio constant) so L and R have independent filter memory, delay lines, oscillator phase, etc.
+- **`STEREO_OUTPUT` (bit 1)** — set by codegen for every stereo-native builtin. The opcode writes `out_buffer` (L) and `out_buffer + 1` (R) in one call. Mono primary input is auto-escalated: the opcode reads `inputs[0]` once and uses it for both internal L and R lanes.
+- **`STEREO_INPUT` (bit 0)** — added alongside `STEREO_OUTPUT` when the primary signal argument is itself stereo. The opcode reads `inputs[0]` for L and `inputs[0] + 1` for R (adjacent-buffer convention).
 - **Scalar/control inputs** (`inputs[1..4]`) are shared — both channels see the same cutoff frequency, resonance, etc. Per-channel control requires explicit stereo construction.
 
-Stateless opcodes (distortion, fold, saturate) simply ignore the XOR'd `state_id` and produce correct audio without any special handling. See `cedar/src/vm/vm.cpp` (`VM::execute`) for the dispatch wrapper.
+Per-channel DSP state (filter memory, delay lines, oscillator phase) lives inside one state struct as `[2]` arrays, keyed by a single `state_id = fnv1a(semantic_path)` — no `/L`/`/R` suffix or XOR rotation.
+
+The legacy **auto-lift** mechanism — run a mono opcode twice via a `STEREO_INPUT`-only dispatch wrapper in `VM::execute`, with an XOR'd `state_id` for the right pass — was retired in Phase 5 of prd-stereo-native-opcodes. `STEREO_INPUT` without `STEREO_OUTPUT` no longer occurs.
 
 ### Rate Field Overloading
 

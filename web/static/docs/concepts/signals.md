@@ -2,12 +2,12 @@
 title: Mono & Stereo Signals
 category: concepts
 order: 3
-keywords: [mono, stereo, channels, auto-lift, conversion, downmix, upmix, signal types]
+keywords: [mono, stereo, channels, stereo-native, conversion, downmix, upmix, signal types]
 ---
 
 # Mono & Stereo Signals
 
-Akkado has two kinds of audio signals: **Mono** (one channel) and **Stereo** (two channels, L and R). Every expression the compiler sees has a known channel count — not a runtime property, but a type the compiler tracks through the program. That lets the compiler catch mismatches at compile time and auto-lift mono effects to run over stereo signals without you duplicating the chain.
+Akkado has two kinds of audio signals: **Mono** (one channel) and **Stereo** (two channels, L and R). Every expression the compiler sees has a known channel count — not a runtime property, but a type the compiler tracks through the program. That lets the compiler diagnose mismatches at compile time, while every audio effect is stereo-native: it processes both channels in one pass and a mono input automatically widens to stereo, so you never duplicate a chain by hand.
 
 ## Defaults
 
@@ -45,19 +45,21 @@ There are exactly two canonical conversions between the representations:
 | `left(s)` | Stereo → Mono | Extract the left channel only |
 | `right(s)` | Stereo → Mono | Extract the right channel only |
 
-Calling a conversion on a signal that's already the target channel count is a compile error — it almost always means something upstream didn't do what you thought. Some typical hits:
+Calling a conversion on a signal that's already the target channel count is a **warning**, not an error — it almost always means something upstream didn't do what you thought, but the expression still compiles and evaluates to the input unchanged. Some typical hits:
 
-- `stereo(already_stereo_signal)` → `E182`
-- `mono(already_mono_signal)` → `E181`
-- `left(mono_signal)` / `right(mono_signal)` → `E183` / `E184`
-- `out(stereo_signal, other)` as *two-arg* `out()` → `E185`
+- `stereo(already_stereo_signal)` → `W182`
+- `mono(already_mono_signal)` → `W181`
+- `left(mono_signal)` / `right(mono_signal)` → `W183` / `W184`
+- `out(stereo_signal, other)` as *two-arg* `out()` → `W185` (auto-escalates)
 
-## Auto-lift
+A genuine *type* mismatch — an audio-rate signal in a non-signal slot, for example — is still a hard error (`E186`).
 
-When a **mono** DSP function receives a **stereo** input, the compiler auto-lifts it: the opcode is emitted once with a `STEREO_INPUT` flag, and the VM runs it twice — once per channel — with independent per-channel state.
+## Stereo-native effects
+
+Every audio effect is **stereo-native**: it processes both channels in a single dispatch with one per-channel state struct. A **mono** input automatically widens — the opcode reads it once and uses it for both the L and R lanes — so you never have to duplicate a chain or insert `stereo()` to get a stereo result.
 
 ```akkado
-bus = osc("saw", 220) |> stereo()
+bus = osc("saw", 220)         // Mono — widens automatically
 
 bus
   |> filter_lp(%, 500, 0.7)   // Stereo: per-channel filter state
@@ -65,7 +67,7 @@ bus
   |> out(%)                   // Stereo out
 ```
 
-This is exactly equivalent to writing:
+For channel-independent effects (filters, distortion, EQ, plain delays) this is exactly equivalent to writing:
 
 ```akkado
 sig = osc("saw", 220)
@@ -74,13 +76,14 @@ right_out = sig |> filter_lp(%, 500, 0.7) |> delay(%, 0.25, 0.5)
 out(left_out, right_out)
 ```
 
-Identical state handling, identical audio. Same story for stateless effects (`saturate`, `softclip`, `fold`, `distort`) — you don't have to think about state for auto-lift to work.
+Identical state handling, identical audio. Stateless effects (`saturate`, `softclip`, `fold`, `distort`) work the same way. Spatializing effects (reverbs, `chorus`, `phaser`, `flanger`) go further: a mono input widens into a genuinely *decorrelated* stereo output (cross-coupled reverb tanks, offset L/R LFO phases).
 
-### What auto-lift doesn't do
+### What stereo-native processing doesn't change
 
 - **Scalar parameters (cutoff, resonance, time, feedback) are shared between L and R.** Both channels see the same value. If you want independent per-channel modulation, split the stream explicitly.
 - **Pattern events (`pat`, `seq`, `timeline`) are always mono** — a stereo synth driven by a mono pattern is the normal case.
-- **Cross-channel effects** like `width`, `pingpong`, `ms_encode`/`ms_decode` are not auto-lifted — they are *inherently* stereo operations with explicit signatures.
+- **Generators stay mono.** `osc`, `noise`, `pulse`, and mono-file `sample` return Mono; the widening happens at the boundary into the first effect.
+- **Cross-channel effects** like `width`, `pingpong`, `ms_encode`/`ms_decode` have their own explicit stereo signatures.
 
 ## Mixed-channel arithmetic
 
@@ -131,4 +134,4 @@ Arithmetic between patterns and other types follows these rules:
 - [Pattern Literals](../reference/pattern/literals.md) — typed prefixes (`v"…"`, `n"…"`, `s"…"`, `c"…"`) and `scalar()`.
 - [Pattern Modulation tutorial](../tutorials/06-pattern-modulation.md) — flagship walkthrough of `bend(notes, v"…")` and custom-property accessors.
 - [Stereo builtins reference](/docs/reference/builtins/stereo) — signatures and behaviour for `stereo`, `mono`, `left`, `right`, `pan`, `width`, `ms_encode`, `ms_decode`, `pingpong`.
-- [Cedar architecture — STEREO_INPUT flag](../../../docs/cedar-architecture.md#bytecode-format) — the VM-level dispatch mechanism that powers auto-lift.
+- [Cedar architecture — STEREO_OUTPUT / STEREO_INPUT flags](../../../docs/cedar-architecture.md#bytecode-format) — the VM-level mechanism behind stereo-native opcodes.

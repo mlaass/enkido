@@ -501,30 +501,10 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
 }
 
 void VM::execute(const Instruction& inst) {
-    // STEREO_INPUT auto-lift: run the opcode twice with per-channel state.
-    // Left pass uses original buffers/state; right pass shifts the primary
-    // signal input (inputs[0]) and out_buffer to the adjacent right buffer
-    // and XORs state_id so left and right have independent DSP memory.
-    // Scalar/control inputs (inputs[1..4]) are shared between passes.
-    //
-    // Skipped when STEREO_OUTPUT is also set: that bit combo means the opcode
-    // is stereo-native (handles both channels in one dispatch with one state
-    // struct). See prd-stereo-native-opcodes.md for the 4-state truth table.
-    if ((inst.flags & InstructionFlag::STEREO_INPUT) &&
-        !(inst.flags & InstructionFlag::STEREO_OUTPUT)) [[unlikely]] {
-        Instruction left = inst;
-        left.flags = static_cast<std::uint16_t>(inst.flags & ~InstructionFlag::STEREO_INPUT);
-        execute(left);
-
-        Instruction right = left;
-        right.out_buffer = static_cast<std::uint16_t>(inst.out_buffer + 1);
-        if (inst.inputs[0] != BUFFER_UNUSED) {
-            right.inputs[0] = static_cast<std::uint16_t>(inst.inputs[0] + 1);
-        }
-        right.state_id = inst.state_id ^ STEREO_STATE_XOR_R;
-        execute(right);
-        return;
-    }
+    // Every audio-signal opcode is stereo-native (prd-stereo-native-opcodes
+    // Phase 5): it handles both channels in one dispatch with one state struct,
+    // reading the STEREO_INPUT / STEREO_OUTPUT flags itself. The legacy
+    // auto-lift dispatch (run-the-opcode-twice with XOR'd state_id) is retired.
 
     // Switch dispatch - compiler generates jump table for O(1) dispatch
     // [[likely]] hints help branch prediction for common opcodes

@@ -163,19 +163,27 @@ inline void op_dc(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
-// SLEW: Slew rate limiter (smooths sudden changes)
-// in0: target signal
-// in1: rate (units per second, e.g., rate=10 means 100ms to traverse 0→1)
+// SLEW: Slew rate limiter (smooths sudden changes) — stereo-native
+//   (prd-stereo-native-opcodes Phase 5).
+// in0: target signal (mono auto-broadcasts to L=R; stereo via STEREO_INPUT)
+// in1: rate (units per second, e.g. rate=10 means 100ms to traverse 0→1;
+//      shared control signal across L/R)
 [[gnu::always_inline]]
 inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
-    float* out = ctx.buffers->get(inst.out_buffer);
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
     const float* target = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* target_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : target;
     const float* rate_buf = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<SlewState>(inst.state_id);
 
     // Initialize state to first input value (instant startup)
     if (!state.initialized) {
-        state.current = target[0];
+        state.current[0] = target[0];
+        state.current[1] = target_r[0];
         state.initialized = true;
     }
 
@@ -183,16 +191,20 @@ inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
         float rate = rate_buf[i];
         // Linear slew rate limiter: limit change to rate units per second
         float max_delta = (rate > 0.0f) ? rate / ctx.sample_rate : 1e10f;
-        float delta = target[i] - state.current;
 
-        if (std::abs(delta) <= max_delta) {
-            state.current = target[i];
-        } else if (delta > 0.0f) {
-            state.current += max_delta;
-        } else {
-            state.current -= max_delta;
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            const float* t = (ch == 0) ? target : target_r;
+            float delta = t[i] - state.current[ch];
+
+            if (std::abs(delta) <= max_delta) {
+                state.current[ch] = t[i];
+            } else if (delta > 0.0f) {
+                state.current[ch] += max_delta;
+            } else {
+                state.current[ch] -= max_delta;
+            }
+            (ch == 0 ? out_l : out_r)[i] = state.current[ch];
         }
-        out[i] = state.current;
     }
 }
 
