@@ -451,6 +451,29 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
                    .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset)",
                    .consumes_polyphonic_pattern = true}},
+    // PRD prd-midi-input §4.7: runtime MIDI event source. The `options` record
+    // selects the source (default device / named device / .mid file) and tunes
+    // the live filter. Special-cased in codegen as handle_midi_call.
+    {"midi", {.opcode = cedar::Opcode::MIDI_QUERY,
+              .input_count = 0, .optional_count = 1, .requires_state = true,
+              .param_names = {"options", "", "", "", "", ""},
+              .defaults = {NAN, NAN, NAN, NAN, NAN},
+              .description = "MIDI event source. Bare midi() opens the default live device. "
+                             "midi({device: name}) opens a named device; midi({file: path}) "
+                             "plays a .mid file. Options: device, file, channel, loop, tempo.",
+              .param_types = {ParamValueType::Record},
+              .option_schemas = {OptionSchema{
+                  /*param_index=*/0,
+                  /*fields=*/{{
+                      {"device",  OptionFieldType::String, "",          "Live device name (substring match against host port list)"},
+                      {"file",    OptionFieldType::String, "",          "Path/URI of a .mid file (mutually exclusive with device:)"},
+                      {"channel", OptionFieldType::Number, "0",         "Channel filter, 1-16 (0 = any)"},
+                      {"loop",    OptionFieldType::Bool,   "false",     "Loop file playback at end-of-track"},
+                      {"tempo",   OptionFieldType::Enum,   "\"follow\"", "Playback tempo policy (file mode only)", "follow,file"},
+                  }},
+                  /*field_count=*/5,
+              }},
+              .option_schema_count = 1}},
 
     // Delays — stereo-native (prd-stereo-native-opcodes Phase 4c).
     // Per-channel ring buffers; mono control inputs (time/fb/dry/wet) shared.

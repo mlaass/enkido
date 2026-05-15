@@ -3,6 +3,7 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/options.hpp"
 #include "akkado/chord_parser.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/mini_parser.hpp"
@@ -5721,6 +5722,154 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
 
     pop_path();
     return cache_and_return(node, TypedValue::signal(mixed));
+}
+
+// PRD prd-midi-input §4.7: midi() builtin. Emits one MIDI_QUERY and records
+// a RequiredMidiSource that the host iterates to call vm.init_midi_queue_state
+// after load. Returns a TypedValue::EventSource — handle_poly_call reads the
+// state_id from event_source->state_id alongside the Pattern path.
+TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
+    // §10 Q4 / Non-Goal: midi() top-level only in v1.
+    if (user_function_depth_ > 0) {
+        error("E412",
+              "midi() may only be called at the top level — not inside fn bodies "
+              "(per prd-midi-input §10).",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    // Walk children. Accept 0 or 1 record argument.
+    NodeIndex arg = n.first_child;
+    NodeIndex options_arg = NULL_NODE;
+    std::size_t arg_count = 0;
+    while (arg != NULL_NODE) {
+        ++arg_count;
+        if (arg_count == 1) options_arg = arg;
+        arg = ast_->arena[arg].next_sibling;
+    }
+    if (arg_count > 1) {
+        error("E400",
+              "midi() takes at most one argument: an options record "
+              "(e.g. midi({device: \"name\"}) or midi({file: \"song.mid\"})).",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    // Defaults
+    cedar::MidiSourceKind kind = cedar::MidiSourceKind::DefaultDevice;
+    std::string           name_or_path;
+    std::uint8_t          channel_filter = 0;
+    bool                  loop = false;
+    cedar::MidiQueueState::TempoMode tempo_mode =
+        cedar::MidiQueueState::TempoMode::Follow;
+
+    if (options_arg != NULL_NODE) {
+        // Look up the options schema declared on the builtin.
+        const OptionSchema* schema_ptr = nullptr;
+        if (const BuiltinInfo* info = lookup_builtin("midi")) {
+            schema_ptr = info->find_option_schema(/*param_index=*/0);
+        }
+        static const OptionSchema empty_schema{};
+        const OptionSchema& schema = schema_ptr ? *schema_ptr : empty_schema;
+
+        codegen::OptionsPayload payload =
+            codegen::extract_options(ast_->arena, options_arg, schema);
+
+        auto device_opt = payload.get_string("device");
+        auto file_opt   = payload.get_string("file");
+        auto channel_opt = payload.get_number("channel");
+        auto loop_opt   = payload.get_bool("loop");
+        auto tempo_opt  = payload.get_string("tempo");
+
+        const bool has_device = device_opt.has_value() && !device_opt->empty();
+        const bool has_file   = file_opt.has_value()   && !file_opt->empty();
+
+        if (has_device && has_file) {
+            error("E411",
+                  "midi(): 'file' and 'device' are mutually exclusive — "
+                  "pick one source.",
+                  n.location);
+            return TypedValue::void_val();
+        }
+
+        if (has_file) {
+            kind = cedar::MidiSourceKind::File;
+            name_or_path.assign(file_opt->data(), file_opt->size());
+        } else if (has_device) {
+            kind = cedar::MidiSourceKind::NamedDevice;
+            name_or_path.assign(device_opt->data(), device_opt->size());
+        }
+
+        if (channel_opt.has_value()) {
+            double ch = *channel_opt;
+            int chi = static_cast<int>(ch);
+            if (chi < 0 || chi > 16 ||
+                static_cast<double>(chi) != ch) {
+                error("E414",
+                      "midi(): 'channel' must be an integer in 0..16 "
+                      "(0 = any channel, 1..16 = specific MIDI channel).",
+                      n.location);
+                return TypedValue::void_val();
+            }
+            channel_filter = static_cast<std::uint8_t>(chi);
+        }
+
+        if (loop_opt.has_value()) {
+            loop = *loop_opt;
+        }
+
+        if (tempo_opt.has_value()) {
+            if (*tempo_opt == "follow") {
+                tempo_mode = cedar::MidiQueueState::TempoMode::Follow;
+            } else if (*tempo_opt == "file") {
+                tempo_mode = cedar::MidiQueueState::TempoMode::File;
+            } else {
+                error("E413",
+                      "midi(): 'tempo' must be \"follow\" or \"file\" "
+                      "(got \"" + std::string(*tempo_opt) + "\").",
+                      n.location);
+                return TypedValue::void_val();
+            }
+        }
+    }
+
+    // Unique semantic-id path per call site so hot-swap state preservation
+    // matches the right ring across recompiles.
+    std::uint32_t midi_count = call_counters_["midi"]++;
+    push_path("midi#" + std::to_string(midi_count));
+    std::uint32_t state_id = compute_state_id();
+
+    // Emit one MIDI_QUERY. The opcode has no inputs or output buffer — POLY
+    // reads MidiQueueState.output via state_pool_.resolve_output_events.
+    cedar::Instruction midi_inst{};
+    midi_inst.opcode = cedar::Opcode::MIDI_QUERY;
+    midi_inst.out_buffer = 0xFFFF;
+    midi_inst.inputs[0] = 0xFFFF;
+    midi_inst.inputs[1] = 0xFFFF;
+    midi_inst.inputs[2] = 0xFFFF;
+    midi_inst.inputs[3] = 0xFFFF;
+    midi_inst.inputs[4] = 0xFFFF;
+    midi_inst.rate = 0;
+    midi_inst.state_id = state_id;
+    emit(midi_inst);
+
+    // Publish host-facing config. Duplicates by name are NOT collapsed —
+    // each call gets its own state_id and its own ring (PRD §3.4).
+    required_midi_sources_.push_back(RequiredMidiSource{
+        /*state_id=*/state_id,
+        /*kind=*/kind,
+        /*name_or_path=*/std::move(name_or_path),
+        /*channel_filter=*/channel_filter,
+        /*loop=*/loop,
+        /*tempo_mode=*/tempo_mode,
+    });
+
+    pop_path();
+
+    auto payload = std::make_shared<EventSourcePayload>();
+    payload->state_id     = state_id;
+    payload->cycle_length = 4.0f;
+    return cache_and_return(node, TypedValue::make_event_source(payload));
 }
 
 TypedValue CodeGenerator::handle_input_call(NodeIndex node, const Node& n) {

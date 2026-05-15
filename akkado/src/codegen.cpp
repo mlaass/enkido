@@ -89,6 +89,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_samples_extended_.clear();
     scalar_sample_mappings_.clear();
     required_soundfonts_.clear();
+    required_midi_sources_.clear();
     required_wavetables_.clear();
     required_uris_.clear();
     required_input_sources_.clear();
@@ -100,6 +101,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     anonymous_counter_ = 0;
     node_types_.clear();
     call_counters_.clear();
+    user_function_depth_ = 0;
     param_function_refs_.clear();
     polyphonic_pattern_nodes_.clear();
     current_source_loc_ = {};
@@ -110,7 +112,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, {}, std::move(diagnostics_), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, false};
+        return {{}, {}, std::move(diagnostics_), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, false};
     }
 
     // Visit root (Program node)
@@ -134,7 +136,8 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     return {std::move(instructions_), std::move(source_locations_), std::move(diagnostics_),
             std::move(state_inits_), std::move(required_samples_vec), std::move(required_samples_extended_),
             std::move(scalar_sample_mappings_),
-            std::move(required_soundfonts_), std::move(required_input_sources_),
+            std::move(required_soundfonts_), std::move(required_midi_sources_),
+            std::move(required_input_sources_),
             std::move(param_decls_), std::move(viz_decls_), std::move(builtin_var_overrides_),
             std::move(required_wavetables_), std::move(required_uris_), success};
 }
@@ -1109,6 +1112,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"compose", &CodeGenerator::handle_compose_call},
                 // SoundFont playback
                 {"soundfont", &CodeGenerator::handle_soundfont_call},
+                // Runtime MIDI event source (PRD prd-midi-input §4.7)
+                {"midi", &CodeGenerator::handle_midi_call},
                 // Wavetable: wt_load(name, path) is a compile-time directive
                 // (records required_wavetables, no instruction emitted).
                 // smooch / wt / wavetable resolve the bank name to its ID at

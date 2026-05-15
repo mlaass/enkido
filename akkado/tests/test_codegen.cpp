@@ -9719,3 +9719,177 @@ TEST_CASE("Codegen: unison stdlib function", "[codegen][unison]") {
         CHECK(count_instructions(insts, cedar::Opcode::OSC_SAW) == 4);
     }
 }
+
+// =============================================================================
+// midi() builtin — PRD prd-midi-input §8.3
+// =============================================================================
+
+namespace {
+
+// Find the index of the first MIDI_QUERY in an instruction list, or SIZE_MAX.
+std::size_t find_midi_query_idx(const std::vector<cedar::Instruction>& insts) {
+    for (std::size_t i = 0; i < insts.size(); ++i) {
+        if (insts[i].opcode == cedar::Opcode::MIDI_QUERY) return i;
+    }
+    return SIZE_MAX;
+}
+
+// Find the index of the first POLY_BEGIN.
+std::size_t find_poly_begin_idx(const std::vector<cedar::Instruction>& insts) {
+    for (std::size_t i = 0; i < insts.size(); ++i) {
+        if (insts[i].opcode == cedar::Opcode::POLY_BEGIN) return i;
+    }
+    return SIZE_MAX;
+}
+
+// Locate the PolyAlloc state init for a given state_id.
+const akkado::StateInitData* find_poly_alloc_init(
+    const akkado::CompileResult& result, std::uint32_t state_id) {
+    for (const auto& s : result.state_inits) {
+        if (s.type == akkado::StateInitData::Type::PolyAlloc &&
+            s.state_id == state_id) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("midi() basic codegen", "[midi]") {
+    const std::string instr_decl =
+        "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n";
+
+    SECTION("bare midi() pipes into poly with matching state_id") {
+        auto result = akkado::compile(instr_decl +
+            "midi() |> poly(%, synth, 8) |> out(%)");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.severity != akkado::Severity::Error);
+        }
+        REQUIRE(result.success);
+
+        auto insts = get_instructions(result);
+        std::size_t mq = find_midi_query_idx(insts);
+        std::size_t pb = find_poly_begin_idx(insts);
+        REQUIRE(mq != SIZE_MAX);
+        REQUIRE(pb != SIZE_MAX);
+        CHECK(mq < pb);
+
+        std::uint32_t midi_state = insts[mq].state_id;
+        std::uint32_t poly_state = insts[pb].state_id;
+        const auto* pa = find_poly_alloc_init(result, poly_state);
+        REQUIRE(pa != nullptr);
+        CHECK(pa->poly_seq_state_id == midi_state);
+
+        REQUIRE(result.required_midi_sources.size() == 1);
+        const auto& src = result.required_midi_sources[0];
+        CHECK(src.state_id == midi_state);
+        CHECK(src.kind == cedar::MidiSourceKind::DefaultDevice);
+        CHECK(src.name_or_path == "");
+        CHECK(src.channel_filter == 0);
+        CHECK(src.loop == false);
+        CHECK(src.tempo_mode == cedar::MidiQueueState::TempoMode::Follow);
+    }
+
+    SECTION("midi({device: \"name\"}) sets kind=NamedDevice + name") {
+        auto result = akkado::compile(instr_decl +
+            "midi({device: \"Launchkey\"}) |> poly(%, synth, 4) |> out(%)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_sources.size() == 1);
+        const auto& src = result.required_midi_sources[0];
+        CHECK(src.kind == cedar::MidiSourceKind::NamedDevice);
+        CHECK(src.name_or_path == "Launchkey");
+    }
+
+    SECTION("midi({file: ...}) sets kind=File + path + Follow default") {
+        auto result = akkado::compile(instr_decl +
+            "midi({file: \"song.mid\"}) |> poly(%, synth, 8) |> out(%)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_sources.size() == 1);
+        const auto& src = result.required_midi_sources[0];
+        CHECK(src.kind == cedar::MidiSourceKind::File);
+        CHECK(src.name_or_path == "song.mid");
+        CHECK(src.tempo_mode == cedar::MidiQueueState::TempoMode::Follow);
+        CHECK(src.loop == false);
+    }
+
+    SECTION("midi({file:..., loop: true, tempo: \"file\"}) propagates all") {
+        auto result = akkado::compile(instr_decl +
+            "midi({file: \"song.mid\", loop: true, tempo: \"file\"}) "
+            "|> poly(%, synth, 8) |> out(%)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_sources.size() == 1);
+        const auto& src = result.required_midi_sources[0];
+        CHECK(src.kind == cedar::MidiSourceKind::File);
+        CHECK(src.name_or_path == "song.mid");
+        CHECK(src.loop == true);
+        CHECK(src.tempo_mode == cedar::MidiQueueState::TempoMode::File);
+    }
+
+    SECTION("midi({channel: 1}) sets channel_filter") {
+        auto result = akkado::compile(instr_decl +
+            "midi({channel: 1}) |> poly(%, synth, 4) |> out(%)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_sources.size() == 1);
+        CHECK(result.required_midi_sources[0].channel_filter == 1);
+    }
+
+    SECTION("two midi() calls produce two RequiredMidiSource entries with distinct state_ids") {
+        auto result = akkado::compile(instr_decl +
+            "midi({channel: 1}) |> poly(%, synth, 4) |> out(%)\n"
+            "midi({channel: 2}) |> poly(%, synth, 4) |> out(%)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_sources.size() == 2);
+        const auto& a = result.required_midi_sources[0];
+        const auto& b = result.required_midi_sources[1];
+        CHECK(a.state_id != b.state_id);
+        CHECK(a.channel_filter == 1);
+        CHECK(b.channel_filter == 2);
+
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::MIDI_QUERY) == 2);
+    }
+}
+
+TEST_CASE("midi() diagnostics", "[midi]") {
+    const std::string instr_decl =
+        "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n";
+
+    auto has_diag = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    SECTION("E411: file and device are mutually exclusive") {
+        auto result = akkado::compile(instr_decl +
+            "midi({file: \"song.mid\", device: \"X\"}) |> poly(%, synth, 4) |> out(%)");
+        CHECK(has_diag(result, "E411"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E413: invalid tempo value") {
+        auto result = akkado::compile(instr_decl +
+            "midi({file: \"song.mid\", tempo: \"wrong\"}) |> poly(%, synth, 4) |> out(%)");
+        CHECK(has_diag(result, "E413"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E414: out-of-range channel") {
+        auto result = akkado::compile(instr_decl +
+            "midi({channel: 17}) |> poly(%, synth, 4) |> out(%)");
+        CHECK(has_diag(result, "E414"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E412: midi() inside fn body is rejected") {
+        auto result = akkado::compile(
+            "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n"
+            "fn build_chain() -> midi() |> poly(%, synth, 4)\n"
+            "build_chain() |> out(%)");
+        CHECK(has_diag(result, "E412"));
+        CHECK(!result.success);
+    }
+}

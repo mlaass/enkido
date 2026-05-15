@@ -706,10 +706,13 @@ TypedValue CodeGenerator::handle_user_function_call(
     auto saved_node_types = std::move(node_types_);
     node_types_.clear();
 
-    // Visit function body (inline expansion)
+    // Visit function body (inline expansion). PRD prd-midi-input §10 Q4:
+    // track fn-body context so handle_midi_call can reject mid-body `midi()`.
     TypedValue result_tv = TypedValue::void_val();
     if (func.body_node != NULL_NODE) {
+        ++user_function_depth_;
         result_tv = visit(func.body_node);
+        --user_function_depth_;
     }
 
     // Restore node_types_ (keep new entries but restore old ones)
@@ -1059,6 +1062,10 @@ TypedValue CodeGenerator::handle_function_value_call(
 
     TypedValue result_tv = TypedValue::void_val();
 
+    // PRD prd-midi-input §10 Q4: track fn-body context so `midi()` can reject
+    // calls that are not top-level.
+    ++user_function_depth_;
+
     // Handle composed functions: apply each function in the chain sequentially
     if (!func.compose_chain.empty()) {
         // First function gets the call argument(s)
@@ -1097,6 +1104,8 @@ TypedValue CodeGenerator::handle_function_value_call(
             result_tv = visit(body);
         }
     }
+
+    --user_function_depth_;
 
     // Restore node_types_
     for (auto& [k, v] : saved_node_types) {
@@ -2051,11 +2060,16 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     std::uint32_t seq_state_id = 0;
     if (pattern_arg != NULL_NODE) {
         auto pat_tv = visit(pattern_arg);
-        // Look up pattern state_id from TypedValue
+        // Look up upstream state_id. Patterns and midi() sources both feed
+        // POLY through StatePool::resolve_output_events on the cedar side;
+        // here we just record whichever state_id the upstream produced.
         if (pat_tv.pattern) {
             seq_state_id = pat_tv.pattern->state_id;
+        } else if (pat_tv.type == ValueType::EventSource && pat_tv.event_source) {
+            seq_state_id = pat_tv.event_source->state_id;
         }
-        // Consume polyphonic tracking — poly() handles voice allocation at runtime
+        // Consume polyphonic tracking — poly() handles voice allocation at runtime.
+        // No-op for EventSource upstreams since they were never registered.
         polyphonic_pattern_nodes_.erase(pattern_arg);
     }
 

@@ -11,6 +11,7 @@
 #include <cedar/vm/instruction.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
+#include <cedar/opcodes/midi.hpp>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -184,6 +185,21 @@ struct RequiredSoundFont {
     int preset_index = 0;    // Preset index within the SF2
 };
 
+/// Required MIDI source from compile-time midi() calls
+/// (PRD prd-midi-input §4.7). One entry per midi() call site — duplicates by
+/// `device:` or `file:` are NOT collapsed, because per-call channel filters
+/// and option overrides may differ. The host iterates this list after
+/// compilation and calls `vm.init_midi_queue_state(...)` with every field.
+struct RequiredMidiSource {
+    std::uint32_t              state_id = 0;
+    cedar::MidiSourceKind      kind = cedar::MidiSourceKind::DefaultDevice;
+    std::string                name_or_path;   // empty for DefaultDevice
+    std::uint8_t               channel_filter = 0;  // 0 = any, 1..16
+    bool                       loop = false;
+    cedar::MidiQueueState::TempoMode tempo_mode =
+        cedar::MidiQueueState::TempoMode::Follow;
+};
+
 /// Required wavetable bank from a compile-time wt_load(...) directive.
 /// The host iterates these after compilation in order: native loads each
 /// via `VM::wavetable_registry().load_from_file(name, path)`; WASM fetches
@@ -230,6 +246,7 @@ struct CodeGenResult {
     std::vector<RequiredSample> required_samples_extended;  // Sample refs with bank/variant info
     std::vector<ScalarSampleMapping> scalar_sample_mappings;  // Direct sample("name") references requiring runtime ID patching
     std::vector<RequiredSoundFont> required_soundfonts;  // SoundFont files needed at runtime
+    std::vector<RequiredMidiSource> required_midi_sources;  // Per-call MIDI source configs (PRD prd-midi-input)
     // Input source strings collected from in('...') calls (per-call, not deduplicated).
     // Empty means in() was called with no argument (host uses UI default).
     // Hosts use this metadata to switch input source on compile.
@@ -638,6 +655,13 @@ private:
     /// Special-cased: extracts filename/preset at compile time, emits SOUNDFONT_VOICE
     TypedValue handle_soundfont_call(NodeIndex node, const Node& n);
 
+    /// Handle midi(options?) - runtime MIDI event source (PRD prd-midi-input §4.7).
+    /// Special-cased: emits one MIDI_QUERY, records a RequiredMidiSource for the
+    /// host to call vm.init_midi_queue_state(state_id, ...) with after load.
+    /// Returns a TypedValue::EventSource that handle_poly_call accepts as
+    /// upstream alongside Pattern.
+    TypedValue handle_midi_call(NodeIndex node, const Node& n);
+
     /// Handle wt_load("name", "path") - register a wavetable bank.
     /// Compile-time directive only — emits no instruction. Both args must
     /// be string literals. The (name, path, id) tuple is recorded in
@@ -782,6 +806,11 @@ private:
     // Track call counts per stateful function for unique state_ids
     std::unordered_map<std::string, std::uint32_t> call_counters_;
 
+    // PRD prd-midi-input §10 Q4: depth counter incremented while visiting a
+    // user-function / closure body. handle_midi_call rejects with E412 when
+    // this is > 0 — `midi()` is top-level only in v1.
+    int user_function_depth_ = 0;
+
     // Track unique sample names used (for runtime loading) - legacy
     std::set<std::string> required_samples_;
     // Track samples with bank/variant info for extended sample resolution
@@ -793,6 +822,8 @@ private:
     std::vector<ScalarSampleMapping> scalar_sample_mappings_;
     // Track required SoundFont files
     std::vector<RequiredSoundFont> required_soundfonts_;
+    // Track per-call midi() configs (PRD prd-midi-input §4.7).
+    std::vector<RequiredMidiSource> required_midi_sources_;
     // Track required wavetable banks from compile-time wt_load() directives
     // (per-call order; deduplicated on (name, path) pair to avoid reloading
     // when the same bank appears in multiple modules).

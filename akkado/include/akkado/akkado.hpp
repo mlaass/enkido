@@ -53,6 +53,11 @@ struct CompileResult {
     std::vector<RequiredSample> required_samples_extended;  // Sample refs with bank/variant info
     std::vector<ScalarSampleMapping> scalar_sample_mappings;  // Direct sample("name") calls needing runtime ID patching
     std::vector<RequiredSoundFont> required_soundfonts;  // SoundFont files needed at runtime
+    // Per-call midi() source configs (PRD prd-midi-input §4.7). Each entry tells
+    // the host to call vm.init_midi_queue_state(state_id, kind, name_or_path,
+    // channel_filter, loop, tempo_mode) before resuming the audio thread, plus
+    // (for File kind) load the .mid bytes via cedar_load_midi_file / UriResolver.
+    std::vector<RequiredMidiSource> required_midi_sources;
     // Source strings collected from in('...') calls in compile order (one entry per call,
     // empty string if the call had no argument). Hosts use this to switch input source.
     std::vector<std::string> required_input_sources;

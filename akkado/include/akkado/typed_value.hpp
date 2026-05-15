@@ -13,15 +13,16 @@ namespace akkado {
 
 /// Type tag for codegen values
 enum class ValueType : std::uint8_t {
-    Signal,    // Audio-rate buffer (oscillator, filter output, etc.)
-    Number,    // Compile-time known numeric constant (still has buffer)
-    Pattern,   // Mini-notation pattern with field buffers
-    Record,    // Named field collection
-    Array,     // Multi-element collection (compile-time unrolled)
-    String,    // Compile-time string (no runtime buffer)
-    Function,  // Function reference (no runtime buffer)
-    StateCell, // Handle to a CellState slot (state(init) in userspace)
-    Void       // No value (statements, directives)
+    Signal,      // Audio-rate buffer (oscillator, filter output, etc.)
+    Number,      // Compile-time known numeric constant (still has buffer)
+    Pattern,     // Mini-notation pattern with field buffers
+    Record,      // Named field collection
+    Array,       // Multi-element collection (compile-time unrolled)
+    String,      // Compile-time string (no runtime buffer)
+    Function,    // Function reference (no runtime buffer)
+    StateCell,   // Handle to a CellState slot (state(init) in userspace)
+    EventSource, // External event stream (midi()); carries a state_id read by poly()
+    Void         // No value (statements, directives)
 };
 
 /// Channel count for signal values. When Stereo, `right_buffer` holds the
@@ -115,6 +116,18 @@ struct ArrayPayload {
     std::vector<TypedValue> elements;
 };
 
+/// EventSource payload (PRD prd-midi-input §4.7): an external runtime event
+/// stream produced by `midi()`. The `state_id` points at a MidiQueueState
+/// in the state pool; `poly()` reads it through
+/// `StatePool::resolve_output_events`, the same path that handles
+/// `SequenceState`. Carried as a separate payload (not Pattern) so the
+/// type system stays honest — MIDI streams have no compile-time event
+/// schedule and don't support pattern transforms.
+struct EventSourcePayload {
+    std::uint32_t state_id = 0;
+    float         cycle_length = 4.0f;
+};
+
 /// A typed value produced by the code generator.
 /// Wraps a buffer index with type information and optional compound payloads.
 struct TypedValue {
@@ -135,6 +148,7 @@ struct TypedValue {
     std::shared_ptr<PatternPayload> pattern;
     std::shared_ptr<RecordPayload> record;
     std::shared_ptr<ArrayPayload> array;
+    std::shared_ptr<EventSourcePayload> event_source;
 
     // String ID (FNV-1a hash) for ValueType::String
     std::uint32_t string_id = 0;
@@ -229,20 +243,30 @@ struct TypedValue {
         tv.array->elements = std::move(elements);
         return tv;
     }
+
+    static TypedValue make_event_source(std::shared_ptr<EventSourcePayload> p,
+                                         std::uint16_t primary_buf = 0xFFFF) {
+        TypedValue tv;
+        tv.type = ValueType::EventSource;
+        tv.buffer = primary_buf;
+        tv.event_source = std::move(p);
+        return tv;
+    }
 };
 
 /// Human-readable name for a ValueType (for error messages)
 constexpr const char* value_type_name(ValueType type) {
     switch (type) {
-        case ValueType::Signal:   return "Signal";
-        case ValueType::Number:   return "Number";
-        case ValueType::Pattern:  return "Pattern";
-        case ValueType::Record:   return "Record";
-        case ValueType::Array:    return "Array";
-        case ValueType::String:   return "String";
-        case ValueType::Function: return "Function";
-        case ValueType::StateCell:return "StateCell";
-        case ValueType::Void:     return "Void";
+        case ValueType::Signal:      return "Signal";
+        case ValueType::Number:      return "Number";
+        case ValueType::Pattern:     return "Pattern";
+        case ValueType::Record:      return "Record";
+        case ValueType::Array:       return "Array";
+        case ValueType::String:      return "String";
+        case ValueType::Function:    return "Function";
+        case ValueType::StateCell:   return "StateCell";
+        case ValueType::EventSource: return "EventSource";
+        case ValueType::Void:        return "Void";
     }
     return "Unknown";
 }
