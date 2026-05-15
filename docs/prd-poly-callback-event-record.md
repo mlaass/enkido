@@ -118,6 +118,8 @@ The leading params consume positions 1…k of the canonical order; the trailing 
 
 ```akkado
 // `e` is the full event record; use e.field freely
+// (AR retriggers on rising edges of `.gate`; for one-shot pulse semantics
+// use `e.trig`. The two are distinct fields, not aliases.)
 chord("C Em Am G") |> poly(%, (...e) ->
     osc("sin", e.freq) * e.vel * ar(e.gate, 0.02, 0.5))
     |> out(%)

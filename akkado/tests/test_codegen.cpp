@@ -3948,6 +3948,26 @@ TEST_CASE("Codegen: Error E130-E136 - Field access errors", "[codegen][errors]")
         CHECK(found);
     }
 
+    SECTION("dropped .t alias produces E136") {
+        // `.t` used to be a short alias of `.trig` but was removed because
+        // it collided with `.time`/`.t0`. Both `.trig` and `.trigger`
+        // continue to work; only the single-letter form is gone.
+        auto result = akkado::compile(R"(pat("c4") |> %.t)");
+        REQUIRE_FALSE(result.success);
+        bool found_e136 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E136") { found_e136 = true; break; }
+        }
+        CHECK(found_e136);
+    }
+
+    SECTION(".trig and .trigger both still resolve") {
+        auto a = akkado::compile(R"(pat("c4") |> %.trig |> out(%, %))");
+        auto b = akkado::compile(R"(pat("c4") |> %.trigger |> out(%, %))");
+        CHECK(a.success);
+        CHECK(b.success);
+    }
+
     SECTION("field access on undefined variable - E005") {
         auto result = akkado::compile("undefined_record.field");
         REQUIRE_FALSE(result.success);

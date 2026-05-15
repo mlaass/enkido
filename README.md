@@ -52,8 +52,8 @@ osc("sin", 440) |> out(%)
 // Pattern with field access
 pat("c4 e4 g4") as e |> osc("saw", e.freq) |> % * e.vel |> out(%)
 
-// Chord with envelope
-C4' |> osc("tri", %) |> adsr(%.trig, 0.01, 0.2) |> out(%)
+// Pattern with envelope (.gate sustains per note; use .trig for an AR/sample pulse)
+n"c4 e4 g4 b4" |> osc("tri", @.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.2) |> out(%)
 
 // Runtime parameters exposed in UI
 freq = param("freq", 440, 20, 2000)

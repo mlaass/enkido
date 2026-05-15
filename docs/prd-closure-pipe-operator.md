@@ -123,7 +123,7 @@ pat("C4' Am7' G4' F4'")
 
 The compiler knows `poly()` expects `(freq, gate, vel)` from its builtin definition. Inside the `->>` body:
 - `%.freq` → direct reference to the `freq` parameter
-- `%.gate` → direct reference to the `gate` parameter
+- `%.gate` → direct reference to the `gate` parameter (held high with a 1-sample drop at every event onset; use `.trig` if you want a 1-sample pulse instead — see mini-notation-reference §Event Fields for the trigger-vs-gate distinction)
 - `%.vel` → direct reference to the `vel` parameter
 
 ### 3.2 Mono / Legato

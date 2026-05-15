@@ -59,6 +59,8 @@ Atoms are chord symbols (`Am`, `C7`, `Fmaj7`, …). Multi-voice; consume via `po
 
 ```akk
 c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) ) |> out(%)
+// `e.trig` is the per-note pulse for AR. Use `e.gate` instead if the
+// instrument is an ADSR that should sustain across the note's duration.
 ```
 
 A chord pattern in a scalar slot errors `E160`. Silently dropping voices is not implicit.

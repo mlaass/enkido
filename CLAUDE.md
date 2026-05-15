@@ -68,9 +68,12 @@ rec.freq  // 440
 Pattern events are records with fields accessible via `%`:
 - `%.freq` / `%.pitch` / `%.f` - Frequency in Hz
 - `%.vel` / `%.velocity` / `%.v` - Velocity (0-1)
-- `%.trig` / `%.trigger` / `%.t` - Trigger pulse
+- `%.trig` / `%.trigger` - 1-sample pulse at every event onset (pair with AR / sample retrigger)
+- `%.gate` / `%.g` - Held high for the event's duration with a 1-sample drop at each onset (pair with ADSR; overlap durations via `dur()` for legato)
 - `%.note` / `%.midi` / `%.n` - MIDI note number
 - `%.dur`, `%.chance`, `%.time`, `%.phase` - Extended fields
+
+`.trig` and `.gate` are **separate fields**, not aliases. `.trig` is a pulse — useful when you want to fire something exactly once per note (sample players, AR envelopes). `.gate` is a sustain signal — useful when an envelope (ADSR) needs to hold a note open. The 1-sample drop at every `.gate` onset means ADSR releases-and-reattacks between adjacent notes by default; overlap durations (`pat.dur(2)`) to suppress the drop and get legato.
 
 Example with pipe binding:
 ```akkado

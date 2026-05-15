@@ -206,6 +206,13 @@ struct SequenceState {
     float last_beat_pos = -1.0f;
     float last_queried_cycle = -1.0f;
 
+    // SEQPAT_GATE retrigger tracking. Separate from `last_beat_pos` because
+    // SEQPAT_STEP and SEQPAT_GATE may run in different orders relative to
+    // other opcodes that read `last_beat_pos`. Sentinel -1.0f means "no
+    // prior sample observed yet"; in that case the gate uses the natural
+    // any-active state without a retrigger drop.
+    float last_beat_pos_gate = -1.0f;
+
     // iter()/iterBack() rotation state. Set via state_pool.init_sequence_iter().
     // When iter_n > 0, SEQPAT_QUERY rotates query results by
     // -iter_dir * (cycle_index mod iter_n) / iter_n of the cycle each cycle.

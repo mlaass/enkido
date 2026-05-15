@@ -605,8 +605,12 @@ inline void op_seqpat_type(ExecutionContext& ctx, const Instruction& inst) {
 // inputs[0]: voice index for polyphonic patterns (0-7, default 0 if 0xFFFF)
 // state_id: must match the SEQPAT_QUERY that populated the SequenceState
 //
-// Gate is high when beat_pos is in [event.time, event.time + event.duration)
-// This allows ADSR envelopes to sustain during the event's duration.
+// Gate is high when beat_pos is in [event.time, event.time + event.duration),
+// **except** that at each event onset we force gate=0 for that one sample to
+// give retrigger-style envelopes (AR, ADSR) a rising edge per note. The drop
+// is suppressed if another event is simultaneously sustaining at the onset
+// sample — this is the legato escape hatch: overlap event durations (e.g.
+// via `dur(2)`) and the gate stays continuously high across the overlap.
 [[gnu::always_inline]]
 inline void op_seqpat_gate(ExecutionContext& ctx, const Instruction& inst) {
     float* out_gate = ctx.buffers->get(inst.out_buffer);
@@ -626,53 +630,81 @@ inline void op_seqpat_gate(ExecutionContext& ctx, const Instruction& inst) {
     const float* ext_beat_pos = external_clock ? ctx.buffers->get(inst.inputs[1]) : nullptr;
 
     const float spb = external_clock ? 1.0f : ctx.samples_per_beat();
+    const float cycle = state.cycle_length;
+
+    // Helper: is event e currently sustaining at bp? Handles wrap-around.
+    auto event_active = [cycle](const OutputEvents::OutputEvent& e, float bp) -> bool {
+        float end = e.time + e.duration;
+        if (end > cycle) {
+            return bp >= e.time || bp < (end - cycle);
+        }
+        return bp >= e.time && bp < end;
+    };
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         // Current beat position within cycle
         float beat_pos;
         if (external_clock) {
-            beat_pos = std::fmod(ext_beat_pos[i], state.cycle_length);
-            if (beat_pos < 0.0f) beat_pos += state.cycle_length;
+            beat_pos = std::fmod(ext_beat_pos[i], cycle);
+            if (beat_pos < 0.0f) beat_pos += cycle;
         } else {
             beat_pos = std::fmod(
                 static_cast<float>(ctx.global_sample_counter + i) / spb,
-                state.cycle_length
+                cycle
             );
         }
 
-        // Find the most recent event that started before or at beat_pos
-        // Search backwards from current_index for efficiency
-        float gate_val = 0.0f;
+        const float bp_prev = state.last_beat_pos_gate;
+        const bool have_prev = (bp_prev >= 0.0f);
+        // Cycle wrap: bp jumped backward by more than half a cycle. Treat as
+        // crossing through cycle end into 0.
+        const bool wrapped = have_prev && (beat_pos < bp_prev - cycle * 0.5f);
 
-        // Linear scan through events to find if we're inside any event's duration
-        for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
-            const auto& evt = state.output.events[e];
-
-            // Check if this voice has a value for this event
-            if (voice_index >= evt.num_values) {
-                continue;  // This voice is silent for this event
+        // Onset detection: did beat_pos cross any event's start time on this
+        // sample? An onset for event e occurs when e.time falls in
+        // (bp_prev, beat_pos] (or, with wrap, in (bp_prev, cycle) ∪ [0, beat_pos]).
+        std::uint32_t onset_idx = state.output.num_events;  // sentinel "none"
+        if (have_prev) {
+            for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
+                const auto& evt = state.output.events[e];
+                if (voice_index >= evt.num_values) continue;
+                bool crossed;
+                if (wrapped) {
+                    crossed = (evt.time > bp_prev && evt.time < cycle) ||
+                              (evt.time >= 0.0f && evt.time <= beat_pos);
+                } else {
+                    crossed = (evt.time > bp_prev && evt.time <= beat_pos);
+                }
+                if (crossed) { onset_idx = e; break; }
             }
+        }
 
-            float event_start = evt.time;
-            float event_end = evt.time + evt.duration;
+        // If we have an onset, check whether another event is also sustaining
+        // at beat_pos. If so, this is a legato handoff — don't drop.
+        bool retrigger_drop = false;
+        if (onset_idx < state.output.num_events) {
+            bool other_sustaining = false;
+            for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
+                if (e == onset_idx) continue;
+                const auto& evt = state.output.events[e];
+                if (voice_index >= evt.num_values) continue;
+                if (event_active(evt, beat_pos)) { other_sustaining = true; break; }
+            }
+            retrigger_drop = !other_sustaining;
+        }
 
-            // Handle wrap-around: if event_end > cycle_length
-            if (event_end > state.cycle_length) {
-                // Event wraps around cycle boundary
-                if (beat_pos >= event_start || beat_pos < (event_end - state.cycle_length)) {
-                    gate_val = 1.0f;
-                    break;
-                }
-            } else {
-                // Normal case: event is contained within cycle
-                if (beat_pos >= event_start && beat_pos < event_end) {
-                    gate_val = 1.0f;
-                    break;
-                }
+        float gate_val = 0.0f;
+        if (!retrigger_drop) {
+            // Default: high if any event currently sustains
+            for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
+                const auto& evt = state.output.events[e];
+                if (voice_index >= evt.num_values) continue;
+                if (event_active(evt, beat_pos)) { gate_val = 1.0f; break; }
             }
         }
 
         out_gate[i] = gate_val;
+        state.last_beat_pos_gate = beat_pos;
     }
 }
 

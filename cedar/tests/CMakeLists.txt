@@ -41,6 +41,7 @@ add_executable(cedar_tests
     test_edge_op.cpp
     test_state_op.cpp
     test_phaser.cpp
+    test_seqpat_gate.cpp
     test_soundfont_registry.cpp
 )
 

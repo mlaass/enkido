@@ -343,12 +343,47 @@ When using patterns with pipe binding (`as`), event fields are accessible.
 |-------|---------|------|-------------|
 | `%.freq` | `%.f`, `%.pitch` | Hz | Frequency |
 | `%.vel` | `%.v`, `%.velocity` | 0-1 | Velocity |
-| `%.trig` | `%.t`, `%.trigger` | pulse | Trigger signal |
+| `%.trig` | `%.trigger` | pulse | 1-sample pulse at every event onset (per-note retrigger) |
+| `%.gate` | `%.g` | 0/1 | Held high during the event's duration, with a 1-sample drop at each onset |
 | `%.note` | `%.n`, `%.midi` | 0-127 | MIDI note number |
 | `%.dur` | - | cycles | Duration |
 | `%.chance` | - | 0-1 | Probability |
 | `%.time` | - | cycles | Event time |
 | `%.phase` | - | 0-1 | Phase within cycle |
+
+### Trigger vs gate
+
+`%.trig` and `%.gate` are **two different signals**, not aliases. Pick the one
+that matches your envelope:
+
+- **`%.trig`** is a single-sample pulse fired exactly once at the start of each
+  event. Pair it with `ar()`, sample players, or anything that listens for an
+  impulse.
+- **`%.gate`** stays high for the full duration of each event but drops to
+  `0` for one sample at every event onset, so retrigger-style envelopes
+  (`ar`, `adsr`) see a rising edge per note. Pair it with `adsr()` when you
+  want true sustain between attack and release.
+
+```akkado
+// AR + .trig — pulse-driven, clean per-note attack/release
+n"c4 e4 g4 b4" |> saw(@.freq) * ar(@.trig, 0.005, 0.15) |> out(%)
+
+// ADSR + .gate — sustains while the note is held; per-note retrigger
+n"c4 e4 g4 b4" |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.2) |> out(%)
+```
+
+#### Legato via overlapping durations
+
+The 1-sample drop in `.gate` happens at every event onset **unless** another
+event is still sustaining at that moment. Overlap durations with `dur()` to
+get true legato (no retrigger between notes):
+
+```akkado
+// Each note's duration is 2 steps long, so events overlap
+// → gate stays continuously high → ADSR sustains across the whole phrase.
+n"c4 e4 g4 b4".dur(2)
+  |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.5) |> out(%)
+```
 
 **Example:**
 ```akkado

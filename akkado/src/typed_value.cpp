@@ -35,7 +35,9 @@ const std::vector<PatternFieldAlias>& pattern_field_aliases() {
     static const std::vector<PatternFieldAlias> kTable = {
         {PatternPayload::FREQ,      {"freq", "frequency", "pitch", "f", "p"}},
         {PatternPayload::VEL,       {"vel", "velocity", "v"}},
-        {PatternPayload::TRIG,      {"trig", "trigger", "t"}},
+        // `.t` was a short alias here; dropped because it collided visually
+        // with `.time`/`.t0`. Use `.trig` (or `.trigger`).
+        {PatternPayload::TRIG,      {"trig", "trigger"}},
         {PatternPayload::GATE,      {"gate", "g"}},
         {PatternPayload::TYPE,      {"type"}},
         {PatternPayload::NOTE,      {"note", "midi", "n"}},
