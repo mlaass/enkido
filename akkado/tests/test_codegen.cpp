@@ -10073,3 +10073,113 @@ TEST_CASE("midi_cc() diagnostics", "[midi_cc]") {
         CHECK(!result.success);
     }
 }
+
+// ============================================================================
+// PRD prd-midi-input §7.2: `release:` option on poly/mono/legato
+// ============================================================================
+//
+// Codegen-side: the parsed value lands on a PolyAlloc StateInitData
+// (poly_release_seconds) without raising errors. Negative / non-literal
+// values are caught with a friendly message.
+
+TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
+    const std::string preamble =
+        "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n";
+
+    SECTION("release as 4th positional literal") {
+        auto result = akkado::compile(preamble +
+            "pat(\"c4 e4\") |> poly(%, synth, 8, 0.5) |> out(%)");
+        REQUIRE(result.success);
+
+        bool found = false;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+                found = true;
+                CHECK(init.poly_release_seconds == Catch::Approx(0.5f));
+                CHECK(init.poly_max_voices == 8);
+                CHECK(init.poly_mode == 0);
+            }
+        }
+        CHECK(found);
+    }
+
+    SECTION("release as named arg") {
+        auto result = akkado::compile(preamble +
+            "pat(\"c4\") |> poly(%, synth, 4, release: 0.25) |> out(%)");
+        REQUIRE(result.success);
+
+        bool found = false;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+                found = true;
+                CHECK(init.poly_release_seconds == Catch::Approx(0.25f));
+            }
+        }
+        CHECK(found);
+    }
+
+    SECTION("release defaults to 0 when omitted") {
+        auto result = akkado::compile(preamble +
+            "pat(\"c4\") |> poly(%, synth) |> out(%)");
+        REQUIRE(result.success);
+
+        bool found = false;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+                found = true;
+                CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
+            }
+        }
+        CHECK(found);
+    }
+
+    SECTION("E406: release must be number literal") {
+        auto has_diag = [](const akkado::CompileResult& r, const char* code) {
+            for (const auto& d : r.diagnostics) {
+                if (d.code == code) return true;
+            }
+            return false;
+        };
+        auto result = akkado::compile(preamble +
+            "x = osc(\"sin\", 1)\n"
+            "pat(\"c4\") |> poly(%, synth, 8, x) |> out(%)");
+        CHECK(has_diag(result, "E406"));
+        CHECK(!result.success);
+    }
+
+    SECTION("negative release clamps to 0") {
+        auto result = akkado::compile(preamble +
+            "pat(\"c4\") |> poly(%, synth, 4, -1.0) |> out(%)");
+        REQUIRE(result.success);
+
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+                CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
+            }
+        }
+    }
+}
+
+TEST_CASE("legato() accepts release: option (positional 3-arg form)",
+          "[polyphony][poly-release]") {
+    const std::string preamble =
+        "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n";
+
+    // legato uses the positional (input, instrument, release) form. Mixed
+    // positional/named args are intentionally not exercised here — see the
+    // comment on the legato builtin in builtins.hpp for the dual-form
+    // dispatch caveat.
+    auto result = akkado::compile(preamble +
+        "pat(\"c4\") |> legato(%, synth, 0.3) |> out(%)");
+    REQUIRE(result.success);
+
+    bool found = false;
+    for (const auto& init : result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            found = true;
+            CHECK(init.poly_release_seconds == Catch::Approx(0.3f));
+            CHECK(init.poly_mode == 2);  // legato
+        }
+    }
+    CHECK(found);
+}

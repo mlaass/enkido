@@ -1083,24 +1083,31 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    {NAN, NAN, NAN},
                    "Scale array to [lo, hi] range"}},
 
-    // Polyphony control
-    {"poly",      {cedar::Opcode::NOP, 2, 1, true,
-                   {"input", "instrument", "voices", "", "", ""},
-                   {NAN, NAN, 64.0f, NAN, NAN},
-                   "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128.",
+    // Polyphony control. `release` (seconds) holds the voice in the mix
+    // for that long past note-off so the instrument's own ADSR can finish
+    // its release tail instead of being silenced by gate-multiplied mixing
+    // — see PRD prd-midi-input §7.2. Default 0 = legacy behavior.
+    {"poly",      {cedar::Opcode::NOP, 2, 2, true,
+                   {"input", "instrument", "voices", "release", "", ""},
+                   {NAN, NAN, 64.0f, 0.0f, NAN},
+                   "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128. `release` (seconds) extends per-voice mix tail past note-off.",
                    0, {}, {}, ChannelCount::Stereo, true}},
     // Dual-role builtin: mono(stereo_signal) downmixes stereo→mono via (L+R)*0.5,
     // while mono(instrument) is the monophonic voice manager. The codegen
     // dispatcher routes based on argument type (see handle_mono_call).
-    {"mono",      {cedar::Opcode::MONO_DOWNMIX, 1, 1, false,
-                   {"signal_or_instrument", "input", "", "", "", ""},
-                   {NAN, NAN, NAN, NAN, NAN},
-                   "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager",
+    // The 2-arg voice-manager form `mono(input, instrument)` is also accepted
+    // but the param_names below describe the 1-arg form; mixed positional +
+    // named-arg use (e.g. `mono(synth, release: 0.3)`) is brittle for this
+    // dual-role builtin — prefer fully-positional `mono(input, synth, 0.3)`.
+    {"mono",      {cedar::Opcode::MONO_DOWNMIX, 1, 2, false,
+                   {"signal_or_instrument", "input", "release", "", "", ""},
+                   {NAN, NAN, 0.0f, NAN, NAN},
+                   "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager. `release` (seconds) extends mix tail past note-off in voice-manager mode.",
                    0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
-    {"legato",    {cedar::Opcode::NOP, 1, 1, false,
-                   {"instrument", "input", "", "", "", ""},
-                   {NAN, NAN, NAN, NAN, NAN},
-                   "Legato voice manager"}},
+    {"legato",    {cedar::Opcode::NOP, 1, 2, false,
+                   {"instrument", "input", "release", "", "", ""},
+                   {NAN, NAN, 0.0f, NAN, NAN},
+                   "Legato voice manager. `release` (seconds) extends mix tail past note-off."}},
     {"spread",    {cedar::Opcode::NOP, 2, 0, false,
                    {"n", "source", "", "", "", ""},
                    {NAN, NAN, NAN},

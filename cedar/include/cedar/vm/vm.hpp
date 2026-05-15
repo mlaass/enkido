@@ -194,15 +194,25 @@ public:
                                                  buffer_indices, count);
     }
 
-    // Initialize polyphony state for a POLY_BEGIN opcode
+    // Initialize polyphony state for a POLY_BEGIN opcode.
+    //
+    // @param release_seconds  Per-instance release window in seconds. 0
+    //   (default) preserves the legacy "gate-multiplied silence at
+    //   note-off" behavior. > 0 holds the mix-side gate at 1.0 for the
+    //   first `release_seconds * ctx_.sample_rate` samples after note-off
+    //   so the voice's own ADSR can run its release tail. See PRD
+    //   prd-midi-input §7.2.
     void init_poly_state(std::uint32_t state_id, std::uint32_t seq_state_id,
                          std::uint8_t max_voices, std::uint8_t mode,
-                         std::uint8_t steal_strategy) {
+                         std::uint8_t steal_strategy,
+                         float release_seconds = 0.0f) {
         auto& state = state_pool_.get_or_create<PolyAllocState>(state_id);
         state.seq_state_id = seq_state_id;
         state.max_voices = std::min(max_voices, static_cast<std::uint8_t>(PolyAllocState::MAX_VOICES));
         state.mode = mode;
         state.steal_strategy = steal_strategy;
+        const float release_clamped = release_seconds > 0.0f ? release_seconds : 0.0f;
+        state.release_window_samples = release_clamped * ctx_.sample_rate;
         state.ensure_voices(&audio_arena_);
     }
 

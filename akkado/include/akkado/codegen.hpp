@@ -162,6 +162,10 @@ struct StateInitData {
     std::uint8_t poly_max_voices = 8;
     std::uint8_t poly_mode = 0;            // 0=poly, 1=mono, 2=legato
     std::uint8_t poly_steal_strategy = 0;  // 0=oldest
+    // Per-instance release window in seconds (PRD prd-midi-input §7.2).
+    // The VM converts to samples at init time via current sample_rate.
+    // 0 = legacy "gate-multiplied silence at note-off" behavior.
+    float poly_release_seconds = 0.0f;
 
     // For SequenceProgram: iter()/iterBack() rotation configuration.
     // iter_n=0 disables rotation. iter_dir is +1 for iter, -1 for iterBack.

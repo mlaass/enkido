@@ -237,7 +237,8 @@ PYBIND11_MODULE(cedar_core, m) {
         // Polyphony state initialization
         .def("init_poly_state", &cedar::VM::init_poly_state,
             py::arg("state_id"), py::arg("seq_state_id"),
-            py::arg("max_voices"), py::arg("mode"), py::arg("steal_strategy"))
+            py::arg("max_voices"), py::arg("mode"), py::arg("steal_strategy"),
+            py::arg("release_seconds") = 0.0f)
 
         // Extended-params initialization (PRD prd-extended-params §5).
         // `constants` and `buffer_indices` must be equal-length arrays of

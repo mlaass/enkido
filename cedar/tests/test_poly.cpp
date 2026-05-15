@@ -1031,3 +1031,174 @@ TEST_CASE("POLY chord completeness: every chord onset allocates all notes",
     CHECK(chord_onsets_inspected >= 60);  // sanity: we sampled enough
     CHECK(incomplete_chord_count == 0);
 }
+
+// ============================================================================
+// PRD prd-midi-input §7.2: Gate-multiplied release fix
+// ============================================================================
+//
+// Default behavior (release_seconds == 0) zeros the voice output as soon as
+// the gate steps 1→0 at note-off. With a per-instance release window > 0,
+// the voice keeps mixing into the output for `release_seconds * sample_rate`
+// samples after note-off so the body's own ADSR (which sees the actual
+// gate edge) can run its release tail.
+
+TEST_CASE("POLY release window: legacy zero-release silences voice immediately",
+          "[poly-release]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // 0.5-beat note out of 4-beat cycle. At 120 BPM/48 kHz the note ends at
+    // sample 12000 (block ~93).
+    setup_single_note_sequence(vm, 440.0f, 0.5f);
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0, /*release_s*/ 0.0f);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    // Run past the note. Capture peak amplitude in the immediate post-note
+    // window (blocks 95-100, after note-off but within the legacy
+    // RELEASE_TIMEOUT=4 reaping window).
+    float post_peak = 0.0f;
+    for (int b = 0; b < 100; ++b) {
+        vm.process_block(left.data(), right.data());
+        if (b >= 95) {
+            for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+                post_peak = std::max(post_peak, std::abs(left[i]));
+            }
+        }
+    }
+
+    // With release=0 the gate-multiplied mix zeros the voice as soon as
+    // gate steps 0. Voices reap a few blocks later. Output in this window
+    // should be effectively silent.
+    CHECK(post_peak < 0.01f);
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    CHECK_THAT(poly.release_window_samples, WithinAbs(0.0f, 0.5f));
+}
+
+TEST_CASE("POLY release window: positive release_seconds keeps voice mixing",
+          "[poly-release]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // Same 0.5-beat note as above.
+    setup_single_note_sequence(vm, 440.0f, 0.5f);
+    // 0.5s release window = 24000 samples = ~187 blocks.
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0, /*release_s*/ 0.5f);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    // The body here is an OSC_SIN with no envelope, so the voice keeps
+    // generating a sine after note-off. The mix-side gate is held at 1.0
+    // while release_countdown > 0, so the sine should remain audible until
+    // the release window expires. Sample the same post-note window.
+    float post_peak = 0.0f;
+    for (int b = 0; b < 100; ++b) {
+        vm.process_block(left.data(), right.data());
+        if (b >= 95) {
+            for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+                post_peak = std::max(post_peak, std::abs(left[i]));
+            }
+        }
+    }
+
+    // Sine at the same amplitude as during the hold should still be present
+    // — we're well inside the release window (< 12800 samples / ~100 blocks
+    // out of the 24000-sample window).
+    CHECK(post_peak > 0.3f);
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    CHECK_THAT(poly.release_window_samples, WithinAbs(24000.0f, 1.0f));
+}
+
+TEST_CASE("POLY release window: voice reaped after countdown expires",
+          "[poly-release]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // 0.5-beat note ends around block 93.
+    setup_single_note_sequence(vm, 440.0f, 0.5f);
+    // Tiny 1 ms release window (48 samples — under one block).
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0, /*release_s*/ 0.001f);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int b = 0; b < 105; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    bool any_active = false;
+    for (std::uint8_t i = 0; i < poly.max_voices; ++i) {
+        if (poly.voices[i].active) any_active = true;
+    }
+    CHECK_FALSE(any_active);  // Released and reaped well within the window.
+}
+
+TEST_CASE("POLY release window: retrigger resets countdown so silenced voice "
+          "speaks again", "[poly-release]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // Two notes on the same pitch (440 Hz). Second note retriggers the
+    // same voice slot — its release_countdown must reset to 0 so the new
+    // note's natural gate path runs.
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event events[2];
+    events[0].type = EventType::DATA;
+    events[0].time = 0.0f;
+    events[0].duration = 0.25f;   // 1 beat
+    events[0].chance = 1.0f;
+    events[0].velocity = 1.0f;
+    events[0].num_values = 1;
+    events[0].values[0] = 440.0f;
+    events[1] = events[0];
+    events[1].time = 2.0f;        // second beat-2 note
+
+    Sequence seq;
+    seq.events = events;
+    seq.num_events = 2;
+    seq.capacity = 2;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH, false, 2);
+
+    // 5 s release window so the first note's countdown is still running when
+    // the second note arrives.
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0, /*release_s*/ 5.0f);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    // Process up to and past the second note-on (beat 2 = 48000 samples
+    // = 375 blocks).
+    for (int b = 0; b < 400; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+
+    // Same voice slot should be active and not releasing — second note-on
+    // reused it and reset the release state.
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    int active_440 = 0;
+    for (std::uint8_t i = 0; i < poly.max_voices; ++i) {
+        const auto& v = poly.voices[i];
+        if (v.active && std::abs(v.freq - 440.0f) < 0.5f && !v.releasing) {
+            ++active_440;
+            CHECK(v.release_countdown == 0);
+        }
+    }
+    CHECK(active_440 == 1);
+}

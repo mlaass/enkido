@@ -504,11 +504,25 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
 
         // Accumulate voice output into the stereo mix, gated by the (mono)
         // gate signal applied identically to both channels.
+        //
+        // Release-window override (PRD prd-midi-input §7.2): while a voice's
+        // release_countdown is positive, the mix-side gate is held at 1.0
+        // even though the per-sample gate_buf already stepped 1→0 at
+        // note-off. The voice body's ADSR sees the 1→0 edge and runs its
+        // release tail naturally; the mix keeps summing it. When the
+        // countdown expires, the actual gate value (0) zeros the output
+        // and tick() reaps the slot.
         const float* voice_out = buffer_pool_.get(voice_out_buf);
         const float* voice_out_r = buffer_pool_.get(voice_out_buf_r);
         const float* gate = buffer_pool_.get(voice_gate_buf);
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            const float g = gate[i];
+            float g;
+            if (voice.release_countdown > 0) {
+                g = 1.0f;
+                --voice.release_countdown;
+            } else {
+                g = gate[i];
+            }
             mix[i]   += voice_out[i]   * g;
             mix_r[i] += voice_out_r[i] * g;
         }

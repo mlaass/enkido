@@ -611,6 +611,7 @@ public:
                 json << R"(,"mode":)" << static_cast<int>(state.mode);
                 json << R"(,"steal_strategy":)" << static_cast<int>(state.steal_strategy);
                 json << R"(,"seq_state_id":)" << state.seq_state_id;
+                json << R"(,"release_window_samples":)" << state.release_window_samples;
                 json << R"(,"voices":[)";
                 for (int vi = 0; vi < state.max_voices && state.voices; ++vi) {
                     if (vi > 0) json << ",";
@@ -621,6 +622,7 @@ public:
                     json << R"(,"gate":)" << v.gate;
                     json << R"(,"releasing":)" << (v.releasing ? "true" : "false");
                     json << R"(,"age":)" << v.age;
+                    json << R"(,"release_countdown":)" << v.release_countdown;
                     json << "}";
                 }
                 json << "]}";

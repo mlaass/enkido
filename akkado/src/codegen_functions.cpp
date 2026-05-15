@@ -2000,16 +2000,20 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     else if (func_name == "legato") mode = 2;
 
     // Collect arguments:
-    //   poly: 2 required (input, instrument), 1 optional (voices, default 64)
-    //   mono/legato: 1-2 (instrument) or (input, instrument)
+    //   poly: 2 required (input, instrument), 2 optional (voices=64, release=0)
+    //   mono/legato: 1 required + 2 optional. mono allows
+    //     mono(instrument) | mono(input, instrument) | mono(input, instrument, release).
+    //     The 1-arg form may also be a downmix call (signal arg) — that path
+    //     is dispatched elsewhere, but the named-arg reorder still validates
+    //     `release` against this param list.
     auto args = extract_call_args(ast_->arena, n.first_child,
                                   mode == 0 ? 2 : 1,
-                                  mode == 0 ? 3 : 2);
+                                  mode == 0 ? 4 : 3);
     if (!args.valid) {
         if (mode == 0) {
-            error("E400", "poly() requires 2-3 arguments: poly(input, instrument, voices=64). Pipe a pattern in: pat(...) |> poly(@, instrument)", n.location);
+            error("E400", "poly() requires 2-4 arguments: poly(input, instrument, voices=64, release=0). Pipe a pattern in: pat(...) |> poly(@, instrument)", n.location);
         } else {
-            error("E400", func_name + "() requires 1-2 arguments: " + func_name + "(instrument) or " + func_name + "(input, instrument)", n.location);
+            error("E400", func_name + "() requires 1-3 arguments: " + func_name + "(instrument) or " + func_name + "(input, instrument, release=0)", n.location);
         }
         return TypedValue::void_val();
     }
@@ -2017,27 +2021,29 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // Parse arguments based on func_name and arg count
     NodeIndex pattern_arg = NULL_NODE;
     NodeIndex voices_arg = NULL_NODE;
+    NodeIndex release_arg = NULL_NODE;
     NodeIndex instrument_arg = NULL_NODE;
     std::uint8_t max_voices = (mode == 0) ? 64 : 1;
+    float release_seconds = 0.0f;
 
     if (mode == 0) {
-        // poly: (input, instrument, voices=64)
+        // poly: (input, instrument, voices=64, release=0)
         pattern_arg = args.nodes[0];
         instrument_arg = args.nodes[1];
-        if (args.nodes.size() == 3) {
-            voices_arg = args.nodes[2];
-        }
+        if (args.nodes.size() >= 3) voices_arg = args.nodes[2];
+        if (args.nodes.size() >= 4) release_arg = args.nodes[3];
     } else {
-        // mono/legato: 1 arg = (fn), 2 args = (input, fn)
-        if (args.nodes.size() == 2) {
+        // mono/legato: 1 arg = (fn), 2 args = (input, fn), 3 args = (input, fn, release)
+        if (args.nodes.size() >= 2) {
             pattern_arg = args.nodes[0];
             instrument_arg = args.nodes[1];
         } else if (args.nodes.size() == 1) {
             instrument_arg = args.nodes[0];
         } else {
-            error("E400", func_name + "() requires 1-2 arguments", n.location);
+            error("E400", func_name + "() requires 1-3 arguments", n.location);
             return TypedValue::void_val();
         }
+        if (args.nodes.size() >= 3) release_arg = args.nodes[2];
     }
 
     // Extract voice count from number literal (poly only)
@@ -2052,6 +2058,20 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             max_voices = static_cast<std::uint8_t>(v);
         } else {
             error("E402", "Voice count must be a number literal", vn.location);
+            return TypedValue::void_val();
+        }
+    }
+
+    // Extract release window from number literal (poly/mono/legato).
+    // Negative values are clamped to 0 in the VM; the literal check just
+    // catches non-constant args so codegen stays simple.
+    if (release_arg != NULL_NODE) {
+        const Node& rn = ast_->arena[release_arg];
+        if (rn.type == NodeType::NumberLit) {
+            release_seconds = static_cast<float>(rn.as_number());
+            if (release_seconds < 0.0f) release_seconds = 0.0f;
+        } else {
+            error("E406", func_name + "() release must be a number literal (seconds)", rn.location);
             return TypedValue::void_val();
         }
     }
@@ -2257,6 +2277,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     poly_init.poly_max_voices = max_voices;
     poly_init.poly_mode = mode;
     poly_init.poly_steal_strategy = 0;  // oldest
+    poly_init.poly_release_seconds = release_seconds;
     state_inits_.push_back(std::move(poly_init));
 
     register_stereo(node, mix_buf, mix_buf_r);

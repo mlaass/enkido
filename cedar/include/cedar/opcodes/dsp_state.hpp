@@ -1048,6 +1048,14 @@ struct PolyVoice {
     std::uint32_t cycle = 0;
     std::uint32_t pending_gate_on = BLOCK_SIZE;   // BLOCK_SIZE = no pending on
     std::uint32_t pending_gate_off = BLOCK_SIZE;  // BLOCK_SIZE = no pending off
+
+    // Release-window countdown in samples. When > 0, the POLY mix loop
+    // forces the mix-side gate to 1.0 so the voice's own ADSR (which
+    // sees the actual 1→0 gate edge) can run its release tail without
+    // being silenced. Decremented per sample in the mix loop; reset to
+    // 0 on retrigger. release_window_samples == 0 (default) leaves
+    // countdown at 0 and the legacy zero-on-gate-off behavior runs.
+    std::int32_t release_countdown = 0;
 };
 
 // PolyAllocState — arena-allocated voices (same pattern as SoundFontVoiceState)
@@ -1059,6 +1067,12 @@ struct PolyAllocState {
     std::uint8_t max_voices = 8;
     std::uint8_t mode = 0;               // 0=poly, 1=mono, 2=legato
     std::uint8_t steal_strategy = 0;     // 0=oldest, 1=quietest
+
+    // Per-instance release window in samples. Set by init_poly_state from
+    // the user's `release: X` option (X is seconds, converted to samples
+    // at init time). Default 0 = legacy "gate-multiplied silence at
+    // note-off" behavior. See PolyVoice::release_countdown.
+    float release_window_samples = 0.0f;
 
     void ensure_voices(AudioArena* arena) {
         if (voices) return;
@@ -1096,6 +1110,7 @@ struct PolyAllocState {
             v.vel = vel;
             v.active = true;
             v.releasing = false;
+            v.release_countdown = 0;
             v.event_index = event_idx;
             v.cycle = cyc;
             v.pending_gate_on = gate_on_sample;
@@ -1119,6 +1134,7 @@ struct PolyAllocState {
                 v.event_index = event_idx;
                 v.cycle = cyc;
                 v.releasing = false;
+                v.release_countdown = 0;
                 v.gate = 1.0f;
                 v.age = 0;
                 v.pending_gate_on = gate_on_sample;  // Retrigger for envelope
@@ -1136,6 +1152,7 @@ struct PolyAllocState {
                 v.gate = 1.0f;
                 v.active = true;
                 v.releasing = false;
+                v.release_countdown = 0;
                 v.age = 0;
                 v.event_index = event_idx;
                 v.cycle = cyc;
@@ -1172,6 +1189,7 @@ struct PolyAllocState {
             v.gate = 1.0f;
             v.active = true;
             v.releasing = false;
+            v.release_countdown = 0;
             v.age = 0;
             v.event_index = event_idx;
             v.cycle = cyc;
@@ -1186,6 +1204,9 @@ struct PolyAllocState {
                                 std::uint32_t gate_off_sample) {
         if (!voices) return;
 
+        const std::int32_t window_samples =
+            static_cast<std::int32_t>(release_window_samples);
+
         if (mode == 1 || mode == 2) {
             // Mono/legato: only release if current voice matches
             auto& v = voices[0];
@@ -1193,6 +1214,7 @@ struct PolyAllocState {
                 v.releasing = true;
                 v.gate = 0.0f;
                 v.age = 0;
+                v.release_countdown = window_samples;
                 v.pending_gate_off = gate_off_sample;
             }
             return;
@@ -1206,13 +1228,19 @@ struct PolyAllocState {
                 v.releasing = true;
                 v.gate = 0.0f;
                 v.age = 0;
+                v.release_countdown = window_samples;
                 v.pending_gate_off = gate_off_sample;
             }
         }
     }
 
-    // Release timeout: blocks after gate-off before voice is deactivated
-    // (gate multiplication zeros output during this window)
+    // Release timeout: blocks after gate-off before voice is deactivated.
+    // When release_window_samples == 0 (default), the mix loop zeros the
+    // voice's output as soon as gate goes 0; this timeout merely gives the
+    // body a few blocks to wind down internal state before the slot is
+    // reclaimed. When release_window_samples > 0, voices stay alive until
+    // their per-voice release_countdown reaches 0; this timeout still
+    // applies as a final-stage guard.
     static constexpr std::uint32_t RELEASE_TIMEOUT = 4;
 
     void tick() {
@@ -1220,8 +1248,13 @@ struct PolyAllocState {
         for (std::uint16_t i = 0; i < max_voices; ++i) {
             if (voices[i].active) {
                 voices[i].age++;
-                // Clean up voices that have been releasing past timeout
-                if (voices[i].releasing && voices[i].age > RELEASE_TIMEOUT) {
+                // Clean up voices that have been releasing past timeout.
+                // Hold the voice alive while the release window has not
+                // expired yet (countdown ticks down per sample in the
+                // POLY mix loop).
+                if (voices[i].releasing &&
+                    voices[i].release_countdown <= 0 &&
+                    voices[i].age > RELEASE_TIMEOUT) {
                     voices[i].active = false;
                     voices[i].releasing = false;
                 }

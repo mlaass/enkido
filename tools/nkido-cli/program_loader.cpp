@@ -260,7 +260,8 @@ void apply_state_inits(cedar::VM& vm,
         } else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
             vm.init_poly_state(init.state_id, init.poly_seq_state_id,
                                init.poly_max_voices, init.poly_mode,
-                               init.poly_steal_strategy);
+                               init.poly_steal_strategy,
+                               init.poly_release_seconds);
         } else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
             vm.init_extended_params(init.state_id,
                                     init.ext_constants.data(),
