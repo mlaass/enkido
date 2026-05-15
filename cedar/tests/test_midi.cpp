@@ -79,6 +79,20 @@ std::vector<Instruction> build_midi_only_program() {
     return program;
 }
 
+// PRD prd-midi-input §7.5: MIDI_QUERY with the four mono buffers wired so
+// fill_mono_buffers runs. Buffer layout matches the per-voice POLY layout
+// (BUF_GATE / BUF_FREQ / BUF_VEL / BUF_TRIG) so a test can mix this opcode
+// with downstream consumers if desired.
+std::vector<Instruction> build_midi_mono_program() {
+    std::vector<Instruction> program;
+    auto midi = Instruction::make_quaternary(
+        Opcode::MIDI_QUERY, 0xFFFF,
+        BUF_GATE, BUF_FREQ, BUF_VEL, BUF_TRIG, MIDI_STATE_ID);
+    program.push_back(midi);
+    program.push_back(Instruction::make_unary(Opcode::OUTPUT, 0, BUF_MIX));
+    return program;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -924,4 +938,208 @@ TEST_CASE("twinkle.mid drives poly voice allocation for ~300 sec", "[midi-poly]"
     // never released across hundreds of seconds).
     auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
     CHECK(poly.active_voice_count() <= 8);
+}
+
+// ============================================================================
+// PRD prd-midi-input §7.5: monophonic per-block buffer synthesis
+//
+// `midi() as e |> osc("sin", e.freq)` works because op_midi_query bakes the
+// runtime event stream into mono gate/freq/vel/trig buffers using
+// last-note-wins with held-stack fallback. These tests drive the SPSC ring
+// directly and inspect the four mono buffers via vm.states().
+// ============================================================================
+
+namespace {
+// Helper: read back the four mono buffers after the last process_block.
+// All four live in BufferPool slots whose indices match BUF_GATE / BUF_FREQ
+// / BUF_VEL / BUF_TRIG.
+struct MonoSample {
+    float gate;
+    float freq;
+    float vel;
+    float trig;
+};
+MonoSample read_mono(const VM& vm, std::size_t i) {
+    const auto* gate = const_cast<VM&>(vm).buffers().get(BUF_GATE);
+    const auto* freq = const_cast<VM&>(vm).buffers().get(BUF_FREQ);
+    const auto* vel  = const_cast<VM&>(vm).buffers().get(BUF_VEL);
+    const auto* trig = const_cast<VM&>(vm).buffers().get(BUF_TRIG);
+    return {gate[i], freq[i], vel[i], trig[i]};
+}
+}  // namespace
+
+TEST_CASE("midi-mono: note-on raises gate, sets freq and vel, fires trig once",
+          "[midi-mono]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    // Trig fires exactly once across the block.
+    int trig_count = 0;
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        if (read_mono(vm, i).trig > 0.5f) ++trig_count;
+    }
+    CHECK(trig_count == 1);
+
+    // After the note-on, gate is held high; freq matches MIDI 60 → C4.
+    auto end = read_mono(vm, BLOCK_SIZE - 1);
+    CHECK(end.gate > 0.9f);
+    const float expected_freq =
+        440.0f * std::pow(2.0f, (60.0f - 69.0f) / 12.0f);
+    CHECK_THAT(end.freq, Catch::Matchers::WithinAbs(expected_freq, 1e-3f));
+    CHECK_THAT(end.vel,
+               Catch::Matchers::WithinAbs(100.0f / 127.0f, 1e-5f));
+}
+
+TEST_CASE("midi-mono: last-note-wins — newer note overrides freq while held",
+          "[midi-mono]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Hold C4 for a few blocks, then add E4 — E4 should win.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64,  90));
+    vm.process_block(left.data(), right.data());
+
+    auto end = read_mono(vm, BLOCK_SIZE - 1);
+    const float expected_e4 =
+        440.0f * std::pow(2.0f, (64.0f - 69.0f) / 12.0f);
+    CHECK(end.gate > 0.9f);
+    CHECK_THAT(end.freq, Catch::Matchers::WithinAbs(expected_e4, 1e-3f));
+}
+
+TEST_CASE("midi-mono: pop fallback — note-off uncovers prior held note",
+          "[midi-mono]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // C4 on, E4 on, then E4 off. Result: gate stays high, freq falls back
+    // to C4 — classic monophonic legato.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64,  90));
+    vm.process_block(left.data(), right.data());
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, 64,   0));
+    vm.process_block(left.data(), right.data());
+
+    auto end = read_mono(vm, BLOCK_SIZE - 1);
+    const float expected_c4 =
+        440.0f * std::pow(2.0f, (60.0f - 69.0f) / 12.0f);
+    CHECK(end.gate > 0.9f);
+    CHECK_THAT(end.freq, Catch::Matchers::WithinAbs(expected_c4, 1e-3f));
+
+    // Stack now has one entry (C4).
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    CHECK(s.mono_stack_depth == 1);
+    CHECK(s.mono_held_stack[0].note == 60);
+}
+
+TEST_CASE("midi-mono: gate transitions 1→0 only when stack empties",
+          "[midi-mono]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Press one note, release it: gate falls.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, 60,   0));
+    vm.process_block(left.data(), right.data());
+
+    auto end = read_mono(vm, BLOCK_SIZE - 1);
+    CHECK(end.gate < 0.1f);  // gate dropped after the release transition
+
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    CHECK(s.mono_stack_depth == 0);
+}
+
+TEST_CASE("midi-mono: trig pulse is exactly one sample wide",
+          "[midi-mono]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Three sequential notes, one per block. Each should fire exactly one
+    // trig sample regardless of stack depth.
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int b = 0; b < 3; ++b) {
+        REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90,
+                                   static_cast<std::uint8_t>(60 + b * 2),
+                                   100));
+        vm.process_block(left.data(), right.data());
+
+        int trig_count = 0;
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            if (read_mono(vm, i).trig > 0.5f) ++trig_count;
+        }
+        CHECK(trig_count == 1);
+    }
+}
+
+TEST_CASE("midi-mono: program without buffer wiring leaves the fill a no-op",
+          "[midi-mono]") {
+    // Backwards-compat guard for build_midi_only_program() (which uses
+    // make_nullary so inputs[0..3] == 0xFFFF). fill_mono_buffers must skip
+    // entirely — no stack push, no buffer touch.
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    CHECK(s.mono_stack_depth == 0);  // not touched
+    CHECK(s.output.num_events == 1); // event still recorded normally
 }

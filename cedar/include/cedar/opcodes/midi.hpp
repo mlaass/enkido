@@ -115,6 +115,28 @@ struct MidiQueueState {
     // `read_pos`. Phase-N can revisit if it matters).
     std::uint64_t midi_overflow_count = 0;
 
+    // PRD prd-midi-input §7.5: monophonic per-block buffer indices.
+    // Allocated by codegen and carried on the MIDI_QUERY instruction
+    // (inst.inputs[0..3]); op_midi_query reads them to fill mono-baked
+    // gate / freq / vel / trig signals so `midi() as e |> osc(..., e.freq)`
+    // works the same way pattern field access does. 0xFFFF (BUFFER_UNUSED)
+    // skips the mono-buffer fill step entirely (downstream is poly/sf2 only).
+    // Note: indices live on the instruction rather than on the state so the
+    // codegen has the freedom to re-allocate buffers on every hot-swap.
+
+    // §7.5: last-note-wins mono priority stack. Each entry remembers
+    // freq/velocity so popping back to a fallback note doesn't require
+    // re-walking OutputEvents. Size 16 covers any realistic single-hand
+    // chord; overflowing pushes drop the oldest entry (FIFO eviction).
+    struct MonoHeldNote {
+        std::int16_t note     = -1;
+        float        freq     = 0.0f;
+        float        velocity = 0.0f;
+    };
+    static constexpr std::uint8_t MONO_STACK_CAPACITY = 16;
+    MonoHeldNote mono_held_stack[MONO_STACK_CAPACITY];
+    std::uint8_t mono_stack_depth = 0;
+
     MidiQueueState() {
         for (std::int32_t& v : held_note_to_event) v = -1;
     }
@@ -142,10 +164,14 @@ struct MidiQueueState {
           current_tempo_idx(other.current_tempo_idx),
           output(other.output),
           cycle_length(other.cycle_length),
-          midi_overflow_count(other.midi_overflow_count)
+          midi_overflow_count(other.midi_overflow_count),
+          mono_stack_depth(other.mono_stack_depth)
     {
         for (std::size_t i = 0; i < 128; ++i) {
             held_note_to_event[i] = other.held_note_to_event[i];
+        }
+        for (std::size_t i = 0; i < MONO_STACK_CAPACITY; ++i) {
+            mono_held_stack[i] = other.mono_held_stack[i];
         }
     }
 
@@ -167,8 +193,12 @@ struct MidiQueueState {
             output               = other.output;
             cycle_length         = other.cycle_length;
             midi_overflow_count  = other.midi_overflow_count;
+            mono_stack_depth     = other.mono_stack_depth;
             for (std::size_t i = 0; i < 128; ++i) {
                 held_note_to_event[i] = other.held_note_to_event[i];
+            }
+            for (std::size_t i = 0; i < MONO_STACK_CAPACITY; ++i) {
+                mono_held_stack[i] = other.mono_held_stack[i];
             }
         }
         return *this;

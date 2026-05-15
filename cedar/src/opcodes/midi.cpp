@@ -5,6 +5,7 @@
 
 #include "cedar/dsp/constants.hpp"
 #include "cedar/io/midi_sequence.hpp"
+#include "cedar/vm/buffer_pool.hpp"
 #include "cedar/vm/context.hpp"
 #include "cedar/vm/instruction.hpp"
 #include "cedar/vm/state_pool.hpp"
@@ -281,6 +282,197 @@ void advance_file_seq_into_output(MidiQueueState& s,
     s.file_play_head_beats = cursor_local;
 }
 
+// PRD prd-midi-input §7.5: bake the OutputEvents touched by this block into
+// per-sample gate/freq/vel/trig buffers using last-note-wins mono priority.
+// Buffer indices ride on the MIDI_QUERY instruction (inst.inputs[0..3]);
+// 0xFFFF means `midi()` wasn't bound via `as e` and the fill is skipped.
+//
+// Held-stack semantics: every note-on pushes onto a stack of currently-
+// sounding notes; every note-off removes the matching entry. The mix-side
+// gate stays 1.0 as long as the stack is non-empty (legato-style fallback);
+// freq/vel track the most-recently-pushed entry. Trig fires one sample at
+// each new note-on. The stack persists across blocks, so a chord held
+// through a 1-second buffer underrun continues sounding the top note.
+void fill_mono_buffers(MidiQueueState& s,
+                       const ExecutionContext& ctx,
+                       const Instruction& inst) {
+    const std::uint16_t gate_buf_idx = inst.inputs[0];
+    const std::uint16_t freq_buf_idx = inst.inputs[1];
+    const std::uint16_t vel_buf_idx  = inst.inputs[2];
+    const std::uint16_t trig_buf_idx = inst.inputs[3];
+    if (gate_buf_idx == 0xFFFFu || freq_buf_idx == 0xFFFFu ||
+        vel_buf_idx == 0xFFFFu || trig_buf_idx == 0xFFFFu) {
+        return;  // midi() wasn't bound via `as e`; nothing to fill.
+    }
+    if (!ctx.buffers) return;
+
+    float* gate_buf = ctx.buffers->get(gate_buf_idx);
+    float* freq_buf = ctx.buffers->get(freq_buf_idx);
+    float* vel_buf  = ctx.buffers->get(vel_buf_idx);
+    float* trig_buf = ctx.buffers->get(trig_buf_idx);
+    if (!gate_buf || !freq_buf || !vel_buf || !trig_buf) return;
+
+    std::fill_n(trig_buf, BLOCK_SIZE, 0.0f);
+
+    const double spb_d = (60.0 / static_cast<double>(ctx.bpm))
+                       * static_cast<double>(ctx.sample_rate);
+    if (!(spb_d > 0.0)) {
+        std::fill_n(gate_buf, BLOCK_SIZE, 0.0f);
+        std::fill_n(freq_buf, BLOCK_SIZE, 0.0f);
+        std::fill_n(vel_buf,  BLOCK_SIZE, 0.0f);
+        return;
+    }
+    const double block_start_b = static_cast<double>(ctx.global_sample_counter) / spb_d;
+    const double block_end_b   = block_start_b + (static_cast<double>(BLOCK_SIZE) / spb_d);
+
+    // Collect transitions (note-on / note-off) that fall in the current
+    // block window. Capped at 64 transitions/block — well above any
+    // realistic MIDI burst (a dense polyphonic stab is ~32 events).
+    struct MonoTransition {
+        std::uint16_t sample;     // 0..BLOCK_SIZE-1
+        bool          is_on;
+        std::uint8_t  midi_note;
+        float         freq;
+        float         velocity;
+    };
+    constexpr std::size_t MAX_TRANSITIONS = 64;
+    MonoTransition transitions[MAX_TRANSITIONS];
+    std::size_t num_transitions = 0;
+
+    auto add_transition = [&](double evt_beat, bool is_on,
+                              std::uint8_t note, float freq, float vel) {
+        if (num_transitions >= MAX_TRANSITIONS) return;
+        const double offset_b = evt_beat - block_start_b;
+        std::int32_t sample = static_cast<std::int32_t>(offset_b * spb_d);
+        if (sample < 0) sample = 0;
+        if (sample >= static_cast<std::int32_t>(BLOCK_SIZE)) {
+            sample = static_cast<std::int32_t>(BLOCK_SIZE) - 1;
+        }
+        transitions[num_transitions++] = {
+            static_cast<std::uint16_t>(sample), is_on, note, freq, vel
+        };
+    };
+
+    // HELD_DURATION_SENTINEL is huge; any event with duration above this
+    // threshold is "still held" — its note-off has not yet arrived.
+    constexpr float SENTINEL_THRESHOLD =
+        MidiQueueState::HELD_DURATION_SENTINEL * 0.5f;
+
+    // Snap tolerance for block-boundary comparisons. drain_live_events
+    // stores evt.time and the patched duration as floats; reading them
+    // back as doubles produces a few-ULP residue against the
+    // double-precision block_start_b. The same snap idea POLY uses at
+    // vm.cpp:314 — well below sample resolution (1 sample ≈ 4e-5 beats
+    // at 110 BPM / 48 kHz) but well above fp noise. A double-fire in the
+    // previous block can't happen because evt.duration was sentinel-sized
+    // back then and the off-check short-circuited.
+    constexpr double BOUNDARY_EPS = 1e-9;
+
+    for (std::uint32_t e = 0; e < s.output.num_events; ++e) {
+        const auto& evt = s.output.events[e];
+        const float freq = evt.values[0];
+        const std::uint8_t note = static_cast<std::uint8_t>(evt.midi_note);
+
+        // note-on transition?
+        const double on_b = static_cast<double>(evt.time);
+        if (on_b + BOUNDARY_EPS >= block_start_b && on_b < block_end_b) {
+            add_transition(on_b, true, note, freq, evt.velocity);
+        }
+
+        // note-off transition? (only for events whose note-off has arrived)
+        if (evt.duration < SENTINEL_THRESHOLD) {
+            const double off_b = on_b + static_cast<double>(evt.duration);
+            if (off_b + BOUNDARY_EPS >= block_start_b && off_b < block_end_b) {
+                add_transition(off_b, false, note, freq, 0.0f);
+            }
+        }
+    }
+
+    // Insertion-sort transitions by sample (typically < 8 entries).
+    for (std::size_t i = 1; i < num_transitions; ++i) {
+        for (std::size_t j = i;
+             j > 0 && transitions[j].sample < transitions[j - 1].sample;
+             --j) {
+            std::swap(transitions[j], transitions[j - 1]);
+        }
+    }
+
+    // Initial output state from the carry-over stack.
+    float current_freq = 0.0f;
+    float current_vel  = 0.0f;
+    float current_gate = 0.0f;
+    if (s.mono_stack_depth > 0) {
+        const auto& top = s.mono_held_stack[s.mono_stack_depth - 1];
+        current_freq = top.freq;
+        current_vel  = top.velocity;
+        current_gate = 1.0f;
+    }
+
+    auto stack_push = [&](std::uint8_t note, float freq, float vel) {
+        if (s.mono_stack_depth >= MidiQueueState::MONO_STACK_CAPACITY) {
+            // Evict oldest entry to make room.
+            for (std::uint8_t k = 0;
+                 k + 1 < MidiQueueState::MONO_STACK_CAPACITY; ++k) {
+                s.mono_held_stack[k] = s.mono_held_stack[k + 1];
+            }
+            s.mono_stack_depth = MidiQueueState::MONO_STACK_CAPACITY - 1;
+        }
+        auto& slot = s.mono_held_stack[s.mono_stack_depth++];
+        slot.note     = static_cast<std::int16_t>(note);
+        slot.freq     = freq;
+        slot.velocity = vel;
+    };
+
+    auto stack_remove = [&](std::uint8_t note) {
+        int idx = -1;
+        for (int k = static_cast<int>(s.mono_stack_depth) - 1; k >= 0; --k) {
+            if (s.mono_held_stack[k].note == static_cast<std::int16_t>(note)) {
+                idx = k;
+                break;
+            }
+        }
+        if (idx < 0) return;
+        for (std::uint8_t k = static_cast<std::uint8_t>(idx);
+             k + 1 < s.mono_stack_depth; ++k) {
+            s.mono_held_stack[k] = s.mono_held_stack[k + 1];
+        }
+        --s.mono_stack_depth;
+    };
+
+    // Walk the block, applying transitions in chronological order.
+    std::size_t ti = 0;
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        while (ti < num_transitions && transitions[ti].sample == i) {
+            const auto& t = transitions[ti];
+            if (t.is_on) {
+                stack_push(t.midi_note, t.freq, t.velocity);
+                trig_buf[i] = 1.0f;
+                current_freq = t.freq;
+                current_vel  = t.velocity;
+                current_gate = 1.0f;
+            } else {
+                stack_remove(t.midi_note);
+                if (s.mono_stack_depth == 0) {
+                    current_gate = 0.0f;
+                    // Keep current_freq/current_vel unchanged — irrelevant
+                    // when gate is 0 and avoids spurious oscillator phase
+                    // resets if the downstream osc reads them anyway.
+                } else {
+                    const auto& top =
+                        s.mono_held_stack[s.mono_stack_depth - 1];
+                    current_freq = top.freq;
+                    current_vel  = top.velocity;
+                    current_gate = 1.0f;
+                }
+            }
+            ++ti;
+        }
+        gate_buf[i] = current_gate;
+        freq_buf[i] = current_freq;
+        vel_buf[i]  = current_vel;
+    }
+}
+
 }  // namespace
 
 void op_midi_query(ExecutionContext& ctx, const Instruction& inst) {
@@ -288,6 +480,7 @@ void op_midi_query(ExecutionContext& ctx, const Instruction& inst) {
 
     drain_live_events_into_output(s, ctx);
     advance_file_seq_into_output(s, ctx);
+    fill_mono_buffers(s, ctx, inst);
 }
 
 }  // namespace cedar

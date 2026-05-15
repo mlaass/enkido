@@ -10160,6 +10160,71 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
     }
 }
 
+// ============================================================================
+// PRD prd-midi-input §7.5: midi() returns a runtime-event-source Pattern so
+// `as e | e.field` works. Bytecode: MIDI_QUERY emits with four wired buffers.
+// ============================================================================
+
+TEST_CASE("midi() returns Pattern with is_runtime_event_source flag",
+          "[midi][midi-mono]") {
+    auto result = akkado::compile("midi() as e |> osc(\"sin\", e.freq) |> out(%)");
+    REQUIRE(result.success);
+
+    // The MIDI_QUERY instruction should have four non-0xFFFF buffer slots
+    // (gate, freq, vel, trig) in inputs[0..3]; slot 4 stays unused.
+    bool found_midi_query = false;
+    for (const auto& inst : get_instructions(result)) {
+        if (inst.opcode != cedar::Opcode::MIDI_QUERY) continue;
+        found_midi_query = true;
+        CHECK(inst.inputs[0] != 0xFFFF);
+        CHECK(inst.inputs[1] != 0xFFFF);
+        CHECK(inst.inputs[2] != 0xFFFF);
+        CHECK(inst.inputs[3] != 0xFFFF);
+        CHECK(inst.inputs[4] == 0xFFFF);
+    }
+    CHECK(found_midi_query);
+}
+
+TEST_CASE("midi() as e | e.gate compiles and binds gate buffer",
+          "[midi][midi-mono]") {
+    // Pipe-binding + pattern field access. Should compile to a program that
+    // reads the gate buffer wired by MIDI_QUERY.
+    auto result = akkado::compile(
+        "midi() as e |> osc(\"saw\", e.freq) |> @ * adsr(e.gate) |> out(%)");
+    REQUIRE(result.success);
+    // No specific instruction shape to check — the compile success and the
+    // bytecode-dump test above cover the wiring. Failure mode prior to 7.5:
+    // E136 \"e.freq: field 'freq' not available on EventSource\".
+}
+
+TEST_CASE("midi() still feeds poly() via state_id (regression)",
+          "[midi][midi-mono]") {
+    const std::string preamble =
+        "fn synth(f, g, v) -> osc(\"saw\", f) * adsr(g) * v\n";
+    auto result = akkado::compile(preamble +
+        "midi() |> poly(%, synth, 8) |> out(%)");
+    REQUIRE(result.success);
+
+    // Both MIDI_QUERY and POLY_BEGIN should be present; PolyAlloc state init
+    // should carry the same state_id MIDI_QUERY emitted with.
+    std::uint32_t midi_state_id = 0;
+    bool found_poly_init = false;
+    for (const auto& inst : get_instructions(result)) {
+        if (inst.opcode == cedar::Opcode::MIDI_QUERY) {
+            midi_state_id = inst.state_id;
+        }
+    }
+    REQUIRE(midi_state_id != 0);
+
+    for (const auto& init : result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            found_poly_init = true;
+            CHECK(init.poly_seq_state_id == midi_state_id);
+        }
+    }
+    CHECK(found_poly_init);
+}
+
 TEST_CASE("legato() accepts release: option (positional 3-arg form)",
           "[polyphony][poly-release]") {
     const std::string preamble =

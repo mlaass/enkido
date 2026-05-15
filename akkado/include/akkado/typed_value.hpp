@@ -78,6 +78,16 @@ struct PatternPayload {
     bool is_sample_pattern = false;
     std::uint8_t max_voices = 1;
 
+    /// PRD prd-midi-input §7.5: true when this payload was synthesized
+    /// by handle_midi_call from a runtime MIDI event stream. Buffer fields
+    /// are mono-baked from MidiQueueState::output for `as e` field access;
+    /// `state_id` resolves to a MidiQueueState whose OutputEvents carry
+    /// the full polyphonic note list. Consumers that allocate voices
+    /// (poly, soundfont — see Phase 7.1) read OutputEvents and ignore the
+    /// mono buffers; consumers that read buffers (osc, lp, adsr) read the
+    /// mono buffers and ignore state_id.
+    bool is_runtime_event_source = false;
+
     /// Samples this Pattern needs, with bank/variant context. Populated by
     /// every Pattern producer (mini-literal, transforms, bank/variant calls)
     /// from the local SequenceCompiler's per-event mappings. Transparent

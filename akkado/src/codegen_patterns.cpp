@@ -5724,10 +5724,18 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::signal(mixed));
 }
 
-// PRD prd-midi-input §4.7: midi() builtin. Emits one MIDI_QUERY and records
-// a RequiredMidiSource that the host iterates to call vm.init_midi_queue_state
-// after load. Returns a TypedValue::EventSource — handle_poly_call reads the
-// state_id from event_source->state_id alongside the Pattern path.
+// PRD prd-midi-input §4.7 + §7.5: midi() builtin. Emits one MIDI_QUERY with
+// four output buffers (gate/freq/vel/trig) baked monophonically from the
+// runtime event stream, and records a RequiredMidiSource that the host
+// iterates to call vm.init_midi_queue_state after load.
+//
+// Returns a TypedValue::Pattern with `is_runtime_event_source = true`. Both
+// shapes work downstream:
+//   * `midi() as e |> osc("sin", e.freq) |> @ * adsr(e.gate)` reads the
+//     mono-baked buffers via pattern field access.
+//   * `midi() |> poly(@, synth, 8)` and (Phase 7.1) `midi() |> soundfont(...)`
+//     read the polyphonic OutputEvents via state_pool_.resolve_output_events.
+// handle_poly_call still picks up state_id from pattern->state_id.
 TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
     // §10 Q4 / Non-Goal: midi() top-level only in v1.
     if (user_function_depth_ > 0) {
@@ -5839,15 +5847,36 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
     push_path("midi#" + std::to_string(midi_count));
     std::uint32_t state_id = compute_state_id();
 
-    // Emit one MIDI_QUERY. The opcode has no inputs or output buffer — POLY
-    // reads MidiQueueState.output via state_pool_.resolve_output_events.
+    // PRD §7.5: allocate per-block mono buffers. op_midi_query reads these
+    // indices off the instruction (inst.inputs[0..3]) and fills them via
+    // fill_mono_buffers. All four allocate together — if any fails, signal
+    // E101 and skip emission. (Buffer pool exhaustion is extremely rare
+    // for a top-level midi() call but we report it cleanly to match the
+    // pattern in handle_poly_call.)
+    std::uint16_t gate_buf = buffers_.allocate();
+    std::uint16_t freq_buf = buffers_.allocate();
+    std::uint16_t vel_buf  = buffers_.allocate();
+    std::uint16_t trig_buf = buffers_.allocate();
+    if (gate_buf == BufferAllocator::BUFFER_UNUSED ||
+        freq_buf == BufferAllocator::BUFFER_UNUSED ||
+        vel_buf  == BufferAllocator::BUFFER_UNUSED ||
+        trig_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted in midi()", n.location);
+        pop_path();
+        return TypedValue::void_val();
+    }
+
+    // Emit one MIDI_QUERY. The four mono buffers ride in inputs[0..3]
+    // (treated as output destinations by op_midi_query). Slot 4 is unused.
+    // POLY / SOUNDFONT continue to read MidiQueueState.output via
+    // state_pool_.resolve_output_events for full polyphonic event access.
     cedar::Instruction midi_inst{};
     midi_inst.opcode = cedar::Opcode::MIDI_QUERY;
     midi_inst.out_buffer = 0xFFFF;
-    midi_inst.inputs[0] = 0xFFFF;
-    midi_inst.inputs[1] = 0xFFFF;
-    midi_inst.inputs[2] = 0xFFFF;
-    midi_inst.inputs[3] = 0xFFFF;
+    midi_inst.inputs[0] = gate_buf;
+    midi_inst.inputs[1] = freq_buf;
+    midi_inst.inputs[2] = vel_buf;
+    midi_inst.inputs[3] = trig_buf;
     midi_inst.inputs[4] = 0xFFFF;
     midi_inst.rate = 0;
     midi_inst.state_id = state_id;
@@ -5866,10 +5895,20 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
 
     pop_path();
 
-    auto payload = std::make_shared<EventSourcePayload>();
-    payload->state_id     = state_id;
-    payload->cycle_length = 4.0f;
-    return cache_and_return(node, TypedValue::make_event_source(payload));
+    // PRD §7.5: return a Pattern-shaped TypedValue so `as e |> ... e.freq`
+    // field access goes through the existing pattern_field() dispatch.
+    // is_runtime_event_source signals to consumers (Phase 7.1 soundfont,
+    // future migrations) that OutputEvents is the source of truth.
+    auto payload = std::make_shared<PatternPayload>();
+    payload->state_id                 = state_id;
+    payload->cycle_length             = 4.0f;
+    payload->max_voices               = 1;
+    payload->is_runtime_event_source  = true;
+    payload->fields[PatternPayload::FREQ] = freq_buf;
+    payload->fields[PatternPayload::VEL]  = vel_buf;
+    payload->fields[PatternPayload::TRIG] = trig_buf;
+    payload->fields[PatternPayload::GATE] = gate_buf;
+    return cache_and_return(node, TypedValue::make_pattern(payload, freq_buf));
 }
 
 // PRD prd-midi-input §4.8: midi_cc("name", {...}) — compile-time only.
