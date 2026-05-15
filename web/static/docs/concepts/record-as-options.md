@@ -88,7 +88,7 @@ auto grad = options.get_string("gradient");
 decl.options_json = options.to_json();
 ```
 
-`OptionsPayload::unknown_fields` collects the names of any caller-supplied fields not declared on the schema. They are dropped from the JSON today; a future pass will surface them as a `W160` warning once that diagnostic ships from the spread PRD.
+`OptionsPayload::unknown_fields` collects the names of any caller-supplied fields not declared on the schema. They are dropped from the JSON today.
 
 ## Recommended families to adopt
 
@@ -102,19 +102,6 @@ Visualizers ship the convention today. Three more families are good candidates f
 | Delays / reverbs | `delay`, `comb`, `freeverb`, `dattorro`, `lexicon` | `feedback`, `dry`, `wet`, `mode`, `damping`, `size` |
 
 The convention does not change the call signature for already-shipped builtins (samplers, filters, delays still use positional params). Migration to the options form is opt-in per family.
-
-## Composes with spread (when it ships)
-
-Once `prd-record-argument-spread.md` lands, callers can build option presets and reuse them:
-
-```akkado
-// Future — pending the spread PRD.
-default_scope = {fft: 1024, gradient: "viridis", angle: 270}
-osc("saw", 220) |> waterfall(%, "left",  ..default_scope)              |> out(%)
-osc("saw", 110) |> waterfall(%, "right", ..default_scope, angle: 90)   |> out(%)
-```
-
-The `accepts_spread` bit on `OptionSchema` already marks each schema as spread-compatible; the editor will surface remaining unfilled options once the syntax is live.
 
 ## See also
 
