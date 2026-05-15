@@ -8,6 +8,7 @@ add_executable(nkido-cli
     asset_loader.cpp
     bytecode_loader.cpp
     bytecode_dump.cpp
+    midi_input.cpp
     program_loader.cpp
     serve_mode.cpp
     ui/bitmap_font.cpp
@@ -20,6 +21,7 @@ target_link_libraries(nkido-cli
         akkado
         cedar
         SDL2::SDL2
+        rtmidi
         nkido_compiler_options
 )
 

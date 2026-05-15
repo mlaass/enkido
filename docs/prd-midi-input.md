@@ -1137,6 +1137,22 @@ by current CI:
 - **14-bit CC pair auto-detection.**
 - **Held-note migration across hot-swap.** When the new program has a
   compatible `midi()` call (matching channel filter), migrate held state.
+  Phase 3 (CLI Live MIDI) intentionally defers the §4.12 synthetic-note-off
+  injection too: held notes survive across hot-swaps when state IDs stay
+  stable (idempotent `init_midi_queue_state`), but a `midi()` call that
+  disappears entirely between programs leaks its held notes until the
+  voice's release timeout. Re-evaluate once a real user hits it.
+- **Audible click on note-off** (and a milder one on note-on) when an
+  instrument's envelope has a release tail longer than ~10 ms. Root cause
+  is the polyphony engine's gate-multiplied accumulation
+  (`prd-polyphony-system.md` §2.7 + §7 "Future: Configurable Voice
+  Release"): each voice's output is multiplied by `gate` before mixing,
+  so when gate flips 1 → 0 at note-off the voice's `* adsr(gate, ...)`
+  release tail is silenced in one sample. Patterns with cycle-aligned
+  note-offs paper over this; live MIDI surfaces it on every key-up.
+  Fix lives in the polyphony PRD (per-instance release timeout + skip
+  gate-mult during the release window, exposed as `poly(@, instr, voices,
+  release: 0.5)`); track there, not here.
 - **File CC playback through `midi_cc` routes.** v1 drops `.mid` CCs; a
   follow-up could feed them through registered routes.
 

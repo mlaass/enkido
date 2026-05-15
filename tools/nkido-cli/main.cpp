@@ -47,6 +47,8 @@ void print_usage(const char* program) {
               << "  --trace-poly <f>   Write per-block poly voice state to JSONL\n"
               << "  --list-devices     List audio capture devices and exit\n"
               << "  --input-device <n> Capture device name for in() (default: system default)\n"
+              << "  --list-midi-devices List MIDI input ports and exit\n"
+              << "  --midi-in <name>   MIDI input port substring for bare midi() (default: first available)\n"
               << "  --bank <uri>       Sample-bank manifest URI (strudel.json). May repeat.\n"
               << "                     Schemes: file://, http(s)://, github:user/repo, bundled://...\n"
               << "                     Bare paths are treated as file://.\n"
@@ -151,6 +153,14 @@ std::optional<nkido::Options> parse_args(int argc, char* argv[]) {
                 return std::nullopt;
             }
             opts.input_device = argv[i];
+        } else if (arg == "--list-midi-devices") {
+            opts.list_midi_devices = true;
+        } else if (arg == "--midi-in") {
+            if (++i >= argc) {
+                std::cerr << "error: --midi-in requires a value\n";
+                return std::nullopt;
+            }
+            opts.midi_device = argv[i];
         } else if (arg == "--bank") {
             if (++i >= argc) {
                 std::cerr << "error: --bank requires a URI\n";
@@ -191,10 +201,10 @@ std::optional<nkido::Options> parse_args(int argc, char* argv[]) {
         }
     }
 
-    // Validate (UI/Serve modes and --list-devices don't need input)
+    // Validate (UI/Serve modes and --list-devices / --list-midi-devices don't need input)
     if (!has_input && opts.input_type != nkido::InputType::InlineSource &&
         opts.mode != nkido::Mode::UI && opts.mode != nkido::Mode::Serve &&
-        !opts.list_devices) {
+        !opts.list_devices && !opts.list_midi_devices) {
         std::cerr << "error: no input specified\n";
         print_usage(argv[0]);
         return std::nullopt;
@@ -441,6 +451,12 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
+    // Same for --list-midi-devices.
+    if (opts->list_midi_devices) {
+        nkido::AudioEngine::list_midi_devices(std::cout);
+        return EXIT_SUCCESS;
+    }
+
     // Handle check mode separately
     if (opts->mode == nkido::Mode::Check) {
         return handle_check_mode(*opts);
@@ -541,6 +557,12 @@ int main(int argc, char* argv[]) {
         engine.init_capture(dev);
     }
 
+    // Record the preferred MIDI input for resolving bare midi() / DefaultDevice
+    // entries. apply_midi_route_plan() below opens the actual port lazily
+    // when the program contains midi() calls.
+    engine.set_preferred_midi_device(
+        opts->midi_device ? opts->midi_device->c_str() : nullptr);
+
     // Resolve assets, load program, and apply state inits in one pass.
     // seq_storage is a local of main(); engine.stop() (below) joins the audio
     // thread before this scope exits, so the sequence backing memory the VM
@@ -548,6 +570,13 @@ int main(int argc, char* argv[]) {
     std::vector<std::vector<cedar::Sequence>> seq_storage;
     if (!nkido::load_and_prepare_immediate(engine.vm(), *opts, result, seq_storage, std::cerr)) {
         return EXIT_FAILURE;
+    }
+
+    // Open MIDI input ports referenced by midi() calls and route incoming
+    // events into their MidiQueueState SPSC rings. Skipped when the input
+    // is precompiled .cedar (no required_midi_sources metadata available).
+    if (result.compile_result) {
+        engine.apply_midi_route_plan(result.compile_result->required_midi_sources);
     }
 
     // Install signal handlers for graceful shutdown

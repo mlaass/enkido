@@ -56,6 +56,10 @@ struct Options {
     bool list_devices = false;                    // Print capture devices and exit
     std::optional<std::string> input_device;      // Capture device name (nullopt = default)
 
+    // MIDI input options (Play/UI/Serve modes; PRD docs/prd-midi-input.md §4.9)
+    bool list_midi_devices = false;               // Print MIDI input ports and exit
+    std::optional<std::string> midi_device;       // Default-device substring for bare midi(); nullopt = first available
+
     // URI-keyed asset flags (URI Resolver PRD §4.5). Each accepts any
     // scheme the resolver recognises (file://, http(s)://, github:,
     // bundled://, file path / bare path → file://).

@@ -2,13 +2,18 @@
 
 #include "cedar/vm/vm.hpp"
 #include "cedar/dsp/constants.hpp"
+#include "akkado/codegen.hpp"
 #include <atomic>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
+#include <vector>
 
 namespace nkido {
+
+class MidiInput;
 
 // SDL2-based audio engine for real-time playback
 class AudioEngine {
@@ -20,7 +25,7 @@ public:
     };
 
     AudioEngine();
-    ~AudioEngine();
+    ~AudioEngine();  // out-of-line so std::unique_ptr<MidiInput> can use a forward decl
 
     // Non-copyable
     AudioEngine(const AudioEngine&) = delete;
@@ -43,6 +48,26 @@ public:
 
     // True when a capture device was successfully opened.
     [[nodiscard]] bool has_input() const { return capture_device_id_ != 0; }
+
+    // Record the preferred MIDI input device name for resolving
+    // MidiSourceKind::DefaultDevice entries (bare `midi()`). Empty / nullptr
+    // means "use the first available port." Should be called once before
+    // start(); apply_midi_route_plan() reads this value on every reload.
+    // Per docs/prd-midi-input.md §4.9 (Phase 3).
+    void set_preferred_midi_device(const char* preferred_name);
+
+    // Print every available MIDI input port to `out`. Mirrors
+    // list_capture_devices.
+    static void list_midi_devices(std::ostream& out);
+
+    // Reconcile the open MIDI input ports with `required` from the latest
+    // bytecode load. For every entry: call vm.init_midi_queue_state(...) so
+    // its SPSC ring is allocated, then group by resolved device name, open
+    // any newly-referenced devices, and atomically swap each open device's
+    // route table. Existing devices that disappear from the program are
+    // kept open with an empty route table (cheap, avoids open/close thrash
+    // when a midi() call flickers in/out across hot-swaps).
+    void apply_midi_route_plan(const std::vector<akkado::RequiredMidiSource>& required);
 
     // Start/stop playback
     bool start();
@@ -109,6 +134,12 @@ private:
     std::array<float, CAPTURE_RING_FRAMES * 2> capture_ring_{};
     std::atomic<std::uint64_t> capture_write_pos_{0};  // Total frames written
     std::atomic<std::uint64_t> capture_read_pos_{0};   // Total frames read
+
+    // Live MIDI inputs (one per physical device). Ports are opened lazily
+    // by apply_midi_route_plan() and kept across hot-swaps. The destructor
+    // tears down each MidiInput's RtMidiIn before the VM goes away.
+    std::vector<std::unique_ptr<MidiInput>> midi_inputs_;
+    std::string preferred_midi_device_name_;  // matches MidiSourceKind::DefaultDevice; "" = first available
 };
 
 // Global signal flag for Ctrl+C handling

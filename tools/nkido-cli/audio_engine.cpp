@@ -1,10 +1,13 @@
 #include "audio_engine.hpp"
+#include "midi_input.hpp"
 #include <SDL2/SDL.h>
 #include <csignal>
 #include <chrono>
 #include <thread>
 #include <cstring>
 #include <iostream>
+#include <unordered_map>
+#include <utility>
 
 namespace nkido {
 
@@ -24,6 +27,10 @@ void install_signal_handlers() {
 AudioEngine::AudioEngine() = default;
 
 AudioEngine::~AudioEngine() {
+    // Close MIDI ports BEFORE stop() so any in-flight MIDI callback can
+    // finish before vm_ goes away. RtMidiIn::cancelCallback joins the
+    // backend thread.
+    midi_inputs_.clear();
     stop();
     if (initialized_.load()) {
         SDL_Quit();
@@ -337,6 +344,91 @@ void AudioEngine::get_waveform(float* out, std::size_t count) const {
     for (std::size_t i = 0; i < count; ++i) {
         std::size_t idx = (pos + WAVEFORM_SIZE - count + i) % WAVEFORM_SIZE;
         out[i] = waveform_buffer_[idx];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MIDI input plumbing (PRD docs/prd-midi-input.md §4.9, Phase 3).
+// ---------------------------------------------------------------------------
+
+void AudioEngine::set_preferred_midi_device(const char* preferred_name) {
+    preferred_midi_device_name_ = preferred_name ? preferred_name : "";
+}
+
+void AudioEngine::list_midi_devices(std::ostream& out) {
+    MidiInput::list_ports(out);
+}
+
+void AudioEngine::apply_midi_route_plan(
+    const std::vector<akkado::RequiredMidiSource>& required) {
+
+    // Phase 1: ensure every state has its SPSC ring + OutputEvents buffer.
+    // Idempotent on hot-swap (same state_id → same ring; held notes survive).
+    for (const auto& req : required) {
+        vm_.init_midi_queue_state(
+            req.state_id,
+            req.kind,
+            req.name_or_path.empty() ? nullptr : req.name_or_path.c_str(),
+            req.channel_filter,
+            req.loop,
+            req.tempo_mode);
+    }
+
+    // Phase 2: group routes by resolved device-name. DefaultDevice entries
+    // collapse to preferred_midi_device_name_ (empty string = "first
+    // available", which open("") handles).
+    std::unordered_map<std::string, MidiRouteTable> wanted;
+    for (const auto& req : required) {
+        std::string device;
+        if (req.kind == cedar::MidiSourceKind::File) {
+            // .mid file playback ships in Phase 5; ignore for routing.
+            continue;
+        }
+        device = (req.kind == cedar::MidiSourceKind::DefaultDevice)
+                     ? preferred_midi_device_name_
+                     : req.name_or_path;
+        wanted[device].push_back({req.state_id, req.channel_filter});
+    }
+
+    // Phase 3: install routes. For each wanted device, find or open a
+    // MidiInput and swap its route table.
+    for (auto& [device, routes] : wanted) {
+        MidiInput* found = nullptr;
+        for (auto& in : midi_inputs_) {
+            if (in->is_open() && in->match_substr() == device) {
+                found = in.get();
+                break;
+            }
+        }
+        auto table = std::make_shared<const MidiRouteTable>(std::move(routes));
+        if (found) {
+            found->set_route_table(table);
+            continue;
+        }
+        auto in = std::make_unique<MidiInput>(vm_);
+        if (in->open(device)) {
+            std::cerr << "[midi] opened '" << in->port_name() << "'"
+                      << " for " << table->size() << " route(s)\n";
+            in->set_route_table(table);
+            midi_inputs_.push_back(std::move(in));
+        } else {
+            std::cerr << "warning: midi: no input device matching \""
+                      << device << "\" — events for "
+                      << table->size() << " route(s) will be silent\n";
+            // Don't keep a closed MidiInput around — its destructor would
+            // run a no-op close(), and a future hot-swap that adds a real
+            // device for the same name will open one then.
+        }
+    }
+
+    // Phase 4: drain devices no longer referenced by clearing their route
+    // tables (callbacks become no-ops). Keep ports open across hot-swaps to
+    // avoid open/close thrash when a midi() call temporarily disappears.
+    for (auto& in : midi_inputs_) {
+        if (!in->is_open()) continue;
+        if (wanted.find(in->match_substr()) == wanted.end()) {
+            in->set_route_table(std::make_shared<const MidiRouteTable>());
+        }
     }
 }
 

@@ -88,6 +88,11 @@
     "description": "Strudel-style chord expansion with a filter and envelope."
   },
   {
+    "slug": "midi-keys",
+    "title": "MIDI Keys",
+    "description": "Live MIDI input via `midi() |> poly(@, instrument, voices)` — plug in a USB controller and play."
+  },
+  {
     "slug": "stepper-demo",
     "title": "Stepper Demo",
     "description": "Userspace `step` and `step_dir` operators built from `state`, `counter`, and method-call syntax — no C++ changes."
