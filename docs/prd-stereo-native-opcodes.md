@@ -284,6 +284,33 @@ The language type system (per `prd-stereo-support`) is largely unchanged. Two ad
 1. `BuiltinSignature` gains `stereo_native: bool`. Auto-escalation is implicit when this is true and the input channel-count is Mono. The existing `auto_lift` flag becomes "transitional" — true while a builtin is mono-only, flipped to false (and `stereo_native = true`) when the builtin is converted.
 2. The error-checking pass converts E181–E185 to **warnings** W181–W185. All five fire only when the user's code is channel-mismatched but otherwise structurally valid; with stereo-native opcodes there is always a sensible interpretation (escalate, no-op, broadcast). W181 (`mono(mono)`) and W182 (`stereo(stereo)`) become silent no-ops — the expression evaluates to the input. W183 (`left(mono)`) and W184 (`right(mono)`) return the input unchanged (the "channel" being extracted is the only one that exists). W185 (`out` arg shape mismatch) auto-escalates. The compiler logs each warning at the source location for discoverability. E186 (non-signal type errors from `BuiltinSignature` catalog) stays as an error — it catches structural type mismatches, not channel mismatches.
 
+### 5.7 `ChannelCount::Match` — Output Width Follows Input (Post-Phase-5 Addendum)
+
+Audio generators, filters, and effects always want to emit a stereo pair (`output_channels = Stereo`). Control-rate utilities that smooth or transform a scalar signal do not — a mono pattern field or knob value run through `slew`/`glide`/`sah` is almost always destined for a mono parameter slot downstream (e.g. `saw(freq=…)`, `lp(in, freq, q)`), and force-widening it to stereo triggers `E186`. The post-Phase-5 fix is a third enum value:
+
+```cpp
+enum class ChannelCount : std::uint8_t {
+    Mono   = 0,
+    Stereo = 1,
+    Match  = 2,  // follow the width of the primary signal input
+};
+```
+
+`Match` is only valid on `BuiltinInfo::output_channels` and is resolved at codegen time. On the stereo-native emission path:
+
+- mono primary input  → `STEREO_OUTPUT` clear, single output buffer, `TypedValue::Mono` result
+- stereo primary input → `STEREO_OUTPUT` set, adjacent L/R pair, `TypedValue::Stereo` result (same as a plain `Stereo` builtin)
+
+Each opcode body keys off `inst.flags & STEREO_OUTPUT` and skips the right-channel work when clear. Per-channel state structs stay 2-wide — the cost of one extra float pair is dwarfed by avoiding a separate code path.
+
+The 11 builtins that opt into `Match` today (all `stereo_native = true`, all take a control-rate primary):
+
+- `slew`, `interp`, `interp_ease_in`, `interp_ease_out`, `interp_cos`
+- `env_follower`
+- `sah`, `gateup`, `gatedown`, `counter`
+
+The cleanest user-facing effect: `n"c4 c5" |> saw(glide(@.freq, 0.1)) |> out(@)` compiles directly, no `mono(...)` wrapping needed. Stereo audio still yields per-channel CV (e.g. `env_follower(stereo_signal, …)` produces independent L/R envelopes for sidechain work).
+
 ---
 
 ## 6. Impact Assessment

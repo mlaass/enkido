@@ -157,7 +157,10 @@ inline void op_env_adsr(ExecutionContext& ctx, const Instruction& inst) {
 [[gnu::always_inline]]
 inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
     float* out_l = ctx.buffers->get(inst.out_buffer);
-    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+    const bool stereo_out = (inst.flags & InstructionFlag::STEREO_OUTPUT) != 0;
+    float* out_r = stereo_out
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1))
+        : nullptr;
     const float* input = ctx.buffers->get(inst.inputs[0]);
     const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
     const float* input_r = stereo_in
@@ -166,6 +169,7 @@ inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
     const float* attack_buf = ctx.buffers->get(inst.inputs[1]);
     const float* release_buf = ctx.buffers->get(inst.inputs[2]);
     auto& state = ctx.states->get_or_create<EnvFollowerState>(inst.state_id);
+    const std::size_t n_channels = stereo_out ? 2u : 1u;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float attack_time = attack_buf[i];
@@ -183,7 +187,7 @@ inline void op_env_follower(ExecutionContext& ctx, const Instruction& inst) {
             state.release_coeff = 1.0f - std::exp(-1.0f / release_samples);
         }
 
-        for (std::size_t ch = 0; ch < 2; ++ch) {
+        for (std::size_t ch = 0; ch < n_channels; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
             float abs_input = std::abs(x);
 

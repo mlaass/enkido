@@ -27,13 +27,21 @@ enum class ValueType : std::uint8_t {
 
 /// Channel count for signal values. When Stereo, `right_buffer` holds the
 /// right channel and must equal `buffer + 1` (adjacent-buffer invariant).
+/// `Match` is only valid on `BuiltinInfo::output_channels`; it means "follow
+/// the width of the primary signal input" and is resolved to Mono or Stereo
+/// at codegen time. It must never appear on a resolved `TypedValue`.
 enum class ChannelCount : std::uint8_t {
     Mono   = 0,
     Stereo = 1,
+    Match  = 2,
 };
 
 constexpr const char* channel_count_name(ChannelCount c) {
-    return c == ChannelCount::Stereo ? "Stereo" : "Mono";
+    switch (c) {
+        case ChannelCount::Stereo: return "Stereo";
+        case ChannelCount::Match:  return "Match";
+        default:                   return "Mono";
+    }
 }
 
 struct TypedValue;

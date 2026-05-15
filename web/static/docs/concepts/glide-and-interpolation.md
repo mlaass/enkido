@@ -37,7 +37,7 @@ Linear interpolation in **Hz** sounds non-uniform over wide intervals — a c4�
 ### Path A — `space: "log"` on `glide`
 
 ```akkado
-n"c2 c6" |> saw(mono(glide(@.freq, 0.2, "linear", "log"))) |> out(@)
+n"c2 c6" |> saw(glide(@.freq, 0.2, "linear", "log")) |> out(@)
 ```
 
 Internally pipes the target through `log + scale` and `pow(2, …)`. Use this when you only have a frequency signal — e.g. a `param`, an LFO, or a non-pattern source where MIDI note isn't naturally available.
@@ -48,7 +48,7 @@ Internally pipes the target through `log + scale` and `pow(2, …)`. Use this wh
 n"c2 c6" |> saw(mtof(glide(@.note, 0.2))) |> out(@)
 ```
 
-`@.note` carries the MIDI note number (linear in semitones), so a plain linear glide is already log-pitch. More transparent, fewer characters, and `mtof` keeps the chain mono (see the [stereo-native caveat](#stereo-native-caveat) below). **Recommended for pattern sources.**
+`@.note` carries the MIDI note number (linear in semitones), so a plain linear glide is already log-pitch. More transparent, fewer characters. **Recommended for pattern sources** — but both paths produce identical audio.
 
 ## Curve shapes
 
@@ -63,28 +63,20 @@ Four shapes ship in v1, selected via the `curve` argument or the corresponding `
 
 The `interp*` family is the lower-level primitive. `glide` is the recommended high-level entry point because it adds value-space conversion and gives you a sensible default (50 ms linear).
 
-## Stereo-native caveat
+## Channel width follows the input
 
-`glide` and every `interp*` builtin are **stereo-native** — feeding in a mono target auto-widens the output to stereo. That collides with mono-only parameter slots:
+`glide`, every `interp*` builtin, and `slew` preserve the channel width of their primary input. Mono in → mono out, so a pattern field like `@.freq` flows straight into a mono parameter slot:
 
 ```akkado
-// E186: saw(freq) wants a mono freq, glide produces stereo
 n"c4 c5" |> saw(glide(@.freq, 0.1)) |> out(@)
 ```
 
-Two clean fixes:
+Feed a stereo signal and you get independent per-channel ramps — useful for stereo CV processing:
 
-1. **Feed via `mtof(glide(@.note, …))`** — `mtof` is mono-native, so the whole chain stays mono until the synth widens it.
-
-   ```akkado
-   n"c4 c5" |> saw(mtof(glide(@.note, 0.1))) |> out(@)
-   ```
-
-2. **Wrap with `mono(...)`** — downmixes glide's output back to mono.
-
-   ```akkado
-   n"c4 c5" |> saw(mono(glide(@.freq, 0.1))) |> out(@)
-   ```
+```akkado
+s = stereo(saw(218), saw(222))
+glide(s, 0.05) |> out(@)
+```
 
 See [Mono & Stereo Signals](./signals.md#stereo-native-effects) for the bigger picture.
 

@@ -132,6 +132,12 @@ struct BuiltinInfo {
     // Only consulted for slots where param_types[i] == Signal; non-signal slots ignore.
     // Default-initialized = all Mono, output Mono — matches the mono-only
     // contract most non-audio builtins have.
+    //
+    // `output_channels = Match` (only valid on stereo-native builtins) means
+    // the result width follows the primary signal input: mono in → mono out,
+    // stereo in → stereo out. Use this for control-rate utilities (slew,
+    // interp_*, env_follower, sah, gateup, gatedown, counter) so their output
+    // does not collide with downstream mono parameter slots.
     std::array<ChannelCount, MAX_BUILTIN_PARAMS> input_channels = {};
     ChannelCount output_channels = ChannelCount::Mono;
 
@@ -420,13 +426,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  "Attack-release envelope (one-shot)"}},
     // env_follower — stereo-native (prd-stereo-native-opcodes Phase 4d).
     // Per-channel envelope levels in a dedicated EnvFollowerState.
-    // Mono input auto-broadcasts; stereo input drives per-channel envelopes
-    // (per-channel sidechain). adsr/ar stay mono per PRD §3.2 (control-domain).
+    // Output width matches input: mono in → mono out (so the CV slots into
+    // downstream mono parameter slots without E186); stereo in → per-channel
+    // envelopes (per-channel sidechain). adsr/ar stay mono per PRD §3.2.
     {"env_follower", {cedar::Opcode::ENV_FOLLOWER, 1, 2, true,
                       {"in", "attack", "release", "", "", ""},
                       {0.01f, 0.1f, NAN},
                       "Amplitude envelope follower",
-                      0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
+                      0, {}, {}, ChannelCount::Match, /*stereo_native=*/true}},
 
     // Samplers (stereo-native, prd-stereo-native-opcodes Phase 3): mono files
     // broadcast L=R; stereo files preserve channels; 3+ channel files keep the
@@ -881,54 +888,56 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"slew",    {cedar::Opcode::SLEW,  2, 0, true,
                  {"target", "rate", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Slew rate limiter (portamento) — stereo-native",
-                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
+                 "Slew rate limiter (portamento) — output width matches input",
+                 0, {}, {}, ChannelCount::Match, /*stereo_native=*/true}},
     // Time-based interpolators — share Opcode::INTERP_TIME, dispatched by
-    // inst_rate (0..3). All stereo-native: inputs[0] is the stereo-capable
-    // target; inputs[1] is a shared mono ramp-time in seconds.
+    // inst_rate (0..3). Stereo-native opcodes with Match output: mono target
+    // → mono output (slots into downstream mono params like saw(freq=...)
+    // without E186); stereo target → independent per-channel ramps.
     {"interp",          {cedar::Opcode::INTERP_TIME, 2, 0, true,
                          {"target", "time", "", "", "", ""},
                          {NAN, NAN, NAN},
-                         "Time-based interpolator (linear) — stereo-native",
-                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/0}},
+                         "Time-based interpolator (linear) — output width matches input",
+                         0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/0}},
     {"interp_ease_in",  {cedar::Opcode::INTERP_TIME, 2, 0, true,
                          {"target", "time", "", "", "", ""},
                          {NAN, NAN, NAN},
-                         "Time-based interpolator (ease-in, t²) — stereo-native",
-                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/1}},
+                         "Time-based interpolator (ease-in, t²) — output width matches input",
+                         0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/1}},
     {"interp_ease_out", {cedar::Opcode::INTERP_TIME, 2, 0, true,
                          {"target", "time", "", "", "", ""},
                          {NAN, NAN, NAN},
-                         "Time-based interpolator (ease-out, 1-(1-t)²) — stereo-native",
-                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/2}},
+                         "Time-based interpolator (ease-out, 1-(1-t)²) — output width matches input",
+                         0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/2}},
     {"interp_cos",      {cedar::Opcode::INTERP_TIME, 2, 0, true,
                          {"target", "time", "", "", "", ""},
                          {NAN, NAN, NAN},
-                         "Time-based interpolator (cosine S-curve) — stereo-native",
-                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/3}},
+                         "Time-based interpolator (cosine S-curve) — output width matches input",
+                         0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/3}},
     // Edge primitives — share Opcode::EDGE_OP, dispatched by inst_rate (0..3).
-    // All stereo-native (prd-stereo-native-opcodes Phase 5): inputs[0] is the
-    // stereo-capable primary; trig/reset/start are shared control signals.
+    // Stereo-native opcodes with Match output: mono primary → mono output
+    // (lets the result feed mono-only slots downstream); stereo primary →
+    // independent per-channel hold/edge/counter state.
     {"sah",      {cedar::Opcode::EDGE_OP, 2, 0, true,
                  {"in", "trig", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Sample and hold — stereo-native",
-                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/0}},
+                 "Sample and hold — output width matches input",
+                 0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/0}},
     {"gateup",   {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "1.0 on rising edge of sig — stereo-native",
-                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/1}},
+                 "1.0 on rising edge of sig — output width matches input",
+                 0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/1}},
     {"gatedown", {cedar::Opcode::EDGE_OP, 1, 0, true,
                  {"sig", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "1.0 on falling edge of sig — stereo-native",
-                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/2}},
+                 "1.0 on falling edge of sig — output width matches input",
+                 0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/2}},
     {"counter",  {cedar::Opcode::EDGE_OP, 1, 2, true,
                  {"trig", "reset", "start", "", "", ""},
                  {NAN, NAN},
-                 "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset — stereo-native",
-                 0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/3}},
+                 "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset — output width matches input",
+                 0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/3}},
 
     // Output (1 required for mono, 2 for stereo)
     {"out",     {cedar::Opcode::OUTPUT, 1, 1, false,

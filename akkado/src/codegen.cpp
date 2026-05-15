@@ -1595,6 +1595,24 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     expansion_buffers.size() == 2 &&
                     is_stereo(arg_nodes[0]);
 
+                // Output width: Stereo declares "always emit a pair";
+                // Match declares "follow the primary signal input" — when
+                // the primary is mono, emit a single buffer so the result
+                // slots into downstream mono parameter slots without E186.
+                bool emit_stereo;
+                switch (builtin->output_channels) {
+                    case ChannelCount::Match:
+                        emit_stereo = primary_stereo;
+                        break;
+                    case ChannelCount::Mono:
+                        emit_stereo = false;
+                        break;
+                    case ChannelCount::Stereo:
+                    default:
+                        emit_stereo = true;
+                        break;
+                }
+
                 // Chord/poly expansion onto the PRIMARY SIGNAL slot of a
                 // stereo-native opcode = E187. Each voice would carry its own
                 // stereo pair, ambiguous without poly(). Stereo input (size==2
@@ -1649,21 +1667,28 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     }
                 }
 
-                // Allocate adjacent L/R output pair (BufferAllocator is linear
-                // so two back-to-back allocations are guaranteed adjacent).
+                // Allocate output buffer(s): adjacent L/R pair when emitting
+                // stereo, otherwise a single buffer (Match+mono input path).
                 std::uint16_t out_left = buffers_.allocate();
-                std::uint16_t out_right = buffers_.allocate();
-                if (out_left == BufferAllocator::BUFFER_UNUSED ||
-                    out_right == BufferAllocator::BUFFER_UNUSED) {
+                if (out_left == BufferAllocator::BUFFER_UNUSED) {
                     error("E101", "Buffer pool exhausted", n.location);
                     if (pushed_path) pop_path();
                     return TypedValue::error_val();
                 }
-                if (out_right != out_left + 1) {
-                    error("E166", "Internal error: stereo buffer allocation not adjacent",
-                          n.location);
-                    if (pushed_path) pop_path();
-                    return TypedValue::error_val();
+                std::uint16_t out_right = 0xFFFF;
+                if (emit_stereo) {
+                    out_right = buffers_.allocate();
+                    if (out_right == BufferAllocator::BUFFER_UNUSED) {
+                        error("E101", "Buffer pool exhausted", n.location);
+                        if (pushed_path) pop_path();
+                        return TypedValue::error_val();
+                    }
+                    if (out_right != out_left + 1) {
+                        error("E166", "Internal error: stereo buffer allocation not adjacent",
+                              n.location);
+                        if (pushed_path) pop_path();
+                        return TypedValue::error_val();
+                    }
                 }
 
                 cedar::Instruction inst{};
@@ -1676,7 +1701,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 inst.inputs[4] = expanded_args.size() > 4 ? expanded_args[4] : 0xFFFF;
                 inst.rate = builtin->inst_rate;
                 inst.flags = static_cast<std::uint16_t>(
-                    cedar::InstructionFlag::STEREO_OUTPUT |
+                    (emit_stereo ? cedar::InstructionFlag::STEREO_OUTPUT : 0u) |
                     (primary_stereo ? cedar::InstructionFlag::STEREO_INPUT : 0u));
 
                 // FM detection on stereo-native oscillators (currently no
@@ -1696,9 +1721,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
                 if (pushed_path) pop_path();
 
-                register_stereo(node, out_left, out_right);
-                return cache_and_return(node,
-                    TypedValue::stereo_signal(out_left, out_right));
+                if (emit_stereo) {
+                    register_stereo(node, out_left, out_right);
+                    return cache_and_return(node,
+                        TypedValue::stereo_signal(out_left, out_right));
+                }
+                return cache_and_return(node, TypedValue::signal(out_left));
             }
 
             // Chord expansion to N instances (stateful UGens only — per-voice state).
@@ -1739,8 +1767,28 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                             }
                         }
 
-                        // Allocate output buffer(s): adjacent L/R pair for
-                        // stereo-native, single buffer otherwise.
+                        // Output width: Stereo declares "always emit a pair";
+                        // Match declares "follow primary signal input", which
+                        // is always single-buffer on this branch (expansion
+                        // is on a control slot, slot 0 stays mono).
+                        bool emit_stereo;
+                        if (builtin->stereo_native) {
+                            switch (builtin->output_channels) {
+                                case ChannelCount::Match:
+                                case ChannelCount::Mono:
+                                    emit_stereo = false;
+                                    break;
+                                case ChannelCount::Stereo:
+                                default:
+                                    emit_stereo = true;
+                                    break;
+                            }
+                        } else {
+                            emit_stereo = false;
+                        }
+
+                        // Allocate output buffer(s): adjacent L/R pair when
+                        // emitting stereo, single buffer otherwise.
                         std::uint16_t inst_out = buffers_.allocate();
                         std::uint16_t inst_out_r = 0xFFFF;
                         if (inst_out == BufferAllocator::BUFFER_UNUSED) {
@@ -1749,7 +1797,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                             if (pushed_path) pop_path();
                             return TypedValue::error_val();
                         }
-                        if (builtin->stereo_native) {
+                        if (emit_stereo) {
                             inst_out_r = buffers_.allocate();
                             if (inst_out_r == BufferAllocator::BUFFER_UNUSED) {
                                 error("E101", "Buffer pool exhausted", n.location);
@@ -1776,7 +1824,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         inst.inputs[3] = expanded_args.size() > 3 ? expanded_args[3] : 0xFFFF;
                         inst.inputs[4] = expanded_args.size() > 4 ? expanded_args[4] : 0xFFFF;
                         inst.rate = builtin->inst_rate;
-                        if (builtin->stereo_native) {
+                        if (emit_stereo) {
                             inst.flags = static_cast<std::uint16_t>(
                                 cedar::InstructionFlag::STEREO_OUTPUT);
                             // (Stereo input through array expansion on a control
@@ -1796,7 +1844,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         emit_extended_params_init(inst.state_id, *builtin, expanded_args);
                         emit(inst);
 
-                        if (builtin->stereo_native) {
+                        if (emit_stereo) {
                             register_stereo(node, inst_out, inst_out_r);
                             result_elements.push_back(
                                 TypedValue::stereo_signal(inst_out, inst_out_r));
@@ -1881,7 +1929,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     return TypedValue::error_val();
                 }
                 TypedValue result = TypedValue::signal(out);
-                result.channels = builtin->output_channels;
+                // Match on a non-stereo-native builtin falls back to Mono
+                // (Match is only meaningful on the stereo-native path).
+                result.channels =
+                    (builtin->output_channels == ChannelCount::Stereo)
+                        ? ChannelCount::Stereo
+                        : ChannelCount::Mono;
                 if (result.channels == ChannelCount::Stereo) {
                     result.right_buffer = static_cast<std::uint16_t>(out + 1);
                 }
@@ -1972,7 +2025,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // builtins route through codegen_stereo.cpp, so this only ever
             // takes the Mono branch in the current tree.
             TypedValue result = TypedValue::signal(out);
-            result.channels = builtin->output_channels;
+            // Match only resolves on the stereo-native path; if we land
+            // here with Match, treat as Mono (no Stereo pair allocated).
+            result.channels =
+                (builtin->output_channels == ChannelCount::Stereo)
+                    ? ChannelCount::Stereo
+                    : ChannelCount::Mono;
             if (result.channels == ChannelCount::Stereo) {
                 result.right_buffer = static_cast<std::uint16_t>(out + 1);
             }

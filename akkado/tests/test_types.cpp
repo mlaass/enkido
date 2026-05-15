@@ -938,13 +938,13 @@ TEST_CASE("Types: stereo-native limiter and gate produce stereo output", "[types
     }
 }
 
-TEST_CASE("Types: stereo-native env_follower produces stereo envelope", "[types][stereo][stereo-native]") {
-    SECTION("mono in produces L=R envelope (Stereo output)") {
+TEST_CASE("Types: env_follower output width matches input", "[types][stereo][stereo-native]") {
+    SECTION("mono in produces mono envelope (no STEREO_OUTPUT)") {
         auto result = akkado::compile(R"( saw(220) |> env_follower(%, 0.01, 0.1) |> out(%) )");
         REQUIRE(result.success);
         auto* op = find_instruction(get_instructions(result), cedar::Opcode::ENV_FOLLOWER);
         REQUIRE(op != nullptr);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
     }
     SECTION("stereo in produces per-channel envelopes") {
@@ -1008,14 +1008,14 @@ TEST_CASE("Types: stereo-native tap_delay runs closure on stereo signal pair", "
 // holdouts, now stereo-native. Auto-lift is fully retired.
 // =============================================================================
 
-TEST_CASE("Types: stereo-native slew produces stereo output from mono input", "[types][stereo][stereo-native]") {
+TEST_CASE("Types: slew with mono input stays mono", "[types][stereo][stereo-native]") {
     auto result = akkado::compile(R"( saw(220) |> slew(%, 10.0) |> out(%) )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
     CHECK(count_instructions(insts, cedar::Opcode::SLEW) == 1);
     auto* op = find_instruction(insts, cedar::Opcode::SLEW);
     REQUIRE(op != nullptr);
-    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+    CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
 }
 
@@ -1033,40 +1033,40 @@ TEST_CASE("Types: stereo-native slew reads stereo primary input", "[types][stere
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
 }
 
-TEST_CASE("Types: stereo-native EDGE_OP family produces stereo output", "[types][stereo][stereo-native]") {
+TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][stereo-native]") {
     // All four edge primitives share Opcode::EDGE_OP, mode-dispatched on rate.
-    SECTION("sah — mono in, stereo out") {
+    SECTION("sah — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> sah(%, beat(1)) |> out(%) )");
         REQUIRE(result.success);
         auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 0);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
     }
-    SECTION("gateup — mono in, stereo out") {
+    SECTION("gateup — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> gateup(%) |> out(%) )");
         REQUIRE(result.success);
         auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 1);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
     }
-    SECTION("gatedown — mono in, stereo out") {
+    SECTION("gatedown — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> gatedown(%) |> out(%) )");
         REQUIRE(result.success);
         auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 2);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
     }
-    SECTION("counter — mono in, stereo out") {
+    SECTION("counter — mono in, mono out") {
         auto result = akkado::compile(R"( beat(1) |> counter(%) |> out(%) )");
         REQUIRE(result.success);
         auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 3);
-        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+        CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
     }
     SECTION("sah reads stereo primary input") {
         auto result = akkado::compile(R"(
@@ -1079,6 +1079,21 @@ TEST_CASE("Types: stereo-native EDGE_OP family produces stereo output", "[types]
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
     }
+}
+
+TEST_CASE("Types: glide on mono pattern field feeds mono saw freq slot",
+          "[types][stereo][stereo-native]") {
+    // Canonical example from prd-glide-interp.md §3.1 — used to fail with
+    // E186 because glide() forced Stereo output into saw()'s mono freq slot.
+    // ChannelCount::Match keeps the smoothed control signal mono.
+    auto result = akkado::compile(R"( n"c4 c5" |> saw(glide(@.freq, 0.1)) |> out(@) )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::INTERP_TIME) == 1);
+    auto* interp = find_instruction(insts, cedar::Opcode::INTERP_TIME);
+    REQUIRE(interp != nullptr);
+    CHECK((interp->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
+    CHECK((interp->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
 }
 
 // ============================================================================

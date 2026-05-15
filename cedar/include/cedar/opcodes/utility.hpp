@@ -171,7 +171,10 @@ inline void op_dc(ExecutionContext& ctx, const Instruction& inst) {
 [[gnu::always_inline]]
 inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
     float* out_l = ctx.buffers->get(inst.out_buffer);
-    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+    const bool stereo_out = (inst.flags & InstructionFlag::STEREO_OUTPUT) != 0;
+    float* out_r = stereo_out
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1))
+        : nullptr;
     const float* target = ctx.buffers->get(inst.inputs[0]);
     const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
     const float* target_r = stereo_in
@@ -179,6 +182,7 @@ inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
         : target;
     const float* rate_buf = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<SlewState>(inst.state_id);
+    const std::size_t n_channels = stereo_out ? 2u : 1u;
 
     // Initialize state to first input value (instant startup)
     if (!state.initialized) {
@@ -192,7 +196,7 @@ inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
         // Linear slew rate limiter: limit change to rate units per second
         float max_delta = (rate > 0.0f) ? rate / ctx.sample_rate : 1e10f;
 
-        for (std::size_t ch = 0; ch < 2; ++ch) {
+        for (std::size_t ch = 0; ch < n_channels; ++ch) {
             const float* t = (ch == 0) ? target : target_r;
             float delta = t[i] - state.current[ch];
 
@@ -223,7 +227,10 @@ inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
 //   - first sample of first block: out = target, ramp marked done
 inline void op_interp_time(ExecutionContext& ctx, const Instruction& inst) {
     float* out_l = ctx.buffers->get(inst.out_buffer);
-    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+    const bool stereo_out = (inst.flags & InstructionFlag::STEREO_OUTPUT) != 0;
+    float* out_r = stereo_out
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1))
+        : nullptr;
     const float* target = ctx.buffers->get(inst.inputs[0]);
     const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
     const float* target_r = stereo_in
@@ -232,6 +239,7 @@ inline void op_interp_time(ExecutionContext& ctx, const Instruction& inst) {
     const float* time_buf = ctx.buffers->get(inst.inputs[1]);
     auto& state = ctx.states->get_or_create<InterpTimeState>(inst.state_id);
     const float sample_rate = ctx.sample_rate;
+    const std::size_t n_channels = stereo_out ? 2u : 1u;
 
     if (!state.initialized) {
         state.start[0] = state.end[0] = target[0];
@@ -248,7 +256,7 @@ inline void op_interp_time(ExecutionContext& ctx, const Instruction& inst) {
 #define CEDAR_INTERP_TIME_LOOP(SHAPE)                                          \
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {                             \
         const float t_dur = time_buf[i];                                       \
-        for (std::size_t ch = 0; ch < 2; ++ch) {                               \
+        for (std::size_t ch = 0; ch < n_channels; ++ch) {                      \
             const float target_v = (ch == 0 ? target[i] : target_r[i]);        \
             float* outp = (ch == 0 ? out_l : out_r);                           \
             if (!std::isfinite(target_v)) {                                    \

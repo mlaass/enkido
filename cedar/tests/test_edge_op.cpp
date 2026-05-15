@@ -290,9 +290,11 @@ TEST_CASE("EDGE_OP is stereo-native: writes out_buffer and out_buffer+1",
     std::array<float, BLOCK_SIZE> sig{};
     sig[4] = sig[5] = 1.0f;
 
-    SECTION("mono primary input: L == R") {
-        // No STEREO_INPUT flag → inputs[0] is read for both internal lanes.
+    SECTION("mono primary input with STEREO_OUTPUT: L == R") {
+        // STEREO_OUTPUT set, STEREO_INPUT clear → inputs[0] is read for both
+        // internal lanes and both output lanes are written equal.
         Instruction edge = make_edge(/*mode*/ 1, /*out*/ 10, /*sig*/ 1);
+        edge.flags = static_cast<std::uint16_t>(InstructionFlag::STEREO_OUTPUT);
         vm.load_program(std::span{&edge, 1});
         std::copy(sig.begin(), sig.end(), vm.buffers().get(1));
 
@@ -305,6 +307,30 @@ TEST_CASE("EDGE_OP is stereo-native: writes out_buffer and out_buffer+1",
             CHECK_THAT(out_r[i], WithinAbs(out_l[i], 1e-6f));
         }
         CHECK_THAT(out_l[4], WithinAbs(1.0f, 1e-6f));
+    }
+
+    SECTION("mono primary input without STEREO_OUTPUT: only L is written") {
+        // ChannelCount::Match path: when STEREO_OUTPUT is clear, the opcode
+        // skips the right channel entirely so the second buffer slot can be
+        // reused by downstream code without colliding with an unintended write.
+        Instruction edge = make_edge(/*mode*/ 1, /*out*/ 10, /*sig*/ 1);
+        // edge.flags = 0 → no STEREO_OUTPUT
+        vm.load_program(std::span{&edge, 1});
+        std::copy(sig.begin(), sig.end(), vm.buffers().get(1));
+
+        // Pre-fill buffer 11 with a sentinel so we can detect any write.
+        float* sentinel = vm.buffers().get(11);
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) sentinel[i] = -42.0f;
+
+        std::array<float, BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+
+        const float* out_l = vm.buffers().get(10);
+        const float* out_r = vm.buffers().get(11);
+        CHECK_THAT(out_l[4], WithinAbs(1.0f, 1e-6f));
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK_THAT(out_r[i], WithinAbs(-42.0f, 1e-6f));
+        }
     }
 
     SECTION("stereo primary input: L and R are independent") {
@@ -352,11 +378,12 @@ TEST_CASE("SLEW is stereo-native: writes out_buffer and out_buffer+1",
         return inst;
     };
 
-    SECTION("mono primary input: L == R") {
+    SECTION("mono primary input with STEREO_OUTPUT: L == R") {
         std::array<float, BLOCK_SIZE> target{};
         std::fill(target.begin(), target.end(), 1.0f);
 
         Instruction slew = make_slew(/*out*/ 10, /*target*/ 1, /*rate*/ 2);
+        slew.flags = static_cast<std::uint16_t>(InstructionFlag::STEREO_OUTPUT);
         vm.load_program(std::span{&slew, 1});
         std::copy(target.begin(), target.end(), vm.buffers().get(1));
         std::copy(rate.begin(), rate.end(), vm.buffers().get(2));
@@ -371,6 +398,32 @@ TEST_CASE("SLEW is stereo-native: writes out_buffer and out_buffer+1",
         }
         // Initialized to target[0] = 1.0, already at target → stays at 1.0.
         CHECK_THAT(out_l[BLOCK_SIZE - 1], WithinAbs(1.0f, 1e-6f));
+    }
+
+    SECTION("mono primary input without STEREO_OUTPUT: only L is written") {
+        // ChannelCount::Match path: with STEREO_OUTPUT clear, the right buffer
+        // is never touched so the buffer pool can reuse the slot freely.
+        std::array<float, BLOCK_SIZE> target{};
+        std::fill(target.begin(), target.end(), 1.0f);
+
+        Instruction slew = make_slew(/*out*/ 10, /*target*/ 1, /*rate*/ 2);
+        // slew.flags = 0 → no STEREO_OUTPUT
+        vm.load_program(std::span{&slew, 1});
+        std::copy(target.begin(), target.end(), vm.buffers().get(1));
+        std::copy(rate.begin(), rate.end(), vm.buffers().get(2));
+
+        float* sentinel = vm.buffers().get(11);
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) sentinel[i] = -42.0f;
+
+        std::array<float, BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+
+        const float* out_l = vm.buffers().get(10);
+        const float* out_r = vm.buffers().get(11);
+        CHECK_THAT(out_l[BLOCK_SIZE - 1], WithinAbs(1.0f, 1e-6f));
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK_THAT(out_r[i], WithinAbs(-42.0f, 1e-6f));
+        }
     }
 
     SECTION("stereo primary input: L and R slew toward independent targets") {

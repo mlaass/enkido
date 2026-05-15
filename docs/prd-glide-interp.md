@@ -214,29 +214,22 @@ Rule of thumb: **if you can answer "how many seconds should the slide
 take?" reach for `glide`. If you can only answer "how fast can it change
 per second?" reach for `slew`.**
 
-### 3.4 Stereo-native caveat (surfaced during Phase 2)
+### 3.4 Channel-width handling
 
-`glide` and every `interp*` builtin are declared `stereo_native`
-(`ChannelCount::Stereo`), mirroring `slew`. That means a mono target
-auto-widens to a stereo output. Placing the result directly into a
-mono-only slot (e.g. the `freq` argument of `saw`/`sin`/`tri`) raises
-`E186 mono-required signal where stereo was produced`.
+`glide`, every `interp*` builtin, `slew`, `env_follower`, and the
+EDGE_OP family (`sah`/`gateup`/`gatedown`/`counter`) all declare
+`output_channels = ChannelCount::Match`. The result follows the primary
+signal input: mono in → mono out, stereo in → independent per-channel
+processing. That means `saw(glide(@.freq, 0.1))` is a direct fit — the
+mono pattern field stays mono into the mono `freq` slot. Feeding a
+stereo signal (e.g. `glide(stereo(saw(218), saw(222)), …)`) still
+yields per-channel ramps.
 
-Two recommended fixes, both used in §3.1 above:
-
-1. **Feed via `mtof(glide(@.note, …))`.** `mtof` is mono-native, so the
-   pipeline stays mono until the synth widens it. This is also the
-   pitch-uniform path (`@.note` is already log-pitch), so it tends to be
-   the right answer for pattern sources.
-2. **Wrap with `mono(...)`.** Explicit sum-to-mono after `glide` for
-   non-pattern sources or when only `@.freq` is available.
-
-The same caveat applies to `slew` and any other stereo-native rate
-limiter — the existing tutorial example `sin(slew(mtof(48 + …), 10))`
-works because `mtof` is mono and the `slew` output flows into the mono
-`freq` slot of `sin` after the widening rule short-circuits on the mono
-target. Documented in the public-facing
-[Glide & Interpolation concept page](../web/static/docs/concepts/glide-and-interpolation.md).
+Earlier drafts of this PRD shipped these builtins as `ChannelCount::Stereo`
+and recommended `mtof(glide(@.note, …))` or `mono(glide(…))` as
+workarounds for an `E186` collision. Those workarounds are no longer
+required — both forms still work and remain reasonable style choices,
+but the bare form composes cleanly today.
 
 ---
 

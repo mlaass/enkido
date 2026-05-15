@@ -24,8 +24,12 @@ namespace cedar {
 inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
     auto& state = ctx.states->get_or_create<EdgeState>(inst.state_id);
     float* out_l = ctx.buffers->get(inst.out_buffer);
-    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+    const bool stereo_out = (inst.flags & InstructionFlag::STEREO_OUTPUT) != 0;
+    float* out_r = stereo_out
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1))
+        : nullptr;
     const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const std::size_t n_channels = stereo_out ? 2u : 1u;
 
     switch (inst.rate) {
         case 0: {
@@ -36,7 +40,7 @@ inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
                 : input;
             const float* trig = ctx.buffers->get(inst.inputs[1]);
             for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-                for (std::size_t ch = 0; ch < 2; ++ch) {
+                for (std::size_t ch = 0; ch < n_channels; ++ch) {
                     const float* in_ch = (ch == 0) ? input : input_r;
                     if (state.prev_trigger[ch] <= 0.0f && trig[i] > 0.0f) {
                         state.held_value[ch] = in_ch[i];
@@ -54,7 +58,7 @@ inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
                 ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
                 : sig;
             for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-                for (std::size_t ch = 0; ch < 2; ++ch) {
+                for (std::size_t ch = 0; ch < n_channels; ++ch) {
                     const float* s = (ch == 0) ? sig : sig_r;
                     (ch == 0 ? out_l : out_r)[i] =
                         (state.prev_trigger[ch] <= 0.0f && s[i] > 0.0f) ? 1.0f : 0.0f;
@@ -70,7 +74,7 @@ inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
                 ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
                 : sig;
             for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-                for (std::size_t ch = 0; ch < 2; ++ch) {
+                for (std::size_t ch = 0; ch < n_channels; ++ch) {
                     const float* s = (ch == 0) ? sig : sig_r;
                     (ch == 0 ? out_l : out_r)[i] =
                         (state.prev_trigger[ch] > 0.0f && s[i] <= 0.0f) ? 1.0f : 0.0f;
@@ -91,7 +95,7 @@ inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
             const float* start = (inst.inputs[2] != BUFFER_UNUSED)
                 ? ctx.buffers->get(inst.inputs[2]) : nullptr;
             for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-                for (std::size_t ch = 0; ch < 2; ++ch) {
+                for (std::size_t ch = 0; ch < n_channels; ++ch) {
                     const float* tr = (ch == 0) ? trig : trig_r;
                     if (reset && state.prev_reset_trigger[ch] <= 0.0f && reset[i] > 0.0f) {
                         state.held_value[ch] = start ? start[i] : 0.0f;
@@ -109,7 +113,7 @@ inline void op_edge(ExecutionContext& ctx, const Instruction& inst) {
             // Unknown mode: emit silence so we don't propagate uninitialized memory
             for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
                 out_l[i] = 0.0f;
-                out_r[i] = 0.0f;
+                if (stereo_out) out_r[i] = 0.0f;
             }
             break;
     }
