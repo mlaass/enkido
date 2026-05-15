@@ -6,6 +6,7 @@
 	import { ParamsPanel } from '$lib/components/Params';
 	import DebugPanel from './DebugPanel.svelte';
 	import AudioInputPanel from './AudioInputPanel.svelte';
+	import MidiInputPanel from './MidiInputPanel.svelte';
 	import SampleBrowser from '$lib/components/Samples/SampleBrowser.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { audioEngine } from '$lib/stores/audio.svelte';
@@ -227,6 +228,11 @@
 					<!-- Audio Input (audio-input PRD) -->
 					<div class="setting-group">
 						<AudioInputPanel />
+					</div>
+
+					<!-- MIDI Input (prd-midi-input) -->
+					<div class="setting-group">
+						<MidiInputPanel />
 					</div>
 
 					<!-- Developer -->

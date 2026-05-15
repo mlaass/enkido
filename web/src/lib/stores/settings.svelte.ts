@@ -14,6 +14,9 @@ interface Settings {
 	activeTab: TabName;
 	scrollPositions: Record<string, number>;
 	showDebugTab: boolean;
+	// Default MIDI input device name (prd-midi-input §4.10). Empty string =
+	// first available device picked at access time. Persisted across reloads.
+	defaultMidiDevice: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -25,7 +28,8 @@ const DEFAULT_SETTINGS: Settings = {
 	panelCollapsed: false,
 	activeTab: 'controls',
 	scrollPositions: {},
-	showDebugTab: false
+	showDebugTab: false,
+	defaultMidiDevice: ''
 };
 
 function loadSettings(): Settings {
@@ -101,6 +105,11 @@ function createSettingsStore() {
 		save();
 	}
 
+	function setDefaultMidiDevice(name: string) {
+		settings.defaultMidiDevice = name;
+		save();
+	}
+
 	function reset() {
 		Object.assign(settings, DEFAULT_SETTINGS);
 		save();
@@ -116,6 +125,7 @@ function createSettingsStore() {
 		get activeTab() { return settings.activeTab; },
 		get scrollPositions() { return settings.scrollPositions; },
 		get showDebugTab() { return settings.showDebugTab; },
+		get defaultMidiDevice() { return settings.defaultMidiDevice; },
 
 		setPanelPosition,
 		setFontSize,
@@ -125,6 +135,7 @@ function createSettingsStore() {
 		setActiveTab,
 		setScrollPosition,
 		setShowDebugTab,
+		setDefaultMidiDevice,
 		reset
 	};
 }

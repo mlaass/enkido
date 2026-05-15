@@ -13,6 +13,7 @@
 #include <cedar/opcodes/sequencing.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
+#include <cedar/opcodes/midi.hpp>
 #include <akkado/akkado.hpp>
 #include <akkado/builtins.hpp>
 #include <akkado/builtins_json.hpp>
@@ -50,6 +51,13 @@ static bool g_input_active = false;
 // "file:NAME"). Empty string means "use UI default". The host reads this
 // after compile to switch input source.
 static std::string g_input_source;
+
+// User-selected default MIDI input device (PRD prd-midi-input §4.10). When
+// a program contains a bare `midi()` call (MidiSourceKind::DefaultDevice),
+// the JS host resolves the route against this name. WASM stores it purely
+// as a label for diagnostics / inspection — the actual route-table build
+// and event fan-out live on the main thread next to requestMIDIAccess().
+static std::string g_default_midi_device;
 
 // Compilation result storage
 static akkado::CompileResult g_compile_result;
@@ -209,6 +217,61 @@ WASM_EXPORT void cedar_set_input_source(const char* source) {
  */
 WASM_EXPORT const char* cedar_get_input_source() {
     return g_input_source.c_str();
+}
+
+// ============================================================================
+// MIDI Input API (PRD prd-midi-input §4.10)
+// ============================================================================
+//
+// The web host owns Web MIDI permission, device acquisition, and route
+// fan-out on the main thread (where requestMIDIAccess() lives). When an
+// onmidimessage fires:
+//   1) the main thread walks the compile-time route table (built from the
+//      `akkado_get_required_midi_source_*` metadata below),
+//   2) applies the channel filter,
+//   3) posts {type:'midi', state_id, status, d1, d2} to the AudioWorklet,
+//   4) the worklet calls cedar_push_midi_event(state_id, ...).
+//
+// cedar_set_default_midi_device records the user's currently selected
+// default device label. The main thread is the source of truth for routing,
+// so this slot is informational (diagnostics, state inspection); it lets
+// non-JS callers — Python bindings, future debug overlays — read back the
+// currently active default device name.
+
+/**
+ * Push a channel-voice MIDI event into the queue for the given state_id.
+ * Mirrors the RtMidi callback path on the CLI side. Returns 1 on success,
+ * 0 on a missing state or full ring (drop-newest policy).
+ *
+ * @param state_id The MidiQueueState's state_id from the compile result.
+ *                 (akkado_get_required_midi_source_state_id(i) for each i.)
+ * @param status   MIDI status byte (channel-voice messages 0x80..0xEF).
+ * @param d1       First data byte (note number, CC index, etc.).
+ * @param d2       Second data byte (velocity, CC value, etc.).
+ */
+WASM_EXPORT int cedar_push_midi_event(uint32_t state_id,
+                                      uint8_t status,
+                                      uint8_t d1,
+                                      uint8_t d2) {
+    if (!g_vm) return 0;
+    return g_vm->push_midi_event(state_id, status, d1, d2) ? 1 : 0;
+}
+
+/**
+ * Record the user-selected default MIDI input device name. Bare `midi()`
+ * calls in source resolve against this label on the JS side; WASM keeps it
+ * as a queryable label only. Pass nullptr or "" to clear the selection.
+ */
+WASM_EXPORT void cedar_set_default_midi_device(const char* name) {
+    g_default_midi_device = name ? name : "";
+}
+
+/**
+ * Read back the currently recorded default MIDI device name. Empty string
+ * means no device is selected.
+ */
+WASM_EXPORT const char* cedar_get_default_midi_device() {
+    return g_default_midi_device.c_str();
 }
 
 /**
@@ -770,6 +833,78 @@ WASM_EXPORT const char* akkado_get_required_input_source(uint32_t index) {
     return g_compile_result.required_input_sources[index].c_str();
 }
 
+// ============================================================================
+// Required MIDI Sources API (PRD prd-midi-input §4.7)
+// ============================================================================
+//
+// Each midi() call in source produces one entry in required_midi_sources
+// (entries are NOT deduplicated — per-call channel filters and option
+// overrides may differ). The web host reads these after compile to build
+// a Web MIDI route table:
+//   kind == DefaultDevice(0): resolve via cedar_set_default_midi_device label
+//   kind == NamedDevice(1)  : substring match against navigator.requestMIDIAccess() input names
+//   kind == File(2)         : skipped in Phase 4 (Phase 5 ships .mid playback)
+
+/**
+ * Number of midi() call sites in the most recent compile.
+ */
+WASM_EXPORT uint32_t akkado_get_required_midi_sources_count() {
+    return static_cast<uint32_t>(g_compile_result.required_midi_sources.size());
+}
+
+/**
+ * State ID for the i-th midi() call. Pass this to cedar_push_midi_event()
+ * for every event the host routes to that call site.
+ */
+WASM_EXPORT uint32_t akkado_get_required_midi_source_state_id(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return 0;
+    return g_compile_result.required_midi_sources[index].state_id;
+}
+
+/**
+ * Source kind (cedar::MidiSourceKind) for the i-th midi() call.
+ * 0 = DefaultDevice, 1 = NamedDevice, 2 = File. Returns -1 on bad index.
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_source_kind(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].kind);
+}
+
+/**
+ * Device name (NamedDevice) or file path (File) for the i-th midi() call.
+ * Empty string for DefaultDevice. Returns nullptr on bad index.
+ */
+WASM_EXPORT const char* akkado_get_required_midi_source_name(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return nullptr;
+    return g_compile_result.required_midi_sources[index].name_or_path.c_str();
+}
+
+/**
+ * Channel filter for the i-th midi() call. 0 means accept any channel;
+ * 1-16 restricts to that MIDI channel. Returns -1 on bad index.
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_source_channel(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].channel_filter);
+}
+
+/**
+ * Loop flag for the i-th midi() call (file mode only). Returns -1 on bad index.
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_source_loop(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return -1;
+    return g_compile_result.required_midi_sources[index].loop ? 1 : 0;
+}
+
+/**
+ * Tempo mode for the i-th midi() call (file mode only).
+ * 0 = Follow, 1 = File. Returns -1 on bad index.
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_source_tempo(uint32_t index) {
+    if (index >= g_compile_result.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].tempo_mode);
+}
+
 /**
  * Resolve sample IDs in state_inits using currently loaded samples.
  * Call this AFTER loading required samples, BEFORE cedar_apply_state_inits().
@@ -970,6 +1105,34 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             state.loop_length = init.timeline_loop_length;
             count++;
         }
+    }
+    return count;
+}
+
+/**
+ * Initialize one MidiQueueState per required_midi_sources entry. The
+ * CLI's `apply_midi_route_plan` (audio_engine.cpp) calls
+ * `vm.init_midi_queue_state` directly; on web the WASM heap is private to
+ * this module, so the JS host calls this single function instead. Must be
+ * invoked AFTER cedar_load_program — initialization writes into the new
+ * program's state pool. Phase 5 (file playback) will load `.mid` bytes
+ * separately and patch the file pointer on each MidiQueueState; Phase 4
+ * leaves File-kind entries silent.
+ *
+ * @return Number of MidiQueueStates initialized.
+ */
+WASM_EXPORT uint32_t cedar_apply_midi_sources() {
+    if (!g_vm) return 0;
+    uint32_t count = 0;
+    for (const auto& src : g_compile_result.required_midi_sources) {
+        g_vm->init_midi_queue_state(
+            src.state_id,
+            src.kind,
+            src.name_or_path.empty() ? nullptr : src.name_or_path.c_str(),
+            src.channel_filter,
+            src.loop,
+            src.tempo_mode);
+        count++;
     }
     return count;
 }

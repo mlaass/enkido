@@ -71,6 +71,11 @@ if(EMSCRIPTEN)
         _cedar_set_input_active
         _cedar_set_input_source
         _cedar_get_input_source
+        # MIDI input (prd-midi-input §4.10)
+        _cedar_push_midi_event
+        _cedar_set_default_midi_device
+        _cedar_get_default_midi_device
+        _cedar_apply_midi_sources
         _cedar_reset
         _cedar_is_crossfading
         _cedar_crossfade_position
@@ -122,6 +127,14 @@ if(EMSCRIPTEN)
         # Required input sources (audio-input PRD §4.4)
         _akkado_get_required_input_sources_count
         _akkado_get_required_input_source
+        # Required MIDI sources (prd-midi-input §4.7)
+        _akkado_get_required_midi_sources_count
+        _akkado_get_required_midi_source_state_id
+        _akkado_get_required_midi_source_kind
+        _akkado_get_required_midi_source_name
+        _akkado_get_required_midi_source_channel
+        _akkado_get_required_midi_source_loop
+        _akkado_get_required_midi_source_tempo
         # State init accessors
         _akkado_get_state_init_count
         _akkado_get_state_init_id

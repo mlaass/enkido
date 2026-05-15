@@ -257,6 +257,41 @@ class CedarProcessor extends AudioWorkletProcessor {
 					}
 				}
 				break;
+
+			case 'midi':
+				// Live MIDI event from the main-thread Web MIDI dispatcher
+				// (prd-midi-input §4.10). The main thread has already applied
+				// the route table's device + channel filter; here we just
+				// push into the addressed MidiQueueState's SPSC ring.
+				if (this.module && this.module._cedar_push_midi_event) {
+					this.module._cedar_push_midi_event(
+						msg.state_id >>> 0,
+						msg.status & 0xFF,
+						msg.d1 & 0xFF,
+						msg.d2 & 0xFF
+					);
+				}
+				break;
+
+			case 'setDefaultMidiDevice':
+				// Record the user-selected default MIDI device label inside
+				// the WASM module. The main thread is the source of truth
+				// for routing, but this lets diagnostics / state inspection
+				// observe the active selection.
+				if (this.module && this.module._cedar_set_default_midi_device) {
+					const name = msg.device || '';
+					const len = this.module.lengthBytesUTF8(name) + 1;
+					const ptr = this.module._nkido_malloc(len);
+					if (ptr !== 0) {
+						try {
+							this.module.stringToUTF8(name, ptr, len);
+							this.module._cedar_set_default_midi_device(ptr);
+						} finally {
+							this.module._nkido_free(ptr);
+						}
+					}
+				}
+				break;
 		}
 	}
 
@@ -324,6 +359,32 @@ class CedarProcessor extends AudioWorkletProcessor {
 		for (let i = 0; i < count; i++) {
 			const ptr = this.module._akkado_get_required_input_source(i);
 			sources.push(ptr ? this.module.UTF8ToString(ptr) : '');
+		}
+		return sources;
+	}
+
+	/**
+	 * Get the list of midi() call sites from the compile result
+	 * (prd-midi-input §4.7). One entry per call; the host turns this into
+	 * a route table that maps device events → cedar_push_midi_event(state_id).
+	 * @returns {Array<{stateId: number, kind: number, name: string, channel: number, loop: boolean, tempo: number}>}
+	 */
+	getRequiredMidiSources() {
+		if (!this.module._akkado_get_required_midi_sources_count) {
+			return [];
+		}
+		const count = this.module._akkado_get_required_midi_sources_count();
+		const sources = [];
+		for (let i = 0; i < count; i++) {
+			const namePtr = this.module._akkado_get_required_midi_source_name(i);
+			sources.push({
+				stateId: this.module._akkado_get_required_midi_source_state_id(i) >>> 0,
+				kind: this.module._akkado_get_required_midi_source_kind(i),
+				name: namePtr ? this.module.UTF8ToString(namePtr) : '',
+				channel: this.module._akkado_get_required_midi_source_channel(i),
+				loop: this.module._akkado_get_required_midi_source_loop(i) === 1,
+				tempo: this.module._akkado_get_required_midi_source_tempo(i)
+			});
 		}
 		return sources;
 	}
@@ -676,6 +737,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 					const requiredWavetables = this.getRequiredWavetables();
 					const requiredUris = this.getRequiredUris();
 					const requiredInputSources = this.getRequiredInputSources();
+					const requiredMidiSources = this.getRequiredMidiSources();
 
 					// Extract all state initialization data
 					const stateInits = this.extractStateInits();
@@ -738,6 +800,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 						requiredWavetables,
 						requiredUris,
 						requiredInputSources,
+						requiredMidiSources,
 						paramDecls,
 						vizDecls,
 						builtinVarOverrides,
@@ -841,6 +904,15 @@ class CedarProcessor extends AudioWorkletProcessor {
 			const stateInitsApplied = this.module._cedar_apply_state_inits();
 			if (stateInitsApplied > 0) {
 				console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
+			}
+			// Initialize one MidiQueueState per midi() call site
+			// (prd-midi-input §4.7). Must run after load_program so the new
+			// program's state pool is the active one.
+			if (this.module._cedar_apply_midi_sources) {
+				const midiApplied = this.module._cedar_apply_midi_sources();
+				if (midiApplied > 0) {
+					console.log('[CedarProcessor] Initialized', midiApplied, 'MIDI queue states');
+				}
 			}
 
 			// Diagnostic logging after load

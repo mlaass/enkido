@@ -22,6 +22,7 @@ import {
 	type InputSourceKind,
 	type InputStatus
 } from '$lib/audio/input-source';
+import { createMidiInputController, type RequiredMidiSource } from '$lib/midi/midi-input.svelte';
 import type { ShapeIndex as ShapeIndexData } from '$lib/editor/akkado-shape-index';
 
 interface Diagnostic {
@@ -176,6 +177,9 @@ interface CompileResult {
 	// Source strings collected from in() calls (one per call, "" = UI default).
 	// Populated by audio-input PRD §4.4. Empty array when in() is not used.
 	requiredInputSources?: string[];
+	// midi() call sites from the compile result (prd-midi-input §4.7). The
+	// host walks this list to build the live-device route table.
+	requiredMidiSources?: RequiredMidiSource[];
 	paramDecls?: ParamDecl[];
 	vizDecls?: VizDecl[];
 	disassembly?: DisassemblyInfo;
@@ -353,6 +357,16 @@ function createAudioEngine() {
 	// Null = no input attached; in() then returns silence.
 	let activeInput: ActiveInputSource | null = null;
 
+	// Web MIDI input controller (prd-midi-input §4.10). Constructed eagerly
+	// so the panel can render a "request permission" button; the actual
+	// requestMIDIAccess() call is deferred until the user interacts.
+	const midiInput = createMidiInputController();
+	// Seed the persisted default device choice from settings.
+	midiInput.setDefaultDeviceName(settingsStore.defaultMidiDevice);
+	// Stash the most recent set of required midi() sources so the panel
+	// (and re-acquired Web MIDI access) can rebuild routes idempotently.
+	let lastRequiredMidiSources: RequiredMidiSource[] = [];
+
 	// Uploaded input files keyed by display name. Map kept on the main thread
 	// because file sources need raw ArrayBuffers for ctx.decodeAudioData().
 	const inputFileBuffers = new Map<string, ArrayBuffer>();
@@ -449,6 +463,11 @@ function createAudioEngine() {
 				handleWorkletMessage(event.data);
 			};
 
+			// Wire the MIDI controller's outbound port. Events the user
+			// plays on a Web MIDI device will be posted here; the worklet's
+			// 'midi' handler forwards them to cedar_push_midi_event.
+			midiInput.setWorkletPort(workletNode.port);
+
 			// Connect: worklet -> gain -> analyser -> destination
 			workletNode.connect(gainNode);
 			gainNode.connect(analyserNode);
@@ -488,6 +507,7 @@ function createAudioEngine() {
 					requiredWavetables: msg.requiredWavetables as RequiredWavetable[] | undefined,
 					requiredUris: msg.requiredUris as UriRequest[] | undefined,
 					requiredInputSources: msg.requiredInputSources as string[] | undefined,
+					requiredMidiSources: msg.requiredMidiSources as RequiredMidiSource[] | undefined,
 					paramDecls: msg.paramDecls as ParamDecl[] | undefined,
 					vizDecls: msg.vizDecls as VizDecl[] | undefined,
 					disassembly: msg.disassembly as DisassemblyInfo | undefined
@@ -524,6 +544,14 @@ function createAudioEngine() {
 				} else {
 					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
 					state.disassembly = null;
+				}
+				// Update MIDI input routes from the new compile's
+				// midi() call sites. This is idempotent and safe even
+				// when access has not yet been granted — the controller
+				// late-resolves on permission grant / device plug-in.
+				if (result.success) {
+					lastRequiredMidiSources = result.requiredMidiSources ?? [];
+					midiInput.setRoutes(lastRequiredMidiSources);
 				}
 				// Resolve pending compile promise
 				if (compileResolve) {
@@ -2217,6 +2245,16 @@ function createAudioEngine() {
 		registerInputFile,
 		unregisterInputFile,
 		getInputFileNames,
+
+		// MIDI input (prd-midi-input)
+		get midi() { return midiInput; },
+		setDefaultMidiDevice(name: string) {
+			settingsStore.setDefaultMidiDevice(name);
+			midiInput.setDefaultDeviceName(name);
+		},
+		async ensureMidiAccess() {
+			return midiInput.ensureAccess();
+		},
 
 		initialize,
 		play,
