@@ -57,6 +57,11 @@ The per-voice offsets come from a symmetric linear spread of
 per-voice values. The special case `voices = 1` returns a single centered,
 undetuned, in-phase voice.
 
+The voice sum is scaled by `1 / sqrt(voices)` so the overall RMS stays
+roughly constant as the voice count grows — the supersaw convention. A
+4-voice unison is about 2× louder than a single voice (not 4×), and you
+can sweep `voices` from 2 up to 16 without re-staging gain.
+
 ### The instrument convention
 
 The `instrument` argument is a 4-arg function:

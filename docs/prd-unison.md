@@ -1,6 +1,6 @@
 # PRD: Unison — Userspace Voice Multiplication with Detune, Width, and Phase Variation
 
-> **Status: PHASE 1 DONE — `unison` ships.** Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. All four compiler prerequisites landed earlier: stereo support in `poly()` (Phase 0b, commit `6b44b4b`), generalized N-arity closures (Phase 0c), `map(arr, fn)` dispatching on closure arity (Phase 0d), and a stereo-preserving variadic `sum(...)` (Phase 0a). Phase 1 (the `unison` stdlib fn + the compiler glue it turned out to need — see the Phase 1 notes) is now done with an `[unison]` test case. Remaining: Phase 2 (docs/demo), Phase 3 (Python smoke test).
+> **Status: ALL PHASES DONE — `unison` ships, with docs, demos, and a Python smoke test.** Adds a `unison(...)` userspace stdlib function that multiplies a single instrument across N detuned, panned, phase-shifted voices. All four compiler prerequisites landed earlier: stereo support in `poly()` (Phase 0b, commit `6b44b4b`), generalized N-arity closures (Phase 0c), `map(arr, fn)` dispatching on closure arity (Phase 0d), and a stereo-preserving variadic `sum(...)` (Phase 0a). Phase 1 (the `unison` stdlib fn + the compiler glue it turned out to need — see the Phase 1 notes) shipped with an `[unison]` C++ test case. Phase 2 (docs + two demo patches) and Phase 3 (`experiments/test_op_unison.py` — four sections: 5-voice spectrum, voices=1 special case, voices sweep, 300 s poly+unison render) are also done.
 
 ## 1. Overview
 
@@ -485,6 +485,12 @@ Depends on: Phase 0a, 0b, 0c, 0d.
   for `voices = 0` / `voices = 17` are downgraded to soft behavior; the
   corresponding error tests are dropped. `voices` not a literal still errors
   E173 from `linspace`.
+- **`1 / sqrt(voices)` gain compensation** (post-Phase-3, per user feedback).
+  The voice sum is multiplied by `1 / sqrt(voices)` so RMS stays roughly
+  constant as `voices` grows — the supersaw convention. The voices=1 special
+  case is unaffected (sqrt(1) = 1, single voice through `pan(...)` unchanged).
+  Verified end-to-end: Phase 3's `poly_unison_300s.wav` peak dropped from 1.0
+  (clipping) to 0.60 with no further code changes.
 - **Compiler prerequisites beyond Phases 0a–0d** (the userspace expansion
   needed these to actually work — all landed in this phase):
   - `resolve_param_literal()` + `handle_linspace_call` now resolve a `linspace`
@@ -548,14 +554,21 @@ Tasks:
 
 ### Phase 3 — Python opcode smoke test
 
-**Status**: TODO  
+**Status**: DONE  
 **Goal**: A Cedar-level test in `experiments/` that renders unison output and saves a WAV for ear evaluation. Per CLAUDE.md, simulate ≥ 300 seconds of audio for any sequenced/poly path.
 
+**Implementation notes**:
+- File: `experiments/test_op_unison.py` (the `test_op_*.py` glob is what `run_all.sh` picks up).
+- Render bridge: `nkido-cli render --source ... --seconds N -o wav` — matches the established pattern in `test_op_poly.py` / `test_chord_pipeline.py`. (The PRD-draft mention of "akkado-cli + cedar_core bindings" was descriptive; no existing test loads bytecode through the Python bindings, and `nkido-cli render` does the same job in one subprocess.)
+- Four sections: (1) 5-voice spectrum at 440 Hz with detune 0.3 → hard-asserts exactly 5 peaks in 431–449 Hz; (2) `voices: 1` special case → 1 centered peak + L/R balance check; (3) sweep `voices ∈ {2, 4, 8}` → exact peak counts, WAVs saved; (4) 300 s `chord("Cmaj7 Am7 Fmaj7 G7") |> poly(%, fat, 4)` with `fat` calling `unison(..., voices: 4)` → checks NaN/Inf, sustained-clipping fraction (transient ±1.0 peak alignment from 16 in-phase saws is normal; >0.1 % of samples at full scale is not), DC offset, and per-second RMS dropout (≥10 % of median).
+- FFT search band tightened from the original `[420, 460]` Hz to `[431, 449]` Hz — exactly brackets the ±detune-semitone spread. Wider bands picked up FFT edge leakage as spurious extra peaks at higher voice counts.
+- Long-render gain staging: `chord(...) |> poly(%, fat, 4) |> % * 0.15 |> out(%)`. The `* 0.15` is what `unison-pad.akk` gets from its `% * 0.6 + freeverb * 0.4` blend.
+
 Tasks:
-- [ ] Compile a small unison patch via `akkado-cli` to bytecode.
-- [ ] Render the patch via `cedar_core` Python bindings, ≥ 300 seconds for a poly+unison patch (shorter for the standalone smoke test).
-- [ ] Verify spectrum has approximately `voices` peaks within ±detune semitones of the fundamental.
-- [ ] Save WAVs to `output/op_unison/`.
+- [x] Compile a small unison patch and render it through the akkado → Cedar pipeline (via `nkido-cli render`).
+- [x] Render the patch for ≥ 300 seconds for the poly+unison case (300 s at 110 BPM, 55 MB WAV).
+- [x] Verify spectrum has approximately `voices` peaks within ±detune semitones of the fundamental (hard assertion at voices ∈ {1, 2, 4, 5, 8}).
+- [x] Save WAVs to `output/op_unison/`.
 
 ### Phase 4 (FUTURE — out of scope here)
 
