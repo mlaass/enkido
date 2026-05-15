@@ -2,11 +2,11 @@
 title: Utility
 category: builtins
 order: 11
-keywords: [utility, out, output, mtof, midi, frequency, dc, slew, sah, sample, hold, clock]
+keywords: [utility, out, output, mtof, midi, frequency, dc, slew, glide, interp, interp_ease_in, interp_ease_out, interp_cos, interpolation, portamento, ease-in, ease-out, cosine, time-based, sah, sample, hold, clock]
 group: tools
 subgroup: audio-plumbing
 icon: Wrench
-tagline: Output, MIDI-to-frequency, slew, DC, and more.
+tagline: Output, MIDI-to-frequency, slew, glide, DC, and more.
 ---
 
 # Utility
@@ -89,17 +89,25 @@ osc("sin", 440) * dc(0.5) |> out(@)
 
 ## slew
 
-**Slew Rate Limiter** - Smoothly transitions between values.
+**Slew Rate Limiter** - Caps how fast a signal can change, in units per second.
 
 | Param  | Type   | Description |
 |--------|--------|-------------|
 | target | signal | Target value |
-| rate   | number | Slew rate (higher = faster) |
+| rate   | number | Slew rate (units per second; higher = faster) |
 
-Limits how fast a signal can change, smoothing transitions. Useful for portamento or smoothing control signals.
+Rate-limited smoothing. Good for taming param sliders, slewing CVs, and audio-rate slew effects. For note-pitch glide between pattern events with a fixed *duration* regardless of interval size, reach for [`glide`](#glide) instead.
+
+| Aspect          | `slew(target, rate)`           | `glide(sig, time, …)`   |
+|-----------------|--------------------------------|-------------------------|
+| Time meaning    | units per second               | total ramp duration     |
+| Interval indep. | No — fast slides on big jumps  | Yes — same time always  |
+| Shape           | Linear                         | Linear / ease / cosine  |
+| Value-space     | Linear                         | Linear or log           |
+| Best for        | CV / knob smoothing, audio slew| Note glide, portamento  |
 
 ```akk
-// Portamento effect (smooth pitch changes)
+// Smoothed pitch sweep (rate-limited)
 sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(@)
 ```
 
@@ -107,6 +115,122 @@ sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(@)
 // Smooth filter sweep
 saw(110) |> lp(@, slew(200 + osc("sqr", 0.5) * 2000, 5)) |> out(@)
 ```
+
+See also: [glide](#glide), [interp](#interp).
+
+---
+
+## glide
+
+**Time-based glide / portamento** - Slides to a new target over a fixed *duration*, regardless of interval size. Stereo-native.
+
+| Param | Type   | Default    | Description                                       |
+|-------|--------|------------|---------------------------------------------------|
+| sig   | signal | —          | Target value (sample-and-hold patterns work well) |
+| time  | number | `0.05`     | Ramp duration in seconds                          |
+| curve | string | `"linear"` | `"linear"`, `"ease_in"`, `"ease_out"`, `"cosine"` |
+| space | string | `"linear"` | `"linear"` or `"log"` (musical pitch glide)       |
+
+Detects target changes by exact value compare and ramps from the current emitted value to the new target over `time` seconds. Pattern fields (`@.freq`, `@.note`, `@.vel`) feed in cleanly because they arrive as sample-and-hold buffers. Use `space: "log"` for perceptually uniform glide over wide intervals — or feed `@.note` through `mtof`, which is already log-pitch by construction.
+
+`glide` is stereo-native: it auto-widens a mono target to stereo. To compose it with a mono-only slot (like `saw(freq)`), either feed via `mtof(glide(@.note, …))` (`mtof` keeps the chain mono) or wrap with `mono(...)`. See the [Glide & Interpolation](../../concepts/glide-and-interpolation.md) concept page for the full discussion.
+
+```akk
+// Default 50 ms portamento between notes
+n"c4 c5" |> saw(mtof(glide(@.note, 0.05))) |> out(@)
+```
+
+```akk
+// 100 ms cosine S-curve glide
+n"c4 c5" |> saw(mtof(glide(@.note, 0.1, "cosine"))) |> out(@)
+```
+
+```akk
+// Wide-interval portamento — log space keeps the slide pitch-uniform
+n"c2 c6" |> saw(mono(glide(@.freq, 0.2, "ease_out", "log"))) |> out(@)
+```
+
+```akk
+// Smoother param-slider response
+cutoff = param("cutoff", 1000, 100, 8000)
+osc("saw", 220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
+```
+
+See also: [interp](#interp) (primitive form), [slew](#slew) (rate-based), [Glide & Interpolation](../../concepts/glide-and-interpolation.md).
+
+---
+
+## interp
+
+**Time-based interpolator (linear)** - Lower-level primitive used by [`glide`](#glide). Stereo-native, no value-space conversion.
+
+| Param  | Type   | Description                       |
+|--------|--------|-----------------------------------|
+| target | signal | Target value                      |
+| time   | number | Ramp duration in seconds          |
+
+Same change-detection and ramp behavior as `glide(sig, time, "linear", "linear")`, with fewer characters. Call directly when you don't need curve or value-space options.
+
+```akk
+// 100 ms linear ramp between targets
+n"c4 c5" |> saw(mtof(interp(@.note, 0.1))) |> out(@)
+```
+
+See also: [glide](#glide), [interp_ease_in](#interp_ease_in), [interp_ease_out](#interp_ease_out), [interp_cos](#interp_cos).
+
+---
+
+## interp_ease_in
+
+**Time-based interpolator (ease-in)** - Quadratic-in shape: `t²`. Starts slow, accelerates into the target.
+
+| Param  | Type   | Description                       |
+|--------|--------|-----------------------------------|
+| target | signal | Target value                      |
+| time   | number | Ramp duration in seconds          |
+
+```akk
+// Notes "settle into" their targets
+n"c4 c5" |> saw(mtof(interp_ease_in(@.note, 0.15))) |> out(@)
+```
+
+See also: [glide](#glide) with `curve: "ease_in"`.
+
+---
+
+## interp_ease_out
+
+**Time-based interpolator (ease-out)** - Quadratic-out shape: `1 - (1-t)²`. Starts fast, decelerates as it approaches the target.
+
+| Param  | Type   | Description                       |
+|--------|--------|-----------------------------------|
+| target | signal | Target value                      |
+| time   | number | Ramp duration in seconds          |
+
+```akk
+// Notes "spring toward" their targets
+n"c4 c5" |> saw(mtof(interp_ease_out(@.note, 0.15))) |> out(@)
+```
+
+See also: [glide](#glide) with `curve: "ease_out"`.
+
+---
+
+## interp_cos
+
+**Time-based interpolator (cosine S-curve)** - Shape `½(1 − cos πt)`. Smooth in *and* out; the classic "tape-stop"-style ramp.
+
+| Param  | Type   | Description                       |
+|--------|--------|-----------------------------------|
+| target | signal | Target value                      |
+| time   | number | Ramp duration in seconds          |
+
+```akk
+// Slow S-shaped pitch sweep
+n"c4 c5" |> saw(mtof(interp_cos(@.note, 0.4))) |> out(@)
+```
+
+See also: [glide](#glide) with `curve: "cosine"`.
 
 ---
 

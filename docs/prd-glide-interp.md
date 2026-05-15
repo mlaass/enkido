@@ -1,4 +1,7 @@
-> **Status: NOT STARTED** — Drafted 2026-05-15.
+> **Status: SHIPPED** — Drafted 2026-05-15. Phases 1–3 landed 2026-05-15
+> / 2026-05-16. See `web/static/docs/concepts/glide-and-interpolation.md`
+> for the public-facing concept page and the `glide` / `interp*` sections
+> in `web/static/docs/reference/builtins/utility.md`.
 
 # PRD: Time-Based Glide / Interpolation (`glide` / `interp`)
 
@@ -108,7 +111,9 @@ Both stay shipped after this PRD. Docs cross-reference them.
    `glide(sig, time=0.05, curve="linear", space="linear")` that adds
    value-space conversion on top of `interp`.
 4. Make the canonical example work end-to-end:
-   `n"c4 c5" |> saw(glide(@freq, 0.1)) |> out(@)`.
+   `n"c4 c5" |> saw(mtof(glide(@.note, 0.1))) |> out(@)`. (See §3.4 on
+   stereo-native composition — the bare `saw(glide(@.freq, …))` form
+   collides with `saw`'s mono input slot and needs `mono(...)`.)
 5. Document the distinction from `slew()` so users reach for the right
    tool.
 6. Cover the kernel with experiment tests (timing accuracy, curve shapes,
@@ -140,25 +145,31 @@ Both stay shipped after this PRD. Docs cross-reference them.
 
 ### 3.1 Canonical examples
 
+`glide` is stereo-native (see §3.4); examples lead with `mtof(glide(@.note, …))`
+so the chain stays mono into `saw`. The `mono(glide(@.freq, …))` form is the
+explicit alternative when only a frequency signal is available.
+
 ```akkado
-// Default: 50 ms linear glide, linear-Hz interpolation
-n"c4 c5" |> saw(glide(@freq)) |> out(@)
+// Default: 50 ms linear glide via MIDI note
+n"c4 c5" |> saw(mtof(glide(@.note))) |> out(@)
 
 // Explicit 100 ms glide
-n"c4 c5" |> saw(glide(@freq, 0.1)) |> out(@)
+n"c4 c5" |> saw(mtof(glide(@.note, 0.1))) |> out(@)
 
 // Cosine S-curve
-n"c4 c5" |> saw(glide(@freq, 0.1, "cosine")) |> out(@)
+n"c4 c5" |> saw(mtof(glide(@.note, 0.1, "cosine"))) |> out(@)
 
-// Musical wide-interval portamento (log-pitch space)
-n"c2 c6" |> saw(glide(@freq, 0.2, "ease_out", "log")) |> out(@)
+// Musical wide-interval portamento — feed @.freq through log-space glide
+// and downmix back to mono for saw
+n"c2 c6" |> saw(mono(glide(@.freq, 0.2, "ease_out", "log"))) |> out(@)
 
 // Glide a parameter slider for smoother knob response
 cutoff = param("cutoff", 1000, 100, 8000)
-osc("saw", 220) |> lp(%, glide(cutoff, 0.03)) |> out(%)
+osc("saw", 220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
 
-// Glide a velocity for smoother accents
-n"c4 c4 c4 c4" |> saw(@freq) * glide(@vel, 0.02) |> out(@)
+// Glide a velocity for smoother accents (velocity is a scalar multiplier,
+// so the stereo result is fine downstream of the saw)
+n"c4 c4 c4 c4" |> saw(@.freq) * glide(@.vel, 0.02) |> out(@)
 ```
 
 ### 3.2 Two paths to musical glide
@@ -202,6 +213,30 @@ Both produce identical audio.
 Rule of thumb: **if you can answer "how many seconds should the slide
 take?" reach for `glide`. If you can only answer "how fast can it change
 per second?" reach for `slew`.**
+
+### 3.4 Stereo-native caveat (surfaced during Phase 2)
+
+`glide` and every `interp*` builtin are declared `stereo_native`
+(`ChannelCount::Stereo`), mirroring `slew`. That means a mono target
+auto-widens to a stereo output. Placing the result directly into a
+mono-only slot (e.g. the `freq` argument of `saw`/`sin`/`tri`) raises
+`E186 mono-required signal where stereo was produced`.
+
+Two recommended fixes, both used in §3.1 above:
+
+1. **Feed via `mtof(glide(@.note, …))`.** `mtof` is mono-native, so the
+   pipeline stays mono until the synth widens it. This is also the
+   pitch-uniform path (`@.note` is already log-pitch), so it tends to be
+   the right answer for pattern sources.
+2. **Wrap with `mono(...)`.** Explicit sum-to-mono after `glide` for
+   non-pattern sources or when only `@.freq` is available.
+
+The same caveat applies to `slew` and any other stereo-native rate
+limiter — the existing tutorial example `sin(slew(mtof(48 + …), 10))`
+works because `mtof` is mono and the `slew` output flows into the mono
+`freq` slot of `sin` after the widening rule short-circuits on the mono
+target. Documented in the public-facing
+[Glide & Interpolation concept page](../web/static/docs/concepts/glide-and-interpolation.md).
 
 ---
 

@@ -4,6 +4,7 @@
 export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
 	"record-as-options": "concepts/record-as-options.md",
+	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
 	"signals": "concepts/signals.md",
 	"05-testing-progression": "tutorials/05-testing-progression.md",
 	"03-synthesis": "tutorials/03-synthesis.md",
@@ -255,6 +256,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 			"title": "Mono & Stereo Signals"
 		},
 		{
+			"slug": "glide-and-interpolation",
+			"title": "Glide & Interpolation"
+		},
+		{
 			"slug": "record-as-options",
 			"title": "Records as Builtin Options"
 		},
@@ -410,6 +415,74 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "record-as-options",
 		"category": "concepts",
 		"title": "Records as Builtin Options"
+	},
+	"glide": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "glide",
+		"anchor": "glide"
+	},
+	"portamento": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"interp": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "interp",
+		"anchor": "interp"
+	},
+	"interpolation": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"slew": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "slew",
+		"anchor": "slew"
+	},
+	"ease": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"ease-in": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"ease-out": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"cosine": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"log": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"pitch": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"transition": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
+	},
+	"time-based": {
+		"slug": "glide-and-interpolation",
+		"category": "concepts",
+		"title": "Glide & Interpolation"
 	},
 	"mono": {
 		"slug": "polyphony",
@@ -628,12 +701,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "gate",
 		"anchor": "gate"
-	},
-	"slew": {
-		"slug": "utility",
-		"category": "builtins",
-		"title": "slew",
-		"anchor": "slew"
 	},
 	"sah": {
 		"slug": "edge",
@@ -1244,11 +1311,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Mini-Notation Basics"
 	},
 	"sequence": {
-		"slug": "basics",
-		"category": "mini-notation",
-		"title": "Mini-Notation Basics"
-	},
-	"pitch": {
 		"slug": "basics",
 		"category": "mini-notation",
 		"title": "Mini-Notation Basics"
@@ -2457,6 +2519,24 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "dc",
 		"anchor": "dc"
 	},
+	"interp_ease_in": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "interp_ease_in",
+		"anchor": "interp-ease-in"
+	},
+	"interp_ease_out": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "interp_ease_out",
+		"anchor": "interp-ease-out"
+	},
+	"interp_cos": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "interp_cos",
+		"anchor": "interp-cos"
+	},
 	"utility": {
 		"slug": "utility",
 		"category": "builtins",
@@ -2659,11 +2739,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Math Functions"
 	},
 	"sqrt": {
-		"slug": "math",
-		"category": "builtins",
-		"title": "Math Functions"
-	},
-	"log": {
 		"slug": "math",
 		"category": "builtins",
 		"title": "Math Functions"
@@ -3324,13 +3399,14 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 
 export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
-	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. This...",
-	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Every expression the compiler sees has a known...",
+	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
+	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
+	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Channel count isn't a runtime property — it's a type...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
-	"03-synthesis": "With oscillators and filters in hand, the next step is wrapping them in amplitude envelopes to make actual notes.",
-	"06-pattern-modulation": "So far patterns have driven note pitches. They can also be used as values: feeding any DSP slot from a pattern, modulating per-event properties,...",
-	"02-filters": "Filters remove or emphasize certain frequencies, turning raw oscillators into something more musical.",
-	"04-rhythm": "This tutorial covers rhythmic patterns, from basic beats to polyrhythms.",
+	"03-synthesis": "Oscillators and filters give you tone. Envelopes give you notes — they decide when the sound starts and when it dies away.",
+	"06-pattern-modulation": "So far patterns have driven note pitches. They're also plain values you can plug into any DSP slot, attach to per-event properties, or combine...",
+	"02-filters": "Filters remove or emphasize certain frequencies. A raw saw or square is harmonically dense — bright, buzzy, hard to listen to for long. A filter...",
+	"04-rhythm": "Everything in Akkado syncs to a global clock. The  function creates pulses:",
 	"01-hello-sine": "Every Akkado program is a signal flow graph. The smallest one is a sine wave sent to the output:",
 	"chords": "Two paths to chordal patterns: the  function with chord-symbol literals (, ), and inline chord brackets in  strings (). For voice leading, the , ,...",
 	"microtonal": "Akkado supports microtonal pitch notation through micro-step operators (, , ) and the  function, which selects how those operators map to frequency.",
