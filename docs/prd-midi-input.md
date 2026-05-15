@@ -13,10 +13,13 @@ Today, the only way to feed musical events into `poly()` is a pattern
 (`pat()`, `seq()`, `note()`, `chord()`). This PRD adds a single new builtin,
 `midi(...)`, that emits the same `OutputEvent` stream patterns produce — so
 **`midi() |> poly(piano, 8)` is a drop-in replacement for**
-**`pat(...) |> poly(...)`**. The source is selected explicitly via a record
-literal: bare `midi()` opens the default live device; `midi({device: "..."})`
-opens a named device; `midi({file: "..."})` plays back an SMF. Passing both
-`file:` and `device:` is a compile error — the source must be unambiguous.
+**`pat(...) |> poly(...)`**, and Phase 7 extends the same drop-in equivalence
+to `soundfont(...)` and to monophonic pipelines
+(`midi() as e |> osc("saw", e.freq) |> @ * adsr(e.gate) |> out`). The source
+is selected explicitly via a record literal: bare `midi()` opens the default
+live device; `midi({device: "..."})` opens a named device;
+`midi({file: "..."})` plays back an SMF. Passing both `file:` and `device:`
+is a compile error — the source must be unambiguous.
 
 Live MIDI input is supported in both hosts:
 - **Browser** — Web MIDI API for live devices; drag-drop for `.mid` files.
@@ -394,9 +397,11 @@ New `cedar/include/cedar/io/midi_sequence.hpp` and
 ```cpp
 struct MidiNote   { uint32_t tick_on, tick_off; uint8_t note, vel, channel; };
 struct MidiTempo  { uint32_t tick; uint32_t us_per_quarter; };
+struct MidiCC     { uint32_t tick; uint8_t channel, cc, value; };   // Phase 7.4
 struct MidiSequence {
     MidiNote*   notes;     uint32_t num_notes;
     MidiTempo*  tempos;    uint32_t num_tempos;
+    MidiCC*     ccs;       uint32_t num_ccs;     // Phase 7.4
     uint16_t    ticks_per_quarter;
     uint32_t    total_ticks;
 };
@@ -411,14 +416,15 @@ Supported:
 - Running status
 - Meta 0x51 (set tempo)
 - Meta 0x2F (end of track)
+- **Control change (0xB0)** — stored in `ccs[]` and dispatched through
+  registered `midi_cc` routes at runtime (Phase 7.4). Tick-aligned with
+  block-boundary granularity, same as notes.
 
 Ignored / discarded:
 - Sysex (0xF0..0xF7)
 - Channel pressure (0xD0)
 - Polyphonic aftertouch (0xA0)
 - Time signature (0x58)
-- Control change in the file — these are dropped for v1 (a follow-up could
-  feed file CCs through `midi_cc` routes too)
 - Format 2 (multi-pattern files) → returns nullptr
 
 ### 4.5 File play-head advancement
@@ -732,24 +738,35 @@ attaches the `MidiSequence*` to the relevant `MidiQueueState`.
 
 ### 4.12 Hot-swap and held notes
 
-When the bytecode swaps, the old program's `MidiQueueState` is GC'd by the
-state pool's frame-tracking. To prevent stuck notes:
+**Phase 7.3 changes this from "cut" to "migrate by default."** State-pool
+semantic-ID rebinding already preserves `SequenceState` and other stateful
+opcodes across recompiles; Phase 7.3 extends the same mechanism to
+`MidiQueueState`. Specifically:
 
-- Before swap, the compiler emits a pre-swap pass that walks each old
-  `MidiQueueState`'s `held_note_to_event[]` array. For every still-held
-  note, it enqueues a synthetic note-off event into the same SPSC ring the
-  live callback writes to — `status = 0x80, d1 = held_note, d2 = 0`. The
-  next `op_midi_query` drain (which runs as part of finishing the
-  outgoing program's last block before swap) picks them up and patches
-  the relevant `OutputEvent.duration` via the existing note-off path.
-- POLY voices observe the gate-off and run their existing 1-block release
-  per `prd-polyphony-system.md` §2.7.
+- When the new program contains a `midi()` call whose semantic state ID
+  matches an existing `MidiQueueState`, the state pool rebinds rather
+  than allocates: `held_note_to_event[]`, the SPSC ring read/write
+  cursors, and `file_play_head_beats` survive the swap intact.
+- `init_midi_queue_state` is idempotent on re-init — option fields
+  (channel filter, loop, tempo mode) update, runtime cursor / held-note
+  state preserves.
+- On the first block after swap, `op_midi_query` re-emits synthetic
+  note-ons (with `duration = 1.0e9f` sentinel until the real note-off
+  arrives) for every still-held key into `OutputEvents`. The new
+  program's `poly`/`sf2` then allocates voices for them as normal.
+  Live performers playing a sustained chord through a hot-swap hear it
+  continue without a gap.
+- For file playback, the play-head beat position carries forward only
+  if the resolved file URI is identical between programs; otherwise
+  the play head resets to 0.
 
-This means a live performer playing a sustained chord through a hot-swap
-hears it cut. Acceptable for v1; §10 lists held-note **migration** (carrying
-the live gate into the new program's matching `midi()` call) as future
-work — that requires matching state IDs by semantic key, which is out of
-scope here.
+**Fallback: synthetic note-off on disappearance.** When a `midi()` call
+*disappears* between programs (the user deleted it from the source), the
+matching state pool entry is GC'd at end-of-frame. Before GC, the engine
+walks `held_note_to_event[]` and enqueues a synthetic note-off for every
+held key (`status = 0x80, d1 = held_note, d2 = 0`) into the outgoing
+program's last block. POLY voices observe the gate-off and release per
+the Phase 7.2 release-window path (no audible click).
 
 ### 4.13 Live MIDI fan-out (host-side)
 
@@ -824,9 +841,12 @@ the old queue per §4.12.
 | Documentation | **New** | Entries in `web/static/docs/` for `midi` and `midi_cc` |
 | `cedar::UriResolver` | **Reused** | `.mid` is another runtime asset |
 | `EnvMap` / `param()` | **Reused** | CC routing path |
-| `PolyAllocState` / POLY | **Unchanged** | NoteEvent contract honored |
+| `PolyAllocState` / POLY | **Modified** | Phase 7.2 adds `release_window_samples` and per-voice `release_countdown`; ships polyphony PRD §7 |
+| `SoundFontVoiceState` / SOUNDFONT_VOICE | **Modified** | Phase 7.1 adds `seq_state_id` + event-driven note path so `midi() \|> soundfont(...)` works |
 | `OutputEvent` / `SequenceState` | **Unchanged** | Same shape consumed |
+| `MidiQueueState` | **New (this PRD)** | Phase 7.5 adds per-block buffer slots + held-note stack for monophonic field access |
 | `tools/midi2akk/` | **Unchanged** | Separate offline path |
+| `prd-polyphony-system.md` §7 | **Shipped via this PRD** | Configurable voice release lands in Phase 7.2 |
 | Python `cedar_core` bindings | **Unaffected** | Could add `push_midi_event` later for tests |
 | Godot extension | **Unaffected** | Contract is host-pushes-events; Godot can opt in later |
 
@@ -849,6 +869,8 @@ the old queue per §4.12.
 | `web/src/lib/midi/midi-input.ts` | Web MIDI acquisition + worklet pump |
 | `web/src/lib/audio/midi-bank.ts` | `.mid` file registry |
 | `web/src/lib/components/Panel/MidiInputPanel.svelte` | UI |
+| `web/src/lib/components/Panel/FilesPanel.svelte` | Phase 7.6 unified drop surface |
+| `web/src/lib/audio/file-router.ts` | Phase 7.6 `inferFromExtension(file)` dispatcher |
 | `web/static/docs/midi.md` | F1 docs for `midi()` |
 | `web/static/docs/midi_cc.md` | F1 docs for `midi_cc()` |
 
@@ -857,14 +879,19 @@ the old queue per §4.12.
 | File | Change |
 |---|---|
 | `cedar/include/cedar/vm/instruction.hpp` | Add `MIDI_QUERY` opcode enum value |
-| `cedar/include/cedar/opcodes/dsp_state.hpp` | Add `MidiQueueState` to `DSPState` variant |
-| `cedar/include/cedar/vm/state_pool.hpp` | Add `resolve_output_events(state_id)` helper |
-| `cedar/include/cedar/vm/vm.hpp` | Add `init_midi_queue_state`, `push_midi_event`, `load_midi_file` |
-| `cedar/src/vm/vm.cpp` | Dispatch case for `MIDI_QUERY`; teach POLY to use `resolve_output_events` |
+| `cedar/include/cedar/opcodes/dsp_state.hpp` | Add `MidiQueueState` to `DSPState` variant; **Phase 7.1**: add `seq_state_id` to `SoundFontVoiceState`; **Phase 7.2**: add `release_window_samples` to `PolyAllocState` + `release_countdown` to `PolyVoice`; **Phase 7.5**: add `gate/freq/vel/trig_buf_idx` + `mono_held_note` + `mono_held_stack[16]` to `MidiQueueState` |
+| `cedar/include/cedar/vm/state_pool.hpp` | Add `resolve_output_events(state_id)` helper; **Phase 7.3**: extend semantic-ID rebinding to `MidiQueueState` |
+| `cedar/include/cedar/vm/vm.hpp` | Add `init_midi_queue_state`, `push_midi_event`, `load_midi_file`; **Phase 7.2**: `init_poly_state` gains `release_seconds` parameter |
+| `cedar/src/vm/vm.cpp` | Dispatch case for `MIDI_QUERY`; teach POLY to use `resolve_output_events`; **Phase 7.2**: gate-guard around the voice accumulation loop (`:505-514`) and release-countdown init in `release_voice_by_event` (`:431`) |
+| `cedar/include/cedar/opcodes/soundfont.hpp` | **Phase 7.1**: add event-driven note-on/off path behind `has_upstream_events` flag; call `resolve_output_events` at block start |
+| `cedar/src/opcodes/midi.cpp` | **Phase 7.5**: second pass that fills mono buffers from `OutputEvents`; **Phase 7.4**: drain file CCs into per-block list |
+| `cedar/src/io/smf_parser.cpp` | **Phase 7.4**: store CC events in `MidiSequence::ccs[]` instead of dropping |
+| `cedar/include/cedar/io/midi_sequence.hpp` | **Phase 7.4**: add `MidiCC { uint32_t tick; uint8_t channel, cc, value; }` and `ccs[]` / `num_ccs` to `MidiSequence` |
 | `cedar/CMakeLists.txt` | Add `src/io/smf_parser.cpp`, `src/opcodes/midi.cpp` |
-| `akkado/include/akkado/builtins.hpp` | Register `midi`, `midi_cc` |
+| `akkado/include/akkado/builtins.hpp` | Register `midi`, `midi_cc`; **Phase 7.1**: flip soundfont `requires_state = true`; **Phase 7.2**: `poly`/`mono`/`legato` gain `release:` option field |
 | `akkado/include/akkado/codegen.hpp` | Required-MIDI-sources / -CC-routes metadata |
-| `akkado/src/codegen.cpp` | `handle_midi_call`, `handle_midi_cc_call`, accept MIDI source in POLY linkage |
+| `akkado/src/codegen.cpp` | `handle_midi_call`, `handle_midi_cc_call`, accept MIDI source in POLY linkage; **Phase 7.2**: forward `release:` to `init_poly_state`; **Phase 7.3**: idempotent `init_midi_queue_state` for hot-swap migration; **Phase 7.5**: `handle_midi_call` synthesizes a `PatternPayload`-shaped binding so `as e` / `e.field` resolves against MIDI buffers |
+| `akkado/src/codegen_patterns.cpp` | **Phase 7.1**: rewrite `handle_soundfont_call` (`:5550-5725`) to accept `EventSource` upstreams via `seq_state_id` linkage (mirror `handle_poly_call` at `codegen_functions.cpp:2060-2069`) |
 | `akkado/src/analyzer.cpp` | Validate `midi()` and `midi_cc()` arg shapes |
 | `web/wasm/nkido_wasm.cpp` | Add the five new exports (`cedar_push_midi_event`, `cedar_load_midi_file`, `cedar_set_default_midi_device`, `cedar_get_required_midi_sources`, `cedar_get_midi_cc_routes`) |
 | `web/static/worklet/cedar-processor.js` | Handle `'midi'` MessagePort message |
@@ -928,7 +955,16 @@ the old queue per §4.12.
 | Sysex / unsupported message | Parsed and discarded silently |
 | Polyphonic aftertouch | Parsed and discarded silently (not folded into `midi_cc`) |
 | Both pattern and MIDI feeding same POLY | Compile error: a POLY block has one event source upstream |
-| Hot-swap during file playback | `file_play_head_beats` resets to 0 on swap (new state); future option could preserve |
+| Hot-swap during file playback | `file_play_head_beats` carries forward when the resolved file URI is identical between programs (Phase 7.3); resets to 0 if the URI changed |
+| Hot-swap when `midi()` call disappears | Synthetic note-off enqueued before state GC; voices release via the Phase 7.2 release-window path |
+| `midi() \|> soundfont(...)` | Same `OutputEvents` linkage as `midi() \|> poly(...)` (Phase 7.1); no surprise diff for sf2 users |
+| Two simultaneous note-ons in same block (monophonic chain) | Chronological tie-break by event index; later note wins at its sample offset; earlier note goes onto the held-stack (Phase 7.5) |
+| Monophonic chain with all notes released | `gate_buf → 0`; `freq_buf` holds last value to avoid an audible zero-Hz osc; `mono_held_stack` is empty (Phase 7.5) |
+| Monophonic chain receives chord (3 simultaneous note-ons) | Only the last (highest-index) note sounds via `freq_buf`; the other two sit on the held-stack and re-sound on release fallback (Phase 7.5) |
+| `release: 0.5` with note-on retrigger inside the release window | New note allocates a fresh voice immediately; old voice continues its release in parallel until the countdown expires (Phase 7.2) |
+| `release: 0` (default) | Behavior unchanged from v0: voice retires at note-off, audible click on long-release instruments |
+| File `.mid` with CC events + matching `midi_cc("...", {cc: n})` | CCs dispatch at block boundary to the named `param()` slot (Phase 7.4); same precision as live MIDI |
+| File `.mid` with CC events + no matching `midi_cc` route | Silently dropped at the route-table lookup (same behavior as a stray live-device CC) |
 | Pitch-bend with no `midi_cc("...", {pb: true})` registered | Discarded |
 
 ---
@@ -1089,20 +1125,115 @@ in both hosts; tempo modes behave as specified.
 **Verify**: CC sweep audibly drives a `param()`; pitch-bend wheel updates
 its target.
 
-**Phase 7 — Polish & docs (0.5 day)**
+**Phase 7 — Unification & symmetry (~5 days)**
 
-- `web/static/docs/midi.md`, `midi_cc.md`.
+Closes the asymmetries that would otherwise make the v1 surface feel
+half-baked. Six sub-items, all of which must land before docs because
+docs commit us to the public surface.
+
+**7.1 Soundfont accepts MIDI upstream (~1.5 days)** — today `soundfont`
+is marked `consumes_polyphonic_pattern = true` and reads the pattern's
+raw `gate/freq/vel/trig` buffers directly in
+`akkado/src/codegen_patterns.cpp:5550-5725`; it never resolves upstream
+via `seq_state_id` the way `poly()` does, so `midi() |> soundfont(...)`
+silently breaks. Rewrite `handle_soundfont_call` to mirror
+`handle_poly_call`'s linkage path
+(`codegen_functions.cpp:2060-2069`): accept either a pattern or an
+`EventSource` upstream, extract `state_id`, store it on
+`SoundFontVoiceState` (add `uint32_t seq_state_id` field). At runtime,
+`op_soundfont_voice` calls `resolve_output_events(state.seq_state_id)`
+and translates note-on → `allocate_voice(note)`, note-off →
+`release_note(note)`. Keep the legacy gate-edge path behind a
+`has_upstream_events` flag so existing pattern bytecode is unchanged.
+Flip `requires_state = false → true` on the soundfont builtin entry.
+
+**7.2 Gate-multiplied release fix (~0.5 day)** — implements the
+configurable voice release proposed in
+[`prd-polyphony-system.md`](prd-polyphony-system.md) §7 (deferred until
+now). Today `cedar/src/vm/vm.cpp:505-514` does
+`mix[i] += voice_out[i] * gate[i]` and gate hard-steps 1→0 at note-off
+(`vm.cpp:486-490`); ADSR enters its release stage correctly but the
+smooth tail is multiplied by zero — audible click on every key-up that
+patterns paper over with cycle-aligned note-offs but live MIDI exposes
+on every note. Add `float release_window_samples` to `PolyAllocState`
+(set from a new `release:` option on `poly`/`mono`/`legato`, default 0)
+and per-voice `int32_t release_countdown`. In the accumulation loop,
+when `release_countdown > 0` the gate is replaced with `1.0` and
+decremented per sample so the instrument's ADSR runs its own release
+to completion. On note-off, set the countdown instead of marking
+retired immediately. Mark polyphony PRD §7 as shipped via this PRD.
+
+**7.3 Hot-swap held-note migration (~1 day)** — replaces §4.12's
+"synthetic note-off + cut" with a migration path when state IDs
+match. State-pool semantic-ID rebinding already does the analogous job
+for `SequenceState`; extend it to `MidiQueueState` so
+`held_note_to_event[]` and `file_play_head_beats` survive recompiles.
+Make `init_midi_queue_state` idempotent on re-init: option fields
+update but cursor / held-note state preserves. On the first block
+after swap, re-emit synthetic note-ons (with `duration = 1.0e9f`
+sentinel) for every still-held key into `OutputEvents` so the new
+program's `poly`/`sf2` allocates voices for them. Notes only cut if
+the matching `midi()` call disappears entirely between programs.
+
+**7.4 File CC playback through `midi_cc` routes (~0.5 day)** — the
+parser already sees control change events; v1 currently drops them.
+Store them in a parallel `MidiSequence::ccs[]` array
+(`tick`, `channel`, `cc`, `value`). When the play head advances across
+a block, look up CC events in that range and build a per-block list
+on `MidiQueueState`. After `op_midi_query` finishes, drain the list
+and dispatch through the same route table the live MIDI callback
+uses (CLI: push to param-update SPSC; Web: call `vm.set_param`
+directly since the worklet is already on the audio thread).
+
+**7.5 Monophonic MIDI pipeline (~1 day)** — `midi() as e |> osc("sin",
+e.freq) |> @ * adsr(e.gate) |> out` must work the way the pattern
+equivalent does today. Patterns work because the compiler synthesizes
+per-sample `gate_buf`, `freq_buf`, `vel_buf`, `trig_buf` from baked
+events and the `as e` / `e.field` codegen reads those buffers. `midi()`
+as specced only exposes `OutputEvents` for `poly`/`sf2`, so field
+access fails to compile. Add per-block buffer slots to
+`MidiQueueState` (`gate_buf_idx`, `freq_buf_idx`, `vel_buf_idx`,
+`trig_buf_idx`, allocated at `init_midi_queue_state` time) plus
+`int16_t mono_held_note` and `int8_t mono_held_stack[16]`. After
+draining live events and advancing the file play-head into
+`OutputEvents`, run a second pass that fills the buffers in
+chronological order: push on note-on (last-note-wins), pop on
+note-off (fall back to the most recent still-held key), `trig_buf`
+pulses one sample per note-on, `gate_buf` transitions 1→0 only when
+the held stack empties. Teach the `as e` / `e.field` resolver in
+codegen to recognize `midi()` the same way it recognizes patterns —
+the cheapest route is for `handle_midi_call` to synthesize a
+`PatternPayload` shape that wraps the MIDI buffers. Policy is
+**last-note-wins with held-stack fallback**, matching every analog
+mono synth.
+
+**7.6 Unified drop-zone UI (~0.5 day)** — collapses the per-asset-type
+drop zones (samples, soundfonts, `.mid`) into a single
+`FilesPanel.svelte` that inspects file extension and dispatches via a
+new `inferFromExtension(file)` helper in
+`web/src/lib/audio/file-router.ts`. Existing per-type panels stay for
+explicit browsing but lose their drop zones. Promoted from the
+previous "TODO" in this section.
+
+**Verify**: `./build/cedar/tests/cedar_tests "[midi]" "[midi-poly]"
+"[midi-soundfont]" "[midi-hotswap]" "[midi-mono]" "[poly-release]"`
+all pass; `midi() |> soundfont("piano.sf2", 0) |> out` and
+`midi() as e |> osc("saw", e.freq) |> lp(@, 2000) |> @ * adsr(e.gate)
+|> out` audibly play in both CLI and web; held chord survives
+hot-edit of the instrument; `release: 0.3` on `poly` removes the
+note-off click.
+
+**Phase 8 — Docs & polish (~0.5 day)**
+
+- `web/static/docs/midi.md`, `midi_cc.md` (covering sf2 upstream,
+  monophonic field access, `release:`, file CCs, held-note migration).
+- `web/static/docs/poly.md` documents the new `release:` option;
+  cross-link to this PRD.
 - `bun run build:opcodes`, `bun run build:docs`.
 - Edge-case test sweep (stuck-note hot-swap, ring overflow surfacing).
 - Cross-host parity render comparison.
-- **Unified file drag-drop UI** — TODO: collapse the per-asset-type drop
-  zones (samples, soundfonts, `.mid`) into a single "Files" surface that
-  dispatches by extension. Today MIDI lives in `MidiInputPanel.svelte`;
-  samples + soundfonts are scattered. Scope to be decided when Phase 7
-  starts — likely a new top-level `FilesPanel.svelte` plus a small
-  `kind = inferFromExtension(file)` helper in the audio store.
 
-**Total**: ~8 working days for a single engineer.
+**Total**: ~13 working days for a single engineer.
 
 ### Risks and OS coverage
 
@@ -1141,26 +1272,32 @@ by current CI:
 - **MPE support.** Per-voice CC routing in `poly()`.
 - **MIDI output.** Sending events from the engine.
 - **14-bit CC pair auto-detection.**
-- **Held-note migration across hot-swap.** When the new program has a
-  compatible `midi()` call (matching channel filter), migrate held state.
-  Phase 3 (CLI Live MIDI) intentionally defers the §4.12 synthetic-note-off
-  injection too: held notes survive across hot-swaps when state IDs stay
-  stable (idempotent `init_midi_queue_state`), but a `midi()` call that
-  disappears entirely between programs leaks its held notes until the
-  voice's release timeout. Re-evaluate once a real user hits it.
-- **Audible click on note-off** (and a milder one on note-on) when an
-  instrument's envelope has a release tail longer than ~10 ms. Root cause
-  is the polyphony engine's gate-multiplied accumulation
-  (`prd-polyphony-system.md` §2.7 + §7 "Future: Configurable Voice
-  Release"): each voice's output is multiplied by `gate` before mixing,
-  so when gate flips 1 → 0 at note-off the voice's `* adsr(gate, ...)`
-  release tail is silenced in one sample. Patterns with cycle-aligned
-  note-offs paper over this; live MIDI surfaces it on every key-up.
-  Fix lives in the polyphony PRD (per-instance release timeout + skip
-  gate-mult during the release window, exposed as `poly(@, instr, voices,
-  release: 0.5)`); track there, not here.
-- **File CC playback through `midi_cc` routes.** v1 drops `.mid` CCs; a
-  follow-up could feed them through registered routes.
+- **Runtime event transforms** (`prd-runtime-event-transforms.md`,
+  not yet drafted). Today `transpose()`, `fast()`, `slow()`, `rev()`,
+  `scale()`, and `velocity()` mutate baked `Event` arrays at compile
+  time (`akkado/src/codegen_patterns.cpp:3056-3311`) and have no
+  runtime path, so they can't operate on a live MIDI event stream.
+  Wiring them up requires a new opcode family that consumes an
+  upstream `OutputEvents` (resolved via `state_id`) and emits
+  transformed `OutputEvents` downstream — plus a parallel codegen
+  path on every transform handler. Scoped as a sibling PRD;
+  deferred until a real user hits the gap.
+
+### Shipped via this PRD (originally listed as Future)
+
+- ~~**Held-note migration across hot-swap.**~~ → Shipped in Phase 7.3.
+  Held notes now survive recompiles by default via state-pool
+  semantic-ID rebinding; synthetic note-offs fire only when the
+  `midi()` call disappears between programs.
+- ~~**Audible click on note-off**~~ → Shipped in Phase 7.2 as
+  `poly(synth, 8, release: 0.5)` (also on `mono`, `legato`,
+  `soundfont`). Implements the proposal from
+  [`prd-polyphony-system.md`](prd-polyphony-system.md) §7 — that
+  section is now marked shipped with a back-link here.
+- ~~**File CC playback through `midi_cc` routes.**~~ → Shipped in
+  Phase 7.4. The parser stores `.mid` CCs in `MidiSequence::ccs[]`
+  and the audio engine dispatches them through the same route table
+  the live MIDI callback uses.
 
 ---
 
@@ -1171,16 +1308,26 @@ by current CI:
    out of scope; a future PRD under `prd-pattern-transport.md`.**
 2. **14-bit CC pairs** — controllers that send CC#n + CC#(n+32) as MSB/LSB.
    **Proposal: v1 treats as separate 7-bit; future auto-pair as needed.**
-3. **Held-note migration across hot-swap** — v1 cuts notes on swap. Future
-   option: migrate held state when the new program has a compatible `midi()`
-   call. **Proposal: v1 cut; revisit if users complain.**
+3. ~~**Held-note migration across hot-swap**~~ — **Shipped in Phase
+   7.3.** Held notes survive hot-swap by default via state-pool
+   semantic-ID rebinding; synthetic note-off only fires when the
+   `midi()` call disappears entirely.
 4. **`midi()` inside `fn` body** — banned in v1. **Proposal: keep banned;
    non-trivial to scope per-call state in a function body.**
 5. **CLI MIDI thru / monitor** — echo received MIDI to a virtual output for
    chaining. **Proposal: out of scope for v1.**
-6. **File CCs through `midi_cc`** — `.mid` files often carry CC automation;
-   v1 drops them. **Proposal: defer; the architectural hook exists (the
-   parser already sees CCs) so a follow-up is small.**
+6. ~~**File CCs through `midi_cc`**~~ — **Shipped in Phase 7.4.** The
+   parser stores `.mid` CCs in `MidiSequence::ccs[]` and the audio
+   engine dispatches them through the existing route table.
+7. **Does `release:` belong on `midi()` too, or only on the voice
+   consumers (`poly`/`mono`/`legato`/`soundfont`)?** **Proposal: only
+   on the consumer side.** Release is a voice property — how long a
+   single allocated voice continues to be summed into the mix after
+   its gate goes 0. It is not a property of the event source. Putting
+   it on `midi()` would conflate two unrelated concepts and force
+   every event source (pattern, MIDI, future ones) to carry a
+   redundant field. Phase 7.2 lands `release:` on the consumer
+   builtins only.
 
 ---
 
@@ -1190,7 +1337,13 @@ by current CI:
   `PolyAllocState`, and the `NoteEvent` abstraction this PRD inherits.
   Section 1.3 previews the syntax as `midi_in() |> poly(...)`; this PRD
   shortens the builtin to `midi()` for symmetry with `pat()`/`note()`/
-  `value()`. Same semantics.
+  `value()`. Same semantics. **§7 "Future: Configurable Voice Release"
+  ships via this PRD's Phase 7.2** — once Phase 7 lands, polyphony PRD
+  §7 should be marked shipped with a back-link here.
+- `prd-runtime-event-transforms.md` *(not yet drafted)* — the natural
+  follow-up that makes `transpose()`, `fast()`, `slow()`, `rev()`,
+  `scale()`, `velocity()` work on live MIDI streams. Out of scope
+  here; see §9 Future.
 - [`prd-audio-input.md`](prd-audio-input.md) — architectural template for
   "host fills VM-side buffer pre-block." Shipped 2026-04-26.
 - [`prd-pattern-transport.md`](prd-pattern-transport.md) — references MIDI
