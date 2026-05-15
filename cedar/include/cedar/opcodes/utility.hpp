@@ -208,6 +208,109 @@ inline void op_slew(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// INTERP_TIME: Time-based interpolator with change detection — stereo-native.
+// On detected target change (exact float compare), captures the current
+// emitted value as a new ramp start, then ramps to the new target over
+// `time` seconds. Holds the target value once the ramp completes.
+//
+// in0: target signal (mono auto-broadcasts to L=R; stereo via STEREO_INPUT)
+// in1: ramp time in seconds (per-sample control signal; shared across L/R)
+// rate: curve shape — 0=linear, 1=ease_in, 2=ease_out, 3=cosine
+//
+// Edge cases:
+//   - time <= 0 / NaN / inf: passthrough (out = target, state sync)
+//   - target = NaN / inf: hold last good `end`, no retarget
+//   - first sample of first block: out = target, ramp marked done
+inline void op_interp_time(ExecutionContext& ctx, const Instruction& inst) {
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+    const float* target = ctx.buffers->get(inst.inputs[0]);
+    const bool stereo_in = (inst.flags & InstructionFlag::STEREO_INPUT) != 0;
+    const float* target_r = stereo_in
+        ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
+        : target;
+    const float* time_buf = ctx.buffers->get(inst.inputs[1]);
+    auto& state = ctx.states->get_or_create<InterpTimeState>(inst.state_id);
+    const float sample_rate = ctx.sample_rate;
+
+    if (!state.initialized) {
+        state.start[0] = state.end[0] = target[0];
+        state.start[1] = state.end[1] = target_r[0];
+        state.progress[0] = state.progress[1] = 0.0f;
+        state.total[0] = state.total[1] = 0.0f;
+        state.initialized = true;
+    }
+
+    // Per-sample kernel parameterized by the curve formula. The switch on
+    // inst.rate wraps the entire BLOCK_SIZE loop so dispatch happens once
+    // per block (mirrors op_edge's structure). SHAPE() is a literal
+    // expression inlined per case — no function-pointer indirection.
+#define CEDAR_INTERP_TIME_LOOP(SHAPE)                                          \
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {                             \
+        const float t_dur = time_buf[i];                                       \
+        for (std::size_t ch = 0; ch < 2; ++ch) {                               \
+            const float target_v = (ch == 0 ? target[i] : target_r[i]);        \
+            float* outp = (ch == 0 ? out_l : out_r);                           \
+            if (!std::isfinite(target_v)) {                                    \
+                outp[i] = state.end[ch];                                       \
+                continue;                                                      \
+            }                                                                  \
+            if (!(t_dur > 0.0f) || !std::isfinite(t_dur)) {                    \
+                state.start[ch] = state.end[ch] = target_v;                    \
+                state.progress[ch] = 0.0f;                                     \
+                state.total[ch] = 0.0f;                                        \
+                outp[i] = target_v;                                            \
+                continue;                                                      \
+            }                                                                  \
+            if (target_v != state.end[ch]) {                                   \
+                float current;                                                 \
+                if (state.total[ch] <= 0.0f ||                                 \
+                    state.progress[ch] >= state.total[ch]) {                   \
+                    current = state.end[ch];                                   \
+                } else {                                                       \
+                    const float u = state.progress[ch] / state.total[ch];      \
+                    current = state.start[ch] +                                \
+                              (SHAPE) * (state.end[ch] - state.start[ch]);     \
+                }                                                              \
+                state.start[ch] = current;                                     \
+                state.end[ch] = target_v;                                      \
+                state.progress[ch] = 0.0f;                                     \
+                state.total[ch] = t_dur * sample_rate;                         \
+            }                                                                  \
+            if (state.progress[ch] >= state.total[ch]) {                       \
+                outp[i] = state.end[ch];                                       \
+            } else {                                                           \
+                const float u = state.progress[ch] / state.total[ch];          \
+                outp[i] = state.start[ch] +                                    \
+                          (SHAPE) * (state.end[ch] - state.start[ch]);         \
+                state.progress[ch] += 1.0f;                                    \
+            }                                                                  \
+        }                                                                      \
+    }
+
+    switch (inst.rate) {
+        case 1: {  // ease_in: shape(u) = u*u
+            CEDAR_INTERP_TIME_LOOP(u * u)
+            break;
+        }
+        case 2: {  // ease_out: shape(u) = 1 - (1-u)*(1-u)
+            CEDAR_INTERP_TIME_LOOP(1.0f - (1.0f - u) * (1.0f - u))
+            break;
+        }
+        case 3: {  // cosine: shape(u) = 0.5 * (1 - cos(pi*u))
+            CEDAR_INTERP_TIME_LOOP(
+                0.5f * (1.0f - std::cos(3.14159265358979323846f * u)))
+            break;
+        }
+        case 0:
+        default: {  // linear: shape(u) = u
+            CEDAR_INTERP_TIME_LOOP(u)
+            break;
+        }
+    }
+#undef CEDAR_INTERP_TIME_LOOP
+}
+
 // ENV_GET: Read external environment parameter with interpolation
 // state_id contains FNV-1a hash of parameter name
 // inputs[0]: optional fallback value buffer (BUFFER_UNUSED if none)

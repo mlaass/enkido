@@ -66,6 +66,9 @@ enum class Opcode : std::uint8_t {
     INPUT = 58,       // Live audio input: copies ctx.input_left/right to adjacent
                       // output buffer pair (out_buffer = L, out_buffer+1 = R).
                       // Writes silence when ctx.input_left/right are null.
+    INTERP_TIME = 59, // Time-based interpolator with change detection:
+                      // rate=0 linear, 1 ease_in, 2 ease_out, 3 cosine.
+                      // in0=target (stereo-capable), in1=ramp time (seconds).
 
     // Envelopes (60-69) - reserved
     ENV_ADSR = 60,

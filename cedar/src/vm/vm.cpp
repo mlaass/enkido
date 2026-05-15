@@ -776,6 +776,10 @@ void VM::execute(const Instruction& inst) {
             op_slew(ctx_, inst);
             break;
 
+        case Opcode::INTERP_TIME:
+            op_interp_time(ctx_, inst);
+            break;
+
         case Opcode::EDGE_OP:
             op_edge(ctx_, inst);
             break;

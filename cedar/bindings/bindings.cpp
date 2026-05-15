@@ -82,6 +82,7 @@ PYBIND11_MODULE(cedar_core, m) {
         .value("SAH", cedar::Opcode::EDGE_OP)
         .value("ENV_GET", cedar::Opcode::ENV_GET)
         .value("STATE_OP", cedar::Opcode::STATE_OP)
+        .value("INTERP_TIME", cedar::Opcode::INTERP_TIME)
         // Envelopes (60-62)
         .value("ENV_ADSR", cedar::Opcode::ENV_ADSR)
         .value("ENV_AR", cedar::Opcode::ENV_AR)

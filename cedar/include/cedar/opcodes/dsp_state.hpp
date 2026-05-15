@@ -119,6 +119,17 @@ struct SlewState {
     bool initialized = false;
 };
 
+// Time-based interpolator state (INTERP_TIME, all curves) — stereo-native.
+// Per-channel start/end/progress/total; [0] = L, [1] = R. `initialized` is
+// shared because both lanes init together on the first block.
+struct InterpTimeState {
+    float start[2]    = {0.0f, 0.0f};   // ramp start value
+    float end[2]      = {0.0f, 0.0f};   // current target value
+    float progress[2] = {0.0f, 0.0f};   // samples elapsed in current ramp
+    float total[2]    = {0.0f, 0.0f};   // total samples for current ramp
+    bool  initialized = false;
+};
+
 // Edge-detection / sample-and-hold / counter state (EDGE_OP, all modes) —
 // stereo-native (prd-stereo-native-opcodes Phase 5). Per-channel fields;
 // [0] = L, [1] = R. prev_reset_trigger is only used in counter mode (rate=3).
@@ -1348,6 +1359,7 @@ using DSPState = std::variant<
     SVFState,
     NoiseState,
     SlewState,
+    InterpTimeState,
     EdgeState,
     CellState,
     DelayState,

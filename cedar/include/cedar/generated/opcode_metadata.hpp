@@ -58,6 +58,7 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::ENV_GET: return "ENV_GET";
         case Opcode::STATE_OP: return "STATE_OP";
         case Opcode::INPUT: return "INPUT";
+        case Opcode::INTERP_TIME: return "INTERP_TIME";
         case Opcode::ENV_ADSR: return "ENV_ADSR";
         case Opcode::ENV_AR: return "ENV_AR";
         case Opcode::ENV_FOLLOWER: return "ENV_FOLLOWER";
