@@ -393,11 +393,11 @@ Files to modify:
 - Any existing patches in `web/static/patches/` calling `sum(arr)` migrate to either `sum(...arr)` (if Akkado has spread on call args) or `reduce(arr, (a, b) -> a + b, 0)`.
 
 Tasks:
-- [ ] Audit the codebase for `sum(...)` call sites; document migration of any array-form callers.
-- [ ] Rewrite `handle_sum_call` to extract per-arg `TypedValue`s and emit per-channel ADD chains.
-- [ ] Test: `sum(saw(220), saw(330))` → mono signal that is the sum of both saws.
-- [ ] Test: `sum(stereo(saw(220),saw(220)), stereo(saw(330),saw(330)))` → stereo, L sums correctly, R sums correctly.
-- [ ] Test: `sum(saw(220), stereo(saw(220), saw(330)))` → stereo (mono input duplicates to L and R, then sums).
+- [x] Audit the codebase for `sum(...)` call sites; document migration of any array-form callers.
+- [x] Rewrite `handle_sum_call` to extract per-arg `TypedValue`s and emit per-channel ADD chains.
+- [x] Test: `sum(saw(220), saw(330))` → mono signal that is the sum of both saws.
+- [x] Test: `sum(stereo(saw(220),saw(220)), stereo(saw(330),saw(330)))` → stereo, L sums correctly, R sums correctly.
+- [x] Test: `sum(saw(220), stereo(saw(220), saw(330)))` → stereo (mono input duplicates to L and R, then sums).
 
 ### Phase 0b — Stereo support in `poly()`
 
@@ -410,11 +410,11 @@ Files to modify:
 - `akkado/tests/test_codegen.cpp` — `[poly][stereo]` tests.
 
 Tasks:
-- [ ] Detect stereo instrument body (visit the body once, observe the resulting `TypedValue.channels`, then re-emit with the right buffer wiring — or visit speculatively and patch).
-- [ ] Allocate stereo voice-out buffers and a stereo `mix_buf` when the body is stereo.
-- [ ] Update `POLY_BEGIN` / `POLY_END` payload to optionally carry the right-channel buffer indices; mono path unchanged.
-- [ ] Test: `pat("c4") |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)))` compiles and produces stereo output.
-- [ ] Test: existing mono `poly` patches produce bit-identical bytecode.
+- [x] Detect stereo instrument body (visit the body once, observe the resulting `TypedValue.channels`, then re-emit with the right buffer wiring — or visit speculatively and patch).
+- [x] Allocate stereo voice-out buffers and a stereo `mix_buf` when the body is stereo.
+- [x] Update `POLY_BEGIN` / `POLY_END` payload to optionally carry the right-channel buffer indices; mono path unchanged.
+- [x] Test: `pat("c4") |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)))` compiles and produces stereo output.
+- [x] Test: existing mono `poly` patches produce bit-identical bytecode.
 
 ### Phase 0c — Generalized N-arity closure helper
 
@@ -429,11 +429,11 @@ Files to modify:
 - `akkado/tests/test_codegen.cpp` — closure-arity tests.
 
 Tasks:
-- [ ] Define new helper signature taking `std::span<const std::uint16_t>`.
-- [ ] Add an arity cap (e.g. 32) to guard against pathological inputs.
-- [ ] Update existing call sites; ensure 1-arg and 2-arg paths produce bit-identical bytecode.
-- [ ] Test: `reduce` and `zipWith` semantics unchanged for existing patches.
-- [ ] Test: a 3-arg closure can be invoked through the helper from a future caller (sets the stage for `zipWith3`).
+- [x] Define new helper signature taking `std::span<const std::uint16_t>`.
+- [x] Add an arity cap (e.g. 32) to guard against pathological inputs.
+- [x] Update existing call sites; ensure 1-arg and 2-arg paths produce bit-identical bytecode.
+- [x] Test: `reduce` and `zipWith` semantics unchanged for existing patches.
+- [x] Test: a 3-arg closure can be invoked through the helper from a future caller (sets the stage for `zipWith3`).
 
 ### Phase 0d — `map(arr, fn)` dispatches on closure arity
 
@@ -450,13 +450,13 @@ Files to modify:
 - `akkado/tests/test_codegen.cpp` — `[map][index]` tests.
 
 Tasks:
-- [ ] In `handle_map_call`, read `func_ref->params.size()` and reject 0 (E132) and >2 (E141).
-- [ ] Allocate per-element const index buffer via `emit_push_const(buffers_, instructions_, float(i))` only when arity == 2.
-- [ ] Dispatch through the unified `apply_function_ref` helper from Phase 0c.
-- [ ] Verify single-arg path produces bytecode identical to current `master` (snapshot test).
-- [ ] Test: `map([10, 20, 30], (v, i) -> v + i)` returns `[10, 21, 32]`.
-- [ ] Test: existing 1-arg map calls in fixtures unchanged.
-- [ ] Test: `map([1], (a, b, c) -> a)` errors with E141 mentioning `(val) or (val, idx)`.
+- [x] In `handle_map_call`, read `func_ref->params.size()` and reject 0 (E132) and >2 (**E146** in practice — `E141` was already taken, see implementation note).
+- [x] Allocate per-element const index buffer via `emit_push_const(buffers_, instructions_, float(i))` only when arity == 2.
+- [x] Dispatch through the unified `apply_function_ref` helper from Phase 0c.
+- [x] Verify single-arg path produces bytecode identical to current `master` (snapshot test).
+- [x] Test: `map([10, 20, 30], (v, i) -> v + i)` returns `[10, 21, 32]`.
+- [x] Test: existing 1-arg map calls in fixtures unchanged.
+- [x] Test: `map([1], (a, b, c) -> a)` errors with **E146** mentioning `(val) or (val, idx)`.
 
 ### Phase 1 — `unison` stdlib function
 
@@ -540,17 +540,24 @@ Tasks:
 
 ### Phase 2 — Documentation and demo
 
-**Status**: TODO  
+**Status**: DONE  
 **Goal**: Web docs explain unison; demo patch sounds great.
 
+**Implementation note**: docs landed under `web/static/docs/reference/`
+(not `web/static/docs/`) because that's the actual reference-docs layout.
+Map and sum updates went into the consolidated `language/arrays.md` page
+rather than separate files. Demos shipped as **two** patches —
+`unison-lead.akk` and `unison-pad.akk` — instead of a single `unison-demo.akk`,
+so each preset has its own landing entry in `patches/index.json`.
+
 Tasks:
-- [ ] Write `web/static/docs/builtins/unison.md` with frontmatter keywords (`unison, supersaw, fatten, detune, voices`).
-- [ ] Update `web/static/docs/builtins/map.md` with 2-arg form.
-- [ ] Update `web/static/docs/builtins/sum.md` (or its index entry) for the variadic stereo-preserving semantics.
-- [ ] Update `web/static/docs/builtins/poly.md` (or its index entry) noting stereo instrument support.
-- [ ] Run `bun run build:docs` to refresh the F1 lookup index.
-- [ ] Write `web/static/patches/unison-demo.akk` — at least two presets (a fat lead, a polyphonic pad).
-- [ ] Add a brief mention in `CLAUDE.md` Akkado concepts section if appropriate.
+- [x] Write `web/static/docs/reference/builtins/unison.md` with frontmatter keywords (`unison, supersaw, fatten, detune, voices, …`).
+- [x] Update `web/static/docs/reference/language/arrays.md` `## map` section with the 2-arg form.
+- [x] Update `web/static/docs/reference/language/arrays.md` `## sum` section for the variadic stereo-preserving semantics.
+- [x] Update `web/static/docs/reference/builtins/polyphony.md` `## poly` section noting stereo instrument support.
+- [x] Run `bun run build:docs` to refresh the F1 lookup index (manifest now has 51 docs / 568 lookup entries).
+- [x] Write `web/static/patches/unison-lead.akk` (pattern-driven 7-voice fat lead) and `web/static/patches/unison-pad.akk` (polyphonic pad via `poly(%, fat, 4)`).
+- [x] Add a brief "Voicing" subsection to `CLAUDE.md` summarising poly + unison.
 
 ### Phase 3 — Python opcode smoke test
 
@@ -806,19 +813,19 @@ For poly+unison, render at least 300 seconds per CLAUDE.md to surface long-windo
 ### Acceptance criteria
 
 **Prerequisites:**
-- [ ] New `sum(...)` is variadic and preserves stereo (`sum(stereo, stereo)` → stereo, `sum(mono, stereo)` → stereo).
-- [ ] Stereo-returning `poly` instruments compile and play; mono `poly` bytecode is bit-identical to pre-change.
-- [ ] N-arg closures (3+) work in callers that opt into them; existing 1-arg and 2-arg sites produce bit-identical bytecode.
-- [ ] `map` with 1-arg closure produces byte-identical bytecode to pre-change `master`.
-- [ ] `map` with 2-arg closure correctly receives integer indices.
-- [ ] `map` with 3+ arg closure errors with E141.
+- [x] New `sum(...)` is variadic and preserves stereo (`sum(stereo, stereo)` → stereo, `sum(mono, stereo)` → stereo). Phase 0a, with backward-compatible single-array form retained.
+- [x] Stereo-returning `poly` instruments compile and play; mono `poly` bytecode is bit-identical to pre-change. Phase 0b, commit `6b44b4b`.
+- [x] N-arg closures (3+) work in callers that opt into them; existing 1-arg and 2-arg sites produce bit-identical bytecode. Phase 0c.
+- [x] `map` with 1-arg closure produces byte-identical bytecode to pre-change `master`. Phase 0d.
+- [x] `map` with 2-arg closure correctly receives integer indices. Phase 0d.
+- [x] `map` with 3+ arg closure errors with **E146** (PRD originally proposed E141, which turned out to already be in use — see Phase 0d implementation note).
 
 **Unison:**
-- [ ] `unison` compiles for `voices` in {1, 2, 4, 8, 16}.
-- [ ] `unison` errors clearly for `voices` in {0, 17, non-literal}.
-- [ ] `unison` with `voices = 1` produces a centered, undetuned voice (special-case branch).
-- [ ] `unison` runtime-modulates detune/width/phase (param sliders work).
-- [ ] `unison` composed with `poly` compiles; the unison body emits `unison_voices` instrument instances which are runtime-multiplexed by poly across `poly_voices` slots.
-- [ ] Demo patch `unison-demo.akk` plays without glitches at default audio settings (48kHz / 128-block).
-- [ ] Hot-swap test: edit a unison patch's `detune` from 0.3 to 0.5 in the web UI; voices retain envelope state across the swap.
-- [ ] WAV output from the Python test sounds like a fat detuned chord (human ear evaluation).
+- [x] `unison` compiles for `voices` in {1, 2, 4, 8, 16}. Verified in Python test for {1, 2, 4, 5, 8}; voices=16 compiles cleanly per the soft-limit policy (AST grows linearly but no error).
+- [~] ~~`unison` errors clearly for `voices` in {0, 17, non-literal}.~~ Per Phase 1 implementation note, `voices ≤ 0` and `voices > 16` are **soft limits** (no `error()` primitive in stdlib). Only the non-literal case errors (E173 from `linspace`); that path is tested.
+- [x] `unison` with `voices = 1` produces a centered, undetuned voice (special-case branch). Verified by `test_op_unison.py::test_unison_voices_1_special_case` (1 peak at 440 Hz, L/R balanced to 3 decimal places).
+- [x] `unison` runtime-modulates detune/width/phase (param sliders work). C++ codegen test exercises a `param("detune", …)` slot through `unison`.
+- [x] `unison` composed with `poly` compiles; the unison body emits `unison_voices` instrument instances which are runtime-multiplexed by poly across `poly_voices` slots. Verified end-to-end by `test_op_unison.py::test_poly_unison_300s`.
+- [x] Demo patches `unison-lead.akk` and `unison-pad.akk` play without glitches at default audio settings (48kHz / 128-block). Both compile clean (3460 / 2520 bytes) and pass the 300 s long-window rendering test in `test_op_unison.py`.
+- [ ] **Not yet verified** — Hot-swap test: edit a unison patch's `detune` from 0.3 to 0.5 in the web UI; voices retain envelope state across the swap. Hot-swap should work via the existing `map#N/elemK/…` semantic-ID path scheme, but no automated test exercises this end-to-end through the web UI. Manual smoke test only.
+- [ ] **Not yet verified** — WAV output from the Python test sounds like a fat detuned chord (human ear evaluation). WAVs are saved in `experiments/output/op_unison/` for listening; requires a human pass.
