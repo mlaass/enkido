@@ -11,15 +11,15 @@ subfeatures:
   - name: Delay
     anchor: delay
     tagline: Beat-synced feedback delay.
-    snippet: 'osc("saw", 220) |> delay(%, 0.5, 0.4)'
+    snippet: 'osc("saw", 220) |> delay(@, 0.5, 0.4)'
   - name: Delay (ms)
     anchor: delay_ms
     tagline: Time-domain delay with millisecond control.
-    snippet: 'osc("saw", 220) |> delay_ms(%, 300, 0.4)'
+    snippet: 'osc("saw", 220) |> delay_ms(@, 300, 0.4)'
   - name: Tap Delay
     anchor: tap_delay
     tagline: Multi-tap with feedback processor.
-    snippet: 'osc("saw", 110) |> tap_delay(%, 0.375, 0.7, (x) -> lp(x, 1500))'
+    snippet: 'osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500))'
 ---
 
 # Delays
@@ -44,22 +44,22 @@ The optional `dry` and `wet` parameters control the output mix. Defaults (dry=0,
 
 ```akk
 // Simple echo at quarter note (120 BPM = 0.5s)
-osc("saw", 220) |> delay(%, 0.5, 0.4) |> out(%)
+osc("saw", 220) |> delay(@, 0.5, 0.4) |> out(@)
 ```
 
 ```akk
 // Classic delay pedal: dry passthrough with wet echoes
-osc("saw", 220) |> delay(%, 0.5, 0.4, 1.0, 0.6) |> out(%)
+osc("saw", 220) |> delay(@, 0.5, 0.4, 1.0, 0.6) |> out(@)
 ```
 
 ```akk
 // Slapback delay for thickening
-osc("saw", 110) |> delay(%, 0.08, 0.3, 0.7, 0.5) |> out(%)
+osc("saw", 110) |> delay(@, 0.08, 0.3, 0.7, 0.5) |> out(@)
 ```
 
 ```akk
 // Ping-pong style stereo delay
-osc("saw", 110) |> (delay(%, 0.3, 0.5), delay(%, 0.45, 0.5)) |> out(%)
+osc("saw", 110) |> (delay(@, 0.3, 0.5), delay(@, 0.45, 0.5)) |> out(@)
 ```
 
 ## delay_ms
@@ -76,12 +76,12 @@ osc("saw", 110) |> (delay(%, 0.3, 0.5), delay(%, 0.45, 0.5)) |> out(%)
 
 ```akk
 // 300ms delay
-osc("saw", 220) |> delay_ms(%, 300, 0.4) |> out(%)
+osc("saw", 220) |> delay_ms(@, 300, 0.4) |> out(@)
 ```
 
 ```akk
 // 50/50 mix
-osc("saw", 220) |> delay_ms(%, 300, 0.4, 0.5, 0.5) |> out(%)
+osc("saw", 220) |> delay_ms(@, 300, 0.4, 0.5, 0.5) |> out(@)
 ```
 
 ## delay_smp
@@ -100,12 +100,12 @@ Use sample-based delay for comb filtering and Karplus-Strong synthesis effects. 
 
 ```akk
 // Comb filter at ~480Hz (48000 / 100 = 480)
-noise() |> delay_smp(%, 100, 0.9) |> out(%)
+noise() |> delay_smp(@, 100, 0.9) |> out(@)
 ```
 
 ```akk
 // Karplus-Strong style pluck (109 samples at 48kHz ≈ 440Hz)
-noise() * ar(button("pluck"), 0.001, 0.001) |> delay_smp(%, 109, 0.995) |> out(%)
+noise() * ar(button("pluck"), 0.001, 0.001) |> delay_smp(@, 109, 0.995) |> out(@)
 ```
 
 ## tap_delay
@@ -127,20 +127,20 @@ The optional `dry` and `wet` parameters control the output mix. Defaults (dry=0,
 
 ```akk
 // Dub-style delay with lowpass filter in feedback
-osc("saw", 110) |> tap_delay(%, 0.375, 0.7, (x) -> lp(x, 1500)) |> out(%)
+osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500)) |> out(@)
 ```
 
 ```akk
 // Degrading tape delay with dry/wet mix
-osc("saw", 110) |> tap_delay(%, 0.4, 0.65, (x) ->
-    lp(x, 3000) |> saturate(%, 0.1),
+osc("saw", 110) |> tap_delay(@, 0.4, 0.65, (x) ->
+    lp(x, 3000) |> saturate(@, 0.1),
     0.3, 0.7
-) |> out(%)
+) |> out(@)
 ```
 
 ```akk
 // Classic delay pedal: full dry signal with softer echoes
-osc("saw", 110) |> tap_delay(%, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5) |> out(%)
+osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5) |> out(@)
 ```
 
 ## tap_delay_ms
@@ -158,12 +158,12 @@ osc("saw", 110) |> tap_delay(%, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5) |> out
 
 ```akk
 // 300ms delay with feedback filtering
-osc("saw", 110) |> tap_delay_ms(%, 300, 0.7, (x) -> lp(x, 1000)) |> out(%)
+osc("saw", 110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000)) |> out(@)
 ```
 
 ```akk
 // 300ms delay with mix control
-osc("saw", 110) |> tap_delay_ms(%, 300, 0.7, (x) -> lp(x, 1000), 0.5, 0.5) |> out(%)
+osc("saw", 110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000), 0.5, 0.5) |> out(@)
 ```
 
 ## tap_delay_smp
@@ -183,12 +183,12 @@ Use sample-based tap delay for comb filtering with feedback processing.
 
 ```akk
 // Resonant comb filter with dampening
-noise() |> tap_delay_smp(%, 100, 0.95, (x) -> lp(x, 2000)) |> out(%)
+noise() |> tap_delay_smp(@, 100, 0.95, (x) -> lp(x, 2000)) |> out(@)
 ```
 
 ```akk
 // Comb filter with dry/wet blend
-noise() |> tap_delay_smp(%, 100, 0.95, (x) -> lp(x, 2000), 0.3, 0.7) |> out(%)
+noise() |> tap_delay_smp(@, 100, 0.95, (x) -> lp(x, 2000), 0.3, 0.7) |> out(@)
 ```
 
 Related: [freeverb](#../reverbs#freeverb), [comb](#../modulation#comb)

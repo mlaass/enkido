@@ -20,5 +20,5 @@ cut = param("cutoff", 2400, 200, 8000)
 pat("c3 eb3 g3 bb3 c4 g3 eb3 c3") as e
   |> unison(e.freq, e.gate, e.vel, saw_voice,
             voices: 7, detune: det, width: wid, phase: 0.3)
-  |> lp(%, cut)
-  |> out(%)
+  |> lp(@, cut)
+  |> out(@)

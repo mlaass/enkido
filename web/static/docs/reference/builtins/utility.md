@@ -28,17 +28,17 @@ Every Akkado patch needs an `out()` to produce sound. Pass one signal for mono, 
 
 ```akk
 // Mono output (same signal to both speakers)
-osc("sin", 440) |> out(%)
+osc("sin", 440) |> out(@)
 ```
 
 ```akk
 // Stereo output (different signals)
-osc("sin", 440) |> out(%, osc("sin", 442))
+osc("sin", 440) |> out(@, osc("sin", 442))
 ```
 
 ```akk
 // Panned signal
-osc("sin", 440) * 0.7 |> out(%, % * 0.3)
+osc("sin", 440) * 0.7 |> out(@, @ * 0.3)
 ```
 
 ---
@@ -55,17 +55,17 @@ Converts MIDI note numbers to frequencies using equal temperament. Middle C (C4)
 
 ```akk
 // Middle C
-sin(mtof(60)) |> out(%)
+sin(mtof(60)) |> out(@)
 ```
 
 ```akk
 // A4 (MIDI note 69 = 440 Hz)
-sin(mtof(69)) |> out(%)
+sin(mtof(69)) |> out(@)
 ```
 
 ```akk
 // Chromatic scale using modulation
-sin(mtof(48 + osc("phasor", 2) * 12)) |> out(%)
+sin(mtof(48 + osc("phasor", 2) * 12)) |> out(@)
 ```
 
 ---
@@ -82,7 +82,7 @@ Outputs a constant value. Useful for mixing with signals or providing a static p
 
 ```akk
 // Use as constant multiplier
-osc("sin", 440) * dc(0.5) |> out(%)
+osc("sin", 440) * dc(0.5) |> out(@)
 ```
 
 ---
@@ -100,12 +100,12 @@ Limits how fast a signal can change, smoothing transitions. Useful for portament
 
 ```akk
 // Portamento effect (smooth pitch changes)
-sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(%)
+sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(@)
 ```
 
 ```akk
 // Smooth filter sweep
-saw(110) |> lp(%, slew(200 + osc("sqr", 0.5) * 2000, 5)) |> out(%)
+saw(110) |> lp(@, slew(200 + osc("sqr", 0.5) * 2000, 5)) |> out(@)
 ```
 
 ---
@@ -123,12 +123,12 @@ Samples the input signal each time the trigger fires and holds that value until 
 
 ```akk
 // Random pitches
-sin(mtof(48 + sah(osc("noise") * 24, trigger(4)))) |> out(%)
+sin(mtof(48 + sah(osc("noise") * 24, trigger(4)))) |> out(@)
 ```
 
 ```akk
 // Stepped filter
-saw(110) |> lp(%, 200 + sah(osc("noise") * 2000, trigger(2))) |> out(%)
+saw(110) |> lp(@, 200 + sah(osc("noise") * 2000, trigger(2))) |> out(@)
 ```
 
 ---
@@ -143,7 +143,7 @@ Returns the master clock signal synchronized to the BPM. Useful for building cus
 
 ```akk
 // Clock-synced modulation
-sin(440 + clock() * 100) |> out(%)
+sin(440 + clock() * 100) |> out(@)
 ```
 
 Related: [trigger](#trigger), [lfo](#lfo)

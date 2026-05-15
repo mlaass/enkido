@@ -17,7 +17,7 @@ mel = n"a2 e3 a3 c#4 e4 c#4 a3 e3"
 
 mel
     |> wt("morph", @.freq, 0, scan) * 0.4
-    |> lp(%, 3500)
+    |> lp(@, 3500)
     |> @ + delay(@, 0.375, 0.45) * 0.5
-    |> out(%, %)
+    |> out(@)
 

@@ -11,7 +11,7 @@ subfeatures:
   - name: Clock
     anchor: clock
     tagline: Master tempo source.
-    snippet: 'osc("saw", 110) |> delay(%, clock() / 4, 0.4)'
+    snippet: 'osc("saw", 110) |> delay(@, clock() / 4, 0.4)'
   - name: LFO
     anchor: lfo
     tagline: Bipolar low-frequency oscillator.
@@ -31,7 +31,7 @@ subfeatures:
   - name: Pattern Generators
     anchor: pattern-generators
     tagline: binary, run, iter, iterBack.
-    snippet: 'run(8) |> mtof(% + 60) |> osc("saw", %)'
+    snippet: 'run(8) |> mtof(@ + 60) |> osc("saw", @)'
 ---
 
 # Sequencing & Timing
@@ -52,7 +52,7 @@ Returns the current position in the clock cycle. Use with other timing functions
 
 ```akk
 // Use clock for tempo-synced effects
-osc("saw", 110) |> delay(%, clock() / 4, 0.4) |> out(%)
+osc("saw", 110) |> delay(@, clock() / 4, 0.4) |> out(@)
 ```
 
 Related: [trigger](#trigger), [lfo](#lfo)
@@ -72,17 +72,17 @@ A low-frequency oscillator for modulation. The duty parameter controls the pulse
 
 ```akk
 // Vibrato
-osc("sin", 220 + lfo(5) * 10) |> out(%)
+osc("sin", 220 + lfo(5) * 10) |> out(@)
 ```
 
 ```akk
 // Tremolo
-osc("saw", 220) * (0.5 + lfo(4) * 0.5) |> out(%)
+osc("saw", 220) * (0.5 + lfo(4) * 0.5) |> out(@)
 ```
 
 ```akk
 // Filter sweep
-osc("saw", 110) |> lp(%, 500 + lfo(0.2) * 1500) |> out(%)
+osc("saw", 110) |> lp(@, 500 + lfo(0.2) * 1500) |> out(@)
 ```
 
 Related: [clock](#clock), [trigger](#trigger)
@@ -101,17 +101,17 @@ Generates short impulses at regular intervals. A div of 4 means 4 triggers per b
 
 ```akk
 // Kick drum on quarter notes
-osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(%)
+osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(@)
 ```
 
 ```akk
 // Hi-hat on 8th notes
-osc("noise") |> hp(%, 8000) * ar(trigger(2), 0.001, 0.05) |> out(%)
+osc("noise") |> hp(@, 8000) * ar(trigger(2), 0.001, 0.05) |> out(@)
 ```
 
 ```akk
 // Fast arpeggio triggers
-pat("c4 e4 g4 c5") |> ((f) -> osc("saw", f) * ar(trigger(8))) |> out(%)
+pat("c4 e4 g4 c5") |> ((f) -> osc("saw", f) * ar(trigger(8))) |> out(@)
 ```
 
 Related: [euclid](#euclid), [lfo](#lfo)
@@ -132,17 +132,17 @@ Creates rhythms by distributing hits as evenly as possible across steps. Classic
 
 ```akk
 // Tresillo pattern
-osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(%)
+osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(@)
 ```
 
 ```akk
 // West African bell
-osc("noise") |> hp(%, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(%)
+osc("noise") |> hp(@, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(@)
 ```
 
 ```akk
 // Rotated pattern
-osc("saw", 110) * ar(euclid(5, 16, 2)) |> lp(%, 800) |> out(%)
+osc("saw", 110) * ar(euclid(5, 16, 2)) |> lp(@, 800) |> out(@)
 ```
 
 Related: [trigger](#trigger), [timelines](timelines)
@@ -219,7 +219,7 @@ Pattern constructors that emit an event stream directly from numeric input. Comp
 `run(n)` produces `n` events at times `i/n` carrying values `0, 1, ..., n-1` each of duration `1/n`. Useful as a rising/integer index pattern.
 
 ```akk
-run(8) |> mtof(% + 60) |> osc("saw", %)  // ascending chromatic from C4
+run(8) |> mtof(@ + 60) |> osc("saw", @)  // ascending chromatic from C4
 ```
 
 ### binary
@@ -227,7 +227,7 @@ run(8) |> mtof(% + 60) |> osc("saw", %)  // ascending chromatic from C4
 `binary(n)` produces a trigger pattern from the binary representation of `n` (MSB first; `bits = floor(log2(n)) + 1`). Set bits emit triggers, unset bits emit rests.
 
 ```akk
-binary(178) |> sampler(%, "hh")  // 0b10110010 = 8-step rhythm
+binary(178) |> sampler(@, "hh")  // 0b10110010 = 8-step rhythm
 ```
 
 ### binaryN

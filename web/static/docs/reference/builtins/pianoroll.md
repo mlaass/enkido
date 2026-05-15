@@ -36,7 +36,7 @@ Displays pattern events as rectangles on a piano-roll grid. The playhead scrolls
 
 ```akk
 // Basic piano roll
-pat("c4 e4 g4 b4") |> pianoroll(%)
+pat("c4 e4 g4 b4") |> pianoroll(@)
 ```
 
 ## beats
@@ -45,7 +45,7 @@ Number of beats visible in the scrolling window. By default, the pianoroll auto-
 
 ```akk
 // Wide view with 8 beats visible
-pat("c4 e4 g4 c5 ~ e4 g4 b4") |> pianoroll(%, "melody", {beats: 8, width: 400, height: 80})
+pat("c4 e4 g4 c5 ~ e4 g4 b4") |> pianoroll(@, "melody", {beats: 8, width: 400, height: 80})
 ```
 
 ## showGrid
@@ -66,7 +66,7 @@ Highlight notes that fall inside a named scale; notes outside are dimmed. Helps 
 
 ```akk
 // Pentatonic scale filter, no grid
-pat("c4 d4 e4 f4 g4 a4 b4 c5") |> pianoroll(%, "scale check", {scale: "pentatonic", showGrid: false})
+pat("c4 d4 e4 f4 g4 a4 b4 c5") |> pianoroll(@, "scale check", {scale: "pentatonic", showGrid: false})
 ```
 
 ## octave

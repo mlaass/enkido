@@ -42,10 +42,10 @@ pos.x                     // 1
 pos.y                     // 2
 ```
 
-Inside a pipe, the hole `%` carries the upstream value. When the upstream is a record (e.g. a pattern event), `%.field` reads off it:
+Inside a pipe, the hole `@` carries the upstream value. When the upstream is a record (e.g. a pattern event), `@.field` reads off it:
 
 ```akk
-pat("c4 e4 g4") |> osc("sin", %.freq) |> out(%)
+pat("c4 e4 g4") |> osc("sin", @.freq) |> out(@)
 ```
 
 Nested access chains:
@@ -74,13 +74,13 @@ Spread is positional: fields written after the spread override fields from the s
 `as` binds the upstream value to a name so multiple downstream stages can read off it:
 
 ```akk
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
+pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
 ```
 
 Inline destructure inside `as` lifts the named fields directly into scope:
 
 ```akk
-pat("c4 e4 g4") as {freq, vel} |> osc("sin", freq) |> % * vel |> out(%)
+pat("c4 e4 g4") as {freq, vel} |> osc("sin", freq) |> @ * vel |> out(@)
 ```
 
 Only fields that the upstream record actually exposes are bindable; unknown names raise `E141`.
@@ -93,7 +93,7 @@ Destructure a record into local bindings outside of a pipe:
 config = {freq: 440, wave: "saw", cutoff: 2000}
 {freq, wave, cutoff} = config
 
-osc(wave, freq) |> lp(%, cutoff) |> out(%)
+osc(wave, freq) |> lp(@, cutoff) |> out(@)
 ```
 
 The right-hand side must be a record value (`E140`). Each declared field must exist on the source unless a default is provided (`E187`). Repeating a field name in the pattern is a parse error (`E188`).
@@ -111,7 +111,7 @@ This composes with regular params:
 
 ```akk
 fn lp_voice(freq, {cutoff, q}) ->
-    osc("saw", freq) |> lp(%, cutoff, q)
+    osc("saw", freq) |> lp(@, cutoff, q)
 
 lp_voice(440, {cutoff: 2000, q: 0.7})
 ```
@@ -124,7 +124,7 @@ Both the statement form and the parameter form accept default expressions per fi
 {x = 0, y = 0} = {x: 5}          // x = 5, y = 0
 
 fn synth({freq = 440, wave = "saw", cutoff = 2000, q = 0.7}) ->
-    osc(wave, freq) |> lp(%, cutoff, q)
+    osc(wave, freq) |> lp(@, cutoff, q)
 
 synth({})                                  // all defaults
 synth({freq: 220})                         // override freq, rest default
@@ -152,7 +152,7 @@ r2 = {..r, x: 5}          // r2 = {x: 5}, r unchanged
 
 ```akk
 voice = state({freq: 440, gate: 0})
-osc("sin", voice.freq) * voice.gate |> out(%)
+osc("sin", voice.freq) * voice.gate |> out(@)
 voice.gate = 1            // sugar over set(voice, {..get(voice), gate: 1})
 ```
 
@@ -177,31 +177,31 @@ Every event a pattern produces is a record. All eleven fields work on every patt
 Examples — every field works in pipes and after transforms:
 
 ```akk
-// %.dur picks up event duration; great for pitch-from-velocity tricks
-pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel * %.gate |> out(%)
+// @.dur picks up event duration; great for pitch-from-velocity tricks
+pat("c4 e4 g4") |> osc("sin", @.freq) * @.vel * @.gate |> out(@)
 
 // Event-scoped phase ramps 0→1 once per note — perfect for built-in envelopes
-fast(pat("c4 e4 g4"), 2) |> osc("sin", %.freq) * (1 - %.phase) |> out(%)
+fast(pat("c4 e4 g4"), 2) |> osc("sin", @.freq) * (1 - @.phase) |> out(@)
 
 // MIDI note number flows through transforms
-slow(pat("c4 e4 g4"), 2) |> osc("sin", mtof(%.note)) |> out(%)
+slow(pat("c4 e4 g4"), 2) |> osc("sin", mtof(@.note)) |> out(@)
 ```
 
 Custom fields attached via `.set("name", value)` chains live alongside these and are visible in autocomplete:
 
 ```akk
 beat = pat("c4 e4").set("cutoff", saw(0.5)).set("res", 0.7)
-beat |> lp(osc("sin", %.freq), %.cutoff, %.res) |> out(%)
+beat |> lp(osc("sin", @.freq), @.cutoff, @.res) |> out(@)
 ```
 
-A custom field that collides with one of the fixed names is silently shadowed by the fixed slot — `pat("c4").set("freq", x)` will not change what `%.freq` reads. The editor's autocomplete deduplicates by name so the suggestions never mislead.
+A custom field that collides with one of the fixed names is silently shadowed by the fixed slot — `pat("c4").set("freq", x)` will not change what `@.freq` reads. The editor's autocomplete deduplicates by name so the suggestions never mislead.
 
 ## Records as builtin options
 
 When a builtin needs more than three or four parameters, the convention is to take a record literal in the last positional slot. Each option is a named field with a declared type and default. This is how the visualizers work today; the same convention is recommended for samplers, filters, and delays.
 
 ```akk
-osc("saw", 220) |> waterfall(%, "scope", {fft: 1024, gradient: "viridis"}) |> out(%)
+osc("saw", 220) |> waterfall(@, "scope", {fft: 1024, gradient: "viridis"}) |> out(@)
 ```
 
 See [Records as Builtin Options](../../concepts/record-as-options.md) for the full convention, the editor's autocomplete behaviour, and guidance for builtin authors.
@@ -227,5 +227,5 @@ See [Records as Builtin Options](../../concepts/record-as-options.md) for the fu
 
 - [State Cells](../builtins/state.md) — record-valued cells with `cell.field` sugar.
 - [Records as Builtin Options](../../concepts/record-as-options.md) — convention for builtin authors.
-- [Pipes & Holes](pipes.md) — `|>` and `%` semantics.
+- [Pipes & Holes](pipes.md) — `|>` and `@` semantics.
 - [Mini-notation reference](../mini-notation/) — how patterns produce events.

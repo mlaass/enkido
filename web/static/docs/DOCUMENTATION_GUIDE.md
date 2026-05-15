@@ -56,7 +56,7 @@ Description of how the filter works...
 
 ```akk
 // Example code
-saw(220) |> lp(%, 800) |> out(%)
+saw(220) |> lp(@, 800) |> out(@)
 ```
 
 Related: [hp](#hp), [bp](#bp)
@@ -118,7 +118,7 @@ When expanding documentation, follow this priority:
    - Filters: lp, hp, moog
    - Envelopes: adsr, ar
    - Output: out
-   - Core operators: |>, %
+   - Core operators: |>, @
 
 2. **Medium Priority**:
    - Effects: delay, reverb, chorus

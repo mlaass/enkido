@@ -37,7 +37,7 @@ Displays a real-time frequency spectrum. Larger FFT sizes give better frequency 
 
 ```akk
 // Basic spectrum
-osc("saw", 220) |> spectrum(%) |> out(%)
+osc("saw", 220) |> spectrum(@) |> out(@)
 ```
 
 ## fft
@@ -46,7 +46,7 @@ FFT window size. Larger values resolve closely-spaced frequencies better but slo
 
 ```akk
 // High resolution FFT
-osc("saw", 55) |> spectrum(%, "bass detail", {fft: 2048, width: 400}) |> out(%)
+osc("saw", 55) |> spectrum(@, "bass detail", {fft: 2048, width: 400}) |> out(@)
 ```
 
 ## logScale
@@ -55,7 +55,7 @@ Use a logarithmic frequency axis. Linear (default) spaces frequencies evenly; lo
 
 ```akk
 // Log scale matches human pitch perception
-osc("saw", 110) |> lp(%, 2000) |> spectrum(%, "filtered", {logScale: true}) |> out(%)
+osc("saw", 110) |> lp(@, 2000) |> spectrum(@, "filtered", {logScale: true}) |> out(@)
 ```
 
 ## minDb
@@ -68,7 +68,7 @@ Upper bound of the dB display range. Loud signals above this are clamped to the 
 
 ```akk
 // Tight dB window for a hot signal
-osc("saw", 110) |> spectrum(%, {minDb: -40, maxDb: 0}) |> out(%)
+osc("saw", 110) |> spectrum(@, {minDb: -40, maxDb: 0}) |> out(@)
 ```
 
 Related: [waterfall](waterfall), [oscilloscope](oscilloscope)

@@ -62,7 +62,7 @@ Plays the sample looped. Useful for sustained material like chords or pads recor
 
 ```akk
 // Looped pad sample on a slow clock
-sample_loop(beat(0.25), 1.0, "pad") |> out(%)
+sample_loop(beat(0.25), 1.0, "pad") |> out(@)
 ```
 
 ## bd
@@ -71,7 +71,7 @@ The **bass drum**. Default kit slot for `bd` patterns; variants `bd2` through `b
 
 ```akk
 // Four-on-the-floor kick
-pat("bd bd bd bd") |> out(%)
+pat("bd bd bd bd") |> out(@)
 ```
 
 ## sd
@@ -80,7 +80,7 @@ The **snare drum**. Default kit slot for `sd`; variants `sd2`–`sd8` give alter
 
 ```akk
 // Backbeat
-pat("~ sd ~ sd") |> out(%)
+pat("~ sd ~ sd") |> out(@)
 ```
 
 ## hh
@@ -89,7 +89,7 @@ The **hi-hat closed**. Variants like `oh` (open hat), `cp` (clap), `rim` (rimsho
 
 ```akk
 // 16th-note hats
-pat("hh*16") |> out(%)
+pat("hh*16") |> out(@)
 ```
 
 ## oh
@@ -98,7 +98,7 @@ The **open hi-hat**. Use it to vary the closed-hat pattern; typical syncopation 
 
 ```akk
 // Closed/open hat variation
-pat("hh hh oh hh") |> out(%)
+pat("hh hh oh hh") |> out(@)
 ```
 
 ## cp
@@ -107,7 +107,7 @@ The **clap**. Layered on the backbeat for a snare reinforcement.
 
 ```akk
 // Snare + clap layered
-pat("~ [sd cp] ~ [sd cp]") |> out(%)
+pat("~ [sd cp] ~ [sd cp]") |> out(@)
 ```
 
 Related: [samples-loading](samples-loading), [soundfonts](soundfonts), [sequencing](sequencing)

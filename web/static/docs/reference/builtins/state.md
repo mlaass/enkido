@@ -49,7 +49,7 @@ The `init` value is consumed *only* on the first execution of the program; subse
 
 ```akk
 counter = state(0)
-counter.get() |> mtof(%) |> sine(%) |> out(%)
+counter.get() |> mtof(@) |> sine(@) |> out(@)
 ```
 
 `get` is a reserved identifier.
@@ -89,7 +89,7 @@ step_dir = (arr, trig, dir) -> {
   arr[idx.get()]
 }
 
-notes.step(trigger(4)) |> mtof(%) |> sine(%) |> out(%)
+notes.step(trigger(4)) |> mtof(@) |> sine(@) |> out(@)
 ```
 
 ## Record-valued state cells

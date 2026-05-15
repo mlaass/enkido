@@ -18,7 +18,7 @@ Generators (`osc`, `noise`, `pulse`) are **mono** by default; effects are stereo
 saw(220)
 
 // Stereo — duplicate mono across both channels
-saw(220) |> stereo(%)
+saw(220) |> stereo(@)
 
 // Stereo — distinct L and R
 stereo(saw(218), saw(222))
@@ -27,9 +27,9 @@ stereo(saw(218), saw(222))
 `out()` accepts either:
 
 ```akkado
-saw(220) |> out(%)              // Mono  → duplicated to L and R
+saw(220) |> out(@)              // Mono  → duplicated to L and R
 stereo(saw(218), saw(222))
-  |> out(%)                     // Stereo → split into L and R
+  |> out(@)                     // Stereo → split into L and R
 out(saw(218), saw(222))         // Two mono signals → L, R explicitly
 ```
 
@@ -59,8 +59,8 @@ A genuine *type* mismatch — an audio-rate signal in a non-signal slot, for exa
 `pan()` has two signatures dispatched by the channel type of its first argument:
 
 ```akkado
-mono_sig   |> pan(%, 0.3)   // Mono → Stereo: equal-power mono pan
-stereo_sig |> pan(%, 0.3)   // Stereo → Stereo: equal-power stereo balance
+mono_sig   |> pan(@, 0.3)   // Mono → Stereo: equal-power mono pan
+stereo_sig |> pan(@, 0.3)   // Stereo → Stereo: equal-power stereo balance
 ```
 
 The stereo overload is DAW-style balance — `L_out = L * cos θ`, `R_out = R * sin θ` with `θ = (p + 1) · π/4`. At `p = 0` both channels drop by ~3 dB (equal-power centre); at `p = ±1` one channel is silenced. See the [Stereo builtins reference](/docs/reference/builtins/stereo) for the math.
@@ -73,17 +73,17 @@ Every audio effect is **stereo-native**: it processes both channels in a single 
 bus = osc("saw", 220)         // Mono — widens automatically
 
 bus
-  |> filter_lp(%, 500, 0.7)   // Stereo: per-channel filter state
-  |> delay(%, 0.25, 0.5)      // Stereo: per-channel delay line
-  |> out(%)                   // Stereo out
+  |> filter_lp(@, 500, 0.7)   // Stereo: per-channel filter state
+  |> delay(@, 0.25, 0.5)      // Stereo: per-channel delay line
+  |> out(@)                   // Stereo out
 ```
 
 For channel-independent effects (filters, distortion, EQ, plain delays) this is exactly equivalent to writing:
 
 ```akkado
 sig = osc("saw", 220)
-left_out  = sig |> filter_lp(%, 500, 0.7) |> delay(%, 0.25, 0.5)
-right_out = sig |> filter_lp(%, 500, 0.7) |> delay(%, 0.25, 0.5)
+left_out  = sig |> filter_lp(@, 500, 0.7) |> delay(@, 0.25, 0.5)
+right_out = sig |> filter_lp(@, 500, 0.7) |> delay(@, 0.25, 0.5)
 out(left_out, right_out)
 ```
 
@@ -95,11 +95,11 @@ Identical state handling, identical audio. Stateless effects (`saturate`, `softc
 
 ```akkado
 // Default: 90° offset, classic stereo chorus
-osc("saw", 220) |> chorus(%, 0.5, 0.4) |> out(%)
+osc("saw", 220) |> chorus(@, 0.5, 0.4) |> out(@)
 
 // 0 = mono-equivalent (L = R); 0.5 = anti-phase (max width, may collapse on mono-summing)
-osc("saw", 220) |> chorus(%, 0.5, 0.4, lfo_phase: 0.5) |> out(%)
-osc("saw", 110) |> phaser(%, 0.3, 0.8, lfo_phase: 0)   |> out(%)
+osc("saw", 220) |> chorus(@, 0.5, 0.4, lfo_phase: 0.5) |> out(@)
+osc("saw", 110) |> phaser(@, 0.3, 0.8, lfo_phase: 0)   |> out(@)
 ```
 
 `phaser` also exposes `feedback` and `stages` the same way. Named-argument syntax (`name: value`) skips intervening defaults — pass only what you want to change.
@@ -118,8 +118,8 @@ osc("saw", 110) |> phaser(%, 0.3, 0.8, lfo_phase: 0)   |> out(%)
 
 ```akkado
 dry = osc("saw", 220)                  // Mono
-wet = dry |> freeverb(%, 0.9, 0.5)     // Stereo — freeverb auto-widens
-dry * 0.3 + wet * 0.7 |> out(%)        // Stereo out (mono dry broadcast onto wet)
+wet = dry |> freeverb(@, 0.9, 0.5)     // Stereo — freeverb auto-widens
+dry * 0.3 + wet * 0.7 |> out(@)        // Stereo out (mono dry broadcast onto wet)
 ```
 
 The `dry * 0.3` stays mono, `wet * 0.7` stays stereo, and `mono + stereo` promotes to stereo by dual-reading the mono buffer. No extra instructions.

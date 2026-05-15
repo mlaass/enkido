@@ -9,16 +9,16 @@ notes = n"c4 e4 g4 b4 c5 b4 g4 e4"
 
 // Pattern visualisation (no audio path)
 notes 
-    |> pianoroll(%, "melody", {beats: 8})
+    |> pianoroll(@, "melody", {beats: 8})
 
 // Synth voice
 notes 
     |> saw(@.freq) * ar(trigger(1), 0.002, 0.18)
-    |> oscilloscope(%, "raw saw", {triggerLevel: 0})
-    |> lp(%, 2400)
-    |> spectrum(%, "filtered", {logScale: true, fft: 1024, minDb: -70})
+    |> oscilloscope(@, "raw saw", {triggerLevel: 0})
+    |> lp(@, 2400)
+    |> spectrum(@, "filtered", {logScale: true, fft: 1024, minDb: -70})
 as voice
 
 voice
     |> @ + freeverb(@, 0.5, 0.5) * 0.4
-    |> out(%, %)
+    |> out(@)

@@ -27,10 +27,10 @@ automatically, so you don't have to duplicate a chain for L and R.
 
 ```akk
 // Duplicate a mono signal into stereo
-osc("saw", 220) |> stereo() |> out(%)
+osc("saw", 220) |> stereo() |> out(@)
 
 // Build a stereo image from two oscillators
-stereo(osc("saw", 218), osc("saw", 222)) |> out(%)
+stereo(osc("saw", 218), osc("saw", 222)) |> out(@)
 ```
 
 ---
@@ -48,8 +48,8 @@ uncorrelated content sums at roughly -3 dB RMS.
 
 ```akk
 // Downmix a stereo reverb tail before sidechain detection
-wet = src |> stereo() |> freeverb(%, 0.8, 0.5)
-env = wet |> mono() |> env_follower(%)
+wet = src |> stereo() |> freeverb(@, 0.8, 0.5)
+env = wet |> mono() |> env_follower(@)
 ```
 
 Calling `mono()` on a mono signal is a compile-time error; call it only on
@@ -83,12 +83,12 @@ Position is `-1` (hard left) … `0` (centre, -3 dB) … `+1` (hard right).
 
 ```akk
 // Mono → stereo pan
-osc("saw", 220) |> pan(%, lfo(0.25)) |> out(%)
+osc("saw", 220) |> pan(@, lfo(0.25)) |> out(@)
 
 // Stereo balance on a stereo bus
 stereo(osc("saw", 218), osc("saw", 222))
-  |> pan(%, 0.3)
-  |> out(%)
+  |> pan(@, 0.3)
+  |> out(@)
 ```
 
 The stereo form is DAW-style balance, not re-panning each channel. At
@@ -103,7 +103,7 @@ unity; at `pos = 0`, both channels are scaled by `cos(π/4) ≈ 0.707`.
 
 ```akk
 // Narrow to mono (width=0), original (1), wide (>1)
-stereo_sig |> width(%, 1.4) |> out(%)
+stereo_sig |> width(@, 1.4) |> out(@)
 ```
 
 ---
@@ -115,10 +115,10 @@ stereo_sig |> width(%, 1.4) |> out(%)
 ```akk
 // M/S processing: boost sides (wider stereo) while preserving centre
 stereo_sig
-  |> ms_encode(%)
-  |> % * stereo(1.0, 2.0)   // scale mid 1.0, side 2.0
-  |> ms_decode(%)
-  |> out(%)
+  |> ms_encode(@)
+  |> @ * stereo(1.0, 2.0)   // scale mid 1.0, side 2.0
+  |> ms_decode(@)
+  |> out(@)
 ```
 
 ---
@@ -137,8 +137,8 @@ stereo_sig
 ```akk
 osc("saw", 110)
   |> stereo()
-  |> pingpong(%, 0.375, 0.6)
-  |> out(%)
+  |> pingpong(@, 0.375, 0.6)
+  |> out(@)
 ```
 
 ---
@@ -154,10 +154,10 @@ no `stereo()` wrapper needed.
 ```akk
 // One instruction per effect; each handles L and R in one dispatch.
 osc("saw", 220)               // mono — widens automatically
-  |> lp(%, 500, 0.7)          // stereo lowpass, independent filter state
-  |> delay(%, 0.25, 0.5)      // stereo delay lines per channel
-  |> freeverb(%, 0.85, 0.5)   // stereo reverb with cross-coupling
-  |> out(%)
+  |> lp(@, 500, 0.7)          // stereo lowpass, independent filter state
+  |> delay(@, 0.25, 0.5)      // stereo delay lines per channel
+  |> freeverb(@, 0.85, 0.5)   // stereo reverb with cross-coupling
+  |> out(@)
 ```
 
 Scalar / control-rate parameters (cutoff, Q, feedback, ...) are shared

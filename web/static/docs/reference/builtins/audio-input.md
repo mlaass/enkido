@@ -21,20 +21,20 @@ The `in()` builtin exposes external audio as a signal source (microphone, tab/sy
 |--------|--------|---------|-------------|
 | source | string | (UI default) | Optional override: `"mic"`, `"tab"`, or `"file:NAME"` |
 
-Output: **Stereo** signal. Every audio effect is stereo-native, so `in() |> lp(%, 2000)` is a stereo lowpass with independent state per side.
+Output: **Stereo** signal. Every audio effect is stereo-native, so `in() |> lp(@, 2000)` is a stereo lowpass with independent state per side.
 
 ### Examples
 
 Filter the microphone:
 
 ```akk
-in() |> lp(%, 2000, 0.7) |> out(%)
+in() |> lp(@, 2000, 0.7) |> out(@)
 ```
 
 Granular delay on the live source:
 
 ```akk
-in() |> delay(%, 0.25, 0.5, 0.5, 0.5) |> out(%)
+in() |> delay(@, 0.25, 0.5, 0.5, 0.5) |> out(@)
 ```
 
 Mix live input with a synth voice:
@@ -42,7 +42,7 @@ Mix live input with a synth voice:
 ```akk
 sig = in()
 osc = osc("saw", 220) * 0.3
-sig + stereo(osc) |> out(%)
+sig + stereo(osc) |> out(@)
 ```
 
 Override the source per-program (a string literal, resolved at compile time):

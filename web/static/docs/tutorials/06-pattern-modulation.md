@@ -25,14 +25,14 @@ Sometimes you want raw numbers, not mtof'd notes. Use `v"…"`:
 
 ```akk
 // Three frequencies, no mtof, just the literal Hz values
-osc("sin", v"<220 440 880>") |> out(%)
+osc("sin", v"<220 440 880>") |> out(@)
 
 // Filter cutoff sweeping through three values per cycle
 sig = osc("saw", 440)
-lp(sig, v"<200 800 2000>", 0.7) |> out(%)
+lp(sig, v"<200 800 2000>", 0.7) |> out(@)
 
 // Amplitude scrubber
-osc("saw", 220) * v"<0.2 0.5 1.0 0.5>" |> out(%)
+osc("saw", 220) * v"<0.2 0.5 1.0 0.5>" |> out(@)
 ```
 
 Atoms in `v"…"` must be numeric; `v"c4"` is a parse error.
@@ -42,16 +42,16 @@ Atoms in `v"…"` must be numeric; `v"c4"` is a parse error.
 Pattern-valued bend depth: each note bends by the corresponding pattern value.
 
 ```akk
-n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") as e
+n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") as e
   |> osc("sin", e.freq + e.bend * 12)
-  |> out(%)
+  |> out(@)
 ```
 
 The same shape works for `aftertouch()` and `dur()`:
 
 ```akk
-n"c4 e4 g4 b4" |> aftertouch(%, v"<0 0.25 0.5 1.0>")  // crescendo
-n"c4 e4 g4"    |> dur(%, v"<0.25 0.5 1.0>")           // pattern-driven note length
+n"c4 e4 g4 b4" |> aftertouch(@, v"<0 0.25 0.5 1.0>")  // crescendo
+n"c4 e4 g4"    |> dur(@, v"<0.25 0.5 1.0>")           // pattern-driven note length
 ```
 
 Constant args still work; `bend(notes, 0.5)` is unchanged.
@@ -63,8 +63,8 @@ A note can carry arbitrary record-suffix keys; the binding `as e` exposes each a
 ```akk
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
   |> osc("saw", e.freq)
-  |> lp(%, 200 + e.cutoff * 4000)
-  |> out(%)
+  |> lp(@, 200 + e.cutoff * 4000)
+  |> out(@)
 ```
 
 This is more compact than calling `bend()` / `aftertouch()` separately for each property.
@@ -90,14 +90,14 @@ osc("sin", c"Am")     // ❌ E160: chord pattern in scalar slot
 The fix is to consume them with `poly()`, which fans out per voice:
 
 ```akk
-c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig)) |> out(%)
+c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig)) |> out(@)
 // AR + `e.trig` (per-note pulse). Swap to `e.gate` for ADSR-style sustain.
 ```
 
 Sample patterns route through `SAMPLE_PLAY` and produce audio. Pipe them to `out()` directly:
 
 ```akk
-s"bd ~ bd ~" |> out(%)
+s"bd ~ bd ~" |> out(@)
 ```
 
 ## scalar(): explicit cast

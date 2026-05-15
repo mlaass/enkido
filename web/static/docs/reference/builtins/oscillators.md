@@ -38,22 +38,22 @@ Oscillators are the primary sound sources in synthesis. The `osc()` function is 
 
 ```akk
 // Sine wave (440 Hz)
-osc("sin", 440) |> out(%)
+osc("sin", 440) |> out(@)
 ```
 
 ```akk
 // Sawtooth wave
-osc("saw", 220) |> out(%)
+osc("saw", 220) |> out(@)
 ```
 
 ```akk
 // Triangle wave
-osc("tri", 110) |> out(%)
+osc("tri", 110) |> out(@)
 ```
 
 ```akk
 // Square wave
-osc("sqr", 110) * 0.3 |> out(%)
+osc("sqr", 110) * 0.3 |> out(@)
 ```
 
 ### Phasor / Ramp
@@ -62,12 +62,12 @@ A phasor outputs a value that ramps from 0 to 1 over each cycle. Useful for driv
 
 ```akk
 // Use phasor for wavetable position
-osc("phasor", 2) |> out(%)
+osc("phasor", 2) |> out(@)
 ```
 
 ```akk
 // Create a sine from phasor using math sin()
-sin(osc("phasor", 440) * 2 * 3.14159) |> out(%)
+sin(osc("phasor", 440) * 2 * 3.14159) |> out(@)
 ```
 
 ### Noise
@@ -76,17 +76,17 @@ White noise contains equal energy at all frequencies. Useful for percussion, win
 
 ```akk
 // Raw noise
-osc("noise") * 0.3 |> out(%)
+osc("noise") * 0.3 |> out(@)
 ```
 
 ```akk
 // Filtered noise for hi-hats
-osc("noise") |> hp(%, 8000) * ar(trigger(8), 0.001, 0.05) |> out(%)
+osc("noise") |> hp(@, 8000) * ar(trigger(8), 0.001, 0.05) |> out(@)
 ```
 
 ```akk
 // Noise sweep
-osc("noise") |> lp(%, 200 + osc("sin", 0.5) * 1000) |> out(%)
+osc("noise") |> lp(@, 200 + osc("sin", 0.5) * 1000) |> out(@)
 ```
 
 ### FM synthesis
@@ -95,7 +95,7 @@ FM synthesis modulates the carrier's frequency input with another oscillator. Se
 
 ```akk
 // Simple FM
-osc("sin", 440 + osc("sin", 5) * 10) |> out(%)
+osc("sin", 440 + osc("sin", 5) * 10) |> out(@)
 ```
 
 Related: [fm-synthesis](fm-synthesis), [Math Functions](math), [Filters](filters)

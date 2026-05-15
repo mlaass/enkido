@@ -188,9 +188,9 @@ chord("Am C G F").anchor("c4")
 ```akk
 // Voice-led progression, top note ≤ c4
 chord("Am C G F").anchor("c4").mode("below")
-  |> mtof(%)
-  |> osc("saw", %)
-  |> out(%)
+  |> mtof(@)
+  |> osc("saw", @)
+  |> out(@)
 ```
 
 ## voicing

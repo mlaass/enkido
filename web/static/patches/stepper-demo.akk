@@ -34,8 +34,8 @@ bass = notes.step_dir(trigger(2), -1)
 
 // Render the two voices into a stereo mix.
 melody 
-  |> mtof(%) as f1 
+  |> mtof(@) as f1 
   |> sine(f1) * 0.5 as L
 bass   
-  |> mtof(%) as f2 
+  |> mtof(@) as f2 
   |> tri(f2 / 2) * 0.5 as R

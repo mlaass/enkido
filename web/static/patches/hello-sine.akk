@@ -8,4 +8,4 @@
 bpm = 120
 
 vibrato = osc("sin", 5) * 3
-osc("sin", 440 + vibrato) * 0.3 |> out(%, %)
+osc("sin", 440 + vibrato) * 0.3 |> out(@)

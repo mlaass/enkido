@@ -39,13 +39,13 @@ Sample-by-sample mux. There is no infix ternary syntax; use `select(cond, a, b)`
 ```akk
 // Switch oscillators on a gate pattern
 gate = pat("1 0 1 0")
-select(gate, osc("saw", 440), osc("sqr", 220)) |> out(%)
+select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@)
 ```
 
 ```akk
 // Apply distortion only when the input is loud
 sig = osc("saw", 110)
-select(sig > 0.5, dist(sig, 4), sig) |> out(%)
+select(sig > 0.5, dist(sig, 4), sig) |> out(@)
 ```
 
 ---
@@ -63,7 +63,7 @@ Equivalent to the `>` operator.
 
 ```akk
 // Square wave from a sine via threshold
-osc("sin", 440) > 0 |> out(%)
+osc("sin", 440) > 0 |> out(@)
 ```
 
 ---
@@ -82,7 +82,7 @@ Equivalent to the `<` operator.
 ```akk
 // Open the filter only on quiet sections
 freq = lfo(0.25) * 2000 + 200
-osc("saw", 110) |> lp(%, freq * (freq < 1000)) |> out(%)
+osc("saw", 110) |> lp(@, freq * (freq < 1000)) |> out(@)
 ```
 
 ---
@@ -102,7 +102,7 @@ Equivalent to the `>=` operator.
 // Hold a gate above a threshold
 amp = lfo(0.5)
 gate = gte(amp, 0.5)
-osc("sin", 440) * gate |> out(%)
+osc("sin", 440) * gate |> out(@)
 ```
 
 ---
@@ -119,7 +119,7 @@ osc("sin", 440) * gate |> out(%)
 Equivalent to the `<=` operator.
 
 ```akk
-osc("sin", 440) * lte(lfo(0.5), 0) |> out(%)
+osc("sin", 440) * lte(lfo(0.5), 0) |> out(@)
 ```
 
 ---
@@ -137,7 +137,7 @@ Equivalent to the `==` operator. The epsilon protects against floating-point dri
 
 ```akk
 // Trigger only on exact step matches
-freq = pat("c4 e4 g4 c5") |> %.freq
+freq = pat("c4 e4 g4 c5") |> @.freq
 hit = eq(freq, 261.6)  // 1.0 only on c4 (~261.6 Hz)
 ```
 
@@ -156,9 +156,9 @@ Equivalent to the `!=` operator. The exact inverse of `eq` (same epsilon).
 
 ```akk
 // Drop a voice on the rest steps only
-freq = pat("c4 ~ g4 c5") |> %.freq
+freq = pat("c4 ~ g4 c5") |> @.freq
 voice = osc("saw", freq) * neq(freq, 0)
-voice |> out(%)
+voice |> out(@)
 ```
 
 ---
@@ -178,7 +178,7 @@ Equivalent to the `&&` operator.
 // Accent only when both gates fire
 loud = lfo(0.5) > 0.5
 hit  = trigger(4)
-band(loud, hit) |> ar(%, 0.005, 0.1) |> out(%)
+band(loud, hit) |> ar(@, 0.005, 0.1) |> out(@)
 ```
 
 ---
@@ -217,7 +217,7 @@ Equivalent to the prefix `!` operator.
 // Inverse gate, sustain when no trigger
 gate = trigger(4)
 sustain = bnot(gate)
-osc("sin", 220) * sustain |> out(%)
+osc("sin", 220) * sustain |> out(@)
 ```
 
 ---

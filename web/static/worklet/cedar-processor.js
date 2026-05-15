@@ -202,7 +202,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 			case 'getShapeIndex':
 				// Phase 2 records-system-unification: editor pulls the
-				// analyzer-driven shape index for r./%./record-literal
+				// analyzer-driven shape index for r./@./record-literal
 				// completions. Debounced ~300 ms on the main thread.
 				this.getShapeIndex(msg.requestId, msg.source, msg.cursor);
 				break;

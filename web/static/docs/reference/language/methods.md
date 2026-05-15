@@ -58,7 +58,7 @@ This is what makes [userspace operators](../builtins/state.md) like `step` read 
 ```akk
 step = (arr, trig) -> arr[counter(trig)]
 
-[60, 64, 67, 72].step(trigger(4)) |> mtof(%) |> sine(%) |> out(%)
+[60, 64, 67, 72].step(trigger(4)) |> mtof(@) |> sine(@) |> out(@)
 ```
 
 ## Mixing pipes and methods
@@ -66,8 +66,8 @@ step = (arr, trig) -> arr[counter(trig)]
 Pipes and methods cooperate freely:
 
 ```akk
-sig.lp(1200) |> hp(%, 200)     // method, then pipe
-sig |> lp(%, 1200).hp(200)     // pipe, then method-chain
+sig.lp(1200) |> hp(@, 200)     // method, then pipe
+sig |> lp(@, 1200).hp(200)     // pipe, then method-chain
 ```
 
 Pick whichever reads better at the call site.

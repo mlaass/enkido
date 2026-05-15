@@ -99,7 +99,7 @@ fn voice(freq, gate, vel, ext) ->
 
 pat("c4 e4 g4") as e
   |> unison(e.freq, e.gate, e.vel, voice, voices: 5, detune: 0.3)
-  |> out(%)
+  |> out(@)
 ```
 
 **Using the `ext` record to vary per voice:**
@@ -112,7 +112,7 @@ fn rich(freq, gate, vel, ext) -> {
 }
 
 unison(440, 1, 1, rich, voices: 6, detune: 0.4, width: 0.9, phase: 0.5)
-  |> out(%)
+  |> out(@)
 ```
 
 **Bridging a 3-arg `poly` instrument:**
@@ -125,7 +125,7 @@ fn lead(freq, gate, vel) -> sqr(freq) * adsr(gate, 0.01, 0.1, 0.7, 0.3) * vel
 
 fn fat(f, g, v, _) -> lead(f, g, v)
 
-unison(440, 1, 1, fat, voices: 5, detune: 0.4) |> out(%)
+unison(440, 1, 1, fat, voices: 5, detune: 0.4) |> out(@)
 ```
 
 **Polyphonic clusters via composition with `poly`:**
@@ -142,8 +142,8 @@ fn fat(freq, gate, vel) ->
     unison(freq, gate, vel, pad_voice, voices: 4, detune: 0.25, width: 0.7)
 
 chord("Cmaj9 Am11 Fmaj7 G13")
-    |> poly(%, fat, 4)
-    |> out(%)
+    |> poly(@, fat, 4)
+    |> out(@)
 ```
 
 CPU scales with `poly_voices × unison_voices` — a 4-voice `poly` × 4-voice

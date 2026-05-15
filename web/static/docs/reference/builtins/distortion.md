@@ -11,41 +11,41 @@ subfeatures:
   - name: Saturate
     anchor: saturate
     tagline: Tape-style tanh saturation.
-    snippet: 'osc("saw", 110) |> saturate(%, 3)'
+    snippet: 'osc("saw", 110) |> saturate(@, 3)'
   - name: Softclip
     anchor: softclip
     tagline: Cubic soft clipper.
-    snippet: 'osc("saw", 220) |> softclip(%, 0.7)'
+    snippet: 'osc("saw", 220) |> softclip(@, 0.7)'
   - name: Bitcrush
     anchor: bitcrush
     tagline: 8-bit lo-fi color.
-    snippet: 'osc("saw", 220) |> bitcrush(%, 8, 0.5)'
+    snippet: 'osc("saw", 220) |> bitcrush(@, 8, 0.5)'
     icon: Binary
   - name: Fold
     anchor: fold
     tagline: Wavefolder for harmonic chaos.
-    snippet: 'osc("sin", 110) * 2 |> fold(%, 0.5)'
+    snippet: 'osc("sin", 110) * 2 |> fold(@, 0.5)'
   - name: Tube
     anchor: tube
     tagline: Asymmetric valve warmth.
-    snippet: 'osc("saw", 110) |> tube(%, 5, 0.1)'
+    snippet: 'osc("saw", 110) |> tube(@, 5, 0.1)'
     icon: Cylinder
   - name: Smooth
     anchor: smooth
     tagline: Anti-aliased smooth distortion.
-    snippet: 'osc("saw", 220) |> smooth(%, 3)'
+    snippet: 'osc("saw", 220) |> smooth(@, 3)'
   - name: Tape
     anchor: tape
     tagline: Tape compression and saturation.
-    snippet: 'osc("saw", 110) |> tape(%, 4, 0.4)'
+    snippet: 'osc("saw", 110) |> tape(@, 4, 0.4)'
   - name: XFMR
     anchor: xfmr
     tagline: Transformer-style coloration.
-    snippet: 'osc("saw", 55) |> xfmr(%, 4, 8)'
+    snippet: 'osc("saw", 55) |> xfmr(@, 4, 8)'
   - name: Excite
     anchor: excite
     tagline: Harmonic exciter.
-    snippet: 'osc("saw", 220) |> excite(%, 0.5, 3000)'
+    snippet: 'osc("saw", 220) |> excite(@, 0.5, 3000)'
 ---
 
 # Distortion
@@ -69,17 +69,17 @@ Warm, tube-like saturation that adds odd harmonics while preventing harsh clippi
 
 ```akk
 // Warm overdrive
-osc("saw", 110) |> saturate(%, 3) |> out(%)
+osc("saw", 110) |> saturate(@, 3) |> out(@)
 ```
 
 ```akk
 // Heavy saturation on bass
-osc("saw", 55) |> saturate(%, 8) |> lp(%, 400) |> out(%)
+osc("saw", 55) |> saturate(@, 8) |> lp(@, 400) |> out(@)
 ```
 
 ```akk
 // Subtle warming
-osc("sin", 220) |> saturate(%, 1.5) |> out(%)
+osc("sin", 220) |> saturate(@, 1.5) |> out(@)
 ```
 
 Related: [softclip](#softclip), [fold](#fold), [tanh (math)](math#tanh)
@@ -99,12 +99,12 @@ Softer than hard clipping, rounds off peaks smoothly. Lower threshold values cre
 
 ```akk
 // Gentle compression-like softclip
-osc("saw", 220) |> softclip(%, 0.7) |> out(%)
+osc("saw", 220) |> softclip(@, 0.7) |> out(@)
 ```
 
 ```akk
 // Aggressive softclip
-osc("sqr", 110) |> softclip(%, 0.2) |> out(%)
+osc("sqr", 110) |> softclip(@, 0.2) |> out(@)
 ```
 
 Related: [saturate](#saturate)
@@ -127,17 +127,17 @@ Creates lo-fi digital artifacts by quantizing amplitude and reducing sample rate
 
 ```akk
 // Classic 8-bit sound
-osc("saw", 220) |> bitcrush(%, 8, 0.5) |> out(%)
+osc("saw", 220) |> bitcrush(@, 8, 0.5) |> out(@)
 ```
 
 ```akk
 // Extreme lo-fi
-osc("saw", 110) |> bitcrush(%, 4, 0.2) |> out(%)
+osc("saw", 110) |> bitcrush(@, 4, 0.2) |> out(@)
 ```
 
 ```akk
 // Subtle grit
-osc("saw", 440) |> bitcrush(%, 12, 0.8) |> out(%)
+osc("saw", 440) |> bitcrush(@, 12, 0.8) |> out(@)
 ```
 
 Related: [fold](#fold)
@@ -159,17 +159,17 @@ Classic West Coast synthesis technique. When the signal exceeds the threshold, i
 
 ```akk
 // Basic wavefold
-osc("sin", 110) * 2 |> fold(%, 0.5) |> out(%)
+osc("sin", 110) * 2 |> fold(@, 0.5) |> out(@)
 ```
 
 ```akk
 // Animated wavefolding
-osc("sin", 110) * (1.5 + osc("sin", 0.2)) |> fold(%, 0.4) |> out(%)
+osc("sin", 110) * (1.5 + osc("sin", 0.2)) |> fold(@, 0.4) |> out(@)
 ```
 
 ```akk
 // Aggressive folding
-osc("tri", 55) * 4 |> fold(%, 0.3) |> lp(%, 2000) |> out(%)
+osc("tri", 55) * 4 |> fold(@, 0.3) |> lp(@, 2000) |> out(@)
 ```
 
 Related: [saturate](#saturate), [softclip](#softclip)
@@ -192,17 +192,17 @@ Emulates triode tube saturation with an asymmetric transfer function. Unlike sym
 
 ```akk
 // Warm vintage drive
-osc("saw", 110) |> tube(%, 5, 0.1) |> out(%)
+osc("saw", 110) |> tube(@, 5, 0.1) |> out(@)
 ```
 
 ```akk
 // Aggressive tube distortion
-osc("saw", 55) |> tube(%, 15, 0.2) |> lp(%, 800) |> out(%)
+osc("saw", 55) |> tube(@, 15, 0.2) |> lp(@, 800) |> out(@)
 ```
 
 ```akk
 // Subtle 2nd harmonic enhancement
-osc("sin", 220) |> tube(%, 2, 0.15) |> out(%)
+osc("sin", 220) |> tube(@, 2, 0.15) |> out(@)
 ```
 
 Related: [saturate](#saturate), [tape](#tape)
@@ -224,17 +224,17 @@ Tanh saturation with built-in antialiasing. Uses the ADAA (Antiderivative Antial
 
 ```akk
 // Clean master bus saturation
-osc("saw", 220) |> smooth(%, 3) |> out(%)
+osc("saw", 220) |> smooth(@, 3) |> out(@)
 ```
 
 ```akk
 // Heavy saturation without harshness
-osc("sqr", 440) |> smooth(%, 10) |> out(%)
+osc("sqr", 440) |> smooth(@, 10) |> out(@)
 ```
 
 ```akk
 // High-frequency content stays clean
-osc("saw", 880) |> smooth(%, 8) |> out(%)
+osc("saw", 880) |> smooth(@, 8) |> out(@)
 ```
 
 Related: [saturate](#saturate), [tube](#tube)
@@ -259,22 +259,22 @@ The advanced `soft_thresh` parameter controls where saturation begins (lower = e
 
 ```akk
 // Tape-style glue
-osc("saw", 110) |> tape(%, 4, 0.4) |> out(%)
+osc("saw", 110) |> tape(@, 4, 0.4) |> out(@)
 ```
 
 ```akk
 // Lo-fi tape warmth
-osc("sqr", 220) |> tape(%, 6, 0.8) |> out(%)
+osc("sqr", 220) |> tape(@, 6, 0.8) |> out(@)
 ```
 
 ```akk
 // Subtle tape coloration
-osc("sin", 440) |> tape(%, 2, 0.2) |> out(%)
+osc("sin", 440) |> tape(@, 2, 0.2) |> out(@)
 ```
 
 ```akk
 // More aggressive saturation with stronger HF rolloff
-osc("saw", 110) |> tape(%, 5, 0.5, 0.3, 0.9) |> out(%)
+osc("saw", 110) |> tape(@, 5, 0.5, 0.3, 0.9) |> out(@)
 ```
 
 Related: [tube](#tube), [saturate](#saturate)
@@ -300,22 +300,22 @@ The `bass_freq` parameter controls the cutoff frequency for bass extraction. Hig
 
 ```akk
 // Punchy bass
-osc("saw", 55) |> xfmr(%, 4, 8) |> out(%)
+osc("saw", 55) |> xfmr(@, 4, 8) |> out(@)
 ```
 
 ```akk
 // Console warmth on synths
-osc("saw", 220) |> xfmr(%, 3, 4) |> out(%)
+osc("saw", 220) |> xfmr(@, 3, 4) |> out(@)
 ```
 
 ```akk
 // Thick transformer saturation
-osc("sqr", 110) |> xfmr(%, 5, 6) |> lp(%, 2000) |> out(%)
+osc("sqr", 110) |> xfmr(@, 5, 6) |> lp(@, 2000) |> out(@)
 ```
 
 ```akk
 // Extended bass range saturation
-osc("saw", 110) |> xfmr(%, 4, 6, 120) |> out(%)
+osc("saw", 110) |> xfmr(@, 4, 6, 120) |> out(@)
 ```
 
 Related: [tube](#tube), [tape](#tape)
@@ -342,22 +342,22 @@ The `harm_odd` and `harm_even` parameters control the mix of odd and even harmon
 
 ```akk
 // Add presence to synths
-osc("saw", 220) |> excite(%, 0.5, 3000) |> out(%)
+osc("saw", 220) |> excite(@, 0.5, 3000) |> out(@)
 ```
 
 ```akk
 // Brighten with higher corner
-osc("tri", 440) |> excite(%, 0.7, 5000) |> out(%)
+osc("tri", 440) |> excite(@, 0.7, 5000) |> out(@)
 ```
 
 ```akk
 // Subtle air and sparkle
-osc("sin", 110) |> excite(%, 0.3, 4000) |> out(%)
+osc("sin", 110) |> excite(@, 0.3, 4000) |> out(@)
 ```
 
 ```akk
 // Warmer excitation (more even harmonics)
-osc("saw", 220) |> excite(%, 0.5, 3000, 0.2, 0.8) |> out(%)
+osc("saw", 220) |> excite(@, 0.5, 3000, 0.2, 0.8) |> out(@)
 ```
 
 Related: [tube](#tube), [saturate](#saturate)

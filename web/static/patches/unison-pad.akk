@@ -16,7 +16,7 @@ fn fat(freq, gate, vel) ->
            voices: 4, detune: 0.25, width: 0.7, phase: 0.5)
 
 chord("Cmaj9 Am11 Fmaj7 G13")
-    |> poly(%, fat, 4)
-    |> lp(%, 1800)
-    |> % * 0.6 + freeverb(%, 0.75, 0.6) * 0.4
-    |> out(%)
+    |> poly(@, fat, 4)
+    |> lp(@, 1800)
+    |> @ * 0.6 + freeverb(@, 0.75, 0.6) * 0.4
+    |> out(@)

@@ -34,8 +34,8 @@ The controls are extracted at compile time. The IDE reads their metadata and ren
 ```akk
 cutoff = param("cutoff", 800, 100, 5000)
 osc("saw", 220)
-    |> lp(%, cutoff)
-    |> out(%)
+    |> lp(@, cutoff)
+    |> out(@)
 ```
 
 Names are display strings — spaces are fine (`param("lfo rate", 0.4, 0.05, 6)`). Each unique name produces one slider; calling `param` with the same name twice returns the same value.
@@ -50,7 +50,7 @@ Names are display strings — spaces are fine (`param("lfo rate", 0.4, 0.05, 6)`
 
 ```akk
 hit = button("Hit!")
-sample(hit, 1.0, "bd") |> out(%)
+sample(hit, 1.0, "bd") |> out(@)
 ```
 
 Press "Hit!" in the IDE to fire the kick sample on demand.
@@ -67,7 +67,7 @@ Press "Hit!" in the IDE to fire the kick sample on demand.
 ```akk
 bypass = toggle("bypass", 0)
 dry = osc("saw", 220)
-wet = dry |> freeverb(%, 0.6, 0.5)
+wet = dry |> freeverb(@, 0.6, 0.5)
 out(dry * bypass + wet * (1 - bypass))
 ```
 
@@ -83,7 +83,7 @@ out(dry * bypass + wet * (1 - bypass))
 
 ```akk
 wave = dropdown("waveform", "sin", "saw", "sqr", "tri")
-osc(wave, 220) |> out(%)
+osc(wave, 220) |> out(@)
 ```
 
 Switching the dropdown returns `0`, `1`, `2`, or `3`; `osc` accepts the index directly.
@@ -112,9 +112,9 @@ voices = saw(note_freq) + saw(note_freq * 1.005) + saw(note_freq * 0.997)
 swept = cutoff + osc("sin", lfo_rate) * cutoff * lfo_depth * 0.6
 
 voices * 0.2
-    |> moog(%, swept, resonance, _, drive)
+    |> moog(@, swept, resonance, _, drive)
     |> @ + freeverb(@ + hit, 0.5, 0.5) * 0.35
-    |> out(%, %)
+    |> out(@)
 ```
 
 Load it in the web IDE, hit play, and ride the sliders. Edit the code and re-evaluate — slider positions stay put, audio crossfades seamlessly.

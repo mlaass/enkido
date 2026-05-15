@@ -24,7 +24,7 @@ Edge primitives detect transitions in trigger / control signals and accumulate c
 
 ```akk
 // Sample noise once per beat
-noise() |> sah(%, trigger(1)) |> out(%)
+noise() |> sah(@, trigger(1)) |> out(@)
 ```
 
 ## gateup
@@ -38,7 +38,7 @@ noise() |> sah(%, trigger(1)) |> out(%)
 ```akk
 // Trigger an envelope on every rising edge of an LFO
 gate = gateup(lfo(2))
-ar(gate, 0.01, 0.3) * osc("sin", 880) |> out(%)
+ar(gate, 0.01, 0.3) * osc("sin", 880) |> out(@)
 ```
 
 ## gatedown
@@ -52,7 +52,7 @@ ar(gate, 0.01, 0.3) * osc("sin", 880) |> out(%)
 ```akk
 // Fire a percussive blip on note-off
 release = gatedown(gate_signal)
-ar(release, 0.001, 0.05) * noise() |> out(%)
+ar(release, 0.001, 0.05) * noise() |> out(@)
 ```
 
 ## counter
@@ -77,7 +77,7 @@ n = counter(trigger(4), beat(4), 7)
 
 // Index into an array of MIDI notes
 notes = [60, 64, 67, 72]
-notes[counter(trigger(4))] |> mtof(%) |> sine(%) |> out(%)
+notes[counter(trigger(4))] |> mtof(@) |> sine(@) |> out(@)
 ```
 
 `counter` is the natural pair with [array indexing](../language/arrays.md), since `ARRAY_INDEX` wraps by default: an unbounded counter index always produces an in-range lookup.

@@ -32,7 +32,7 @@
   {
     "slug": "unison-pad",
     "title": "Unison Pad",
-    "description": "Polyphonic pad: each chord note fans into a 4-voice detuned unison cluster via poly(%, fat, 4).",
+    "description": "Polyphonic pad: each chord note fans into a 4-voice detuned unison cluster via poly(@, fat, 4).",
     "landing": true
   },
   {
