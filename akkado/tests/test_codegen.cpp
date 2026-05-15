@@ -10197,6 +10197,75 @@ TEST_CASE("midi() as e | e.gate compiles and binds gate buffer",
     // E136 \"e.freq: field 'freq' not available on EventSource\".
 }
 
+// PRD prd-midi-input §7.1: midi() |> soundfont(...) emits a single
+// SOUNDFONT_VOICE with unwired inputs and a SoundfontEvents state init.
+TEST_CASE("midi() |> soundfont() takes the MIDI-upstream path",
+          "[midi][midi-soundfont]") {
+    auto result = akkado::compile(
+        "midi() |> soundfont(%, \"piano.sf2\", 0) |> out(%)");
+    REQUIRE(result.success);
+
+    // Exactly one SOUNDFONT_VOICE instruction; all inputs unwired (the
+    // runtime dispatch signal for event-driven mode).
+    int sf_count = 0;
+    std::uint32_t sf_state_id = 0;
+    std::uint32_t midi_state_id = 0;
+    for (const auto& inst : get_instructions(result)) {
+        if (inst.opcode == cedar::Opcode::SOUNDFONT_VOICE) {
+            ++sf_count;
+            sf_state_id = inst.state_id;
+            CHECK(inst.inputs[0] == 0xFFFF);
+            CHECK(inst.inputs[1] == 0xFFFF);
+            CHECK(inst.inputs[2] == 0xFFFF);
+            CHECK(inst.inputs[3] == 0xFFFF);
+            CHECK(inst.inputs[4] == 0xFFFF);
+        }
+        if (inst.opcode == cedar::Opcode::MIDI_QUERY) {
+            midi_state_id = inst.state_id;
+        }
+    }
+    CHECK(sf_count == 1);
+
+    // The state init must reference the upstream midi() state_id and the
+    // literal preset index.
+    bool found_sf_init = false;
+    for (const auto& init : result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
+            found_sf_init = true;
+            CHECK(init.state_id == sf_state_id);
+            CHECK(init.sf_seq_state_id == midi_state_id);
+            CHECK(init.sf_preset_idx == 0);
+        }
+    }
+    CHECK(found_sf_init);
+}
+
+TEST_CASE("pat() |> soundfont() still takes the legacy buffer path",
+          "[midi][midi-soundfont]") {
+    // Regression: pattern upstream keeps the per-chord-voice SOUNDFONT_VOICE
+    // emission with wired gate/freq/vel/preset buffers.
+    auto result = akkado::compile(
+        "pat(\"c4 e4\") |> soundfont(%, \"piano.sf2\", 0) |> out(%)");
+    REQUIRE(result.success);
+
+    int sf_count = 0;
+    for (const auto& inst : get_instructions(result)) {
+        if (inst.opcode == cedar::Opcode::SOUNDFONT_VOICE) {
+            ++sf_count;
+            // Legacy path wires gate (inputs[0]) and a constant preset buffer
+            // (inputs[3]) — both non-0xFFFF.
+            CHECK(inst.inputs[0] != 0xFFFF);
+            CHECK(inst.inputs[3] != 0xFFFF);
+        }
+    }
+    CHECK(sf_count >= 1);
+
+    // No SoundfontEvents init should be emitted on the pattern path.
+    for (const auto& init : result.state_inits) {
+        CHECK(init.type != akkado::StateInitData::Type::SoundfontEvents);
+    }
+}
+
 TEST_CASE("midi() still feeds poly() via state_id (regression)",
           "[midi][midi-mono]") {
     const std::string preamble =

@@ -262,6 +262,11 @@ void apply_state_inits(cedar::VM& vm,
                                init.poly_max_voices, init.poly_mode,
                                init.poly_steal_strategy,
                                init.poly_release_seconds);
+#ifndef CEDAR_NO_SOUNDFONT
+        } else if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
+            vm.init_soundfont_voice_event_state(
+                init.state_id, init.sf_seq_state_id, init.sf_preset_idx);
+#endif
         } else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
             vm.init_extended_params(init.state_id,
                                     init.ext_constants.data(),

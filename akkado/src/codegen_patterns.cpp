@@ -5586,22 +5586,52 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Get pattern's fields (gate, freq, vel) from PatternPayload
-    if (!pattern_tv.pattern) {
-        error("E133", "soundfont() first argument must be a pattern that produces "
-              "gate/freq/vel fields", n.location);
-        return TypedValue::void_val();
-    }
+    // PRD prd-midi-input §7.1: detect runtime event source upstream
+    // (today: midi(); future: anything else that sets is_runtime_event_source
+    // on PatternPayload). EventSourcePayload is also accepted to keep the
+    // EventSource v1 surface working in case any caller still produces it.
+    const bool upstream_is_event_source =
+        (pattern_tv.pattern && pattern_tv.pattern->is_runtime_event_source) ||
+        (pattern_tv.type == ValueType::EventSource && pattern_tv.event_source);
+    const std::uint32_t upstream_seq_state_id = upstream_is_event_source
+        ? (pattern_tv.pattern
+              ? pattern_tv.pattern->state_id
+              : pattern_tv.event_source->state_id)
+        : 0u;
 
-    const auto& pat_fields = pattern_tv.pattern->fields;
-    std::uint16_t gate_buf = pat_fields[PatternPayload::GATE];
-    std::uint16_t freq_buf = pat_fields[PatternPayload::FREQ];
-    std::uint16_t vel_buf = pat_fields[PatternPayload::VEL];
+    // Get pattern's fields (gate, freq, vel) from PatternPayload — only the
+    // legacy buffer-driven path needs them.
+    std::uint16_t gate_buf = 0xFFFF;
+    std::uint16_t freq_buf = 0xFFFF;
+    std::uint16_t vel_buf  = 0xFFFF;
+    std::uint16_t trig_buf = 0xFFFF;
+    std::vector<std::uint16_t> freq_per_voice;
 
-    if (gate_buf == 0xFFFF || freq_buf == 0xFFFF || vel_buf == 0xFFFF) {
-        error("E133", "soundfont() pattern is missing required fields (gate, freq, vel)",
-              n.location);
-        return TypedValue::void_val();
+    if (!upstream_is_event_source) {
+        if (!pattern_tv.pattern) {
+            error("E133", "soundfont() first argument must be a pattern that produces "
+                  "gate/freq/vel fields", n.location);
+            return TypedValue::void_val();
+        }
+
+        const auto& pat_fields = pattern_tv.pattern->fields;
+        gate_buf = pat_fields[PatternPayload::GATE];
+        freq_buf = pat_fields[PatternPayload::FREQ];
+        vel_buf  = pat_fields[PatternPayload::VEL];
+        trig_buf = pat_fields[PatternPayload::TRIG];
+
+        if (gate_buf == 0xFFFF || freq_buf == 0xFFFF || vel_buf == 0xFFFF) {
+            error("E133", "soundfont() pattern is missing required fields (gate, freq, vel)",
+                  n.location);
+            return TypedValue::void_val();
+        }
+
+        const auto& voice_freqs = pattern_tv.pattern->voice_freqs;
+        if (voice_freqs.empty()) {
+            freq_per_voice.push_back(freq_buf);
+        } else {
+            freq_per_voice = voice_freqs;
+        }
     }
 
     // soundfont natively dispatches chord polyphony: each chord voice goes to
@@ -5609,15 +5639,6 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     // and the per-voice outputs are summed. Clear the E410 tracking entry —
     // poly() is not required for soundfont.
     polyphonic_pattern_nodes_.erase(pattern_arg);
-
-    const auto& voice_freqs = pattern_tv.pattern->voice_freqs;
-    std::vector<std::uint16_t> freq_per_voice;
-    if (voice_freqs.empty()) {
-        freq_per_voice.push_back(freq_buf);
-    } else {
-        freq_per_voice = voice_freqs;
-    }
-    std::uint16_t trig_buf = pat_fields[PatternPayload::TRIG];
 
     // Find or assign SF2 slot index (deduplicate by filename)
     std::uint8_t sf_slot = 0;
@@ -5637,29 +5658,17 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     std::uint32_t sf_count = call_counters_["soundfont"]++;
     push_path("soundfont#" + std::to_string(sf_count));
 
-    // Emit constant for preset index (shared across voices)
-    std::uint16_t preset_buf = codegen::emit_push_const(buffers_, instructions_,
-                                                         static_cast<float>(preset_index));
-    if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
-        pop_path();
-        return TypedValue::void_val();
-    }
-    source_locations_.push_back(current_source_loc_);
-
-    // Emit one SOUNDFONT_VOICE per chord voice. Each gets its own state_id
-    // (and therefore its own SoundFontVoiceState with 32 internal voices)
-    // so simultaneous chord notes don't fight over one allocator.
+    // PRD prd-midi-input §7.1: MIDI-upstream (event-driven) path. One
+    // SOUNDFONT_VOICE with unwired inputs; the opcode resolves events from
+    // seq_state_id and uses its internal 32-voice allocator for chord
+    // polyphony driven by live note-ons.
     std::vector<std::uint16_t> per_voice_outs;
-    per_voice_outs.reserve(freq_per_voice.size());
-    for (std::size_t v = 0; v < freq_per_voice.size(); ++v) {
-        push_path("voice#" + std::to_string(v));
+    if (upstream_is_event_source) {
         std::uint32_t state_id = compute_state_id();
 
         std::uint16_t out_buf = buffers_.allocate();
         if (out_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
-            pop_path();
             pop_path();
             return TypedValue::void_val();
         }
@@ -5667,17 +5676,65 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         cedar::Instruction sf_inst{};
         sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
         sf_inst.out_buffer = out_buf;
-        sf_inst.inputs[0] = gate_buf;
-        sf_inst.inputs[1] = freq_per_voice[v];
-        sf_inst.inputs[2] = vel_buf;
-        sf_inst.inputs[3] = preset_buf;
-        sf_inst.inputs[4] = trig_buf;
+        sf_inst.inputs[0] = 0xFFFF;  // signals event-driven mode to op_soundfont_voice
+        sf_inst.inputs[1] = 0xFFFF;
+        sf_inst.inputs[2] = 0xFFFF;
+        sf_inst.inputs[3] = 0xFFFF;
+        sf_inst.inputs[4] = 0xFFFF;
         sf_inst.state_id = state_id;
         sf_inst.rate = sf_slot;
         emit(sf_inst);
 
+        // Tell the host to seed the SoundFontVoiceState with the upstream
+        // state_id and the preset index before audio starts.
+        StateInitData sf_init;
+        sf_init.state_id          = state_id;
+        sf_init.type              = StateInitData::Type::SoundfontEvents;
+        sf_init.sf_seq_state_id   = upstream_seq_state_id;
+        sf_init.sf_preset_idx     = preset_index;
+        state_inits_.push_back(std::move(sf_init));
+
         per_voice_outs.push_back(out_buf);
-        pop_path();
+    } else {
+        // Legacy buffer-driven path: emit a constant preset buffer and one
+        // SOUNDFONT_VOICE per chord voice, each with its own state_id.
+        std::uint16_t preset_buf = codegen::emit_push_const(buffers_, instructions_,
+                                                             static_cast<float>(preset_index));
+        if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            pop_path();
+            return TypedValue::void_val();
+        }
+        source_locations_.push_back(current_source_loc_);
+
+        per_voice_outs.reserve(freq_per_voice.size());
+        for (std::size_t v = 0; v < freq_per_voice.size(); ++v) {
+            push_path("voice#" + std::to_string(v));
+            std::uint32_t state_id = compute_state_id();
+
+            std::uint16_t out_buf = buffers_.allocate();
+            if (out_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                pop_path();
+                pop_path();
+                return TypedValue::void_val();
+            }
+
+            cedar::Instruction sf_inst{};
+            sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
+            sf_inst.out_buffer = out_buf;
+            sf_inst.inputs[0] = gate_buf;
+            sf_inst.inputs[1] = freq_per_voice[v];
+            sf_inst.inputs[2] = vel_buf;
+            sf_inst.inputs[3] = preset_buf;
+            sf_inst.inputs[4] = trig_buf;
+            sf_inst.state_id = state_id;
+            sf_inst.rate = sf_slot;
+            emit(sf_inst);
+
+            per_voice_outs.push_back(out_buf);
+            pop_path();
+        }
     }
 
     // Sum per-voice outputs into one buffer. Single voice = no sum needed.

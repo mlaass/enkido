@@ -216,6 +216,24 @@ public:
         state.ensure_voices(&audio_arena_);
     }
 
+    // PRD prd-midi-input §7.1: initialize a SoundFontVoiceState for the
+    // event-driven path. Codegen pushes one of these whenever the upstream
+    // is a runtime event source (midi() — and any future producer that
+    // sets is_runtime_event_source on its PatternPayload). The SF2 voice
+    // opcode then resolves events via seq_state_id instead of reading the
+    // legacy gate/freq/vel buffers from instruction inputs.
+#ifndef CEDAR_NO_SOUNDFONT
+    void init_soundfont_voice_event_state(std::uint32_t state_id,
+                                          std::uint32_t seq_state_id,
+                                          int preset_idx) {
+        auto& state = state_pool_.get_or_create<SoundFontVoiceState>(state_id);
+        state.has_upstream_events = true;
+        state.seq_state_id        = seq_state_id;
+        state.preset_idx          = preset_idx;
+        state.ensure_voices(&audio_arena_);
+    }
+#endif
+
     // Initialize a MidiQueueState for a MIDI_QUERY opcode.
     //
     // Allocates the SPSC ring (DEFAULT_RING_CAPACITY events) and the

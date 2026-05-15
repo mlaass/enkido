@@ -446,10 +446,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                      "sample name or numeric sample-bank ID.",
                      0, {}, {}, ChannelCount::Stereo,
                      /*stereo_native=*/true}},
-    {"soundfont", {.opcode = cedar::Opcode::NOP, .input_count = 2, .optional_count = 1, .requires_state = false,
+    // PRD prd-midi-input §7.1: requires_state flipped to true so the state
+    // pool retains seq_state_id + preset_idx across blocks for the MIDI
+    // event-driven path. Legacy pattern path is unaffected (its codegen
+    // assigns one state_id per chord voice and lets the runtime alloc).
+    {"soundfont", {.opcode = cedar::Opcode::NOP, .input_count = 2, .optional_count = 1, .requires_state = true,
                    .param_names = {"input", "file", "preset", "", "", ""},
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
-                   .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset)",
+                   .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset). Accepts midi() upstream for live polyphonic SF2 playback.",
                    .consumes_polyphonic_pattern = true}},
     // PRD prd-midi-input §4.7: runtime MIDI event source. The `options` record
     // selects the source (default device / named device / .mid file) and tunes

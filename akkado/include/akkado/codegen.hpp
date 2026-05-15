@@ -127,6 +127,8 @@ struct StateInitData {
         SequenceProgram,  // Initialize SequenceState with compiled sequences
         PolyAlloc,        // Initialize PolyAllocState for poly/mono/legato
         ExtendedParams,   // Initialize ExtendedParams<N> with constants/buffer refs
+        SoundfontEvents,  // PRD prd-midi-input §7.1: SoundFontVoiceState in
+                          // event-driven mode (upstream is midi()/EventSource)
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -166,6 +168,13 @@ struct StateInitData {
     // The VM converts to samples at init time via current sample_rate.
     // 0 = legacy "gate-multiplied silence at note-off" behavior.
     float poly_release_seconds = 0.0f;
+
+    // PRD prd-midi-input §7.1: SoundfontEvents init payload. sf_seq_state_id
+    // is the upstream MidiQueueState / SequenceState the soundfont opcode
+    // resolves events from; sf_preset_idx is the SF2 preset index (constant
+    // across the program, captured from the codegen literal).
+    std::uint32_t sf_seq_state_id = 0;
+    int           sf_preset_idx   = 0;
 
     // For SequenceProgram: iter()/iterBack() rotation configuration.
     // iter_n=0 disables rotation. iter_dir is +1 for iter, -1 for iterBack.

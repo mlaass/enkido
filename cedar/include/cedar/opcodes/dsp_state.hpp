@@ -615,6 +615,17 @@ struct SoundFontVoiceState {
     float prev_gate = 0.0f;       // For gate edge detection
     std::uint8_t prev_note = 255; // For note-change fallback (255 = none)
 
+    // PRD prd-midi-input §7.1: when has_upstream_events is true, the opcode
+    // ignores its input buffers and sources note-on / note-off transitions
+    // from a MidiQueueState (or any EventSource) via
+    // ctx.states->resolve_output_events(seq_state_id). The legacy gate-edge
+    // path (for pattern → soundfont) is preserved when this flag is false.
+    bool          has_upstream_events = false;
+    std::uint32_t seq_state_id        = 0;
+    // Preset index when has_upstream_events=true (buffer-based path reads
+    // it from inputs[3]). Captured at init time.
+    int           preset_idx          = 0;
+
     // Ensure voices are allocated from arena
     void ensure_voices(AudioArena* arena) {
         if (voices) return;

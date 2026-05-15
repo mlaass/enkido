@@ -16,6 +16,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1143,3 +1146,200 @@ TEST_CASE("midi-mono: program without buffer wiring leaves the fill a no-op",
     CHECK(s.mono_stack_depth == 0);  // not touched
     CHECK(s.output.num_events == 1); // event still recorded normally
 }
+
+// ============================================================================
+// PRD prd-midi-input §7.1: SoundFont accepts MIDI upstream
+//
+// `midi() |> soundfont(...)` triggers polyphonic voices on each note-on event
+// and releases them on note-off, without relying on the legacy buffer-driven
+// edge detection. SoundFontVoiceState's internal 32-voice allocator handles
+// chord polyphony.
+// ============================================================================
+
+#ifndef CEDAR_NO_SOUNDFONT
+namespace fs = std::filesystem;
+
+static fs::path find_sf_fixture_midi() {
+    fs::path cur = fs::current_path();
+    for (int depth = 0; depth < 8; ++depth) {
+        const fs::path candidate =
+            cur / "web" / "static" / "soundfonts" / "TimGM6mb.sf3";
+        if (fs::exists(candidate)) return candidate;
+        if (cur.has_parent_path() && cur.parent_path() != cur) {
+            cur = cur.parent_path();
+        } else {
+            break;
+        }
+    }
+    return {};
+}
+
+static std::vector<std::uint8_t> read_file_bytes_midi(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    REQUIRE(in.good());
+    auto sz = static_cast<std::size_t>(in.tellg());
+    in.seekg(0);
+    std::vector<std::uint8_t> buf(sz);
+    in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(sz));
+    return buf;
+}
+
+// Build a MIDI_QUERY + SOUNDFONT_VOICE (event-driven) + OUTPUT program.
+// All five SOUNDFONT_VOICE input slots are 0xFFFF — that's the runtime
+// signal that selects the event-driven path. Bytecode mirrors what
+// handle_soundfont_call emits for `midi() |> soundfont(@, "...", N)`.
+static std::vector<Instruction> build_midi_soundfont_program() {
+    static constexpr std::uint32_t SF_STATE_ID = 0x50000;
+    std::vector<Instruction> program;
+
+    program.push_back(Instruction::make_nullary(
+        Opcode::MIDI_QUERY, 0xFFFF, MIDI_STATE_ID));
+
+    Instruction sf_inst{};
+    sf_inst.opcode = Opcode::SOUNDFONT_VOICE;
+    sf_inst.out_buffer = BUF_MIX;
+    sf_inst.inputs[0] = 0xFFFF;
+    sf_inst.inputs[1] = 0xFFFF;
+    sf_inst.inputs[2] = 0xFFFF;
+    sf_inst.inputs[3] = 0xFFFF;
+    sf_inst.inputs[4] = 0xFFFF;
+    sf_inst.state_id = SF_STATE_ID;
+    sf_inst.rate = 0;  // SF slot 0
+    program.push_back(sf_inst);
+
+    program.push_back(Instruction::make_unary(Opcode::OUTPUT, 0, BUF_MIX));
+    return program;
+}
+
+TEST_CASE("midi-soundfont: live note-on allocates a SF voice",
+          "[midi-soundfont]") {
+    auto sf_path = find_sf_fixture_midi();
+    if (sf_path.empty()) {
+        SKIP("SF2/SF3 fixture not found — skipping");
+    }
+
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto sf_bytes = read_file_bytes_midi(sf_path);
+    REQUIRE(vm.soundfont_registry().load_from_memory(
+                MemoryView(sf_bytes.data(), sf_bytes.size()),
+                "test", vm.sample_bank()) == 0);
+
+    constexpr std::uint32_t SF_STATE_ID = 0x50000;
+    auto program = build_midi_soundfont_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_soundfont_voice_event_state(SF_STATE_ID, MIDI_STATE_ID, /*preset=*/0);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));  // C4 on
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& sf = vm.states().get_or_create<SoundFontVoiceState>(SF_STATE_ID);
+    int active = 0;
+    for (std::uint16_t i = 0; i < SoundFontVoiceState::MAX_VOICES; ++i) {
+        if (sf.voices[i].active) ++active;
+    }
+    CHECK(active >= 1);
+}
+
+TEST_CASE("midi-soundfont: chord allocates multiple voices",
+          "[midi-soundfont]") {
+    auto sf_path = find_sf_fixture_midi();
+    if (sf_path.empty()) {
+        SKIP("SF2/SF3 fixture not found — skipping");
+    }
+
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto sf_bytes = read_file_bytes_midi(sf_path);
+    REQUIRE(vm.soundfont_registry().load_from_memory(
+                MemoryView(sf_bytes.data(), sf_bytes.size()),
+                "test", vm.sample_bank()) == 0);
+
+    constexpr std::uint32_t SF_STATE_ID = 0x50000;
+    auto program = build_midi_soundfont_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_soundfont_voice_event_state(SF_STATE_ID, MIDI_STATE_ID, 0);
+
+    // C major triad — three simultaneous note-ons.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));  // C4
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64,  90));  // E4
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 67,  80));  // G4
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    // Count distinct active notes (one preset may use multiple zones per
+    // note, so total active >= 3 but distinct notes should be exactly 3).
+    auto& sf = vm.states().get_or_create<SoundFontVoiceState>(SF_STATE_ID);
+    std::set<std::uint8_t> active_notes;
+    for (std::uint16_t i = 0; i < SoundFontVoiceState::MAX_VOICES; ++i) {
+        if (sf.voices[i].active) active_notes.insert(sf.voices[i].note);
+    }
+    CHECK(active_notes.count(60) == 1);
+    CHECK(active_notes.count(64) == 1);
+    CHECK(active_notes.count(67) == 1);
+}
+
+TEST_CASE("midi-soundfont: note-off marks matching voices as releasing",
+          "[midi-soundfont]") {
+    auto sf_path = find_sf_fixture_midi();
+    if (sf_path.empty()) {
+        SKIP("SF2/SF3 fixture not found — skipping");
+    }
+
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto sf_bytes = read_file_bytes_midi(sf_path);
+    REQUIRE(vm.soundfont_registry().load_from_memory(
+                MemoryView(sf_bytes.data(), sf_bytes.size()),
+                "test", vm.sample_bank()) == 0);
+
+    constexpr std::uint32_t SF_STATE_ID = 0x50000;
+    auto program = build_midi_soundfont_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_soundfont_voice_event_state(SF_STATE_ID, MIDI_STATE_ID, 0);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, 60,   0));
+    vm.process_block(left.data(), right.data());
+
+    auto& sf = vm.states().get_or_create<SoundFontVoiceState>(SF_STATE_ID);
+    bool found_releasing_60 = false;
+    for (std::uint16_t i = 0; i < SoundFontVoiceState::MAX_VOICES; ++i) {
+        const auto& v = sf.voices[i];
+        if (v.active && v.note == 60 && v.releasing) {
+            found_releasing_60 = true;
+        }
+    }
+    CHECK(found_releasing_60);
+}
+
+TEST_CASE("midi-soundfont: legacy pattern path is untouched by has_upstream_events",
+          "[midi-soundfont]") {
+    // A SoundFontVoiceState created with has_upstream_events=false must
+    // take the legacy buffer-driven path. Just verify the default value.
+    SoundFontVoiceState s;
+    CHECK_FALSE(s.has_upstream_events);
+    CHECK(s.seq_state_id == 0);
+    CHECK(s.preset_idx == 0);
+}
+#endif  // CEDAR_NO_SOUNDFONT

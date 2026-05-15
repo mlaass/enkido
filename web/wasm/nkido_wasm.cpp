@@ -1152,6 +1152,13 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             );
             count++;
         }
+#ifndef CEDAR_NO_SOUNDFONT
+        else if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
+            g_vm->init_soundfont_voice_event_state(
+                init.state_id, init.sf_seq_state_id, init.sf_preset_idx);
+            count++;
+        }
+#endif
         else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
             g_vm->init_extended_params(
                 init.state_id,
