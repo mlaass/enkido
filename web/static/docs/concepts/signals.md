@@ -11,14 +11,14 @@ Akkado has two kinds of audio signals: **Mono** (one channel) and **Stereo** (tw
 
 ## Defaults
 
-Oscillators, filters, and most DSP is **mono** by default. You go stereo explicitly:
+Generators (`osc`, `noise`, `pulse`) are **mono** by default; effects are stereo-native and preserve their input's channel count. To start a chain in stereo, widen at the boundary:
 
 ```akkado
 // Mono — single channel
 saw(220)
 
 // Stereo — duplicate mono across both channels
-saw(220) |> stereo()
+saw(220) |> stereo(%)
 
 // Stereo — distinct L and R
 stereo(saw(218), saw(222))
@@ -54,6 +54,17 @@ Calling a conversion on a signal that's already the target channel count is a **
 
 A genuine *type* mismatch — an audio-rate signal in a non-signal slot, for example — is still a hard error (`E186`).
 
+### Panning a stereo signal
+
+`pan()` has two signatures dispatched by the channel type of its first argument:
+
+```akkado
+mono_sig   |> pan(%, 0.3)   // Mono → Stereo: equal-power mono pan
+stereo_sig |> pan(%, 0.3)   // Stereo → Stereo: equal-power stereo balance
+```
+
+The stereo overload is DAW-style balance — `L_out = L * cos θ`, `R_out = R * sin θ` with `θ = (p + 1) · π/4`. At `p = 0` both channels drop by ~3 dB (equal-power centre); at `p = ±1` one channel is silenced. See the [Stereo builtins reference](/docs/reference/builtins/stereo) for the math.
+
 ## Stereo-native effects
 
 Every audio effect is **stereo-native**: it processes both channels in a single dispatch with one per-channel state struct. A **mono** input automatically widens — the opcode reads it once and uses it for both the L and R lanes — so you never have to duplicate a chain or insert `stereo()` to get a stereo result.
@@ -76,13 +87,29 @@ right_out = sig |> filter_lp(%, 500, 0.7) |> delay(%, 0.25, 0.5)
 out(left_out, right_out)
 ```
 
-Identical state handling, identical audio. Stateless effects (`saturate`, `softclip`, `fold`, `distort`) work the same way. Spatializing effects (reverbs, `chorus`, `phaser`, `flanger`) go further: a mono input widens into a genuinely *decorrelated* stereo output (cross-coupled reverb tanks, offset L/R LFO phases).
+Identical state handling, identical audio. Stateless effects (`saturate`, `softclip`, `fold`, `distort`) work the same way. Spatializing effects (reverbs, `chorus`, `phaser`, `flanger`) go further: a mono input widens into a genuinely *decorrelated* stereo output (cross-coupled reverb tanks, offset L/R LFO phases). A *stereo* input into a spatializing effect runs through a single cross-coupled instance — `dattorro`, `freeverb`, `fdn` each get one set of tanks with L↔R cross-bleed, not two independent mono reverbs in parallel.
+
+### Tuning stereo width on modulation FX
+
+`chorus`, `flanger`, and `phaser` expose an extended parameter `lfo_phase` — the offset between the L and R LFOs, in **turns** (0.0–1.0). Default is `0.25` (= 90°), the classic stereo-modulation setting.
+
+```akkado
+// Default: 90° offset, classic stereo chorus
+osc("saw", 220) |> chorus(%, 0.5, 0.4) |> out(%)
+
+// 0 = mono-equivalent (L = R); 0.5 = anti-phase (max width, may collapse on mono-summing)
+osc("saw", 220) |> chorus(%, 0.5, 0.4, lfo_phase: 0.5) |> out(%)
+osc("saw", 110) |> phaser(%, 0.3, 0.8, lfo_phase: 0)   |> out(%)
+```
+
+`phaser` also exposes `feedback` and `stages` the same way. Named-argument syntax (`name: value`) skips intervening defaults — pass only what you want to change.
 
 ### What stereo-native processing doesn't change
 
 - **Scalar parameters (cutoff, resonance, time, feedback) are shared between L and R.** Both channels see the same value. If you want independent per-channel modulation, split the stream explicitly.
 - **Pattern events (`pat`, `seq`, `timeline`) are always mono** — a stereo synth driven by a mono pattern is the normal case.
-- **Generators stay mono.** `osc`, `noise`, `pulse`, and mono-file `sample` return Mono; the widening happens at the boundary into the first effect.
+- **Generators stay mono.** `osc`, `noise`, `pulse` return Mono; the widening happens at the boundary into the first effect.
+- **`sample()` is the exception — always Stereo.** A mono file broadcasts to L=R; a stereo file preserves its L/R channels; files with 3+ channels keep the first two and drop the rest. Either way the output type is Stereo, so downstream effects skip the auto-widening step.
 - **Cross-channel effects** like `width`, `pingpong`, `ms_encode`/`ms_decode` have their own explicit stereo signatures.
 
 ## Mixed-channel arithmetic
@@ -90,9 +117,9 @@ Identical state handling, identical audio. Stateless effects (`saturate`, `softc
 `+`, `-`, `*`, `/` on a **mono** and a **stereo** operand broadcast the mono side across both channels:
 
 ```akkado
-dry = osc("saw", 220)                          // Mono
-wet = dry |> stereo() |> freeverb(%, 0.9, 0.5) // Stereo
-dry * 0.3 + wet * 0.7 |> out(%)                // Stereo out
+dry = osc("saw", 220)                  // Mono
+wet = dry |> freeverb(%, 0.9, 0.5)     // Stereo — freeverb auto-widens
+dry * 0.3 + wet * 0.7 |> out(%)        // Stereo out (mono dry broadcast onto wet)
 ```
 
 The `dry * 0.3` stays mono, `wet * 0.7` stays stereo, and `mono + stereo` promotes to stereo by dual-reading the mono buffer. No extra instructions.
