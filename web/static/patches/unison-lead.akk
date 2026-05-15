@@ -1,0 +1,24 @@
+// Unison Lead
+// `unison()` multiplies a single note across N detuned, panned, phase-spread
+// voices and returns a stereo signal. Pure userspace stdlib — no special
+// opcode. The instrument is a 4-arg function `(freq, gate, vel, ext)`; `ext`
+// carries per-voice info: `idx`, `count`, `detune_st`, `pan`, `phase`.
+//
+// Drag the sliders to hear the spread morph in real time. `detune` is in
+// semitones; `width` is the stereo pan spread; voices are statically
+// expanded at compile time, so the count must be a literal.
+
+bpm = 110
+
+fn saw_voice(freq, gate, vel, ext) ->
+    saw(freq, ext.phase) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel
+
+det = param("detune", 0.4, 0.0, 1.5)
+wid = param("width", 0.8, 0.0, 1.0)
+cut = param("cutoff", 2400, 200, 8000)
+
+pat("c3 eb3 g3 bb3 c4 g3 eb3 c3") as e
+  |> unison(e.freq, e.gate, e.vel, saw_voice,
+            voices: 7, detune: det, width: wid, phase: 0.3)
+  |> lp(%, cut)
+  |> out(%)

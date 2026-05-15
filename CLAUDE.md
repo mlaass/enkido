@@ -83,6 +83,10 @@ Chords are signal arrays that auto-expand UGens:
 - `Am7'` → A minor 7th chord
 - `F#m7_4'` → chord with slash bass
 
+### Voicing
+- `poly(input, instrument, voices)` allocates a new runtime voice per incoming note (instrument is 3-arg `(freq, gate, vel)`, may return stereo).
+- `unison(freq, gate, vel, instrument, voices, detune, width, phase)` is a userspace stdlib fn that statically fans a single note into N detuned, stereo-panned, phase-spread voices (instrument is 4-arg `(freq, gate, vel, ext)` with `ext.{idx, count, detune_st, pan, phase}`). Compose with `poly` for polyphonic unison.
+
 ### Parameter Exposure
 Runtime controls exposed in the web UI:
 ```akkado

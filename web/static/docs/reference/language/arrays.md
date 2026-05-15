@@ -3,7 +3,7 @@ title: Arrays
 category: language
 order: 6
 index_headings: true
-keywords: [array, list, arrays, indexing, len, length, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension]
+keywords: [array, list, arrays, indexing, len, length, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension, index, stereo, variadic]
 group: language
 subgroup: data
 icon: Brackets
@@ -98,18 +98,34 @@ osc("sin", 220) * (1 / n) |> out(%)
 
 ## map
 
-**Map**: Apply a unary function to each element. Each call to `fn` receives a unique semantic path, so stateful functions (oscillators, filters) get independent state per voice.
+**Map**: Apply a function to each element. The closure may take **one** or
+**two** parameters: `(v) -> ...` receives just the element, `(v, idx) -> ...`
+also receives the integer element index. A closure with more than two
+parameters errors (E146). Each call to `fn` receives a unique semantic path,
+so stateful functions (oscillators, filters) get independent state per voice.
 
 | Param | Type     | Default | Description |
 |-------|----------|---------|-------------|
 | array | array    | -       | Input array |
-| fn    | function | -       | Closure `(x) -> ...` applied to each element |
+| fn    | function | -       | Closure `(v) -> ...` or `(v, idx) -> ...` applied to each element |
 
 ```akk
 // Three independent saw voices, summed
 [110, 220, 440]
   |> map(%, (f) -> osc("saw", f) |> lp(%, 1200))
   |> sum(%) * 0.3
+  |> out(%)
+```
+
+The `(v, idx)` form is useful for indexed per-element variation — looking
+up a parallel array, staggering phases or attacks across voices, etc.:
+
+```akk
+// Stagger phases across a small saw stack
+freqs  = [220, 330, 440, 660]
+phases = [0.0, 0.25, 0.5, 0.75]
+map(freqs, (f, idx) -> saw(f, phases[idx]))
+  |> sum(%) * 0.2
   |> out(%)
 ```
 
@@ -206,17 +222,33 @@ reverse([1, 2, 3])  // [3, 2, 1]
 
 ## sum
 
-**Sum**: Add all elements. Empty array yields a single zero. Single-element array passes through untouched.
+**Sum**: Add signals together. `sum` is **variadic** and **stereo-preserving**:
+it accepts either a single array (`sum(arr)`) or an arbitrary list of signals
+(`sum(a, b, c, ...)`) and adds them per-channel. If any argument is stereo,
+the result is stereo; mono inputs broadcast to both channels. An empty array
+yields zero; a single element passes through untouched.
 
-| Param | Type  | Default | Description |
-|-------|-------|---------|-------------|
-| array | array | -       | Input array |
+| Param | Type             | Default | Description |
+|-------|------------------|---------|-------------|
+| ...   | array or signals | -       | One array of signals, or N signal arguments |
 
 ```akk
-// Mix three voices
+// Mix three voices (array form)
 [osc("sin", 220), osc("sin", 330), osc("sin", 440)]
   |> sum(%) * 0.33
   |> out(%)
+```
+
+```akk
+// Variadic form — sum a few hand-written voices
+sum(saw(220), saw(330.5), saw(440.7)) * 0.25 |> out(%)
+```
+
+```akk
+// Stereo preserved: stereo inputs sum L and R independently.
+a = stereo(saw(220), saw(220.5))
+b = stereo(saw(330), saw(329.4))
+sum(a, b) * 0.4 |> out(%)
 ```
 
 ## mean

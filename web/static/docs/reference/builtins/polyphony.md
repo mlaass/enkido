@@ -2,7 +2,7 @@
 title: Polyphony
 category: builtins
 order: 18
-keywords: [polyphony, polyphonic, poly, mono, legato, spread, voice, voices, chord, instrument, allocation, retrigger, voice-stealing]
+keywords: [polyphony, polyphonic, poly, mono, legato, spread, voice, voices, chord, instrument, allocation, retrigger, voice-stealing, stereo, unison]
 group: sequencing
 subgroup: voicing
 icon: Layers
@@ -40,7 +40,7 @@ Voice allocation for patterns. `poly()` runs an instrument function per voice an
 
 `poly()` reads pattern events at runtime and assigns each note to its own voice slot. The instrument function receives per-voice frequency, gate, and velocity, and the outputs of all active voices are summed. When the same note appears in consecutive events, the voice slot is reused (preserving phase continuity); when all voices are busy, the oldest is stolen.
 
-The instrument must be a 3-parameter function; the names don't matter but the order is fixed: `(freq, gate, vel)`.
+The instrument must be a 3-parameter function; the names don't matter but the order is fixed: `(freq, gate, vel)`. The instrument may return a **mono** or **stereo** signal — `poly` always produces stereo output, broadcasting mono bodies to both channels.
 
 ```akk
 // Polyphonic chord progression with the default 64 voices
@@ -55,6 +55,15 @@ chord("C Em Am G") |> poly(@, stab) |> out(@)
 // Lower voice count if you want predictable stealing
 pat("c4 e4 g4 b4") |> poly(@, (f, g, v) -> osc("sin", f) * v, 8) |> out(@)
 ```
+
+```akk
+// Stereo instrument: each voice returns L/R, poly sums per-channel.
+pat("c4 e4 g4") |> poly(@, (f, g, v) -> stereo(saw(f), saw(f * 1.01)) * v, 4) |> out(@)
+```
+
+For *unison* per voice — fanning each chord note into a stereo-spread,
+detuned cluster — wrap [`unison`](unison) inside the 3-arg `poly`
+instrument.
 
 ## mono
 
@@ -114,4 +123,4 @@ A **voice** is one independent instance of the instrument function. `poly()` run
 
 The **voice count** parameter to `poly()` (default 64). It must be a literal so the compiler can statically allocate. Lower voice counts give predictable voice stealing; higher counts handle complex patterns without dropouts.
 
-Related: [sequencing](sequencing), [chord](../mini-notation/chords), [pat](../mini-notation/basics)
+Related: [unison](unison), [sequencing](sequencing), [chord](../mini-notation/chords), [pat](../mini-notation/basics)

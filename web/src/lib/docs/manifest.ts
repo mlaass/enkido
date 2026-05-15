@@ -26,6 +26,7 @@ export const slugToPath: Record<string, string> = {
 	"operators": "reference/language/operators.md",
 	"audio-input": "reference/builtins/audio-input.md",
 	"stereo": "reference/builtins/stereo.md",
+	"unison": "reference/builtins/unison.md",
 	"sequencing": "reference/builtins/sequencing.md",
 	"delays": "reference/builtins/delays.md",
 	"samples-loading": "reference/builtins/samples-loading.md",
@@ -165,6 +166,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "polyphony",
 			"title": "Polyphony"
+		},
+		{
+			"slug": "unison",
+			"title": "Unison"
 		},
 		{
 			"slug": "timelines",
@@ -1791,6 +1796,17 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Arrays"
 	},
+	"index": {
+		"slug": "fm-synthesis",
+		"category": "builtins",
+		"title": "index",
+		"anchor": "index"
+	},
+	"variadic": {
+		"slug": "arrays",
+		"category": "language",
+		"title": "Arrays"
+	},
 	"variables": {
 		"slug": "variables",
 		"category": "language",
@@ -2013,6 +2029,47 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "stereo",
 		"category": "builtins",
 		"title": "Stereo"
+	},
+	"unison": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "unison",
+		"anchor": "unison"
+	},
+	"supersaw": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"fatten": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"fat": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"detune": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"phase": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"stack": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
+	},
+	"cluster": {
+		"slug": "unison",
+		"category": "builtins",
+		"title": "Unison"
 	},
 	"euclid": {
 		"slug": "sequencing",
@@ -3176,12 +3233,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "modulator",
 		"anchor": "modulator"
 	},
-	"index": {
-		"slug": "fm-synthesis",
-		"category": "builtins",
-		"title": "index",
-		"anchor": "index"
-	},
 	"sideband": {
 		"slug": "fm-synthesis",
 		"category": "builtins",
@@ -3246,6 +3297,7 @@ export const previews: Record<string, string> = {
 	"operators": "Akkado uses operators for arithmetic, comparison, logic, and signal flow.",
 	"audio-input": "The  builtin exposes external audio as a signal source (microphone, tab/system audio, or an uploaded file) so any Cedar effect can process it. The...",
 	"stereo": "Stereo signal operations. Akkado tracks channel count (Mono vs Stereo) on every signal; every audio DSP op is stereo-native — one instruction...",
+	"unison": "Unison takes a single note and multiplies it across N voices that play the same pitch with slightly different detune, stereo pan, and starting...",
 	"sequencing": "Timing and sequencing functions create rhythmic patterns, triggers, and automation curves synchronized to the global clock.",
 	"delays": "Delay effects create copies of a signal offset in time for echoes, rhythmic effects, and spatial depth.",
 	"samples-loading": "How user-supplied audio reaches the sampler at runtime. The  directive declares a bank URI to fetch before the program runs; the IDE also accepts...",
