@@ -392,7 +392,7 @@ CORS: Worker sets `Access-Control-Allow-Origin: https://live.nkido.cc` (and `htt
 │                                        │
 │  Description (optional)                │
 │  ┌──────────────────────────────────┐  │
-│  │ tweak %.cutoff to taste           │  │
+│  │ tweak @.cutoff to taste           │  │
 │  └──────────────────────────────────┘  │
 │                                        │
 │  ⚠ Public and immutable. To change it, │
@@ -460,9 +460,9 @@ PATCHES
 <head>
   <meta charset="utf-8">
   <title>moody bass — nkido</title>
-  <meta name="description" content="tweak %.cutoff to taste">
+  <meta name="description" content="tweak @.cutoff to taste">
   <meta property="og:title" content="moody bass">
-  <meta property="og:description" content="tweak %.cutoff to taste">
+  <meta property="og:description" content="tweak @.cutoff to taste">
   <meta property="og:url" content="https://share.nkido.cc/p/k7gp2x">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="nkido">
@@ -473,8 +473,8 @@ PATCHES
 <body>
   <main>
     <h1>moody bass</h1>
-    <p>tweak %.cutoff to taste</p>
-    <pre><code>osc("saw", 80) |> lp(%, 400, 6) |> out(%, %)</code></pre>
+    <p>tweak @.cutoff to taste</p>
+    <pre><code>osc("saw", 80) |> lp(@, 400, 6) |> out(@, @)</code></pre>
     <a href="https://live.nkido.cc/p/k7gp2x">Open in editor →</a>
   </main>
 </body>

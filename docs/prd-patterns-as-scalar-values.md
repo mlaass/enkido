@@ -116,7 +116,7 @@ These shipped as part of f8dca4d but only by accepting per-event constants or by
 bend("<0 0.5 -0.5>")  // standalone, no host pattern — semantic? Probably error.
 
 // Concrete usage (the actual user story):
-n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") |> mtof(% + bend(%) * 12) |> osc("sin", %)
+n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)
 
 // Functional form:
 bend(n"c4 e4 g4", v"<0 0.5 -0.5>")
@@ -165,7 +165,7 @@ v"<0.3 0.5 0.7>" as e |> osc("saw", 440 + e.freq * 100)
 //   ^^ e is bound as Pattern; e.freq is a Signal pulled from the value buffer.
 //   e.vel, e.trig, e.gate also accessible.
 
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> @ * e.vel |> out(@, @)
 //   identical to today's behavior; n"" doesn't change pipe-binding semantics.
 ```
 
@@ -174,8 +174,8 @@ n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
 ```akkado
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
   |> osc("saw", e.freq)
-  |> lp(%, 200 + e.cutoff * 4000)   // e.cutoff is Signal pulled from SEQPAT_PROP buffer
-  |> out(%, %)
+  |> lp(@, 200 + e.cutoff * 4000)   // e.cutoff is Signal pulled from SEQPAT_PROP buffer
+  |> out(@, @)
 ```
 
 `e.cutoff` returns a Signal-typed `TypedValue` resolved through the existing `PatternPayload.custom_fields` map (already wired in `typed_value.cpp:56` for Phase 2.1). This PRD adds the test coverage and the documented behavior; the runtime plumbing landed in commit f8dca4d.
@@ -308,12 +308,12 @@ TypedValue CodeGenerator::implicit_scalar_cast(const TypedValue& tv, NodeIndex n
 1. **Builtin call args** (most common). For each builtin in `BUILTIN_FUNCTIONS` map (`akkado/include/akkado/builtins.hpp:147`), the dispatch handler reads its args via `coerce_arg_for_signal()` instead of bare `visit()`. **Exceptions** (must use raw `visit()`): handlers that intentionally take a `Pattern` arg — `pat`, `note`, `value`, `chord`, `sample`, `slow`, `fast`, `rev`, every transform in `is_pattern_call()` (defined at `codegen_patterns.cpp:1768`), and `poly`. Mark these with a `bool args_are_signal` flag in `BuiltinInfo`, default true.
 
 > **Note: `args_are_signal` vs the existing `auto_lift` flag.** `BuiltinInfo` already has an `auto_lift` flag that controls Signal→Stereo lifting. The new `args_are_signal` is orthogonal: it controls Pattern→Signal coercion. Both flags can apply to the same builtin (e.g., `osc` lifts mono→stereo when fed a stereo input AND coerces a Pattern arg in its freq slot). Order is fixed: Pattern→Signal first, then Signal→Stereo if applicable.
-2. **Binary / unary operators** (`+`, `-`, `*`, `/`, `%`, comparisons). See §5.3.1 below for the operator type rules — operators only coerce when at least one operand is non-Pattern.
+2. **Binary / unary operators** (`+`, `-`, `*`, `/`, `@`, comparisons). See §5.3.1 below for the operator type rules — operators only coerce when at least one operand is non-Pattern.
 3. **Pipe expression** (`a |> b`). When `a` is a Pattern and `b`'s first slot expects Signal, coerce.
 
 #### 5.3.1 Operator type rules
 
-The operator visit branch resolves types using these rules (applies to `+`, `-`, `*`, `/`, `%`, and comparisons; unary operators apply the same rule with one operand):
+The operator visit branch resolves types using these rules (applies to `+`, `-`, `*`, `/`, `@`, and comparisons; unary operators apply the same rule with one operand):
 
 | LHS         | RHS         | Result type      | Coerce? |
 |-------------|-------------|------------------|---------|
@@ -417,7 +417,7 @@ TypedValue handle_scalar_call(const Node& call_node) {
 
 Phase 2.1 commit f8dca4d shipped `SEQPAT_PROP` and the `custom_fields` map on `PatternPayload`. `pattern_field()` already falls through to `custom_fields` when a name is not in the fixed-field set (`typed_value.cpp:56`).
 
-This PRD's contribution: the auto-coerce hook treats custom-field Signal results the same as fixed-field Signal results. `n"c4{cutoff:0.3}" as e |> lp(%, e.cutoff * 4000 + 200)` works because `e.cutoff` returns `TypedValue::signal(custom_fields["cutoff"])`, which feeds `lp`'s cutoff slot natively without needing further coercion. Test coverage and a documented happy path are added.
+This PRD's contribution: the auto-coerce hook treats custom-field Signal results the same as fixed-field Signal results. `n"c4{cutoff:0.3}" as e |> lp(@, e.cutoff * 4000 + 200)` works because `e.cutoff` returns `TypedValue::signal(custom_fields["cutoff"])`, which feeds `lp`'s cutoff slot natively without needing further coercion. Test coverage and a documented happy path are added.
 
 #### 5.7.2 §11.2 standalone `bend`/`aftertouch`/`dur` with pattern args
 
@@ -470,7 +470,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 | `web/static/docs/reference/pattern/literals.md` | **New** | Typed prefixes (`v`/`n`/`s`/`c`/`p`); side-by-side examples; coerce mental model. |
 | `web/static/docs/reference/mini-notation/basics.md` | **Modified** | Typed-prefix overview table; pointer to `literals.md`. |
 | `web/static/docs/concepts/signals.md` | **Modified** | New section "Patterns and Signals" — coerce rules, operator type rules, idempotent `scalar()`. |
-| `web/static/docs/tutorials/06-pattern-modulation.md` | **New** | Tutorial chapter: typed prefixes, Pattern→Signal mental model, `bend(notes, v"…")` flagship, custom-property accessor (`e.cutoff`), the `lp(%, e.cutoff * 4000)` workflow. |
+| `web/static/docs/tutorials/06-pattern-modulation.md` | **New** | Tutorial chapter: typed prefixes, Pattern→Signal mental model, `bend(notes, v"…")` flagship, custom-property accessor (`e.cutoff`), the `lp(@, e.cutoff * 4000)` workflow. |
 | `web/static/docs/tutorials/04-rhythm.md` | **Modified** | Cross-reference to chapter 06; migrate any `pat()` examples to typed prefixes. |
 | F1 help index | **Regenerated** | `bun run build:docs` regenerates lookup-index for new prefixes/builtins. |
 
@@ -562,7 +562,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 2. Implement `implicit_scalar_cast` and `coerce_arg_for_signal` in `codegen.cpp`.
 3. Route all builtin call args through `coerce_arg_for_signal` when `args_are_signal == true`.
 4. Route binary/unary operators through the same coerce.
-5. Route pipe-`%`-injection through the same coerce when downstream first slot is Signal.
+5. Route pipe-`@`-injection through the same coerce when downstream first slot is Signal.
 6. Implement `handle_scalar_call` for the explicit cast.
 
 **Verification:**
@@ -598,7 +598,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 
 **Steps:**
 1. Confirm `pattern_field()` returns `TypedValue::signal(custom_fields[name])` for custom keys (already shipped per typed_value.cpp:56).
-2. Add integration tests covering `n"c4{cutoff:0.3}" as e |> lp(%, e.cutoff * 4000)`.
+2. Add integration tests covering `n"c4{cutoff:0.3}" as e |> lp(@, e.cutoff * 4000)`.
 3. Extend the docs index entry for pipe-binding to call out custom-key access.
 
 **Verification:**
@@ -616,14 +616,14 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 // Pattern-driven oscillator, filter, and bend depth, plus per-event cutoff
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
   |> osc("saw", e.freq + v"<0 -10 10>")          // detune via scalar pattern
-  |> lp(%, 200 + e.cutoff * 4000, v"<0.3 0.7>")  // cutoff custom-property + Q v-pattern
-  |> % * v"<0.5 1.0 0.7>"                        // amplitude pattern
-  |> out(%, %)
+  |> lp(@, 200 + e.cutoff * 4000, v"<0.3 0.7>")  // cutoff custom-property + Q v-pattern
+  |> @ * v"<0.5 1.0 0.7>"                        // amplitude pattern
+  |> out(@, @)
 
 // Pattern-driven bend on a separate voice
 n"c4 e4 g4 b4".bend(v"<0 0.25 -0.25 0>") as e
   |> osc("sin", mtof(e.freq + e.bend * 12))      // bend is a per-event property
-  |> out(%, %)
+  |> out(@, @)
 
 // Negative coerce path: chord pattern in scalar slot must error
 // osc("sin", c"Am C G")  // E160 expected
@@ -691,8 +691,8 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 - **Operator on Pattern + Signal.** `let z = v"<0 0.5>" + sig` — RHS is `Signal`, result is `Signal`. Pattern coerces; `z` is `ValueType::Signal`. Field access on `z` errors.
 - **Pattern + Stereo Signal.** `v"<0 0.5>" * stereoSig` — **error E165**. User must wrap: `stereo(scalar(v"<0 0.5>")) * stereoSig`.
 - **Pattern fed to a `pat()`-style transform.** `slow(v"<0 0.5>", 2)` — slow's first arg is `Pattern` (not Signal); no coerce. Result remains a `Pattern`.
-- **Chord pattern in pipe-binding.** `c"Am" as e |> osc("sin", e.freq)` does **not** auto-expand. `e.freq` on a multi-voice pattern returns the voice-0 buffer only (mono Signal); the other voices are dropped silently — likely surprising. Users who want all voices must pipe through `poly()` explicitly: `c"Am" |> poly(% as e |> osc("sin", e.freq))`. Document this in the literals reference page; a future PRD will add `e.freq[i]` voice indexing or implicit poly-expansion in pipe-binding context.
-- **Sample pattern in non-Signal slot.** `s"bd sd" |> sampler(%, ...)` — `sampler` is pattern-aware (`args_are_signal = false`). No coerce. Works as today.
+- **Chord pattern in pipe-binding.** `c"Am" as e |> osc("sin", e.freq)` does **not** auto-expand. `e.freq` on a multi-voice pattern returns the voice-0 buffer only (mono Signal); the other voices are dropped silently — likely surprising. Users who want all voices must pipe through `poly()` explicitly: `c"Am" |> poly(@ as e |> osc("sin", e.freq))`. Document this in the literals reference page; a future PRD will add `e.freq[i]` voice indexing or implicit poly-expansion in pipe-binding context.
+- **Sample pattern in non-Signal slot.** `s"bd sd" |> sampler(@, ...)` — `sampler` is pattern-aware (`args_are_signal = false`). No coerce. Works as today.
 - **Empty value pattern.** `v""` produces a pattern with `freq` buffer initialized to 0.0. `osc("sin", v"")` produces a 0 Hz oscillator (silent). No error.
 
 ### 9.4 `scalar()` cast
@@ -775,7 +775,7 @@ Per `docs/dsp-experiment-methodology.md` and the long-window guidance in `CLAUDE
 
 ### 10.4 Manual Audition
 
-- The user's example: `n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") |> ...` should audibly bend the third event by -0.5 (a downward bend depth applied per voice).
+- The user's example: `n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> ...` should audibly bend the third event by -0.5 (a downward bend depth applied per voice).
 - `osc("sin", v"<220 440 880>")` should cycle three pitches.
 - `lp(sig, v"<200 800 2000>", 0.7)` should produce a clearly modulated filter sweep.
 
@@ -795,8 +795,8 @@ These are blocking acceptance criteria — the PRD is not closed until each land
 - `web/static/docs/tutorials/06-pattern-modulation.md` — narrative tutorial. Required sections:
   1. *Patterns are values* — introduce the typed prefixes with simple `osc("sin", n"c4 e4 g4")` examples.
   2. *Numeric patterns with `v"…"`* — `osc("sin", v"<220 440>")`, `lp(sig, v"<200 800>", 0.7)`.
-  3. *The flagship: per-event modulation* — `n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") |> ...`.
-  4. *Custom-property accessor* — `n"c4{cutoff:0.3} e4{cutoff:0.7}" as e |> lp(%, e.cutoff * 4000 + 200)`.
+  3. *The flagship: per-event modulation* — `n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> ...`.
+  4. *Custom-property accessor* — `n"c4{cutoff:0.3} e4{cutoff:0.7}" as e |> lp(@, e.cutoff * 4000 + 200)`.
   5. *Scalar arithmetic* — `v"<60 64 67>" + 12` (still Pattern), `v"<0 0.5>" + sig` (now Signal).
   6. *When coerce fails* — chord/sample patterns, the `poly()` and `sampler()` escape hatches.
 

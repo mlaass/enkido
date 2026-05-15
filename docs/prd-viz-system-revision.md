@@ -40,29 +40,29 @@ Overhaul the visualization system across three revisions: (1) add a spectral wat
 
 ```akkado
 // Basic waterfall with defaults (angle: 180, speed: 40, fft: 1024, gradient: "magma")
-osc("saw", 220) |> waterfall(%, "harmonics") |> out(%, %)
+osc("saw", 220) |> waterfall(@, "harmonics") |> out(@, @)
 
 // Fully configured waterfall
-osc("saw", 220) |> waterfall(%, "harmonics", {
+osc("saw", 220) |> waterfall(@, "harmonics", {
     angle: 270,          // scroll direction in degrees (0=right, 90=up, 180=left, 270=down)
     speed: 60,           // scroll speed in pixels per second
     fft: 2048,           // FFT resolution (power of 2: 256, 512, 1024, 2048)
     gradient: "viridis", // color preset
     width: 400,          // container width in pixels
     height: 200          // container height in pixels
-}) |> out(%, %)
+}) |> out(@, @)
 
 // Relative sizing
-signal |> waterfall(%, "full-width", {width: "100%", height: 150})
+signal |> waterfall(@, "full-width", {width: "100%", height: 150})
 
 // Multiple waterfalls with different configs
 dry = osc("saw", 220)
-dry |> waterfall(%, "pre-filter", {gradient: "thermal", fft: 512})
-dry |> filter_lp(%, 2000, 0.7) |> waterfall(%, "post-filter", {gradient: "magma", fft: 512})
-|> out(%, %)
+dry |> waterfall(@, "pre-filter", {gradient: "thermal", fft: 512})
+dry |> filter_lp(@, 2000, 0.7) |> waterfall(@, "post-filter", {gradient: "magma", fft: 512})
+|> out(@, @)
 
 // Spectrum now also benefits from WASM FFT (replaces JS DFT)
-signal |> spectrum(%, "fft", {fft: 1024}) |> out(%, %)
+signal |> spectrum(@, "fft", {fft: 1024}) |> out(@, @)
 ```
 
 ### Semantics
@@ -181,7 +181,7 @@ IFFT = 182,        // Inverse FFT (reserved for Revision 2+)
 **IFFT** is reserved for Revision 2+. It will synthesize time-domain audio from complex frequency bins, enabling spectral processing chains like:
 ```akkado
 // Future (Revision 2+): spectral freeze, cross-synthesis, etc.
-signal |> fft(%) |> spectral_gate(%, threshold) |> ifft(%) |> out(%, %)
+signal |> fft(@) |> spectral_gate(@, threshold) |> ifft(@) |> out(@, @)
 ```
 
 ### 3. FFTProbeState
@@ -378,7 +378,7 @@ function generateGradient(stops: Array<{pos: number; r: number; g: number; b: nu
 
 Color stops for each preset derived from standard colormap definitions (matplotlib/d3).
 
-**Relative sizing**: When `width` or `height` is a string ending in `%`, attach a `ResizeObserver` to the container's parent. On resize, reallocate ImageData and canvas dimensions. Clear the waterfall history on resize (acceptable UX — history is transient).
+**Relative sizing**: When `width` or `height` is a string ending in `@`, attach a `ResizeObserver` to the container's parent. On resize, reallocate ImageData and canvas dimensions. Clear the waterfall history on resize (acceptable UX — history is transient).
 
 ### 10. Register in Visualization Index
 
@@ -389,7 +389,7 @@ Add `import './waterfall';` to `web/src/lib/visualizations/index.ts`.
 ## Data Flow
 
 ```
-Source: osc("saw", 220) |> waterfall(%, "spec", {fft: 1024, gradient: "magma"})
+Source: osc("saw", 220) |> waterfall(@, "spec", {fft: 1024, gradient: "magma"})
 
                     Compile Time                          Runtime
                     ──────────                            ───────
@@ -531,9 +531,9 @@ CompileResult                                    ▼
 
 Test program:
 ```akkado
-osc("saw", 220) |> waterfall(%, "saw-harmonics", {
+osc("saw", 220) |> waterfall(@, "saw-harmonics", {
     angle: 90, speed: 40, fft: 1024, gradient: "magma", width: 400, height: 150
-}) |> out(%, %)
+}) |> out(@, @)
 ```
 
 Verify:

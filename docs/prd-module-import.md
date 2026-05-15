@@ -45,11 +45,11 @@ import "filters" as f      // namespaced — access via f.lp(), f.hp()
 ```akkado
 // Direct injection — names available unqualified
 import "synths"
-osc("saw", 440) |> out(%, %)
+osc("saw", 440) |> out(@, @)
 
 // Namespaced — names require qualifier
 import "effects" as fx
-osc("saw", 440) |> fx.chorus(%, 0.5, 0.3) |> out(%, %)
+osc("saw", 440) |> fx.chorus(@, 0.5, 0.3) |> out(@, @)
 
 // Multiple imports
 import "synths"
@@ -141,10 +141,10 @@ Definitions from the imported module are only accessible via `alias.name`. They 
 import "effects" as fx
 
 // fx.chorus is accessible
-osc("saw", 440) |> fx.chorus(%, 0.5, 0.3)
+osc("saw", 440) |> fx.chorus(@, 0.5, 0.3)
 
 // chorus alone is NOT accessible
-osc("saw", 440) |> chorus(%, 0.5, 0.3)  // ERROR: undefined 'chorus'
+osc("saw", 440) |> chorus(@, 0.5, 0.3)  // ERROR: undefined 'chorus'
 ```
 
 ### Circular Imports
@@ -505,7 +505,7 @@ fn double(x) -> x * 2
 
 // -- main.ak --
 import "utils"
-osc("sin", double(220)) |> out(%, %)    // double() available
+osc("sin", double(220)) |> out(@, @)    // double() available
 
 // Transitive imports (all resolved modules are visible)
 // -- a.ak --
@@ -538,7 +538,7 @@ import "a"
 // ERROR: E500: Circular import detected: a.ak -> b.ak -> a.ak
 
 // Import after code error
-osc("sin", 440) |> out(%, %)
+osc("sin", 440) |> out(@, @)
 import "utils"
 // ERROR: E501: Import statements must appear before other code
 
@@ -564,7 +564,7 @@ import "../shared/helpers"               // resolves to ../shared/helpers.ak
 ```akkado
 // Namespace access
 import "filters" as f
-osc("saw", 440) |> f.lp(%, 800) |> out(%, %)
+osc("saw", 440) |> f.lp(@, 800) |> out(@, @)
 
 // Hidden names
 import "filters" as f
@@ -577,7 +577,7 @@ f.nonexistent(440)                       // ERROR: module 'filters' has no defin
 // Mixed direct + namespaced
 import "synths"
 import "effects" as fx
-osc("saw", 440) |> fx.chorus(%, 0.5) |> out(%, %)
+osc("saw", 440) |> fx.chorus(@, 0.5) |> out(@, @)
 ```
 
 ### Phase C: Web Virtual Filesystem

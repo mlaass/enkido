@@ -67,7 +67,7 @@ This limits pattern-based audio programming where decisions need to happen at au
 ```akkado
 // Switch between oscillators based on gate
 gate = pat("1 0 1 0")
-select(gate, osc("saw", 440), osc("sqr", 220)) |> out(%, %)
+select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@, @)
 ```
 
 ### 2. Threshold-based effects
@@ -75,7 +75,7 @@ select(gate, osc("saw", 440), osc("sqr", 220)) |> out(%, %)
 // Apply distortion only when signal is loud
 sig = osc("saw", 110)
 loud = sig > 0.5
-select(loud, dist(sig, 4), sig) |> out(%, %)
+select(loud, dist(sig, 4), sig) |> out(@, @)
 ```
 
 ### 3. Rhythmic logic
@@ -89,7 +89,7 @@ combined = gate1 || gate2  // "1 0 1 0"
 ### 4. Signal-rate square wave from sine
 ```akkado
 // Convert sine to square via comparison
-osc("sin", 440) > 0 |> out(%, %)
+osc("sin", 440) > 0 |> out(@, @)
 ```
 
 ### 5. Range detection
@@ -244,7 +244,7 @@ case TOKEN_BANG:
 | 4 | `==`, `!=` | Left |
 | 5 | `>`, `<`, `>=`, `<=` | Left |
 | 6 | `+`, `-` | Left |
-| 7 | `*`, `/`, `%` | Left |
+| 7 | `*`, `/`, `@` | Left |
 | 8 | `!` (prefix) | Right |
 | 9 (highest) | Function call, indexing | Left |
 

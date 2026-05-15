@@ -86,7 +86,7 @@ The sampler was designed for drum machine use with minimal parameters. `SampleDa
 ```akkado
 // SP-1200 character: 12-bit, 26.04kHz, varispeed pitch
 samples("github:tidalcycles/Dirt-Samples", preset: "sp1200")
-pat("bd sd hh*8") |> out(%, %)
+pat("bd sd hh*8") |> out(@, @)
 
 // MPC60: 12-bit, 40kHz
 samples("github:tidalcycles/Dirt-Samples", preset: "mpc60")
@@ -154,7 +154,7 @@ sample(trigger(4), 1.5, 1,
 )
 
 // With pattern events (velocity from event, pan from pattern)
-pat("bd sd hh cp").pan("<-1 0 1 0>") |> sample(%, %, %, pan: %.pan)
+pat("bd sd hh cp").pan("<-1 0 1 0>") |> sample(@, @, @, pan: @.pan)
 ```
 
 ### 4.4 User-Defined Presets (Future: requires dict spread operator)
@@ -320,7 +320,7 @@ struct SamplerVoice {
 │                        Akkado Source Code                           │
 │                                                                     │
 │  samples("uri", preset: "sp1200", pitch_algo: "granular")           │
-│  pat("bd sd") |> sample(%, %, %, pan: 0.5, vel: 0.8)                │
+│  pat("bd sd") |> sample(@, @, @, pan: 0.5, vel: 0.8)                │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
                                ▼
@@ -636,7 +636,7 @@ If multiple sources exist, `smpl` chunk takes priority.
 - `docs/mini-notation-reference.md` (if sample patterns gain new params)
 
 **Verification**:
-- End-to-end: `samples("uri", preset: "sp1200")` + `sample(%, %, %, pan: ...)` → correct audio
+- End-to-end: `samples("uri", preset: "sp1200")` + `sample(@, @, @, pan: ...)` → correct audio
 - CLI and web both support all features
 - DSP experiments in `experiments/` validate audio quality
 

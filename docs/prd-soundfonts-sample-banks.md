@@ -48,19 +48,19 @@ Implement a two-tier sample system:
 
 ```akkado
 // Use default bank (built-in 808 kit)
-pat("bd sd hh*8") |> out(%, %)
+pat("bd sd hh*8") |> out(@, @)
 
 // Switch to a named bank
-pat("bd sd hh*8").bank("TR909") |> out(%, %)
+pat("bd sd hh*8").bank("TR909") |> out(@, @)
 
 // Bank can be patterned
-pat("bd sd").bank("<TR808 TR909>") |> out(%, %)
+pat("bd sd").bank("<TR808 TR909>") |> out(@, @)
 
 // Sample variants with colon syntax
-pat("bd:0 bd:1 bd:2 bd:3") |> out(%, %)
+pat("bd:0 bd:1 bd:2 bd:3") |> out(@, @)
 
 // Or with variant() modifier
-pat("bd").variant("<0 1 2 3>") |> out(%, %)
+pat("bd").variant("<0 1 2 3>") |> out(@, @)
 ```
 
 ### 2.2 SoundFont Instruments
@@ -70,16 +70,16 @@ pat("bd").variant("<0 1 2 3>") |> out(%, %)
 piano = soundfont("gm.sf2", 0)  // Bank 0, preset 0 (Acoustic Grand Piano)
 
 // Play with pattern (note patterns auto-trigger)
-pat("c4 e4 g4 c5") |> piano |> out(%, %)
+pat("c4 e4 g4 c5") |> piano |> out(@, @)
 
 // Or with explicit note control
-note(pat("c4 e4 g4")) |> piano |> out(%, %)
+note(pat("c4 e4 g4")) |> piano |> out(@, @)
 
 // Select preset by name (if available)
 strings = soundfont("orchestral.sf2", "Violin Section")
 
 // Velocity sensitivity
-pat("c4 e4 g4").vel("<0.3 0.6 1.0>") |> piano |> out(%, %)
+pat("c4 e4 g4").vel("<0.3 0.6 1.0>") |> piano |> out(@, @)
 ```
 
 ### 2.3 Web UI: Sample Browser

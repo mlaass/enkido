@@ -12,10 +12,10 @@ Many DSP builtins have 3-5+ parameters where only the first few are required. To
 
 ```akkado
 // Current: must know and repeat default values to set 'wet'
-delay(%, 0.25, 0.0, 0.0, 0.8)
+delay(@, 0.25, 0.0, 0.0, 0.8)
 
 // Proposed: skip middle params, compiler fills defaults
-delay(%, 0.25, _, _, 0.8)
+delay(@, 0.25, _, _, 0.8)
 ```
 
 This is especially valuable for DSP functions where default values are carefully tuned (filter Q, delay feedback, envelope times) and users shouldn't need to look them up just to reach a later parameter.
@@ -47,8 +47,8 @@ Today, defaults can only fill **trailing** missing arguments. There is no way to
 
 ```akkado
 // delay(in, time, fb, dry, wet) — dry defaults to 0.0, wet to 1.0
-delay(%, 0.25, 0.8)          // OK: skips dry and wet (trailing)
-delay(%, 0.25, _, _, 0.8)    // ERROR today: _ is not handled as skip
+delay(@, 0.25, 0.8)          // OK: skips dry and wet (trailing)
+delay(@, 0.25, _, _, 0.8)    // ERROR today: _ is not handled as skip
 ```
 
 ---
@@ -59,8 +59,8 @@ delay(%, 0.25, _, _, 0.8)    // ERROR today: _ is not handled as skip
 
 ```akkado
 // Skip optional middle parameters
-delay(%, 0.25, _, _, 0.8)       // time=0.25, fb=default, dry=default, wet=0.8
-lp(%, 5000, _)                  // cut=5000, q=default (0.707)
+delay(@, 0.25, _, _, 0.8)       // time=0.25, fb=default, dry=default, wet=0.8
+lp(@, 5000, _)                  // cut=5000, q=default (0.707)
 adsr(gate, _, _, 0.8)           // attack=default, decay=default, sustain=0.8
 ```
 
@@ -68,7 +68,7 @@ adsr(gate, _, _, 0.8)           // attack=default, decay=default, sustain=0.8
 
 ```akkado
 fn synth(freq, wave = "saw", cut = 2000, res = 0.5) =
-    osc(wave, freq) |> lp(%, cut, res)
+    osc(wave, freq) |> lp(@, cut, res)
 
 // Skip wave and cut, set res
 synth(440, _, _, 0.9)
@@ -81,8 +81,8 @@ synth(440, _, 8000)
 
 ```akkado
 // These remain equivalent — no trailing _ needed
-delay(%, 0.25, 0.8)
-delay(%, 0.25, 0.8, _, _)   // Valid but redundant
+delay(@, 0.25, 0.8)
+delay(@, 0.25, 0.8, _, _)   // Valid but redundant
 ```
 
 ### 2.4 Error Cases
@@ -93,7 +93,7 @@ delay(_, 0.25, 0.8)
 // Error E106: Cannot skip required parameter 'in' — no default value
 
 // _ in named argument — compile error (E107)
-delay(%, time: _)
+delay(@, time: _)
 // Error E107: '_' placeholder not valid in named arguments — use named arg omission instead
 ```
 
@@ -123,7 +123,7 @@ No new AST node type needed. The parser already creates `Identifier("_")` for un
 
 ### 3.2 Compilation Flow
 
-For a call like `delay(%, 0.25, _, _, 0.8)`:
+For a call like `delay(@, 0.25, _, _, 0.8)`:
 
 ```
 1. Parser produces 5 argument nodes: [Hole, Number(0.25), Ident("_"), Ident("_"), Number(0.8)]
@@ -189,7 +189,7 @@ This check happens **before** normal identifier resolution, so `_` never reaches
 ### 6.1 All Arguments Are Placeholders
 
 ```akkado
-lp(%, _, _)   // Both cut and q use defaults — equivalent to lp(%)
+lp(@, _, _)   // Both cut and q use defaults — equivalent to lp(@)
 ```
 Valid. Each `_` fills its position's default.
 
@@ -223,16 +223,16 @@ Valid for **constant** expression defaults (literals, math builtins, const varia
 ### 6.5 Named Arguments Mixed with Positional
 
 ```akkado
-delay(%, 0.25, _, wet: 0.8)   // Positional _ then named arg
+delay(@, 0.25, _, wet: 0.8)   // Positional _ then named arg
 ```
 The `_` applies to positional parameter 2 (`fb`). Named args bypass positional ordering. `_` in a named arg position (`wet: _`) is error E107, since named args already skip by omission.
 
 ### 6.6 Redundant Trailing Underscores
 
 ```akkado
-delay(%, 0.25, 0.8, _, _)   // Explicit _ for trailing params
+delay(@, 0.25, 0.8, _, _)   // Explicit _ for trailing params
 ```
-Valid but redundant. Same result as `delay(%, 0.25, 0.8)`. No warning emitted.
+Valid but redundant. Same result as `delay(@, 0.25, 0.8)`. No warning emitted.
 
 ---
 
@@ -310,7 +310,7 @@ cmake --build build --target akkado_tests
 ## 9. Done Criteria
 
 - All checklist items complete and tests passing
-- `delay(%, 0.25, _, _, 0.8)` compiles to identical bytecode as `delay(%, 0.25, 0.0, 0.0, 0.8)`
+- `delay(@, 0.25, _, _, 0.8)` compiles to identical bytecode as `delay(@, 0.25, 0.0, 0.0, 0.8)`
 - `_` on required parameter produces E106 with clear error message
 - `_` in named argument produces E107
 - `_` in non-call contexts (assignment, match, array) is unaffected — remains a normal identifier

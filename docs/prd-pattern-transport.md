@@ -29,8 +29,8 @@ transport(pat("c4 e4 g4"), trigger(4), 0.5) as e |> osc("sin", e.freq)
 // Cross-pattern triggers: one pattern drives another
 transport(pat("c4 e4 g4"), pat("x x x x").trig) as e |> osc("sin", e.freq)
 
-// Pipe style (% is Pattern thanks to type system)
-pat("c4 e4 g4") |> transport(%, trigger(2)) as e |> osc("sin", e.freq)
+// Pipe style (@ is Pattern thanks to type system)
+pat("c4 e4 g4") |> transport(@, trigger(2)) as e |> osc("sin", e.freq)
 
 // Negative step: reverse playback
 transport(pat("c4 e4 g4"), trigger(2), -1.0) as e |> osc("sin", e.freq)

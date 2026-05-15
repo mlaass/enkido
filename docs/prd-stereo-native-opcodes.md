@@ -38,10 +38,10 @@ Key design decisions made in question rounds:
 
 | Scenario | Expected | Actual today |
 |----------|----------|--------------|
-| `osc("saw", 110) \|> dattorro(%, 0.85, 30) \|> out(%)` | Stereo reverb tail (mono in widens) | Mono reverb, no width — Dattorro's L/R tanks are summed and discarded |
-| `stereo_sig \|> freeverb(%, 0.9, 0.5)` | Real stereo reverb with cross-coupling | Two independent mono Freeverbs (auto-lift), 2× CPU, no inter-channel coupling |
-| `mono_sig \|> chorus(%, 0.5, 0.5)` | Stereo chorus via offset L/R LFO | Mono chorus; user must `\|> stereo()` first to even get auto-lifted double-mono |
-| `mono_sig \|> filter_lp(%, ...) \|> out(stereo_wet, mono_dry)` | Sensible compile or auto-mix | E185: stereo and mono mixed on out — defensive `stereo()` wrap required |
+| `osc("saw", 110) \|> dattorro(@, 0.85, 30) \|> out(@)` | Stereo reverb tail (mono in widens) | Mono reverb, no width — Dattorro's L/R tanks are summed and discarded |
+| `stereo_sig \|> freeverb(@, 0.9, 0.5)` | Real stereo reverb with cross-coupling | Two independent mono Freeverbs (auto-lift), 2× CPU, no inter-channel coupling |
+| `mono_sig \|> chorus(@, 0.5, 0.5)` | Stereo chorus via offset L/R LFO | Mono chorus; user must `\|> stereo()` first to even get auto-lifted double-mono |
+| `mono_sig \|> filter_lp(@, ...) \|> out(stereo_wet, mono_dry)` | Sensible compile or auto-mix | E185: stereo and mono mixed on out — defensive `stereo()` wrap required |
 
 ### 2.2 Root Cause
 
@@ -70,7 +70,7 @@ The original PRD §13 acknowledged this gap and pointed at a never-written compa
 ### 3.1 Goals
 
 - **G1**: Every audio-signal opcode in Cedar can write a stereo output pair natively, with a single instruction emit and one state struct per call.
-- **G2**: Spatializing FX (reverbs, chorus, phaser, flanger) widen mono inputs into stereo outputs — `osc(…) |> dattorro(%, …) |> out(%)` produces a stereo tail with no `stereo()` wrapper.
+- **G2**: Spatializing FX (reverbs, chorus, phaser, flanger) widen mono inputs into stereo outputs — `osc(…) |> dattorro(@, …) |> out(@)` produces a stereo tail with no `stereo()` wrapper.
 - **G3**: Auto-escalation replaces stereo/mono mismatch errors at audio-signal slots: when a mono signal flows into a slot that's now stereo-native, codegen silently duplicates L=R. All channel-mismatch error codes E181–E185 become warnings W181–W185 (logged but non-blocking). E186 (non-signal type mismatch) remains an error.
 - **G4**: Channel-independent DSP (filters, distortion, EQ, plain delays) processes both channels inside one opcode call with per-channel state in a single state struct, retiring the `STEREO_INPUT`/auto-lift dispatch.
 - **G5**: Bit-identity for legacy mono code: every Akkado program that compiled to mono-only bytecode under `prd-stereo-support` produces audio identical-within-`1e-6` per sample after this PRD.
@@ -94,29 +94,29 @@ The original PRD §13 acknowledged this gap and pointed at a never-written compa
 
 ```akkado
 // Mono in → stereo reverb tail (no `stereo()` wrapper needed)
-osc("saw", 110) |> dattorro(%, 0.85, 30) |> out(%)
+osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)
 // Today: mono tail. After: stereo tail with figure-8 cross-coupling.
 
 // Stereo in → cross-coupled stereo reverb (not double-mono)
-in() |> dattorro(%, 0.85, 30) |> out(%)
+in() |> dattorro(@, 0.85, 30) |> out(@)
 // Today: two independent mono Dattorros via auto-lift, 2× CPU, no L↔R coupling.
 // After: one Dattorro instance, L feeds R-tank and vice-versa, stereo native.
 
 // Reverb wet/dry mix is unchanged
 dry = osc("saw", 220)
-wet = dry |> freeverb(%, 0.9, 0.5)        // Mono dry → stereo wet (auto-escalates)
-dry * 0.3 + wet * 0.7 |> out(%)            // Mono+Stereo broadcast, stereo out
+wet = dry |> freeverb(@, 0.9, 0.5)        // Mono dry → stereo wet (auto-escalates)
+dry * 0.3 + wet * 0.7 |> out(@)            // Mono+Stereo broadcast, stereo out
 ```
 
 ### 4.2 Chorus / Phaser / Flanger Widen
 
 ```akkado
 // Mono synth, stereo modulation FX
-osc("saw", 220) |> chorus(%, 0.5, 0.4) |> out(%)
+osc("saw", 220) |> chorus(@, 0.5, 0.4) |> out(@)
 // L-channel and R-channel use 90°-offset LFO phases (true stereo chorus,
 // not double-mono). Mono input automatically broadcast.
 
-osc("saw", 220) |> phaser(%, 0.7, 4) |> out(%)
+osc("saw", 220) |> phaser(@, 0.7, 4) |> out(@)
 // Same pattern: L/R LFOs offset for stereo width.
 ```
 
@@ -125,10 +125,10 @@ osc("saw", 220) |> phaser(%, 0.7, 4) |> out(%)
 ```akkado
 // Filters, distortion, EQ, plain delays: same audio as today's auto-lift.
 // What changes: one instruction emit instead of "STEREO_INPUT runs twice."
-in() |> filter_lp(%, 800, 0.5)
-     |> saturate(%, 2.0)
-     |> delay(%, 0.25, 0.5, 1.0, 0.5)
-     |> out(%)
+in() |> filter_lp(@, 800, 0.5)
+     |> saturate(@, 2.0)
+     |> delay(@, 0.25, 0.5, 1.0, 0.5)
+     |> out(@)
 // Each opcode body now contains a 2-iteration L/R inner loop with shared state struct.
 ```
 
@@ -136,18 +136,18 @@ in() |> filter_lp(%, 800, 0.5)
 
 ```akkado
 // Was E185: out(L, R) with stereo as one of the slots
-some_stereo |> out(%, osc("sin", 440))
+some_stereo |> out(@, osc("sin", 440))
 // After: auto-escalates. The mono sine broadcasts; the stereo signal feeds out().
 // Equivalent to today's: out(stereo_to_left, stereo_to_right + mono_sine_broadcast).
 
 // Was E183/E184: extraction on mono
-mono_sig |> left(%)
+mono_sig |> left(@)
 // After: warning W183 logged ("left() on mono signal — returning the input unchanged");
 // expression evaluates to the mono input. Same for right(mono) → W184.
 
 // Was E181/E182: identity conversions
-mono_sig |> mono(%)        // After: W181 logged, returns the input unchanged
-stereo_sig |> stereo(%)    // After: W182 logged, returns the input unchanged
+mono_sig |> mono(@)        // After: W181 logged, returns the input unchanged
+stereo_sig |> stereo(@)    // After: W182 logged, returns the input unchanged
 
 // Errors that REMAIN (truly structural):
 freq = stereo_sig          // Audio-rate signal in a control slot of a non-signal builtin: error.
@@ -159,9 +159,9 @@ The relaxation rule: anything that's a *channel mismatch* becomes a warning + co
 
 ```akkado
 // Mono WAV: L = R = sample
-sample("kick.wav") |> dattorro(%, 0.7, 20) |> out(%)
+sample("kick.wav") |> dattorro(@, 0.7, 20) |> out(@)
 // Stereo WAV: L = file_L, R = file_R, channels preserved
-sample("loop_stereo.wav") |> width(%, 1.4) |> out(%)
+sample("loop_stereo.wav") |> width(@, 1.4) |> out(@)
 // Sampler opcode reads file metadata internally and writes appropriate buffers.
 ```
 
@@ -364,8 +364,8 @@ Files that explicitly **do not change**:
 - Decide Freeverb topology (OQ1) before Phase 2.
 
 **Verification**:
-- `osc("saw", 110) |> dattorro(%, 0.85, 30) |> out(%)` produces stereo output (correlation < 1.0 between L and R).
-- `osc("saw", 110) |> stereo() |> dattorro(%, 0.85, 30)` cross-couples (different from naive double-mono — measure with phase-inverted L+R sum).
+- `osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)` produces stereo output (correlation < 1.0 between L and R).
+- `osc("saw", 110) |> stereo() |> dattorro(@, 0.85, 30)` cross-couples (different from naive double-mono — measure with phase-inverted L+R sum).
 - Existing mono test cases unchanged.
 
 ### Phase 1 — Codegen + builtin signature plumbing
@@ -380,7 +380,7 @@ Files that explicitly **do not change**:
 
 **Verification**:
 - All existing tests pass (auto-lift opcodes still work).
-- New test: `mono_sig |> dattorro(%, ...) |> out(%)` compiles, produces stereo.
+- New test: `mono_sig |> dattorro(@, ...) |> out(@)` compiles, produces stereo.
 - New test: bit-identity for any mono-in / mono-out program (regression gate).
 
 ### Phase 2 — Reverbs
@@ -393,7 +393,7 @@ Files that explicitly **do not change**:
 - Update Python experiments: assert stereo decorrelation for each reverb.
 
 **Verification**:
-- `osc(...) |> freeverb(%, ...) |> out(%)`, `... |> fdn(%, ...)` — stereo tail measured.
+- `osc(...) |> freeverb(@, ...) |> out(@)`, `... |> fdn(@, ...)` — stereo tail measured.
 - L/R cross-correlation < 1.0; decorrelation grows over reverb time.
 - Stereo input through reverb shows audible cross-coupling (write `in() |> dattorro` and listen).
 
@@ -406,7 +406,7 @@ Files that explicitly **do not change**:
 - Re-validate `WIDTH`, `MS_ENCODE/DECODE`, `PINGPONG`, `PAN`, `PAN_STEREO` under the flag convention.
 
 **Verification**:
-- `osc |> chorus(%, ...)` produces audibly stereo output from mono input.
+- `osc |> chorus(@, ...)` produces audibly stereo output from mono input.
 - Stereo sample file plays with original L/R intact.
 - All `stereo.hpp` opcodes pass existing `[stereo]` test tag.
 
@@ -513,8 +513,8 @@ Plus the **bit-identity gate**: a curated set of mono-only Akkado programs (osci
 
 ### 10.3 Akkado tests (akkado_tests)
 
-- **Auto-escalation positive cases**: `osc(...) |> dattorro(%, ...)`, `osc(...) |> chorus(%, ...)` — compile and execute without error, produce stereo `TypedValue`.
-- **Channel-mismatch warnings emitted, not errors**: `mono_sig |> left(%)`, `mono(mono_sig)`, `stereo(stereo_sig)` compile, log W183/W181/W182, and evaluate to the input unchanged.
+- **Auto-escalation positive cases**: `osc(...) |> dattorro(@, ...)`, `osc(...) |> chorus(@, ...)` — compile and execute without error, produce stereo `TypedValue`.
+- **Channel-mismatch warnings emitted, not errors**: `mono_sig |> left(@)`, `mono(mono_sig)`, `stereo(stereo_sig)` compile, log W183/W181/W182, and evaluate to the input unchanged.
 - **`out()` auto-escalation**: `out(stereo_sig, mono_sig)` compiles (relaxed E185).
 
 ### 10.4 Python experiments
@@ -529,19 +529,19 @@ Plus the **bit-identity gate**: a curated set of mono-only Akkado programs (osci
 
 ```akkado
 // L1 — Reverb tail width
-osc("saw", 110) |> dattorro(%, 0.85, 30) |> out(%)
+osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)
 // Listen for: stereo width in the tail, not centred mono
 
 // L2 — Chorus on mono synth
-osc("saw", 220) |> chorus(%, 0.5, 0.4) |> out(%)
+osc("saw", 220) |> chorus(@, 0.5, 0.4) |> out(@)
 // Listen for: shimmer that moves between L and R
 
 // L3 — Stereo input through reverb (cross-coupling)
-in() |> dattorro(%, 0.85, 30) |> out(%)
+in() |> dattorro(@, 0.85, 30) |> out(@)
 // Listen for: tail that's denser than two independent mono reverbs
 
 // L4 — Filter chain on stereo (regression check)
-in() |> filter_lp(%, 800, 0.5) |> saturate(%, 2.0) |> delay(%, 0.25, 0.5, 1.0, 0.5) |> out(%)
+in() |> filter_lp(@, 800, 0.5) |> saturate(@, 2.0) |> delay(@, 0.25, 0.5, 1.0, 0.5) |> out(@)
 // Listen for: identical tone vs current build (bit-identity gate)
 ```
 

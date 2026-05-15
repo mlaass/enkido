@@ -54,7 +54,7 @@ State preservation during code updates:
 
 ### Core Operators
 - `|>` (pipe): Defines signal flow through the DAG
-- `%` (hole): Explicit input port for signal injection
+- `@` (hole): Explicit input port for signal injection. `%` parses identically as a legacy alias, but new docs/examples should use `@`.
 - `as` (pipe binding): Named binding for multi-stage access: `expr as name`
 - Mini-notation patterns: `pat()`, `seq()`, `timeline()`, `note()` - see [Mini-Notation Reference](docs/mini-notation-reference.md)
 
@@ -65,19 +65,19 @@ rec = {freq: 440, vel: 0.8}
 rec.freq  // 440
 ```
 
-Pattern events are records with fields accessible via `%`:
-- `%.freq` / `%.pitch` / `%.f` - Frequency in Hz
-- `%.vel` / `%.velocity` / `%.v` - Velocity (0-1)
-- `%.trig` / `%.trigger` - 1-sample pulse at every event onset (pair with AR / sample retrigger)
-- `%.gate` / `%.g` - Held high for the event's duration with a 1-sample drop at each onset (pair with ADSR; overlap durations via `dur()` for legato)
-- `%.note` / `%.midi` / `%.n` - MIDI note number
-- `%.dur`, `%.chance`, `%.time`, `%.phase` - Extended fields
+Pattern events are records with fields accessible via `@`:
+- `@.freq` / `@.pitch` / `@.f` - Frequency in Hz
+- `@.vel` / `@.velocity` / `@.v` - Velocity (0-1)
+- `@.trig` / `@.trigger` - 1-sample pulse at every event onset (pair with AR / sample retrigger)
+- `@.gate` / `@.g` - Held high for the event's duration with a 1-sample drop at each onset (pair with ADSR; overlap durations via `dur()` for legato)
+- `@.note` / `@.midi` / `@.n` - MIDI note number
+- `@.dur`, `@.chance`, `@.time`, `@.phase` - Extended fields
 
 `.trig` and `.gate` are **separate fields**, not aliases. `.trig` is a pulse — useful when you want to fire something exactly once per note (sample players, AR envelopes). `.gate` is a sustain signal — useful when an envelope (ADSR) needs to hold a note open. The 1-sample drop at every `.gate` onset means ADSR releases-and-reattacks between adjacent notes by default; overlap durations (`pat.dur(2)`) to suppress the drop and get legato.
 
 Example with pipe binding:
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
+pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
 ```
 
 ### Chord Expansion (Strudel-compatible)
@@ -387,7 +387,7 @@ def test_something():
 - Effects without dry/wet params (chorus, flanger, phaser, reverbs) output 100% wet signal. Users mix manually:
   ```akkado
   dry = osc("saw", 220)
-  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(%)  // 30% dry, 70% wet
+  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(@)  // 30% dry, 70% wet
   ```
 - Never use bit-packing tricks for parameters. Use the 5 input slots and extended params properly.
 

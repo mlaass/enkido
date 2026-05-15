@@ -58,7 +58,7 @@ dirt  = param("dirt",    0.3, 0.0, 1.0)   // tube bias (even harmonics)
 
 // Source — a saw bass with a slow note pattern
 src = n"a2 a2 e3 a2 c3 a2 g2 a2"
-    |> saw(%.freq) * ar(trigger(8), 0.002, 0.4)
+    |> saw(@.freq) * ar(trigger(8), 0.002, 0.4)
 
 // 1. Driver — pre-filter saturation gives the filter content to grip
 driven = tube(src, 1.5 + mng * 2.0, dirt * 0.4)
@@ -78,7 +78,7 @@ filtered = diode(driven, cutoff, sq, 0.026, 1.0 + sq * 15.0)
 // 5. Mangler — post-filter wavefold (and optionally bitcrush)
 mangled = filtered * (1.0 - mng) + fold(filtered, 0.5 - mng * 0.4) * mng
 
-mangled |> out(%, %)
+mangled |> out(@, @)
 ```
 
 The original knob mapping is preserved:

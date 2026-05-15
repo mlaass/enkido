@@ -68,14 +68,14 @@ Every signature below ends with the new extended params. Required-positional and
 // comp: attack & release surface (were hidden in inst.rate)
 comp(in, thresh, ratio, attack?, release?)
 // attack default = 0.1ms (current rate=0 decode), release default = 10ms
-osc("saw", 220) |> comp(%, -12, 4, attack: 5, release: 100)
+osc("saw", 220) |> comp(@, -12, 4, attack: 5, release: 100)
 
 // limiter: explicit `lookahead` replaces the rate-field boolean
 limiter(in, ceiling, release, lookahead?)
 // lookahead default = 1.0 (matches current "lookahead enabled, 1ms" hardcoded path);
 // pass lookahead: 0 to disable
-in |> limiter(%, -0.1, 0.1, lookahead: 0)   // off
-in |> limiter(%, -0.1, 0.1, lookahead: 5)   // 5ms lookahead
+in |> limiter(@, -0.1, 0.1, lookahead: 0)   // off
+in |> limiter(@, -0.1, 0.1, lookahead: 5)   // 5ms lookahead
 
 // gate: attack, hold, release surface
 gate(in, thresh, range, hyst, close_time, attack?, hold?, release?)
@@ -88,12 +88,12 @@ gate(in, thresh, range, hyst, close_time, attack?, hold?, release?)
 // dattorro: damping/mod_depth out of rate field, lfo_rate now tunable too
 dattorro(in, decay, predelay, in_diff, dec_diff, damping?, mod_depth?, lfo_rate?)
 // damping=0, mod_depth=0, lfo_rate=0.5 (current hardcoded value)
-sig |> dattorro(%, 0.8, 30, 0.75, 0.625, damping: 0.4, mod_depth: 0.3, lfo_rate: 0.7)
+sig |> dattorro(@, 0.8, 30, 0.75, 0.625, damping: 0.4, mod_depth: 0.3, lfo_rate: 0.7)
 
 // freeverb: gains explicit dry & wet (header had it documented; code never read rate)
 freeverb(in, room, damp, room_scale, room_offset, dry?, wet?)
 // dry default = 0.0, wet default = 1.0 (matches current 100%-wet behavior)
-sig |> freeverb(%, 0.6, 0.5, 0.28, 0.7, dry: 0.5, wet: 0.5)
+sig |> freeverb(@, 0.6, 0.5, 0.28, 0.7, dry: 0.5, wet: 0.5)
 ```
 
 ### 3.3 Modulation & Delays (Phase 3)
@@ -103,18 +103,18 @@ sig |> freeverb(%, 0.6, 0.5, 0.28, 0.7, dry: 0.5, wet: 0.5)
 flanger(in, rate, depth, min_delay, max_delay, feedback?, lfo_phase?)
 // feedback default = current inst.rate=0 decode (compute exact in test);
 // extended_param_names now { "feedback", "lfo_phase" }, count 2
-sig |> flanger(%, 0.4, 0.7, 1.0, 5.0, feedback: 0.6, lfo_phase: 0.5)
+sig |> flanger(@, 0.4, 0.7, 1.0, 5.0, feedback: 0.6, lfo_phase: 0.5)
 
 // comb: damping surfaces (was packed in rate field 0-255)
 comb(in, time, fb, damping?)
 // damping default = 0.0 (current rate=0)
-noise() |> comb(%, 0.005, 0.95, damping: 0.4)
+noise() |> comb(@, 0.005, 0.95, damping: 0.4)
 
 // delay_sync: gains a builtin entry + tunable mix parameter
 delay_sync(in, beats, fb, mix?)
 // mix default = 1.0 (current rate=0 → 100% wet)
 // NEW: the opcode existed but no Akkado builtin exposed it; this PRD adds one.
-sig |> delay_sync(%, 0.25, 0.5, mix: 0.6)
+sig |> delay_sync(@, 0.25, 0.5, mix: 0.6)
 ```
 
 ### 3.4 Sequencing — Internal Cleanup (Phase 4)

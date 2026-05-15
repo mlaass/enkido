@@ -274,7 +274,7 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
 
 **Testing**:
 1. Catch2 test: Create VM, load a program that outputs DC 1.0, load a second identical program, process blocks through full crossfade. Assert that output level never exceeds ~1.5x (equal-power peak for correlated signals) at any point. Before fix: peaks at ~4x.
-2. Manual: Open web app, write `osc("saw", 220) |> out(%, %)`, play, change frequency to 440, listen for click. Before fix: loud pop. After fix: smooth transition.
+2. Manual: Open web app, write `osc("saw", 220) |> out(@, @)`, play, change frequency to 440, listen for click. Before fix: loud pop. After fix: smooth transition.
 
 **Verification command**:
 ```bash
@@ -456,7 +456,7 @@ cmake --build build --target cedar_tests && ./build/cedar/tests/cedar_tests "[cr
 
 ### Manual Verification
 
-1. Open web app, write `osc("saw", 220) |> out(%, %)`, press play
+1. Open web app, write `osc("saw", 220) |> out(@, @)`, press play
 2. Change `220` to `440`, observe live reload — no click
 3. Add `|> lp(1000, 1)` after the oscillator, reload — no click
 4. Add `|> delay(0.25, 0.5, 1, 0)` — reload — no click, delay tail continuous

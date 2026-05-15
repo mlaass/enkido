@@ -362,7 +362,7 @@ A test SF2 file is also needed. Options: use the GM SoundFont from the web app's
 **Steps:**
 1. Rebuild WASM: `cd web && bun run build:wasm`
 2. Start dev server: `bun run dev`
-3. Test with: `pat("c4 e4 g4") |> soundfont(%, "gm", 0) |> out(%, %)`
+3. Test with: `pat("c4 e4 g4") |> soundfont(@, "gm", 0) |> out(@, @)`
 4. Verify all three notes are audible with legato overlap
 
 ---
@@ -445,14 +445,14 @@ cmake --build build
 Manual test in browser after WASM rebuild:
 ```akkado
 // Test 1: Sequential melody — different notes with legato overlap
-pat("c4 e4 g4") |> soundfont(%, "gm", 0) |> out(%, %)
+pat("c4 e4 g4") |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 2: Same-note repetition — should re-articulate each hit
-pat("c4 c4 c4 c4") |> soundfont(%, "gm", 0) |> out(%, %)
+pat("c4 c4 c4 c4") |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 3: Sustained single note — verify no spurious retrigger
-pat("c4") |> soundfont(%, "gm", 0) |> out(%, %)
+pat("c4") |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 4: Notes with rests — verify gate release works
-pat("c4 ~ e4 ~ g4 ~") |> soundfont(%, "gm", 0) |> out(%, %)
+pat("c4 ~ e4 ~ g4 ~") |> soundfont(@, "gm", 0) |> out(@, @)
 ```

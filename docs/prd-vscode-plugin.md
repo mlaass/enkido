@@ -219,7 +219,7 @@ Syntax highlighting uses a TextMate grammar (`akkado.tmLanguage.json`) ported fr
 Key tokens to highlight:
 - **Keywords**: `true`, `false`, `fn`, `as`, `match`, `post`
 - **Builtins**: `osc`, `lp`, `adsr`, `delay`, etc. (90+ functions)
-- **Operators**: `|>`, `->`, `==`, `!=`, `+`, `-`, `*`, `/`, `^`, `%`
+- **Operators**: `|>`, `->`, `==`, `!=`, `+`, `-`, `*`, `/`, `^`, `@`
 - **Strings**: Double-quoted strings with escape support
 - **Numbers**: Integers, floats, scientific notation
 - **Comments**: `//` line comments

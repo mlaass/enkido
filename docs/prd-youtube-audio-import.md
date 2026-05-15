@@ -81,7 +81,7 @@ samples("https://youtube.com/watch?v=dQw4W9WgXcQ", {
 })
 
 // Use in patterns — bank name derived from video title
-pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(%, %)
+pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(@, @)
 ```
 
 ### 3.2 Multiple variants per sample
@@ -94,7 +94,7 @@ samples("https://youtube.com/watch?v=abc123", {
 })
 
 // Access variants by index
-pat("hh:0 hh:1 hh:2 hh:0") .bank("abc123") |> out(%, %)
+pat("hh:0 hh:1 hh:2 hh:0") .bank("abc123") |> out(@, @)
 ```
 
 ### 3.3 Timestamp formats
@@ -143,7 +143,7 @@ The bank name is derived from the video/page title returned by yt-dlp (sanitized
 samples("https://youtube.com/watch?v=abc", {kick: {s: 0, e: 2}})
 // → bank name: "My Cool Video" (from yt-dlp title)
 
-pat("kick") .bank("My Cool Video") |> out(%, %)
+pat("kick") .bank("My Cool Video") |> out(@, @)
 ```
 
 ### 3.6 Error: clip fails
@@ -714,7 +714,7 @@ curl -X POST http://localhost:8765/extract \
        hh:    [{s: 10, e: 11}, {s: 25, e: 26}],
    })
 
-   pat("kick snare hh:0 hh:1") .bank("Never Gonna Give You Up") |> out(%, %)
+   pat("kick snare hh:0 hh:1") .bank("Never Gonna Give You Up") |> out(@, @)
    ```
 3. Verify: samples load, then play. No audio gaps.
 4. Recompile same source — verify: fast (cache hit).
@@ -731,7 +731,7 @@ nkido-cli render --seconds 5 -o /tmp/test.wav \
         kick: {s: 32, e: 34},
         snare: {s: 60, e: 62},
     })
-    pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(%, %)
+    pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(@, @)
   '
 
 # Listen to /tmp/test.wav

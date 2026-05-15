@@ -25,10 +25,10 @@ Extend Akkado with Strudel-compatible patterns, first-class arrays, chord notati
 
 ```akkado
 // Explicit (always works)
-map([c4, e4, g4], x => osc("saw", x)) |> mix(%) |> out(%, %)
+map([c4, e4, g4], x => osc("saw", x)) |> mix(@) |> out(@, @)
 
 // Sugar (expands at compile time)
-osc("saw", [c4, e4, g4]) |> out(%, %)  // Equivalent to above
+osc("saw", [c4, e4, g4]) |> out(@, @)  // Equivalent to above
 ```
 
 ### 2.2 Voice System
@@ -86,7 +86,7 @@ chord("Am")  // → [57, 60, 64] (A3, C4, E4 as MIDI)
 chord("Am C G F")
   .anchor("c5")
   .mode("below")
-  |> mtof(%) |> osc("saw", %)
+  |> mtof(@) |> osc("saw", @)
 ```
 
 | Function | Description |
@@ -102,7 +102,7 @@ chord("Am C G F")
 
 ```akkado
 drums = "bd sd [hh hh] cp"
-drums.slow(2).rev() |> sampler(%) |> out(%, %)
+drums.slow(2).rev() |> sampler(@) |> out(@, @)
 
 "bd*4".lp("<4000 2000 1000>")  // Methods on string-as-pattern
 ```
@@ -186,7 +186,7 @@ drums.slow(2).rev() |> sampler(%) |> out(%, %)
 ```
 - `[1, 2, 3]` parses to ArrayLit node
 - `map([1,2,3], x => x*2)` produces `[2,4,6]`
-- `[c4, e4, g4] |> mtof(%) |> osc("saw", %)` produces 3 oscillators
+- `[c4, e4, g4] |> mtof(@) |> osc("saw", @)` produces 3 oscillators
 
 ### Phase 2: Pattern Objects & Method Chaining
 
@@ -202,7 +202,7 @@ drums.slow(2).rev() |> sampler(%) |> out(%, %)
 **Syntax**:
 ```akkado
 drums = "bd sd"
-drums.slow(2).rev() |> out(%, %)
+drums.slow(2).rev() |> out(@, @)
 ```
 
 **Files to Create**:
@@ -259,7 +259,7 @@ drums.slow(2).rev() |> out(%, %)
 **Verification**:
 - `chord("Am")` → `[57, 60, 64]`
 - `chord("C7")` → `[48, 52, 55, 58]`
-- Listen: `chord("Am") |> mtof(%) |> osc("saw", %)` sounds like A minor
+- Listen: `chord("Am") |> mtof(@) |> osc("saw", @)` sounds like A minor
 
 ### Phase 4: Voicing System — DEFERRED to Phase 2 PRD
 
@@ -320,7 +320,7 @@ note("c4").velocity(0.7).dur(0.5)
 
 **Implemented**:
 1. `LBrace`/`RBrace`/`Percent` tokens in `mini_token.hpp`
-2. Lexer handles `{`, `}`, `%` in `mini_lexer.cpp`
+2. Lexer handles `{`, `}`, `@` in `mini_lexer.cpp`
 3. `MiniPolymeter` AST node with `MiniPolymeterData.step_count` in `ast.hpp`
 4. Parser: `parse_polymeter()` in `mini_parser.cpp` handles `{x y}` and `{x y}%n`
 5. Evaluator: `eval_polymeter()` in `pattern_eval.cpp` — divides parent duration into N equal steps, cycles through children
@@ -444,7 +444,7 @@ Edge cases where valid mini-notation could also be a valid string:
 
 ### Phase 3 Complete When:
 - All common chord symbols parse correctly
-- `chord("Am C F G") |> mtof(%) |> osc("saw", %)` plays correct progression
+- `chord("Am C F G") |> mtof(@) |> osc("saw", @)` plays correct progression
 
 ### Full System Complete When:
 - Strudel code examples work with minimal modification

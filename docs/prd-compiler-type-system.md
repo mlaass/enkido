@@ -29,7 +29,7 @@ Built-in, not user-extendable. Eight types:
 
 | Type | Representation | Examples |
 |------|---------------|----------|
-| **Signal** | Single audio-rate buffer | `osc("sin", 440)`, `% * 0.5` |
+| **Signal** | Single audio-rate buffer | `osc("sin", 440)`, `@ * 0.5` |
 | **Number** | Compile-time constant (float) | `440`, `0.5`, `2 * pi` |
 | **Pattern** | Record of {freq, vel, trig, gate, type} + SequenceState ref + cycle_length | `pat("c4 e4 g4")`, `seq("x _ x _")` |
 | **Record** | Named fields → TypedValue | `{freq: 440, vel: 0.8}` |
@@ -152,13 +152,13 @@ TypedValue { .type = Void, .buffer = BUFFER_UNUSED }
 
 ## Impact on Pipes and Holes
 
-Today `%` (hole) is substituted at AST level by `substitute_holes()` in the analyzer (analyzer.cpp:381-646). The analyzer clones the replacement node. The codegen never sees a hole — it sees the substituted expression.
+Today `@` (hole) is substituted at AST level by `substitute_holes()` in the analyzer (analyzer.cpp:381-646). The analyzer clones the replacement node. The codegen never sees a hole — it sees the substituted expression.
 
-With TypedValue, **no change to hole substitution logic is needed.** The AST rewrite remains the same. The difference is that when codegen visits the substituted expression, it returns a TypedValue instead of a buffer index. Field access (`%.freq`) resolves via TypedValue's type rather than probing maps.
+With TypedValue, **no change to hole substitution logic is needed.** The AST rewrite remains the same. The difference is that when codegen visits the substituted expression, it returns a TypedValue instead of a buffer index. Field access (`@.freq`) resolves via TypedValue's type rather than probing maps.
 
 Example flow:
 ```
-pat("c4 e4") |> transport(%, trigger(2))
+pat("c4 e4") |> transport(@, trigger(2))
 ```
 1. Analyzer rewrites to: `transport(pat("c4 e4"), trigger(2))`
 2. Codegen visits `pat("c4 e4")` → returns `TypedValue{Pattern, ...}`
@@ -266,7 +266,7 @@ Three phases. The original Phase 1 (introduce `visit_typed()` wrapper alongside 
 
 ### Closure parameters
 
-`pat("c4") |> ((f) -> osc("sin", f.freq))` — the analyzer rewrites pipe-to-closure by substituting `%` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
+`pat("c4") |> ((f) -> osc("sin", f.freq))` — the analyzer rewrites pipe-to-closure by substituting `@` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
 
 - `handle_closure()` receives the incoming TypedValue to type the parameter
 - `f.freq` resolves via the propagated Pattern type, not via map probing
@@ -295,7 +295,7 @@ When an Array TypedValue is passed to a builtin parameter expecting Signal, the 
 3. One instruction is emitted per array element, each wired to the corresponding element's buffer
 4. Only the **first** Array argument triggers expansion (existing limitation, documented not changed)
 
-Example: `[osc("sin", 220), osc("sin", 330), osc("sin", 440)] |> filter_lp(%, 1000)` clones the filter instruction 3 times.
+Example: `[osc("sin", 220), osc("sin", 330), osc("sin", 440)] |> filter_lp(@, 1000)` clones the filter instruction 3 times.
 
 ## Relationship to SymbolKind
 

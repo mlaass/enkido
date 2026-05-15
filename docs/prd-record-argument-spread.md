@@ -155,7 +155,7 @@ filter(signal, 1000, 0.7, ..base, ..extra)  // wet = 0.5 (from extra)
 ```akkado
 // User function with named parameters
 fn synth(freq, wave, cutoff, env_attack, env_decay) ->
-    osc(wave, freq) |> lp(%, cutoff) * ar(1, env_attack, env_decay)
+    osc(wave, freq) |> lp(@, cutoff) * ar(1, env_attack, env_decay)
 
 // Preset as record
 config = {wave: "saw", cutoff: 2000, env_attack: 0.01, env_decay: 0.3}
@@ -174,8 +174,8 @@ synth(440, ..config)  // Same result
 ```akkado
 // Spread result is the receiver for dot-call
 config = {freq: 440}
-{..config, wave: "saw"}.osc("sin") |> out(%, %)
-// Equivalent to: osc("sin", 440) |> out(%, %)
+{..config, wave: "saw"}.osc("sin") |> out(@, @)
+// Equivalent to: osc("sin", 440) |> out(@, @)
 // (osc is called with the spread record's first buffer as the implicit receiver)
 ```
 

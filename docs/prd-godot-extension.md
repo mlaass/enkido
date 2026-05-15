@@ -51,7 +51,7 @@ func _ready():
         freq = param("freq", 440, 20, 2000)
         vol = param("volume", 0.8, 0, 1)
 
-        osc("saw", freq) |> lpf(%, 2000) * vol |> out(%, %)
+        osc("saw", freq) |> lpf(@, 2000) * vol |> out(@, @)
     '''
     synth.compile()
     synth.play()
@@ -71,7 +71,7 @@ When an `NkidoPlayer` node is selected in the scene tree:
 +-----------------------------------------+
 | Source                                  |
 | +-------------------------------------+ |
-| | osc("saw", 220) |> out(%, %)        | |
+| | osc("saw", 220) |> out(@, @)        | |
 | |                                     | |
 | |                                     | |
 | +-------------------------------------+ |
@@ -104,12 +104,12 @@ func _ready():
         intensity = param("intensity", 0, 0, 1)
 
         // Base oscillator
-        pad = osc("saw", 110) |> lpf(%, 200 + intensity * 3000)
+        pad = osc("saw", 110) |> lpf(@, 200 + intensity * 3000)
 
         // Lead fades in with intensity
         lead = osc("square", 440) * intensity
 
-        (pad * 0.5 + lead * 0.3) |> out(%, %)
+        (pad * 0.5 + lead * 0.3) |> out(@, @)
     '''
     music.compile()
     music.play()
@@ -134,7 +134,7 @@ func _ready():
         trig = button("play")
 
         env = ar(trig, 0.01, 0.3)
-        osc("sin", 440 * pitch) * env |> out(%, %)
+        osc("sin", 440 * pitch) * env |> out(@, @)
     '''
     sfx.compile()
     sfx.play()  # Runs silently until triggered
@@ -663,7 +663,7 @@ Controls are rebuilt when `params_changed` signal fires after recompilation.
 | `addons/nkido/plugin.cfg` | New |
 | `project.godot` | New |
 
-**Verification:** Add NkidoPlayer to scene, set `source = "osc(\"sin\", 440) |> out(%, %)"`, call `compile()`, confirm `compilation_finished` signal fires with `success = true`.
+**Verification:** Add NkidoPlayer to scene, set `source = "osc(\"sin\", 440) |> out(@, @)"`, call `compile()`, confirm `compilation_finished` signal fires with `success = true`.
 
 ### Phase 2: Audio Playback + Parameters + Hot-Swap
 
@@ -685,8 +685,8 @@ Controls are rebuilt when `params_changed` signal fires after recompilation.
 | `addons/nkido/native_src/src/nkido_player.cpp` | Modified (add play/stop/params) |
 
 **Verification:**
-- `osc("sin", 440) |> out(%, %)` -> hear 440 Hz sine
-- `param("freq", 440, 20, 2000) |> osc("sin", %) |> out(%, %)` -> `set_param("freq", 880)` changes pitch
+- `osc("sin", 440) |> out(@, @)` -> hear 440 Hz sine
+- `param("freq", 440, 20, 2000) |> osc("sin", @) |> out(@, @)` -> `set_param("freq", 880)` changes pitch
 - Change source while playing, call `compile()` -> smooth transition
 
 ### Phase 3: Inspector Plugin
@@ -733,7 +733,7 @@ Controls are rebuilt when `params_changed` signal fires after recompilation.
 
 Since the extension runs inside Godot, testing is primarily manual:
 
-1. **Sine wave test**: Source `osc("sin", 440) |> out(%, %)` -> compile -> play -> hear 440 Hz
+1. **Sine wave test**: Source `osc("sin", 440) |> out(@, @)` -> compile -> play -> hear 440 Hz
 2. **Parameter test**: Add `param("freq", 440, 20, 2000)`, verify `set_param` from GDScript console
 3. **Hot-swap test**: Change source while playing, recompile -> no clicks/pops
 4. **Error test**: Set source to invalid code, compile -> verify error diagnostics

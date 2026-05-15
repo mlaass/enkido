@@ -168,7 +168,7 @@ opens the host's default live device.
 
 ```akkado
 fn lead(freq, gate, vel) =
-    osc("saw", freq) |> lp(%, 2000 * adsr(gate)) |> % * vel
+    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
 
 // Default live device (set via UI dropdown or --midi-in)
 midi() |> poly(lead, 8) |> out
@@ -203,7 +203,7 @@ cutoff = param("cutoff", 1000, 50, 5000)
 midi_cc("cutoff", {cc: 74, min: 50, max: 5000})
 
 fn synth(freq, gate, vel) =
-    osc("saw", freq) |> lp(%, cutoff * adsr(gate)) |> % * vel
+    osc("saw", freq) |> lp(@, cutoff * adsr(gate)) |> @ * vel
 
 midi() |> poly(synth, 8) |> out
 // Turn CC74 on your keyboard → cutoff sweeps live

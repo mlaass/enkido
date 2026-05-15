@@ -109,18 +109,18 @@ pat("bd hh sd hh").swingBy(0.4, 4) // custom delay amount
 ```akkado
 // run(n): integer sequence 0..n-1 as evenly-spaced events
 run(8)                            // 0,1,2,3,4,5,6,7
-run(8) |> mtof(% + 60) |> osc("saw", %)   // ascending chromatic
+run(8) |> mtof(@ + 60) |> osc("saw", @)   // ascending chromatic
 
 // binary(n): trigger pattern from binary representation of n
 binary(0b1010)                    // 4 steps: 1, 0, 1, 0
-binary(170) |> sampler(%, "kick") // 170 = 0b10101010, 8 steps
+binary(170) |> sampler(@, "kick") // 170 = 0b10101010, 8 steps
 
 // binaryN(n, bits): zero-padded fixed-width
 binaryN(5, 8)                     // 0b00000101 = 0,0,0,0,0,1,0,1
 
 // Generators chain via dot-call (free, via desugaring)
-run(16).fast(2).rev() |> mtof(% + 48) |> osc("sin", %)
-binary(0b11010010).slow(2).ply(2) |> sampler(%, "hh")
+run(16).fast(2).rev() |> mtof(@ + 48) |> osc("sin", @)
+binary(0b11010010).slow(2).ply(2) |> sampler(@, "hh")
 ```
 
 ### 4.3 Voicing
@@ -136,9 +136,9 @@ chord("Am C G F").anchor("c4").mode("root")    // root in bass, rest near c4
 chord("Am C G F")
   .anchor("c4")
   .mode("below")
-  |> mtof(%)
-  |> poly(%, lead, 4)
-  |> out(%, %)
+  |> mtof(@)
+  |> poly(@, lead, 4)
+  |> out(@, @)
 
 // Voice leading is automatic when mode is set (greedy nearest)
 // Each chord change picks the inversion minimizing total semitone movement.
@@ -176,8 +176,8 @@ pat("c4{vel:0.8, cutoff:0.3} e4{cutoff:0.7}")
 // Reachable from synth code via record field access on the bound event:
 pat("c4{cutoff:0.3} e4{cutoff:0.7}") as e
   |> osc("saw", e.freq)
-  |> lp(%, 200 + e.cutoff * 4000)
-  |> out(%, %)
+  |> lp(@, 200 + e.cutoff * 4000)
+  |> out(@, @)
 
 // Existing positional shorthand still works
 pat("c4:0.8 e4:1.0")              // colon = velocity (unchanged)
@@ -463,7 +463,7 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 - Unit test per generator: assert event count, times, values match spec.
 - Composition test: `run(8).fast(2).rev()` works (validates dot-call free composition).
 
-**Acceptance:** `binary(0b10110010) |> sampler(%, "hh")` produces an audible 8-step rhythm matching the bit pattern.
+**Acceptance:** `binary(0b10110010) |> sampler(@, "hh")` produces an audible 8-step rhythm matching the bit pattern.
 
 ### Phase C — Voicing System
 
@@ -480,7 +480,7 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 - Voice-leading distance test: for a chord progression, total semitone movement is ≤ a hand-verified bound.
 - Custom dictionary test: `addVoicings("test", {...})` then `chord(...).voicing("test")` round-trips.
 
-**Acceptance:** `chord("Am C G F").anchor("c4").mode("below") |> mtof(%) |> poly(%, lead, 4) |> out(%, %)` plays with audible smooth voice leading.
+**Acceptance:** `chord("Am C G F").anchor("c4").mode("below") |> mtof(@) |> poly(@, lead, 4) |> out(@, @)` plays with audible smooth voice leading.
 
 ### Phase D — Extended Note Properties
 
@@ -497,9 +497,9 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 **Verification:**
 - Transform tests: input event with default field, apply transform, assert field is set.
 - Mini-notation test: parse `pat("c4{vel:0.8,bend:0.2}")`, assert resulting `PatternEvent.velocity == 0.8` and `event.bend == 0.2`.
-- Custom property test: `pat("c4{cutoff:0.3}") as e |> lp(%, 200 + e.cutoff * 4000)` compiles to the expected cutoff.
+- Custom property test: `pat("c4{cutoff:0.3}") as e |> lp(@, 200 + e.cutoff * 4000)` compiles to the expected cutoff.
 
-**Acceptance:** `note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(% + bend(%) * 12) |> osc("sin", %)` audibly bends.
+**Acceptance:** `note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)` audibly bends.
 
 ### Phase E — Cross-Phase Smoke Acceptance
 
@@ -511,23 +511,23 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 // 1. Voicing-led chord progression (Phase C)
 chord("Am C G F").anchor("c4").mode("below") as ch
   |> mtof(ch)
-  |> poly(%, lead, 4)
-  |> out(%, %)
+  |> poly(@, lead, 4)
+  |> out(@, @)
 
 // 2. Time-modified pattern (Phase A)
 pat("c4 e4 g4 b4").early(0.125).palindrome() as p
   |> mtof(p)
-  |> osc("saw", %)
-  |> out(%, %)
+  |> osc("saw", @)
+  |> out(@, @)
 
 // 3. Generator-driven sample pattern (Phase B)
-binary(0b10110010) |> sampler(%, "hh") |> out(%, %)
+binary(0b10110010) |> sampler(@, "hh") |> out(@, @)
 
 // 4. Bend + aftertouch + custom-property pattern (Phase D)
 pat("c4{vel:0.8, bend:0.2, cutoff:0.3} e4{vel:1.0, cutoff:0.7}") as e
   |> osc("saw", e.freq)
-  |> lp(%, 200 + e.cutoff * 4000)
-  |> out(%, %)
+  |> lp(@, 200 + e.cutoff * 4000)
+  |> out(@, @)
 ```
 
 **Acceptance:** the program compiles with `cmake --build build` clean, runs in `nkido-cli render` for ≥ 30 s without crashes, and an experiment script confirms event-list correctness for blocks 0–N (per §10.3).
@@ -648,7 +648,7 @@ up as a Phase 2.1 follow-up.
 - `as e |> ... e.freq` (existing fixed-field accessor) still works.
 
 **What's missing:**
-- `pat("c4{cutoff:0.3}") as e |> lp(%, 200 + e.cutoff * 4000)` — the `e.cutoff`
+- `pat("c4{cutoff:0.3}") as e |> lp(@, 200 + e.cutoff * 4000)` — the `e.cutoff`
   member-access path. `pattern_field_index()` returns -1 for unrecognized
   keys; per the PRD §5.5a design, the resolver needs to fall through to
   `tv.pattern->custom_fields` (a `std::unordered_map<std::string, std::uint16_t>`
@@ -666,8 +666,8 @@ up as a Phase 2.1 follow-up.
 ```akkado
 pat("c4{vel:0.8, cutoff:0.3} e4{vel:1.0, cutoff:0.7}") as e
   |> osc("saw", e.freq)
-  |> lp(%, 200 + e.cutoff * 4000)
-  |> out(%, %)
+  |> lp(@, 200 + e.cutoff * 4000)
+  |> out(@, @)
 ```
 
 ### 11.2 Standalone `bend()` / `aftertouch()` transforms
@@ -694,7 +694,7 @@ runtime fields not added.
 
 **Acceptance test (unblocked by this work):**
 ```akkado
-note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(% + bend(%) * 12) |> osc("sin", %) |> out(%, %)
+note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @) |> out(@, @)
 ```
 
 ### 11.3 Implementation sequencing

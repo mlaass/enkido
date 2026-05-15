@@ -186,7 +186,7 @@ hh_closed(trig, freq, tone, decay, noisiness) // alias setting rate=1
 // Mini-notation pattern of drum names. Each step plays one preset voice
 // at the inferred beat. Voices are bd_analog, sd_analog, hh_closed, hh_open.
 // Output is mono.
-ds_drum("bd:sd:hh:hh") |> out(%, %)
+ds_drum("bd:sd:hh:hh") |> out(@, @)
 
 // Custom voice/freq overrides via record syntax (mirrors `s()` events)
 ds_drum("bd hh*4 sd?", { bd: { freq: 60, decay: 0.7 } })
@@ -645,12 +645,12 @@ In `akkado/tests/test_daisy_codegen.cpp`:
 
 ```cpp
 TEST_CASE("bd_analog parses and emits DAISY_BD_ANALOG", "[daisy][drums]") {
-    auto bytecode = compile("bd_analog(trig(4), 60, 0.5, 0.3, 0.1, 0.2, 0.5) |> out(%, %)");
+    auto bytecode = compile("bd_analog(trig(4), 60, 0.5, 0.3, 0.1, 0.2, 0.5) |> out(@, @)");
     REQUIRE(bytecode_contains_opcode(bytecode, Opcode::DAISY_BD_ANALOG));
 }
 
 TEST_CASE("ds_drum mini-notation expands to drum voices", "[daisy][drums][ds_drum]") {
-    auto bytecode = compile("ds_drum(\"bd:sd:hh:hh\") |> out(%, %)");
+    auto bytecode = compile("ds_drum(\"bd:sd:hh:hh\") |> out(@, @)");
     REQUIRE(bytecode_contains_opcode(bytecode, Opcode::DAISY_BD_ANALOG));
     REQUIRE(bytecode_contains_opcode(bytecode, Opcode::DAISY_SD_ANALOG));
     REQUIRE(bytecode_contains_opcode(bytecode, Opcode::DAISY_HH));

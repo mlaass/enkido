@@ -1,14 +1,17 @@
-> **Status: NOT STARTED** — Drafted 2026-05-15.
+> **Status: NOT STARTED** — Drafted 2026-05-15. Note: as of 2026-05-15, `@` is
+> the canonical hole token in nkido docs and examples; `%` continues to parse
+> as a legacy alias. This PRD's spec covers both, but new prose/examples
+> should prefer `@`.
 
-# PRD: Dotless Hole Field Shorthand (`@field` / `%field`)
+# PRD: Dotless Hole Field Shorthand (`@field`, with `%field` legacy alias)
 
 ## Executive Summary
 
 Today, accessing a field of a pattern event (or any record) on a hole requires
-the dotted form `@.freq` or `%.vel`. In practice — especially when typing —
-the dot is awkward: users naturally reach for `@freq`. This PRD specifies a
-dotless shorthand so that **anywhere `@.field` is legal, `@field` is also
-legal** (and likewise for `%`).
+the dotted form `@.freq` (or the legacy `%.vel`). In practice — especially
+when typing — the dot is awkward: users naturally reach for `@freq`. This PRD
+specifies a dotless shorthand so that **anywhere `@.field` is legal, `@field`
+is also legal** (and likewise for the legacy `%`).
 
 The dotted form keeps working unchanged. A new opt-in warning (`W201`) flags
 dotted usages for users who want to migrate. Existing patches, docs, and
@@ -141,13 +144,13 @@ see §5.4) so the corpus migration is mechanical.
 
 ```akkado
 // Today
-pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel |> out(%, %)
+pat("c4 e4 g4") |> osc("sin", @.freq) * @.vel |> out(@, @)
 
-// After
+// After (canonical dotless form)
+pat("c4 e4 g4") |> osc("sin", @freq) * @vel |> out(@, @)
+
+// Legacy `%` alias accepts the same shorthand
 pat("c4 e4 g4") |> osc("sin", %freq) * %vel |> out(%, %)
-
-// Or with @
-c"CM Am Dm G" |> osc("saw", @freq) |> out(@, @)
 ```
 
 ### 3.2 Aliases work the same
@@ -164,7 +167,7 @@ pat("c4") |> osc("sin", @f) * @v * ar(@t, 0.01, 0.1)
 
 ```akkado
 fn make_voice(freq) -> {sig: osc("saw", freq), env: ar(1, 0.01, 0.3)}
-make_voice(440) as v |> lp(v.sig, 1000) * v.env |> out(%, %)
+make_voice(440) as v |> lp(v.sig, 1000) * v.env |> out(@, @)
 ```
 
 `v.sig` / `v.env` are unaffected (they use a regular identifier, not a
@@ -203,22 +206,22 @@ chains are parsed by the existing field-access postfix machinery.
 ### 3.6 Method calls (unchanged)
 
 ```akkado
-osc("saw", 440) |> %.lp(800) |> out(%, %)        // ✓ today, ✓ after
-osc("saw", 440) |> @.lp(800).hp(2000) |> out(%)  // ✓ today, ✓ after
-osc("saw", 440) |> %lp(800)                       // ✗ parse error E108
+osc("saw", 440) |> @.lp(800) |> out(@, @)        // ✓ today, ✓ after
+osc("saw", 440) |> @.lp(800).hp(2000) |> out(@)  // ✓ today, ✓ after
+osc("saw", 440) |> @lp(800)                       // ✗ parse error E108
 ```
 
-`%lp(800)` triggers a new parse error:
+`@lp(800)` triggers a new parse error:
 
 ```
-E108 — Method calls on holes require a dot: write `%.lp(800)` instead of `%lp(800)`.
+E108 — Method calls on holes require a dot: write `@.lp(800)` instead of `@lp(800)`.
 ```
 
 ### 3.7 Bare holes are unaffected
 
 ```akkado
-out(%, %)                  // bare hole — no change
-saw(440) |> lp(%, 1000)    // bare hole — no change
+out(@, @)                  // bare hole — no change
+saw(440) |> lp(@, 1000)    // bare hole — no change
 ```
 
 After consuming the hole token, the parser only consumes a field name when
@@ -528,9 +531,9 @@ cd web && bun run check
 ### 8.1 Bare hole still works in all contexts
 
 ```akkado
-out(%, %)
-saw(440) |> lp(%, 1000)
-pat("c4") |> %                  // bare hole, equivalent to %.freq
+out(@, @)
+saw(440) |> lp(@, 1000)
+pat("c4") |> @                  // bare hole, equivalent to @.freq
 ```
 
 The shorthand only kicks in when the next token is an **adjacent**

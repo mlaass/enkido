@@ -143,13 +143,13 @@ The editor is the primary view with inline visualizations. A collapsible side pa
 │  │ [Toggle 3]  │   │  osc = osc("sin", 440)                          │
 │  │             │   │        ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅▄▃▂▁   │
 │  ├─────────────┤   │                                          │
-│  │ Settings    │   │  |> lp(%, 800 + 300 * co, 0.7)           │
+│  │ Settings    │   │  |> lp(@, 800 + 300 * co, 0.7)           │
 │  │             │   │     ━━━━━━━━━▂▄▆█▓░░░░░░░░░░░░░░░░░     │
 │  │ Theme       │   │                                          │
 │  │ Audio Out   │   │  pad = seq("c3 e3 g3 b3:4", ...)         │
 │  │ Buffer Size │   │        ┃ ┃ ┃ █████████████████████       │
 │  │             │   │                                          │
-│  ├─────────────┤   │  |> out(L: %, R: %)                      │
+│  ├─────────────┤   │  |> out(L: @, R: @)                      │
 │  │ Docs        │   │     L ▁▂▄▆█▆▄▂  R ▁▂▄▆█▆▄▂              │
 │  │ (quick ref) │   │                                          │
 │  │             │   │                                          │
@@ -185,7 +185,7 @@ The editor is the primary view with inline visualizations. A collapsible side pa
 ### CodeMirror 6 Configuration
 
 1. **Custom Akkado Language Mode**
-   - Syntax highlighting for: keywords, operators (`|>`, `%`), numbers, strings, pitches (`'c4'`), chords
+   - Syntax highlighting for: keywords, operators (`|>`, `@`), numbers, strings, pitches (`'c4'`), chords
    - Mini-notation parsing inside `pat()`, `seq()`, `timeline()` strings
    - Bracket matching for `()`, `[]`, `{}`
 
@@ -214,7 +214,7 @@ Instead of a separate visualization panel, visualizations appear **inline** bene
 │  osc = osc("sin", 440)                                             │
 │        ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅▄▃▂▁  ← waveform         │
 │                                                             │
-│  |> lp(%, 800, 0.7)                                         │
+│  |> lp(@, 800, 0.7)                                         │
 │     ━━━━━━━━━━━━▂▄▆█▓░░░░░░░░░░░░░░░░  ← freq response     │
 │                                                             │
 │  pad = seq("c3 e3 g3 b3:4", (t, v, p) -> {                  │
@@ -223,7 +223,7 @@ Instead of a separate visualization panel, visualizations appear **inline** bene
 │     ...                                                     │
 │  })                                                         │
 │                                                             │
-│  |> out(L: %, R: %)                                         │
+│  |> out(L: @, R: @)                                         │
 │     L ▁▂▃▄▅▆▇█▇▆▅▄ R ▁▂▃▄▅▆▇█▇▆▅▄  ← stereo output         │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -300,7 +300,7 @@ Markdown files with embedded NKIDO widgets:
 The `sin()` function generates a sine wave oscillator.
 
 :::nkido
-osc("sin", 440) |> out(%, %)
+osc("sin", 440) |> out(@, @)
 :::
 
 Parameters:
@@ -310,7 +310,7 @@ Try modifying the frequency:
 
 :::nkido {interactive}
 freq = 440  // Try changing this!
-sin(freq) |> out(%, %)
+sin(freq) |> out(@, @)
 :::
 ```
 
@@ -329,7 +329,7 @@ sin(freq) |> out(%, %)
    - Hot-swapping basics
 
 2. **Language Reference**
-   - Operators (`|>`, `%`, arithmetic)
+   - Operators (`|>`, `@`, arithmetic)
    - Closures and patterns
    - Mini-notation grammar
 
@@ -515,7 +515,7 @@ nkido/
 ### Manual Verification Steps
 
 1. Load IDE in browser, verify WASM modules load
-2. Type simple program: `osc("sin", 440) |> out(%, %)`
+2. Type simple program: `osc("sin", 440) |> out(@, @)`
 3. Press Ctrl+Enter, verify audio output
 4. Modify frequency, verify hot-swap (no click)
 5. Check waveform visualization matches audio

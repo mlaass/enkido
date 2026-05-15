@@ -18,7 +18,7 @@ Refactor the current inline piano roll and introduce an extensible visualization
 ### Goals
 
 1. Visualizations display **below** the source line, not inline
-2. Visualizations are **function calls** that can be piped: `signal |> oscilloscope(%, "name", opts)`
+2. Visualizations are **function calls** that can be piped: `signal |> oscilloscope(@, "name", opts)`
 3. Support **multiple visualization types**: pianoroll, oscilloscope, waveform, spectrum
 4. **Extensible architecture** for future custom visualizations
 5. **Zero audio-thread allocations** for signal capture
@@ -27,27 +27,27 @@ Refactor the current inline piano roll and introduce an extensible visualization
 
 ```akkado
 // Piano roll for pattern events (beat-aligned note display)
-pat("c4 e4 g4") |> pianoroll(%, "melody")
-pat("c4 e4 g4") |> pianoroll(%, "melody", {height: 64, scale: "chromatic"})
+pat("c4 e4 g4") |> pianoroll(@, "melody")
+pat("c4 e4 g4") |> pianoroll(@, "melody", {height: 64, scale: "chromatic"})
 
 // Oscilloscope (beat-aligned waveform cycles)
-osc("saw", 220) |> oscilloscope(%, "osc1")
-osc("saw", 220) |> oscilloscope(%, "osc1", {width: 400, beats: 2})
+osc("saw", 220) |> oscilloscope(@, "osc1")
+osc("saw", 220) |> oscilloscope(@, "osc1", {width: 400, beats: 2})
 
 // Continuous waveform display (scrolling)
-signal |> waveform(%, "output")
-signal |> waveform(%, "output", {scale: 1.0, duration: 0.5})
+signal |> waveform(@, "output")
+signal |> waveform(@, "output", {scale: 1.0, duration: 0.5})
 
 // FFT spectrum analyzer
-signal |> spectrum(%, "spectrum")
-signal |> spectrum(%, "spectrum", {fftSize: 2048, logScale: true})
+signal |> spectrum(@, "spectrum")
+signal |> spectrum(@, "spectrum", {fftSize: 2048, logScale: true})
 ```
 
 ### Semantics
 
 - All visualization functions **pass through** their input signal unchanged
 - Visualizations emit **metadata** during compilation, not audio processing code
-- Multiple visualizations can be chained: `sig |> pianoroll(%, "a") |> spectrum(%, "b")`
+- Multiple visualizations can be chained: `sig |> pianoroll(@, "a") |> spectrum(@, "b")`
 
 ## Visualization Types
 
@@ -392,7 +392,7 @@ Source Code
 ## Success Criteria
 
 - [ ] Visualizations render below source lines without text interruption
-- [ ] `|> pianoroll(%, ...)` syntax works in the language
+- [ ] `|> pianoroll(@, ...)` syntax works in the language
 - [ ] All four visualization types functional
 - [ ] Playhead synchronized with beat position
 - [ ] No audio dropouts with 4+ active visualizations

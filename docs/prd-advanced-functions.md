@@ -231,16 +231,16 @@ In `resolve_and_validate()`, add the call for user functions:
 fn make_filter(cut) -> (sig) -> lp(sig, cut)
 
 filt = make_filter(1000)
-noise() |> filt(%) |> out(%, %)
+noise() |> filt(@) |> out(@, @)
 ```
 
 ```akkado
 fn make_voice(wave = "saw") -> (freq) -> {
-    osc(wave, freq) |> lp(%, freq * 4)
+    osc(wave, freq) |> lp(@, freq * 4)
 }
 
 my_voice = make_voice("tri")
-my_voice(440) |> out(%, %)
+my_voice(440) |> out(@, @)
 ```
 
 #### Rules
@@ -344,7 +344,7 @@ mix(a, b, c, d)     // 4 signals
 ```akkado
 fn chain(input, ...fxs) -> fold(fxs, input, (acc, fx) -> fx(acc))
 
-noise() |> chain(%, lp(_, 500), delay(_, 0.3), reverb(_))
+noise() |> chain(@, lp(_, 500), delay(_, 0.3), reverb(_))
 ```
 
 ```akkado
@@ -353,7 +353,7 @@ fn parallel(...fns) -> (sig) -> {
 }
 
 fx = parallel(lp(_, 500), hp(_, 2000), bandpass(_, 800, 2))
-noise() |> fx(%) |> out(%, %)
+noise() |> fx(@) |> out(@, @)
 ```
 
 #### Rules
@@ -513,7 +513,7 @@ clamp01 = clamp(0, _, 1)  // creates (x) -> clamp(0, x, 1)
 
 // Works with builtins too
 soft_lp = lp(_, 500, 0.7)   // creates (sig) -> lp(sig, 500, 0.7)
-noise() |> soft_lp(%) |> out(%, %)
+noise() |> soft_lp(@) |> out(@, @)
 
 // Multiple placeholders
 f = clamp(_, _, 1)    // creates (a, b) -> clamp(a, b, 1)
@@ -526,7 +526,7 @@ f = clamp(_, _, 1)    // creates (a, b) -> clamp(a, b, 1)
 - The result is a `FunctionValue` (closure) that can be assigned and called
 - Works with both builtins and user-defined functions
 - Can be passed directly as a function argument: `map(arr, add(3, _))`
-- Can be used inline in pipe chains: `noise() |> lp(_, 500)(%) |> out(%, %)`
+- Can be used inline in pipe chains: `noise() |> lp(_, 500)(@) |> out(@, @)`
 
 #### Unambiguity with Match Wildcards
 
@@ -593,11 +593,11 @@ if (rhs is Call && call_has_placeholder_args(rhs)) {
 ```akkado
 // Two functions
 pipeline = compose(lp(_, 1000), delay(_, 0.3))
-noise() |> pipeline(%) |> out(%, %)
+noise() |> pipeline(@) |> out(@, @)
 
 // Three or more functions
 fx_chain = compose(lp(_, 800), saturate(_, 0.3), reverb(_))
-saw(220) |> fx_chain(%) |> out(%, %)
+saw(220) |> fx_chain(@) |> out(@, @)
 
 // With user-defined functions
 fn double(x) -> x * 2
@@ -606,7 +606,7 @@ f = compose(double, inc)   // (x) -> inc(double(x))
 f(5)  // returns 11
 
 // Inline use
-noise() |> compose(lp(_, 500), delay(_, 0.3))(%) |> out(%, %)
+noise() |> compose(lp(_, 500), delay(_, 0.3))(@) |> out(@, @)
 ```
 
 #### Rules
@@ -816,7 +816,7 @@ g(100)              // 50.0
 
 fn make_filter(cut) -> (sig) -> lp(sig, cut)
 filt = make_filter(1000)
-noise() |> filt(%) |> out(%, %)  // should compile and produce filtered noise
+noise() |> filt(@) |> out(@, @)  // should compile and produce filtered noise
 
 // Feature 4: Variadic
 fn mix(...sigs) -> sum(sigs) / len(sigs)
@@ -833,7 +833,7 @@ add3 = add(3, _)
 add3(4)             // 7.0
 
 soft_lp = lp(_, 500, 0.7)
-noise() |> soft_lp(%) |> out(%, %)
+noise() |> soft_lp(@) |> out(@, @)
 
 // Feature 6: Compose
 fn double(x) -> x * 2
@@ -842,7 +842,7 @@ f = compose(double, inc)
 f(5)                // 11.0 (double first, then inc)
 
 pipeline = compose(lp(_, 1000), delay(_, 0.3))
-noise() |> pipeline(%) |> out(%, %)
+noise() |> pipeline(@) |> out(@, @)
 ```
 
 ### 5.4 Build & Run
@@ -882,7 +882,7 @@ cmake --build build && ./build/akkado/tests/akkado_tests
 
 - `_` must not be treated as a variable reference. It's a syntax marker only.
 - Partial application of a partially applied function: `f = add(_, _); g = f(3, _)` -- this is equivalent to `g = add(3, _)` but requires `f` to be a FunctionValue first. The rewrite in pass 2 handles this: `f(3, _)` sees `f` is a FunctionValue call with a `_`, so it rewrites to a closure `(x) -> f(3, x)`.
-- Partial application in pipe chains: `noise() |> lp(_, 500)(%)` -- the `lp(_, 500)` produces a closure, then `(%)` calls it with pipe input. This requires the parser to handle `expr(args)` where `expr` is a partial application.
+- Partial application in pipe chains: `noise() |> lp(_, 500)(@)` -- the `lp(_, 500)` produces a closure, then `(@)` calls it with pipe input. This requires the parser to handle `expr(args)` where `expr` is a partial application.
 
 ### 6.6 Compose
 

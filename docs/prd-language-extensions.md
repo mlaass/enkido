@@ -46,7 +46,7 @@ This PRD specifies 8 language features across Phases 1, 3, and 4 of the [Languag
 // These are equivalent:
 saw(440).lp(800).delay(0.3, 0.5)
 delay(lp(saw(440), 800), 0.3, 0.5)
-saw(440) |> lp(%, 800) |> delay(%, 0.3, 0.5)
+saw(440) |> lp(@, 800) |> delay(@, 0.3, 0.5)
 ```
 
 **Semantics:**
@@ -54,7 +54,7 @@ saw(440) |> lp(%, 800) |> delay(%, 0.3, 0.5)
 - No special method resolution, no "methods" concept
 - Works with builtins and user-defined functions equally
 - Left-associative chaining: `a.f().g()` → `g(f(a))`
-- Interacts with pipe: `x.f(a) |> g(%, b)` works (dot-call resolves first)
+- Interacts with pipe: `x.f(a) |> g(@, b)` works (dot-call resolves first)
 
 **Non-goals:**
 - No property access via dot (that's `FieldAccess`, a separate node type)
@@ -89,7 +89,7 @@ osc("sin", 440).lp(800)                    // → lp(osc("sin", 440), 800)
 saw(440).lp(800).delay(0.3, 0.5, 1, 0.5)  // → delay(lp(saw(440), 800), 0.3, 0.5, 1, 0.5)
 
 // With pipe
-osc("sin", 440).lp(800) |> out(%, %)       // dot resolves before pipe
+osc("sin", 440).lp(800) |> out(@, @)       // dot resolves before pipe
 
 // User-defined functions
 fn gain(sig, amt) -> sig * amt
@@ -116,18 +116,18 @@ Not implemented. The compiler has hardcoded compile-time evaluation for `linspac
 **Syntax:**
 ```akkado
 const fn linspace(start, end, n) -> {
-    range(0, n) |> map(%, (i) -> start + (end - start) * i / (n - 1))
+    range(0, n) |> map(@, (i) -> start + (end - start) * i / (n - 1))
 }
 
 const fn edo_scale(divisions) -> {
-    range(0, divisions) |> map(%, (i) -> pow(2, i / divisions))
+    range(0, divisions) |> map(@, (i) -> pow(2, i / divisions))
 }
 
 const fn mtof(note) -> 440.0 * pow(2.0, (note - 69.0) / 12.0)
 
 const fn just_intonation() -> [1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8]
 
-const fn wavetable(n) -> range(0, n) |> map(%, (i) -> sin(2 * 3.14159265 * i / n))
+const fn wavetable(n) -> range(0, n) |> map(@, (i) -> sin(2 * 3.14159265 * i / n))
 ```
 
 **Semantics:**
@@ -138,7 +138,7 @@ const fn wavetable(n) -> range(0, n) |> map(%, (i) -> sin(2 * 3.14159265 * i / n
 - Result is emitted as `PUSH_CONST` instruction(s) — zero runtime cost
 
 **Allowed in body:**
-- Arithmetic: `+`, `-`, `*`, `/`, `%`
+- Arithmetic: `+`, `-`, `*`, `/`, `@`
 - Comparisons: `<`, `>`, `<=`, `>=`, `==`, `!=`
 - Math builtins: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `pow`, `sqrt`, `abs`, `log`, `exp`, `floor`, `ceil`, `min`, `max`, `clamp`
 - Array operations: `range`, `map`, `fold`, `sum`, `len`, `zip`, `zipWith`
@@ -218,7 +218,7 @@ using ConstValue = std::variant<double, std::vector<double>>;
 ```
 
 **Operations:**
-- Arithmetic on `double` values (+, -, *, /, %)
+- Arithmetic on `double` values (+, -, *, /, @)
 - Arithmetic on arrays (element-wise or scalar broadcast)
 - Math functions: `sin(double) -> double`, etc. (delegate to `<cmath>`)
 - `range(start, end) -> vector<double>` (integer range)
@@ -248,11 +248,11 @@ Once `const fn` works, the hardcoded generators in `codegen_arrays.cpp` can be m
 
 ```akkado
 const fn linspace(start, end, n) -> {
-    range(0, n) |> map(%, (i) -> start + (end - start) * i / (n - 1))
+    range(0, n) |> map(@, (i) -> start + (end - start) * i / (n - 1))
 }
 
 const fn harmonics(fundamental, count) -> {
-    range(1, count + 1) |> map(%, (i) -> fundamental * i)
+    range(1, count + 1) |> map(@, (i) -> fundamental * i)
 }
 
 const fn normalize(arr) -> {
@@ -285,7 +285,7 @@ const fn double_it(x) -> x * 2
 osc("sin", double_it(220))                // → osc("sin", 440)
 
 // Array const fn
-const fn harmonics(f, n) -> range(1, n + 1) |> map(%, (i) -> f * i)
+const fn harmonics(f, n) -> range(1, n + 1) |> map(@, (i) -> f * i)
 harmonics(110, 4)                          // → [110, 220, 330, 440]
 
 // Nested const fn calls
@@ -416,7 +416,7 @@ match(event) {
 
 **`as` binding syntax:**
 ```akkado
-pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> % * vel
+pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> @ * vel
 ```
 
 **Semantics:**
@@ -530,7 +530,7 @@ match(r) {
 }
 
 // As binding destructuring
-pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> % * vel |> out(%, %)
+pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> @ * vel |> out(@, @)
 
 // With guard
 match(event) {
@@ -674,7 +674,7 @@ fn pitched(sig, freq = mtof(60)) -> lp(sig, freq)
 pitched(noise())                            // freq = 261.6
 
 // Array default
-const fn harmonics(f, n) -> range(1, n + 1) |> map(%, (i) -> f * i)
+const fn harmonics(f, n) -> range(1, n + 1) |> map(@, (i) -> f * i)
 fn additive(freqs = harmonics(220, 4)) -> sum(map(freqs, (f) -> osc("sin", f)))
 additive()                                  // freqs = [220, 440, 660, 880]
 
@@ -955,8 +955,8 @@ pat("c4 e4 g4")
     .transpose(12)
     as {freq, vel, trig}
     |> osc("sin", freq)
-    |> % * vel
-    |> out(%, %)
+    |> @ * vel
+    |> out(@, @)
 
 // Const fn + expression defaults + record spreading
 const fn mtof(n) -> 440.0 * pow(2.0, (n - 69.0) / 12.0)
@@ -970,7 +970,7 @@ match(vel) {
     0.3..0.7: osc("tri", freq) * vel
     0.7..1.0: osc("saw", freq) * vel
     _: dc(0)
-} |> out(%, %)
+} |> out(@, @)
 ```
 
 ---

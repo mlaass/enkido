@@ -15,7 +15,7 @@ Live-coding a synth is useful, but many musical workflows want to *process* an e
 - **One new opcode, one new builtin.** `INPUT` opcode + `in` builtin. The language surface is minimal.
 - **Silent fallback.** When input is unavailable (permission denied, device gone, file not loaded), `in()` returns zeros. No crash, no compile error.
 - **Source selection has two layers.** A UI dropdown picks the default source; an optional string argument `in('mic' | 'tab' | 'file:name.wav')` overrides per-compile.
-- **Stereo return via the universal stereo signal semantics PRD** ([`prd-stereo-support.md`](prd-stereo-support.md)). `in()` produces a `Stereo` `TypedValue` with adjacent L/R buffers. Auto-lift then handles the rest — `in() |> lp(%, 2000) |> out` is a stereo lowpass with independent per-channel filter state at no extra user effort.
+- **Stereo return via the universal stereo signal semantics PRD** ([`prd-stereo-support.md`](prd-stereo-support.md)). `in()` produces a `Stereo` `TypedValue` with adjacent L/R buffers. Auto-lift then handles the rest — `in() |> lp(@, 2000) |> out` is a stereo lowpass with independent per-channel filter state at no extra user effort.
 - **Host populates input buffers before each block.** `ExecutionContext` gains `input_left` / `input_right` pointers symmetric to the existing `output_left` / `output_right`. Each host (WASM, CLI, Godot) is responsible for filling them.
 
 ---
@@ -69,10 +69,10 @@ No audio-input opcode exists in the `Opcode` enum in `cedar/include/cedar/vm/ins
 
 ```akkado
 // Filter the microphone
-in() |> lp(%, 2000, 0.7) |> out
+in() |> lp(@, 2000, 0.7) |> out
 
 // Delay and feed back
-in() |> delay(%, 0.25, 0.5, 0.5, 0.5) |> out
+in() |> delay(@, 0.25, 0.5, 0.5, 0.5) |> out
 
 // Mix with a synth
 s = osc("saw", 220) * 0.3
@@ -87,7 +87,7 @@ in('tab')              // tab / system audio (via getDisplayMedia)
 in('file:voice.wav')   // an uploaded file, looped
 
 // Useful when the UI default is 'mic' but this patch wants a file:
-in('file:drums.wav') |> freeverb(%) |> out
+in('file:drums.wav') |> freeverb(@) |> out
 ```
 
 The argument is a **compile-time string literal**. The compiler does not interpret it semantically; it is forwarded to the host as metadata (e.g. via a new `cedar_set_input_source()` call triggered on compile).
@@ -100,7 +100,7 @@ in() * 0.5 |> out
 
 // Parallel dry/wet
 dry = in()
-wet = dry |> crush(%, 8)
+wet = dry |> crush(@, 8)
 dry * 0.5 + wet * 0.5 |> out
 ```
 
@@ -393,7 +393,7 @@ The Godot extension must, before each `process_block()` call, fill `ctx.input_le
 ### 8.2 Akkado tests (added to `akkado/tests/test_codegen.cpp` under `[input]` tag)
 
 - `in()` compiles and emits an INPUT instruction with a `TypedValue` built via `TypedValue::stereo_signal(left, right)` (i.e. `channels == ChannelCount::Stereo`, `right_buffer == left + 1`).
-- Feeding `in()` into a mono DSP builtin (e.g. `in() |> lp(%, 2000)`) emits one instruction with the `InstructionFlag::STEREO_INPUT` bit set and allocates an adjacent L/R output pair (depends on stereo-PRD Phase 4 auto-lift codegen landing first).
+- Feeding `in()` into a mono DSP builtin (e.g. `in() |> lp(@, 2000)`) emits one instruction with the `InstructionFlag::STEREO_INPUT` bit set and allocates an adjacent L/R output pair (depends on stereo-PRD Phase 4 auto-lift codegen landing first).
 - `in('mic')`, `in('tab')`, `in('file:sample.wav')` all compile.
 - `in('garbage_value')` is a compile-time error.
 - `in() |> out` end-to-end compiles and produces runnable bytecode.
@@ -421,7 +421,7 @@ The Godot extension must, before each `process_block()` call, fill `ctx.input_le
 - `nkido-cli --list-devices` prints numbered list of capture devices.
 - `nkido-cli --input-device "USB Audio"` selects named device.
 - `nkido-cli --input-device "nonexistent"` warns and falls back to default.
-- Piping input through `in() |> lp(%, 800) |> out` in a `.cedar` file works audibly.
+- Piping input through `in() |> lp(@, 800) |> out` in a `.cedar` file works audibly.
 
 ### 8.5 Cedar → CLI → Web integration sanity
 
@@ -479,7 +479,7 @@ Same Akkado program compiled and run on both platforms with the same input (a pr
 
 ## 10. Open Questions
 
-- **Dependency ordering on stereo PRD.** This PRD's `in()` type signature assumes `ChannelCount` and adjacent-buffer output pairs from [`prd-stereo-support.md`](prd-stereo-support.md). The Target Syntax in §3 — most notably `in() |> lp(%, 2000) |> out` — relies on the stereo PRD's **Phase 1** (type system), **Phase 3** (`STEREO_INPUT` VM dispatch), and **Phase 4** (auto-lift codegen) all being in place. If `in()` ships before Phases 3–4 land, the INPUT opcode still works (host fills two buffers, opcode copies them), but downstream mono DSP silently drops the right channel — users would need to pipe through existing stereo opcodes (`width`, `pingpong`) or explicit `pan(left(in()), right(in()))` routing. Recommendation: land the stereo PRD's Phases 1–4 before wiring `in()` into auto-lift, so the UX promised in §3 is real on day one.
+- **Dependency ordering on stereo PRD.** This PRD's `in()` type signature assumes `ChannelCount` and adjacent-buffer output pairs from [`prd-stereo-support.md`](prd-stereo-support.md). The Target Syntax in §3 — most notably `in() |> lp(@, 2000) |> out` — relies on the stereo PRD's **Phase 1** (type system), **Phase 3** (`STEREO_INPUT` VM dispatch), and **Phase 4** (auto-lift codegen) all being in place. If `in()` ships before Phases 3–4 land, the INPUT opcode still works (host fills two buffers, opcode copies them), but downstream mono DSP silently drops the right channel — users would need to pipe through existing stereo opcodes (`width`, `pingpong`) or explicit `pan(left(in()), right(in()))` routing. Recommendation: land the stereo PRD's Phases 1–4 before wiring `in()` into auto-lift, so the UX promised in §3 is real on day one.
 - **Source string grammar** — the PRD uses `'mic'`, `'tab'`, `'file:NAME'`. Should `file:` support relative paths, IDs, or both? Recommend: whatever the existing sample-loading uses.
 - **Does hot-swap pause capture?** Optimization, not correctness. Deferred to implementation.
 - **Latency measurement / alignment** — out of scope; users who need tight input-output alignment can add a short delay manually.

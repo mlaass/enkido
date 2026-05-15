@@ -109,9 +109,9 @@ len(e.notes)   // dynamic signal: 3, then 1, then 2
 // Walk the current chord on every 8th note, sound through a sine
 pat("[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]") as e
   |> e.notes.step(trigger(8))   // UFCS from state PRD: step(notes(e), trigger(8))
-  |> note(%)                    // MIDI → Hz
-  |> osc("sin", %)
-  |> out(%, %)
+  |> note(@)                    // MIDI → Hz
+  |> osc("sin", @)
+  |> out(@, @)
 ```
 
 `step()` is provided by the state PRD; it composes with dynamic arrays automatically because `len()` (used internally by `step` to wrap the counter) is polymorphic.
@@ -122,8 +122,8 @@ pat("[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]") as e
 // Add a 3rd and 5th to every melody note; play the chord with poly
 pat("c4 e4 g4 e4") as e
   |> map([0, 4, 7], (i) -> e.note + i)   // [n, n+4, n+7] — a static array of 3 elements
-  |> poly(%, (f, g, v) -> osc("sin", note(f)) * ar(g, 0.01, 0.3) * v)
-  |> out(%, %)
+  |> poly(@, (f, g, v) -> osc("sin", note(f)) * ar(g, 0.01, 0.3) * v)
+  |> out(@, @)
 ```
 
 This composes the existing `e.note` (scalar, unchanged) with `map()` over a *static* array of intervals, then sounds with `poly()`. No dynamic array needed for this case.
@@ -147,7 +147,7 @@ pat("[c4, e4, g4]") as e
 osc("sin", e.freqs)
 // E???: Stateful operators cannot auto-expand over dynamic arrays
 //       (chord size varies per pattern event). Wrap with poly() for runtime polyphony:
-//       e |> poly(%, (f, g, v) -> osc("sin", f) * ar(g, 0.01, 0.3) * v)
+//       e |> poly(@, (f, g, v) -> osc("sin", f) * ar(g, 0.01, 0.3) * v)
 ```
 
 ---

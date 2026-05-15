@@ -58,8 +58,8 @@ func _ready():
         vol = param("volume", 0.8)
         cutoff = param("filter", 2000, 100, 8000)
 
-        bass = osc("saw", 55) |> lpf(%, cutoff) * vol
-        bass |> out(%, %)
+        bass = osc("saw", 55) |> lpf(@, cutoff) * vol
+        bass |> out(@, @)
     '''
 
     music.compile()
@@ -85,7 +85,7 @@ When an `NkidoPlayer` node is selected:
 ├─────────────────────────────────────────┤
 │ Source                                  │
 │ ┌─────────────────────────────────────┐ │
-│ │ osc("saw", 220) |> out(%, %)        │ │
+│ │ osc("saw", 220) |> out(@, @)        │ │
 │ └─────────────────────────────────────┘ │
 │                                         │
 │ Source File: [                      ] ◉ │
@@ -130,14 +130,14 @@ func _ready():
         hat = sample("hat") * seq("..x...x...x...x.")
 
         // Synth layers - crossfade based on intensity
-        pad = osc("saw", 110) |> lpf(%, 200 + intensity * 2000)
-        lead = osc("square", 440) |> delay(%, 0.3) * intensity
+        pad = osc("saw", 110) |> lpf(@, 200 + intensity * 2000)
+        lead = osc("square", 440) |> delay(@, 0.3) * intensity
 
         // Mix based on intensity
         drums = (kick + hat * 0.5) * 0.8
         synths = pad * 0.3 + lead * 0.5
 
-        (drums + synths * intensity) |> out(%, %)
+        (drums + synths * intensity) |> out(@, @)
     '''
     music.compile()
     music.play()
@@ -169,7 +169,7 @@ func _ready():
         trig = button("play")
 
         env = ar(trig, 0.01, 0.3)
-        osc("sine", 440 * pitch) * env |> out(%, %)
+        osc("sine", 440 * pitch) * env |> out(@, @)
     '''
     sfx.compile()
     sfx.play()  # Runs silently until triggered
@@ -1470,16 +1470,16 @@ drums = kick + snare + hat
 
 // Bass synth - responds to filter param
 bass_freq = 55 * (1 + intensity * 0.5)  // Pitch rises with intensity
-bass = osc("saw", bass_freq) |> lpf(%, filter, 0.3)
+bass = osc("saw", bass_freq) |> lpf(@, filter, 0.3)
 
 // Pad - fades in with intensity
 pad_freq = 220
-pad = osc("triangle", pad_freq) |> lpf(%, 1000)
+pad = osc("triangle", pad_freq) |> lpf(@, 1000)
 pad = pad * intensity * 0.3
 
 // Mix
 master = drums * 0.8 + bass * 0.4 + pad
-master |> out(%, %)
+master |> out(@, @)
 ```
 
 ---
@@ -1493,7 +1493,7 @@ master |> out(%, %)
 
 TEST_CASE("NkidoPlayer compiles valid source") {
     NkidoPlayer player;
-    player.set_source("osc(\"saw\", 220) |> out(%, %)");
+    player.set_source("osc(\"saw\", 220) |> out(@, @)");
 
     bool success = player.compile();
     REQUIRE(success);
@@ -1504,7 +1504,7 @@ TEST_CASE("NkidoPlayer extracts parameters") {
     NkidoPlayer player;
     player.set_source(R"(
         vol = param("volume", 0.8, 0, 1)
-        osc("saw", 220) * vol |> out(%, %)
+        osc("saw", 220) * vol |> out(@, @)
     )");
 
     player.compile();
@@ -1522,7 +1522,7 @@ TEST_CASE("NkidoPlayer set_param updates EnvMap") {
     NkidoPlayer player;
     player.set_source(R"(
         vol = param("volume", 0.5)
-        dc(1) * vol |> out(%, %)
+        dc(1) * vol |> out(@, @)
     )");
 
     player.compile();
@@ -1544,7 +1544,7 @@ func test_compile_and_play():
     var player = NkidoPlayer.new()
     add_child(player)
 
-    player.source = "osc('saw', 220) |> out(%, %)"
+    player.source = "osc('saw', 220) |> out(@, @)"
     assert_true(player.compile())
 
     player.play()
@@ -1563,7 +1563,7 @@ func test_parameter_binding():
 
     player.source = """
         vol = param("volume", 0.5, 0, 1)
-        osc("saw", 220) * vol |> out(%, %)
+        osc("saw", 220) * vol |> out(@, @)
     """
     player.compile()
 
