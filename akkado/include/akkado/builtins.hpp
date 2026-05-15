@@ -883,6 +883,29 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Slew rate limiter (portamento) — stereo-native",
                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
+    // Time-based interpolators — share Opcode::INTERP_TIME, dispatched by
+    // inst_rate (0..3). All stereo-native: inputs[0] is the stereo-capable
+    // target; inputs[1] is a shared mono ramp-time in seconds.
+    {"interp",          {cedar::Opcode::INTERP_TIME, 2, 0, true,
+                         {"target", "time", "", "", "", ""},
+                         {NAN, NAN, NAN},
+                         "Time-based interpolator (linear) — stereo-native",
+                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/0}},
+    {"interp_ease_in",  {cedar::Opcode::INTERP_TIME, 2, 0, true,
+                         {"target", "time", "", "", "", ""},
+                         {NAN, NAN, NAN},
+                         "Time-based interpolator (ease-in, t²) — stereo-native",
+                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/1}},
+    {"interp_ease_out", {cedar::Opcode::INTERP_TIME, 2, 0, true,
+                         {"target", "time", "", "", "", ""},
+                         {NAN, NAN, NAN},
+                         "Time-based interpolator (ease-out, 1-(1-t)²) — stereo-native",
+                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/2}},
+    {"interp_cos",      {cedar::Opcode::INTERP_TIME, 2, 0, true,
+                         {"target", "time", "", "", "", ""},
+                         {NAN, NAN, NAN},
+                         "Time-based interpolator (cosine S-curve) — stereo-native",
+                         0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true, /*inst_rate=*/3}},
     // Edge primitives — share Opcode::EDGE_OP, dispatched by inst_rate (0..3).
     // All stereo-native (prd-stereo-native-opcodes Phase 5): inputs[0] is the
     // stereo-capable primary; trig/reset/start are shared control signals.

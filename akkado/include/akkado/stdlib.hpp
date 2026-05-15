@@ -83,6 +83,37 @@ fn unison(freq, gate, vel, instrument,
     }
 }
 
+// glide(sig, time, curve, space) — time-based interpolation with optional
+// curve shape and value-space conversion.
+//
+//   curve: "linear" (default) | "ease_in" | "ease_out" | "cosine" / "cos"
+//   space: "linear" (default) | "log"  — use "log" for pitch-uniform glide
+//
+// The curve+space match is inlined here (rather than delegated to a helper
+// fn) because param_literals_ is cleared at each user-fn boundary; nested
+// match keeps both `space` and `curve` resolvable at compile time. Default
+// time = 0.05 (50 ms) gives `glide(@freq)` a subtle baseline portamento
+// without forcing users to pick a number. 1.4426950408889634 = 1/ln(2)
+// converts natural log (the `log` builtin) to log₂.
+fn glide(sig, time = 0.05, curve = "linear", space = "linear") -> match(space) {
+    "log": match(curve) {
+        "linear":   pow(2, interp(log(sig) * 1.4426950408889634, time))
+        "ease_in":  pow(2, interp_ease_in(log(sig) * 1.4426950408889634, time))
+        "ease_out": pow(2, interp_ease_out(log(sig) * 1.4426950408889634, time))
+        "cosine":   pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
+        "cos":      pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
+        _:          pow(2, interp(log(sig) * 1.4426950408889634, time))
+    }
+    _: match(curve) {
+        "linear":   interp(sig, time)
+        "ease_in":  interp_ease_in(sig, time)
+        "ease_out": interp_ease_out(sig, time)
+        "cosine":   interp_cos(sig, time)
+        "cos":      interp_cos(sig, time)
+        _:          interp(sig, time)
+    }
+}
+
 )akkado";
 
 /// Line count for diagnostic offset calculation (computed at compile time)
