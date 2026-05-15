@@ -202,6 +202,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
     result.scalar_sample_mappings = std::move(gen.scalar_sample_mappings);
     result.required_soundfonts = std::move(gen.required_soundfonts);
     result.required_midi_sources = std::move(gen.required_midi_sources);
+    result.required_midi_cc_routes = std::move(gen.required_midi_cc_routes);
     result.required_wavetables = std::move(gen.required_wavetables);
     result.required_uris = std::move(gen.required_uris);
     result.required_input_sources = std::move(gen.required_input_sources);

@@ -905,6 +905,73 @@ WASM_EXPORT int32_t akkado_get_required_midi_source_tempo(uint32_t index) {
     return static_cast<int32_t>(g_compile_result.required_midi_sources[index].tempo_mode);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// midi_cc() route accessors (PRD prd-midi-input §4.8)
+//
+// midi_cc("name", {cc|pb|at, ...}) is a compile-time directive that emits no
+// bytecode. The host MIDI dispatcher (JS main thread) walks this list, matches
+// each incoming CC/PB/AT against the routes, computes the scaled value, and
+// posts a 'setParam' message to the worklet — which calls cedar_set_param_slew.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Number of midi_cc() routes in the most recent compile.
+ */
+WASM_EXPORT uint32_t akkado_get_required_midi_cc_routes_count() {
+    return static_cast<uint32_t>(g_compile_result.required_midi_cc_routes.size());
+}
+
+/**
+ * Param name string for the i-th midi_cc() route. Lives in g_compile_result;
+ * stable until the next compile. Returns nullptr on bad index.
+ */
+WASM_EXPORT const char* akkado_get_required_midi_cc_route_name(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return nullptr;
+    return g_compile_result.required_midi_cc_routes[index].param_name.c_str();
+}
+
+/**
+ * cc_num for the i-th route. 0..127 = MIDI CC number; -1 = pitch-bend;
+ * -2 = channel aftertouch. Returns -128 on bad index (out-of-band sentinel).
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_cc_route_cc(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return -128;
+    return static_cast<int32_t>(g_compile_result.required_midi_cc_routes[index].cc_num);
+}
+
+/**
+ * Channel filter for the i-th route. 0 = any; 1..16 = specific channel.
+ * Returns -1 on bad index.
+ */
+WASM_EXPORT int32_t akkado_get_required_midi_cc_route_channel(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.required_midi_cc_routes[index].channel_filter);
+}
+
+/**
+ * Scale factor for the i-th route (= max - min). Returns 0 on bad index.
+ */
+WASM_EXPORT float akkado_get_required_midi_cc_route_scale(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.required_midi_cc_routes[index].scale;
+}
+
+/**
+ * Bias for the i-th route (= min). Returns 0 on bad index.
+ */
+WASM_EXPORT float akkado_get_required_midi_cc_route_bias(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.required_midi_cc_routes[index].bias;
+}
+
+/**
+ * EnvMap slew in milliseconds for the i-th route. Returns 0 on bad index.
+ */
+WASM_EXPORT float akkado_get_required_midi_cc_route_slew_ms(uint32_t index) {
+    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.required_midi_cc_routes[index].slew_ms;
+}
+
 /**
  * Resolve sample IDs in state_inits using currently loaded samples.
  * Call this AFTER loading required samples, BEFORE cedar_apply_state_inits().

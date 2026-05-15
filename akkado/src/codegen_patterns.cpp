@@ -5872,6 +5872,149 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::make_event_source(payload));
 }
 
+// PRD prd-midi-input §4.8: midi_cc("name", {...}) — compile-time only.
+// Records a RequiredMidiCcRoute entry in `required_midi_cc_routes_`. The
+// host MIDI callback walks this list and calls vm.set_param() for matching
+// events. No instruction is emitted.
+TypedValue CodeGenerator::handle_midi_cc_call(NodeIndex node, const Node& n) {
+    // §10 Q4 / Non-Goal: midi_cc() top-level only in v1 (same as midi()).
+    if (user_function_depth_ > 0) {
+        error("E412",
+              "midi_cc() may only be called at the top level — not inside fn bodies "
+              "(per prd-midi-input §10).",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    // Walk children. Require name (string literal) + options record.
+    NodeIndex name_arg = NULL_NODE;
+    NodeIndex options_arg = NULL_NODE;
+    std::size_t arg_count = 0;
+    NodeIndex arg = n.first_child;
+    while (arg != NULL_NODE) {
+        ++arg_count;
+        if (arg_count == 1) name_arg = arg;
+        else if (arg_count == 2) options_arg = arg;
+        arg = ast_->arena[arg].next_sibling;
+    }
+    if (arg_count != 2) {
+        error("E400",
+              "midi_cc() takes two arguments: a param name string and an options "
+              "record (e.g. midi_cc(\"cutoff\", {cc: 74})).",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    auto name_opt = get_string_arg(*ast_, n, 0);
+    if (!name_opt.has_value() || name_opt->empty()) {
+        error("E400",
+              "midi_cc(): first argument must be a non-empty string literal "
+              "naming the target param() slot.",
+              n.location);
+        return TypedValue::void_val();
+    }
+    std::string param_name = *name_opt;
+    (void)name_arg;  // suppress unused-warning; the walk above is only for arity
+
+    // Look up the options schema declared on the builtin.
+    const OptionSchema* schema_ptr = nullptr;
+    if (const BuiltinInfo* info = lookup_builtin("midi_cc")) {
+        schema_ptr = info->find_option_schema(/*param_index=*/1);
+    }
+    static const OptionSchema empty_schema{};
+    const OptionSchema& schema = schema_ptr ? *schema_ptr : empty_schema;
+
+    codegen::OptionsPayload payload =
+        codegen::extract_options(ast_->arena, options_arg, schema);
+
+    auto cc_opt      = payload.get_number("cc");
+    auto channel_opt = payload.get_number("channel");
+    auto pb_opt      = payload.get_bool("pb");
+    auto at_opt      = payload.get_bool("at");
+    auto min_opt     = payload.get_number("min");
+    auto max_opt     = payload.get_number("max");
+    auto slew_opt    = payload.get_number("slew");
+
+    // Default-cc sentinel is -128 in the schema; treat any negative value as "unset".
+    const bool cc_present = cc_opt.has_value() && *cc_opt >= 0.0;
+    const bool pb_set     = pb_opt.value_or(false);
+    const bool at_set     = at_opt.value_or(false);
+
+    const int set_count = (cc_present ? 1 : 0) + (pb_set ? 1 : 0) + (at_set ? 1 : 0);
+    if (set_count == 0) {
+        error("E421",
+              "midi_cc(): one of cc:, pb:, or at: must be set "
+              "(e.g. midi_cc(\"name\", {cc: 74}), {pb: true}, or {at: true}).",
+              n.location);
+        return TypedValue::void_val();
+    }
+    if (set_count > 1) {
+        error("E420",
+              "midi_cc(): exactly one of cc:, pb:, or at: may be set — "
+              "they are mutually exclusive.",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    std::int16_t cc_num = 0;
+    if (cc_present) {
+        double cv = *cc_opt;
+        int cci = static_cast<int>(cv);
+        if (cci < 0 || cci > 127 || static_cast<double>(cci) != cv) {
+            error("E422",
+                  "midi_cc(): 'cc' must be an integer in 0..127.",
+                  n.location);
+            return TypedValue::void_val();
+        }
+        cc_num = static_cast<std::int16_t>(cci);
+    } else if (pb_set) {
+        cc_num = -1;
+    } else {
+        cc_num = -2;
+    }
+
+    std::uint8_t channel_filter = 0;
+    if (channel_opt.has_value()) {
+        double ch = *channel_opt;
+        int chi = static_cast<int>(ch);
+        if (chi < 0 || chi > 16 || static_cast<double>(chi) != ch) {
+            error("E414",
+                  "midi_cc(): 'channel' must be an integer in 0..16 "
+                  "(0 = any channel, 1..16 = specific MIDI channel).",
+                  n.location);
+            return TypedValue::void_val();
+        }
+        channel_filter = static_cast<std::uint8_t>(chi);
+    }
+
+    // PRD §4.8: default range is 0..1 for cc/at and -1..+1 for pb.
+    double range_min = pb_set ? -1.0 : 0.0;
+    double range_max = 1.0;
+    if (min_opt.has_value()) range_min = *min_opt;
+    if (max_opt.has_value()) range_max = *max_opt;
+    float scale = static_cast<float>(range_max - range_min);
+    float bias  = static_cast<float>(range_min);
+
+    float slew_ms = 5.0f;
+    if (slew_opt.has_value()) {
+        double s = *slew_opt;
+        if (s < 0.0) s = 0.0;
+        slew_ms = static_cast<float>(s);
+    }
+
+    required_midi_cc_routes_.push_back(RequiredMidiCcRoute{
+        /*param_name=*/std::move(param_name),
+        /*cc_num=*/cc_num,
+        /*channel_filter=*/channel_filter,
+        /*scale=*/scale,
+        /*bias=*/bias,
+        /*slew_ms=*/slew_ms,
+    });
+
+    // No instruction emitted; the directive is compile-time metadata only.
+    return cache_and_return(node, TypedValue::void_val());
+}
+
 TypedValue CodeGenerator::handle_input_call(NodeIndex node, const Node& n) {
     // in() — defaults to host UI source.
     // in("mic" | "tab" | "file:NAME") — overrides the source for this compile.

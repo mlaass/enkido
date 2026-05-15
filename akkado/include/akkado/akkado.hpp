@@ -58,6 +58,9 @@ struct CompileResult {
     // channel_filter, loop, tempo_mode) before resuming the audio thread, plus
     // (for File kind) load the .mid bytes via cedar_load_midi_file / UriResolver.
     std::vector<RequiredMidiSource> required_midi_sources;
+    // Per-call midi_cc() routes (PRD prd-midi-input §4.8). Compile-time directives
+    // that the host MIDI callback evaluates to call vm.set_param(name, value, slew).
+    std::vector<RequiredMidiCcRoute> required_midi_cc_routes;
     // Source strings collected from in('...') calls in compile order (one entry per call,
     // empty string if the call had no argument). Hosts use this to switch input source.
     std::vector<std::string> required_input_sources;

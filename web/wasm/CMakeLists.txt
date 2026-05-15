@@ -136,6 +136,14 @@ if(EMSCRIPTEN)
         _akkado_get_required_midi_source_channel
         _akkado_get_required_midi_source_loop
         _akkado_get_required_midi_source_tempo
+        # midi_cc() routes (prd-midi-input §4.8)
+        _akkado_get_required_midi_cc_routes_count
+        _akkado_get_required_midi_cc_route_name
+        _akkado_get_required_midi_cc_route_cc
+        _akkado_get_required_midi_cc_route_channel
+        _akkado_get_required_midi_cc_route_scale
+        _akkado_get_required_midi_cc_route_bias
+        _akkado_get_required_midi_cc_route_slew_ms
         # State init accessors
         _akkado_get_state_init_count
         _akkado_get_state_init_id

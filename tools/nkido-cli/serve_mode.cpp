@@ -1010,7 +1010,7 @@ void handle_command_line(ServeState& s, const std::string& line) {
             s.seq_storage_history.emplace_back();
             apply_state_inits(s.engine->vm(), cr, s.seq_storage_history.back());
             apply_builtin_var_overrides(s.engine->vm(), cr);
-            s.engine->apply_midi_route_plan(cr.required_midi_sources);
+            s.engine->apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
         } else {
             if (!s.audio_initialized) {
                 if (!s.engine->init(s.audio_config)) {
@@ -1027,7 +1027,7 @@ void handle_command_line(ServeState& s, const std::string& line) {
                 emit_compiled(false);
                 return;
             }
-            s.engine->apply_midi_route_plan(cr.required_midi_sources);
+            s.engine->apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
             s.engine->set_master_volume(s.master_volume);
             if (!s.engine->start()) {
                 emit_error("failed to start audio");

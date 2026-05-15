@@ -362,7 +362,8 @@ void AudioEngine::list_midi_devices(std::ostream& out) {
 }
 
 void AudioEngine::apply_midi_route_plan(
-    const std::vector<akkado::RequiredMidiSource>& required) {
+    const std::vector<akkado::RequiredMidiSource>& required,
+    const std::vector<akkado::RequiredMidiCcRoute>& cc_routes) {
 
     // Phase 0: resolve and load .mid files (prd-midi-input Phase 5). This
     // must happen before init_midi_queue_state so the registry lookup
@@ -421,9 +422,40 @@ void AudioEngine::apply_midi_route_plan(
         wanted[device].push_back({req.state_id, req.channel_filter});
     }
 
-    // Phase 3: install routes. For each wanted device, find or open a
-    // MidiInput and swap its route table.
-    for (auto& [device, routes] : wanted) {
+    // Phase 2b (prd-midi-input §4.8): group midi_cc() routes per device.
+    // PRD v1 has no `device:` option on midi_cc — every route rides the
+    // default device. Always materialize the bucket for the default device
+    // (even if empty) so Phase 3 can ensure that device is open when the
+    // program declares midi_cc(...) but no midi(...).
+    std::unordered_map<std::string, MidiCcRouteTable> wanted_cc;
+    const bool have_cc_routes = !cc_routes.empty();
+    if (have_cc_routes) {
+        wanted_cc[preferred_midi_device_name_];  // ensure key exists
+    }
+    for (const auto& r : cc_routes) {
+        wanted_cc[preferred_midi_device_name_].push_back({
+            r.param_name, r.cc_num, r.channel_filter,
+            r.scale, r.bias, r.slew_ms});
+    }
+
+    // Union of devices touched by either route kind. Iterating this lets
+    // Phase 3 open each device once and install both tables in one pass.
+    std::unordered_set<std::string> all_devices;
+    for (const auto& [d, _] : wanted) all_devices.insert(d);
+    for (const auto& [d, _] : wanted_cc) all_devices.insert(d);
+
+    // Phase 3: install routes. For each device, find or open a MidiInput and
+    // swap whichever tables apply.
+    for (const auto& device : all_devices) {
+        auto note_it = wanted.find(device);
+        auto cc_it   = wanted_cc.find(device);
+        auto note_table = std::make_shared<const MidiRouteTable>(
+            note_it != wanted.end() ? std::move(note_it->second)
+                                    : MidiRouteTable{});
+        auto cc_table = std::make_shared<const MidiCcRouteTable>(
+            cc_it != wanted_cc.end() ? std::move(cc_it->second)
+                                     : MidiCcRouteTable{});
+
         MidiInput* found = nullptr;
         for (auto& in : midi_inputs_) {
             if (in->is_open() && in->match_substr() == device) {
@@ -431,34 +463,35 @@ void AudioEngine::apply_midi_route_plan(
                 break;
             }
         }
-        auto table = std::make_shared<const MidiRouteTable>(std::move(routes));
         if (found) {
-            found->set_route_table(table);
+            found->set_route_table(note_table);
+            found->set_cc_route_table(cc_table);
             continue;
         }
         auto in = std::make_unique<MidiInput>(vm_);
         if (in->open(device)) {
-            std::cerr << "[midi] opened '" << in->port_name() << "'"
-                      << " for " << table->size() << " route(s)\n";
-            in->set_route_table(table);
+            std::cerr << "[midi] opened '" << in->port_name() << "' for "
+                      << note_table->size() << " note route(s), "
+                      << cc_table->size() << " CC route(s)\n";
+            in->set_route_table(note_table);
+            in->set_cc_route_table(cc_table);
             midi_inputs_.push_back(std::move(in));
         } else {
             std::cerr << "warning: midi: no input device matching \""
-                      << device << "\" — events for "
-                      << table->size() << " route(s) will be silent\n";
-            // Don't keep a closed MidiInput around — its destructor would
-            // run a no-op close(), and a future hot-swap that adds a real
-            // device for the same name will open one then.
+                      << device << "\" — "
+                      << note_table->size() << " note + "
+                      << cc_table->size() << " CC route(s) will be silent\n";
         }
     }
 
-    // Phase 4: drain devices no longer referenced by clearing their route
-    // tables (callbacks become no-ops). Keep ports open across hot-swaps to
-    // avoid open/close thrash when a midi() call temporarily disappears.
+    // Phase 4: drain devices no longer referenced by clearing both tables
+    // (callbacks become no-ops). Keep ports open across hot-swaps to avoid
+    // open/close thrash when a midi() / midi_cc() call temporarily disappears.
     for (auto& in : midi_inputs_) {
         if (!in->is_open()) continue;
-        if (wanted.find(in->match_substr()) == wanted.end()) {
+        if (all_devices.find(in->match_substr()) == all_devices.end()) {
             in->set_route_table(std::make_shared<const MidiRouteTable>());
+            in->set_cc_route_table(std::make_shared<const MidiCcRouteTable>());
         }
     }
 }

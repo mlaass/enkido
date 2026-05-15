@@ -20,6 +20,7 @@ MidiInput::MidiInput(cedar::VM& vm) : vm_(vm) {
     // Start with an empty route table so callbacks fired before
     // set_route_table find nothing to dispatch (no UB on null deref).
     route_table_ = std::make_shared<const MidiRouteTable>();
+    cc_route_table_ = std::make_shared<const MidiCcRouteTable>();
 }
 
 MidiInput::~MidiInput() {
@@ -84,11 +85,17 @@ void MidiInput::close() {
     is_open_ = false;
     port_name_.clear();
     set_route_table(std::make_shared<const MidiRouteTable>());
+    set_cc_route_table(std::make_shared<const MidiCcRouteTable>());
 }
 
 void MidiInput::set_route_table(std::shared_ptr<const MidiRouteTable> table) {
     std::lock_guard<std::mutex> lock(route_mutex_);
     route_table_ = std::move(table);
+}
+
+void MidiInput::set_cc_route_table(std::shared_ptr<const MidiCcRouteTable> table) {
+    std::lock_guard<std::mutex> lock(route_mutex_);
+    cc_route_table_ = std::move(table);
 }
 
 void MidiInput::list_ports(std::ostream& out) {
@@ -136,16 +143,24 @@ void MidiInput::on_message(double /*dt*/,
     const std::uint8_t d2 = msg->size() > 2 ? (*msg)[2] : 0;
     const std::uint8_t channel = static_cast<std::uint8_t>((status & 0x0Fu) + 1u);
 
-    // Snapshot the route table under the mutex, then release before the
-    // (potentially many) push_midi_event calls. shared_ptr keeps the
-    // table alive even if the main thread swaps in a new one mid-loop.
+    // Snapshot both route tables under one lock-and-release, then dispatch
+    // outside the critical section. shared_ptr keeps each table alive even
+    // if the main thread swaps in a new one mid-callback.
     std::shared_ptr<const MidiRouteTable> tbl;
+    std::shared_ptr<const MidiCcRouteTable> cc_tbl;
     {
         std::lock_guard<std::mutex> lock(self->route_mutex_);
         tbl = self->route_table_;
+        cc_tbl = self->cc_route_table_;
     }
-    if (!tbl) return;
 
+    // CC / pitch-bend / aftertouch land in the EnvMap via vm.set_param
+    // (PRD prd-midi-input §4.8). Independent of the note ring below.
+    if (cc_tbl && !cc_tbl->empty()) {
+        dispatch_midi_cc(self->vm_, *cc_tbl, status, d1, d2, channel);
+    }
+
+    if (!tbl) return;
     for (const auto& route : *tbl) {
         if (route.channel_filter != 0 && route.channel_filter != channel) continue;
         self->vm_.push_midi_event(route.state_id, status, d1, d2);

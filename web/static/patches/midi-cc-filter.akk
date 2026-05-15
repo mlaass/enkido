@@ -1,0 +1,48 @@
+// MIDI CC + Pitch-Bend — live filter and pitch control from a USB controller.
+//
+// Plug in a keyboard and play. Three external controls are wired in:
+//   * Mod wheel        (CC 1)  -> filter cutoff
+//   * Second wheel/Y   (CC 2)  -> filter resonance
+//   * Pitch-bend wheel         -> pitch in semitones (+/- 2 by default)
+//
+// `midi_cc(name, {...})` is a compile-time directive (prd-midi-input §4.8)
+// that routes incoming controller messages straight into `param()` slots via
+// EnvMap — no audio-thread work, no extra opcode. The sliders below act as
+// the fallback / default when nothing is sending on those CCs.
+//
+// CC numbers vary per controller. Common conventions:
+//   CC 1  = mod wheel (universal)
+//   CC 2  = breath / Korg-style joystick Y-axis
+//   CC 71 = "resonance" (GM2 spec — only sent by mappable knobs)
+//   CC 74 = "brightness/filter" (GM2 spec — same caveat)
+// If a route doesn't move, change its `cc:` to match what your gear sends.
+
+bpm = 120
+
+cutoff       = param("cutoff",     1200, 100, 6000)
+res          = param("res",         0.5,   0,    1)
+pitch_bend   = param("pitch_bend",    0,  -2,    2)   // semitones
+amp          = param("amp",         0.8,   0,    1)
+
+// CC 1 = mod wheel on every controller. Default in v1 is a 0..1 range; we
+// override to map the wheel's 0..127 to the param's audible 200..6000 Hz.
+midi_cc("cutoff", {cc:  1, min: 200, max: 6000})
+midi_cc("res",    {cc:  2, min:   0, max: 0.95})
+
+// pb: true picks up the 14-bit pitch-bend message (0xEn). Default PB range is
+// -1..+1; remap to semitones for a musical +/- 2 ST whammy.
+midi_cc("pitch_bend", {pb: true, min: -2, max: 2})
+
+// Convert pitch-bend in semitones to a frequency multiplier. 12 semitones =
+// 1 octave = factor of 2, so 2^(bend/12) is the standard scaling.
+fn bend_mult() -> pow(2, pitch_bend / 12)
+
+fn lead(freq, gate, vel) ->
+    osc("saw", freq * bend_mult()) * 0.55
+        + osc("sqr", freq * bend_mult() * 0.5) * 0.3
+        |> lp(@, cutoff, res)
+        |> @ * adsr(gate, 0.01, 0.15, 0.75, 0.35) * vel * amp
+
+midi()
+    |> poly(@, lead, 8)
+    |> out(@)

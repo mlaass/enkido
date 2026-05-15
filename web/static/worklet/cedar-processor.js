@@ -394,6 +394,35 @@ class CedarProcessor extends AudioWorkletProcessor {
 	}
 
 	/**
+	 * Get the list of midi_cc() routes from the compile result
+	 * (prd-midi-input §4.8). One entry per call site; the host turns this into
+	 * a per-device route table that maps incoming CC/PB/AT events →
+	 * cedar_set_param_slew(name, value, slew_ms). cc_num sentinels: 0..127 =
+	 * MIDI CC#; -1 = pitch-bend; -2 = channel aftertouch.
+	 * @returns {Array<{paramName: string, ccNum: number, channel: number,
+	 *                  scale: number, bias: number, slewMs: number}>}
+	 */
+	getRequiredMidiCcRoutes() {
+		if (!this.module._akkado_get_required_midi_cc_routes_count) {
+			return [];
+		}
+		const count = this.module._akkado_get_required_midi_cc_routes_count();
+		const routes = [];
+		for (let i = 0; i < count; i++) {
+			const namePtr = this.module._akkado_get_required_midi_cc_route_name(i);
+			routes.push({
+				paramName: namePtr ? this.module.UTF8ToString(namePtr) : '',
+				ccNum:   this.module._akkado_get_required_midi_cc_route_cc(i) | 0,
+				channel: this.module._akkado_get_required_midi_cc_route_channel(i) | 0,
+				scale:   this.module._akkado_get_required_midi_cc_route_scale(i),
+				bias:    this.module._akkado_get_required_midi_cc_route_bias(i),
+				slewMs:  this.module._akkado_get_required_midi_cc_route_slew_ms(i)
+			});
+		}
+		return routes;
+	}
+
+	/**
 	 * Get required SoundFont files from the compile result
 	 * @returns {Array<{filename: string, preset: number}>}
 	 */
@@ -742,6 +771,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 					const requiredUris = this.getRequiredUris();
 					const requiredInputSources = this.getRequiredInputSources();
 					const requiredMidiSources = this.getRequiredMidiSources();
+					const requiredMidiCcRoutes = this.getRequiredMidiCcRoutes();
 
 					// Extract all state initialization data
 					const stateInits = this.extractStateInits();
@@ -805,6 +835,7 @@ class CedarProcessor extends AudioWorkletProcessor {
 						requiredUris,
 						requiredInputSources,
 						requiredMidiSources,
+						requiredMidiCcRoutes,
 						paramDecls,
 						vizDecls,
 						builtinVarOverrides,

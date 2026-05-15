@@ -27,6 +27,19 @@ export interface RequiredMidiSource {
 	tempo: number; // 0 = Follow, 1 = File
 }
 
+/**
+ * Compile-time CC / pitch-bend / channel-aftertouch route (PRD §4.8).
+ * ccNum sentinels: 0..127 = MIDI CC#; -1 = pitch-bend; -2 = channel AT.
+ */
+export interface RequiredMidiCcRoute {
+	paramName: string;
+	ccNum: number;
+	channel: number;   // 0 = any, 1..16
+	scale: number;     // max - min
+	bias: number;      // min
+	slewMs: number;
+}
+
 export interface MidiDeviceInfo {
 	id: string;
 	name: string;
@@ -78,11 +91,15 @@ export function createMidiInputController() {
 	// fan out to multiple routes (different channel filters per compile-time
 	// midi() call site).
 	let routesByDevice = new Map<string, ResolvedRoute[]>();
+	// CC-routes keyed by the device the CC events should be sourced from. In
+	// v1 (PRD §4.8) every cc-route rides the resolved default device.
+	let ccRoutesByDevice = new Map<string, RequiredMidiCcRoute[]>();
 	// Held-onto MIDIInput refs so we can remove our listeners on rebuild.
 	let attachedInputs = new Map<string, MIDIInput>();
 	// Raw required_midi_sources kept around so we can re-resolve when the
 	// device list changes (plug-in / hot-swap of default device).
 	let pendingSources: RequiredMidiSource[] = [];
+	let pendingCcRoutes: RequiredMidiCcRoute[] = [];
 
 	function refreshDevices() {
 		if (!access) {
@@ -115,7 +132,8 @@ export function createMidiInputController() {
 		detachAll();
 		access.inputs.forEach((input) => {
 			const name = input.name || '';
-			if (!routesByDevice.has(name)) return;
+			// Attach if this device hosts EITHER note routes OR CC routes.
+			if (!routesByDevice.has(name) && !ccRoutesByDevice.has(name)) return;
 			input.onmidimessage = (ev: MIDIMessageEvent) => handleMessage(name, ev);
 			attachedInputs.set(name, input);
 		});
@@ -130,11 +148,45 @@ export function createMidiInputController() {
 		const d1 = data.length > 1 ? data[1] : 0;
 		const d2 = data.length > 2 ? data[2] : 0;
 		const channel1Based = (statusByte & 0x0F) + 1;
+		const base = statusByte & 0xF0;
+
+		lastEventTime = Date.now();
+
+		// PRD §4.8: dispatch CC / PB / AT to param() slots via setParam. The
+		// math runs on the main thread (same topology as note routing) and
+		// the worklet's existing 'setParam' message hits cedar_set_param_slew.
+		if (base === 0xB0 || base === 0xD0 || base === 0xE0) {
+			const ccRoutes = ccRoutesByDevice.get(deviceName);
+			if (ccRoutes && ccRoutes.length > 0) {
+				for (const r of ccRoutes) {
+					if (r.channel !== 0 && r.channel !== channel1Based) continue;
+					let value: number | null = null;
+					if (base === 0xB0) {
+						if (r.ccNum < 0 || r.ccNum > 127) continue;
+						if (d1 !== r.ccNum) continue;
+						value = (d2 / 127) * r.scale + r.bias;
+					} else if (base === 0xE0) {
+						if (r.ccNum !== -1) continue;
+						const v14 = (d2 << 7) | d1; // 14-bit unsigned
+						const n = (v14 / 16383) * 2 - 1; // -1..+1
+						value = n * (r.scale * 0.5) + (r.bias + r.scale * 0.5);
+					} else {
+						if (r.ccNum !== -2) continue;
+						value = (d1 / 127) * r.scale + r.bias;
+					}
+					if (value === null) continue;
+					workletPort?.postMessage({
+						type: 'setParam',
+						name: r.paramName,
+						value,
+						slewMs: r.slewMs
+					});
+				}
+			}
+		}
 
 		const matchingRoutes = routesByDevice.get(deviceName);
 		if (!matchingRoutes || matchingRoutes.length === 0) return;
-
-		lastEventTime = Date.now();
 
 		for (const route of matchingRoutes) {
 			if (route.channelFilter !== 0 && route.channelFilter !== channel1Based) {
@@ -206,9 +258,9 @@ export function createMidiInputController() {
 		defaultDeviceName = name;
 		// Tell the worklet so the WASM side has the label for diagnostics.
 		workletPort?.postMessage({ type: 'setDefaultMidiDevice', device: name });
-		// Re-resolve any pending DefaultDevice routes (kind=0) against
-		// the new label — no recompile required.
-		if (pendingSources.length > 0) {
+		// Re-resolve any pending DefaultDevice routes (kind=0) and CC routes
+		// against the new label — no recompile required.
+		if (pendingSources.length > 0 || pendingCcRoutes.length > 0) {
 			applyRoutes();
 		}
 	}
@@ -269,6 +321,20 @@ export function createMidiInputController() {
 		}
 
 		routesByDevice = next;
+
+		// PRD §4.8 v1: all CC routes ride the resolved default device.
+		const nextCc = new Map<string, RequiredMidiCcRoute[]>();
+		if (pendingCcRoutes.length > 0) {
+			const defaultDev = resolveDefaultDevice();
+			if (defaultDev) {
+				nextCc.set(defaultDev, pendingCcRoutes.slice());
+			}
+			// If no default device matches yet, ccRoutes stay pending —
+			// they'll resolve when a device plugs in (onStateChange) or the
+			// user picks a default in the UI (setDefaultDeviceName).
+		}
+		ccRoutesByDevice = nextCc;
+
 		attachForRoutes();
 	}
 
@@ -282,8 +348,9 @@ export function createMidiInputController() {
 	 * is eventually granted; resolution is re-attempted on each device
 	 * statechange and after a successful ensureAccess() call.
 	 */
-	function setRoutes(sources: RequiredMidiSource[]) {
+	function setRoutes(sources: RequiredMidiSource[], ccRoutes: RequiredMidiCcRoute[] = []) {
 		pendingSources = sources.slice();
+		pendingCcRoutes = ccRoutes.slice();
 		applyRoutes();
 	}
 
@@ -294,6 +361,7 @@ export function createMidiInputController() {
 		}
 		access = null;
 		routesByDevice = new Map();
+		ccRoutesByDevice = new Map();
 		workletPort = null;
 	}
 

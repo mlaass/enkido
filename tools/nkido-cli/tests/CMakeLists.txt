@@ -53,6 +53,7 @@ configure_file(
 add_executable(nkido_cli_tests
     test_render.cpp
     test_serve.cpp
+    test_midi_cc_dispatch.cpp
 )
 
 # Make sure the CLI binary is built before tests try to invoke it.
@@ -61,12 +62,14 @@ add_dependencies(nkido_cli_tests nkido-cli)
 target_include_directories(nkido_cli_tests
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/..  # for midi_input.hpp
 )
 
 target_link_libraries(nkido_cli_tests
     PRIVATE
         Catch2::Catch2WithMain
         nkido_compiler_options
+        cedar  # dispatch_midi_cc inlines into the test; cedar provides VM + EnvMap
 )
 
 catch_discover_tests(nkido_cli_tests)

@@ -67,7 +67,8 @@ public:
     // route table. Existing devices that disappear from the program are
     // kept open with an empty route table (cheap, avoids open/close thrash
     // when a midi() call flickers in/out across hot-swaps).
-    void apply_midi_route_plan(const std::vector<akkado::RequiredMidiSource>& required);
+    void apply_midi_route_plan(const std::vector<akkado::RequiredMidiSource>& required,
+                               const std::vector<akkado::RequiredMidiCcRoute>& cc_routes = {});
 
     // Start/stop playback
     bool start();

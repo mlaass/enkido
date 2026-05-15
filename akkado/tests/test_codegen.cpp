@@ -9913,3 +9913,163 @@ TEST_CASE("midi() diagnostics", "[midi]") {
         CHECK(!result.success);
     }
 }
+
+// =============================================================================
+// midi_cc() builtin — PRD prd-midi-input §4.8
+// =============================================================================
+
+TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
+    SECTION("midi_cc(name, {cc}) records a CC route with default range") {
+        auto result = akkado::compile(
+            "cutoff = param(\"cutoff\", 1000, 50, 5000)\n"
+            "midi_cc(\"cutoff\", {cc: 74})\n"
+            "out(cutoff)");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+            CHECK(d.severity != akkado::Severity::Error);
+        }
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        const auto& r = result.required_midi_cc_routes[0];
+        CHECK(r.param_name == "cutoff");
+        CHECK(r.cc_num == 74);
+        CHECK(r.channel_filter == 0);
+        CHECK(r.scale == Catch::Approx(1.0f));
+        CHECK(r.bias == Catch::Approx(0.0f));
+        CHECK(r.slew_ms == Catch::Approx(5.0f));
+    }
+
+    SECTION("midi_cc(name, {cc, min, max}) sets scale/bias") {
+        auto result = akkado::compile(
+            "f = param(\"f\", 1000, 50, 5000)\n"
+            "midi_cc(\"f\", {cc: 74, min: 50, max: 5000})\n"
+            "out(f)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        const auto& r = result.required_midi_cc_routes[0];
+        CHECK(r.scale == Catch::Approx(4950.0f));
+        CHECK(r.bias  == Catch::Approx(50.0f));
+    }
+
+    SECTION("midi_cc(name, {pb: true}) sets cc_num=-1 and default -1..+1") {
+        auto result = akkado::compile(
+            "b = param(\"bend\", 0, -1, 1)\n"
+            "midi_cc(\"bend\", {pb: true})\n"
+            "out(b)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        const auto& r = result.required_midi_cc_routes[0];
+        CHECK(r.cc_num == -1);
+        CHECK(r.scale == Catch::Approx(2.0f));
+        CHECK(r.bias  == Catch::Approx(-1.0f));
+    }
+
+    SECTION("midi_cc(name, {at: true}) sets cc_num=-2") {
+        auto result = akkado::compile(
+            "p = param(\"press\", 0, 0, 1)\n"
+            "midi_cc(\"press\", {at: true})\n"
+            "out(p)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        CHECK(result.required_midi_cc_routes[0].cc_num == -2);
+    }
+
+    SECTION("midi_cc(name, {cc, channel}) sets channel_filter") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 1, channel: 5})\n"
+            "out(x)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        CHECK(result.required_midi_cc_routes[0].channel_filter == 5);
+    }
+
+    SECTION("midi_cc(name, {cc, slew}) sets slew_ms") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 1, slew: 20})\n"
+            "out(x)");
+        REQUIRE(result.success);
+        REQUIRE(result.required_midi_cc_routes.size() == 1);
+        CHECK(result.required_midi_cc_routes[0].slew_ms == Catch::Approx(20.0f));
+    }
+
+    SECTION("midi_cc emits no bytecode for the directive itself") {
+        // Baseline: just out(0). Then with midi_cc layered on top, the
+        // instruction count for non-state-init ops should match.
+        auto base = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "out(x)");
+        auto with_cc = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 74})\n"
+            "out(x)");
+        REQUIRE(base.success);
+        REQUIRE(with_cc.success);
+        auto base_insts = get_instructions(base);
+        auto with_insts = get_instructions(with_cc);
+        CHECK(base_insts.size() == with_insts.size());
+    }
+}
+
+TEST_CASE("midi_cc() diagnostics", "[midi_cc]") {
+    auto has_diag = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    SECTION("E420: multiple of cc/pb/at set") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 1, pb: true})\n"
+            "out(x)");
+        CHECK(has_diag(result, "E420"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E421: none of cc/pb/at set") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {})\n"
+            "out(x)");
+        CHECK(has_diag(result, "E421"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E422: CC out of range") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 200})\n"
+            "out(x)");
+        CHECK(has_diag(result, "E422"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E414: channel out of range") {
+        auto result = akkado::compile(
+            "x = param(\"x\", 0, 0, 1)\n"
+            "midi_cc(\"x\", {cc: 1, channel: 17})\n"
+            "out(x)");
+        CHECK(has_diag(result, "E414"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E400: wrong arg count") {
+        auto result = akkado::compile(
+            "midi_cc(\"x\")\n"
+            "out(0)");
+        CHECK(has_diag(result, "E400"));
+        CHECK(!result.success);
+    }
+
+    SECTION("E412: midi_cc inside fn body is rejected") {
+        auto result = akkado::compile(
+            "fn setup() -> midi_cc(\"x\", {cc: 1})\n"
+            "setup()\n"
+            "out(0)");
+        CHECK(has_diag(result, "E412"));
+        CHECK(!result.success);
+    }
+}

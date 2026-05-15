@@ -23,7 +23,11 @@ import {
 	type InputSourceKind,
 	type InputStatus
 } from '$lib/audio/input-source';
-import { createMidiInputController, type RequiredMidiSource } from '$lib/midi/midi-input.svelte';
+import {
+	createMidiInputController,
+	type RequiredMidiSource,
+	type RequiredMidiCcRoute
+} from '$lib/midi/midi-input.svelte';
 import type { ShapeIndex as ShapeIndexData } from '$lib/editor/akkado-shape-index';
 
 interface Diagnostic {
@@ -181,6 +185,9 @@ interface CompileResult {
 	// midi() call sites from the compile result (prd-midi-input §4.7). The
 	// host walks this list to build the live-device route table.
 	requiredMidiSources?: RequiredMidiSource[];
+	// midi_cc() routes from the compile result (prd-midi-input §4.8). The
+	// controller turns these into a per-device CC route table.
+	requiredMidiCcRoutes?: RequiredMidiCcRoute[];
 	paramDecls?: ParamDecl[];
 	vizDecls?: VizDecl[];
 	disassembly?: DisassemblyInfo;
@@ -367,6 +374,7 @@ function createAudioEngine() {
 	// Stash the most recent set of required midi() sources so the panel
 	// (and re-acquired Web MIDI access) can rebuild routes idempotently.
 	let lastRequiredMidiSources: RequiredMidiSource[] = [];
+	let lastRequiredMidiCcRoutes: RequiredMidiCcRoute[] = [];
 
 	// Uploaded input files keyed by display name. Map kept on the main thread
 	// because file sources need raw ArrayBuffers for ctx.decodeAudioData().
@@ -513,6 +521,7 @@ function createAudioEngine() {
 					requiredUris: msg.requiredUris as UriRequest[] | undefined,
 					requiredInputSources: msg.requiredInputSources as string[] | undefined,
 					requiredMidiSources: msg.requiredMidiSources as RequiredMidiSource[] | undefined,
+					requiredMidiCcRoutes: msg.requiredMidiCcRoutes as RequiredMidiCcRoute[] | undefined,
 					paramDecls: msg.paramDecls as ParamDecl[] | undefined,
 					vizDecls: msg.vizDecls as VizDecl[] | undefined,
 					disassembly: msg.disassembly as DisassemblyInfo | undefined
@@ -556,7 +565,8 @@ function createAudioEngine() {
 				// late-resolves on permission grant / device plug-in.
 				if (result.success) {
 					lastRequiredMidiSources = result.requiredMidiSources ?? [];
-					midiInput.setRoutes(lastRequiredMidiSources);
+					lastRequiredMidiCcRoutes = result.requiredMidiCcRoutes ?? [];
+					midiInput.setRoutes(lastRequiredMidiSources, lastRequiredMidiCcRoutes);
 				}
 				// Resolve pending compile promise
 				if (compileResolve) {

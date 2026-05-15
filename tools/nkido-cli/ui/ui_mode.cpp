@@ -306,7 +306,7 @@ void UIMode::compile_and_play() {
         }
         seq_storage_history_.emplace_back();
         apply_state_inits(engine_.vm(), cr, seq_storage_history_.back());
-        engine_.apply_midi_route_plan(cr.required_midi_sources);
+        engine_.apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
     } else {
         seq_storage_history_.emplace_back();
         if (!load_and_prepare_immediate(engine_.vm(), opts_, load,
@@ -314,7 +314,7 @@ void UIMode::compile_and_play() {
             status_message_ = "Error: Failed to load program";
             return;
         }
-        engine_.apply_midi_route_plan(cr.required_midi_sources);
+        engine_.apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
         if (!engine_.start()) {
             status_message_ = "Error: Failed to start audio";
             return;

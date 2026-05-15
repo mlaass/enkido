@@ -200,6 +200,22 @@ struct RequiredMidiSource {
         cedar::MidiQueueState::TempoMode::Follow;
 };
 
+/// Required MIDI CC / pitch-bend / channel-aftertouch → param() route from
+/// a compile-time `midi_cc(...)` directive (PRD prd-midi-input §4.8).
+/// Emits no bytecode; the host MIDI callback walks this table and calls
+/// `vm.set_param(param_name, value, slew_ms)` for matching events. The
+/// audio thread sees the result through the existing EnvMap interpolated
+/// path. cc_num sentinels: 0..127 = MIDI CC number; -1 = pitch-bend
+/// (14-bit, status 0xEn); -2 = channel aftertouch (status 0xDn).
+struct RequiredMidiCcRoute {
+    std::string   param_name;
+    std::int16_t  cc_num         = 0;     // 0..127 = CC#, -1 = PB, -2 = AT
+    std::uint8_t  channel_filter = 0;     // 0 = any, 1..16
+    float         scale          = 1.0f;  // max - min
+    float         bias           = 0.0f;  // min
+    float         slew_ms        = 5.0f;  // EnvMap default
+};
+
 /// Required wavetable bank from a compile-time wt_load(...) directive.
 /// The host iterates these after compilation in order: native loads each
 /// via `VM::wavetable_registry().load_from_file(name, path)`; WASM fetches
@@ -247,6 +263,7 @@ struct CodeGenResult {
     std::vector<ScalarSampleMapping> scalar_sample_mappings;  // Direct sample("name") references requiring runtime ID patching
     std::vector<RequiredSoundFont> required_soundfonts;  // SoundFont files needed at runtime
     std::vector<RequiredMidiSource> required_midi_sources;  // Per-call MIDI source configs (PRD prd-midi-input)
+    std::vector<RequiredMidiCcRoute> required_midi_cc_routes;  // midi_cc() routes (PRD prd-midi-input §4.8)
     // Input source strings collected from in('...') calls (per-call, not deduplicated).
     // Empty means in() was called with no argument (host uses UI default).
     // Hosts use this metadata to switch input source on compile.
@@ -662,6 +679,12 @@ private:
     /// upstream alongside Pattern.
     TypedValue handle_midi_call(NodeIndex node, const Node& n);
 
+    /// Handle midi_cc("param_name", options) — compile-time CC / pitch-bend /
+    /// aftertouch route to a param() slot (PRD prd-midi-input §4.8). Emits no
+    /// instruction; records a RequiredMidiCcRoute entry the host MIDI callback
+    /// evaluates at runtime to call vm.set_param(name, value, slew_ms).
+    TypedValue handle_midi_cc_call(NodeIndex node, const Node& n);
+
     /// Handle wt_load("name", "path") - register a wavetable bank.
     /// Compile-time directive only — emits no instruction. Both args must
     /// be string literals. The (name, path, id) tuple is recorded in
@@ -824,6 +847,8 @@ private:
     std::vector<RequiredSoundFont> required_soundfonts_;
     // Track per-call midi() configs (PRD prd-midi-input §4.7).
     std::vector<RequiredMidiSource> required_midi_sources_;
+    // Track per-call midi_cc() routes (PRD prd-midi-input §4.8).
+    std::vector<RequiredMidiCcRoute> required_midi_cc_routes_;
     // Track required wavetable banks from compile-time wt_load() directives
     // (per-call order; deduplicated on (name, path) pair to avoid reloading
     // when the same bank appears in multiple modules).

@@ -93,6 +93,11 @@
     "description": "Live MIDI input via `midi() |> poly(@, instrument, voices)` — plug in a USB controller and play."
   },
   {
+    "slug": "midi-cc-filter",
+    "title": "MIDI CC + Bend",
+    "description": "Mod wheel sweeps the filter, CC 71 controls resonance, pitch-bend wheel bends ±2 semitones — `midi_cc()` routes external controllers straight into `param()` slots."
+  },
+  {
     "slug": "stepper-demo",
     "title": "Stepper Demo",
     "description": "Userspace `step` and `step_dir` operators built from `state`, `counter`, and method-call syntax — no C++ changes."

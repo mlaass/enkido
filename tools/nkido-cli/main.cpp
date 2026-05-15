@@ -576,7 +576,8 @@ int main(int argc, char* argv[]) {
     // events into their MidiQueueState SPSC rings. Skipped when the input
     // is precompiled .cedar (no required_midi_sources metadata available).
     if (result.compile_result) {
-        engine.apply_midi_route_plan(result.compile_result->required_midi_sources);
+        engine.apply_midi_route_plan(result.compile_result->required_midi_sources,
+                                     result.compile_result->required_midi_cc_routes);
     }
 
     // Install signal handlers for graceful shutdown

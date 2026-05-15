@@ -475,6 +475,34 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
               }},
               .option_schema_count = 1}},
 
+    // PRD prd-midi-input §4.8: route an incoming MIDI CC / pitch-bend / channel-
+    // aftertouch to a named param() slot via EnvMap. Compile-time directive only
+    // (no bytecode emitted); the host MIDI callback evaluates the route and
+    // calls vm.set_param(name, value, slew_ms). Special-cased in codegen as
+    // handle_midi_cc_call. Defaults: cc 0..1 range, pb -1..+1 range; 5 ms slew.
+    {"midi_cc", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1, .optional_count = 1, .requires_state = false,
+                 .param_names = {"name", "options", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN, NAN, NAN},
+                 .description = "Route an incoming MIDI CC / pitch-bend / channel-aftertouch to a "
+                                "named param() slot via EnvMap. Compile-time only — exactly one of "
+                                "cc:, pb:, at: must be set. Defaults: 0..1 range (cc/at), -1..+1 (pb).",
+                 .param_types = {ParamValueType::String, ParamValueType::Record},
+                 .option_schemas = {OptionSchema{
+                     /*param_index=*/1,
+                     /*fields=*/{{
+                         {"cc",      OptionFieldType::Number, "-128",  "CC number 0..127 (omit when pb: or at: is set)"},
+                         {"channel", OptionFieldType::Number, "0",     "Channel filter, 1-16 (0 = any)"},
+                         {"pb",      OptionFieldType::Bool,   "false", "Route 14-bit pitch-bend instead of a CC"},
+                         {"at",      OptionFieldType::Bool,   "false", "Route channel aftertouch instead of a CC"},
+                         {"min",     OptionFieldType::Number, "0",     "Output range minimum (defaults to -1 when pb: is set)"},
+                         {"max",     OptionFieldType::Number, "1",     "Output range maximum"},
+                         {"slew",    OptionFieldType::Number, "5",     "EnvMap slew, in milliseconds"},
+                     }},
+                     /*field_count=*/7,
+                 }},
+                 .option_schema_count = 1}},
+
     // Delays — stereo-native (prd-stereo-native-opcodes Phase 4c).
     // Per-channel ring buffers; mono control inputs (time/fb/dry/wet) shared.
     // Optional dry/wet parameters for mix control (defaults: dry=0.0, wet=1.0 = 100% wet)
