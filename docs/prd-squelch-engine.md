@@ -1,4 +1,4 @@
-> **Status: MOSTLY SHIPPED** — All DSP primitives are implemented as Cedar opcodes. The "SquelchEngine" itself is a userspace Akkado patch (§3). Remaining engine work is small: feedback saturation in SVF/Formant, wider ADAA, SIMD for the Formant bank.
+> **Status: MOSTLY SHIPPED** — All DSP primitives are implemented as Cedar opcodes. The "SquelchEngine" itself is a userspace Akkado patch (§3). Feedback saturation in SVF/Formant and ADAA-on-`tube` moved to `docs/prd-distortion-roadmap.md` (general distortion-quality work, not squelch-specific). Remaining engine work here: SIMD for the Formant bank.
 
 # Product Requirement Document: SquelchEngine
 
@@ -100,8 +100,8 @@ Switching the §4 filter line between `diode`, `formant`, and `sallenkey` select
 
 These are the items from the original v1.0 spec that are not yet shipped. None block the recipe in §3 — the patch already sounds correct — but each closes a remaining quality dimension.
 
-- **Feedback-path saturation in SVF and Formant.** Moog, Diode, and Sallen-Key already have non-linear feedback. The Chamberlin SVF and Formant BPFs run linear feedback and lose some character at high Q. Add a `tanh` or soft-clip to the feedback term in `op_filter_svf_*` and per-band in `op_filter_formant`.
-- **Wider ADAA coverage.** Only `fold` and `smooth` use antiderivative anti-aliasing today (`cedar/include/cedar/opcodes/distortion.hpp:121, 235`). `tube`, `tape`, `transformer`, and `exciter` use 2× oversampling, which is fine for moderate drive but aliases at extreme settings. Convert at least `tube` to ADAA so the macro-knob recipe can push MANGLER to 1.0 cleanly.
+- **Feedback-path saturation in SVF and Formant.** Moog, Diode, and Sallen-Key already have non-linear feedback. The Chamberlin SVF and Formant BPFs run linear feedback and lose some character at high Q. Add a `tanh` or soft-clip to the feedback term in `op_filter_svf_*` and per-band in `op_filter_formant`. **→ Moved to `docs/prd-distortion-roadmap.md` Phase 1a/1b** (`fb_sat` ExtendedParams<1>, opt-in, default off).
+- **Wider ADAA coverage.** Only `fold` and `smooth` use antiderivative anti-aliasing today (`cedar/include/cedar/opcodes/distortion.hpp:121, 235`). `tube`, `tape`, `transformer`, and `exciter` use 2× oversampling, which is fine for moderate drive but aliases at extreme settings. Convert at least `tube` to ADAA so the macro-knob recipe can push MANGLER to 1.0 cleanly. **→ Tube-only ADAA moved to `docs/prd-distortion-roadmap.md` Phase 1c**; `tape`/`xfmr`/`excite` ADAA deferred (2× oversampling buys enough headroom for current use cases).
 - **SIMD for the Formant bank.** The 3 BPFs in `op_filter_formant` run serially. AVX2/NEON intrinsics processing 3 (padded to 4) BPFs in parallel would roughly halve the per-sample cost. The original spec called this out as a v1 optimization target.
 - **Known self-oscillation gaps.** Two existing tracked issues in `docs/dsp-issues.md` overlap directly with the SquelchEngine character:
   - **#9 FILTER_DIODE** self-oscillates only for one of four (VT, FB) configurations tested. Higher VT keeps the sinh argument in its linear regime, producing insufficient loop gain.
