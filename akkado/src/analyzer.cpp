@@ -1309,7 +1309,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
 
     if (n.type == NodeType::Hole) {
         // Holes should have been substituted - if we see one, it's an error
-        error("E003", "Hole '%' used outside of pipe expression", n.location);
+        error("E003", "Hole '@' used outside of pipe expression", n.location);
     }
 
     if (n.type == NodeType::Call) {

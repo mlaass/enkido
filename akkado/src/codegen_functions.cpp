@@ -2007,7 +2007,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
                                   mode == 0 ? 3 : 2);
     if (!args.valid) {
         if (mode == 0) {
-            error("E400", "poly() requires 2-3 arguments: poly(input, instrument, voices=64). Pipe a pattern in: pat(...) |> poly(%, instrument)", n.location);
+            error("E400", "poly() requires 2-3 arguments: poly(input, instrument, voices=64). Pipe a pattern in: pat(...) |> poly(@, instrument)", n.location);
         } else {
             error("E400", func_name + "() requires 1-2 arguments: " + func_name + "(instrument) or " + func_name + "(input, instrument)", n.location);
         }

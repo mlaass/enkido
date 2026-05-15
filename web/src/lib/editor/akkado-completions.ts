@@ -285,7 +285,7 @@ function formatOptionDetail(f: OptionFieldSpec): string {
  *
  * Walks backwards from `pos - 1`, skipping whitespace, and recognises:
  *   - `<identifier>.` → kind: 'identifier', name: <identifier>
- *   - `%.`             → kind: 'hole'
+ *   - `@.` or `%.`    → kind: 'hole' (`@` is canonical; `%` is a legacy alias)
  *
  * Reuses the same string/comment guard from `detectRecordLiteralCtx` so we
  * never trigger inside string literals (forward scan to confirm string
@@ -327,7 +327,7 @@ function detectDotContext(text: string, pos: number): DotCtx | null {
 	while (i >= 0 && /\s/.test(text[i])) i--;
 	if (i < 0) return null;
 
-	if (text[i] === '%') {
+	if (text[i] === '@' || text[i] === '%') {
 		return { kind: 'hole', from: insertFrom };
 	}
 
@@ -420,7 +420,7 @@ export async function akkadoCompletions(context: CompletionContext): Promise<Com
 		}
 	}
 
-	// Dot context: `r.` or `%.` — surface analyzer-driven shape fields when
+	// Dot context: `r.` or `@.`/`%.` — surface analyzer-driven shape fields when
 	// the editor has a cached shape index for the target binding / pattern
 	// hole. Phase 2 of records-system-unification PRD §5.2.
 	const dotCtx = detectDotContext(docText, context.pos);

@@ -97,7 +97,7 @@ export function getShape(name: string): Shape | undefined {
 	return cached?.bindings[name];
 }
 
-/** Read the cached pattern-hole shape (corresponds to `%` in the enclosing
+/** Read the cached pattern-hole shape (corresponds to `@` in the enclosing
  *  pipe). Undefined when no pipe / no Pattern LHS / cursor outside any pipe. */
 export function getPatternHoleShape(): Shape | undefined {
 	return cached?.patternHole;

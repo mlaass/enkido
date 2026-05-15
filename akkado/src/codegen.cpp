@@ -2015,7 +2015,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
         case NodeType::Hole: {
             // Holes should have been substituted by the analyzer
-            error("E110", "Hole '%' in unexpected context", n.location);
+            error("E110", "Hole '@' in unexpected context", n.location);
             return TypedValue::error_val();
         }
 
