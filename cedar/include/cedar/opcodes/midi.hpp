@@ -9,6 +9,9 @@ namespace cedar {
 
 struct ExecutionContext;
 struct Instruction;
+struct MidiSequence;  // cedar/io/midi_sequence.hpp — full definition is only
+                      // needed by op_midi_query / smf_parser, so keep this
+                      // header free of the IO include.
 
 // Source kind selected by the akkado `midi()` builtin. Phase 1 stores the
 // value on the state but only the live-device path is wired through
@@ -68,16 +71,19 @@ struct MidiQueueState {
     std::atomic<std::uint64_t> write_pos{0};
     std::atomic<std::uint64_t> read_pos{0};
 
-    // Stored Phase-1 metadata. `file_seq` stays nullptr until Phase 5 lands
-    // the SMF parser; loop / tempo_mode / file_play_head_beats are reserved
-    // for that path. `channel_filter` is honored today (0 = any, 1-16 = MIDI
-    // channel match).
+    // Source metadata populated by VM::init_midi_queue_state. `file_seq` is
+    // set when the host registers parsed bytes via VM::load_midi_file and
+    // the registry lookup matches `name_or_path`; nullptr keeps the file
+    // path silent and is a documented edge case (loading-in-progress, file
+    // not yet dropped, parse failure).
     MidiSourceKind kind          = MidiSourceKind::DefaultDevice;
     std::uint8_t   channel_filter = 0;
     bool           loop           = false;
     TempoMode      tempo_mode     = Follow;
-    void*          file_seq       = nullptr;   // Phase 5: MidiSequence*
+    MidiSequence*  file_seq       = nullptr;
     double         file_play_head_beats = 0.0;
+    // Reserved for a future tempo-map cursor optimisation; v1 uses the
+    // per-note `beat_on_file`/`beat_off_file` precomputed in parse_smf.
     std::uint32_t  current_tempo_idx     = 0;
 
     // Note → index of the OutputEvent in `output.events` currently emitting

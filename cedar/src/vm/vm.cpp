@@ -1,9 +1,11 @@
 #include "cedar/vm/vm.hpp"
+#include "cedar/io/midi_sequence.hpp"
 #include "cedar/opcodes/opcodes.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace cedar {
 
@@ -1115,9 +1117,31 @@ void VM::reset() {
     buffer_pool_.clear_all();
     state_pool_.reset();
     audio_arena_.reset();  // Reset arena when states are cleared
+    clear_midi_sequences();  // Pointers were arena-owned; map now stale
     crossfade_state_.complete();
     ctx_.global_sample_counter = 0;
     ctx_.block_counter = 0;
+}
+
+std::int32_t VM::load_midi_file(std::string_view name,
+                                const std::uint8_t* bytes,
+                                std::size_t len) {
+    if (name.empty() || !bytes || len == 0) return -1;
+    std::string key(name);
+    const auto existing = midi_sequences_.find(key);
+    if (existing != midi_sequences_.end() && existing->second != nullptr) {
+        return 0;  // already loaded; dedup against repeated drag-drop
+    }
+    MidiSequence* seq = parse_smf(bytes, len, audio_arena_);
+    if (!seq) return -1;
+    midi_sequences_[std::move(key)] = seq;
+    return 0;
+}
+
+void VM::clear_midi_sequences() {
+    // Pointer values live in audio_arena_ and are freed by arena.reset();
+    // we only own the map keys.
+    midi_sequences_.clear();
 }
 
 void VM::hot_swap_begin() {

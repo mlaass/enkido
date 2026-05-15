@@ -186,6 +186,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 				this.loadSoundFont(msg.name, msg.data);
 				break;
 
+			case 'loadMidiFile':
+				this.loadMidiFile(msg.name, msg.data);
+				break;
+
 			case 'loadWavetable':
 				this.loadWavetable(msg.name, msg.data);
 				break;
@@ -1172,6 +1176,58 @@ class CedarProcessor extends AudioWorkletProcessor {
 					name,
 					success: false,
 					error: 'SF2 parsing failed'
+				});
+			}
+		} finally {
+			this.module._nkido_free(namePtr);
+			this.module._nkido_free(dataPtr);
+		}
+	}
+
+	/**
+	 * Load a `.mid` file (prd-midi-input Phase 5). Parses the bytes in the
+	 * VM's name-keyed registry; subsequent cedar_apply_midi_sources() calls
+	 * (run inside loadCompiledProgram) attach the parsed sequence to each
+	 * matching MidiQueueState. Mirrors loadSoundFont's lifecycle.
+	 */
+	loadMidiFile(name, audioData) {
+		if (!this.module) {
+			this.port.postMessage({ type: 'midiFileLoaded', name, success: false, error: 'Module not initialized' });
+			return;
+		}
+		if (!this.module._cedar_load_midi_file) {
+			this.port.postMessage({ type: 'midiFileLoaded', name, success: false, error: 'cedar_load_midi_file not exported' });
+			return;
+		}
+
+		const nameLen = this.module.lengthBytesUTF8(name) + 1;
+		const namePtr = this.module._nkido_malloc(nameLen);
+		if (namePtr === 0) {
+			this.port.postMessage({ type: 'midiFileLoaded', name, success: false, error: 'Failed to allocate name' });
+			return;
+		}
+
+		const dataArray = new Uint8Array(audioData);
+		const dataPtr = this.module._nkido_malloc(dataArray.length);
+		if (dataPtr === 0) {
+			this.module._nkido_free(namePtr);
+			const needKB = (dataArray.length / 1024).toFixed(1);
+			this.port.postMessage({ type: 'midiFileLoaded', name, success: false, error: `Out of memory: could not allocate ${needKB} KB for MIDI file data` });
+			return;
+		}
+
+		try {
+			this.module.stringToUTF8(name, namePtr, nameLen);
+			this.writeByteArray(dataPtr, dataArray);
+			const result = this.module._cedar_load_midi_file(namePtr, dataPtr, dataArray.length);
+			if (result === 0) {
+				this.port.postMessage({ type: 'midiFileLoaded', name, success: true });
+			} else {
+				this.port.postMessage({
+					type: 'midiFileLoaded',
+					name,
+					success: false,
+					error: 'MIDI parse failed (unsupported format, malformed bytes, or arena exhausted)'
 				});
 			}
 		} finally {

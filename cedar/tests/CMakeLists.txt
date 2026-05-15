@@ -58,4 +58,11 @@ target_link_libraries(cedar_tests
         Catch2::Catch2WithMain
 )
 
+# Source-tree path for test fixtures (e.g. .mid files used by smf parser
+# tests). Embedded as a compile-time string so tests don't depend on the
+# current working directory at runtime.
+target_compile_definitions(cedar_tests PRIVATE
+    CEDAR_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)
+
 catch_discover_tests(cedar_tests)

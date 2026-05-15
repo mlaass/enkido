@@ -1095,6 +1095,12 @@ its target.
 - `bun run build:opcodes`, `bun run build:docs`.
 - Edge-case test sweep (stuck-note hot-swap, ring overflow surfacing).
 - Cross-host parity render comparison.
+- **Unified file drag-drop UI** — TODO: collapse the per-asset-type drop
+  zones (samples, soundfonts, `.mid`) into a single "Files" surface that
+  dispatches by extension. Today MIDI lives in `MidiInputPanel.svelte`;
+  samples + soundfonts are scattered. Scope to be decided when Phase 7
+  starts — likely a new top-level `FilesPanel.svelte` plus a small
+  `kind = inferFromExtension(file)` helper in the audio store.
 
 **Total**: ~8 working days for a single engineer.
 

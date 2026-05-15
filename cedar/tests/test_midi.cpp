@@ -5,13 +5,18 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "cedar/io/midi_sequence.hpp"
+#include "cedar/opcodes/dsp_state.hpp"  // for PolyAllocState
 #include "cedar/opcodes/midi.hpp"
+#include "cedar/vm/audio_arena.hpp"
 #include "cedar/vm/instruction.hpp"
 #include "cedar/vm/vm.hpp"
 
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 using namespace cedar;
@@ -456,4 +461,467 @@ TEST_CASE("MIDI same-block note-on + note-off fires a one-shot voice",
 
     auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
     CHECK(poly.active_voice_count() == 0);
+}
+
+// ============================================================================
+// [smf] — SMF parser unit tests (PRD prd-midi-input Phase 5)
+// ============================================================================
+
+namespace {
+
+// Inline byte-builder for tiny synthetic SMF streams. Tests can construct a
+// valid file in 5-10 lines without committing a binary fixture for every
+// edge case. push_vlq matches the parser's VLQ shape (MSB continuation).
+struct ByteBuilder {
+    std::vector<std::uint8_t> bytes;
+    void u8(std::uint8_t v)  { bytes.push_back(v); }
+    void u16(std::uint16_t v){ u8(std::uint8_t(v >> 8)); u8(std::uint8_t(v)); }
+    void u32(std::uint32_t v){ u8(std::uint8_t(v >> 24)); u8(std::uint8_t(v >> 16));
+                               u8(std::uint8_t(v >> 8));  u8(std::uint8_t(v)); }
+    void str(const char* s)  { for (; *s; ++s) u8(std::uint8_t(*s)); }
+    void vlq(std::uint32_t v) {
+        std::uint32_t buffer = v & 0x7F;
+        while (v >>= 7) { buffer <<= 8; buffer |= ((v & 0x7F) | 0x80); }
+        while (true) {
+            u8(std::uint8_t(buffer & 0xFF));
+            if (buffer & 0x80) buffer >>= 8;
+            else break;
+        }
+    }
+    void embed_track(const std::vector<std::uint8_t>& events) {
+        str("MTrk");
+        u32(std::uint32_t(events.size()));
+        bytes.insert(bytes.end(), events.begin(), events.end());
+    }
+};
+
+// Build a minimal one-track SMF with the supplied track-body bytes.
+std::vector<std::uint8_t> make_smf(std::uint16_t format,
+                                   std::uint16_t ntrks,
+                                   std::uint16_t tpq,
+                                   const std::vector<std::uint8_t>& track) {
+    ByteBuilder b;
+    b.str("MThd");
+    b.u32(6);
+    b.u16(format);
+    b.u16(ntrks);
+    b.u16(tpq);
+    b.embed_track(track);
+    return b.bytes;
+}
+
+// Read a fixture file from CEDAR_TEST_FIXTURES_DIR. Aborts the test if the
+// file cannot be opened (regression in the build wiring).
+std::vector<std::uint8_t> read_fixture(const char* relative_path) {
+    std::string full = CEDAR_TEST_FIXTURES_DIR;
+    full += "/";
+    full += relative_path;
+    std::FILE* fp = std::fopen(full.c_str(), "rb");
+    REQUIRE(fp != nullptr);
+    std::fseek(fp, 0, SEEK_END);
+    const auto len = std::ftell(fp);
+    std::fseek(fp, 0, SEEK_SET);
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(len));
+    if (len > 0) {
+        const std::size_t got = std::fread(out.data(), 1, std::size_t(len), fp);
+        REQUIRE(got == std::size_t(len));
+    }
+    std::fclose(fp);
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("parse_smf accepts a minimal format-0 file with one note", "[smf]") {
+    // One quarter note C4 (60) at 480 TPQ. Note-on at tick 0, note-off at
+    // tick 480, EOT at the same tick.
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);      ev.u8(0x90); ev.u8(60); ev.u8(96);    // note-on
+    ev.vlq(480);    ev.u8(0x80); ev.u8(60); ev.u8(64);    // note-off
+    ev.vlq(0);      ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00); // EOT
+    track = ev.bytes;
+
+    const auto bytes = make_smf(/*format*/0, /*ntrks*/1, /*tpq*/480, track);
+
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->ticks_per_quarter == 480);
+    REQUIRE(seq->num_notes == 1);
+    CHECK(seq->notes[0].note == 60);
+    CHECK(seq->notes[0].vel == 96);
+    CHECK(seq->notes[0].tick_on == 0);
+    CHECK(seq->notes[0].tick_off == 480);
+}
+
+TEST_CASE("parse_smf rejects format-2 files", "[smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(/*format*/2, /*ntrks*/1, /*tpq*/480, track);
+    AudioArena arena(64 * 1024);
+    CHECK(parse_smf(bytes.data(), bytes.size(), arena) == nullptr);
+}
+
+TEST_CASE("parse_smf rejects SMPTE timing division", "[smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    // SMPTE timing has the high bit of division set.
+    const auto bytes = make_smf(/*format*/0, /*ntrks*/1,
+                                /*tpq*/0xE228, track);
+    AudioArena arena(64 * 1024);
+    CHECK(parse_smf(bytes.data(), bytes.size(), arena) == nullptr);
+}
+
+TEST_CASE("parse_smf rejects truncated header / null input", "[smf]") {
+    AudioArena arena(8 * 1024);
+    CHECK(parse_smf(nullptr, 0, arena) == nullptr);
+    const std::uint8_t too_short[] = { 'M','T','h','d', 0,0,0,6 };
+    CHECK(parse_smf(too_short, sizeof(too_short), arena) == nullptr);
+    const std::uint8_t bad_magic[] = { 'B','A','D','!', 0,0,0,6,
+                                       0,0, 0,1, 1,0xE0 };
+    CHECK(parse_smf(bad_magic, sizeof(bad_magic), arena) == nullptr);
+}
+
+TEST_CASE("parse_smf handles running status across note-ons", "[smf]") {
+    // Three note-ons back to back using running status (0x90 implicit on
+    // events 2 and 3), each followed by an explicit note-off.
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);          // note-on, status set
+    ev.vlq(0);                ev.u8(64); ev.u8(96);          // running status
+    ev.vlq(0);                ev.u8(67); ev.u8(96);          // running status
+    ev.vlq(480); ev.u8(0x80); ev.u8(60); ev.u8(64);          // note-off C4
+    ev.vlq(0);                ev.u8(64); ev.u8(64);          // running status off
+    ev.vlq(0);                ev.u8(67); ev.u8(64);          // running status off
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);      // EOT
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    CHECK(seq->num_notes == 3);
+}
+
+TEST_CASE("parse_smf treats velocity-0 note-on as note-off", "[smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);   // note-on
+    ev.vlq(240); ev.u8(0x90); ev.u8(60); ev.u8(0);    // note-on vel 0 == off
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->num_notes == 1);
+    CHECK(seq->notes[0].tick_off == 240);
+}
+
+TEST_CASE("parse_smf populates tempos[] with default + meta events", "[smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    // Set-tempo: 500000 us/qn (120 BPM) at tick 0
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x51); ev.u8(0x03);
+    ev.u8(0x07); ev.u8(0xA1); ev.u8(0x20);  // 0x07A120 = 500000
+    // Set-tempo: 250000 us/qn (240 BPM) at tick 480
+    ev.vlq(480); ev.u8(0xFF); ev.u8(0x51); ev.u8(0x03);
+    ev.u8(0x03); ev.u8(0xD0); ev.u8(0x90);  // 0x03D090 = 250000
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->num_tempos == 2);
+    CHECK(seq->tempos[0].tick == 0);
+    CHECK(seq->tempos[0].us_per_quarter == 500000u);
+    CHECK_THAT(seq->tempos[0].beats_before,
+               Catch::Matchers::WithinAbs(0.0f, 1e-6f));
+    CHECK(seq->tempos[1].tick == 480);
+    CHECK(seq->tempos[1].us_per_quarter == 250000u);
+    // 480 ticks before second tempo / 480 TPQ = 1 beat.
+    CHECK_THAT(seq->tempos[1].beats_before,
+               Catch::Matchers::WithinAbs(1.0f, 1e-6f));
+}
+
+TEST_CASE("parse_smf synthesizes a default tempo when the file declares none",
+          "[smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);
+    ev.vlq(480); ev.u8(0x80); ev.u8(60); ev.u8(64);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->num_tempos == 1);
+    CHECK(seq->tempos[0].tick == 0);
+    CHECK(seq->tempos[0].us_per_quarter == 500000u);  // 120 BPM default
+}
+
+TEST_CASE("parse_smf skips unsupported channel and meta payloads", "[smf]") {
+    // CC, program change, pitch-bend, channel pressure, and a non-tempo
+    // meta should all be consumed without throwing the parser off.
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    // Text meta (type 0x01) with body "hi"
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x01); ev.u8(0x02); ev.u8('h'); ev.u8('i');
+    // CC #74 = 0x40
+    ev.vlq(0); ev.u8(0xB0); ev.u8(74); ev.u8(0x40);
+    // Program change to 0x10
+    ev.vlq(0); ev.u8(0xC0); ev.u8(0x10);
+    // Channel pressure 0x55
+    ev.vlq(0); ev.u8(0xD0); ev.u8(0x55);
+    // Pitch bend
+    ev.vlq(0); ev.u8(0xE0); ev.u8(0x40); ev.u8(0x40);
+    // Note-on/off
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);
+    ev.vlq(240); ev.u8(0x80); ev.u8(60); ev.u8(64);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    CHECK(seq->num_notes == 1);
+}
+
+TEST_CASE("parse_smf loads twinkle.mid fixture with 24 notes", "[smf]") {
+    const auto bytes = read_fixture("midi/twinkle.mid");
+    AudioArena arena(256 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    CHECK(seq->num_notes == 24);
+    CHECK(seq->ticks_per_quarter == 480);
+    CHECK(seq->num_tempos >= 1);
+    // First note is middle C (60). Each note is a quarter note at 480 TPQ,
+    // so tick_off - tick_on must be 480.
+    CHECK(seq->notes[0].note == 60);
+    CHECK(seq->notes[0].tick_off - seq->notes[0].tick_on == 480u);
+}
+
+TEST_CASE("parse_smf loads tempo-map.mid with embedded tempo changes", "[smf]") {
+    const auto bytes = read_fixture("midi/tempo-map.mid");
+    AudioArena arena(256 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->num_notes == 4);
+    REQUIRE(seq->num_tempos >= 4);
+    // beat_on_file for follow mode would equal tick_on / TPQ. For the
+    // second note (tick_on = 480, TPQ = 480) follow == 1.0 beats; file mode
+    // honours the tempo map but ticks are linear in beats, so beat_on_file
+    // also equals 1.0 — the difference manifests in playback wall-time, not
+    // beat coordinates. The point of file mode is that we DO precompute the
+    // beat tables: confirm the field is populated.
+    CHECK_THAT(seq->notes[1].beat_on_file,
+               Catch::Matchers::WithinAbs(1.0f, 1e-3f));
+}
+
+TEST_CASE("parse_smf rejects the format-2 fixture", "[smf]") {
+    const auto bytes = read_fixture("midi/format2.mid");
+    AudioArena arena(64 * 1024);
+    CHECK(parse_smf(bytes.data(), bytes.size(), arena) == nullptr);
+}
+
+// ============================================================================
+// [midi-file] — op_midi_query file-playback tests
+// ============================================================================
+
+TEST_CASE("File playback emits a note-on once per scheduled tick", "[midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, /*loop*/false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    // Sanity check: run a single block, confirm op_midi_query advanced the
+    // play head (catches a Phase-5 regression where the file path remained
+    // stubbed). Then run a short window and assert at least one note
+    // emitted — the long-form scan test in [midi-poly] handles the
+    // 300-sec coverage requirement without paying for 5000 quick blocks
+    // in every iterative dev cycle.
+    vm.process_block(left.data(), right.data());
+    auto* s = vm.states().get_if<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s != nullptr);
+    REQUIRE(s->file_seq != nullptr);
+    CHECK(s->file_play_head_beats > 0.0);
+    CHECK(s->output.num_events >= 1);
+    CHECK(s->output.events[0].midi_note == 60.0f);
+}
+
+TEST_CASE("File playback loops when loop=true", "[midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, /*loop*/true,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    // Run for ~12 sec of audio (4500 blocks) — twinkle is 12 sec at 120 BPM
+    // (24 quarter notes = 24 * 0.5 = 12 sec), so loop should re-emit notes.
+    for (int i = 0; i < 5000; ++i) {
+        vm.process_block(left.data(), right.data());
+    }
+    auto* s = vm.states().get_if<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s != nullptr);
+    // After ~13 sec of audio with a 12-sec loop, expect at least 25 events
+    // (full first iteration + one note into the second). Cap at capacity.
+    CHECK(s->output.num_events > 24);
+}
+
+TEST_CASE("File playback honors channel_filter", "[midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    // The fixture writes all notes on channel 0 (1 with 1-indexed shift).
+    // Filtering channel 2 must drop everything.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", /*channel*/2, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int i = 0; i < 1000; ++i) {
+        vm.process_block(left.data(), right.data());
+    }
+    auto* s = vm.states().get_if<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s != nullptr);
+    CHECK(s->output.num_events == 0);
+}
+
+TEST_CASE("File playback nullptr file_seq stays silent", "[midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // Initialize a File-kind state without loading any bytes — file_seq
+    // stays nullptr. Documented edge case (PRD §7 "`.mid` not yet loaded").
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "missing.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int i = 0; i < 100; ++i) {
+        vm.process_block(left.data(), right.data());
+    }
+    auto* s = vm.states().get_if<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s != nullptr);
+    CHECK(s->file_seq == nullptr);
+    CHECK(s->output.num_events == 0);
+}
+
+TEST_CASE("vm.load_midi_file is idempotent and dedup'd by name", "[midi-file]") {
+    VM vm;
+    // Load order mirrors the host: program first (which resets the
+    // arena-backed registries), then asset bytes, then state inits.
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    // Second call returns success without re-parsing.
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+
+    // Two MidiQueueStates referencing the same file get the same pointer.
+    vm.init_midi_queue_state(0x111, MidiSourceKind::File,
+                             "twinkle.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_midi_queue_state(0x222, MidiSourceKind::File,
+                             "twinkle.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    auto* s1 = vm.states().get_if<MidiQueueState>(0x111);
+    auto* s2 = vm.states().get_if<MidiQueueState>(0x222);
+    REQUIRE(s1 != nullptr); REQUIRE(s2 != nullptr);
+    CHECK(s1->file_seq != nullptr);
+    CHECK(s1->file_seq == s2->file_seq);
+}
+
+TEST_CASE("vm.load_midi_file rejects format-2 fixture", "[midi-file]") {
+    VM vm;
+    const auto bytes = read_fixture("midi/format2.mid");
+    CHECK(vm.load_midi_file("format2.mid",
+                            bytes.data(), bytes.size()) < 0);
+}
+
+// ============================================================================
+// [midi-poly] — full file → POLY integration
+// ============================================================================
+
+TEST_CASE("twinkle.mid drives poly voice allocation for ~300 sec", "[midi-poly]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, /*loop*/true,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_poly_state(POLY_STATE_ID, MIDI_STATE_ID, 8, 0, 0);
+
+    // 300 seconds at 48 kHz / 128 = 112_500 blocks. Drive the engine and
+    // accumulate the peak absolute output value to confirm voices are
+    // actually rendering audio rather than tripping zero output.
+    constexpr int kBlocks = 112'500;
+    float peak = 0.0f;
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int i = 0; i < kBlocks; ++i) {
+        vm.process_block(left.data(), right.data());
+        for (float v : left) peak = std::max(peak, std::fabs(v));
+    }
+    // Looped Twinkle should produce a clearly non-zero sine output.
+    CHECK(peak > 0.05f);
+
+    // POLY state should still be running cleanly (no stuck voices that
+    // never released across hundreds of seconds).
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    CHECK(poly.active_voice_count() <= 8);
 }

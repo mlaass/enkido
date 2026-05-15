@@ -1,6 +1,8 @@
 #include "program_loader.hpp"
 
 #include "asset_loader.hpp"
+#include "cedar/io/uri_resolver.hpp"
+#include "cedar/opcodes/midi.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -8,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace nkido {
@@ -277,6 +280,46 @@ void apply_state_inits(cedar::VM& vm,
     }
 }
 
+// Resolve every File-kind RequiredMidiSource via the URI resolver and
+// register the parsed sequence on the VM, then init the MidiQueueState
+// for every MIDI source (live + file). Called from load_and_prepare_immediate
+// after load_program_immediate so the registry survives the VM reset
+// triggered by program load. Used by render mode (no AudioEngine wrapper)
+// AND play mode (AudioEngine::apply_midi_route_plan replays the same
+// init idempotently before opening the live device routes).
+void apply_midi_source_inits(cedar::VM& vm,
+                             const std::vector<akkado::RequiredMidiSource>& required,
+                             std::ostream& err) {
+    std::unordered_set<std::string> loaded;
+    auto& resolver = cedar::UriResolver::instance();
+    for (const auto& req : required) {
+        if (req.kind != cedar::MidiSourceKind::File) continue;
+        if (req.name_or_path.empty()) continue;
+        if (!loaded.insert(req.name_or_path).second) continue;
+        auto result = resolver.load(req.name_or_path);
+        if (!result.success()) {
+            err << "[midi] failed to fetch '" << req.name_or_path
+                << "': " << result.error().message << "\n";
+            continue;
+        }
+        const auto& bytes = result.buffer();
+        const std::int32_t rc = vm.load_midi_file(req.name_or_path,
+                                                  bytes.data(), bytes.size());
+        if (rc < 0) {
+            err << "[midi] parse failed for '" << req.name_or_path << "'\n";
+        }
+    }
+    for (const auto& req : required) {
+        vm.init_midi_queue_state(
+            req.state_id,
+            req.kind,
+            req.name_or_path.empty() ? nullptr : req.name_or_path.c_str(),
+            req.channel_filter,
+            req.loop,
+            req.tempo_mode);
+    }
+}
+
 bool load_and_prepare_immediate(cedar::VM& vm,
                                 const Options& opts,
                                 LoadResult& load,
@@ -303,6 +346,8 @@ bool load_and_prepare_immediate(cedar::VM& vm,
     if (load.compile_result) {
         apply_state_inits(vm, *load.compile_result, seq_storage);
         apply_builtin_var_overrides(vm, *load.compile_result);
+        apply_midi_source_inits(vm, load.compile_result->required_midi_sources,
+                                err);
     }
     return true;
 }

@@ -2076,6 +2076,25 @@ WASM_EXPORT int32_t cedar_load_soundfont(const char* name, const uint8_t* data, 
 }
 
 /**
+ * Load a `.mid` file from memory into the VM's name-keyed midi sequence
+ * registry. Subsequent cedar_apply_midi_sources() calls will attach the
+ * parsed sequence to any MidiQueueState whose RequiredMidiSource.name_or_path
+ * matches `name`. Mirrors cedar_load_soundfont's contract.
+ *
+ * @param name Display name / lookup key (must match the akkado source
+ *             reference, typically the file basename)
+ * @param data Pointer to .mid file bytes
+ * @param size Size of `data` in bytes
+ * @return 0 on success, negative on parse failure or invalid arguments
+ */
+WASM_EXPORT int32_t cedar_load_midi_file(const char* name, const uint8_t* data, int32_t size) {
+    if (!g_vm || !name || !data || size <= 0) {
+        return -1;
+    }
+    return g_vm->load_midi_file(name, data, static_cast<std::size_t>(size));
+}
+
+/**
  * Get number of presets in a loaded SoundFont
  * @param sf_id SoundFont ID
  * @return Number of presets, or 0 if invalid

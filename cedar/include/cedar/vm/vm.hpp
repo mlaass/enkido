@@ -17,8 +17,12 @@
 #include "../opcodes/dsp_state.hpp"
 #include "../opcodes/midi.hpp"
 #include <atomic>
+#include <cstddef>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace cedar {
 
@@ -225,7 +229,7 @@ public:
     // @param tempo           File-mode tempo policy (Phase 5)
     void init_midi_queue_state(std::uint32_t state_id,
                                MidiSourceKind kind,
-                               const char* /*name_or_path*/,
+                               const char* name_or_path,
                                std::uint8_t channel_filter,
                                bool loop,
                                MidiQueueState::TempoMode tempo) {
@@ -235,6 +239,20 @@ public:
         s.channel_filter = channel_filter;
         s.loop           = loop;
         s.tempo_mode     = tempo;
+
+        // File-kind sources look up their parsed sequence in the registry the
+        // host populates via load_midi_file(). On hot-swap with a re-init
+        // before bytes land we leave file_seq nullptr — the opcode is silent
+        // until the host pushes bytes, which is the documented edge case
+        // (PRD §7 "`.mid` not yet loaded at compile").
+        if (kind == MidiSourceKind::File && name_or_path && *name_or_path) {
+            const auto it = midi_sequences_.find(name_or_path);
+            s.file_seq = (it != midi_sequences_.end()) ? it->second : nullptr;
+            s.file_play_head_beats = 0.0;
+            s.current_tempo_idx = 0;
+        } else {
+            s.file_seq = nullptr;
+        }
 
         // Arena-allocate the ring on first init only; reuse on hot-swap to
         // avoid clobbering the producer cursor (a Phase-N improvement could
@@ -269,6 +287,29 @@ public:
             }
         }
     }
+
+    // Parse a `.mid` byte buffer and stash the resulting MidiSequence in
+    // the VM's name-keyed registry. Idempotent: a second call with the same
+    // name short-circuits and returns the cached pointer's status. Mirrors
+    // the soundfont-load shape so the asset pipeline in both web and CLI
+    // treats `.mid` files the same as other binary assets.
+    //
+    // Side effect: walks the state pool and attaches the parsed sequence to
+    // any MidiQueueState whose kind == File and whose stored name matches.
+    // This makes load-after-init work without forcing the host to call
+    // init_midi_queue_state in a particular order relative to load.
+    //
+    // @return 0 on success, negative on parse failure (file rejected or
+    //         arena exhausted). Failed entries are not cached.
+    std::int32_t load_midi_file(std::string_view name,
+                                const std::uint8_t* bytes,
+                                std::size_t len);
+
+    // Free the parsed MidiSequence registry. Pointers themselves live in
+    // audio_arena_ and become invalid the moment that arena resets; the
+    // map is cleared so a later load_midi_file does not return a dangling
+    // pointer. Called from the VM's program-reset paths.
+    void clear_midi_sequences();
 
     // Push a raw channel-voice MIDI event into the queue for the given
     // state_id. Thread-safe single-producer enqueue. The VM stamps the
@@ -387,6 +428,13 @@ private:
                 MAX_WAVETABLE_BANKS> wavetable_pins_{};
 #endif
     AudioArena audio_arena_;
+
+    // Parsed MIDI files keyed by the name the akkado source uses (see
+    // RequiredMidiSource::name_or_path). Pointer values live in audio_arena_;
+    // the map is cleared whenever the arena is reset to avoid dangling
+    // pointers. Touched only from the host thread (load_midi_file) and the
+    // host-thread side of init_midi_queue_state — never from the audio path.
+    std::unordered_map<std::string, MidiSequence*> midi_sequences_;
 };
 
 }  // namespace cedar

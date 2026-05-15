@@ -76,6 +76,7 @@ if(EMSCRIPTEN)
         _cedar_set_default_midi_device
         _cedar_get_default_midi_device
         _cedar_apply_midi_sources
+        _cedar_load_midi_file
         _cedar_reset
         _cedar_is_crossfading
         _cedar_crossfade_position

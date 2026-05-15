@@ -6,6 +6,7 @@
 
 import { DEFAULT_DRUM_KIT } from '$lib/audio/default-samples';
 import { DEFAULT_SOUNDFONTS, resolveDefaultSoundFontUrls } from '$lib/audio/default-soundfonts';
+import { midiBank } from '$lib/audio/midi-bank';
 import { settingsStore } from './settings.svelte';
 import { bankRegistry, type SampleReference } from '$lib/audio/bank-registry';
 import { loadFile } from '$lib/io/file-loader';
@@ -412,6 +413,10 @@ function createAudioEngine() {
 	// Track which wavetable bank IDs are currently registered in the worklet
 	// (kept in sync via clearWavetables / loadWavetable). Map: name → bankId.
 	const loadedWavetables = new Map<string, number>();
+	// Pending .mid file load promises (prd-midi-input Phase 5)
+	const pendingMidiFileLoads = new Map<string, { resolve: (success: boolean) => void }>();
+	// Track which .mid files are currently registered in the worklet by name
+	const loadedMidiFiles = new Set<string>();
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -603,6 +608,26 @@ function createAudioEngine() {
 					if (pendingSf) {
 						pendingSf.resolve(null);
 						pendingSoundFontLoads.delete(sfName);
+					}
+				}
+				break;
+			}
+			case 'midiFileLoaded': {
+				const midiName = msg.name as string;
+				if (msg.success) {
+					console.log('[AudioEngine] MIDI file loaded:', midiName);
+					loadedMidiFiles.add(midiName);
+					const pendingMidi = pendingMidiFileLoads.get(midiName);
+					if (pendingMidi) {
+						pendingMidi.resolve(true);
+						pendingMidiFileLoads.delete(midiName);
+					}
+				} else {
+					console.error('[AudioEngine] MIDI file load failed:', midiName, msg.error);
+					const pendingMidi = pendingMidiFileLoads.get(midiName);
+					if (pendingMidi) {
+						pendingMidi.resolve(false);
+						pendingMidiFileLoads.delete(midiName);
 					}
 				}
 				break;
@@ -1236,6 +1261,36 @@ function createAudioEngine() {
 					};
 				}
 			}
+
+			// Load any required .mid files (prd-midi-input Phase 5). For
+			// each File-kind RequiredMidiSource, resolve the name to a URL
+			// (drag-drop blob via midi-bank registry → fallback to treating
+			// the name as a fetchable URL) and push bytes into the worklet.
+			// Mirrors the soundfont gating: bail out with a compile-style
+			// diagnostic if any required file fails to load, so the user
+			// gets a clear error rather than silent playback.
+			const requiredMidi = compileResult.requiredMidiSources ?? [];
+			for (const src of requiredMidi) {
+				// MidiSourceKind.File = 2 (see akkado/include/akkado/codegen.hpp)
+				if (src.kind !== 2 || !src.name) continue;
+				if (loadedMidiFiles.has(src.name)) continue;
+				const blobUrl = midiBank.lookup(src.name);
+				const url = blobUrl ?? pathToFetchUri(src.name);
+				const ok = await loadAsset(url, 'midi', src.name);
+				if (!ok) {
+					return {
+						success: false,
+						diagnostics: [
+							{
+								severity: 2,
+								message: `MIDI file '${src.name}' failed to load — drop the file into the MIDI panel or check the URL`,
+								line: 1,
+								column: 1
+							}
+						]
+					};
+				}
+			}
 		} finally {
 			state.isLoadingSamples = false;
 		}
@@ -1649,6 +1704,50 @@ function createAudioEngine() {
 	}
 
 	/**
+	 * Load a `.mid` file (prd-midi-input Phase 5) into the worklet's
+	 * name-keyed registry. Subsequent `loadCompiledProgram` calls
+	 * `cedar_apply_midi_sources` which attaches the parsed sequence to
+	 * each MidiQueueState whose RequiredMidiSource.name matches `name`.
+	 */
+	async function loadMidiFile(name: string, data: ArrayBuffer): Promise<boolean> {
+		if (!workletNode) {
+			console.warn('[AudioEngine] Cannot load MIDI file - worklet not initialized');
+			return false;
+		}
+
+		const loadPromise = new Promise<boolean>((resolve) => {
+			pendingMidiFileLoads.set(name, { resolve });
+			setTimeout(() => {
+				if (pendingMidiFileLoads.has(name)) {
+					console.error('[AudioEngine] MIDI file load timeout:', name);
+					pendingMidiFileLoads.delete(name);
+					resolve(false);
+				}
+			}, 10000);
+		});
+
+		workletNode.port.postMessage(
+			{ type: 'loadMidiFile', name, data },
+			[data]
+		);
+		return await loadPromise;
+	}
+
+	/**
+	 * Fetch a `.mid` from a URI and load it. Internal helper called by
+	 * `loadAsset(uri, 'midi', name)`.
+	 */
+	async function loadMidiFileFromUri(name: string, uri: string): Promise<boolean> {
+		try {
+			const result = await loadFile(uri, { cache: true });
+			return await loadMidiFile(name, result.data);
+		} catch (err) {
+			console.error('[AudioEngine] Failed to fetch MIDI file:', err);
+			return false;
+		}
+	}
+
+	/**
 	 * Fetch a wavetable WAV from a URI and load it into the worklet.
 	 * Internal helper called by `loadAsset(uri, 'wavetable', name)`.
 	 */
@@ -1678,9 +1777,10 @@ function createAudioEngine() {
 	function loadAsset(uri: string, kind: 'soundfont', name: string): Promise<SoundFontInfo | null>;
 	function loadAsset(uri: string, kind: 'wavetable', name: string): Promise<number>;
 	function loadAsset(uri: string, kind: 'sample_bank', name?: string): Promise<boolean>;
+	function loadAsset(uri: string, kind: 'midi', name: string): Promise<boolean>;
 	function loadAsset(
 		uri: string,
-		kind: 'sample' | 'soundfont' | 'wavetable' | 'sample_bank',
+		kind: 'sample' | 'soundfont' | 'wavetable' | 'sample_bank' | 'midi',
 		name?: string
 	): Promise<boolean | SoundFontInfo | null | number> {
 		switch (kind) {
@@ -1692,6 +1792,8 @@ function createAudioEngine() {
 				return loadWavetableFromUri(name!, uri);
 			case 'sample_bank':
 				return loadBank(uri, name);
+			case 'midi':
+				return loadMidiFileFromUri(name!, uri);
 		}
 	}
 
@@ -2280,6 +2382,9 @@ function createAudioEngine() {
 		getBankNames,
 		// SoundFont API
 		loadSoundFont,
+		// MIDI file API (prd-midi-input Phase 5)
+		loadMidiFile,
+		midiBank,
 		// Wavetable API (Smooch)
 		loadWavetable,
 		clearWavetables,

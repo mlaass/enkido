@@ -1,5 +1,6 @@
 #include "audio_engine.hpp"
 #include "midi_input.hpp"
+#include "cedar/io/uri_resolver.hpp"
 #include <SDL2/SDL.h>
 #include <csignal>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace nkido {
@@ -362,8 +364,36 @@ void AudioEngine::list_midi_devices(std::ostream& out) {
 void AudioEngine::apply_midi_route_plan(
     const std::vector<akkado::RequiredMidiSource>& required) {
 
+    // Phase 0: resolve and load .mid files (prd-midi-input Phase 5). This
+    // must happen before init_midi_queue_state so the registry lookup
+    // inside the VM attaches the parsed sequence on the same call. Dedup
+    // by name so two midi({file: ...}) references to the same path resolve
+    // through the URI once.
+    std::unordered_set<std::string> loaded_midi_files;
+    auto& resolver = cedar::UriResolver::instance();
+    for (const auto& req : required) {
+        if (req.kind != cedar::MidiSourceKind::File) continue;
+        if (req.name_or_path.empty()) continue;
+        if (!loaded_midi_files.insert(req.name_or_path).second) continue;
+        auto result = resolver.load(req.name_or_path);
+        if (!result.success()) {
+            std::cerr << "[midi] failed to fetch '" << req.name_or_path
+                      << "': " << result.error().message << "\n";
+            continue;
+        }
+        const auto& bytes = result.buffer();
+        const std::int32_t rc = vm_.load_midi_file(req.name_or_path,
+                                                   bytes.data(), bytes.size());
+        if (rc < 0) {
+            std::cerr << "[midi] parse failed for '" << req.name_or_path
+                      << "' (unsupported format or malformed bytes)\n";
+        }
+    }
+
     // Phase 1: ensure every state has its SPSC ring + OutputEvents buffer.
     // Idempotent on hot-swap (same state_id → same ring; held notes survive).
+    // For File-kind entries, init_midi_queue_state also consults the
+    // registry populated in Phase 0 and attaches the parsed sequence.
     for (const auto& req : required) {
         vm_.init_midi_queue_state(
             req.state_id,
@@ -381,7 +411,8 @@ void AudioEngine::apply_midi_route_plan(
     for (const auto& req : required) {
         std::string device;
         if (req.kind == cedar::MidiSourceKind::File) {
-            // .mid file playback ships in Phase 5; ignore for routing.
+            // File-kind sources play back through op_midi_query's
+            // advance_file_seq_into_output path; no live device routing.
             continue;
         }
         device = (req.kind == cedar::MidiSourceKind::DefaultDevice)
