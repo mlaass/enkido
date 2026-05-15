@@ -82,7 +82,7 @@ notes = [60, 64, 67, 72]
 // Walk the array forward on every rising edge of trig.
 step = (arr, trig) -> arr[counter(trig)]
 
-// Walk forward or backward by `dir` each tick, using a state cell directly.
+// Walk forward or backward by `dir` each tick, using a state cell.
 step_dir = (arr, trig, dir) -> {
   idx = state(0)
   idx.set(select(gateup(trig), idx.get() + dir, idx.get()))
@@ -103,8 +103,8 @@ voice = state({freq: 440, vel: 0.5, gate: 0})
 // get(cell) returns the whole record; field access works as usual.
 osc("sin", get(voice).freq) * get(voice).vel * get(voice).gate
 
-// set(cell, new_record) replaces the whole record. The new value's field
-// names must exactly match the cell's declared shape.
+// set(cell, new_record) replaces the whole record. The new
+// value's field names must exactly match the cell's declared shape.
 set(voice, {freq: 880, vel: 0.7, gate: 1})
 ```
 
@@ -126,7 +126,7 @@ out(tone, tone)
 voice.gate = 1
 voice.freq = 880
 
-// Self-referential updates are fine — RHS reads land before LHS writes.
+// Self-referential updates are fine — reads land before writes.
 counter = state({n: 0})
 counter.n = counter.n + 1
 ```
@@ -165,7 +165,8 @@ Constraints on record cells:
 ```akk
 // Whole-record updates compose with ordinary expressions.
 counter = state({n: 0, last: 0})
-button("inc") |> set(counter, {n: get(counter).n + 1, last: get(counter).n})
+button("inc")
+    |> set(counter, {n: get(counter).n + 1, last: get(counter).n})
 ```
 
 Related: [Records](../language/records.md), [counter](edge.md#counter), [gateup](edge.md#gateup), [Method calls](../language/methods.md)

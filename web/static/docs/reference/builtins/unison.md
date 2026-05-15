@@ -106,13 +106,14 @@ pat("c4 e4 g4") as e
 
 ```akk
 fn rich(freq, gate, vel, ext) -> {
-    // Each voice gets a slightly different attack so the stack swells in.
+    // Different attack per voice — the stack swells in.
     env = adsr(gate, 0.02 + ext.idx * 0.01, 0.3, 0.6, 0.4)
     saw(freq, ext.phase) * env * vel
 }
 
-unison(440, 1, 1, rich, voices: 6, detune: 0.4, width: 0.9, phase: 0.5)
-  |> out(@)
+unison(440, 1, 1, rich,
+    voices: 6, detune: 0.4, width: 0.9, phase: 0.5)
+    |> out(@)
 ```
 
 **Bridging a 3-arg `poly` instrument:**
@@ -121,7 +122,8 @@ Unison expects a 4-arg instrument, but you might already have a 3-arg one
 you wrote for `poly`. Wrap it with an underscore for the unused `ext`:
 
 ```akk
-fn lead(freq, gate, vel) -> sqr(freq) * adsr(gate, 0.01, 0.1, 0.7, 0.3) * vel
+fn lead(freq, gate, vel) ->
+    sqr(freq) * adsr(gate, 0.01, 0.1, 0.7, 0.3) * vel
 
 fn fat(f, g, v, _) -> lead(f, g, v)
 
@@ -139,7 +141,8 @@ fn pad_voice(freq, gate, vel, ext) ->
     saw(freq, ext.phase) * adsr(gate, 0.4, 0.6, 0.7, 1.2) * vel
 
 fn fat(freq, gate, vel) ->
-    unison(freq, gate, vel, pad_voice, voices: 4, detune: 0.25, width: 0.7)
+    unison(freq, gate, vel, pad_voice,
+        voices: 4, detune: 0.25, width: 0.7)
 
 chord("Cmaj9 Am11 Fmaj7 G13")
     |> poly(@, fat, 4)

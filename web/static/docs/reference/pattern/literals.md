@@ -58,9 +58,12 @@ s"hh*8 [bd sd]" |> out(@)
 Atoms are chord symbols (`Am`, `C7`, `Fmaj7`, …). Multi-voice; consume via `poly()`:
 
 ```akk
-c"Am C G Em" |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) ) |> out(@)
-// `e.trig` is the per-note pulse for AR. Use `e.gate` instead if the
-// instrument is an ADSR that should sustain across the note's duration.
+c"Am C G Em"
+    |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) )
+    |> out(@)
+// `e.trig` is the per-note pulse for AR. Use `e.gate` instead
+// if the instrument is an ADSR that should sustain across the
+// note's duration.
 ```
 
 A chord pattern in a scalar slot errors `E160`. Silently dropping voices is not implicit.
@@ -70,9 +73,9 @@ A chord pattern in a scalar slot errors `E160`. Silently dropping voices is not 
 When a `Pattern` value reaches a slot that expects a `Signal`, the compiler implicitly extracts the pattern's primary value buffer (the `freq` field). This makes patterns first-class as scalar values:
 
 ```akk
-osc("sin", n"c4 e4 g4")            // Pattern freq → osc freq slot (Signal)
-lp(sig, v"<200 800>", 0.7)         // Pattern → cutoff slot (Signal)
-osc("saw", n"c4 e4" + v"<0 12>")   // Pattern + Pattern arithmetic
+osc("sin", n"c4 e4 g4")          // Pattern freq → osc freq (Signal)
+lp(sig, v"<200 800>", 0.7)       // Pattern → cutoff slot (Signal)
+osc("saw", n"c4 e4" + v"<0 12>") // Pattern + Pattern arithmetic
 ```
 
 The coerce only fires for monophonic, non-sample patterns. Polyphonic patterns (chord, multi-voice) error `E160` with a hint to `poly()`, since silently emitting voice 0 is rarely what you want. Sample patterns route through `SAMPLE_PLAY` and produce audio output rather than a scalar; use `out()` directly.

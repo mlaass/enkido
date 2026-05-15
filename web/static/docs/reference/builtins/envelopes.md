@@ -43,12 +43,16 @@ osc("sin", 440) * adsr(trigger(2), 0.01, 0.2) |> out(@)
 
 ```akk
 // Plucky sound (short attack and decay)
-osc("saw", 330) * adsr(trigger(4), 0.001, 0.1) |> lp(@, 2000) |> out(@)
+osc("saw", 330) * adsr(trigger(4), 0.001, 0.1)
+    |> lp(@, 2000)
+    |> out(@)
 ```
 
 ```akk
 // Pad sound (slow attack)
-osc("saw", 220) * adsr(trigger(0.5), 0.5, 0.3) |> lp(@, 1000) |> out(@)
+osc("saw", 220) * adsr(trigger(0.5), 0.5, 0.3)
+    |> lp(@, 1000)
+    |> out(@)
 ```
 
 Related: [ar](#ar), [trigger](#trigger)

@@ -146,7 +146,9 @@ osc("saw", 55) |> moog(@, 400, 2) |> out(@)
 
 ```akk
 // Filter sweep with high resonance
-osc("saw", 110) |> moog(@, 100 + osc("sin", 0.5) * 1000, 3.5) |> out(@)
+osc("saw", 110)
+    |> moog(@, 100 + osc("sin", 0.5) * 1000, 3.5)
+    |> out(@)
 ```
 
 ```akk
@@ -186,7 +188,9 @@ osc("saw", 55) |> sallenkey(@, 600, 3) |> out(@)
 
 ```akk
 // Screaming resonance
-osc("saw", 110) |> sallenkey(@, 400 + osc("sin", 0.2) * 800, 3.8) |> out(@)
+osc("saw", 110)
+    |> sallenkey(@, 400 + osc("sin", 0.2) * 800, 3.8)
+    |> out(@)
 ```
 
 ```akk

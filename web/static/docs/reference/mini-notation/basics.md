@@ -61,7 +61,9 @@ Space-separated notes play in sequence over one cycle:
 
 ```akk
 // Four notes per cycle
-pat("c4 e4 g4 c5") |> ((f) -> osc("sin", f) * ar(trigger(4))) |> out(@)
+pat("c4 e4 g4 c5")
+    |> ((f) -> osc("sin", f) * ar(trigger(4)))
+    |> out(@)
 ```
 
 ## Rests

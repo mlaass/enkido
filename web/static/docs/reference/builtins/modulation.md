@@ -178,7 +178,9 @@ osc("saw", 110) |> phaser(@, 0.2, 0.8, 100, 8000) |> out(@)
 
 ```akk
 // Deep, resonant 6-stage phaser with strong feedback
-osc("saw", 110) |> phaser(@, 0.5, 0.9, 100, 5000, feedback: 0.7, stages: 6) |> out(@)
+osc("saw", 110)
+    |> phaser(@, 0.5, 0.9, 100, 5000, feedback: 0.7, stages: 6)
+    |> out(@)
 ```
 
 ```akk
@@ -214,7 +216,9 @@ osc("saw", 110) |> comb(@, 0.01, 0.7) |> out(@)
 
 ```akk
 // Karplus-Strong style pluck
-osc("noise") * ar(trigger(4), 0.001, 0.01) |> comb(@, 1/440, 0.99) |> out(@)
+osc("noise") * ar(trigger(4), 0.001, 0.01)
+    |> comb(@, 1/440, 0.99)
+    |> out(@)
 ```
 
 Related: [flanger](#flanger), [delay](#../delays#delay)

@@ -35,7 +35,9 @@ Closures are commonly used with patterns and higher-order functions:
 
 ```akk
 // Pattern triggers closure for each note
-pat("c4 e4 g4") |> ((freq) -> osc("sin", freq) * ar(trigger(4))) |> out(@)
+pat("c4 e4 g4")
+    |> ((freq) -> osc("sin", freq) * ar(trigger(4)))
+    |> out(@)
 ```
 
 ## Closures as voices
@@ -122,7 +124,9 @@ fn inc(x) -> x + 1
 f = compose(double, inc)   // (x) -> inc(double(x))
 f(5)                       // 11
 
-pipeline = compose(lp(_, 1000, 0.7, 0.5, 0.5), hp(_, 200, 0.7, 0.5, 0.5))
+pipeline = compose(
+    lp(_, 1000, 0.7, 0.5, 0.5),
+    hp(_, 200, 0.7, 0.5, 0.5))
 saw(440) |> pipeline(@) |> out(@)
 ```
 

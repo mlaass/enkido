@@ -80,7 +80,10 @@ pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
 Inline destructure inside `as` lifts the named fields directly into scope:
 
 ```akk
-pat("c4 e4 g4") as {freq, vel} |> osc("sin", freq) |> @ * vel |> out(@)
+pat("c4 e4 g4") as {freq, vel}
+    |> osc("sin", freq)
+    |> @ * vel
+    |> out(@)
 ```
 
 Only fields that the upstream record actually exposes are bindable; unknown names raise `E141`.
@@ -127,7 +130,7 @@ fn synth({freq = 440, wave = "saw", cutoff = 2000, q = 0.7}) ->
     osc(wave, freq) |> lp(@, cutoff, q)
 
 synth({})                                  // all defaults
-synth({freq: 220})                         // override freq, rest default
+synth({freq: 220})                     // override freq, rest default
 synth({freq: 220, cutoff: 800, q: 0.9})    // mix-and-match
 ```
 
@@ -153,7 +156,8 @@ r2 = {..r, x: 5}          // r2 = {x: 5}, r unchanged
 ```akk
 voice = state({freq: 440, gate: 0})
 osc("sin", voice.freq) * voice.gate |> out(@)
-voice.gate = 1            // sugar over set(voice, {..get(voice), gate: 1})
+// sugar over set(voice, {..get(voice), gate: 1})
+voice.gate = 1
 ```
 
 ## Pattern events are records
@@ -180,8 +184,10 @@ Examples — every field works in pipes and after transforms:
 // @.dur picks up event duration; great for pitch-from-velocity tricks
 pat("c4 e4 g4") |> osc("sin", @.freq) * @.vel * @.gate |> out(@)
 
-// Event-scoped phase ramps 0→1 once per note — perfect for built-in envelopes
-fast(pat("c4 e4 g4"), 2) |> osc("sin", @.freq) * (1 - @.phase) |> out(@)
+// Event-scoped phase ramps 0→1 once per note — perfect for envelopes
+fast(pat("c4 e4 g4"), 2)
+    |> osc("sin", @.freq) * (1 - @.phase)
+    |> out(@)
 
 // MIDI note number flows through transforms
 slow(pat("c4 e4 g4"), 2) |> osc("sin", mtof(@.note)) |> out(@)
@@ -201,7 +207,9 @@ A custom field that collides with one of the fixed names is silently shadowed by
 When a builtin needs more than three or four parameters, the convention is to take a record literal in the last positional slot. Each option is a named field with a declared type and default. This is how the visualizers work today; the same convention is recommended for samplers, filters, and delays.
 
 ```akk
-osc("saw", 220) |> waterfall(@, "scope", {fft: 1024, gradient: "viridis"}) |> out(@)
+osc("saw", 220)
+    |> waterfall(@, "scope", {fft: 1024, gradient: "viridis"})
+    |> out(@)
 ```
 
 See [Records as Builtin Options](../../concepts/record-as-options.md) for the full convention, the editor's autocomplete behaviour, and guidance for builtin authors.

@@ -42,10 +42,14 @@ pat("Bbv4")   // Bb4 - one EDO step
 
 ```akk
 // 31-EDO: each ^ step = 38.7 cents
-tune("31edo", pat("c4 c^4 c^^4")) |> ((f) -> osc("sin", f) * ar(trigger(3))) |> out(@)
+tune("31edo", pat("c4 c^4 c^^4"))
+    |> ((f) -> osc("sin", f) * ar(trigger(3)))
+    |> out(@)
 
 // 24-EDO: each ^ step = 50 cents (quarter tone)
-tune("24edo", pat("a4 a^4 a^^4")) |> ((f) -> osc("sin", f) * ar(trigger(3))) |> out(@)
+tune("24edo", pat("a4 a^4 a^^4"))
+    |> ((f) -> osc("sin", f) * ar(trigger(3)))
+    |> out(@)
 ```
 
 Without `tune()`, the default is 12-EDO where each `^` step equals one semitone (100 cents), so `c^4` is the same as `c#4`.
@@ -100,7 +104,10 @@ pat("e5 d#5 e5 d#5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2 ~ e4 g#4 b4 c5@2")
 In 17-EDO the semitone shrinks to 70.6 cents. D#-to-E becomes tighter and more restless. The trill wants to resolve but can't quite settle:
 
 ```akk
-tune("17edo", pat("e5 d#5 e5 d#5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2 ~ e4 g#4 b4 c5@2"))
+m = pat(
+    "e5 d#5 e5 d#5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2 ~ e4 g#4 b4 c5@2"
+)
+tune("17edo", m)
     |> ((f) -> osc("tri", f) * ar(trigger(20), 0.005, 0.3))
     |> out(@)
 ```

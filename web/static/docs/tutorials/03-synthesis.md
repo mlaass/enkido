@@ -100,7 +100,10 @@ Layer a sine wave an octave below for weight:
 ```akk
 // Main oscillator plus sub
 osc = osc("saw", 110) + osc("sin", 55) * 0.5
-osc |> lp(@, 800) * ar(trigger(2)) |> out(@)
+osc
+    |> lp(@, 800)
+    * ar(trigger(2))
+    |> out(@)
 ```
 
 ## ADSR envelopes

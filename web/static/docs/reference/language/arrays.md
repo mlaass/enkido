@@ -143,10 +143,11 @@ Threads `init` through `fn(init, arr[0])`, `fn(result, arr[1])`, ... in left-to-
 
 ```akk
 // Sum-of-squares as a custom reducer
-reduce([1, 2, 3, 4], (acc, x) -> acc + x * x, 0)  // 1 + 4 + 9 + 16 = 30
+// 1 + 4 + 9 + 16 = 30
+reduce([1, 2, 3, 4], (acc, x) -> acc + x * x, 0)
 
-// Product (multiplicative reduce). Use init=1 (the multiplicative identity);
-// empty arrays return 1, matching the math convention.
+// Product (multiplicative reduce). Use init=1 (the
+// multiplicative identity); empty arrays return 1.
 reduce([2, 3, 4], (a, b) -> a * b, 1)  // 24
 ```
 

@@ -128,7 +128,9 @@ sin(mtof(48 + sah(osc("noise") * 24, trigger(4)))) |> out(@)
 
 ```akk
 // Stepped filter
-saw(110) |> lp(@, 200 + sah(osc("noise") * 2000, trigger(2))) |> out(@)
+saw(110)
+    |> lp(@, 200 + sah(osc("noise") * 2000, trigger(2)))
+    |> out(@)
 ```
 
 ---

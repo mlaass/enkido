@@ -108,7 +108,11 @@ osc("saw", 220) * adsr(trigger(2), 0.01, 0.2) |> lp(@, 1000) |> out(@)
 
 ```akk
 // Guitar-like processing
-osc("saw", 110) |> saturate(@, 3) |> lp(@, 2000) |> delay(@, 0.3, 0.4) |> out(@)
+osc("saw", 110)
+    |> saturate(@, 3)
+    |> lp(@, 2000)
+    |> delay(@, 0.3, 0.4)
+    |> out(@)
 ```
 
 ### Stereo processing

@@ -106,7 +106,8 @@ hit_trigger = button("Hit!")
 hit = sample(hit_trigger, 1.0, "bd")
 
 // Detuned saw stack for body
-voices = saw(note_freq) + saw(note_freq * 1.005) + saw(note_freq * 0.997)
+freq = note_freq
+voices = saw(freq) + saw(freq * 1.005) + saw(freq * 0.997)
 
 // LFO modulates the cutoff around the slider value
 swept = cutoff + osc("sin", lfo_rate) * cutoff * lfo_depth * 0.6

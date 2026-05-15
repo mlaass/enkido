@@ -111,7 +111,9 @@ osc("noise") |> hp(@, 8000) * ar(trigger(2), 0.001, 0.05) |> out(@)
 
 ```akk
 // Fast arpeggio triggers
-pat("c4 e4 g4 c5") |> ((f) -> osc("saw", f) * ar(trigger(8))) |> out(@)
+pat("c4 e4 g4 c5")
+    |> ((f) -> osc("saw", f) * ar(trigger(8)))
+    |> out(@)
 ```
 
 Related: [euclid](#euclid), [lfo](#lfo)
@@ -168,7 +170,8 @@ pat("c4 e4 g4 b4").early(0.25)  // each event plays 1/4 cycle earlier
 `palindrome(pattern)` plays the pattern forward then reversed, doubling `cycle_length`.
 
 ```akk
-pat("c4 e4 g4 b4").palindrome()  // c4 e4 g4 b4 b4 g4 e4 c4 over 2× cycles
+// c4 e4 g4 b4 b4 g4 e4 c4 over 2× cycles
+pat("c4 e4 g4 b4").palindrome()
 ```
 
 ### compress
@@ -219,7 +222,8 @@ Pattern constructors that emit an event stream directly from numeric input. Comp
 `run(n)` produces `n` events at times `i/n` carrying values `0, 1, ..., n-1` each of duration `1/n`. Useful as a rising/integer index pattern.
 
 ```akk
-run(8) |> mtof(@ + 60) |> osc("saw", @)  // ascending chromatic from C4
+// ascending chromatic from C4
+run(8) |> mtof(@ + 60) |> osc("saw", @)
 ```
 
 ### binary

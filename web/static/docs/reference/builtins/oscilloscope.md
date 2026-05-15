@@ -44,7 +44,12 @@ Trigger on a rising edge (signal crossing the threshold from below to above). Th
 
 ```akk
 // Named with trigger at zero-crossing
-osc("saw", 110) |> oscilloscope(@, "saw wave", {triggerLevel: 0, triggerEdge: "rising"}) |> out(@)
+osc("saw", 110)
+    |> oscilloscope(@, "saw wave", {
+        triggerLevel: 0,
+        triggerEdge: "rising"
+    })
+    |> out(@)
 ```
 
 ## falling
@@ -53,7 +58,12 @@ Trigger on a falling edge (signal crossing the threshold from above to below). U
 
 ```akk
 // Wide display with falling edge trigger
-osc("sqr", 220) |> oscilloscope(@, "square", {width: 400, triggerEdge: "falling"}) |> out(@)
+osc("sqr", 220)
+    |> oscilloscope(@, "square", {
+        width: 400,
+        triggerEdge: "falling"
+    })
+    |> out(@)
 ```
 
 ## triggerLevel

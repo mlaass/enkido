@@ -106,12 +106,16 @@ The `close_time` parameter controls how quickly the gate fades out when closing,
 
 ```akk
 // Basic noise gate
-(osc("saw", 110) + osc("noise") * 0.1) * ar(trigger(2)) |> gate(@, -30, 6) |> out(@)
+(osc("saw", 110) + osc("noise") * 0.1) * ar(trigger(2))
+    |> gate(@, -30, 6)
+    |> out(@)
 ```
 
 ```akk
 // Tight gate for percussive sounds
-osc("noise") * ar(trigger(8), 0.001, 0.05) |> gate(@, -20, 10) |> out(@)
+osc("noise") * ar(trigger(8), 0.001, 0.05)
+    |> gate(@, -20, 10)
+    |> out(@)
 ```
 
 ```akk

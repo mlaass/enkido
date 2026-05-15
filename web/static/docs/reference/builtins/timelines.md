@@ -57,7 +57,9 @@ The **curve string** is an ASCII sketch of the envelope shape. See [Curve Notati
 
 ```akk
 // Filter sweep envelope
-osc("saw", 110) |> lp(@, 200 + timeline("__/''__\\__") * 2000) |> out(@)
+osc("saw", 110)
+    |> lp(@, 200 + timeline("__/''__\\__") * 2000)
+    |> out(@)
 ```
 
 ## automation

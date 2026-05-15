@@ -54,7 +54,9 @@ Classic Euclidean patterns:
 ```akk
 // Layered Euclidean rhythms
 kick = osc("sin", 55) * ar(euclid(4, 16), 0.005, 0.15)
-perc = osc("noise") |> bp(@, 2000, 4) * ar(euclid(5, 16), 0.001, 0.05) * 0.4
+perc = osc("noise")
+    |> bp(@, 2000, 4)
+    * ar(euclid(5, 16), 0.001, 0.05) * 0.4
 
 kick + perc |> out(@)
 ```
@@ -133,7 +135,9 @@ Create tension with conflicting rhythms:
 ```akk
 // 3 against 4
 bass = osc("saw", 55) * ar(euclid(3, 12), 0.01, 0.15) |> lp(@, 400)
-perc = osc("noise") |> hp(@, 4000) * ar(euclid(4, 12), 0.001, 0.05) * 0.3
+perc = osc("noise")
+    |> hp(@, 4000)
+    * ar(euclid(4, 12), 0.001, 0.05) * 0.3
 
 bass + perc |> out(@)
 ```

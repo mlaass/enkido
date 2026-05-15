@@ -229,7 +229,10 @@ chord("Cmaj7 Am7 Dm7 G7").voicing("drop2")
 
 ```akk
 // Custom piano-jazz voicing
-addVoicings("piano-jazz", {M: [0, 4, 7, 11, 14], m: [0, 3, 7, 10, 14]})
+addVoicings("piano-jazz", {
+    M: [0, 4, 7, 11, 14],
+    m: [0, 3, 7, 10, 14]
+})
 chord("CM Am Dm G").voicing("piano-jazz")
 ```
 

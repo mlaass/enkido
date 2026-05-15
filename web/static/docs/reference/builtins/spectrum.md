@@ -46,7 +46,9 @@ FFT window size. Larger values resolve closely-spaced frequencies better but slo
 
 ```akk
 // High resolution FFT
-osc("saw", 55) |> spectrum(@, "bass detail", {fft: 2048, width: 400}) |> out(@)
+osc("saw", 55)
+    |> spectrum(@, "bass detail", {fft: 2048, width: 400})
+    |> out(@)
 ```
 
 ## logScale
@@ -55,7 +57,10 @@ Use a logarithmic frequency axis. Linear (default) spaces frequencies evenly; lo
 
 ```akk
 // Log scale matches human pitch perception
-osc("saw", 110) |> lp(@, 2000) |> spectrum(@, "filtered", {logScale: true}) |> out(@)
+osc("saw", 110)
+    |> lp(@, 2000)
+    |> spectrum(@, "filtered", {logScale: true})
+    |> out(@)
 ```
 
 ## minDb

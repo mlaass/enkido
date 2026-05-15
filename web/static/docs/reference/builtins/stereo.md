@@ -154,10 +154,10 @@ no `stereo()` wrapper needed.
 ```akk
 // One instruction per effect; each handles L and R in one dispatch.
 osc("saw", 220)               // mono — widens automatically
-  |> lp(@, 500, 0.7)          // stereo lowpass, independent filter state
-  |> delay(@, 0.25, 0.5)      // stereo delay lines per channel
-  |> freeverb(@, 0.85, 0.5)   // stereo reverb with cross-coupling
-  |> out(@)
+    |> lp(@, 500, 0.7)        // stereo lowpass, per-channel state
+    |> delay(@, 0.25, 0.5)    // stereo delay lines per channel
+    |> freeverb(@, 0.85, 0.5) // stereo reverb with cross-coupling
+    |> out(@)
 ```
 
 Scalar / control-rate parameters (cutoff, Q, feedback, ...) are shared

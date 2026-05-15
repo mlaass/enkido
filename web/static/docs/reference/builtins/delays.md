@@ -105,7 +105,9 @@ noise() |> delay_smp(@, 100, 0.9) |> out(@)
 
 ```akk
 // Karplus-Strong style pluck (109 samples at 48kHz ≈ 440Hz)
-noise() * ar(button("pluck"), 0.001, 0.001) |> delay_smp(@, 109, 0.995) |> out(@)
+noise() * ar(button("pluck"), 0.001, 0.001)
+    |> delay_smp(@, 109, 0.995)
+    |> out(@)
 ```
 
 ## tap_delay
@@ -127,7 +129,9 @@ The optional `dry` and `wet` parameters control the output mix. Defaults (dry=0,
 
 ```akk
 // Dub-style delay with lowpass filter in feedback
-osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500)) |> out(@)
+osc("saw", 110)
+    |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500))
+    |> out(@)
 ```
 
 ```akk
@@ -140,7 +144,9 @@ osc("saw", 110) |> tap_delay(@, 0.4, 0.65, (x) ->
 
 ```akk
 // Classic delay pedal: full dry signal with softer echoes
-osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5) |> out(@)
+osc("saw", 110)
+    |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5)
+    |> out(@)
 ```
 
 ## tap_delay_ms
@@ -158,12 +164,16 @@ osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5) |> out
 
 ```akk
 // 300ms delay with feedback filtering
-osc("saw", 110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000)) |> out(@)
+osc("saw", 110)
+    |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000))
+    |> out(@)
 ```
 
 ```akk
 // 300ms delay with mix control
-osc("saw", 110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000), 0.5, 0.5) |> out(@)
+osc("saw", 110)
+    |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000), 0.5, 0.5)
+    |> out(@)
 ```
 
 ## tap_delay_smp
@@ -188,7 +198,9 @@ noise() |> tap_delay_smp(@, 100, 0.95, (x) -> lp(x, 2000)) |> out(@)
 
 ```akk
 // Comb filter with dry/wet blend
-noise() |> tap_delay_smp(@, 100, 0.95, (x) -> lp(x, 2000), 0.3, 0.7) |> out(@)
+noise()
+    |> tap_delay_smp(@, 100, 0.95, (x) -> lp(x, 2000), 0.3, 0.7)
+    |> out(@)
 ```
 
 Related: [freeverb](#../reverbs#freeverb), [comb](#../modulation#comb)
