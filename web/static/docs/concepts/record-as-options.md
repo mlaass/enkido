@@ -7,7 +7,7 @@ keywords: [options, record, builtin, convention, OptionSchema, params, configura
 
 # Records as Builtin Options
 
-When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a **record literal as the last positional argument**. This convention keeps call sites readable, lets the editor offer field-name autocomplete, and gives the compiler a typed schema to validate against.
+When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a **record literal as the last positional argument**. Call sites stay readable, the editor knows what fields are legal so it can autocomplete them, and the compiler has a typed schema to validate against.
 
 ## The pattern
 

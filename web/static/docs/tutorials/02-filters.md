@@ -7,7 +7,7 @@ keywords: [filter, lowpass, highpass, cutoff, resonance, tutorial, lp, hp, moog]
 
 # Shaping Sound with Filters
 
-Filters remove or emphasize certain frequencies, turning raw oscillators into something more musical.
+Filters remove or emphasize certain frequencies. A raw saw or square is harmonically dense — bright, buzzy, hard to listen to for long. A filter is how you carve that into a tone that sits in a mix.
 
 ## Your first lowpass filter
 
@@ -29,17 +29,11 @@ The `800` is the **cutoff frequency**: frequencies above this get quieter.
 
 ## The pipe and hole pattern
 
-Notice the pattern: `|> lp(@, 800)`
-
-- The pipe (`|>`) sends the sawtooth into the filter
-- The hole (`@`) receives that signal
-- `800` sets the cutoff frequency
-
-All signal processing in Akkado uses this shape.
+`|> lp(@, 800)` reads: pipe the saw into `lp`, drop it into the `@` slot, set cutoff to 800. Every effect in Akkado uses the same shape — pipe in, name the hole, pass parameters.
 
 ## Moving the cutoff
 
-Lower cutoffs make darker sounds, higher cutoffs brighter:
+Lower cutoffs sound darker. Higher cutoffs sound brighter:
 
 ```akk
 // Very dark - cutoff at 200 Hz
@@ -82,7 +76,7 @@ osc("saw", 110)
 
 ## Filter sweeps
 
-Make the cutoff change over time for classic synth sounds:
+Modulate the cutoff with an LFO for the classic synth sweep:
 
 ```akk
 // Slow sweep using an LFO
@@ -127,7 +121,7 @@ osc("noise")
 
 ## The Moog filter
 
-For a classic analog sound, use the Moog ladder filter:
+The Moog ladder is the classic 24-dB analog filter — fatter than `lp`, with characteristic resonance:
 
 ```akk
 // Classic Moog bass
@@ -157,5 +151,5 @@ osc("saw", 110)
 
 ## Next steps
 
-- [Building Synths](03-synthesis.md): combine oscillators, filters, and envelopes
-- [Moog filter reference](../builtins/filters.md#moog) for parameter details
+- [Building Synths](03-synthesis.md) wraps oscillators and filters in envelopes to make actual notes.
+- [Moog filter reference](../builtins/filters.md#moog) has the full parameter list.

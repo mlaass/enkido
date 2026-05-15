@@ -7,7 +7,7 @@ keywords: [mono, stereo, channels, stereo-native, conversion, downmix, upmix, si
 
 # Mono & Stereo Signals
 
-Akkado has two kinds of audio signals: **Mono** (one channel) and **Stereo** (two channels, L and R). Every expression the compiler sees has a known channel count — not a runtime property, but a type the compiler tracks through the program. That lets the compiler diagnose mismatches at compile time, while every audio effect is stereo-native: it processes both channels in one pass and a mono input automatically widens to stereo, so you never duplicate a chain by hand.
+Akkado has two kinds of audio signals: **Mono** (one channel) and **Stereo** (two channels, L and R). Channel count isn't a runtime property — it's a type the compiler tracks through every expression, so mismatches surface at compile time. Every audio effect is also stereo-native: it processes both channels in one pass, and a mono input automatically widens to stereo. You never duplicate a chain by hand.
 
 ## Defaults
 

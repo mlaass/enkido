@@ -7,11 +7,11 @@ keywords: [tutorial, pattern, modulation, value pattern, v"…", bend, aftertouc
 
 # Pattern Modulation
 
-So far patterns have driven note pitches. They can also be used as **values**: feeding any DSP slot from a pattern, modulating per-event properties, and combining via arithmetic.
+So far patterns have driven note pitches. They're also plain **values** you can plug into any DSP slot, attach to per-event properties, or combine with arithmetic.
 
 ## Patterns are values
 
-A pattern is a stream of events stepping through values over time. When you write:
+A pattern is a stream of events that steps through values over time. When you write:
 
 ```akk
 osc("sin", n"c4 e4 g4")

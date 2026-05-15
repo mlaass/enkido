@@ -7,8 +7,6 @@ keywords: [rhythm, pattern, beat, trigger, euclidean, sequencer, clock, tutorial
 
 # Rhythm & Patterns
 
-This tutorial covers rhythmic patterns, from basic beats to polyrhythms.
-
 ## The clock
 
 Everything in Akkado syncs to a global clock. The `trigger` function creates pulses:
@@ -130,7 +128,7 @@ kick + snare + hat + ride |> out(@)
 
 ## Polyrhythms
 
-Create tension with conflicting rhythms:
+Layer two rhythms that don't divide evenly into each other — 3 against 4 is the textbook example:
 
 ```akk
 // 3 against 4
@@ -215,7 +213,7 @@ For the full operator precedence table and the complete list of comparison/logic
 
 ## Next steps
 
-- [Mini-Notation](../mini-notation/basics.md) for pattern syntax
-- [Pattern Modulation](./06-pattern-modulation.md): patterns as values: `bend(notes, v"<0 0.5 -0.5>")`, `e.cutoff` custom properties, scalar arithmetic
-- [Effects](../builtins/reverbs.md) for space and depth
-- [Dynamics](../builtins/dynamics.md) for polish
+- [Mini-Notation](../mini-notation/basics.md) — the full pattern syntax.
+- [Pattern Modulation](./06-pattern-modulation.md) — patterns as values: `bend(notes, v"<0 0.5 -0.5>")`, custom `e.cutoff` properties, scalar arithmetic.
+- [Effects](../builtins/reverbs.md) — reverbs and delays.
+- [Dynamics](../builtins/dynamics.md) — compression, gating, limiting.

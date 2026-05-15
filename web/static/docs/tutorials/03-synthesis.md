@@ -7,7 +7,7 @@ keywords: [synthesis, synth, envelope, adsr, ar, subtractive, tutorial, voice]
 
 # Building Synth Voices
 
-With oscillators and filters in hand, the next step is wrapping them in amplitude envelopes to make actual notes.
+Oscillators and filters give you tone. Envelopes give you notes — they decide when the sound starts and when it dies away.
 
 ## The problem with raw oscillators
 
@@ -17,7 +17,7 @@ A raw oscillator plays constantly:
 osc("saw", 220) |> out(@)
 ```
 
-For musical notes, the sound has to start and stop. That's what envelopes do.
+That's a drone, not a note. To play notes you need an envelope on the amplitude.
 
 ## Attack-release envelopes
 
@@ -95,7 +95,7 @@ Combine multiple oscillators for thicker sounds:
 
 ## Adding sub bass
 
-Layer a sine wave an octave below for weight:
+A sine wave an octave below adds weight without muddying the mids:
 
 ```akk
 // Main oscillator plus sub
@@ -134,7 +134,7 @@ osc("saw", bass_freq)
 
 ## Building a lead patch
 
-A bright, cutting lead sound:
+A lead that cuts through a busy mix — saw plus a touch of square, big filter env:
 
 ```akk
 // Screaming lead
@@ -147,7 +147,7 @@ lead_freq = 440
 
 ## Storing voices as variables
 
-Keep your patches organized:
+Once a patch has more than two lines, bind it to a name:
 
 ```akk
 // Define the voice
@@ -159,5 +159,5 @@ synth |> out(@)
 
 ## Next steps
 
-- [Rhythm & Patterns](04-rhythm.md): create beats and sequences
-- [Effects](../builtins/reverbs.md): add space and character
+- [Rhythm & Patterns](04-rhythm.md) — beats, sequences, and Euclidean patterns.
+- [Effects](../builtins/reverbs.md) — reverbs and delays.

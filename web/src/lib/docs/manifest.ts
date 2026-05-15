@@ -2,6 +2,7 @@
 // Do not edit manually - run: bun run build:docs
 
 export const slugToPath: Record<string, string> = {
+	"runtime-controls": "concepts/runtime-controls.md",
 	"record-as-options": "concepts/record-as-options.md",
 	"signals": "concepts/signals.md",
 	"05-testing-progression": "tutorials/05-testing-progression.md",
@@ -256,6 +257,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "record-as-options",
 			"title": "Records as Builtin Options"
+		},
+		{
+			"slug": "runtime-controls",
+			"title": "Runtime Controls"
 		}
 	]
 };
@@ -305,6 +310,61 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "samplers",
 		"category": "builtins",
 		"title": "Samplers"
+	},
+	"param": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"slider": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"button": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"toggle": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"dropdown": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"ui": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"interactive": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"controls": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"live": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"performance": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
+	},
+	"knob": {
+		"slug": "runtime-controls",
+		"category": "concepts",
+		"title": "Runtime Controls"
 	},
 	"options": {
 		"slug": "record-as-options",
@@ -1586,7 +1646,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Pipes & Holes"
 	},
-	"%": {
+	"@": {
 		"slug": "pipes",
 		"category": "language",
 		"title": "Pipes & Holes"
@@ -1950,11 +2010,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Audio Input"
 	},
 	"tab": {
-		"slug": "audio-input",
-		"category": "builtins",
-		"title": "Audio Input"
-	},
-	"live": {
 		"slug": "audio-input",
 		"category": "builtins",
 		"title": "Audio Input"
@@ -2774,11 +2829,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Samplers"
 	},
-	"button": {
-		"slug": "samplers",
-		"category": "builtins",
-		"title": "Samplers"
-	},
 	"tri": {
 		"slug": "oscillators",
 		"category": "builtins",
@@ -3273,6 +3323,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 };
 
 export const previews: Record<string, string> = {
+	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. This...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Every expression the compiler sees has a known...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",

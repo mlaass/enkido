@@ -19,16 +19,14 @@ Click **Run** above to hear a 440 Hz sine wave (concert A).
 
 ## Understanding the code
 
-What each part means:
-
 - `osc("sin", 440)` - a sine wave oscillator at 440 Hz
 - `|>` - the **pipe** operator, connecting nodes in the signal flow
-- `@` - the **hole**, representing the signal from the left side of the pipe
+- `@` - the **hole**, the signal coming in from the left side of the pipe
 - `out(@)` - sends the signal to both left and right speakers
 
 ## Changing the frequency
 
-Try different frequencies by changing the number:
+Try other frequencies:
 
 ```akk
 // Lower octave (220 Hz)
@@ -72,6 +70,4 @@ osc("sqr", 220) * 0.3 |> out(@)
 
 ## Next steps
 
-- Combine different waveforms
-- Use math to modulate the frequency
-- Move on to the [Filters tutorial](02-filters.md) to shape your sounds
+Layer waveforms, modulate the frequency with math, or head to the [Filters tutorial](02-filters.md) to start shaping these raw tones.
