@@ -55,6 +55,7 @@ set(CEDAR_ARENA_SIZE "" CACHE STRING "Override AudioArena size in bytes (default
 set(CEDAR_SOURCES
     src/cedar.cpp
     src/vm/vm.cpp
+    src/opcodes/midi.cpp
     src/io/uri_resolver.cpp
     src/io/handlers/bundled_handler.cpp
     src/io/handlers/github_handler.cpp

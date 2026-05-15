@@ -9,6 +9,7 @@
 #include <new>
 #include "../vm/audio_arena.hpp"
 #include "sequence.hpp"
+#include "midi.hpp"
 
 namespace cedar {
 
@@ -1358,6 +1359,7 @@ using DSPState = std::variant<
     TransportState,
     TimelineState,
     SequenceState,      // Lazy queryable patterns (sequence system)
+    MidiQueueState,     // Runtime MIDI event source (MIDI_QUERY opcode)
     // Filter states
     MoogState,
     DiodeState,

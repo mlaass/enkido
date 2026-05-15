@@ -82,6 +82,7 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::DISTORT_SMOOTH: return "DISTORT_SMOOTH";
         case Opcode::CLOCK: return "CLOCK";
         case Opcode::LFO: return "LFO";
+        case Opcode::MIDI_QUERY: return "MIDI_QUERY";
         case Opcode::EUCLID: return "EUCLID";
         case Opcode::TRIGGER: return "TRIGGER";
         case Opcode::TIMELINE: return "TIMELINE";
@@ -200,6 +201,7 @@ inline bool opcode_is_stateful(Opcode op) {
         case Opcode::DISTORT_TUBE:
         case Opcode::DISTORT_SMOOTH:
         case Opcode::LFO:
+        case Opcode::MIDI_QUERY:
         case Opcode::EUCLID:
         case Opcode::TRIGGER:
         case Opcode::TIMELINE:

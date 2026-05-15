@@ -19,6 +19,7 @@
 #include "soundfont.hpp"
 #endif
 #include "delays.hpp"
+#include "midi.hpp"
 #include "sequencing.hpp"
 #include "distortion.hpp"
 #include "modulation.hpp"

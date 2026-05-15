@@ -152,6 +152,7 @@ function inferStatefulOpcodes(opcodes: Map<string, number>, fromBuiltins: Set<st
     "PROBE",       // Visualization ring buffer
     "FFT_PROBE",   // FFT visualization state
     "POLY_BEGIN",  // PolyAllocState — voice allocation
+    "MIDI_QUERY",  // MidiQueueState — runtime MIDI event source
   ];
 
   for (const [name, _] of opcodes) {

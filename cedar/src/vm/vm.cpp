@@ -286,14 +286,21 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
     std::fill_n(mix_r, BLOCK_SIZE, 0.0f);
 
     // =========================================================================
-    // Event processing: read OutputEvents from linked SequenceState
+    // Event processing: read OutputEvents from linked event source
+    //
+    // Resolves to either a SequenceState (pattern upstream) or a
+    // MidiQueueState (MIDI_QUERY upstream) — both expose the same
+    // `OutputEvents` shape, so the voice-allocation logic below is
+    // source-agnostic per the PolyAllocState contract in
+    // prd-polyphony-system §2.6.
     // =========================================================================
-    auto* seq_state = (poly_state.seq_state_id != 0)
-        ? state_pool_.get_if<SequenceState>(poly_state.seq_state_id)
-        : nullptr;
+    auto events_src = (poly_state.seq_state_id != 0)
+        ? state_pool_.resolve_output_events(poly_state.seq_state_id)
+        : StatePool::ResolvedEvents{};
 
-    if (seq_state && seq_state->output.num_events > 0) {
-        const float cycle_length = seq_state->cycle_length;
+    if (events_src.events && events_src.events->num_events > 0) {
+        OutputEvents& seq_output = *events_src.events;
+        const float cycle_length = events_src.cycle_length;
         // Cycle-position snap tolerance, in beats. IEEE-754 division of large
         // sample counters by spb produces tiny non-zero fmod residues at exact
         // cycle boundaries (e.g., 5.7e-14 at block 99000 / cycle 121 with
@@ -352,8 +359,8 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
         }
 
         // Scan all output events for gate-on and gate-off within this block
-        for (std::uint32_t e = 0; e < seq_state->output.num_events; ++e) {
-            const auto& evt = seq_state->output.events[e];
+        for (std::uint32_t e = 0; e < seq_output.num_events; ++e) {
+            const auto& evt = seq_output.events[e];
 
             float evt_start = evt.time;
             float evt_end = evt.time + evt.duration;
@@ -802,6 +809,11 @@ void VM::execute(const Instruction& inst) {
 
         case Opcode::TIMELINE:
             op_timeline(ctx_, inst);
+            break;
+
+        // === Runtime MIDI event source ===
+        case Opcode::MIDI_QUERY:
+            op_midi_query(ctx_, inst);
             break;
 
         // === Lazy Queryable Patterns ===

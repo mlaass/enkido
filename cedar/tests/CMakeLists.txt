@@ -32,6 +32,7 @@ add_executable(cedar_tests
     test_memory_stress.cpp
     test_sequence.cpp
     test_poly.cpp
+    test_midi.cpp
     test_file_loader.cpp
     test_uri_resolver.cpp
     test_audio_decoder.cpp

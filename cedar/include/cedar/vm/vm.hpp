@@ -15,6 +15,8 @@
 #include "swap_controller.hpp"
 #include "crossfade_state.hpp"
 #include "../opcodes/dsp_state.hpp"
+#include "../opcodes/midi.hpp"
+#include <atomic>
 #include <memory>
 #include <span>
 
@@ -198,6 +200,113 @@ public:
         state.mode = mode;
         state.steal_strategy = steal_strategy;
         state.ensure_voices(&audio_arena_);
+    }
+
+    // Initialize a MidiQueueState for a MIDI_QUERY opcode.
+    //
+    // Allocates the SPSC ring (DEFAULT_RING_CAPACITY events) and the
+    // OutputEvents buffer (DEFAULT_OUTPUT_CAPACITY entries) from the audio
+    // arena on first call. Idempotent on hot-swap: when the same state_id
+    // already has arena-allocated storage, the existing buffers are reused
+    // and the metadata fields are updated in place. Live events queued on
+    // the previous program survive — held notes will emit synthetic
+    // note-offs through the Phase-2 hot-swap path (PRD §4.12).
+    //
+    // Phase 1: only `channel_filter` and the device-kind metadata are used
+    // — file_seq stays nullptr (.mid playback ships in Phase 5), loop /
+    // tempo_mode are stored for forward-compat.
+    //
+    // @param state_id        FNV-1a hash for this midi() call site
+    // @param kind            DefaultDevice / NamedDevice / File
+    // @param name_or_path    Device substring or file URI (Phase 1 stores
+    //                        for diagnostics only). May be nullptr.
+    // @param channel_filter  0 = any, 1-16 = match incoming MIDI channel
+    // @param loop            File-mode loop flag (Phase 5)
+    // @param tempo           File-mode tempo policy (Phase 5)
+    void init_midi_queue_state(std::uint32_t state_id,
+                               MidiSourceKind kind,
+                               const char* /*name_or_path*/,
+                               std::uint8_t channel_filter,
+                               bool loop,
+                               MidiQueueState::TempoMode tempo) {
+        auto& s = state_pool_.get_or_create<MidiQueueState>(state_id);
+
+        s.kind           = kind;
+        s.channel_filter = channel_filter;
+        s.loop           = loop;
+        s.tempo_mode     = tempo;
+
+        // Arena-allocate the ring on first init only; reuse on hot-swap to
+        // avoid clobbering the producer cursor (a Phase-N improvement could
+        // resize when capacity changes, but Phase 1 keeps it fixed).
+        if (!s.ring || s.ring_capacity == 0) {
+            const std::uint32_t cap = MidiQueueState::DEFAULT_RING_CAPACITY;
+            const std::size_t bytes = static_cast<std::size_t>(cap) * sizeof(MidiRawEvent);
+            const std::size_t floats = (bytes + sizeof(float) - 1) / sizeof(float);
+            float* mem = audio_arena_.allocate(floats);
+            if (mem) {
+                s.ring = reinterpret_cast<MidiRawEvent*>(mem);
+                s.ring_capacity = cap;
+                // Zero-init for deterministic playback even before first push.
+                for (std::uint32_t i = 0; i < cap; ++i) {
+                    s.ring[i] = MidiRawEvent{};
+                }
+                s.write_pos.store(0, std::memory_order_relaxed);
+                s.read_pos.store(0, std::memory_order_relaxed);
+            }
+        }
+
+        // Same for the OutputEvents buffer.
+        if (!s.output.events || s.output.capacity == 0) {
+            const std::uint32_t cap = MidiQueueState::DEFAULT_OUTPUT_CAPACITY;
+            const std::size_t bytes = static_cast<std::size_t>(cap) * sizeof(OutputEvents::OutputEvent);
+            const std::size_t floats = (bytes + sizeof(float) - 1) / sizeof(float);
+            float* mem = audio_arena_.allocate(floats);
+            if (mem) {
+                s.output.events = reinterpret_cast<OutputEvents::OutputEvent*>(mem);
+                s.output.capacity = cap;
+                s.output.num_events = 0;
+            }
+        }
+    }
+
+    // Push a raw channel-voice MIDI event into the queue for the given
+    // state_id. Thread-safe single-producer enqueue. The VM stamps the
+    // event with its current sample counter so a Phase-N sample-accurate
+    // scheduler can refine block-boundary timing; Phase 1 drains the whole
+    // queue at the start of each block and emits everything at the block's
+    // beat position.
+    //
+    // Drop-newest on a full ring: increments midi_overflow_count and
+    // discards the new event. Strict SPSC: only this method (and the
+    // hosts wired to it in Phases 3-4) ever touches write_pos.
+    //
+    // @return true if the event was enqueued, false if dropped due to a
+    //         missing state or a full ring.
+    bool push_midi_event(std::uint32_t state_id,
+                         std::uint8_t status,
+                         std::uint8_t d1,
+                         std::uint8_t d2) {
+        auto* s = state_pool_.get_if<MidiQueueState>(state_id);
+        if (!s || !s->ring || s->ring_capacity == 0) return false;
+
+        const std::uint64_t w = s->write_pos.load(std::memory_order_relaxed);
+        const std::uint64_t r = s->read_pos.load(std::memory_order_acquire);
+        if (w - r >= s->ring_capacity) {
+            ++s->midi_overflow_count;
+            return false;
+        }
+
+        MidiRawEvent& slot = s->ring[w % s->ring_capacity];
+        slot.sample_ts = current_sample_position();
+        slot.status    = status;
+        slot.d1        = d1;
+        slot.d2        = d2;
+        slot.channel   = static_cast<std::uint8_t>(status & 0x0Fu);
+
+        // Release publishes the payload writes above.
+        s->write_pos.store(w + 1, std::memory_order_release);
+        return true;
     }
 
     // =========================================================================

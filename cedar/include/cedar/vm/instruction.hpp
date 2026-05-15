@@ -102,7 +102,10 @@ enum class Opcode : std::uint8_t {
     // Sequencers & Timing (90-95)
     CLOCK = 90,       // Beat/bar phase output (rate field: 0=beat, 1=bar, 2=cycle)
     LFO = 91,         // Beat-synced LFO (reserved field: shape 0-6)
-    // Note: Opcode 92 removed (SEQ_STEP deprecated in favor of pat())
+    MIDI_QUERY = 92,  // Runtime MIDI event source (formerly SEQ_STEP). Drains
+                      // the live-event ring (and, post-Phase 5, advances the
+                      // .mid playback head) into a MidiQueueState::output the
+                      // downstream POLY block consumes via seq_state_id.
     EUCLID = 93,      // Euclidean rhythm trigger generator
     TRIGGER = 94,     // Beat-division impulse generator
     TIMELINE = 95,    // Breakpoint automation

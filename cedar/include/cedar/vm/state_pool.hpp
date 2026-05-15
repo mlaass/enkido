@@ -111,6 +111,35 @@ public:
         return std::get_if<T>(&entry.state);
     }
 
+    // Resolved event source — returned by resolve_output_events for any
+    // upstream that produces an OutputEvents buffer. Carries the source's
+    // cycle_length so the POLY block keeps its existing wrap math without
+    // caring whether the upstream is a SequenceState or a MidiQueueState.
+    struct ResolvedEvents {
+        OutputEvents* events = nullptr;
+        float         cycle_length = 0.0f;
+    };
+
+    // Resolve a state_id to its OutputEvents buffer regardless of which
+    // event-source state type produced it. Returns {nullptr, 0} for unknown
+    // ids or non-event-source state types. Used by execute_poly_block to
+    // accept both SequenceState (patterns) and MidiQueueState (MIDI_QUERY)
+    // upstreams interchangeably.
+    [[nodiscard]] ResolvedEvents resolve_output_events(std::uint32_t state_id) {
+        std::uint32_t effective_id = state_id ^ state_id_xor_;
+        std::size_t idx = find_slot(effective_id);
+        if (idx == INVALID_SLOT) return {};
+        auto& entry = states_[idx];
+        if (!entry.occupied) return {};
+        if (auto* seq = std::get_if<SequenceState>(&entry.state)) {
+            return {&seq->output, seq->cycle_length};
+        }
+        if (auto* midi = std::get_if<MidiQueueState>(&entry.state)) {
+            return {&midi->output, midi->cycle_length};
+        }
+        return {};
+    }
+
     // Check if state exists
     [[nodiscard]] bool exists(std::uint32_t state_id) const {
         std::uint32_t effective_id = state_id ^ state_id_xor_;
