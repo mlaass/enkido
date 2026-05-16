@@ -1,8 +1,14 @@
 /**
- * Editor state store using Svelte 5 runes
+ * Editor state store using Svelte 5 runes.
+ *
+ * Phase 1 (shareable patches): `code`/`setCode` delegate to the drafts store
+ * when persistence is enabled (main app). When persistence is disabled
+ * (embed mode), the editor reverts to an in-memory-only buffer that does
+ * not touch the drafts list — preserves the embed iframe semantics.
  */
 
 import { audioEngine } from './audio.svelte';
+import { draftsStore, DEFAULT_CODE } from './drafts.svelte';
 
 export interface EditorDiagnostic {
 	severity: number;  // 0=Info, 1=Warning, 2=Error
@@ -12,7 +18,9 @@ export interface EditorDiagnostic {
 }
 
 interface EditorState {
-	code: string;
+	/** Local mirror used when persistence is disabled. With persistence on, the
+	 *  source of truth is `draftsStore.activeCode`. */
+	embedCode: string;
 	hasUnsavedChanges: boolean;
 	lastCompileError: string | null;
 	lastCompileTime: number | null;
@@ -20,46 +28,9 @@ interface EditorState {
 	diagnostics: EditorDiagnostic[];
 }
 
-const STORAGE_KEY = 'nkido-editor-code';
-
-const DEFAULT_CODE = `// Welcome to NKIDO!
-// Press Ctrl+Enter to evaluate
-
-bpm = 120
-
-// Simple sine wave
-sin(440) |> out(%, %)
-`;
-
-function loadCode(): string {
-	if (typeof localStorage === 'undefined') return DEFAULT_CODE;
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY);
-		return stored || DEFAULT_CODE;
-	} catch {
-		return DEFAULT_CODE;
-	}
-}
-
-function saveCode(code: string) {
-	if (typeof localStorage === 'undefined') return;
-	try {
-		localStorage.setItem(STORAGE_KEY, code);
-	} catch (e) {
-		console.warn('Failed to save code:', e);
-	}
-}
-
-let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-
-function debouncedSaveCode(code: string) {
-	if (saveTimeout) clearTimeout(saveTimeout);
-	saveTimeout = setTimeout(() => saveCode(code), 500);
-}
-
 function createEditorStore() {
 	let state = $state<EditorState>({
-		code: loadCode(),
+		embedCode: DEFAULT_CODE,
 		hasUnsavedChanges: false,
 		lastCompileError: null,
 		lastCompileTime: null,
@@ -67,35 +38,46 @@ function createEditorStore() {
 		diagnostics: []
 	});
 
-	// When false, setCode and beforeunload do not touch localStorage.
-	// The embed route flips this off so it doesn't clobber the main app's saved code.
+	// When false, setCode is in-memory-only (no drafts-store writes).
+	// The embed route flips this off so it doesn't clobber the main app's drafts.
 	let persistenceEnabled = true;
 
 	// Save immediately on page unload
 	if (typeof window !== 'undefined') {
 		window.addEventListener('beforeunload', () => {
-			if (saveTimeout) clearTimeout(saveTimeout);
-			if (persistenceEnabled) saveCode(state.code);
+			if (persistenceEnabled) draftsStore.flushPendingSave();
 		});
 	}
 
-	function setCode(code: string) {
-		state.code = code;
-		state.hasUnsavedChanges = true;
-		if (persistenceEnabled) debouncedSaveCode(code);
+	function getCode(): string {
+		return persistenceEnabled ? draftsStore.activeCode : state.embedCode;
 	}
 
-	function setPersistenceEnabled(enabled: boolean) {
-		persistenceEnabled = enabled;
-		if (!enabled && saveTimeout) {
-			clearTimeout(saveTimeout);
-			saveTimeout = null;
+	function setCode(code: string) {
+		state.hasUnsavedChanges = true;
+		if (persistenceEnabled) {
+			draftsStore.updateActiveCode(code);
+		} else {
+			state.embedCode = code;
 		}
 	}
 
+	function setPersistenceEnabled(enabled: boolean) {
+		if (persistenceEnabled === enabled) return;
+		if (persistenceEnabled && !enabled) {
+			// switching off: flush pending save, then snapshot active code into embedCode
+			draftsStore.flushPendingSave();
+			state.embedCode = draftsStore.activeCode;
+		}
+		persistenceEnabled = enabled;
+	}
+
 	function reloadFromPersistence() {
-		const loaded = loadCode();
-		state.code = loaded;
+		// When persistence is on, draftsStore is already the source of truth.
+		// When persistence is off (embed), reset the embed buffer to the
+		// current active draft's code — matches legacy reloadFromPersistence
+		// semantics (the main app's saved code is restored after embed unmount).
+		state.embedCode = draftsStore.activeCode;
 		state.hasUnsavedChanges = false;
 		state.diagnostics = [];
 		state.lastCompileError = null;
@@ -107,7 +89,6 @@ function createEditorStore() {
 
 	function setDiagnostics(diagnostics: EditorDiagnostic[]) {
 		state.diagnostics = diagnostics;
-		// Clear compile error when diagnostics are cleared
 		if (diagnostics.length === 0) {
 			state.lastCompileError = null;
 		}
@@ -119,16 +100,16 @@ function createEditorStore() {
 	}
 
 	function reset() {
-		state.code = DEFAULT_CODE;
+		if (persistenceEnabled) {
+			draftsStore.updateActiveCode(DEFAULT_CODE);
+		} else {
+			state.embedCode = DEFAULT_CODE;
+		}
 		state.hasUnsavedChanges = false;
 		state.lastCompileError = null;
 		state.lastCompileTime = null;
 	}
 
-	/**
-	 * Compile and run the current code
-	 * Compilation happens in the AudioWorklet for atomic loading
-	 */
 	async function evaluate(): Promise<boolean> {
 		if (state.isEvaluating) return false;
 		state.isEvaluating = true;
@@ -136,35 +117,31 @@ function createEditorStore() {
 		console.log('[Editor] evaluate() called');
 
 		try {
-			// Ensure audio engine is initialized first
 			if (!audioEngine.isInitialized) {
 				console.log('[Editor] Initializing audio engine first...');
 				await audioEngine.play();
 			}
 
-			// Compile in the worklet - this is atomic with loading
+			const code = getCode();
 			console.log('[Editor] Sending source to worklet for compilation...');
-			const result = await audioEngine.compile(state.code);
+			const result = await audioEngine.compile(code);
 			console.log('[Editor] Compile result:', result);
 
 			if (result.success) {
 				markCompiled();
 				setCompileError(null);
-				setDiagnostics([]);  // Clear diagnostics on success
+				setDiagnostics([]);
 				console.log('[Editor] Compiled and loaded, bytecode size:', result.bytecodeSize);
 
-				// Start playback if not already playing
 				if (!audioEngine.isPlaying) {
 					audioEngine.play();
 				}
 
 				return true;
 			} else {
-				// Store all diagnostics for inline display
 				const diagnostics = result.diagnostics || [];
 				setDiagnostics(diagnostics);
 
-				// Show first error in status bar
 				const firstError = diagnostics.find(d => d.severity === 2);
 				const errorMsg = firstError
 					? `${firstError.message} (line ${firstError.line})`
@@ -185,7 +162,7 @@ function createEditorStore() {
 	}
 
 	return {
-		get code() { return state.code; },
+		get code() { return getCode(); },
 		get hasUnsavedChanges() { return state.hasUnsavedChanges; },
 		get lastCompileError() { return state.lastCompileError; },
 		get lastCompileTime() { return state.lastCompileTime; },

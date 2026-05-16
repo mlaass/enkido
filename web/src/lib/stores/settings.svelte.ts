@@ -2,7 +2,7 @@
  * Settings store with localStorage persistence
  */
 
-type TabName = 'controls' | 'files' | 'settings' | 'docs' | 'debug';
+type TabName = 'patches' | 'controls' | 'files' | 'settings' | 'docs' | 'debug';
 
 interface Settings {
 	panelPosition: 'left' | 'right';

@@ -8,6 +8,7 @@
 	import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 	import { editorStore } from '$stores/editor.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
+	import { draftsStore } from '$stores/drafts.svelte';
 	import { triggerF1Help, getWordAtCursor } from '$lib/docs/lookup';
 	import { linterExtensions, updateEditorDiagnostics } from './editor-linter';
 	import { akkadoCompletions } from '$lib/editor/akkado-completions';
@@ -31,6 +32,10 @@
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
 	let pulseKey = $state(0);
+	// Set while applying an externally-driven doc change (e.g. tab switch).
+	// Suppresses the update listener's write-back into the editor store so we
+	// don't bounce the new code back into the drafts store.
+	let applyingExternal = false;
 
 	// Map superscript Unicode to ASCII ^N (fixes macOS text substitution)
 	const superscriptMap: Record<string, string> = {
@@ -137,6 +142,25 @@
 				}
 				return true; // Prevent browser help
 			}
+		},
+		{
+			key: 'Ctrl-t',
+			mac: 'Cmd-t',
+			preventDefault: true,
+			run: () => {
+				draftsStore.createDraft({});
+				return true;
+			}
+		},
+		{
+			key: 'Ctrl-Shift-w',
+			mac: 'Cmd-Shift-w',
+			preventDefault: true,
+			run: () => {
+				const id = draftsStore.activeTabId;
+				if (id) draftsStore.closeTab(id);
+				return true;
+			}
 		}
 	]);
 
@@ -191,7 +215,7 @@
 				// Normalize superscripts back to ^N if OS still substitutes
 				normalizeSuperscripts,
 				EditorView.updateListener.of((update) => {
-					if (update.docChanged) {
+					if (update.docChanged && !applyingExternal) {
 						editorStore.setCode(update.state.doc.toString());
 					}
 					// Phase 2 records-system-unification: refresh the shape
@@ -242,6 +266,24 @@
 			setTimeout(() => {
 				patternHighlightStore.updatePreviews();
 			}, 50);
+		}
+	});
+
+	// Rebind CodeMirror doc when the active draft's code changes externally
+	// (tab switch, Keep promotion, inline-URL phantom open). Compares against
+	// the current view doc to skip noop updates and avoid feedback loops.
+	$effect(() => {
+		const externalCode = editorStore.code;
+		if (!view) return;
+		const current = view.state.doc.toString();
+		if (current === externalCode) return;
+		applyingExternal = true;
+		try {
+			view.dispatch({
+				changes: { from: 0, to: current.length, insert: externalCode }
+			});
+		} finally {
+			applyingExternal = false;
 		}
 	});
 

@@ -1,17 +1,31 @@
 <script lang="ts">
 	import Transport from '$components/Transport/Transport.svelte';
 	import Editor from '$components/Editor/Editor.svelte';
+	import EditorTabs from '$components/EditorTabs.svelte';
 	import SidePanel from '$components/Panel/SidePanel.svelte';
 	import Logo from '$components/Logo/Logo.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
 	import { settingsStore } from '$stores/settings.svelte';
-	import { Eye, Settings } from 'lucide-svelte';
+	import { draftsStore } from '$stores/drafts.svelte';
+	import { Eye, Settings, BookmarkPlus } from 'lucide-svelte';
 
 	let panelPosition = $derived(settingsStore.panelPosition);
+	let activeIsPhantom = $derived(
+		draftsStore.drafts.find((d) => d.id === draftsStore.activeTabId)?.isPhantom ?? false
+	);
 
 	function openSettings() {
 		settingsStore.setPanelCollapsed(false);
 		settingsStore.setActiveTab('settings');
+	}
+
+	function onKeep() {
+		const active = draftsStore.drafts.find((d) => d.id === draftsStore.activeTabId);
+		if (!active) return;
+		const suggested = active.name.startsWith('From inline link') ? 'Inline patch' : `Fork of ${active.name}`;
+		const name = window.prompt('Name this patch:', suggested);
+		if (!name || !name.trim()) return;
+		draftsStore.keepActiveAsNamed(name.trim());
 	}
 </script>
 
@@ -22,6 +36,16 @@
 		</div>
 		<Transport />
 		<div class="header-right">
+			{#if activeIsPhantom}
+				<button
+					class="keep-button"
+					title="Save this patch to your local drafts"
+					onclick={onKeep}
+				>
+					<BookmarkPlus size={16} />
+					<span>Keep</span>
+				</button>
+			{/if}
 			<button
 				class="icon-button"
 				title="Toggle visualizations"
@@ -41,6 +65,7 @@
 		{/if}
 
 		<div class="editor-container">
+			<EditorTabs />
 			<Editor />
 		</div>
 
@@ -97,6 +122,25 @@
 	.icon-button:hover {
 		background-color: var(--bg-hover);
 		color: var(--text-primary);
+	}
+
+	.keep-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--bg-primary);
+		background-color: var(--accent-warning);
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		transition: opacity var(--transition-fast);
+	}
+
+	.keep-button:hover {
+		opacity: 0.85;
 	}
 
 	.main {
