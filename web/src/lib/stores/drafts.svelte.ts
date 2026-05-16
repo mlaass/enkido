@@ -363,6 +363,60 @@ function createDraftsStore() {
 	}
 
 	/**
+	 * Open or focus a slug-keyed phantom tab. Mirrors `openInlinePhantomTab`
+	 * but the tab id is `slug:<slug>` and `phantomSlug` is set so the
+	 * Share dialog / PatchesPanel can recognize the parent share.
+	 *
+	 * Like inline phantoms, the entry is added to the in-memory list
+	 * immediately but only persisted to localStorage on the first
+	 * `updateActiveCode` call (lazy materialization).
+	 */
+	function openSlugPhantomTab(opts: { slug: string; code: string; title?: string | null }): string {
+		const id = 'slug:' + opts.slug;
+		const existing = allDrafts.find((d) => d.id === id);
+		if (existing) {
+			openTab(id);
+			return id;
+		}
+		const phantom: DraftFull = {
+			id,
+			name: (opts.title && opts.title.trim()) || `Patch ${opts.slug}`,
+			code: opts.code,
+			updatedAt: Date.now(),
+			isPhantom: true,
+			phantomSlug: opts.slug
+		};
+		allDrafts.push(phantom);
+		syncSummariesFromAllDrafts();
+		ensureOpen(id);
+		state.activeTabId = id;
+		state.activeCode = phantom.code;
+		writeActiveTab(id);
+		return id;
+	}
+
+	/** True if a slug-phantom (with local edits or not) already exists. */
+	function findSlugPhantom(slug: string): DraftFull | null {
+		return allDrafts.find((d) => d.id === 'slug:' + slug && d.isPhantom) ?? null;
+	}
+
+	/**
+	 * Remove a slug-phantom from storage and close its tab if open.
+	 * Used by PatchesPanel's "Forget" action and when discarding local
+	 * edits to revisit the original share.
+	 */
+	function deleteSlugPhantom(slug: string): void {
+		const id = 'slug:' + slug;
+		const i = allDrafts.findIndex((d) => d.id === id);
+		if (i >= 0) {
+			allDrafts.splice(i, 1);
+			persistAll('delete-slug-phantom');
+			syncSummariesFromAllDrafts();
+		}
+		if (state.openTabIds.includes(id)) closeTab(id);
+	}
+
+	/**
 	 * Promote the active phantom draft to a regular named draft.
 	 * Replaces the phantom id with a fresh UUID, sets isPhantom=false.
 	 */
@@ -407,6 +461,9 @@ function createDraftsStore() {
 		deleteDraft,
 		updateActiveCode,
 		openInlinePhantomTab,
+		openSlugPhantomTab,
+		findSlugPhantom,
+		deleteSlugPhantom,
 		keepActiveAsNamed,
 		flushPendingSave
 	};
