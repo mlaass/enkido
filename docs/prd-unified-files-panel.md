@@ -287,6 +287,45 @@ User-dropped samples, soundfonts, and MIDI files survive a page reload.
 - Built-ins are not in the manifest; they continue to load from
   bundled URLs.
 
+### Stop / reset asymmetry — DO NOT regress (fixed in 729cf77)
+
+`stop()` posts `{type: 'reset'}` → `_cedar_reset()` → `VM::reset()`,
+which calls `audio_arena_.reset()` and `clear_midi_sequences()`. Every
+`MidiSequence*` is arena-owned (prd-midi-input Phase 5), so the
+worklet's `midi_sequences_` map is wiped on every Stop. **`SampleBank`,
+`SoundFontRegistry`, and `WavetableRegistry` use heap storage and
+survive `VM::reset()` — only MIDI is wiped.**
+
+The compile-time loader at `audio.svelte.ts:1402` short-circuits when
+`loadedMidiFilesIndex.has(name)`, so without a recovery step the next
+compile after Stop never re-uploads the bytes, `init_midi_queue_state`
+sets `file_seq = nullptr`, and `advance_file_seq_into_output` produces
+silence with no diagnostic. `stop()` currently re-fetches each tracked
+MIDI file from `midiBank`'s native blob URL and re-pushes via
+`loadMidiFile`.
+
+When Phase B routes uploads through IndexedDB, **at least one of these
+must remain true** or the Stop → Play regression returns:
+
+1. `stop()` continues to re-upload MIDI files to the worklet (whether
+   from `midiBank`, the IDB blob, or a fresh fetch). Cheapest option.
+2. `VM::reset()` stops wiping `midi_sequences_` (would require
+   detaching `MidiSequence*` from `audio_arena_`, e.g. moving them to
+   a heap-owned registry parallel to `SampleBank`). Cleaner symmetry
+   but bigger refactor.
+3. `VM::reset()` is split into "light reset" (clock + state pool) and
+   "hard reset" (everything), and `stop()` uses the light variant.
+   Also cleaner but every caller of `_cedar_reset` would need
+   re-evaluating.
+
+The compile-time loader at `audio.svelte.ts:1411-1418` cannot reuse
+`midiBank`'s native blob URLs through `loadAsset` because the
+uri-resolver `blob:` handler (`web/src/lib/io/handlers/blob-handler.ts`)
+only recognises `blob:nkido:` URIs. If Phase B unifies upload reads
+through the uri-resolver, either extend the blob handler to accept
+native browser blob URLs or use `fetch()` directly the way `stop()`
+does today.
+
 ## 7. Verification
 
 ### Phase A (manual)
