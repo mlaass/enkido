@@ -455,6 +455,99 @@ TEST_CASE("Mini parser basic patterns", "[mini_parser]") {
     }
 }
 
+// Regression: in n"…" / v"…" modes the lexer used to route digit-leading tokens
+// through lex_note_atom / lex_value_atom unconditionally, swallowing modifier
+// arguments. Then `@1.25` after a pitch tokenized as `At` + `PitchToken("1.25")`
+// instead of `At` + `Number(1.25)`, and parse_modifiers emitted MP01. Covers all
+// five value-taking modifiers (`*`, `/`, `@`, `!`, `?`) × both typed prefixes.
+TEST_CASE("Modifiers parse inside typed n\"…\" / v\"…\" patterns", "[mini_parser][regression]") {
+    using Catch::Matchers::WithinRel;
+
+    SECTION("@ modifier in note mode (the original repro)") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("g4@1.25 eb4@2 c4@1.75 ~@8", arena, {},
+                                        MiniParseMode::Note);
+        REQUIRE(diags.empty());
+
+        // Four children, each a MiniModified wrapping the original atom.
+        CHECK(arena.child_count(root) == 4);
+
+        NodeIndex c = arena[root].first_child;
+        const float expected[] = {1.25f, 2.0f, 1.75f, 8.0f};
+        for (float ev : expected) {
+            CHECK(arena[c].type == NodeType::MiniModified);
+            auto& mod = arena[c].as_mini_modifier();
+            CHECK(mod.modifier_type == Node::MiniModifierType::Weight);
+            CHECK_THAT(mod.value, WithinRel(ev, 0.001f));
+            c = arena[c].next_sibling;
+        }
+    }
+
+    SECTION("all value-taking modifiers in note mode") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("c4*2 e4/2 g4!3 a4?0.5", arena, {},
+                                        MiniParseMode::Note);
+        REQUIRE(diags.empty());
+        REQUIRE(arena.child_count(root) == 4);
+
+        NodeIndex c = arena[root].first_child;
+        const Node::MiniModifierType expected_types[] = {
+            Node::MiniModifierType::Speed,
+            Node::MiniModifierType::Slow,
+            Node::MiniModifierType::Repeat,
+            Node::MiniModifierType::Chance,
+        };
+        const float expected_values[] = {2.0f, 2.0f, 3.0f, 0.5f};
+        for (std::size_t i = 0; i < 4; ++i) {
+            CHECK(arena[c].type == NodeType::MiniModified);
+            auto& mod = arena[c].as_mini_modifier();
+            CHECK(mod.modifier_type == expected_types[i]);
+            CHECK_THAT(mod.value, WithinRel(expected_values[i], 0.001f));
+            c = arena[c].next_sibling;
+        }
+    }
+
+    SECTION("@ modifier after bare-MIDI atom in note mode") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("60@1.5 64@2", arena, {}, MiniParseMode::Note);
+        REQUIRE(diags.empty());
+        REQUIRE(arena.child_count(root) == 2);
+
+        NodeIndex c = arena[root].first_child;
+        auto& mod0 = arena[c].as_mini_modifier();
+        CHECK(mod0.modifier_type == Node::MiniModifierType::Weight);
+        CHECK_THAT(mod0.value, WithinRel(1.5f, 0.001f));
+
+        c = arena[c].next_sibling;
+        auto& mod1 = arena[c].as_mini_modifier();
+        CHECK(mod1.modifier_type == Node::MiniModifierType::Weight);
+        CHECK_THAT(mod1.value, WithinRel(2.0f, 0.001f));
+    }
+
+    SECTION("modifiers in value mode") {
+        AstArena arena;
+        auto [root, diags] = parse_mini("0.5@2 0.8*3 1.0?0.5", arena, {},
+                                        MiniParseMode::Value);
+        REQUIRE(diags.empty());
+        REQUIRE(arena.child_count(root) == 3);
+
+        NodeIndex c = arena[root].first_child;
+        auto& m0 = arena[c].as_mini_modifier();
+        CHECK(m0.modifier_type == Node::MiniModifierType::Weight);
+        CHECK_THAT(m0.value, WithinRel(2.0f, 0.001f));
+
+        c = arena[c].next_sibling;
+        auto& m1 = arena[c].as_mini_modifier();
+        CHECK(m1.modifier_type == Node::MiniModifierType::Speed);
+        CHECK_THAT(m1.value, WithinRel(3.0f, 0.001f));
+
+        c = arena[c].next_sibling;
+        auto& m2 = arena[c].as_mini_modifier();
+        CHECK(m2.modifier_type == Node::MiniModifierType::Chance);
+        CHECK_THAT(m2.value, WithinRel(0.5f, 0.001f));
+    }
+}
+
 // ============================================================================
 // Pattern Evaluation Tests
 // ============================================================================

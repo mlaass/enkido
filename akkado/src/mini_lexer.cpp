@@ -248,6 +248,11 @@ MiniToken MiniLexer::lex_token() {
         return make_token(MiniTokenType::Eof);
     }
 
+    // Snapshot then clear: any code path below that emits a modifier token
+    // sets `last_was_modifier_` back to true before returning.
+    const bool prev_was_modifier = last_was_modifier_;
+    last_was_modifier_ = false;
+
     char c = peek();
 
     // Curve-mode handling: reinterpret certain characters as curve tokens
@@ -282,6 +287,7 @@ MiniToken MiniLexer::lex_token() {
                 // '/' followed by a digit is Slash (slow modifier); otherwise CurveRamp
                 if (is_digit(peek_next())) {
                     advance();
+                    last_was_modifier_ = true;
                     return make_token(MiniTokenType::Slash);
                 }
                 advance();
@@ -300,7 +306,9 @@ MiniToken MiniLexer::lex_token() {
     // Value mode (v"…"): atoms must be numeric literals.
     // Negative numbers, decimals, scientific notation are accepted.
     // Reject any letter-leading token with E163.
-    if (value_mode_) {
+    // Skip when the previous token was a modifier: a number following `@`/`*`/`/`/`!`/`?`
+    // is the modifier's argument, not a value-atom, and must be a plain Number token.
+    if (value_mode_ && !prev_was_modifier) {
         // Possible numeric atom: optional sign + digits (or .digits).
         bool starts_numeric = is_digit(c) || (c == '.' && is_digit(peek_next()));
         if (c == '-' || c == '+') {
@@ -332,7 +340,9 @@ MiniToken MiniLexer::lex_token() {
     // to note names — per the token comment "note name + bare-MIDI pattern".
     // Letter-leading atoms still fall through to standard pitch detection so
     // `n"c4 e4 g4"` continues to work alongside `n"60 64 67"`.
-    if (note_mode_) {
+    // Skip when the previous token was a modifier: digits after `@`/`*`/`/`/`!`/`?`
+    // are the modifier's argument and must lex as a plain Number, not a PitchToken.
+    if (note_mode_ && !prev_was_modifier) {
         bool starts_numeric = is_digit(c) || (c == '.' && is_digit(peek_next()));
         if (starts_numeric) {
             return lex_note_atom();
@@ -388,13 +398,15 @@ MiniToken MiniLexer::lex_token() {
         case '}': return make_token(MiniTokenType::RBrace);
         case ',': return make_token(MiniTokenType::Comma);
 
-        // Modifiers
-        case '*': return make_token(MiniTokenType::Star);
-        case '/': return make_token(MiniTokenType::Slash);
+        // Modifiers. The five modifiers that take a numeric argument set
+        // last_was_modifier_ so the next token routes through lex_number()
+        // even inside v"…" / n"…". `:` and `%` are not value-taking modifiers.
+        case '*': last_was_modifier_ = true; return make_token(MiniTokenType::Star);
+        case '/': last_was_modifier_ = true; return make_token(MiniTokenType::Slash);
         case ':': return make_token(MiniTokenType::Colon);
-        case '@': return make_token(MiniTokenType::At);
-        case '!': return make_token(MiniTokenType::Bang);
-        case '?': return make_token(MiniTokenType::Question);
+        case '@': last_was_modifier_ = true; return make_token(MiniTokenType::At);
+        case '!': last_was_modifier_ = true; return make_token(MiniTokenType::Bang);
+        case '?': last_was_modifier_ = true; return make_token(MiniTokenType::Question);
         case '%': return make_token(MiniTokenType::Percent);
 
         // Choice

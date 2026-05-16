@@ -104,6 +104,12 @@ private:
     bool value_mode_ = false;    // When true, atoms must be numeric literals (v"…")
     bool note_mode_ = false;     // When true, bare ints are MIDI notes (n"…")
 
+    // True iff the most recently emitted token was a modifier (`*`, `/`, `@`, `!`, `?`).
+    // The next call to lex_token() consults this so a digit-leading token following a
+    // modifier is lexed as a plain Number even inside `v"…"` / `n"…"`, instead of being
+    // captured by lex_value_atom / lex_note_atom. Cleared at the top of lex_token().
+    bool last_was_modifier_ = false;
+
     // Current position
     std::uint32_t start_ = 0;    // Start of current token
     std::uint32_t current_ = 0;  // Current position
