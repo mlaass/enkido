@@ -34,6 +34,7 @@ target_include_directories(nkido-cli
 # `share/nkido/default_kit/strudel.json` rule below.
 target_compile_definitions(nkido-cli PRIVATE
     NKIDO_DEFAULT_KIT_PATH="${CMAKE_SOURCE_DIR}/web/static/samples/bpb_808_clean/strudel.json"
+    NKIDO_SOUNDFONT_PATH="${CMAKE_SOURCE_DIR}/web/static/soundfonts"
 )
 
 # Platform-specific: SDL2main needed on Windows
@@ -50,6 +51,17 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/web/static/samples/bpb_808_clean/
     FILES_MATCHING
         PATTERN "*.wav"
         PATTERN "strudel.json"
+)
+
+# Bundled SoundFonts (matches the web app's DEFAULT_SOUNDFONTS table). The
+# `resolve_soundfont_alias()` helper in asset_loader.cpp searches this
+# directory at runtime so `soundfont(@, "gm", 0)` works without --soundfont.
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/web/static/soundfonts/
+    DESTINATION share/nkido/soundfonts
+    FILES_MATCHING
+        PATTERN "*.sf2"
+        PATTERN "*.sf3"
+        PATTERN "LICENSE.md"
 )
 
 if(NKIDO_BUILD_TESTS)

@@ -98,6 +98,11 @@
     "description": "Mod wheel sweeps the filter, CC 71 controls resonance, pitch-bend wheel bends ±2 semitones — `midi_cc()` routes external controllers straight into `param()` slots."
   },
   {
+    "slug": "midi-soundfont",
+    "title": "MIDI → SoundFont",
+    "description": "Live polyphonic SF2 playback from a USB keyboard — `midi() |> soundfont(@, \"gm\", N)` layers piano (GM 0) and strings (GM 48) through the built-in 32-voice SoundFont allocator."
+  },
+  {
     "slug": "stepper-demo",
     "title": "Stepper Demo",
     "description": "Userspace `step` and `step_dir` operators built from `state`, `counter`, and method-call syntax — no C++ changes."

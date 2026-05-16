@@ -1,0 +1,18 @@
+// MIDI → SoundFont — live polyphonic SF2 playback from a USB controller.
+//
+// Plug in a USB keyboard and play. `midi()` captures note-on/off events and
+// dispatches them directly through `soundfont()`'s built-in 32-voice
+// allocator — no `poly()` wrapper required. Preset 0 is Acoustic Grand
+// Piano in the GM standard; edit the number to swap instruments (see
+// `/docs/reference/builtins/soundfonts` for the GM preset table).
+//
+// Gain staging: each SoundFont voice is roughly unity per zone, so a 4-note
+// chord sums to ~4× amplitude and clips `out()`. The `* gain` after
+// `soundfont()` reserves headroom for held chords.
+
+bpm = 120
+gain = param("gain", 0.4, 0, 1)
+
+midi()
+    |> soundfont(@, "gm", 0) * gain
+    |> out(@)

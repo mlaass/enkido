@@ -41,6 +41,7 @@ inline void trigger_sf_voices_for_note(SoundFontVoiceState& state,
             state.voices[v].env_stage = SFVoice::EnvStage::Release;
             state.voices[v].env_time = 0.0f;
             state.voices[v].env_release = 0.005f;
+            state.voices[v].env_release_start_level = state.voices[v].env_level;
         }
     }
 
@@ -175,8 +176,11 @@ inline void process_sf_voice_one_sample(SFVoice& voice,
                 env = 0.0f;
                 voice.active = false;
             } else {
-                env = voice.env_level * (1.0f - std::min(1.0f, release_progress));
-                env *= std::exp(-5.0f * release_progress);
+                // Decay from the level captured at gate-off (env_release_start_level)
+                // via a single exponential. Reading voice.env_level here and
+                // writing back at line 184 would compound the decay each
+                // sample and collapse a 100ms release into ~10ms (audible click).
+                env = voice.env_release_start_level * std::exp(-5.0f * release_progress);
             }
             break;
         }
@@ -423,6 +427,7 @@ inline void op_soundfont_voice(ExecutionContext& ctx, const Instruction& inst,
                     state.voices[v].env_stage = SFVoice::EnvStage::Release;
                     state.voices[v].env_time = 0.0f;
                     state.voices[v].env_release = 0.005f; // Fast re-trigger release
+                    state.voices[v].env_release_start_level = state.voices[v].env_level;
                 }
             }
 
@@ -580,9 +585,11 @@ inline void op_soundfont_voice(ExecutionContext& ctx, const Instruction& inst,
                         env = 0.0f;
                         voice.active = false;
                     } else {
-                        // Exponential release from current level to 0
-                        env = voice.env_level * (1.0f - std::min(1.0f, release_progress));
-                        env *= std::exp(-5.0f * release_progress);
+                        // Single exponential decay from env_release_start_level
+                        // (captured at gate-off). See the matching block in
+                        // process_sf_voice_one_sample for why we don't read
+                        // env_level here.
+                        env = voice.env_release_start_level * std::exp(-5.0f * release_progress);
                     }
                     break;
                 }

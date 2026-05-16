@@ -583,6 +583,12 @@ struct SFVoice {
     float env_decay = 0.001f;
     float env_sustain = 1.0f;
     float env_release = 0.001f;
+    // Envelope amplitude at the moment the voice transitioned into Release
+    // (captured by release_note() / the quick-fade retrigger paths). The
+    // release stage decays from this value via `start * exp(-5 * progress)`
+    // rather than compounding `env_level` each sample (which collapses the
+    // release tail to milliseconds regardless of env_release).
+    float env_release_start_level = 0.0f;
 
     // Level
     float attenuation_linear = 1.0f;  // Pre-computed from dB
@@ -692,6 +698,10 @@ struct SoundFontVoiceState {
                 voices[i].releasing = true;
                 voices[i].env_stage = SFVoice::EnvStage::Release;
                 voices[i].env_time = 0.0f;
+                // Capture the level at release-onset so the Release stage can
+                // decay from a stable starting point instead of compounding
+                // env_level each sample (see SFVoice::env_release_start_level).
+                voices[i].env_release_start_level = voices[i].env_level;
             }
         }
     }

@@ -67,4 +67,21 @@ std::size_t register_required_samples(
 /// emit a one-line info diagnostic and continue without a default kit).
 std::optional<std::string> find_default_bank_uri(std::ostream& diag);
 
+/// Resolve a short SoundFont alias (e.g. "gm", "gm_medium", "gm_large") to a
+/// file:// URI pointing at a bundled .sf2/.sf3 on disk. Mirrors the web app's
+/// DEFAULT_SOUNDFONTS table in `web/src/lib/audio/default-soundfonts.ts`.
+///
+/// Search order for the underlying file:
+///   1. `$NKIDO_SOUNDFONT_DIR` env var (directory of .sf2/.sf3 files).
+///   2. `NKIDO_SOUNDFONT_PATH` compile-time macro (in-tree builds).
+///   3. Walk-up from CWD looking for `web/static/soundfonts/<file>`.
+///   4. `$HOME/.nkido/soundfonts/<file>`.
+///   5. Install-relative `<binary_dir>/../share/nkido/soundfonts/<file>`.
+///
+/// Returns `std::nullopt` for unknown aliases or when no bundled file is
+/// findable. Callers should fall through to treating the name as a literal
+/// URI (so `soundfont(@, "https://...", N)` and `soundfont(@, "piano.sf2", N)`
+/// keep working).
+std::optional<std::string> resolve_soundfont_alias(const std::string& alias);
+
 }  // namespace nkido

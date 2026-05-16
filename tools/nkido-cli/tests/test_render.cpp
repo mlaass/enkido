@@ -214,6 +214,49 @@ TEST_CASE("render mode loads samples from a local bank manifest", "[render][samp
     CHECK(rms(left) > 0.005f);
 }
 
+TEST_CASE("render mode auto-loads patch-declared SoundFonts via alias",
+          "[render][soundfont][default_soundfont]") {
+    // `soundfont(@, "gm", 0)` must produce sound without --soundfont on the
+    // CLI. asset_loader::resolve_soundfont_alias() resolves "gm" to the
+    // bundled TimGM6mb.sf3 (NKIDO_SOUNDFONT_PATH points at
+    // web/static/soundfonts in dev builds). Regression net for the CLI
+    // integration gap fixed in prepare_program_assets().
+    const std::string wav = out_path("soundfont_gm_auto");
+    std::filesystem::remove(wav);
+
+    std::ostringstream args;
+    args << std::string(nkido::test::FIXTURES_DIR) + "/soundfont_gm.akk"
+         << " render --seconds 2 -o " << wav;
+
+    REQUIRE(run_cli(args.str()) == 0);
+    REQUIRE(std::filesystem::exists(wav));
+
+    Wav w = read_wav(wav);
+    auto left = channel(w, 0);
+    CHECK(peak(left) > 0.05f);
+    CHECK(rms(left) > 0.005f);
+}
+
+TEST_CASE("--no-default-soundfont suppresses auto-load and produces silence",
+          "[render][soundfont][default_soundfont]") {
+    // Opt-out flag must be load-bearing: same patch as the previous test, but
+    // with the flag the SoundFont never registers and the opcode short-circuits
+    // to zero buffers. Verifies the flag wires through Options correctly.
+    const std::string wav = out_path("soundfont_gm_off");
+    std::filesystem::remove(wav);
+
+    std::ostringstream args;
+    args << std::string(nkido::test::FIXTURES_DIR) + "/soundfont_gm.akk"
+         << " render --seconds 1 --no-default-soundfont -o " << wav;
+
+    REQUIRE(run_cli(args.str()) == 0);
+    REQUIRE(std::filesystem::exists(wav));
+
+    Wav w = read_wav(wav);
+    auto left = channel(w, 0);
+    CHECK(peak(left) < 0.001f);
+}
+
 TEST_CASE("render mode resolves bare sample names via built-in default kit",
           "[render][sample][default_kit]") {
     // Parity check: `s"bd"` must produce non-silent audio with neither a

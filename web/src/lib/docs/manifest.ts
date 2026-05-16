@@ -3262,6 +3262,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "preset",
 		"anchor": "preset"
 	},
+	"gain staging": {
+		"slug": "soundfonts",
+		"category": "builtins",
+		"title": "Gain staging",
+		"anchor": "gain-staging"
+	},
 	"sf2": {
 		"slug": "soundfonts",
 		"category": "builtins",

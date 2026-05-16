@@ -73,6 +73,13 @@ struct Options {
     // resolve without an explicit --bank flag. Set true to suppress.
     bool no_default_bank = false;
 
+    // Auto-resolve `soundfont("gm", ...)` and friends to bundled SF3 files.
+    // When false (default), prepare_program_assets iterates the patch's
+    // RequiredSoundFont list and loads each via resolve_soundfont_alias() →
+    // file:// before processing --soundfont URIs. Set true to suppress
+    // (then the patch must use a full URI in the soundfont() string).
+    bool no_default_soundfont = false;
+
     // Check if input needs compilation
     [[nodiscard]] bool needs_compilation() const {
         return input_type == InputType::SourceFile ||

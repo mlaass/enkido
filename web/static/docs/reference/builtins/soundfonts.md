@@ -71,6 +71,20 @@ chord("Cmaj7 Fmaj7 G7 Cmaj7") |> soundfont(@, "gm", 0) |> out(@)
 
 Voice count is managed internally by the SoundFont engine. There's no explicit voice limit at the akkado level; the engine steals the oldest voice when the budget is exhausted, which is typical SoundFont behavior.
 
+## Gain staging
+
+Each SoundFont zone is rendered at roughly unity per voice, and `out()` is pure summation across calls and chord voices. That means **layered presets and held chords clip without explicit attenuation**:
+
+```akk
+// Clips on any 3+ note chord: 4 voices × unity = peak ~4.0
+chord("Cmaj7 Fmaj7") |> soundfont(@, "gm", 0) |> out(@)
+
+// Safe: explicit per-voice scaling reserves headroom
+chord("Cmaj7 Fmaj7") |> soundfont(@, "gm", 0) * 0.3 |> out(@)
+```
+
+A good rule of thumb: scale a single SoundFont voice by `0.3..0.5`. For two layered presets, drop each to `0.2..0.3`. Add reverb only on a low send (`* 0.15` style). Effects like `freeverb`, `dattorro`, `chorus`, `phaser` all output at unity by default — sum them into a wet bus, don't add full-strength wet on top of full-strength dry.
+
 ## instrument
 
 Different presets within a SoundFont give different **instruments**. Routing the same pattern through different `preset` values gives you, for example, piano, brass, and string versions of the same melody, which is handy for layering.

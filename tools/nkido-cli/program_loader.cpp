@@ -135,8 +135,33 @@ bool prepare_program_assets(cedar::VM& vm,
         }
     }
 
-    // SoundFonts (one fetch each, registered under their URI tail as
-    // display name).
+    // Patch-declared SoundFonts (akkado bakes one RequiredSoundFont entry per
+    // unique `soundfont(@, "<name>", N)` filename, in source order). We must
+    // load these BEFORE --soundfont URIs so the registry slot IDs match the
+    // `inst.rate = sf_slot` baked into bytecode by codegen
+    // (akkado/src/codegen_patterns.cpp:5644). Aliases like "gm" resolve to a
+    // bundled file via resolve_soundfont_alias(); unrecognised names fall
+    // through to the URI resolver as-is (so full URIs and bare paths still
+    // work in the source string). Registry dedup by display_name (the literal
+    // patch string) prevents a later --soundfont with the same name from
+    // bumping the slot.
+    if (!opts.no_default_soundfont) {
+        for (const auto& req : cr.required_soundfonts) {
+            std::string uri = resolve_soundfont_alias(req.filename)
+                                  .value_or(req.filename);
+            const int sf_id = load_soundfont_uri(vm, uri, req.filename);
+            if (sf_id < 0) {
+                err << "error: SoundFont '" << req.filename
+                    << "' (resolved to '" << uri
+                    << "') failed to load — required by patch\n";
+                return false;
+            }
+        }
+    }
+
+    // SoundFonts from --soundfont flags (one fetch each, registered under
+    // their URI tail as display name). These follow the patch-declared
+    // SoundFonts so they don't collide with the baked slot IDs.
     for (const auto& uri : opts.soundfont_uris) {
         std::string display = uri;
         auto last = uri.find_last_of('/');

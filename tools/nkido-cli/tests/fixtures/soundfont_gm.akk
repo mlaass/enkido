@@ -1,0 +1,5 @@
+// Render-test fixture: minimal SoundFont patch using the "gm" alias.
+// The CLI must auto-resolve "gm" to web/static/soundfonts/TimGM6mb.sf3
+// via resolve_soundfont_alias() and load it before invoking the bytecode.
+bpm = 240
+pat("c4 e4 g4 c5") |> soundfont(@, "gm", 0) * 0.3 |> out(@)

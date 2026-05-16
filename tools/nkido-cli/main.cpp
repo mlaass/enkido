@@ -55,6 +55,7 @@ void print_usage(const char* program) {
               << "  --soundfont <uri>  SoundFont (SF2) URI. May repeat.\n"
               << "  --sample <uri>     Single-sample URI ('name=uri' or just URI). May repeat.\n"
               << "  --no-default-bank  Suppress the built-in default 808 kit.\n"
+              << "  --no-default-soundfont  Suppress auto-loading of patch-declared SoundFonts (gm/gm_medium/gm_large).\n"
               << "                     (Override path with NKIDO_DEFAULT_KIT env var.)\n"
               << "  -h, --help         Show this help\n\n"
               << "Examples:\n"
@@ -181,6 +182,8 @@ std::optional<nkido::Options> parse_args(int argc, char* argv[]) {
             opts.sample_uris.push_back(argv[i]);
         } else if (arg == "--no-default-bank") {
             opts.no_default_bank = true;
+        } else if (arg == "--no-default-soundfont") {
+            opts.no_default_soundfont = true;
         } else if (arg == "--dump-bytecode") {
             opts.dump_bytecode = true;
         } else if (arg == "--json") {

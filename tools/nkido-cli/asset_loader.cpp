@@ -363,6 +363,82 @@ std::optional<std::filesystem::path> executable_dir() {
 
 }  // namespace
 
+std::optional<std::string> resolve_soundfont_alias(const std::string& alias) {
+    namespace fs = std::filesystem;
+
+    // Mirrors web/src/lib/audio/default-soundfonts.ts. The first existing
+    // candidate per alias wins; .sf3 (compressed) preferred over .sf2 (PCM)
+    // because the bundled set is .sf3 today.
+    struct AliasEntry {
+        const char* name;
+        const char* files[3];  // null-terminated, max two candidates per alias
+    };
+    static constexpr AliasEntry kAliases[] = {
+        {"gm",        {"TimGM6mb.sf3",        "TimGM6mb.sf2",        nullptr}},
+        {"gm_medium", {"FluidR3Mono_GM.sf3",  nullptr,               nullptr}},
+        {"gm_large",  {"MuseScore_General.sf3", nullptr,             nullptr}},
+    };
+
+    const AliasEntry* entry = nullptr;
+    for (const auto& e : kAliases) {
+        if (alias == e.name) { entry = &e; break; }
+    }
+    if (!entry) return std::nullopt;
+
+    // Build the candidate search directories in priority order.
+    std::vector<fs::path> dirs;
+
+    if (const char* env = std::getenv("NKIDO_SOUNDFONT_DIR")) {
+        if (env[0] != '\0') dirs.emplace_back(env);
+    }
+
+#ifdef NKIDO_SOUNDFONT_PATH
+    dirs.emplace_back(NKIDO_SOUNDFONT_PATH);
+#endif
+
+    // Walk up from CWD looking for web/static/soundfonts/.
+    {
+        std::error_code ec;
+        fs::path cwd = fs::current_path(ec);
+        if (!ec) {
+            for (fs::path dir = cwd; !dir.empty(); ) {
+                fs::path candidate = dir / "web" / "static" / "soundfonts";
+                if (fs::is_directory(candidate, ec) && !ec) {
+                    dirs.push_back(std::move(candidate));
+                    break;
+                }
+                fs::path parent = dir.parent_path();
+                if (parent == dir) break;
+                dir = std::move(parent);
+            }
+        }
+    }
+
+    if (const char* home = std::getenv("HOME")) {
+        if (home[0] != '\0') {
+            dirs.emplace_back(fs::path(home) / ".nkido" / "soundfonts");
+        }
+    }
+
+    if (auto exe_dir = executable_dir()) {
+        dirs.push_back(*exe_dir / ".." / "share" / "nkido" / "soundfonts");
+    }
+
+    for (const auto& dir : dirs) {
+        for (int i = 0; i < 3 && entry->files[i]; ++i) {
+            fs::path candidate = dir / entry->files[i];
+            std::error_code ec;
+            if (fs::exists(candidate, ec) && !ec) {
+                fs::path canon = fs::canonical(candidate, ec);
+                if (ec) canon = candidate;
+                return path_to_uri(canon.generic_string());
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::optional<std::string> find_default_bank_uri(std::ostream& diag) {
     namespace fs = std::filesystem;
 
