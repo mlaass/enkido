@@ -311,6 +311,36 @@ void AudioEngine::audio_callback(void* userdata, std::uint8_t* stream, int len) 
 
         engine->vm_.process_block(left, right);
 
+        // PRD prd-midi-input §7.4: drain file-CC events from every File-kind
+        // MidiQueueState and dispatch through the CC route table. Snapshot
+        // the plan once per block (atomic load) so a concurrent
+        // apply_midi_route_plan doesn't tear midway through dispatch.
+        if (auto plan = engine->file_cc_plan_.load()) {
+            if (plan->cc_table && !plan->cc_table->empty()) {
+                for (std::uint32_t state_id : plan->file_state_ids) {
+                    engine->vm_.drain_pending_file_ccs(
+                        state_id,
+                        [&](std::uint8_t status, std::uint8_t d1,
+                            std::uint8_t d2, std::uint8_t channel) {
+                            // dispatch_midi_cc expects 1-indexed channel.
+                            dispatch_midi_cc(engine->vm_, *plan->cc_table,
+                                             status, d1, d2,
+                                             static_cast<std::uint8_t>(
+                                                 channel + 1u));
+                        });
+                }
+            } else {
+                // No CC routes installed — still drain to keep the buffer
+                // from filling up and tripping the overflow counter.
+                for (std::uint32_t state_id : plan->file_state_ids) {
+                    engine->vm_.drain_pending_file_ccs(
+                        state_id,
+                        [](std::uint8_t, std::uint8_t, std::uint8_t,
+                           std::uint8_t) {});
+                }
+            }
+        }
+
         const float gain = engine->master_volume_.load(std::memory_order_relaxed);
 
         // Interleave to output buffer
@@ -494,6 +524,26 @@ void AudioEngine::apply_midi_route_plan(
             in->set_cc_route_table(std::make_shared<const MidiCcRouteTable>());
         }
     }
+
+    // Phase 5 (prd-midi-input §7.4): publish the file-CC dispatch plan for
+    // the audio thread. Collect every File-kind state_id and bundle it with
+    // the default-device CC table — v1 routes file CCs through the same
+    // table the live-device path uses. Atomic store: the audio_callback's
+    // next pass loads the new plan; in-flight passes finish with the old.
+    auto plan = std::make_shared<FileCcDispatchPlan>();
+    for (const auto& req : required) {
+        if (req.kind == cedar::MidiSourceKind::File) {
+            plan->file_state_ids.push_back(req.state_id);
+        }
+    }
+    auto cc_it = wanted_cc.find(preferred_midi_device_name_);
+    if (cc_it != wanted_cc.end() && !cc_it->second.empty()) {
+        plan->cc_table = std::make_shared<const MidiCcRouteTable>(
+            cc_it->second);
+    } else {
+        plan->cc_table = std::make_shared<const MidiCcRouteTable>();
+    }
+    file_cc_plan_.store(std::shared_ptr<const FileCcDispatchPlan>(plan));
 }
 
 }  // namespace nkido

@@ -160,6 +160,22 @@ public:
         touched_.fill(false);
     }
 
+    // PRD prd-midi-input §7.3: walk every MidiQueueState that is occupied but
+    // not touched in the current frame and patch its held notes to release at
+    // `now_beats`. Called by VM::handle_swap between rebind_states (which
+    // marks survivors as touched) and gc_sweep (which evicts the rest), so
+    // downstream consumers preserved by the hot-swap see finite durations
+    // for notes whose midi() source has disappeared.
+    void release_held_notes_on_untouched_midi(float now_beats,
+                                              float samples_per_beat) {
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (!states_[i].occupied || touched_[i]) continue;
+            if (auto* midi = std::get_if<MidiQueueState>(&states_[i].state)) {
+                midi->release_all_held(now_beats, samples_per_beat);
+            }
+        }
+    }
+
     // Garbage collect: move untouched states to fading pool
     // Call after hot-swap to begin fade-out of orphaned states
     void gc_sweep() {

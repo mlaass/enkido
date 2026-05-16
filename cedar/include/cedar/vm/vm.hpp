@@ -263,6 +263,15 @@ public:
                                MidiQueueState::TempoMode tempo) {
         auto& s = state_pool_.get_or_create<MidiQueueState>(state_id);
 
+        // PRD §7.3 hot-swap held-note migration: a re-init while arena-backed
+        // storage exists means this state survived a hot-swap. Capture the
+        // signal BEFORE overwriting any field so the next op_midi_query can
+        // re-emit synthetic note-ons at the new block's beat position.
+        const bool was_reused = (s.ring != nullptr);
+        std::string new_uri = (name_or_path && *name_or_path)
+                                  ? std::string(name_or_path)
+                                  : std::string();
+
         s.kind           = kind;
         s.channel_filter = channel_filter;
         s.loop           = loop;
@@ -273,13 +282,33 @@ public:
         // before bytes land we leave file_seq nullptr — the opcode is silent
         // until the host pushes bytes, which is the documented edge case
         // (PRD §7 "`.mid` not yet loaded at compile").
-        if (kind == MidiSourceKind::File && name_or_path && *name_or_path) {
-            const auto it = midi_sequences_.find(name_or_path);
+        if (kind == MidiSourceKind::File && !new_uri.empty()) {
+            const auto it = midi_sequences_.find(new_uri);
             s.file_seq = (it != midi_sequences_.end()) ? it->second : nullptr;
-            s.file_play_head_beats = 0.0;
-            s.current_tempo_idx = 0;
+            // Preserve play-head only when the new init matches the file URI
+            // that produced the current position; otherwise reset so a new
+            // file starts from beat 0.
+            if (!was_reused || s.last_file_uri != new_uri) {
+                s.file_play_head_beats = 0.0;
+                s.current_tempo_idx = 0;
+            }
         } else {
             s.file_seq = nullptr;
+            if (!was_reused) {
+                s.file_play_head_beats = 0.0;
+                s.current_tempo_idx = 0;
+            }
+        }
+
+        // Stash the URI for the next re-init comparison.
+        s.last_file_uri = std::move(new_uri);
+
+        // Schedule held-note migration if a hot-swap left notes still
+        // sounding. op_midi_query consumes the flag at the start of its
+        // next call, BEFORE the live-event drain so a note-off arriving in
+        // the same block patches the right (newly synthesized) event index.
+        if (was_reused) {
+            s.pending_held_note_remigration = s.has_any_held_notes();
         }
 
         // Arena-allocate the ring on first init only; reuse on hot-swap to
@@ -314,6 +343,49 @@ public:
                 s.output.num_events = 0;
             }
         }
+
+        // PRD §7.4 file-CC scratch. Same allocation pattern as ring/output:
+        // first init wins, reuse on hot-swap.
+        if (!s.pending_ccs || s.pending_cc_capacity == 0) {
+            const std::uint32_t cap =
+                MidiQueueState::DEFAULT_PENDING_CC_CAPACITY;
+            const std::size_t bytes = static_cast<std::size_t>(cap)
+                                    * sizeof(MidiQueueState::PendingCc);
+            const std::size_t floats =
+                (bytes + sizeof(float) - 1) / sizeof(float);
+            float* mem = audio_arena_.allocate(floats);
+            if (mem) {
+                s.pending_ccs =
+                    reinterpret_cast<MidiQueueState::PendingCc*>(mem);
+                s.pending_cc_capacity = cap;
+                s.num_pending_ccs = 0;
+            }
+        }
+    }
+
+    // PRD prd-midi-input §7.4: drain the pending file-CC scratch buffer for
+    // the addressed `midi()` state into the supplied callback. Resets the
+    // count so subsequent process_block calls start with a clean buffer.
+    // The callback is invoked once per event with the (status, d1, d2,
+    // channel) tuple the host's `dispatch_midi_cc` expects.
+    //
+    // Safe to call from the audio thread *after* `process_block` has
+    // completed; the buffer is single-producer (op_midi_query writes) and
+    // single-consumer (this drain). Channel filter is already applied at
+    // append-time.
+    //
+    // @return number of events drained (0 if state not found / kind != File).
+    template<typename F>
+    std::uint32_t drain_pending_file_ccs(std::uint32_t state_id, F&& cb) {
+        auto* s = state_pool_.get_if<MidiQueueState>(state_id);
+        if (!s || !s->pending_ccs || s->num_pending_ccs == 0) return 0;
+        const std::uint32_t n = s->num_pending_ccs;
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto& e = s->pending_ccs[i];
+            cb(e.status, e.d1, e.d2, e.channel);
+        }
+        s->num_pending_ccs = 0;
+        return n;
     }
 
     // Parse a `.mid` byte buffer and stash the resulting MidiSequence in

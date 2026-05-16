@@ -350,6 +350,23 @@ int handle_render_mode(const nkido::Options& opts) {
         }
     }
 
+    // PRD prd-midi-input §7.4: gather File-kind midi state_ids and build a
+    // CC route table for offline dispatch. The render path doesn't go
+    // through AudioEngine::apply_midi_route_plan, so do it inline here so
+    // `midi({file:...}) |> ... ; midi_cc(...)` works in `nkido-cli render`.
+    std::vector<std::uint32_t> file_midi_state_ids;
+    for (const auto& req : load.compile_result->required_midi_sources) {
+        if (req.kind == cedar::MidiSourceKind::File) {
+            file_midi_state_ids.push_back(req.state_id);
+        }
+    }
+    nkido::MidiCcRouteTable file_cc_table;
+    file_cc_table.reserve(load.compile_result->required_midi_cc_routes.size());
+    for (const auto& r : load.compile_result->required_midi_cc_routes) {
+        file_cc_table.push_back({r.param_name, r.cc_num, r.channel_filter,
+                                 r.scale, r.bias, r.slew_ms});
+    }
+
     // Determine output WAV path
     std::string wav_path = opts.output_file.value_or("out.wav");
 
@@ -373,6 +390,29 @@ int handle_render_mode(const nkido::Options& opts) {
 
     for (std::uint32_t b = 0; b < total_blocks; ++b) {
         vm->process_block(left.data(), right.data());
+
+        // PRD §7.4: drain file-CC events and dispatch through the route
+        // table so render mode can exercise file-CC → param() bindings.
+        if (!file_midi_state_ids.empty() && !file_cc_table.empty()) {
+            for (std::uint32_t state_id : file_midi_state_ids) {
+                vm->drain_pending_file_ccs(
+                    state_id,
+                    [&](std::uint8_t status, std::uint8_t d1,
+                        std::uint8_t d2, std::uint8_t channel) {
+                        nkido::dispatch_midi_cc(
+                            *vm, file_cc_table, status, d1, d2,
+                            static_cast<std::uint8_t>(channel + 1u));
+                    });
+            }
+        } else if (!file_midi_state_ids.empty()) {
+            // Drain without dispatch to keep the buffer counter clean.
+            for (std::uint32_t state_id : file_midi_state_ids) {
+                vm->drain_pending_file_ccs(
+                    state_id,
+                    [](std::uint8_t, std::uint8_t, std::uint8_t,
+                       std::uint8_t) {});
+            }
+        }
 
         for (std::size_t i = 0; i < cedar::BLOCK_SIZE; ++i) {
             interleaved.push_back(left[i]);

@@ -24,6 +24,16 @@ class CedarProcessor extends AudioWorkletProcessor {
 		this.pendingLoadRetry = false; // Set when load hit SlotBusy; retried from process() each block
 		this.pendingLoadRefreshId = 0; // ID of the latest refresh request awaiting load
 
+		// PRD prd-midi-input §7.4: file-CC dispatch plan, pushed by the main
+		// thread via `setFileCcPlan` whenever apply_midi_route_plan runs. We
+		// drain pending file CCs after every _cedar_process_block and route
+		// them through this in-worklet CC table — same scale/bias math as
+		// midi-input.svelte.ts's live-CC dispatch, no IPC hop per event.
+		this.fileMidiStateIds = [];     // uint32[]
+		this.fileCcRoutes = [];         // [{paramName, ccNum, channel, scale, bias, slewMs}]
+		this.fileCcScratchPtr = 0;      // WASM heap pointer; allocated lazily
+		this.fileCcScratchCap = 0;      // events that fit in scratchPtr (4 bytes each)
+
 		// Queue messages until module is ready
 		this.messageQueue = [];
 
@@ -275,6 +285,20 @@ class CedarProcessor extends AudioWorkletProcessor {
 						msg.d2 & 0xFF
 					);
 				}
+				break;
+
+			case 'setFileCcPlan':
+				// PRD §7.4: main thread publishes the list of File-kind midi
+				// state IDs plus the CC route table. We drain pending CCs from
+				// each state after every process_block and dispatch through
+				// the table without an IPC hop. Idempotent — safe to call on
+				// every compile.
+				this.fileMidiStateIds = Array.isArray(msg.fileMidiStateIds)
+					? msg.fileMidiStateIds.map((id) => id >>> 0)
+					: [];
+				this.fileCcRoutes = Array.isArray(msg.fileCcRoutes)
+					? msg.fileCcRoutes.slice()
+					: [];
 				break;
 
 			case 'setDefaultMidiDevice':
@@ -1019,6 +1043,69 @@ class CedarProcessor extends AudioWorkletProcessor {
 			}
 		} finally {
 			this.module._nkido_free(ptr);
+		}
+	}
+
+	/**
+	 * PRD prd-midi-input §7.4: drain pending file-CC events from every
+	 * File-kind midi state and dispatch through `this.fileCcRoutes`. Mirrors
+	 * the host-side `dispatch_midi_cc` math so file CCs route through the
+	 * same param assignment users see for live CCs.
+	 *
+	 * Channel encoding matches the WASM export — `cedar_drain_pending_file_ccs`
+	 * writes (status, d1, d2, channel) per event, channel 0-indexed. We add
+	 * +1 before matching against route.channel (1-indexed, 0 = any).
+	 */
+	drainFileCcs() {
+		if (!this.module || !this.module._cedar_drain_pending_file_ccs) return;
+
+		const MAX_PER_DRAIN = 64;
+		if (this.fileCcScratchPtr === 0 || this.fileCcScratchCap < MAX_PER_DRAIN) {
+			if (this.fileCcScratchPtr !== 0) {
+				this.module._nkido_free(this.fileCcScratchPtr);
+			}
+			this.fileCcScratchPtr = this.module._nkido_malloc(MAX_PER_DRAIN * 4);
+			this.fileCcScratchCap = this.fileCcScratchPtr === 0 ? 0 : MAX_PER_DRAIN;
+			if (this.fileCcScratchPtr === 0) return;
+		}
+
+		const heap = this.module.HEAPU8 || new Uint8Array(this.module.wasmMemory.buffer);
+
+		for (const stateId of this.fileMidiStateIds) {
+			const written = this.module._cedar_drain_pending_file_ccs(
+				stateId >>> 0,
+				this.fileCcScratchPtr,
+				MAX_PER_DRAIN
+			);
+			if (written <= 0) continue;
+			for (let i = 0; i < written; ++i) {
+				const base = this.fileCcScratchPtr + i * 4;
+				const status = heap[base];
+				const d1 = heap[base + 1];
+				const d2 = heap[base + 2];
+				const channel = heap[base + 3];
+				const ch1 = (channel & 0x0F) + 1;
+				const baseStatus = status & 0xF0;
+				for (const r of this.fileCcRoutes) {
+					if (r.channel !== 0 && r.channel !== ch1) continue;
+					let value = null;
+					if (baseStatus === 0xB0) {
+						if (r.ccNum < 0 || r.ccNum > 127) continue;
+						if (d1 !== r.ccNum) continue;
+						value = (d2 / 127) * r.scale + r.bias;
+					} else if (baseStatus === 0xE0) {
+						if (r.ccNum !== -1) continue;
+						const v14 = (d2 << 7) | d1;
+						const n = (v14 / 16383) * 2 - 1;
+						value = n * (r.scale * 0.5) + (r.bias + r.scale * 0.5);
+					} else if (baseStatus === 0xD0) {
+						if (r.ccNum !== -2) continue;
+						value = (d1 / 127) * r.scale + r.bias;
+					}
+					if (value === null) continue;
+					this.setParam(r.paramName, value, r.slewMs);
+				}
+			}
 		}
 	}
 
@@ -1890,6 +1977,12 @@ class CedarProcessor extends AudioWorkletProcessor {
 		// Process one block with Cedar VM
 		// Cedar handles crossfade internally when programs are swapped
 		this.module._cedar_process_block();
+
+		// PRD prd-midi-input §7.4: drain pending file CCs and dispatch via
+		// the in-worklet CC route table (set by setFileCcPlan).
+		if (this.fileMidiStateIds.length > 0 && this.fileCcRoutes.length > 0) {
+			this.drainFileCcs();
+		}
 
 		// Copy output from WASM memory
 		// outputLeftPtr and outputRightPtr are byte offsets, convert to float index

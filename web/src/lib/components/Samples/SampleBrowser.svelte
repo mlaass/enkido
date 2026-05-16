@@ -27,29 +27,8 @@
 		}
 	}
 
-	async function handleFileDrop(event: DragEvent) {
-		event.preventDefault();
-		const files = event.dataTransfer?.files;
-		if (!files) return;
-
-		for (const file of files) {
-			if (file.name.match(/\.sf[23]$/i)) {
-				loading = true;
-				try {
-					const data = await file.arrayBuffer();
-					await audioEngine.loadSoundFont(file.name, data);
-				} catch (e) {
-					console.error('Failed to load SoundFont:', e);
-				} finally {
-					loading = false;
-				}
-			}
-		}
-	}
-
-	function handleDragOver(event: DragEvent) {
-		event.preventDefault();
-	}
+	// Drop / drag handlers moved to FilesPanel (PRD prd-midi-input §7.6) —
+	// SampleBrowser is now a list/details view only.
 </script>
 
 <div class="sample-browser">
@@ -60,7 +39,7 @@
 		{#if soundfonts.length === 0}
 			<div class="empty-state">
 				<p>No SoundFonts loaded</p>
-				<p class="hint">Drop .sf2/.sf3 files here or enter a URL below</p>
+				<p class="hint">Drop .sf2/.sf3 files in the Files tab or enter a URL below</p>
 			</div>
 		{:else}
 			<div class="sf-list">
@@ -90,17 +69,6 @@
 				{/each}
 			</div>
 		{/if}
-
-		<!-- Drop zone -->
-		<div
-			class="drop-zone"
-			role="region"
-			aria-label="Drop SF2 files here"
-			ondrop={handleFileDrop}
-			ondragover={handleDragOver}
-		>
-			<span>Drop .sf2/.sf3 file here</span>
-		</div>
 
 		<!-- URL loader -->
 		<div class="url-loader">
@@ -241,23 +209,6 @@
 	.preset-bank {
 		color: var(--text-muted);
 		font-variant-numeric: tabular-nums;
-	}
-
-	.drop-zone {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--spacing-md);
-		border: 1px dashed var(--border-default);
-		border-radius: 4px;
-		font-size: 11px;
-		color: var(--text-muted);
-		transition: all var(--transition-fast);
-	}
-
-	.drop-zone:hover {
-		border-color: var(--accent-primary);
-		color: var(--text-secondary);
 	}
 
 	.url-loader {

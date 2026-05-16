@@ -257,6 +257,36 @@ WASM_EXPORT int cedar_push_midi_event(uint32_t state_id,
     return g_vm->push_midi_event(state_id, status, d1, d2) ? 1 : 0;
 }
 
+// PRD prd-midi-input §7.4: drain file-CC events from a File-kind midi state
+// into a caller-provided uint32 buffer (one event per 4 bytes: status, d1,
+// d2, channel — packed little-endian). The worklet posts each event back to
+// the main thread as a `setParam` so the existing CC route table on
+// midi-input.svelte.ts can dispatch it.
+//
+// `out` must point to an aligned 4-byte-per-event buffer of `max_events`
+// capacity; the function returns the number of events written (≤ max_events).
+// If `max_events == 0` the function returns 0 without touching `out`.
+//
+// Channel is 0-indexed (matches MidiQueueState::PendingCc::channel); the
+// caller adds +1 before matching against MidiCcRoute::channel_filter.
+WASM_EXPORT int32_t cedar_drain_pending_file_ccs(uint32_t state_id,
+                                                 uint8_t* out,
+                                                 int32_t max_events) {
+    if (!g_vm || !out || max_events <= 0) return 0;
+    int32_t written = 0;
+    g_vm->drain_pending_file_ccs(state_id,
+        [&](uint8_t status, uint8_t d1, uint8_t d2, uint8_t channel) {
+            if (written >= max_events) return;
+            const std::size_t base = static_cast<std::size_t>(written) * 4u;
+            out[base + 0] = status;
+            out[base + 1] = d1;
+            out[base + 2] = d2;
+            out[base + 3] = channel;
+            ++written;
+        });
+    return written;
+}
+
 /**
  * Record the user-selected default MIDI input device name. Bare `midi()`
  * calls in source resolve against this label on the JS side; WASM keeps it

@@ -31,11 +31,104 @@ inline double block_start_beats(const ExecutionContext& ctx) noexcept {
     return static_cast<double>(ctx.global_sample_counter) / spb_d;
 }
 
+// PRD prd-midi-input §7.5: a transition the mono-fill pass applies at a
+// specific sample inside the current block. Drain / file-advance / hot-swap
+// migration populate the list directly so fill_mono_buffers never has to
+// re-derive timing from float-stored OutputEvent fields — the previous
+// implementation lost transitions to float ULP residue at session-length
+// beat magnitudes and stuck the gate high.
+struct MonoTransition {
+    std::uint16_t sample;     // 0..BLOCK_SIZE-1
+    bool          is_on;
+    std::uint8_t  midi_note;
+    float         freq;
+    float         velocity;
+};
+
+struct MonoTransitionBuf {
+    static constexpr std::size_t CAPACITY = 256;
+    MonoTransition entries[CAPACITY];
+    std::size_t count = 0;
+
+    void push(std::uint16_t sample, bool is_on, std::uint8_t note,
+              float freq, float vel) noexcept {
+        if (count >= CAPACITY) return;  // drop-newest; 256 covers any sane block
+        entries[count++] = {sample, is_on, note, freq, vel};
+    }
+};
+
+// PRD prd-midi-input §7.3: re-emit synthetic note-ons at the current block's
+// beat position for every note still in `held_note_to_event[]`. Called once
+// per hot-swap when `pending_held_note_remigration` is set. The new event
+// uses HELD_DURATION_SENTINEL so a subsequent note-off arriving via the SPSC
+// ring patches its duration normally.
+//
+// The old held event is left untouched (still sentinel-sized) so a downstream
+// POLY voice that was preserved across the swap keeps playing without a
+// gate-off glitch; POLY's same-frequency dedup in `allocate_voice` updates
+// that voice's `event_index` to point at the synthetic event, so when the
+// note-off arrives `release_voice_by_event` resolves to the right voice.
+void remigrate_held_notes(MidiQueueState& s, const ExecutionContext& ctx,
+                          MonoTransitionBuf& mono) {
+    const float now_beats = static_cast<float>(block_start_beats(ctx));
+    constexpr float SENTINEL_THRESHOLD =
+        MidiQueueState::HELD_DURATION_SENTINEL * 0.5f;
+
+    for (int note = 0; note < 128; ++note) {
+        const std::int32_t old_idx = s.held_note_to_event[note];
+        if (old_idx < 0 ||
+            static_cast<std::uint32_t>(old_idx) >= s.output.num_events) {
+            continue;
+        }
+        const auto& old_evt = s.output.events[old_idx];
+        // If the old event already received a note-off via stale ring drain,
+        // skip the re-emit. Defensive: the held map is supposed to be reset
+        // to -1 in that case, but no need to double-emit.
+        if (old_evt.duration < SENTINEL_THRESHOLD) {
+            s.held_note_to_event[note] = -1;
+            continue;
+        }
+
+        const float freq     = old_evt.values[0];
+        const float velocity = old_evt.velocity;
+
+        const std::uint32_t idx_before = s.output.num_events;
+        s.output.add(
+            /*time*/      now_beats,
+            /*duration*/  MidiQueueState::HELD_DURATION_SENTINEL,
+            /*vals*/      &freq,
+            /*count*/     1,
+            /*velocity*/  velocity,
+            /*type_id*/   0,
+            /*src_off*/   0,
+            /*src_len*/   0,
+            /*chance*/    1.0f,
+            /*midi_note*/ static_cast<float>(note));
+        // OutputEvents::add silently drops if at capacity — only retarget the
+        // held-note linkage when a slot was actually written; otherwise leave
+        // the old index in place so any future note-off can still patch it.
+        if (s.output.num_events > idx_before) {
+            s.held_note_to_event[note] =
+                static_cast<std::int32_t>(idx_before);
+            // Mono pipeline sees the re-emit as a fresh note-on at sample 0
+            // so any downstream osc/adsr running off `e.gate` re-arms cleanly
+            // after the swap.
+            mono.push(0, /*is_on=*/true, static_cast<std::uint8_t>(note),
+                      freq, velocity);
+        }
+    }
+}
+
 // Drain everything queued in the SPSC ring up to the writer's current
 // position, emitting OutputEvents into `s.output`. Drop-newest overflow is
 // the producer's policy in `push_midi_event`; the consumer just reads.
+//
+// Pushes one mono transition per processed note-on/note-off so the mono-fill
+// pass never has to time-window-match a float-stored event. Live-MIDI in v1
+// is block-aligned, so sample_offset is always 0.
 void drain_live_events_into_output(MidiQueueState& s,
-                                   const ExecutionContext& ctx) {
+                                   const ExecutionContext& ctx,
+                                   MonoTransitionBuf& mono) {
     if (!s.ring || s.ring_capacity == 0) return;
 
     const float now_beats = static_cast<float>(block_start_beats(ctx));
@@ -88,6 +181,7 @@ void drain_live_events_into_output(MidiQueueState& s,
             if (s.output.num_events > idx_before) {
                 s.held_note_to_event[note] =
                     static_cast<std::int32_t>(idx_before);
+                mono.push(0, /*is_on=*/true, note, freq, vel_norm);
             }
         } else if (is_note_off) {
             const std::int32_t idx = s.held_note_to_event[note];
@@ -105,6 +199,7 @@ void drain_live_events_into_output(MidiQueueState& s,
                 }
                 evt.duration = dur;
                 s.held_note_to_event[note] = -1;
+                mono.push(0, /*is_on=*/false, note, 0.0f, 0.0f);
             }
         }
         // All other status bytes silently discarded in Phase 1.
@@ -185,17 +280,23 @@ inline void emit_file_note(MidiQueueState& s,
         /*midi_note*/ static_cast<float>(n.note));
 }
 
-// Scan all notes whose on-beat lands in [scan_lo, scan_hi). `play_head` is
-// the file-local beat the OutputEvent times are emitted relative to;
-// `block_start_beat_abs` is added so the result is in the absolute beat
-// space POLY consumes. Channel filter is applied here (1-indexed match;
-// 0 = any).
+// Scan all notes whose on-beat OR off-beat lands in [scan_lo, scan_hi).
+// `play_head` is the file-local beat the OutputEvent times are emitted
+// relative to; `block_start_beat_abs` is added so the result is in the
+// absolute beat space POLY consumes. Channel filter is applied here
+// (1-indexed match; 0 = any).
+//
+// The mono transition list is populated directly here (with file-local beat
+// offsets translated into sample positions) so fill_mono_buffers does not
+// have to recover timing from float-stored event fields.
 inline void scan_notes_into_block(MidiQueueState& s,
                                   const MidiSequence& seq,
                                   double scan_lo,
                                   double scan_hi,
                                   double play_head,
-                                  float  block_start_beat_abs) {
+                                  float  block_start_beat_abs,
+                                  MonoTransitionBuf& mono,
+                                  double spb_d) {
     for (std::uint32_t i = 0; i < seq.num_notes; ++i) {
         const MidiNote& n = seq.notes[i];
         if (s.channel_filter != 0 &&
@@ -203,10 +304,140 @@ inline void scan_notes_into_block(MidiQueueState& s,
             continue;
         }
         const double on_local  = note_on_beat (n, seq, s.tempo_mode);
-        if (on_local < scan_lo || on_local >= scan_hi) continue;
         const double off_local = note_off_beat(n, seq, s.tempo_mode);
-        emit_file_note(s, n, on_local, off_local, play_head,
-                       block_start_beat_abs);
+
+        const bool on_in_window  = on_local  >= scan_lo && on_local  < scan_hi;
+        const bool off_in_window = off_local >= scan_lo && off_local < scan_hi;
+
+        if (on_in_window) {
+            emit_file_note(s, n, on_local, off_local, play_head,
+                           block_start_beat_abs);
+        }
+
+        if (!(spb_d > 0.0)) continue;
+
+        // Translate file-local beats into block-local sample offsets.
+        // `play_head` matches the caller's segment start (scan_lo for a
+        // non-loop window; the loop's cursor_local for each wrap segment),
+        // so (beat_local - play_head) is the offset from block-start.
+        // Clamp defensively so float drift at the boundary lands inside.
+        auto to_sample = [&](double beat_local) -> std::uint16_t {
+            double s_d = (beat_local - play_head) * spb_d;
+            if (s_d < 0.0) s_d = 0.0;
+            if (s_d >= static_cast<double>(BLOCK_SIZE)) {
+                s_d = static_cast<double>(BLOCK_SIZE) - 1.0;
+            }
+            return static_cast<std::uint16_t>(s_d);
+        };
+
+        const float freq = midi_to_freq(n.note);
+        const float vel  = static_cast<float>(n.vel) / 127.0f;
+
+        if (on_in_window) {
+            mono.push(to_sample(on_local), /*is_on=*/true, n.note, freq, vel);
+        }
+        if (off_in_window) {
+            mono.push(to_sample(off_local), /*is_on=*/false, n.note, 0.0f, 0.0f);
+        }
+    }
+}
+
+// PRD prd-midi-input §7.4: file-CC dispatch. For each CC/PB/AT in
+// `file_seq->ccs[]` whose tick-derived beat lands inside the supplied
+// [scan_lo, scan_hi) file-local window, append a (status, d1, d2, channel)
+// tuple to `pending_ccs[]` for the host's post-process_block drain. Channel
+// filter is applied here (matches the live-event drain shape). Overflow is
+// drop-newest with a counter; the buffer is sized for any realistic per-
+// block CC density (256 events).
+inline void scan_ccs_into_pending(MidiQueueState& s,
+                                  const MidiSequence& seq,
+                                  double scan_lo,
+                                  double scan_hi) {
+    if (!s.pending_ccs || s.pending_cc_capacity == 0) return;
+    if (seq.num_ccs == 0) return;
+
+    const double tpq = static_cast<double>(seq.ticks_per_quarter);
+    const bool tempo_file = (s.tempo_mode == MidiQueueState::TempoMode::File);
+
+    for (std::uint32_t i = 0; i < seq.num_ccs; ++i) {
+        const MidiCC& cc = seq.ccs[i];
+        if (s.channel_filter != 0 &&
+            static_cast<std::uint8_t>(cc.channel + 1u) != s.channel_filter) {
+            continue;
+        }
+        const double cc_beat = tempo_file
+            ? static_cast<double>(cc.beat_on_file)
+            : (tpq > 0.0 ? static_cast<double>(cc.tick) / tpq : 0.0);
+        if (cc_beat < scan_lo || cc_beat >= scan_hi) continue;
+
+        if (s.num_pending_ccs >= s.pending_cc_capacity) {
+            ++s.file_cc_overflow_count;
+            continue;
+        }
+
+        // Synthesize the status byte the host dispatcher expects. cc_num
+        // encoding: 0..127 = CC (0xBn), 128 = PB (0xEn), 129 = AT (0xDn).
+        auto& slot = s.pending_ccs[s.num_pending_ccs++];
+        slot.channel = cc.channel;
+        if (cc.cc_num <= 127u) {
+            slot.status = static_cast<std::uint8_t>(0xB0u | (cc.channel & 0x0Fu));
+            slot.d1     = static_cast<std::uint8_t>(cc.cc_num);
+            slot.d2     = cc.value;
+        } else if (cc.cc_num == 128u) {
+            // Pitch-bend: v1 emits 7-bit MSB; LSB=0 keeps the dispatcher's
+            // 14-bit math centered when value is in {0, 64, 127}.
+            slot.status = static_cast<std::uint8_t>(0xE0u | (cc.channel & 0x0Fu));
+            slot.d1     = 0;
+            slot.d2     = cc.value;
+        } else {
+            // Channel aftertouch.
+            slot.status = static_cast<std::uint8_t>(0xD0u | (cc.channel & 0x0Fu));
+            slot.d1     = cc.value;
+            slot.d2     = 0;
+        }
+    }
+}
+
+// PRD §7.4: file-CC playback. Walk the same [head, head + block_beats)
+// window advance_file_seq_into_output uses, and append matching CCs into
+// pending_ccs[]. Loop wrap mirrors the note-scan algorithm so a CC that
+// straddles the loop boundary is emitted in the same block as the wrap.
+void advance_file_cc_into_output(MidiQueueState& s,
+                                 const ExecutionContext& ctx,
+                                 double pre_advance_play_head) {
+    if (!s.file_seq || s.file_seq->num_ccs == 0) return;
+    const MidiSequence& seq = *s.file_seq;
+
+    const double spb = static_cast<double>(ctx.samples_per_beat());
+    if (!(spb > 0.0)) return;
+    const double block_beats = static_cast<double>(BLOCK_SIZE) / spb;
+    if (!(block_beats > 0.0)) return;
+
+    const double total_beats = seq_total_beats(seq, s.tempo_mode);
+    const double scan_lo_global = pre_advance_play_head;
+    const double scan_hi_global = scan_lo_global + block_beats;
+
+    if (!s.loop || !(total_beats > 0.0)) {
+        const double hi = (total_beats > 0.0)
+            ? std::min<double>(scan_hi_global, total_beats)
+            : scan_hi_global;
+        scan_ccs_into_pending(s, seq, scan_lo_global, hi);
+        return;
+    }
+
+    constexpr int kMaxSegments = 8;
+    double cursor_local = std::fmod(scan_lo_global, total_beats);
+    if (cursor_local < 0.0) cursor_local += total_beats;
+    double consumed_total = 0.0;
+    for (int i = 0; i < kMaxSegments; ++i) {
+        const double remaining = block_beats - consumed_total;
+        if (remaining <= 1e-12) break;
+        const double seg_remaining = total_beats - cursor_local;
+        const double consume = std::min<double>(remaining, seg_remaining);
+        scan_ccs_into_pending(s, seq, cursor_local, cursor_local + consume);
+        consumed_total += consume;
+        cursor_local += consume;
+        if (cursor_local + 1e-12 >= total_beats) cursor_local = 0.0;
     }
 }
 
@@ -216,7 +447,8 @@ inline void scan_notes_into_block(MidiQueueState& s,
 // boundary. Both follow-mode and file-mode tempo are honoured via the
 // helpers above.
 void advance_file_seq_into_output(MidiQueueState& s,
-                                  const ExecutionContext& ctx) {
+                                  const ExecutionContext& ctx,
+                                  MonoTransitionBuf& mono) {
     if (!s.file_seq || s.file_seq->num_notes == 0) return;
     const MidiSequence& seq = *s.file_seq;
 
@@ -246,7 +478,7 @@ void advance_file_seq_into_output(MidiQueueState& s,
             ? std::min<double>(scan_hi_global, total_beats)
             : scan_hi_global;
         scan_notes_into_block(s, seq, scan_lo_global, hi, scan_lo_global,
-                              now_beats_abs);
+                              now_beats_abs, mono, spb);
         s.file_play_head_beats = (total_beats > 0.0)
             ? std::min<double>(scan_hi_global, total_beats)
             : scan_hi_global;
@@ -271,7 +503,7 @@ void advance_file_seq_into_output(MidiQueueState& s,
         const double seg_remaining = total_beats - cursor_local;
         const double consume = std::min<double>(remaining, seg_remaining);
         scan_notes_into_block(s, seq, cursor_local, cursor_local + consume,
-                              cursor_local, now_beats_abs);
+                              cursor_local, now_beats_abs, mono, spb);
         consumed_total += consume;
         cursor_local += consume;
         if (cursor_local + 1e-12 >= total_beats) {
@@ -282,7 +514,7 @@ void advance_file_seq_into_output(MidiQueueState& s,
     s.file_play_head_beats = cursor_local;
 }
 
-// PRD prd-midi-input §7.5: bake the OutputEvents touched by this block into
+// PRD prd-midi-input §7.5: bake the per-block transition list into
 // per-sample gate/freq/vel/trig buffers using last-note-wins mono priority.
 // Buffer indices ride on the MIDI_QUERY instruction (inst.inputs[0..3]);
 // 0xFFFF means `midi()` wasn't bound via `as e` and the fill is skipped.
@@ -293,9 +525,16 @@ void advance_file_seq_into_output(MidiQueueState& s,
 // freq/vel track the most-recently-pushed entry. Trig fires one sample at
 // each new note-on. The stack persists across blocks, so a chord held
 // through a 1-second buffer underrun continues sounding the top note.
+//
+// Transitions are provided pre-built by the drain/file-scan passes — we do
+// NOT re-derive them by walking s.output. The previous implementation lost
+// transitions to float ULP residue at session-length beat magnitudes
+// (~7e-6 beats at 120 beats, well above the 1e-9 boundary tolerance), which
+// stuck the mono gate high after a few minutes of live play.
 void fill_mono_buffers(MidiQueueState& s,
                        const ExecutionContext& ctx,
-                       const Instruction& inst) {
+                       const Instruction& inst,
+                       MonoTransitionBuf& mono) {
     const std::uint16_t gate_buf_idx = inst.inputs[0];
     const std::uint16_t freq_buf_idx = inst.inputs[1];
     const std::uint16_t vel_buf_idx  = inst.inputs[2];
@@ -314,86 +553,12 @@ void fill_mono_buffers(MidiQueueState& s,
 
     std::fill_n(trig_buf, BLOCK_SIZE, 0.0f);
 
-    const double spb_d = (60.0 / static_cast<double>(ctx.bpm))
-                       * static_cast<double>(ctx.sample_rate);
-    if (!(spb_d > 0.0)) {
-        std::fill_n(gate_buf, BLOCK_SIZE, 0.0f);
-        std::fill_n(freq_buf, BLOCK_SIZE, 0.0f);
-        std::fill_n(vel_buf,  BLOCK_SIZE, 0.0f);
-        return;
-    }
-    const double block_start_b = static_cast<double>(ctx.global_sample_counter) / spb_d;
-    const double block_end_b   = block_start_b + (static_cast<double>(BLOCK_SIZE) / spb_d);
-
-    // Collect transitions (note-on / note-off) that fall in the current
-    // block window. Capped at 64 transitions/block — well above any
-    // realistic MIDI burst (a dense polyphonic stab is ~32 events).
-    struct MonoTransition {
-        std::uint16_t sample;     // 0..BLOCK_SIZE-1
-        bool          is_on;
-        std::uint8_t  midi_note;
-        float         freq;
-        float         velocity;
-    };
-    constexpr std::size_t MAX_TRANSITIONS = 64;
-    MonoTransition transitions[MAX_TRANSITIONS];
-    std::size_t num_transitions = 0;
-
-    auto add_transition = [&](double evt_beat, bool is_on,
-                              std::uint8_t note, float freq, float vel) {
-        if (num_transitions >= MAX_TRANSITIONS) return;
-        const double offset_b = evt_beat - block_start_b;
-        std::int32_t sample = static_cast<std::int32_t>(offset_b * spb_d);
-        if (sample < 0) sample = 0;
-        if (sample >= static_cast<std::int32_t>(BLOCK_SIZE)) {
-            sample = static_cast<std::int32_t>(BLOCK_SIZE) - 1;
-        }
-        transitions[num_transitions++] = {
-            static_cast<std::uint16_t>(sample), is_on, note, freq, vel
-        };
-    };
-
-    // HELD_DURATION_SENTINEL is huge; any event with duration above this
-    // threshold is "still held" — its note-off has not yet arrived.
-    constexpr float SENTINEL_THRESHOLD =
-        MidiQueueState::HELD_DURATION_SENTINEL * 0.5f;
-
-    // Snap tolerance for block-boundary comparisons. drain_live_events
-    // stores evt.time and the patched duration as floats; reading them
-    // back as doubles produces a few-ULP residue against the
-    // double-precision block_start_b. The same snap idea POLY uses at
-    // vm.cpp:314 — well below sample resolution (1 sample ≈ 4e-5 beats
-    // at 110 BPM / 48 kHz) but well above fp noise. A double-fire in the
-    // previous block can't happen because evt.duration was sentinel-sized
-    // back then and the off-check short-circuited.
-    constexpr double BOUNDARY_EPS = 1e-9;
-
-    for (std::uint32_t e = 0; e < s.output.num_events; ++e) {
-        const auto& evt = s.output.events[e];
-        const float freq = evt.values[0];
-        const std::uint8_t note = static_cast<std::uint8_t>(evt.midi_note);
-
-        // note-on transition?
-        const double on_b = static_cast<double>(evt.time);
-        if (on_b + BOUNDARY_EPS >= block_start_b && on_b < block_end_b) {
-            add_transition(on_b, true, note, freq, evt.velocity);
-        }
-
-        // note-off transition? (only for events whose note-off has arrived)
-        if (evt.duration < SENTINEL_THRESHOLD) {
-            const double off_b = on_b + static_cast<double>(evt.duration);
-            if (off_b + BOUNDARY_EPS >= block_start_b && off_b < block_end_b) {
-                add_transition(off_b, false, note, freq, 0.0f);
-            }
-        }
-    }
-
     // Insertion-sort transitions by sample (typically < 8 entries).
-    for (std::size_t i = 1; i < num_transitions; ++i) {
+    for (std::size_t i = 1; i < mono.count; ++i) {
         for (std::size_t j = i;
-             j > 0 && transitions[j].sample < transitions[j - 1].sample;
+             j > 0 && mono.entries[j].sample < mono.entries[j - 1].sample;
              --j) {
-            std::swap(transitions[j], transitions[j - 1]);
+            std::swap(mono.entries[j], mono.entries[j - 1]);
         }
     }
 
@@ -407,21 +572,6 @@ void fill_mono_buffers(MidiQueueState& s,
         current_vel  = top.velocity;
         current_gate = 1.0f;
     }
-
-    auto stack_push = [&](std::uint8_t note, float freq, float vel) {
-        if (s.mono_stack_depth >= MidiQueueState::MONO_STACK_CAPACITY) {
-            // Evict oldest entry to make room.
-            for (std::uint8_t k = 0;
-                 k + 1 < MidiQueueState::MONO_STACK_CAPACITY; ++k) {
-                s.mono_held_stack[k] = s.mono_held_stack[k + 1];
-            }
-            s.mono_stack_depth = MidiQueueState::MONO_STACK_CAPACITY - 1;
-        }
-        auto& slot = s.mono_held_stack[s.mono_stack_depth++];
-        slot.note     = static_cast<std::int16_t>(note);
-        slot.freq     = freq;
-        slot.velocity = vel;
-    };
 
     auto stack_remove = [&](std::uint8_t note) {
         int idx = -1;
@@ -439,11 +589,33 @@ void fill_mono_buffers(MidiQueueState& s,
         --s.mono_stack_depth;
     };
 
+    auto stack_push = [&](std::uint8_t note, float freq, float vel) {
+        // De-dup retrigger: a second note-on for an already-held key
+        // replaces the existing entry rather than stacking a duplicate.
+        // Without this, the matching note-off only pops once and the stale
+        // entry keeps the gate high forever — the exact "hanging notes"
+        // symptom from `midi-cc-filtermono.akk` on a live keyboard.
+        stack_remove(note);
+
+        if (s.mono_stack_depth >= MidiQueueState::MONO_STACK_CAPACITY) {
+            // Evict oldest entry to make room.
+            for (std::uint8_t k = 0;
+                 k + 1 < MidiQueueState::MONO_STACK_CAPACITY; ++k) {
+                s.mono_held_stack[k] = s.mono_held_stack[k + 1];
+            }
+            s.mono_stack_depth = MidiQueueState::MONO_STACK_CAPACITY - 1;
+        }
+        auto& slot = s.mono_held_stack[s.mono_stack_depth++];
+        slot.note     = static_cast<std::int16_t>(note);
+        slot.freq     = freq;
+        slot.velocity = vel;
+    };
+
     // Walk the block, applying transitions in chronological order.
     std::size_t ti = 0;
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        while (ti < num_transitions && transitions[ti].sample == i) {
-            const auto& t = transitions[ti];
+        while (ti < mono.count && mono.entries[ti].sample == i) {
+            const auto& t = mono.entries[ti];
             if (t.is_on) {
                 stack_push(t.midi_note, t.freq, t.velocity);
                 trig_buf[i] = 1.0f;
@@ -471,6 +643,7 @@ void fill_mono_buffers(MidiQueueState& s,
         freq_buf[i] = current_freq;
         vel_buf[i]  = current_vel;
     }
+    (void)ctx;
 }
 
 }  // namespace
@@ -478,9 +651,25 @@ void fill_mono_buffers(MidiQueueState& s,
 void op_midi_query(ExecutionContext& ctx, const Instruction& inst) {
     auto& s = ctx.states->get_or_create<MidiQueueState>(inst.state_id);
 
-    drain_live_events_into_output(s, ctx);
-    advance_file_seq_into_output(s, ctx);
-    fill_mono_buffers(s, ctx, inst);
+    MonoTransitionBuf mono{};
+
+    // PRD §7.3: hot-swap migration runs BEFORE the live-event drain so a
+    // note-off arriving in this block patches the freshly synthesized event
+    // (held_note_to_event[note] has just been retargeted to the new index).
+    if (s.pending_held_note_remigration) {
+        remigrate_held_notes(s, ctx, mono);
+        s.pending_held_note_remigration = false;
+    }
+
+    drain_live_events_into_output(s, ctx, mono);
+
+    // PRD §7.4: snapshot the file play head BEFORE advance_file_seq mutates
+    // it so the CC scan walks the same block-local window the note scan did.
+    const double pre_advance_head = s.file_play_head_beats;
+    advance_file_seq_into_output(s, ctx, mono);
+    advance_file_cc_into_output(s, ctx, pre_advance_head);
+
+    fill_mono_buffers(s, ctx, inst, mono);
 }
 
 }  // namespace cedar

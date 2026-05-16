@@ -567,6 +567,22 @@ function createAudioEngine() {
 					lastRequiredMidiSources = result.requiredMidiSources ?? [];
 					lastRequiredMidiCcRoutes = result.requiredMidiCcRoutes ?? [];
 					midiInput.setRoutes(lastRequiredMidiSources, lastRequiredMidiCcRoutes);
+
+					// PRD prd-midi-input §7.4: publish the file-CC dispatch
+					// plan to the worklet. File-kind midi sources have no
+					// physical device, so their CC events are drained
+					// inside _cedar_process_block and routed through the
+					// same CC table the live-device path uses.
+					if (workletNode) {
+						const fileMidiStateIds = lastRequiredMidiSources
+							.filter((s) => s.kind === 2)
+							.map((s) => s.stateId);
+						workletNode.port.postMessage({
+							type: 'setFileCcPlan',
+							fileMidiStateIds,
+							fileCcRoutes: lastRequiredMidiCcRoutes
+						});
+					}
 				}
 				// Resolve pending compile promise
 				if (compileResolve) {
@@ -2333,6 +2349,11 @@ function createAudioEngine() {
 		get samplesLoaded() { return state.samplesLoaded; },
 		get samplesLoading() { return state.samplesLoading; },
 		get isLoadingSamples() { return state.isLoadingSamples; },
+		// Count of distinct sample names accepted by the worklet across the
+		// current session. Used by the FilesPanel (PRD §7.6) to surface a
+		// "{n} samples" summary. Not reactive — see TODO if a Svelte-reactive
+		// version is needed.
+		get loadedSampleCount() { return loadedSamples.size; },
 		get loadedSoundfonts() { return state.loadedSoundfonts; },
 		// Parameter exposure
 		get params() { return state.params; },

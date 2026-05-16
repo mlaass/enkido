@@ -3,6 +3,7 @@
 #include "cedar/vm/vm.hpp"
 #include "cedar/dsp/constants.hpp"
 #include "akkado/codegen.hpp"
+#include "midi_input.hpp"  // MidiCcRouteTable for file-CC dispatch plan
 #include <atomic>
 #include <array>
 #include <cstdint>
@@ -141,6 +142,16 @@ private:
     // tears down each MidiInput's RtMidiIn before the VM goes away.
     std::vector<std::unique_ptr<MidiInput>> midi_inputs_;
     std::string preferred_midi_device_name_;  // matches MidiSourceKind::DefaultDevice; "" = first available
+
+    // PRD prd-midi-input §7.4: file-CC dispatch plan, swapped atomically by
+    // the main thread (apply_midi_route_plan) and loaded by the audio
+    // thread after each process_block. v1 routes every file CC through the
+    // resolved default device's CC table — same convention as live midi_cc.
+    struct FileCcDispatchPlan {
+        std::vector<std::uint32_t>              file_state_ids;
+        std::shared_ptr<const MidiCcRouteTable> cc_table;
+    };
+    std::atomic<std::shared_ptr<const FileCcDispatchPlan>> file_cc_plan_;
 };
 
 // Global signal flag for Ctrl+C handling

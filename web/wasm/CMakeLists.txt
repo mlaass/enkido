@@ -77,6 +77,8 @@ if(EMSCRIPTEN)
         _cedar_get_default_midi_device
         _cedar_apply_midi_sources
         _cedar_load_midi_file
+        # MIDI file CC playback (prd-midi-input §7.4)
+        _cedar_drain_pending_file_ccs
         _cedar_reset
         _cedar_is_crossfading
         _cedar_crossfade_position

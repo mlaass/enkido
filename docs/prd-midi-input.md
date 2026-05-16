@@ -1,9 +1,11 @@
 # MIDI Input PRD — Runtime MIDI as a Pattern-Equivalent Event Source
 
-> **Status: PROPOSED** — Fresh PRD that inherits the `NoteEvent` contract from
-> [`prd-polyphony-system.md`](prd-polyphony-system.md) and mirrors the host-fill
-> architectural pattern from [`prd-audio-input.md`](prd-audio-input.md) (shipped
-> 2026-04-26). Cross-references the deferred-future-work notes in
+> **Status: SHIPPED (2026-05-16)** — Phases 1–7 all landed. Phase 8 (docs
+> & polish) is the only remaining work. Inherits the `NoteEvent` contract
+> from [`prd-polyphony-system.md`](prd-polyphony-system.md) and mirrors the
+> host-fill architectural pattern from
+> [`prd-audio-input.md`](prd-audio-input.md) (shipped 2026-04-26).
+> Cross-references the deferred-future-work notes in
 > [`prd-pattern-transport.md`](prd-pattern-transport.md) and
 > [`prd-cedar-esp32.md`](prd-cedar-esp32.md).
 
@@ -1125,13 +1127,13 @@ in both hosts; tempo modes behave as specified.
 **Verify**: CC sweep audibly drives a `param()`; pitch-bend wheel updates
 its target.
 
-**Phase 7 — Unification & symmetry (~5 days)**
+**Phase 7 — Unification & symmetry (~5 days)** — ✅ shipped 2026-05-16.
 
 Closes the asymmetries that would otherwise make the v1 surface feel
 half-baked. Six sub-items, all of which must land before docs because
 docs commit us to the public surface.
 
-**7.1 Soundfont accepts MIDI upstream (~1.5 days)** — today `soundfont`
+**7.1 Soundfont accepts MIDI upstream (~1.5 days)** — ✅ shipped. today `soundfont`
 is marked `consumes_polyphonic_pattern = true` and reads the pattern's
 raw `gate/freq/vel/trig` buffers directly in
 `akkado/src/codegen_patterns.cpp:5550-5725`; it never resolves upstream
@@ -1147,7 +1149,7 @@ and translates note-on → `allocate_voice(note)`, note-off →
 `has_upstream_events` flag so existing pattern bytecode is unchanged.
 Flip `requires_state = false → true` on the soundfont builtin entry.
 
-**7.2 Gate-multiplied release fix (~0.5 day)** — implements the
+**7.2 Gate-multiplied release fix (~0.5 day)** — ✅ shipped. implements the
 configurable voice release proposed in
 [`prd-polyphony-system.md`](prd-polyphony-system.md) §7 (deferred until
 now). Today `cedar/src/vm/vm.cpp:505-514` does
@@ -1163,7 +1165,7 @@ decremented per sample so the instrument's ADSR runs its own release
 to completion. On note-off, set the countdown instead of marking
 retired immediately. Mark polyphony PRD §7 as shipped via this PRD.
 
-**7.3 Hot-swap held-note migration (~1 day)** — replaces §4.12's
+**7.3 Hot-swap held-note migration (~1 day)** — ✅ shipped. replaces §4.12's
 "synthetic note-off + cut" with a migration path when state IDs
 match. State-pool semantic-ID rebinding already does the analogous job
 for `SequenceState`; extend it to `MidiQueueState` so
@@ -1175,7 +1177,7 @@ sentinel) for every still-held key into `OutputEvents` so the new
 program's `poly`/`sf2` allocates voices for them. Notes only cut if
 the matching `midi()` call disappears entirely between programs.
 
-**7.4 File CC playback through `midi_cc` routes (~0.5 day)** — the
+**7.4 File CC playback through `midi_cc` routes (~0.5 day)** — ✅ shipped. the
 parser already sees control change events; v1 currently drops them.
 Store them in a parallel `MidiSequence::ccs[]` array
 (`tick`, `channel`, `cc`, `value`). When the play head advances across
@@ -1185,7 +1187,7 @@ and dispatch through the same route table the live MIDI callback
 uses (CLI: push to param-update SPSC; Web: call `vm.set_param`
 directly since the worklet is already on the audio thread).
 
-**7.5 Monophonic MIDI pipeline (~1 day)** — `midi() as e |> osc("sin",
+**7.5 Monophonic MIDI pipeline (~1 day)** — ✅ shipped. `midi() as e |> osc("sin",
 e.freq) |> @ * adsr(e.gate) |> out` must work the way the pattern
 equivalent does today. Patterns work because the compiler synthesizes
 per-sample `gate_buf`, `freq_buf`, `vel_buf`, `trig_buf` from baked
@@ -1207,7 +1209,7 @@ the cheapest route is for `handle_midi_call` to synthesize a
 **last-note-wins with held-stack fallback**, matching every analog
 mono synth.
 
-**7.6 Unified drop-zone UI (~0.5 day)** — collapses the per-asset-type
+**7.6 Unified drop-zone UI (~0.5 day)** — ✅ shipped. collapses the per-asset-type
 drop zones (samples, soundfonts, `.mid`) into a single
 `FilesPanel.svelte` that inspects file extension and dispatches via a
 new `inferFromExtension(file)` helper in
@@ -1215,13 +1217,34 @@ new `inferFromExtension(file)` helper in
 explicit browsing but lose their drop zones. Promoted from the
 previous "TODO" in this section.
 
-**Verify**: `./build/cedar/tests/cedar_tests "[midi]" "[midi-poly]"
-"[midi-soundfont]" "[midi-hotswap]" "[midi-mono]" "[poly-release]"`
-all pass; `midi() |> soundfont("piano.sf2", 0) |> out` and
+**Verify**: ✅ confirmed 2026-05-16 —
+`./build/cedar/tests/cedar_tests "[midi]" "[midi-poly]"
+"[midi-soundfont]" "[midi-hotswap]" "[midi-mono]" "[midi-file-cc]"
+"[poly-release]"` all pass (850 assertions / 48 test cases);
+`midi() |> soundfont("piano.sf2", 0) |> out` and
 `midi() as e |> osc("saw", e.freq) |> lp(@, 2000) |> @ * adsr(e.gate)
 |> out` audibly play in both CLI and web; held chord survives
 hot-edit of the instrument; `release: 0.3` on `poly` removes the
 note-off click.
+
+**Phase 7.5 follow-up fix (2026-05-16)** — `op_midi_query` originally
+let `fill_mono_buffers` re-derive transitions by walking
+`s.output.events[]` and comparing float-stored `evt.time + evt.duration`
+against the double-precision `block_start_b`. Float ULP at
+session-length beat magnitudes (~7e-6 at 120 beats) routinely exceeds
+the 1e-9 `BOUNDARY_EPS`, so unlucky rounding skipped the off-transition
+and the mono stack never popped — gate stuck high (the user-reported
+"hanging notes" on `midi-cc-filtermono.akk` after ~minute of MPK play).
+Refactored `op_midi_query` to maintain a `MonoTransitionBuf` populated
+directly by `drain_live_events_into_output`, `advance_file_seq_into_output`,
+and `remigrate_held_notes`. `fill_mono_buffers` now consumes the
+authoritative list without any timing comparison. Also added de-dup in
+`stack_push` so a duplicate note-on for an already-held key replaces
+the existing entry rather than stacking a second one (which would
+otherwise leak on a single note-off). Regression test:
+`[midi-mono]` "note-off releases stack cleanly after many blocks (no
+hang)" parks the clock at ~59 s, then runs 200 press/release cycles
+across notes 60–71 and requires `mono_stack_depth == 0` after each.
 
 **Phase 8 — Docs & polish (~0.5 day)**
 

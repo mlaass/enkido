@@ -156,6 +156,22 @@ void VM::handle_swap() {
     // Rebind states from old to new program
     rebind_states(old_slot, new_slot);
 
+    // PRD prd-midi-input §7.3 GC-sweep fallback: any MidiQueueState that the
+    // new program does NOT touch is about to be moved to the fading pool
+    // when its host opcode disappears. Patch held-note durations to release
+    // at the current block boundary so downstream consumers preserved by
+    // the swap (e.g. a POLY that re-bound to a different midi source) see
+    // finite note-off transitions instead of stuck sentinels.
+    {
+        const float spb_local = ctx_.samples_per_beat();
+        const double spb_d = static_cast<double>(spb_local);
+        const float now_beats = (spb_d > 0.0)
+            ? static_cast<float>(
+                  static_cast<double>(ctx_.global_sample_counter) / spb_d)
+            : 0.0f;
+        state_pool_.release_held_notes_on_untouched_midi(now_beats, spb_local);
+    }
+
     // Determine if crossfade is needed
     if (old_slot && old_slot->instruction_count > 0 &&
         requires_crossfade(old_slot, new_slot)) {

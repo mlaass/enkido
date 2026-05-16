@@ -69,10 +69,12 @@ struct Cursor {
 
 // Collected per-track output. Tempo events from any track contribute to a
 // shared tempo map; note-on/off are paired inside each track to produce
-// complete MidiNote entries.
+// complete MidiNote entries. CCs (PRD §7.4) include CC, PB, and channel-AT;
+// each track's CCs are merged into the parent MidiSequence and sorted by tick.
 struct CollectedTrack {
     std::vector<MidiNote>  notes;
     std::vector<MidiTempo> tempos;
+    std::vector<MidiCC>    ccs;
     std::uint32_t          last_tick = 0;  // ticks reached at end of track
 };
 
@@ -171,11 +173,48 @@ void parse_track(Cursor& tc, CollectedTrack& out) {
                     held.last_on_tick[k] = static_cast<std::int32_t>(current_tick);
                     held.last_on_vel[k]  = vel;
                 }
-            } else if (high == 0xA0u || high == 0xB0u || high == 0xE0u) {
-                // 2-byte payload; consume and discard.
+            } else if (high == 0xB0u) {
+                // Control change: cc# (7-bit) + value (7-bit). PRD §7.4 keeps
+                // these in the per-track CC list so op_midi_query can drain
+                // them into pending_ccs[] for host-side route dispatch.
+                std::uint8_t cc_num = tc.u8() & 0x7Fu;
+                std::uint8_t value  = tc.u8() & 0x7Fu;
+                if (tc.error) break;
+                out.ccs.push_back(MidiCC{
+                    /*tick*/         current_tick,
+                    /*beat_on_file*/ 0.0f,
+                    /*channel*/      ch,
+                    /*value*/        value,
+                    /*cc_num*/       static_cast<std::uint16_t>(cc_num)});
+            } else if (high == 0xE0u) {
+                // Pitch-bend: 14-bit LSB-first. v1 emits 7-bit precision —
+                // store the high byte and let downstream re-pack as needed.
+                std::uint8_t lsb = tc.u8() & 0x7Fu;
+                std::uint8_t msb = tc.u8() & 0x7Fu;
+                if (tc.error) break;
+                (void)lsb;
+                out.ccs.push_back(MidiCC{
+                    /*tick*/         current_tick,
+                    /*beat_on_file*/ 0.0f,
+                    /*channel*/      ch,
+                    /*value*/        msb,
+                    /*cc_num*/       static_cast<std::uint16_t>(128u)});
+            } else if (high == 0xD0u) {
+                // Channel pressure / aftertouch: 1-byte payload.
+                std::uint8_t value = tc.u8() & 0x7Fu;
+                if (tc.error) break;
+                out.ccs.push_back(MidiCC{
+                    /*tick*/         current_tick,
+                    /*beat_on_file*/ 0.0f,
+                    /*channel*/      ch,
+                    /*value*/        value,
+                    /*cc_num*/       static_cast<std::uint16_t>(129u)});
+            } else if (high == 0xA0u) {
+                // Poly aftertouch: 2-byte payload; not surfaced in v1 (route
+                // table has no per-note AT entry). Consume to keep alignment.
                 tc.u8(); tc.u8();
-            } else if (high == 0xC0u || high == 0xD0u) {
-                // 1-byte payload; consume and discard.
+            } else if (high == 0xC0u) {
+                // Program change: 1-byte payload; ignored in v1.
                 tc.u8();
             } else {
                 // Unknown status byte — malformed file.
@@ -309,6 +348,22 @@ MidiSequence* parse_smf(const std::uint8_t* data, std::size_t len, AudioArena& a
     }
     const float total_beats_file = tick_to_beat_file(max_track_ticks);
 
+    // Merge CCs from every track and sort by tick. Per PRD §7.4 the file-CC
+    // drain scans the array within the play-head window; sorted order keeps
+    // the scan output chronological so dispatch matches the source file.
+    std::vector<MidiCC> merged_ccs;
+    for (const auto& tr : tracks) {
+        merged_ccs.insert(merged_ccs.end(), tr.ccs.begin(), tr.ccs.end());
+    }
+    std::sort(merged_ccs.begin(), merged_ccs.end(),
+              [](const MidiCC& a, const MidiCC& b) {
+                  if (a.tick != b.tick) return a.tick < b.tick;
+                  return a.cc_num < b.cc_num;
+              });
+    for (auto& cc : merged_ccs) {
+        cc.beat_on_file = tick_to_beat_file(cc.tick);
+    }
+
     // Allocate arena slices and copy. Each struct's size is rounded up
     // to a multiple of sizeof(float) so the bump allocator's next call
     // stays aligned.
@@ -336,6 +391,14 @@ MidiSequence* parse_smf(const std::uint8_t* data, std::size_t len, AudioArena& a
                     sizeof(MidiTempo) * merged_tempos.size());
         seq->tempos = reinterpret_cast<MidiTempo*>(tempos_mem);
         seq->num_tempos = static_cast<std::uint32_t>(merged_tempos.size());
+    }
+    if (!merged_ccs.empty()) {
+        auto* ccs_mem = arena_alloc(sizeof(MidiCC) * merged_ccs.size());
+        if (!ccs_mem) return nullptr;
+        std::memcpy(ccs_mem, merged_ccs.data(),
+                    sizeof(MidiCC) * merged_ccs.size());
+        seq->ccs = reinterpret_cast<MidiCC*>(ccs_mem);
+        seq->num_ccs = static_cast<std::uint32_t>(merged_ccs.size());
     }
     seq->ticks_per_quarter = tpq;
     seq->total_ticks = max_track_ticks;

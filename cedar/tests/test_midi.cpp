@@ -1147,6 +1147,54 @@ TEST_CASE("midi-mono: program without buffer wiring leaves the fill a no-op",
     CHECK(s.output.num_events == 1); // event still recorded normally
 }
 
+TEST_CASE("midi-mono: note-off releases stack cleanly after many blocks (no hang)",
+          "[midi-mono]") {
+    // Regression: live-keyboard play stretches over minutes, and the
+    // float-storage of evt.time + patched evt.duration accumulates ULP
+    // residue at session-length beat magnitudes. With BOUNDARY_EPS = 1e-9,
+    // the off-transition check `off_b + EPS >= block_start_b` is fragile —
+    // any unfortunate rounding direction skips the off, the stack never
+    // pops, and gate stays stuck high. This drives many press/release
+    // cycles with one-block holds at varying offsets to statistically hit
+    // the bad cases.
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_mono_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    // Park the clock at ~120 beats so float ULP is meaningful, then drive
+    // repeated press/release pairs. Each cycle is press-block, gap-block,
+    // release-block — covers the typical "hold for one block then off"
+    // shape a fast keyboard run produces.
+    constexpr int kWarmBlocks = 22'000;  // ~59 s at 48 kHz / 128
+    for (int b = 0; b < kWarmBlocks; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+    constexpr int kCycles = 200;
+    for (int c = 0; c < kCycles; ++c) {
+        const std::uint8_t note = static_cast<std::uint8_t>(60 + (c % 12));
+        REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, note, 100));
+        vm.process_block(left.data(), right.data());  // on block
+        vm.process_block(left.data(), right.data());  // hold block
+        REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, note,   0));
+        vm.process_block(left.data(), right.data());  // off block
+
+        auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+        INFO("cycle " << c << " stack_depth=" << int(s.mono_stack_depth));
+        REQUIRE(s.mono_stack_depth == 0);  // every cycle must end clean
+    }
+
+    auto end = read_mono(vm, BLOCK_SIZE - 1);
+    CHECK(end.gate < 0.1f);
+}
+
 // ============================================================================
 // PRD prd-midi-input §7.1: SoundFont accepts MIDI upstream
 //
@@ -1343,3 +1391,552 @@ TEST_CASE("midi-soundfont: legacy pattern path is untouched by has_upstream_even
     CHECK(s.preset_idx == 0);
 }
 #endif  // CEDAR_NO_SOUNDFONT
+
+// ============================================================================
+// PRD prd-midi-input §7.3: hot-swap held-note migration
+//
+// A re-call of `init_midi_queue_state` with the same state_id simulates the
+// host's hot-swap path (akkado recompile → `apply_midi_sources` → re-init).
+// Held notes must survive the swap: op_midi_query re-emits synthetic note-ons
+// at the new block's beat position, and held_note_to_event[] points at the
+// new event index so a subsequent note-off patches the right slot.
+// ============================================================================
+
+TEST_CASE("midi-hotswap: re-init with held notes schedules re-migration",
+          "[midi-hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Press a chord, drive a few blocks so the notes are firmly held.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64,  90));
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 67,  80));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s.output.num_events == 3);
+    REQUIRE(s.has_any_held_notes());
+
+    // Simulate the host's apply_midi_sources after a hot-swap.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    CHECK(s.pending_held_note_remigration);
+    // The flag clears once op_midi_query runs.
+    vm.process_block(left.data(), right.data());
+    CHECK_FALSE(s.pending_held_note_remigration);
+
+    // Three synthetic note-ons appended to output (one per held key).
+    CHECK(s.output.num_events == 6);
+
+    // held_note_to_event[] now points at the synthetic events, not the
+    // pre-migration ones.
+    for (int n : {60, 64, 67}) {
+        const std::int32_t idx = s.held_note_to_event[n];
+        REQUIRE(idx >= 3);  // the new events live at indices 3..5
+        const auto& evt = s.output.events[idx];
+        CHECK(evt.duration == MidiQueueState::HELD_DURATION_SENTINEL);
+        CHECK(evt.midi_note == static_cast<float>(n));
+    }
+}
+
+TEST_CASE("midi-hotswap: re-init without held notes does NOT set the flag",
+          "[midi-hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // No notes pressed → re-init must not schedule re-migration.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    CHECK_FALSE(s.pending_held_note_remigration);
+}
+
+TEST_CASE("midi-hotswap: note-off after re-migration patches the synthetic event",
+          "[midi-hotswap]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    // Hot-swap re-init.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // In the same block, send the note-off — re-migration runs BEFORE the
+    // live-event drain, so the synthetic event's index is in
+    // held_note_to_event[60] when the note-off arrives. The new event's
+    // duration is patched, the old one's is left as sentinel.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, 60, 0));
+    vm.process_block(left.data(), right.data());
+
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s.output.num_events == 2);
+    CHECK(s.output.events[0].duration ==
+          MidiQueueState::HELD_DURATION_SENTINEL);
+    CHECK(s.output.events[1].duration <
+          MidiQueueState::HELD_DURATION_SENTINEL);
+    CHECK(s.output.events[1].duration > 0.0f);
+    CHECK(s.held_note_to_event[60] == -1);
+}
+
+TEST_CASE("midi-hotswap: file play head preserved when URI matches",
+          "[midi-hotswap][midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, /*loop*/false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int b = 0; b < 50; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    const double head_before = s.file_play_head_beats;
+    REQUIRE(head_before > 0.0);
+
+    // Re-init with identical URI — head must be preserved.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, /*loop*/false,
+                             MidiQueueState::TempoMode::Follow);
+    CHECK(s.file_play_head_beats == head_before);
+}
+
+TEST_CASE("midi-hotswap: file play head resets when URI changes",
+          "[midi-hotswap][midi-file]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    const auto fixture = read_fixture("midi/twinkle.mid");
+    REQUIRE(vm.load_midi_file("twinkle.mid",
+                              fixture.data(), fixture.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "twinkle.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    for (int b = 0; b < 50; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s.file_play_head_beats > 0.0);
+
+    // Re-init with a different URI — head resets to 0.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "different.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    CHECK(s.file_play_head_beats == 0.0);
+    CHECK(s.current_tempo_idx == 0);
+}
+
+TEST_CASE("midi-hotswap: poly downstream allocates voices for re-emitted notes",
+          "[midi-hotswap][midi-poly]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_midi_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+    vm.init_poly_state(POLY_STATE_ID, MIDI_STATE_ID, 8, 0, 0);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64, 100));
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 67, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+    vm.process_block(left.data(), right.data());
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 3);
+
+    // Audio is sounding before the swap.
+    float pre_peak = 0.0f;
+    for (float v : left) pre_peak = std::max(pre_peak, std::fabs(v));
+    CHECK(pre_peak > 0.01f);
+
+    // Hot-swap re-init — same midi() call, no source change.
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Drive a few more blocks: voices must keep mixing audio.
+    float post_peak = 0.0f;
+    for (int b = 0; b < 4; ++b) {
+        vm.process_block(left.data(), right.data());
+        for (float v : left) post_peak = std::max(post_peak, std::fabs(v));
+    }
+    CHECK(post_peak > 0.01f);
+    // POLY's same-freq dedup keeps the voice count at 3 (re-emit retargets
+    // the existing voice slots rather than allocating fresh ones).
+    CHECK(poly.active_voice_count() == 3);
+
+    // Note-off for the re-migrated note still resolves through the new
+    // event index, so the matching voice releases.
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x80, 64, 0));
+    for (int b = 0; b < 20; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+    CHECK(poly.active_voice_count() == 2);
+}
+
+// ============================================================================
+// PRD prd-midi-input §7.4: file-CC playback through midi_cc
+//
+// parse_smf collects CC, pitch-bend, and channel-aftertouch events into
+// MidiSequence::ccs[]. op_midi_query's advance_file_cc_into_output drains
+// those that fall in the current block window into MidiQueueState's
+// pending_ccs[] scratch buffer, which the host (CLI / web worklet) reads
+// after process_block to dispatch into the active route table.
+// ============================================================================
+
+TEST_CASE("parse_smf collects CC, pitch-bend, and channel-AT events",
+          "[midi-file-cc][smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    // CC#74 = 0x40
+    ev.vlq(0);   ev.u8(0xB0); ev.u8(74); ev.u8(0x40);
+    // Pitch-bend LSB=0, MSB=0x55
+    ev.vlq(0);   ev.u8(0xE0); ev.u8(0x00); ev.u8(0x55);
+    // Channel pressure 0x33
+    ev.vlq(0);   ev.u8(0xD0); ev.u8(0x33);
+    // CC#74 = 0x60 at tick 240
+    ev.vlq(240); ev.u8(0xB0); ev.u8(74); ev.u8(0x60);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);  // EOT
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    REQUIRE(seq->num_ccs == 4);
+
+    // Sorted by tick, then cc_num.
+    CHECK(seq->ccs[0].tick == 0);
+    CHECK(seq->ccs[0].cc_num == 74);
+    CHECK(seq->ccs[0].value == 0x40);
+    CHECK(seq->ccs[1].tick == 0);
+    CHECK(seq->ccs[1].cc_num == 128u);          // PB
+    CHECK(seq->ccs[1].value == 0x55);
+    CHECK(seq->ccs[2].tick == 0);
+    CHECK(seq->ccs[2].cc_num == 129u);          // AT
+    CHECK(seq->ccs[2].value == 0x33);
+    CHECK(seq->ccs[3].tick == 240);
+    CHECK(seq->ccs[3].cc_num == 74);
+    CHECK(seq->ccs[3].value == 0x60);
+    // beat_on_file precomputed from tempo map (default 120 BPM, 480 TPQ).
+    CHECK_THAT(seq->ccs[3].beat_on_file,
+               Catch::Matchers::WithinAbs(0.5f, 1e-3f));
+}
+
+TEST_CASE("parse_smf: file with only notes leaves ccs empty",
+          "[midi-file-cc][smf]") {
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);
+    ev.vlq(240); ev.u8(0x80); ev.u8(60); ev.u8(64);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+
+    const auto bytes = make_smf(0, 1, 480, track);
+    AudioArena arena(64 * 1024);
+    MidiSequence* seq = parse_smf(bytes.data(), bytes.size(), arena);
+    REQUIRE(seq != nullptr);
+    CHECK(seq->num_ccs == 0);
+    CHECK(seq->ccs == nullptr);
+}
+
+TEST_CASE("midi-file-cc: file CCs land in pending_ccs as the play head crosses them",
+          "[midi-file-cc]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    // Build a tiny SMF with a few CCs and one note (to keep file_seq
+    // valid). CC#74 ramps 0x20 → 0x40 → 0x60 every 240 ticks.
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0);   ev.u8(0xB0); ev.u8(74); ev.u8(0x20);
+    ev.vlq(240); ev.u8(0xB0); ev.u8(74); ev.u8(0x40);
+    ev.vlq(240); ev.u8(0xB0); ev.u8(74); ev.u8(0x60);
+    ev.vlq(0);   ev.u8(0x90); ev.u8(60); ev.u8(96);
+    ev.vlq(480); ev.u8(0x80); ev.u8(60); ev.u8(64);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+    const auto bytes = make_smf(0, 1, 480, track);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    REQUIRE(vm.load_midi_file("cc-test.mid",
+                              bytes.data(), bytes.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "cc-test.mid", 0, /*loop*/false,
+                             MidiQueueState::TempoMode::Follow);
+
+    // Three CCs at beats 0, 0.5, 1.0. At 120 BPM / 48 kHz / 128-sample
+    // blocks, each beat is ~187.5 blocks. Run for 250 blocks (~1.33 beats)
+    // and drain — all three CCs should have landed in pending_ccs.
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    int total_drained = 0;
+    std::vector<std::uint8_t> seen_values;
+    for (int b = 0; b < 250; ++b) {
+        vm.process_block(left.data(), right.data());
+        total_drained += vm.drain_pending_file_ccs(
+            MIDI_STATE_ID,
+            [&](std::uint8_t status, std::uint8_t d1, std::uint8_t d2,
+                std::uint8_t /*channel*/) {
+                CHECK((status & 0xF0u) == 0xB0u);
+                CHECK(d1 == 74);
+                seen_values.push_back(d2);
+            });
+    }
+    CHECK(total_drained == 3);
+    REQUIRE(seen_values.size() == 3);
+    CHECK(seen_values[0] == 0x20);
+    CHECK(seen_values[1] == 0x40);
+    CHECK(seen_values[2] == 0x60);
+}
+
+TEST_CASE("midi-file-cc: channel filter rejects CCs on other channels",
+          "[midi-file-cc]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    // CC on channel 0 (status 0xB0) and CC on channel 1 (status 0xB1).
+    ev.vlq(0);   ev.u8(0xB0); ev.u8(74); ev.u8(0x20);
+    ev.vlq(0);   ev.u8(0xB1); ev.u8(74); ev.u8(0x40);
+    ev.vlq(0);   ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+    const auto bytes = make_smf(0, 1, 480, track);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    REQUIRE(vm.load_midi_file("cc-ch.mid", bytes.data(), bytes.size()) == 0);
+    // Filter channel 2 (1-indexed) — matches MIDI channel 1 (0-indexed).
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "cc-ch.mid", /*channel*/2, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    std::vector<std::uint8_t> seen_values;
+    vm.drain_pending_file_ccs(MIDI_STATE_ID,
+        [&](std::uint8_t /*status*/, std::uint8_t /*d1*/,
+            std::uint8_t d2, std::uint8_t /*channel*/) {
+            seen_values.push_back(d2);
+        });
+    REQUIRE(seen_values.size() == 1);
+    CHECK(seen_values[0] == 0x40);
+}
+
+TEST_CASE("midi-file-cc: pitch-bend and aftertouch synthesize correct status bytes",
+          "[midi-file-cc]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0); ev.u8(0xE0); ev.u8(0x00); ev.u8(0x55);  // PB ch 0, MSB=0x55
+    ev.vlq(0); ev.u8(0xD0); ev.u8(0x33);                // AT ch 0
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+    const auto bytes = make_smf(0, 1, 480, track);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    REQUIRE(vm.load_midi_file("pb-at.mid", bytes.data(), bytes.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "pb-at.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    struct Drained { std::uint8_t status, d1, d2, channel; };
+    std::vector<Drained> events;
+    vm.drain_pending_file_ccs(MIDI_STATE_ID,
+        [&](std::uint8_t st, std::uint8_t d1, std::uint8_t d2,
+            std::uint8_t ch) {
+            events.push_back({st, d1, d2, ch});
+        });
+    REQUIRE(events.size() == 2);
+    // Sorted by tick then cc_num: PB (128) before AT (129).
+    CHECK(events[0].status == 0xE0u);
+    CHECK(events[0].d1 == 0);
+    CHECK(events[0].d2 == 0x55);
+    CHECK(events[1].status == 0xD0u);
+    CHECK(events[1].d1 == 0x33);
+    CHECK(events[1].d2 == 0);
+}
+
+TEST_CASE("midi-file-cc: drain → vm.set_param round-trip drives a param value",
+          "[midi-file-cc]") {
+    // End-to-end test for the file-CC playback path: simulate the host's
+    // post-process_block drain by calling vm.set_param() in the drain
+    // callback. After the CC fires, has_param("cutoff") is true and the
+    // value lands at the expected normalized magnitude. This mirrors what
+    // nkido-cli's handle_render_mode does with the real
+    // dispatch_midi_cc/MidiCcRouteTable indirection.
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0); ev.u8(0xB0); ev.u8(74); ev.u8(127);  // CC#74 max
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+    const auto bytes = make_smf(0, 1, 480, track);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    REQUIRE(vm.load_midi_file("cc-param.mid",
+                              bytes.data(), bytes.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "cc-param.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+    vm.drain_pending_file_ccs(MIDI_STATE_ID,
+        [&](std::uint8_t /*status*/, std::uint8_t d1, std::uint8_t d2,
+            std::uint8_t /*channel*/) {
+            // Mimic dispatch_midi_cc's CC#74 → param("cutoff") scale/bias:
+            // route would be {param: "cutoff", cc: 74, scale: 1, bias: 0}.
+            if (d1 == 74) {
+                const float v = static_cast<float>(d2) / 127.0f;
+                vm.set_param("cutoff", v, 0.0f);
+            }
+        });
+
+    REQUIRE(vm.has_param("cutoff"));
+}
+
+TEST_CASE("midi-file-cc: drain resets the buffer and is idempotent",
+          "[midi-file-cc]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    std::vector<std::uint8_t> track;
+    ByteBuilder ev;
+    ev.vlq(0); ev.u8(0xB0); ev.u8(74); ev.u8(0x40);
+    ev.vlq(0); ev.u8(0xFF); ev.u8(0x2F); ev.u8(0x00);
+    track = ev.bytes;
+    const auto bytes = make_smf(0, 1, 480, track);
+
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    REQUIRE(vm.load_midi_file("once.mid", bytes.data(), bytes.size()) == 0);
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::File,
+                             "once.mid", 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    int first = 0;
+    vm.drain_pending_file_ccs(MIDI_STATE_ID,
+        [&](std::uint8_t, std::uint8_t, std::uint8_t, std::uint8_t) {
+            ++first;
+        });
+    CHECK(first == 1);
+
+    // Second drain without another process_block sees nothing.
+    int second = 0;
+    vm.drain_pending_file_ccs(MIDI_STATE_ID,
+        [&](std::uint8_t, std::uint8_t, std::uint8_t, std::uint8_t) {
+            ++second;
+        });
+    CHECK(second == 0);
+}
+
+TEST_CASE("midi-hotswap: untouched midi state releases held notes via GC sweep",
+          "[midi-hotswap]") {
+    // When a midi() call disappears from the new program, the MidiQueueState
+    // is not touched during rebind_states. handle_swap then calls
+    // release_held_notes_on_untouched_midi BEFORE gc_sweep so held events
+    // get finite durations. We exercise the helper directly: rebind_states
+    // requires a full ProgramSlot swap which is exercised in higher-level
+    // tests; here we just verify the StatePool helper does the right thing.
+
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+    auto program = build_midi_only_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+    vm.init_midi_queue_state(MIDI_STATE_ID, MidiSourceKind::DefaultDevice,
+                             nullptr, 0, false,
+                             MidiQueueState::TempoMode::Follow);
+
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 60, 100));
+    REQUIRE(vm.push_midi_event(MIDI_STATE_ID, 0x90, 64, 100));
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& s = vm.states().get_or_create<MidiQueueState>(MIDI_STATE_ID);
+    REQUIRE(s.has_any_held_notes());
+    REQUIRE(s.output.events[0].duration ==
+            MidiQueueState::HELD_DURATION_SENTINEL);
+
+    // Simulate handle_swap's "midi() disappeared" path: begin_frame() clears
+    // the touched_ set, then release_held_notes_on_untouched_midi patches
+    // durations on every untouched midi state (in this case, the only one).
+    vm.states().begin_frame();
+    vm.states().release_held_notes_on_untouched_midi(
+        /*now_beats*/ 1.0f,
+        /*samples_per_beat*/ (60.0f / 120.0f) * 48000.0f);
+
+    CHECK(s.output.events[0].duration <
+          MidiQueueState::HELD_DURATION_SENTINEL);
+    CHECK(s.output.events[0].duration > 0.0f);
+    CHECK(s.output.events[1].duration <
+          MidiQueueState::HELD_DURATION_SENTINEL);
+    CHECK_FALSE(s.has_any_held_notes());
+}

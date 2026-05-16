@@ -8,6 +8,7 @@
 	import AudioInputPanel from './AudioInputPanel.svelte';
 	import MidiInputPanel from './MidiInputPanel.svelte';
 	import SampleBrowser from '$lib/components/Samples/SampleBrowser.svelte';
+	import FilesPanel from './FilesPanel.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { audioEngine } from '$lib/stores/audio.svelte';
 
@@ -32,9 +33,11 @@
 	let docsScrollEl: HTMLElement | null = $state(null);
 	let debugScrollEl: HTMLElement | null = $state(null);
 	let samplesScrollEl: HTMLElement | null = $state(null);
+	let filesScrollEl: HTMLElement | null = $state(null);
 
 	function getScrollEl(tab: string): HTMLElement | null {
 		if (tab === 'controls') return controlsScrollEl;
+		if (tab === 'files') return filesScrollEl;
 		if (tab === 'samples') return samplesScrollEl;
 		if (tab === 'settings') return settingsScrollEl;
 		if (tab === 'docs') return docsScrollEl;
@@ -57,7 +60,7 @@
 		}
 	}
 
-	function handleTabChange(tab: 'controls' | 'samples' | 'settings' | 'docs' | 'debug') {
+	function handleTabChange(tab: 'controls' | 'files' | 'samples' | 'settings' | 'docs' | 'debug') {
 		saveScrollPosition(activeTab);
 		settingsStore.setActiveTab(tab);
 		// Restore scroll after DOM updates
@@ -128,6 +131,13 @@
 			</button>
 			<button
 				class="tab"
+				class:active={activeTab === 'files'}
+				onclick={() => handleTabChange('files')}
+			>
+				Files
+			</button>
+			<button
+				class="tab"
 				class:active={activeTab === 'samples'}
 				onclick={() => handleTabChange('samples')}
 			>
@@ -162,6 +172,10 @@
 			{#if activeTab === 'controls'}
 				<div class="tab-content" bind:this={controlsScrollEl}>
 					<ParamsPanel />
+				</div>
+			{:else if activeTab === 'files'}
+				<div class="tab-content" bind:this={filesScrollEl}>
+					<FilesPanel />
 				</div>
 			{:else if activeTab === 'samples'}
 				<div class="tab-content" bind:this={samplesScrollEl}>

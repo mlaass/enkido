@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 #include "sequence.hpp"  // for OutputEvents
 
@@ -62,6 +63,12 @@ struct MidiQueueState {
     // Default OutputEvents capacity. Held events stay in `output` across
     // blocks (see op_midi_query); 4096 entries covers ~hours of normal play.
     static constexpr std::uint32_t DEFAULT_OUTPUT_CAPACITY = 4096u;
+
+    // PRD §7.4: default pending-CC scratch buffer capacity. The audio thread
+    // appends here in advance_file_cc_into_output; the host drains after
+    // each process_block. 256 entries comfortably covers any realistic
+    // per-block CC density (~16-CC sweep per block at 48 kHz / 128 samples).
+    static constexpr std::uint32_t DEFAULT_PENDING_CC_CAPACITY = 256u;
 
     // SPSC ring — single producer (host MIDI callback / test thread) writes
     // through `push_midi_event`; single consumer (audio thread) drains in
@@ -137,6 +144,80 @@ struct MidiQueueState {
     MonoHeldNote mono_held_stack[MONO_STACK_CAPACITY];
     std::uint8_t mono_stack_depth = 0;
 
+    // PRD §7.4: scratch buffer for CC/PB/AT events the file scan unpacks
+    // into during the current block. The host drains via
+    // `VM::drain_pending_file_ccs` after `process_block` and dispatches each
+    // entry through the same route table the live-device path uses.
+    //
+    // Field layout matches the (status, d1, d2, channel) tuple
+    // `dispatch_midi_cc` reads — that lets the drain call into the existing
+    // dispatcher without re-encoding. `channel` is 0..15 (zero-indexed);
+    // the dispatcher adds +1 itself when matching against MidiCcRoute.
+    struct PendingCc {
+        std::uint8_t status  = 0;
+        std::uint8_t d1      = 0;
+        std::uint8_t d2      = 0;
+        std::uint8_t channel = 0;
+    };
+    PendingCc*    pending_ccs          = nullptr;
+    std::uint32_t pending_cc_capacity  = 0;
+    std::uint32_t num_pending_ccs      = 0;
+    std::uint64_t file_cc_overflow_count = 0;
+
+    // PRD prd-midi-input §7.3: hot-swap held-note migration. Set by
+    // `VM::init_midi_queue_state` when a re-init detects this state already
+    // has arena-backed storage AND still has held notes. `op_midi_query`
+    // checks the flag at the start of the next block, walks
+    // `held_note_to_event[]`, and re-emits synthetic note-ons at the new
+    // block's beat position so a downstream POLY/SF re-allocates voices
+    // sample-accurately rather than restarting silently.
+    bool pending_held_note_remigration = false;
+
+    // PRD §7.3: last name_or_path passed to init_midi_queue_state. The
+    // file-mode play head is only preserved across re-init when the new
+    // call's URI matches this one; otherwise the head resets to 0. Held in
+    // a std::string (heap-allocated; the host thread runs the init path).
+    std::string last_file_uri;
+
+    [[nodiscard]] bool has_any_held_notes() const noexcept {
+        for (std::int32_t v : held_note_to_event) {
+            if (v >= 0) return true;
+        }
+        return false;
+    }
+
+    // PRD §7.3 GC-sweep fallback. Walk `held_note_to_event[]` and patch each
+    // matching event's `duration` so its note-off lands at `now_beats`. Used
+    // when a `midi()` call disappears entirely from the program: downstream
+    // consumers that the hot-swap preserved see finite durations and run
+    // their normal note-off path instead of stuck-voice sentinel readings.
+    // Single-sample-floor mirrors the same-block patch in
+    // drain_live_events_into_output so POLY/SF still fire the gate-off when
+    // the migration runs at the exact block boundary.
+    void release_all_held(float now_beats, float samples_per_beat) noexcept {
+        constexpr float SENTINEL_THRESHOLD = HELD_DURATION_SENTINEL * 0.5f;
+        for (std::int32_t& idx_ref : held_note_to_event) {
+            const std::int32_t idx = idx_ref;
+            if (idx < 0 ||
+                static_cast<std::uint32_t>(idx) >= output.num_events) {
+                idx_ref = -1;
+                continue;
+            }
+            auto& evt = output.events[idx];
+            if (evt.duration < SENTINEL_THRESHOLD) {
+                idx_ref = -1;
+                continue;
+            }
+            float dur = now_beats - evt.time;
+            if (!(dur > 0.0f)) {
+                dur = (samples_per_beat > 0.0f) ? (1.0f / samples_per_beat)
+                                                : 1.0e-6f;
+            }
+            evt.duration = dur;
+            idx_ref = -1;
+        }
+    }
+
     MidiQueueState() {
         for (std::int32_t& v : held_note_to_event) v = -1;
     }
@@ -165,7 +246,13 @@ struct MidiQueueState {
           output(other.output),
           cycle_length(other.cycle_length),
           midi_overflow_count(other.midi_overflow_count),
-          mono_stack_depth(other.mono_stack_depth)
+          mono_stack_depth(other.mono_stack_depth),
+          pending_ccs(other.pending_ccs),
+          pending_cc_capacity(other.pending_cc_capacity),
+          num_pending_ccs(other.num_pending_ccs),
+          file_cc_overflow_count(other.file_cc_overflow_count),
+          pending_held_note_remigration(other.pending_held_note_remigration),
+          last_file_uri(std::move(other.last_file_uri))
     {
         for (std::size_t i = 0; i < 128; ++i) {
             held_note_to_event[i] = other.held_note_to_event[i];
@@ -194,6 +281,12 @@ struct MidiQueueState {
             cycle_length         = other.cycle_length;
             midi_overflow_count  = other.midi_overflow_count;
             mono_stack_depth     = other.mono_stack_depth;
+            pending_ccs           = other.pending_ccs;
+            pending_cc_capacity   = other.pending_cc_capacity;
+            num_pending_ccs       = other.num_pending_ccs;
+            file_cc_overflow_count = other.file_cc_overflow_count;
+            pending_held_note_remigration = other.pending_held_note_remigration;
+            last_file_uri        = std::move(other.last_file_uri);
             for (std::size_t i = 0; i < 128; ++i) {
                 held_note_to_event[i] = other.held_note_to_event[i];
             }
