@@ -146,6 +146,43 @@ describe('WorkerShareProvider.reportShare', () => {
 		const provider = new WorkerShareProvider({ apiBase: 'http://localhost:8787', fetchImpl });
 		await expect(provider.reportShare('aaaaaaaa')).rejects.toThrow(WorkerShareApiError);
 	});
+
+	it('omits reason from the wire body when not provided', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue(jsonRes(200, { ok: true }));
+		const provider = new WorkerShareProvider({ apiBase: 'http://localhost:8787', fetchImpl });
+		await provider.reportShare('aaaaaaaa');
+		const [, init] = fetchImpl.mock.calls[0];
+		// JSON.stringify drops `reason: undefined`, so the wire body is { slug }.
+		expect(JSON.parse(init.body)).toEqual({ slug: 'aaaaaaaa' });
+	});
+
+	it('throws WorkerShareApiError with code "not_found" on a 404', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue(jsonRes(404, { error: 'not_found' }));
+		const provider = new WorkerShareProvider({ apiBase: 'http://localhost:8787', fetchImpl });
+		try {
+			await provider.reportShare('aaaaaaaa');
+			expect.unreachable('expected throw');
+		} catch (e) {
+			expect(e).toBeInstanceOf(WorkerShareApiError);
+			expect((e as WorkerShareApiError).code).toBe('not_found');
+			expect((e as WorkerShareApiError).status).toBe(404);
+		}
+	});
+
+	it('throws WorkerShareApiError with code "reason_too_long" on a 400', async () => {
+		const fetchImpl = vi.fn().mockResolvedValue(
+			jsonRes(400, { error: 'reason_too_long', limit: 500 })
+		);
+		const provider = new WorkerShareProvider({ apiBase: 'http://localhost:8787', fetchImpl });
+		try {
+			await provider.reportShare('aaaaaaaa', 'r'.repeat(600));
+			expect.unreachable('expected throw');
+		} catch (e) {
+			expect(e).toBeInstanceOf(WorkerShareApiError);
+			expect((e as WorkerShareApiError).code).toBe('reason_too_long');
+			expect((e as WorkerShareApiError).status).toBe(400);
+		}
+	});
 });
 
 describe('WorkerShareProvider draft delegation', () => {

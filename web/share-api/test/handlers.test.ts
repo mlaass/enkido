@@ -246,14 +246,156 @@ describe('OPTIONS preflight', () => {
 	});
 });
 
-describe('POST /report (Phase 3 stub)', () => {
-	it('returns 501 until Phase 3 lands', async () => {
+async function postReport(body: unknown, extra: RequestInit = {}): Promise<Response> {
+	return callWorker('/report', {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', ...(extra.headers as Record<string, string> ?? {}) },
+		body: JSON.stringify(body),
+		...extra
+	});
+}
+
+async function createPatch(code = 'sin(440) |> out(@, @)'): Promise<string> {
+	const res = await postShare({ code });
+	const { slug } = (await res.json()) as { slug: string };
+	return slug;
+}
+
+describe('POST /report', () => {
+	beforeEach(resetDb);
+
+	it('returns 200 + { ok: true } for an existing slug and flags the row', async () => {
+		const slug = await createPatch();
+
+		const res = await postReport({ slug });
+		expect(res.status).toBe(200);
+		const data = (await res.json()) as { ok: boolean };
+		expect(data.ok).toBe(true);
+
+		const row = await env.DB
+			.prepare('SELECT reported_at, report_count FROM patches WHERE slug = ?')
+			.bind(slug)
+			.first<{ reported_at: number | null; report_count: number }>();
+		expect(row?.reported_at).toBeTypeOf('number');
+		expect(row?.reported_at).toBeGreaterThan(0);
+		expect(row?.report_count).toBe(1);
+	});
+
+	it('preserves the first report timestamp across repeated reports', async () => {
+		const slug = await createPatch();
+
+		await postReport({ slug });
+		const after1 = await env.DB
+			.prepare('SELECT reported_at, report_count FROM patches WHERE slug = ?')
+			.bind(slug)
+			.first<{ reported_at: number; report_count: number }>();
+		expect(after1?.report_count).toBe(1);
+
+		// Wait long enough that unixepoch() * 1000 would tick if reported_at
+		// were recomputed.
+		await new Promise((r) => setTimeout(r, 15));
+
+		await postReport({ slug });
+		const after2 = await env.DB
+			.prepare('SELECT reported_at, report_count FROM patches WHERE slug = ?')
+			.bind(slug)
+			.first<{ reported_at: number; report_count: number }>();
+		expect(after2?.report_count).toBe(2);
+		expect(after2?.reported_at).toBe(after1?.reported_at);
+	});
+
+	it('returns 404 for an unknown slug', async () => {
+		const res = await postReport({ slug: newSlug() });
+		expect(res.status).toBe(404);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('not_found');
+	});
+
+	it('returns 404 for a soft-deleted slug and does not mutate the row', async () => {
+		const slug = await createPatch();
+		await env.DB
+			.prepare('UPDATE patches SET deleted_at = unixepoch()*1000 WHERE slug = ?')
+			.bind(slug)
+			.run();
+
+		const res = await postReport({ slug });
+		expect(res.status).toBe(404);
+
+		const row = await env.DB
+			.prepare('SELECT reported_at, report_count FROM patches WHERE slug = ?')
+			.bind(slug)
+			.first<{ reported_at: number | null; report_count: number }>();
+		expect(row?.reported_at).toBeNull();
+		expect(row?.report_count).toBe(0);
+	});
+
+	it('rejects a malformed slug', async () => {
+		const res = await postReport({ slug: 'not-a-slug!' });
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('invalid_slug');
+	});
+
+	it('rejects a missing slug field', async () => {
+		const res = await postReport({});
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('invalid_slug');
+	});
+
+	it('rejects a non-JSON body', async () => {
 		const res = await callWorker('/report', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ slug: newSlug() })
+			body: '{not json'
 		});
-		expect(res.status).toBe(501);
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('invalid_json');
+	});
+
+	it('rejects a JSON array body', async () => {
+		const res = await callWorker('/report', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify([])
+		});
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('invalid_body');
+	});
+
+	it('accepts a reason at exactly 500 chars', async () => {
+		const slug = await createPatch();
+		const reason = 'r'.repeat(LIMITS.MAX_REASON_CHARS);
+		const res = await postReport({ slug, reason });
+		expect(res.status).toBe(200);
+	});
+
+	it('rejects a reason over 500 chars after trim', async () => {
+		const slug = await createPatch();
+		const reason = '  ' + 'r'.repeat(LIMITS.MAX_REASON_CHARS + 1) + '  ';
+		const res = await postReport({ slug, reason });
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string; limit: number };
+		expect(data.error).toBe('reason_too_long');
+		expect(data.limit).toBe(LIMITS.MAX_REASON_CHARS);
+	});
+
+	it('accepts a missing or null reason', async () => {
+		const slug = await createPatch();
+		const res1 = await postReport({ slug });
+		expect(res1.status).toBe(200);
+		const res2 = await postReport({ slug, reason: null });
+		expect(res2.status).toBe(200);
+	});
+
+	it('rejects a reason of the wrong type', async () => {
+		const slug = await createPatch();
+		const res = await postReport({ slug, reason: 42 });
+		expect(res.status).toBe(400);
+		const data = (await res.json()) as { error: string };
+		expect(data.error).toBe('reason_too_long');
 	});
 });
 

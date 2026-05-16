@@ -15,6 +15,7 @@ export interface Env extends CorsEnv {
 const MAX_CODE_BYTES = 16384;
 const MAX_TITLE_CHARS = 200;
 const MAX_DESC_CHARS = 500;
+const MAX_REASON_CHARS = 500;
 const SLUG_RETRIES = 3;
 
 function jsonResponse(body: unknown, init: ResponseInit & { headers: Record<string, string> }): Response {
@@ -36,6 +37,17 @@ function sanitizeDescription(raw: unknown): string | null {
 	const trimmed = raw.trim();
 	if (!trimmed) return null;
 	return trimmed.slice(0, MAX_DESC_CHARS);
+}
+
+type SanitizedReason = { ok: true; value: string | null } | { ok: false };
+
+function sanitizeReason(raw: unknown): SanitizedReason {
+	if (raw === undefined || raw === null) return { ok: true, value: null };
+	if (typeof raw !== 'string') return { ok: false };
+	const cleaned = raw.replace(/[\r\n\t]/g, ' ').trim();
+	if (!cleaned) return { ok: true, value: null };
+	if (cleaned.length > MAX_REASON_CHARS) return { ok: false };
+	return { ok: true, value: cleaned };
 }
 
 function codeByteLength(code: string): number {
@@ -183,10 +195,48 @@ export async function handleHtmlGet(slug: string, env: Env, selfOrigin: string):
 	});
 }
 
-export async function handleReport(_req: Request, _env: Env, cors: Record<string, string>): Promise<Response> {
-	// Stub for Phase 3. Routing is wired so the endpoint exists; the body of
-	// the handler is intentionally a 501 until Phase 3 lands.
-	return jsonResponse({ error: 'not_implemented' }, { status: 501, headers: cors });
+export async function handleReport(req: Request, env: Env, cors: Record<string, string>): Promise<Response> {
+	let body: unknown;
+	try {
+		body = await req.json();
+	} catch {
+		return jsonResponse({ error: 'invalid_json' }, { status: 400, headers: cors });
+	}
+	if (!body || typeof body !== 'object' || Array.isArray(body)) {
+		return jsonResponse({ error: 'invalid_body' }, { status: 400, headers: cors });
+	}
+	const b = body as Record<string, unknown>;
+
+	const slug = typeof b.slug === 'string' ? b.slug : '';
+	if (!isValidSlug(slug)) {
+		return jsonResponse({ error: 'invalid_slug' }, { status: 400, headers: cors });
+	}
+
+	const reason = sanitizeReason(b.reason);
+	if (!reason.ok) {
+		return jsonResponse(
+			{ error: 'reason_too_long', limit: MAX_REASON_CHARS },
+			{ status: 400, headers: cors }
+		);
+	}
+
+	// COALESCE preserves the FIRST report's timestamp so the queue stays sorted
+	// by when the issue was originally surfaced, not by the most recent click.
+	const result = await env.DB.prepare(
+		`UPDATE patches
+		 SET reported_at = COALESCE(reported_at, unixepoch() * 1000),
+		     report_count = report_count + 1
+		 WHERE slug = ? AND deleted_at IS NULL`
+	).bind(slug).run();
+
+	if ((result.meta?.changes ?? 0) !== 1) {
+		return jsonResponse({ error: 'not_found' }, { status: 404, headers: cors });
+	}
+
+	const ipHash = await hashClientIp(req);
+	console.log('[report] slug=%s ip_hash=%s reason=%s', slug, ipHash ?? '', reason.value ?? '');
+
+	return jsonResponse({ ok: true }, { status: 200, headers: cors });
 }
 
 async function hashClientIp(req: Request): Promise<string | null> {
@@ -202,7 +252,7 @@ async function hashClientIp(req: Request): Promise<string | null> {
 }
 
 // Re-export limits so tests can assert against the same values.
-export const LIMITS = { MAX_CODE_BYTES, MAX_TITLE_CHARS, MAX_DESC_CHARS, SLUG_RETRIES } as const;
+export const LIMITS = { MAX_CODE_BYTES, MAX_TITLE_CHARS, MAX_DESC_CHARS, MAX_REASON_CHARS, SLUG_RETRIES } as const;
 
 // Re-export for tests
 export { corsHeaders };

@@ -5,18 +5,39 @@
 	import SidePanel from '$components/Panel/SidePanel.svelte';
 	import Logo from '$components/Logo/Logo.svelte';
 	import ShareDialog from '$components/ShareDialog.svelte';
+	import ReportDialog from '$components/ReportDialog.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
 	import { settingsStore } from '$stores/settings.svelte';
 	import { draftsStore } from '$stores/drafts.svelte';
 	import { getProvider } from '$lib/ide/storage';
-	import { Eye, Settings, BookmarkPlus, Share2, GitFork } from 'lucide-svelte';
+	import { hasReported } from '$lib/ide/share/reported-slugs';
+	import { Eye, Settings, BookmarkPlus, Share2, GitFork, Flag } from 'lucide-svelte';
 
 	let panelPosition = $derived(settingsStore.panelPosition);
-	let activeIsPhantom = $derived(
-		draftsStore.drafts.find((d) => d.id === draftsStore.activeTabId)?.isPhantom ?? false
+	const provider = getProvider();
+	let activeDraft = $derived(draftsStore.activeDraft);
+	let activeIsPhantom = $derived(activeDraft?.isPhantom ?? false);
+	// Only slug-phantoms are reportable. Inline phantoms (phantomSlug === null)
+	// have no server identity to flag — PRD §3.2 non-goal 6.
+	let activePhantomSlug = $derived(
+		activeIsPhantom ? (activeDraft?.phantomSlug ?? null) : null
 	);
-	const canShare = typeof getProvider().share === 'function';
+	const canShare = typeof provider.share === 'function';
+	const canReport = typeof provider.reportShare === 'function';
+	let canReportActive = $derived(canReport && activePhantomSlug !== null);
+
 	let shareOpen = $state(false);
+	let reportOpen = $state(false);
+
+	// Header toast — sibling of the modal stack so it can announce results
+	// after a dialog dismisses (e.g. "Reported.", "Already reported").
+	let headerToast = $state<string | null>(null);
+	let headerToastTimer: ReturnType<typeof setTimeout> | null = null;
+	function showHeaderToast(msg: string) {
+		headerToast = msg;
+		if (headerToastTimer) clearTimeout(headerToastTimer);
+		headerToastTimer = setTimeout(() => (headerToast = null), 1800);
+	}
 
 	function openSettings() {
 		settingsStore.setPanelCollapsed(false);
@@ -24,7 +45,7 @@
 	}
 
 	function onKeep() {
-		const active = draftsStore.drafts.find((d) => d.id === draftsStore.activeTabId);
+		const active = draftsStore.activeDraft;
 		if (!active) return;
 		const suggested = active.name.startsWith('From inline link') ? 'Inline patch' : `Fork of ${active.name}`;
 		const name = window.prompt('Name this patch:', suggested);
@@ -34,6 +55,21 @@
 
 	function openShare() {
 		shareOpen = true;
+	}
+
+	function onReportClick() {
+		const slug = activePhantomSlug;
+		if (!slug) return;
+		if (hasReported(slug)) {
+			showHeaderToast('Already reported');
+			return;
+		}
+		reportOpen = true;
+	}
+
+	function onReported() {
+		reportOpen = false;
+		showHeaderToast('Reported.');
 	}
 </script>
 
@@ -63,6 +99,16 @@
 						<span>Fork</span>
 					</button>
 				{/if}
+				{#if canReportActive}
+					<button
+						class="icon-button"
+						title="Report this patch to operators"
+						aria-label="Report patch"
+						onclick={onReportClick}
+					>
+						<Flag size={18} />
+					</button>
+				{/if}
 			{:else}
 				<button
 					class="share-button"
@@ -88,6 +134,18 @@
 
 	{#if shareOpen}
 		<ShareDialog onClose={() => (shareOpen = false)} />
+	{/if}
+
+	{#if reportOpen && activePhantomSlug}
+		<ReportDialog
+			slug={activePhantomSlug}
+			onClose={() => (reportOpen = false)}
+			onReported={onReported}
+		/>
+	{/if}
+
+	{#if headerToast}
+		<div class="header-toast" role="status">{headerToast}</div>
 	{/if}
 
 	<main class="main" class:panel-left={panelPosition === 'left'} class:panel-right={panelPosition === 'right'}>
@@ -204,5 +262,20 @@
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
+	}
+
+	.header-toast {
+		position: fixed;
+		left: 50%;
+		bottom: 24px;
+		transform: translateX(-50%);
+		padding: 6px 12px;
+		background: var(--text-primary);
+		color: var(--bg-primary);
+		font-size: 12px;
+		border-radius: 4px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+		z-index: 1100;
+		pointer-events: none;
 	}
 </style>
