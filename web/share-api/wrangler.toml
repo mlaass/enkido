@@ -1,0 +1,38 @@
+name = "nkido-share-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Production env vars. Override per environment.
+[vars]
+ALLOW_ORIGIN = "https://live.nkido.cc"
+LIVE_ORIGIN = "https://live.nkido.cc"
+# Dev pattern is unset in production. In dev, set via `wrangler dev --var
+# ALLOW_ORIGIN_DEV_PATTERN='^http://localhost:\d+$'` or in a wrangler.dev.toml.
+
+# D1 binding — uncomment and fill in `database_id` after `wrangler d1 create
+# nkido-shares-prod` (see README §Deploy).
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "nkido-shares-prod"
+# database_id = "REPLACE_ME"
+
+# Local dev D1 — automatically created by Miniflare on first `wrangler dev`.
+# No `database_id` needed for local mode.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nkido-shares-dev"
+database_id = "local-dev-placeholder"
+
+# Rate-limit binding — only valid in deployed Workers, ignored by `wrangler
+# dev`. Uncomment when deploying. Configured as 10 requests / 60s / IP, applied
+# to POST /share inside the Worker.
+# [[unsafe.bindings]]
+# name = "RATE_LIMITER"
+# type = "ratelimit"
+# namespace_id = "1"
+# simple = { limit = 10, period = 60 }
+
+[observability]
+enabled = true
