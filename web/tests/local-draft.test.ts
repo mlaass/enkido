@@ -138,4 +138,22 @@ describe('LocalDraftProvider — recently visited', () => {
 		const p = new LocalDraftProvider();
 		expect(await p.listRecentlyVisited()).toEqual([]);
 	});
+
+	it('forgetVisited removes the specific slug', async () => {
+		const p = new LocalDraftProvider();
+		await p.recordVisited('aaa', 'a');
+		await p.recordVisited('bbb', 'b');
+		await p.recordVisited('ccc', 'c');
+		await p.forgetVisited('bbb');
+		const list = await p.listRecentlyVisited();
+		expect(list).toHaveLength(2);
+		expect(list.find((v) => v.slug === 'bbb')).toBeUndefined();
+	});
+
+	it('forgetVisited is a no-op when slug not present', async () => {
+		const p = new LocalDraftProvider();
+		await p.recordVisited('aaa', 'a');
+		await p.forgetVisited('zzz');
+		expect(await p.listRecentlyVisited()).toHaveLength(1);
+	});
 });

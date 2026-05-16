@@ -64,6 +64,9 @@ export class WorkerShareProvider implements StorageProvider {
 	recordVisited(slug: string, title: string | null): Promise<void> {
 		return this.local.recordVisited(slug, title);
 	}
+	forgetVisited(slug: string): Promise<void> {
+		return this.local.forgetVisited(slug);
+	}
 	listRecentlyVisited(): Promise<RecentlyVisited[]> {
 		return this.local.listRecentlyVisited();
 	}

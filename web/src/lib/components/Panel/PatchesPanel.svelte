@@ -1,16 +1,22 @@
 <script lang="ts">
-	import { Plus, Trash2, Pencil, Save, X } from 'lucide-svelte';
+	import { Plus, Trash2, Pencil, Save, X, Share2 } from 'lucide-svelte';
 	import { draftsStore as drafts } from '$stores/drafts.svelte';
-	import type { DraftSummary } from '$lib/ide/storage/types';
+	import { getProvider } from '$lib/ide/storage';
+	import type { DraftSummary, RecentlyVisited } from '$lib/ide/storage/types';
 
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
+	let loadingSlug = $state<string | null>(null);
+	let visitError = $state<string | null>(null);
 
 	let myDrafts = $derived(
 		drafts.drafts
 			.slice()
+			.filter((d) => !d.isPhantom)
 			.sort((a, b) => b.updatedAt - a.updatedAt)
 	);
+
+	let recentlyVisited = $derived(drafts.recentlyVisited);
 
 	function startRename(d: DraftSummary) {
 		renamingId = d.id;
@@ -24,9 +30,7 @@
 		renamingId = null;
 	}
 
-	function cancelRename() {
-		renamingId = null;
-	}
+	function cancelRename() { renamingId = null; }
 
 	function onRenameKey(e: KeyboardEvent) {
 		if (e.key === 'Enter') {
@@ -40,18 +44,50 @@
 
 	function onDelete(d: DraftSummary, e: MouseEvent) {
 		e.stopPropagation();
-		// guard: confirm destructive action
-		const label = d.isPhantom ? `phantom "${d.name}"` : `"${d.name}"`;
-		const ok = window.confirm(`Delete ${label}? This cannot be undone.`);
+		const ok = window.confirm(`Delete "${d.name}"? This cannot be undone.`);
 		if (ok) drafts.deleteDraft(d.id);
 	}
 
-	function onOpen(d: DraftSummary) {
-		drafts.openTab(d.id);
+	function onOpen(d: DraftSummary) { drafts.openTab(d.id); }
+
+	function onNew() { drafts.createDraft({}); }
+
+	async function onOpenVisited(entry: RecentlyVisited) {
+		// If a local slug-phantom already exists, just focus it — no refetch.
+		const existing = drafts.findSlugPhantom(entry.slug);
+		if (existing) {
+			drafts.openTab(existing.id);
+			return;
+		}
+		const provider = getProvider();
+		if (typeof provider.fetchShare !== 'function') {
+			visitError = 'Sharing is not configured on this build.';
+			return;
+		}
+		loadingSlug = entry.slug;
+		visitError = null;
+		try {
+			const share = await provider.fetchShare(entry.slug);
+			if (!share) {
+				visitError = `Patch ${entry.slug} no longer exists. Removing from recent.`;
+				await drafts.forgetVisited(entry.slug);
+				return;
+			}
+			drafts.openSlugPhantomTab({ slug: share.slug, code: share.code, title: share.title });
+			drafts.recordVisited(share.slug, share.title).catch(() => {});
+		} catch (e) {
+			visitError = `Couldn't load /p/${entry.slug}: ${(e as Error).message}`;
+		} finally {
+			loadingSlug = null;
+		}
 	}
 
-	function onNew() {
-		drafts.createDraft({});
+	function onForget(entry: RecentlyVisited, e: MouseEvent) {
+		e.stopPropagation();
+		const ok = window.confirm(`Forget /p/${entry.slug}? Any local edits will be deleted.`);
+		if (!ok) return;
+		drafts.deleteSlugPhantom(entry.slug);
+		drafts.forgetVisited(entry.slug);
 	}
 
 	function relativeTime(ms: number): string {
@@ -60,6 +96,10 @@
 		if (diff < 3_600_000) return Math.floor(diff / 60_000) + 'm ago';
 		if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + 'h ago';
 		return Math.floor(diff / 86_400_000) + 'd ago';
+	}
+
+	function hasLocalEdits(slug: string): boolean {
+		return drafts.findSlugPhantom(slug) !== null;
 	}
 </script>
 
@@ -77,11 +117,7 @@
 		{:else}
 			<ul class="list">
 				{#each myDrafts as d (d.id)}
-					<li
-						class="row"
-						class:active={d.id === drafts.activeTabId}
-						class:phantom={d.isPhantom}
-					>
+					<li class="row" class:active={d.id === drafts.activeTabId}>
 						{#if renamingId === d.id}
 							<input
 								class="rename-input"
@@ -99,10 +135,9 @@
 						{:else}
 							<button
 								class="row-main"
-								title={(d.isPhantom ? 'Phantom: ' : '') + d.name + ' — last edit ' + relativeTime(d.updatedAt)}
+								title={d.name + ' — last edit ' + relativeTime(d.updatedAt)}
 								onclick={() => onOpen(d)}
 							>
-								{#if d.isPhantom}<span class="dirty-dot">●</span>{/if}
 								<span class="name">{d.name}</span>
 								<span class="time">{relativeTime(d.updatedAt)}</span>
 							</button>
@@ -133,9 +168,42 @@
 		<header class="section-header">
 			<span class="section-title">Recently visited</span>
 		</header>
-		<div class="empty muted">
-			Worker shares (coming in Phase 2) will appear here.
-		</div>
+		{#if recentlyVisited.length === 0}
+			<div class="empty muted">
+				Slug shares you visit will appear here.
+			</div>
+		{:else}
+			<ul class="list">
+				{#each recentlyVisited as entry (entry.slug)}
+					<li class="row" class:active={drafts.activeTabId === 'slug:' + entry.slug}>
+						<button
+							class="row-main"
+							title={`/p/${entry.slug} — visited ${relativeTime(entry.visitedAt)}`}
+							disabled={loadingSlug === entry.slug}
+							onclick={() => onOpenVisited(entry)}
+						>
+							{#if hasLocalEdits(entry.slug)}<span class="dirty-dot" title="Local edits">●</span>{/if}
+							<Share2 size={11} strokeWidth={2} class="row-icon" />
+							<span class="name">
+								{entry.title?.trim() || `/p/${entry.slug}`}
+							</span>
+							<span class="time">{loadingSlug === entry.slug ? '…' : relativeTime(entry.visitedAt)}</span>
+						</button>
+						<button
+							class="icon-btn row-action"
+							title="Forget"
+							aria-label="Forget /p/{entry.slug}"
+							onclick={(e) => onForget(entry, e)}
+						>
+							<X size={12} strokeWidth={2.5} />
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		{#if visitError}
+			<div class="error">{visitError}</div>
+		{/if}
 	</section>
 </div>
 
@@ -205,17 +273,11 @@
 		transition: background-color var(--transition-fast);
 	}
 
-	.row:hover {
-		background-color: var(--bg-tertiary);
-	}
+	.row:hover { background-color: var(--bg-tertiary); }
 
 	.row.active {
 		background-color: var(--bg-tertiary);
 		box-shadow: inset 2px 0 0 var(--accent-primary);
-	}
-
-	.row.phantom .name {
-		font-style: italic;
 	}
 
 	.row-main {
@@ -234,10 +296,17 @@
 		cursor: pointer;
 	}
 
+	.row-main:disabled { opacity: 0.6; cursor: progress; }
+
 	.dirty-dot {
 		color: var(--accent-warning);
 		font-size: 12px;
 		line-height: 1;
+		flex-shrink: 0;
+	}
+
+	:global(.row-icon) {
+		color: var(--text-muted);
 		flex-shrink: 0;
 	}
 
@@ -255,14 +324,10 @@
 		flex-shrink: 0;
 	}
 
-	.row-action {
-		opacity: 0;
-	}
+	.row-action { opacity: 0; }
 
 	.row:hover .row-action,
-	.row.active .row-action {
-		opacity: 1;
-	}
+	.row.active .row-action { opacity: 1; }
 
 	.rename-input {
 		flex: 1;
@@ -282,7 +347,11 @@
 		font-style: italic;
 	}
 
-	.empty.muted {
-		opacity: 0.7;
+	.empty.muted { opacity: 0.7; }
+
+	.error {
+		padding: var(--spacing-xs) var(--spacing-md);
+		font-size: 11px;
+		color: var(--accent-danger, #c0392b);
 	}
 </style>

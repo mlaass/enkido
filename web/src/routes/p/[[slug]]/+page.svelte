@@ -83,11 +83,9 @@
 				code: share.code,
 				title: share.title
 			});
-			if (typeof provider.recordVisited === 'function') {
-				provider.recordVisited(share.slug, share.title).catch(() => {
-					/* recording is best-effort; never block the viewer flow */
-				});
-			}
+			draftsStore.recordVisited(share.slug, share.title).catch(() => {
+				/* recording is best-effort; never block the viewer flow */
+			});
 			state = { kind: 'redirect-home' };
 			await goto('/', { replaceState: true });
 		} catch (e) {

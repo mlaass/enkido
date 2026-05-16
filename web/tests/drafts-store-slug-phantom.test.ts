@@ -141,6 +141,26 @@ describe('deleteSlugPhantom', () => {
 	});
 });
 
+describe('recentlyVisited reactivity', () => {
+	it('starts empty, populates after recordVisited, prunes after forgetVisited', async () => {
+		const store = await loadFreshStore();
+		// initial: empty (the hydration promise resolves on the microtask queue;
+		// give it a tick by awaiting any pending microtask)
+		await Promise.resolve();
+		expect(store.recentlyVisited).toEqual([]);
+
+		await store.recordVisited('aaaaaaaa', 'first');
+		await store.recordVisited('bbbbbbbb', 'second');
+
+		expect(store.recentlyVisited).toHaveLength(2);
+		expect(store.recentlyVisited[0].slug).toBe('bbbbbbbb');
+
+		await store.forgetVisited('aaaaaaaa');
+		expect(store.recentlyVisited).toHaveLength(1);
+		expect(store.recentlyVisited[0].slug).toBe('bbbbbbbb');
+	});
+});
+
 describe('keepActiveAsNamed on a slug phantom', () => {
 	it('promotes to a named draft and clears the phantom-slug binding', async () => {
 		const store = await loadFreshStore();

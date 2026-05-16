@@ -13,7 +13,7 @@
  */
 
 import { LocalDraftProvider } from '$lib/ide/storage/local-draft';
-import type { DraftFull, DraftSummary } from '$lib/ide/storage/types';
+import type { DraftFull, DraftSummary, RecentlyVisited } from '$lib/ide/storage/types';
 
 const OPEN_TABS_KEY = 'nkido-open-tabs';
 const ACTIVE_TAB_KEY = 'nkido-active-tab';
@@ -90,6 +90,8 @@ interface DraftsState {
 	activeTabId: string | null;
 	/** The active draft's full content (mirrored for fast editor access). */
 	activeCode: string;
+	/** Reactive mirror of the LocalDraftProvider's recently-visited list. */
+	recentlyVisited: RecentlyVisited[];
 }
 
 function createDraftsStore() {
@@ -102,7 +104,8 @@ function createDraftsStore() {
 		drafts: [],
 		openTabIds: [],
 		activeTabId: null,
-		activeCode: DEFAULT_CODE
+		activeCode: DEFAULT_CODE,
+		recentlyVisited: []
 	});
 
 	let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -208,6 +211,10 @@ function createDraftsStore() {
 		writeOpenTabs(open);
 		writeActiveTab(active);
 		syncSummariesFromAllDrafts();
+		// Hydrate recently-visited from localStorage (async, fire-and-forget).
+		provider.listRecentlyVisited().then((list) => {
+			state.recentlyVisited = list;
+		}).catch(() => { /* empty list is fine */ });
 	}
 
 	// Browser- and test-only init: skip when localStorage is unavailable
@@ -395,6 +402,16 @@ function createDraftsStore() {
 		return id;
 	}
 
+	async function recordVisited(slug: string, title: string | null): Promise<void> {
+		await provider.recordVisited(slug, title);
+		state.recentlyVisited = await provider.listRecentlyVisited();
+	}
+
+	async function forgetVisited(slug: string): Promise<void> {
+		await provider.forgetVisited(slug);
+		state.recentlyVisited = await provider.listRecentlyVisited();
+	}
+
 	/** True if a slug-phantom (with local edits or not) already exists. */
 	function findSlugPhantom(slug: string): DraftFull | null {
 		return allDrafts.find((d) => d.id === 'slug:' + slug && d.isPhantom) ?? null;
@@ -452,6 +469,7 @@ function createDraftsStore() {
 		get activeTabId() { return state.activeTabId; },
 		get activeCode() { return state.activeCode; },
 		get activeDraft() { return getActive(); },
+		get recentlyVisited() { return state.recentlyVisited; },
 
 		setActive,
 		openTab,
@@ -465,6 +483,8 @@ function createDraftsStore() {
 		findSlugPhantom,
 		deleteSlugPhantom,
 		keepActiveAsNamed,
+		recordVisited,
+		forgetVisited,
 		flushPendingSave
 	};
 }

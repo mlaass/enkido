@@ -63,5 +63,6 @@ export interface StorageProvider {
 	reportShare?(slug: string, reason?: string): Promise<void>;
 
 	recordVisited?(slug: string, title: string | null): Promise<void>;
+	forgetVisited?(slug: string): Promise<void>;
 	listRecentlyVisited?(): Promise<RecentlyVisited[]>;
 }

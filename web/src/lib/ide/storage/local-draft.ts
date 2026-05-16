@@ -129,6 +129,10 @@ export class LocalDraftProvider implements StorageProvider {
 		writeVisited(list.slice(0, RECENTLY_VISITED_CAP));
 	}
 
+	async forgetVisited(slug: string): Promise<void> {
+		writeVisited(readVisited().filter((v) => v.slug !== slug));
+	}
+
 	async listRecentlyVisited(): Promise<RecentlyVisited[]> {
 		return readVisited();
 	}
