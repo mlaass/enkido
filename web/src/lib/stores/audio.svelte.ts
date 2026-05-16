@@ -396,6 +396,10 @@ function createAudioEngine() {
 	let analyserNode: AnalyserNode | null = null;
 	let wasmJsCode: string | null = null;
 	let wasmBinary: ArrayBuffer | null = null;
+	// Memoizes the in-flight bootstrap so concurrent callers (eager
+	// onMount init + a racing file drop) await the same promise instead
+	// of seeing workletNode still null and bailing out.
+	let initPromise: Promise<void> | null = null;
 
 	// Currently connected live-input source (audio-input PRD §4.5).
 	// Null = no input attached; in() then returns silence.
@@ -509,30 +513,32 @@ function createAudioEngine() {
 		state.loadedMidiFiles = state.loadedMidiFiles.filter((m) => m.name !== name);
 	}
 
-	async function initialize() {
-		if (state.isInitialized || state.isLoading) return;
+	async function initialize(): Promise<void> {
+		if (state.isInitialized) return;
+		if (initPromise) return initPromise;
 
 		state.isLoading = true;
 		state.error = null;
 
-		try {
-			// Create AudioContext with sample rate from settings
+		initPromise = (async () => {
+			// Create AudioContext with sample rate from settings.
+			// On eager onMount init this starts in 'suspended' state until
+			// play() calls resume() — that is the expected browser pattern
+			// and allows pre-play sample/SoundFont/MIDI loads to reach the
+			// worklet without the autoplay policy blocking us.
 			audioContext = new AudioContext({
 				sampleRate: settingsStore.sampleRate,
 				latencyHint: 'interactive'
 			});
 			state.activeSampleRate = audioContext.sampleRate;
 
-			// Create gain node
 			gainNode = audioContext.createGain();
 			gainNode.gain.value = state.volume;
 
-			// Create analyser for visualizations
 			analyserNode = audioContext.createAnalyser();
 			analyserNode.fftSize = 2048;
 			analyserNode.smoothingTimeConstant = 0.8;
 
-			// Pre-fetch WASM JS code and binary in parallel
 			console.log('[AudioEngine] Fetching WASM module...');
 			const [jsResponse, wasmResponse] = await Promise.all([
 				fetch('/wasm/nkido.js'),
@@ -542,19 +548,16 @@ function createAudioEngine() {
 			wasmBinary = await wasmResponse.arrayBuffer();
 			console.log('[AudioEngine] WASM fetched:', wasmJsCode.length, 'bytes JS,', wasmBinary.byteLength, 'bytes WASM');
 
-			// Load AudioWorklet processor
 			await audioContext.audioWorklet.addModule('/worklet/cedar-processor.js');
 
-			// Create worklet node. numberOfInputs=1 lets the audio-input PRD's
-			// in() opcode receive live audio (mic / tab / uploaded file) — see
-			// `setInputSource` below for how a source is connected.
+			// numberOfInputs=1 lets the audio-input PRD's in() opcode receive
+			// live audio (mic / tab / uploaded file) — see setInputSource below.
 			workletNode = new AudioWorkletNode(audioContext, 'cedar-processor', {
 				numberOfInputs: 1,
 				numberOfOutputs: 1,
 				outputChannelCount: [2]
 			});
 
-			// Handle messages from worklet
 			workletNode.port.onmessage = (event) => {
 				handleWorkletMessage(event.data);
 			};
@@ -564,17 +567,22 @@ function createAudioEngine() {
 			// 'midi' handler forwards them to cedar_push_midi_event.
 			midiInput.setWorkletPort(workletNode.port);
 
-			// Connect: worklet -> gain -> analyser -> destination
 			workletNode.connect(gainNode);
 			gainNode.connect(analyserNode);
 			analyserNode.connect(audioContext.destination);
 
 			state.isInitialized = true;
-			state.isLoading = false;
 			console.log('[AudioEngine] Initialized with AudioWorklet');
+		})();
+
+		try {
+			await initPromise;
 		} catch (err) {
 			console.error('[AudioEngine] Failed to initialize:', err);
 			state.error = err instanceof Error ? err.message : String(err);
+			// Clear so a later caller (e.g. user clicking Play) can retry.
+			initPromise = null;
+		} finally {
 			state.isLoading = false;
 		}
 	}
@@ -943,6 +951,9 @@ function createAudioEngine() {
 		workletNode = null;
 		gainNode = null;
 		analyserNode = null;
+		// Drop the memoized bootstrap so initialize() actually re-runs
+		// instead of resolving instantly off the prior (now-stale) promise.
+		initPromise = null;
 
 		// Reset state
 		state.isInitialized = false;
@@ -1512,9 +1523,10 @@ function createAudioEngine() {
 	 * @param channels Number of channels (1=mono, 2=stereo)
 	 * @param sampleRate Sample rate in Hz
 	 */
-	function loadSample(name: string, audioData: Float32Array, channels: number, sampleRate: number) {
+	async function loadSample(name: string, audioData: Float32Array, channels: number, sampleRate: number) {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load sample - worklet bootstrap failed');
 			return;
 		}
 
@@ -1540,8 +1552,9 @@ function createAudioEngine() {
 		file: File | Blob,
 		origin: 'builtin' | 'user' = 'user'
 	): Promise<boolean> {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load sample - worklet bootstrap failed');
 			return false;
 		}
 
@@ -1585,8 +1598,9 @@ function createAudioEngine() {
 		uri: string,
 		origin: 'builtin' | 'user' = 'user'
 	): Promise<boolean> {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load sample - worklet bootstrap failed');
 			return false;
 		}
 
@@ -1765,8 +1779,9 @@ function createAudioEngine() {
 		data: ArrayBuffer,
 		origin: 'builtin' | 'user' = 'user'
 	): Promise<SoundFontInfo | null> {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load SoundFont - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load SoundFont - worklet bootstrap failed');
 			return null;
 		}
 
@@ -1827,8 +1842,9 @@ function createAudioEngine() {
 	 * to the assigned bank ID, or -1 on failure.
 	 */
 	async function loadWavetable(name: string, data: ArrayBuffer): Promise<number> {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load wavetable - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load wavetable - worklet bootstrap failed');
 			return -1;
 		}
 		const loadPromise = new Promise<number>((resolve) => {
@@ -1855,8 +1871,9 @@ function createAudioEngine() {
 	 * each MidiQueueState whose RequiredMidiSource.name matches `name`.
 	 */
 	async function loadMidiFile(name: string, data: ArrayBuffer): Promise<boolean> {
+		await initialize();
 		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load MIDI file - worklet not initialized');
+			console.warn('[AudioEngine] Cannot load MIDI file - worklet bootstrap failed');
 			return false;
 		}
 
