@@ -52,3 +52,21 @@ bun run build:wasm
 ```
 
 This runs `emcmake cmake` in `wasm/` and automatically copies the output to `static/wasm/`.
+
+## Hosting your own share endpoint
+
+The `/p/<slug>` permalink feature is backed by a small Cloudflare Worker
+(`web/share-api/`) that stores anonymous patches in a D1 database. The
+reference deployment lives at `share.nkido.cc`, but the SPA can point at
+any compatible Worker via the `PUBLIC_SHARE_API_BASE` env var.
+
+If you want to run your own copy — for privacy, for an internal
+deployment, or to fork the API surface — see
+[`share-api/README.md`](share-api/README.md). The walkthrough takes a
+fresh clone to a working share endpoint in under 30 minutes and covers
+prerequisites, D1 setup, custom domains, rate limiting, backups, and
+takedown procedures.
+
+Leaving `PUBLIC_SHARE_API_BASE` empty is fine too — the IDE falls back
+to inline-link sharing (the full patch is encoded in the URL hash),
+which needs no backend.
