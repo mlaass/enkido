@@ -2,7 +2,7 @@
 title: URI Schemes
 category: reference
 order: 50
-keywords: [uri, resolver, samples, soundfont, wavetable, github, http, https, file, bundled, blob, idb, asset loading]
+keywords: [uri, resolver, samples, soundfont, wavetable, github, http, https, file, bundled, blob, idb, asset loading, midi, .mid, smf]
 ---
 
 # URI Schemes
@@ -77,6 +77,19 @@ nkido-cli render --sample 'kick=https://example.com/kick.wav' \
 Every flag accepts any registered scheme. Bare paths are `file://`. Multiple `--bank` / `--soundfont` / `--sample` flags may be combined; banks accumulate in declaration order and are searched first-hit-wins for default-bank `RequiredSample` lookups.
 
 `samples()` directives in source code are resolved alongside `--bank` flags (CLI flags first, source declarations after).
+
+## `.mid` files
+
+`.mid` files use the same scheme table — there is no dedicated `midi://` scheme. The [`midi({file: "..."})`](builtins/midi) call accepts bare paths, `file://`, `https://`, and `github:` URIs, all resolved through the same `cedar::UriResolver` as samples and SoundFonts.
+
+```akkado
+midi({file: "drums.mid"})                                  // bundled or web-registered
+midi({file: "file:///home/me/songs/intro.mid"})            // absolute native path
+midi({file: "https://example.com/groove.mid"})             // remote, cached after first fetch
+midi({file: "github:nkido/example-mids/twinkle.mid"})      // GitHub raw fetch
+```
+
+On the web, dragging a `.mid` onto the Files panel registers it as a transient handle (the bare filename), so the same string works whether the file ships in the bundle or you just dropped it in.
 
 ## Caching
 

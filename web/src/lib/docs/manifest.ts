@@ -10,6 +10,7 @@ export const slugToPath: Record<string, string> = {
 	"03-synthesis": "tutorials/03-synthesis.md",
 	"06-pattern-modulation": "tutorials/06-pattern-modulation.md",
 	"02-filters": "tutorials/02-filters.md",
+	"07-midi": "tutorials/07-midi.md",
 	"04-rhythm": "tutorials/04-rhythm.md",
 	"01-hello-sine": "tutorials/01-hello-sine.md",
 	"chords": "reference/mini-notation/chords.md",
@@ -34,6 +35,7 @@ export const slugToPath: Record<string, string> = {
 	"samples-loading": "reference/builtins/samples-loading.md",
 	"polyphony": "reference/builtins/polyphony.md",
 	"filters": "reference/builtins/filters.md",
+	"midi-cc": "reference/builtins/midi-cc.md",
 	"distortion": "reference/builtins/distortion.md",
 	"utility": "reference/builtins/utility.md",
 	"envelopes": "reference/builtins/envelopes.md",
@@ -54,6 +56,7 @@ export const slugToPath: Record<string, string> = {
 	"reverbs": "reference/builtins/reverbs.md",
 	"fm-synthesis": "reference/builtins/fm-synthesis.md",
 	"visualizations": "reference/builtins/visualizations.md",
+	"midi": "reference/builtins/midi.md",
 	"DOCUMENTATION_GUIDE": "DOCUMENTATION_GUIDE.md"
 };
 
@@ -82,6 +85,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "06-pattern-modulation",
 			"title": "Pattern Modulation"
+		},
+		{
+			"slug": "07-midi",
+			"title": "MIDI Input"
 		}
 	],
 	"builtins": [
@@ -152,6 +159,14 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "fm-synthesis",
 			"title": "FM Synthesis"
+		},
+		{
+			"slug": "midi",
+			"title": "MIDI Input"
+		},
+		{
+			"slug": "midi-cc",
+			"title": "MIDI CC"
 		},
 		{
 			"slug": "samplers",
@@ -844,6 +859,60 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "hp",
 		"anchor": "hp"
 	},
+	"midi": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "midi",
+		"anchor": "midi"
+	},
+	"keyboard": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
+	"controller": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
+	"cc": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
+	"pitch-bend": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
+	"soundfont": {
+		"slug": "soundfonts",
+		"category": "builtins",
+		"title": "soundfont",
+		"anchor": "soundfont"
+	},
+	".mid": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
+	"file": {
+		"slug": "samples-loading",
+		"category": "builtins",
+		"title": "file",
+		"anchor": "file"
+	},
+	"poly": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "poly",
+		"anchor": "poly"
+	},
+	"lead": {
+		"slug": "07-midi",
+		"category": "tutorials",
+		"title": "MIDI Input"
+	},
 	"rhythm": {
 		"slug": "04-rhythm",
 		"category": "tutorials",
@@ -1042,18 +1111,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "chords",
 		"category": "mini-notation",
 		"title": "Chords"
-	},
-	"poly": {
-		"slug": "polyphony",
-		"category": "builtins",
-		"title": "poly",
-		"anchor": "poly"
-	},
-	"soundfont": {
-		"slug": "soundfonts",
-		"category": "builtins",
-		"title": "soundfont",
-		"anchor": "soundfont"
 	},
 	"e410": {
 		"slug": "chords",
@@ -1474,12 +1531,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "reference",
 		"title": "URI Schemes"
 	},
-	"file": {
-		"slug": "samples-loading",
-		"category": "builtins",
-		"title": "file",
-		"anchor": "file"
-	},
 	"bundled": {
 		"slug": "uri-schemes",
 		"category": "reference",
@@ -1496,6 +1547,11 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "URI Schemes"
 	},
 	"asset loading": {
+		"slug": "uri-schemes",
+		"category": "reference",
+		"title": "URI Schemes"
+	},
+	"smf": {
 		"slug": "uri-schemes",
 		"category": "reference",
 		"title": "URI Schemes"
@@ -2423,6 +2479,26 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Polyphony"
 	},
+	"release": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "Polyphony"
+	},
+	"release-window": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "Polyphony"
+	},
+	"note-off": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "Polyphony"
+	},
+	"click": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "Polyphony"
+	},
 	"bp": {
 		"slug": "filters",
 		"category": "builtins",
@@ -2443,6 +2519,62 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "filters",
 		"category": "builtins",
 		"title": "Filters"
+	},
+	"midi_cc": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "midi_cc",
+		"anchor": "midi-cc"
+	},
+	"control-change": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"control change": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"pitchbend": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"pb": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"channel-pressure": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"at": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"route": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"envmap": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"channel": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
+	},
+	"modwheel": {
+		"slug": "midi-cc",
+		"category": "builtins",
+		"title": "MIDI CC"
 	},
 	"softclip": {
 		"slug": "distortion",
@@ -2542,11 +2674,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Utility"
 	},
-	"midi": {
-		"slug": "utility",
-		"category": "builtins",
-		"title": "Utility"
-	},
 	"frequency": {
 		"slug": "utility",
 		"category": "builtins",
@@ -2568,11 +2695,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Envelopes"
 	},
 	"sustain": {
-		"slug": "envelopes",
-		"category": "builtins",
-		"title": "Envelopes"
-	},
-	"release": {
 		"slug": "envelopes",
 		"category": "builtins",
 		"title": "Envelopes"
@@ -3375,6 +3497,46 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "FM Synthesis"
 	},
+	"device": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"velocity": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"freq": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"trig": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"tempo": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"mpk": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"held-note": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
+	"hotswap": {
+		"slug": "midi",
+		"category": "builtins",
+		"title": "MIDI Input"
+	},
 	"contributing": {
 		"slug": "DOCUMENTATION_GUIDE",
 		"category": "concepts",
@@ -3406,6 +3568,7 @@ export const previews: Record<string, string> = {
 	"03-synthesis": "Oscillators and filters give you tone. Envelopes give you notes — they decide when the sound starts and when it dies away.",
 	"06-pattern-modulation": "So far patterns have driven note pitches. They're also plain values you can plug into any DSP slot, attach to per-event properties, or combine...",
 	"02-filters": "Filters remove or emphasize certain frequencies. A raw saw or square is harmonically dense — bright, buzzy, hard to listen to for long. A filter...",
+	"07-midi": "Plug in a keyboard and play through your patch. This tutorial walks from a one-line synth to a full mono lead with CC routing and  file playback.",
 	"04-rhythm": "Everything in Akkado syncs to a global clock. The  function creates pulses:",
 	"01-hello-sine": "Every Akkado program is a signal flow graph. The smallest one is a sine wave sent to the output:",
 	"chords": "Two paths to chordal patterns: the  function with chord-symbol literals (, ), and inline chord brackets in  strings (). For voice leading, the , ,...",
@@ -3430,6 +3593,7 @@ export const previews: Record<string, string> = {
 	"samples-loading": "How user-supplied audio reaches the sampler at runtime. The  directive declares a bank URI to fetch before the program runs; the IDE also accepts...",
 	"polyphony": "Voice allocation for patterns.  runs an instrument function per voice and sums the outputs.  and  are single-voice variants with different...",
 	"filters": "Filters shape the frequency content of signals by attenuating or boosting certain frequencies.",
+	"midi-cc": "is a compile-time directive that maps an incoming MIDI controller onto an existing  slot. There is no audio-thread work and no extra opcode — the...",
 	"distortion": "Distortion effects add harmonic content by clipping, saturating, or otherwise mangling signals.",
 	"utility": "Utility functions for common audio tasks like output, MIDI conversion, and signal processing helpers.",
 	"envelopes": "Envelopes shape the amplitude or other parameters of a sound over time. They respond to gates (sustained signals) or triggers (momentary pulses).",
@@ -3450,5 +3614,6 @@ export const previews: Record<string, string> = {
 	"reverbs": "Reverbs simulate acoustic spaces by generating many delayed, filtered reflections. Each algorithm has its own character.",
 	"fm-synthesis": "Frequency modulation (FM) synthesizes complex timbres by modulating the frequency of one oscillator (the carrier) with the output of another (the...",
 	"visualizations": "Inline visualizations render directly in the editor. Each visualization is a pass-through node in the signal chain: audio flows through unchanged.",
+	"midi": "exposes runtime MIDI events the same way  exposes baked pattern events. Drop it into the same pipe stages —  for polyphony, or  for monophonic...",
 	"DOCUMENTATION_GUIDE": "This guide outlines standards and practices for writing NKIDO documentation."
 };

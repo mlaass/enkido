@@ -183,6 +183,7 @@ inline bool opcode_is_stateful(Opcode op) {
         case Opcode::SLEW:
         case Opcode::EDGE_OP:
         case Opcode::STATE_OP:
+        case Opcode::INTERP_TIME:
         case Opcode::ENV_ADSR:
         case Opcode::ENV_AR:
         case Opcode::ENV_FOLLOWER:

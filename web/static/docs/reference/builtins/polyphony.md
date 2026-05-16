@@ -2,7 +2,7 @@
 title: Polyphony
 category: builtins
 order: 18
-keywords: [polyphony, polyphonic, poly, mono, legato, spread, voice, voices, chord, instrument, allocation, retrigger, voice-stealing, stereo, unison]
+keywords: [polyphony, polyphonic, poly, mono, legato, spread, voice, voices, chord, instrument, allocation, retrigger, voice-stealing, stereo, unison, release, release-window, note-off, click, midi]
 group: sequencing
 subgroup: voicing
 icon: Layers
@@ -37,6 +37,7 @@ Voice allocation for patterns. `poly()` runs an instrument function per voice an
 | input      | pattern  | -       | Pattern or `chord(...)` producing events (notes or chords) |
 | instrument | function | -       | A function `(freq, gate, vel) -> signal` run per voice |
 | voices     | number   | 64      | Voice count (1-128, must be a literal) |
+| `release:` | number   | 0.0     | Seconds of voice-mix tail past note-off. Holds the gate high for the window so the instrument's ADSR finishes its release stage instead of being multiplied to zero. |
 
 `poly()` reads pattern events at runtime and assigns each note to its own voice slot. The instrument function receives per-voice frequency, gate, and velocity, and the outputs of all active voices are summed. When the same note appears in consecutive events, the voice slot is reused (preserving phase continuity); when all voices are busy, the oldest is stolen.
 
@@ -69,6 +70,28 @@ For *unison* per voice — fanning each chord note into a stereo-spread,
 detuned cluster — wrap [`unison`](unison) inside the 3-arg `poly`
 instrument.
 
+### `release:` — click-free note-off
+
+By default `poly()` accumulates `voice * gate` per sample, so when a
+note-off drops the gate to zero the instrument's ADSR release tail is
+multiplied out instantly — audible as a click on every key-up with live
+[`midi()`](midi) input. Cycle-aligned pattern note-offs hide this; live
+keyboards expose it on every note.
+
+`release: 0.3` holds the gate high for 300 ms past note-off so the
+instrument's own ADSR runs its release to completion. The voice slot
+isn't reusable until the window expires, so set the window roughly equal
+to your longest ADSR release.
+
+```akk
+fn lead(freq, gate, vel) ->
+    saw(freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel
+
+midi() |> poly(@, lead, 8, release: 0.3) |> out(@)
+```
+
+Same option is available on [`mono`](#mono) and [`legato`](#legato).
+
 ## mono
 
 **Monophonic Voice Manager** - Single-voice manager with retrigger on every new note.
@@ -77,6 +100,7 @@ instrument.
 |------------|----------|---------|-------------|
 | input      | pattern  | -       | Pattern producing events |
 | instrument | function | -       | A function `(freq, gate, vel) -> signal` |
+| `release:` | number   | 0.0     | Seconds of mix tail past note-off (voice-manager mode). See [`poly`](#poly) for mechanics. |
 
 `mono()` is `poly()` with one voice and last-note priority. Every new note retriggers the gate so envelopes restart cleanly, the classic hardware-mono behavior.
 
@@ -97,6 +121,7 @@ pat("c4 e4 g4 c5")
 |------------|----------|---------|-------------|
 | input      | pattern  | -       | Pattern producing events |
 | instrument | function | -       | A function `(freq, gate, vel) -> signal` |
+| `release:` | number   | 0.0     | Seconds of mix tail past note-off. See [`poly`](#poly) for mechanics. |
 
 Like `mono()`, but the gate stays high while notes overlap, so envelopes don't restart on every note. Frequency and velocity update but the AR/ADSR keeps decaying through the phrase. Best for legato leads and bass lines.
 

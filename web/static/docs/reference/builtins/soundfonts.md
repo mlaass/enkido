@@ -2,7 +2,7 @@
 title: SoundFonts
 category: builtins
 order: 16
-keywords: [soundfont, sf2, sf3, gm, general-midi, preset, voice, polyphonic, instrument, piano, fluidsynth, timgm6mb, fluidr3, musescore]
+keywords: [soundfont, sf2, sf3, gm, general-midi, preset, voice, polyphonic, instrument, piano, fluidsynth, timgm6mb, fluidr3, musescore, midi, live, keyboard]
 group: instruments
 subgroup: sample-based
 icon: Piano
@@ -28,6 +28,16 @@ The pattern provides gate, frequency, and velocity signals. The file is resolved
 ```akk
 // Piano on a chord progression
 chord("C Em Am G") |> soundfont(@, "gm", 0) |> out(@)
+```
+
+`soundfont()` also accepts [`midi()`](midi) upstream for live polyphonic SF2 playback — note-on and note-off from a keyboard or `.mid` file dispatch directly through the SoundFont's voice allocator:
+
+```akk
+// Live piano from a USB MIDI keyboard
+midi() |> soundfont(@, "gm", 0) |> out(@)
+
+// Play a .mid through GM strings
+midi({file: "ballad.mid", loop: true}) |> soundfont(@, "gm", 48) |> out(@)
 ```
 
 ## gm
@@ -72,4 +82,4 @@ melody |> soundfont(@, "gm", 0) +
 melody |> soundfont(@, "gm", 48) |> out(@)
 ```
 
-Related: [samplers](samplers), [samples-loading](samples-loading), [poly](sequencing#poly)
+Related: [samplers](samplers), [samples-loading](samples-loading), [poly](polyphony#poly), [midi](midi)

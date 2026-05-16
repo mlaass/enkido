@@ -80,3 +80,4 @@ Mic-in → speakers-out without headphones causes feedback. Use headphones, or a
 - [Stereo](stereo): `stereo()`, `mono()`, `left()`, `right()` for routing the live input.
 - [Filters](filters): typical first effect for vocal / instrument processing.
 - [Delays](delays): for live looping and dub effects on the mic.
+- [MIDI Input](midi): sibling builtin for live MIDI devices and `.mid` file playback.
