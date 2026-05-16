@@ -13,6 +13,7 @@
  * the blob URL) and parsed into the cedar registry.
  */
 import { audioEngine } from '$lib/stores/audio.svelte';
+import { persistUpload } from '$lib/io/upload-manifest';
 
 export type FileKind = 'sample' | 'soundfont' | 'midi' | 'unknown';
 
@@ -83,13 +84,23 @@ export async function routeFile(file: File): Promise<RoutedFile> {
 	try {
 		switch (kind) {
 			case 'sample': {
-				const ok = await audioEngine.loadSampleFromFile(name, file);
+				// Persist the bytes (Phase B) so the upload survives a
+				// reload. Read once and pass through `loadSampleFromBytes`
+				// to avoid double-reading the File.
+				const data = await file.arrayBuffer();
+				const ok = await audioEngine.loadSampleFromBytes(name, data, 'user');
+				if (ok) await persistUpload('sample', name, data);
 				return { name, kind, ok };
 			}
 			case 'soundfont': {
 				const data = await file.arrayBuffer();
+				// loadSoundFont transfers `data` to the worklet (detaches
+				// it). Clone first so the persist write has live bytes.
+				const persistCopy = data.slice(0);
 				const info = await audioEngine.loadSoundFont(name, data);
-				return { name, kind, ok: info !== null };
+				const ok = info !== null;
+				if (ok) await persistUpload('soundfont', name, persistCopy);
+				return { name, kind, ok };
 			}
 			case 'midi': {
 				// Register with the in-memory midiBank so a later
@@ -97,9 +108,13 @@ export async function routeFile(file: File): Promise<RoutedFile> {
 				// URL without an HTTP fetch; then parse into cedar so the
 				// sequence is ready when the next compile runs.
 				const data = await file.arrayBuffer();
+				// loadMidiFile transfers `data` to the worklet. Clone for
+				// the persist write before the transfer detaches it.
+				const persistCopy = data.slice(0);
 				audioEngine.midiBank.register(name, data.slice(0));
 				const ok = await audioEngine.loadMidiFile(name, data);
-				if (!ok) audioEngine.midiBank.revoke(name);
+				if (ok) await persistUpload('midi', name, persistCopy);
+				else audioEngine.midiBank.revoke(name);
 				return { name, kind, ok };
 			}
 			default:

@@ -4,31 +4,60 @@
 
 const DB_NAME = 'nkido-file-cache';
 const STORE_NAME = 'files';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const MAX_CACHE_SIZE = 500 * 1024 * 1024; // 500MB
 
-interface CacheEntry {
+export interface CacheEntry {
 	key: string;
 	data: ArrayBuffer;
 	size: number;
 	lastAccess: number;
+	// PRD prd-unified-files-panel Phase B: pinned rows are excluded from
+	// LRU eviction so user-dropped uploads survive a heavy HTTP-cache
+	// session. Defaults to false (HTTP/idb-handler writes stay evictable).
+	pinned?: boolean;
 }
 
 function openDB(): Promise<IDBDatabase> {
 	return new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-		request.onupgradeneeded = () => {
+		request.onupgradeneeded = (event) => {
 			const db = request.result;
+			const tx = request.transaction;
 			if (!db.objectStoreNames.contains(STORE_NAME)) {
 				const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' });
 				store.createIndex('lastAccess', 'lastAccess');
+				return;
+			}
+			// Upgrading an existing DB. v1 → v2 back-fills `pinned: false`
+			// on every row so old HTTP-cached entries keep participating
+			// in LRU eviction unchanged.
+			const oldVersion = (event as IDBVersionChangeEvent).oldVersion;
+			if (oldVersion < 2 && tx) {
+				const store = tx.objectStore(STORE_NAME);
+				const cursorReq = store.openCursor();
+				cursorReq.onsuccess = () => {
+					const cursor = cursorReq.result;
+					if (!cursor) return;
+					const entry = cursor.value as CacheEntry;
+					if (entry.pinned === undefined) {
+						entry.pinned = false;
+						cursor.update(entry);
+					}
+					cursor.continue();
+				};
 			}
 		};
 
 		request.onsuccess = () => resolve(request.result);
 		request.onerror = () => reject(request.error);
 	});
+}
+
+export interface SetOptions {
+	/** When true, the entry is exempt from LRU eviction. */
+	pinned?: boolean;
 }
 
 export class FileCache {
@@ -73,11 +102,14 @@ export class FileCache {
 		}
 	}
 
-	async set(key: string, data: ArrayBuffer): Promise<void> {
+	async set(key: string, data: ArrayBuffer, options?: SetOptions): Promise<void> {
 		try {
 			const db = await this.getDB();
+			const pinned = options?.pinned === true;
 
-			// Evict if needed before inserting
+			// Evict if needed before inserting. Pinned writes still
+			// trigger eviction of *unpinned* rows; pinned rows are never
+			// evicted to make room (see evictIfNeeded).
 			await this.evictIfNeeded(db, data.byteLength);
 
 			return new Promise((resolve, reject) => {
@@ -88,7 +120,8 @@ export class FileCache {
 					key,
 					data,
 					size: data.byteLength,
-					lastAccess: Date.now()
+					lastAccess: Date.now(),
+					pinned
 				};
 
 				const request = store.put(entry);
@@ -132,11 +165,28 @@ export class FileCache {
 		}
 	}
 
+	async getAllPinned(): Promise<CacheEntry[]> {
+		try {
+			const db = await this.getDB();
+			return await new Promise((resolve, reject) => {
+				const tx = db.transaction(STORE_NAME, 'readonly');
+				const store = tx.objectStore(STORE_NAME);
+				const req = store.getAll();
+				req.onsuccess = () => {
+					const all = (req.result as CacheEntry[]) ?? [];
+					resolve(all.filter((e) => e.pinned === true));
+				};
+				req.onerror = () => reject(req.error);
+			});
+		} catch {
+			return [];
+		}
+	}
+
 	private async evictIfNeeded(db: IDBDatabase, incomingSize: number): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const tx = db.transaction(STORE_NAME, 'readwrite');
 			const store = tx.objectStore(STORE_NAME);
-			const index = store.index('lastAccess');
 
 			// Calculate total size
 			const allRequest = store.getAll();
@@ -150,14 +200,22 @@ export class FileCache {
 					return;
 				}
 
-				// Sort by lastAccess ascending (oldest first) for LRU eviction
-				entries.sort((a, b) => a.lastAccess - b.lastAccess);
+				// Sort by lastAccess ascending (oldest first) for LRU
+				// eviction, and exclude pinned rows entirely — pinned
+				// uploads must survive a full cache fill.
+				const candidates = entries
+					.filter((e) => e.pinned !== true)
+					.sort((a, b) => a.lastAccess - b.lastAccess);
 
-				// Evict oldest entries until we have room
+				// Evict oldest unpinned entries until we have room. If
+				// the unpinned set can't satisfy the request, the loop
+				// exits and the new write proceeds anyway — pinned rows
+				// dominate the cap, which is bounded by the user's own
+				// drops and the browser's quota.
 				const evictTx = db.transaction(STORE_NAME, 'readwrite');
 				const evictStore = evictTx.objectStore(STORE_NAME);
 
-				for (const entry of entries) {
+				for (const entry of candidates) {
 					if (totalSize + incomingSize <= MAX_CACHE_SIZE) break;
 					evictStore.delete(entry.key);
 					totalSize -= entry.size;

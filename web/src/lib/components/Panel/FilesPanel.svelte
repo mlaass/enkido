@@ -97,6 +97,20 @@
 		audioEngine.unregisterMidiFile(name);
 	}
 
+	function removeSample(name: string) {
+		// UI-only "forget" — see audio.svelte.ts forgetSample. Worklet
+		// retains the sample until next reload; the manifest entry is
+		// dropped so it won't re-appear after refresh.
+		void audioEngine.forgetSample(name);
+	}
+
+	function removeSoundFont(sfId: number, event: MouseEvent) {
+		// The remove button is nested inside the sf-row toggle button;
+		// stop the click so the preset list doesn't expand/collapse.
+		event.stopPropagation();
+		void audioEngine.forgetSoundFont(sfId);
+	}
+
 	// Live preview of what kind the URL input will resolve to (or
 	// "unknown" if the extension isn't recognized). Helps users notice
 	// typos before they hit Load.
@@ -180,6 +194,12 @@
 						{#each userSamples as s (s.name)}
 							<li class="row">
 								<span class="row-name">{s.name}</span>
+								<button
+									class="row-action"
+									title="Forget {s.name}"
+									aria-label="Forget {s.name}"
+									onclick={() => removeSample(s.name)}
+								>×</button>
 							</li>
 						{/each}
 					</ul>
@@ -227,17 +247,27 @@
 					<ul class="row-list">
 						{#each soundfonts as sf (sf.sfId)}
 							<li class="sf-card">
-								<button
-									class="row sf-row"
-									onclick={() => toggleSf(sf.sfId)}
-								>
-									<span class="chev" class:open={expandedSf === sf.sfId}>▶</span>
-									<span class="row-name">{sf.name}</span>
-									<span class="row-meta">{sf.presetCount} presets</span>
-									{#if sf.origin === 'builtin'}
-										<span class="badge">built-in</span>
+								<div class="sf-row-wrap">
+									<button
+										class="row sf-row"
+										onclick={() => toggleSf(sf.sfId)}
+									>
+										<span class="chev" class:open={expandedSf === sf.sfId}>▶</span>
+										<span class="row-name">{sf.name}</span>
+										<span class="row-meta">{sf.presetCount} presets</span>
+										{#if sf.origin === 'builtin'}
+											<span class="badge">built-in</span>
+										{/if}
+									</button>
+									{#if sf.origin === 'user'}
+										<button
+											class="row-action"
+											title="Forget {sf.name}"
+											aria-label="Forget {sf.name}"
+											onclick={(e) => removeSoundFont(sf.sfId, e)}
+										>×</button>
 									{/if}
-								</button>
+								</div>
 								{#if expandedSf === sf.sfId}
 									<div class="sf-presets">
 										{#each sf.presets as preset, i (i)}
@@ -520,8 +550,13 @@
 		display: flex;
 		flex-direction: column;
 	}
+	.sf-row-wrap {
+		display: flex;
+		align-items: center;
+	}
 	.sf-row {
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		cursor: pointer;
 	}
 	.sf-presets {

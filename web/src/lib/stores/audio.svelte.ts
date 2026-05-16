@@ -11,6 +11,7 @@ import { settingsStore } from './settings.svelte';
 import { bankRegistry, type SampleReference } from '$lib/audio/bank-registry';
 import { loadFile } from '$lib/io/file-loader';
 import { pathToFetchUri } from '$lib/io/path-to-uri';
+import { listUploads, forgetUpload } from '$lib/io/upload-manifest';
 import {
 	acquireMicSource,
 	acquireTabSource,
@@ -573,6 +574,45 @@ function createAudioEngine() {
 
 			state.isInitialized = true;
 			console.log('[AudioEngine] Initialized with AudioWorklet');
+
+			// PRD prd-unified-files-panel Phase B: restore user uploads
+			// from IndexedDB before initialize() resolves, so the first
+			// compile (which awaits initialize()) sees every restored
+			// asset and never surfaces a transient "missing asset" error.
+			// Serial loop keeps ack ordering simple and avoids spamming
+			// the worklet on cold start.
+			try {
+				const uploads = await listUploads();
+				if (uploads.length > 0) {
+					console.log('[AudioEngine] Restoring', uploads.length, 'user upload(s) from IndexedDB');
+				}
+				for (const entry of uploads) {
+					try {
+						if (entry.kind === 'sample') {
+							await loadSampleFromBytes(entry.name, entry.data, 'user');
+						} else if (entry.kind === 'soundfont') {
+							await loadSoundFont(entry.name, entry.data, 'user');
+						} else {
+							// MIDI: re-register with midiBank so compile-time
+							// lookups (and stop() re-upload) find a blob URL,
+							// then push bytes to the worklet sequence registry.
+							midiBank.register(entry.name, entry.data.slice(0));
+							const ok = await loadMidiFile(entry.name, entry.data);
+							if (!ok) midiBank.revoke(entry.name);
+						}
+					} catch (err) {
+						// Best-effort: a broken row shouldn't bury init.
+						console.warn(
+							'[AudioEngine] Restore failed for',
+							entry.kind,
+							entry.name,
+							err
+						);
+					}
+				}
+			} catch (err) {
+				console.warn('[AudioEngine] Upload manifest read failed:', err);
+			}
 		})();
 
 		try {
@@ -1568,13 +1608,16 @@ function createAudioEngine() {
 	}
 
 	/**
-	 * Load a sample from a WAV file
-	 * @param name Sample name (e.g., "kick", "snare")
-	 * @param file File object or Blob containing WAV data
+	 * Load a sample from raw decoded-or-encoded bytes. The worklet
+	 * C++/WASM side decodes WAV/MP3/FLAC/etc., so all this does is
+	 * post the bytes and await the `sampleLoaded` ack.
+	 *
+	 * Used by `loadSampleFromFile` (drag-drop path) and by the
+	 * Phase B restore-on-init step (`upload-manifest` re-hydration).
 	 */
-	async function loadSampleFromFile(
+	async function loadSampleFromBytes(
 		name: string,
-		file: File | Blob,
+		data: ArrayBuffer,
 		origin: 'builtin' | 'user' = 'user'
 	): Promise<boolean> {
 		await initialize();
@@ -1584,8 +1627,7 @@ function createAudioEngine() {
 		}
 
 		try {
-			const arrayBuffer = await file.arrayBuffer();
-			console.log('[AudioEngine] Loading audio sample:', name, 'size:', arrayBuffer.byteLength);
+			console.log('[AudioEngine] Loading audio sample:', name, 'size:', data.byteLength);
 
 			// Wait for the worklet ack so the reactive registry gets the
 			// origin tag (file drops weren't waited on historically; the
@@ -1604,12 +1646,31 @@ function createAudioEngine() {
 			workletNode.port.postMessage({
 				type: 'loadSampleAudio',
 				name,
-				audioData: arrayBuffer
+				audioData: data
 			});
 
 			return await loadPromise;
 		} catch (err) {
-			console.error('[AudioEngine] Failed to load sample from file:', err);
+			console.error('[AudioEngine] Failed to load sample from bytes:', err);
+			return false;
+		}
+	}
+
+	/**
+	 * Load a sample from a WAV file
+	 * @param name Sample name (e.g., "kick", "snare")
+	 * @param file File object or Blob containing WAV data
+	 */
+	async function loadSampleFromFile(
+		name: string,
+		file: File | Blob,
+		origin: 'builtin' | 'user' = 'user'
+	): Promise<boolean> {
+		try {
+			const arrayBuffer = await file.arrayBuffer();
+			return await loadSampleFromBytes(name, arrayBuffer, origin);
+		} catch (err) {
+			console.error('[AudioEngine] Failed to read sample file:', err);
 			return false;
 		}
 	}
@@ -1945,6 +2006,34 @@ function createAudioEngine() {
 	function unregisterMidiFile(name: string): void {
 		midiBank.revoke(name);
 		removeLoadedMidiFile(name);
+		// Drop the persistence manifest entry so the row doesn't
+		// reappear on the next reload (Phase B). Fire-and-forget —
+		// the file-cache layer swallows errors silently.
+		void forgetUpload('midi', name);
+	}
+
+	/**
+	 * UI-only "forget" for a user-uploaded sample. Removes the row from
+	 * the reactive registry and drops the persistence manifest entry.
+	 * The worklet keeps the sample in WASM heap until the next reload —
+	 * `cedar_remove_sample` doesn't exist yet (PRD Phase B notes a
+	 * follow-up that would touch cedar C++).
+	 */
+	async function forgetSample(name: string): Promise<void> {
+		removeLoadedSample(name);
+		await forgetUpload('sample', name);
+	}
+
+	/**
+	 * UI-only "forget" for a user-uploaded SoundFont. Same semantics as
+	 * `forgetSample`: the worklet's `SoundFontRegistry` entry survives
+	 * until reload, but the UI row and the manifest row are gone.
+	 */
+	async function forgetSoundFont(sfId: number): Promise<void> {
+		const entry = state.loadedSoundfonts.find((s) => s.sfId === sfId);
+		if (!entry) return;
+		state.loadedSoundfonts = state.loadedSoundfonts.filter((s) => s.sfId !== sfId);
+		await forgetUpload('soundfont', entry.name);
 	}
 
 	/**
@@ -2581,13 +2670,16 @@ function createAudioEngine() {
 		getFrequencyData,
 		loadSample,
 		loadSampleFromFile,
+		loadSampleFromBytes,
 		loadSamplePack,
 		clearSamples,
+		forgetSample,
 		// Sample bank API
 		loadBank,
 		getBankNames,
 		// SoundFont API
 		loadSoundFont,
+		forgetSoundFont,
 		// MIDI file API (prd-midi-input Phase 5)
 		loadMidiFile,
 		unregisterMidiFile,
