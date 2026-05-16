@@ -924,6 +924,31 @@ function createAudioEngine() {
 		await pause();
 		state.currentBeat = 0;
 		state.currentBar = 0;
+
+		// _cedar_reset() resets audio_arena_, which owns every parsed
+		// MidiSequence (prd-midi-input Phase 5). SampleBank /
+		// SoundFontRegistry / WavetableRegistry use heap storage and
+		// survive reset, so only MIDI needs to be re-uploaded. The bytes
+		// still live behind midiBank's native blob URLs from the original
+		// drop/fetch — re-fetch and re-push to the worklet so the next
+		// compile can resolve the file from the worklet's registry. (The
+		// compile-time loadAsset path can't reuse these URLs because the
+		// uri-resolver blob handler only recognises blob:nkido: URIs.)
+		const names = state.loadedMidiFiles.map((m) => m.name);
+		loadedMidiFilesIndex.clear();
+		state.loadedMidiFiles = [];
+		for (const name of names) {
+			const blobUrl = midiBank.lookup(name);
+			if (!blobUrl) continue;
+			try {
+				const resp = await fetch(blobUrl);
+				if (!resp.ok) continue;
+				const data = await resp.arrayBuffer();
+				await loadMidiFile(name, data);
+			} catch (err) {
+				console.warn('[AudioEngine] Failed to re-upload MIDI after stop:', name, err);
+			}
+		}
 	}
 
 	/**
