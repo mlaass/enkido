@@ -7,6 +7,7 @@
 import { DEFAULT_DRUM_KIT } from '$lib/audio/default-samples';
 import { DEFAULT_SOUNDFONTS, resolveDefaultSoundFontUrls } from '$lib/audio/default-soundfonts';
 import { midiBank } from '$lib/audio/midi-bank';
+import type { MidiMeta } from '$lib/audio/midi-meta';
 import { settingsStore } from './settings.svelte';
 import { bankRegistry, type SampleReference } from '$lib/audio/bank-registry';
 import { loadFile } from '$lib/io/file-loader';
@@ -174,6 +175,7 @@ export interface LoadedSample {
 export interface LoadedMidiFile {
 	name: string;
 	origin: 'user';  // no built-in MIDI today; field is here for symmetry.
+	meta?: MidiMeta; // populated from midiBank when bytes are parseable
 }
 
 interface RequiredSoundFont {
@@ -506,7 +508,8 @@ function createAudioEngine() {
 	function addLoadedMidiFile(name: string): void {
 		if (loadedMidiFilesIndex.has(name)) return;
 		loadedMidiFilesIndex.add(name);
-		state.loadedMidiFiles = [...state.loadedMidiFiles, { name, origin: 'user' }];
+		const meta = midiBank.getMeta(name);
+		state.loadedMidiFiles = [...state.loadedMidiFiles, { name, origin: 'user', meta }];
 	}
 	function removeLoadedMidiFile(name: string): void {
 		if (!loadedMidiFilesIndex.has(name)) return;

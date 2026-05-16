@@ -12,6 +12,8 @@
 		type FileKind,
 		type RoutedFile
 	} from '$lib/audio/file-router';
+	import { gmProgramName } from '$lib/audio/gm-programs';
+	import { ChevronDown, ChevronRight, Copy, Check } from 'lucide-svelte';
 
 	let dropping = $state(false);
 	let errors = $state<string[]>([]);
@@ -28,6 +30,11 @@
 	// from the old SampleBrowser; only one expanded at a time keeps the
 	// panel readable.
 	let expandedSf = $state<number | null>(null);
+	// Same accordion behaviour for MIDI files, keyed by filename.
+	let expandedMidi = $state<string | null>(null);
+	// Which filename's copy button most recently fired — drives the
+	// transient Check icon swap. Cleared on a timer per click.
+	let copiedName = $state<string | null>(null);
 
 	const allSamples = $derived(audioEngine.loadedSamples);
 	const userSamples = $derived(allSamples.filter((s) => s.origin === 'user'));
@@ -91,6 +98,25 @@
 
 	function toggleSf(sfId: number) {
 		expandedSf = expandedSf === sfId ? null : sfId;
+	}
+
+	function toggleMidi(name: string) {
+		expandedMidi = expandedMidi === name ? null : name;
+	}
+
+	async function copyName(name: string, e?: MouseEvent) {
+		// Stop propagation so clicking copy inside a toggleable row (sf, midi)
+		// does not also expand/collapse the row.
+		e?.stopPropagation();
+		try {
+			await navigator.clipboard.writeText(name);
+			copiedName = name;
+			setTimeout(() => {
+				if (copiedName === name) copiedName = null;
+			}, 1200);
+		} catch {
+			// Clipboard write can fail on insecure contexts; silently ignore.
+		}
 	}
 
 	function removeMidi(name: string) {
@@ -179,7 +205,11 @@
 			class="section-header"
 			onclick={() => (samplesOpen = !samplesOpen)}
 		>
-			<span class="chev" class:open={samplesOpen}>▶</span>
+			{#if samplesOpen}
+				<ChevronDown size={14} />
+			{:else}
+				<ChevronRight size={14} />
+			{/if}
 			<span class="section-title">Samples</span>
 			<span class="section-meta">
 				{userSamples.length} user, {builtinSamples.length} built-in
@@ -193,6 +223,18 @@
 					<ul class="row-list">
 						{#each userSamples as s (s.name)}
 							<li class="row">
+								<button
+									class="row-copy"
+									title="Copy filename"
+									aria-label="Copy {s.name}"
+									onclick={(e) => copyName(s.name, e)}
+								>
+									{#if copiedName === s.name}
+										<Check size={12} />
+									{:else}
+										<Copy size={12} />
+									{/if}
+								</button>
 								<span class="row-name">{s.name}</span>
 								<button
 									class="row-action"
@@ -210,7 +252,11 @@
 						class="subsection-header"
 						onclick={() => (builtinSamplesOpen = !builtinSamplesOpen)}
 					>
-						<span class="chev" class:open={builtinSamplesOpen}>▶</span>
+						{#if builtinSamplesOpen}
+							<ChevronDown size={14} />
+						{:else}
+							<ChevronRight size={14} />
+						{/if}
 						<span class="subsection-title">
 							Built-in: 808 drum kit ({builtinSamples.length})
 						</span>
@@ -219,6 +265,18 @@
 						<ul class="row-list builtin">
 							{#each builtinSamples as s (s.name)}
 								<li class="row">
+									<button
+										class="row-copy"
+										title="Copy filename"
+										aria-label="Copy {s.name}"
+										onclick={(e) => copyName(s.name, e)}
+									>
+										{#if copiedName === s.name}
+											<Check size={12} />
+										{:else}
+											<Copy size={12} />
+										{/if}
+									</button>
 									<span class="row-name">{s.name}</span>
 								</li>
 							{/each}
@@ -235,7 +293,11 @@
 			class="section-header"
 			onclick={() => (soundfontsOpen = !soundfontsOpen)}
 		>
-			<span class="chev" class:open={soundfontsOpen}>▶</span>
+			{#if soundfontsOpen}
+				<ChevronDown size={14} />
+			{:else}
+				<ChevronRight size={14} />
+			{/if}
 			<span class="section-title">SoundFonts</span>
 			<span class="section-meta">{soundfonts.length}</span>
 		</button>
@@ -249,10 +311,26 @@
 							<li class="sf-card">
 								<div class="sf-row-wrap">
 									<button
+										class="row-copy"
+										title="Copy filename"
+										aria-label="Copy {sf.name}"
+										onclick={(e) => copyName(sf.name, e)}
+									>
+										{#if copiedName === sf.name}
+											<Check size={12} />
+										{:else}
+											<Copy size={12} />
+										{/if}
+									</button>
+									<button
 										class="row sf-row"
 										onclick={() => toggleSf(sf.sfId)}
 									>
-										<span class="chev" class:open={expandedSf === sf.sfId}>▶</span>
+										{#if expandedSf === sf.sfId}
+											<ChevronDown size={14} />
+										{:else}
+											<ChevronRight size={14} />
+										{/if}
 										<span class="row-name">{sf.name}</span>
 										<span class="row-meta">{sf.presetCount} presets</span>
 										{#if sf.origin === 'builtin'}
@@ -293,7 +371,11 @@
 			class="section-header"
 			onclick={() => (midiOpen = !midiOpen)}
 		>
-			<span class="chev" class:open={midiOpen}>▶</span>
+			{#if midiOpen}
+				<ChevronDown size={14} />
+			{:else}
+				<ChevronRight size={14} />
+			{/if}
 			<span class="section-title">MIDI files</span>
 			<span class="section-meta">{midiFiles.length}</span>
 		</button>
@@ -304,14 +386,56 @@
 				{:else}
 					<ul class="row-list">
 						{#each midiFiles as m (m.name)}
-							<li class="row">
-								<span class="row-name">{m.name}</span>
-								<button
-									class="row-action"
-									title="Remove {m.name}"
-									aria-label="Remove {m.name}"
-									onclick={() => removeMidi(m.name)}
-								>×</button>
+							<li class="sf-card">
+								<div class="sf-row-wrap">
+									<button
+										class="row-copy"
+										title="Copy filename"
+										aria-label="Copy {m.name}"
+										onclick={(e) => copyName(m.name, e)}
+									>
+										{#if copiedName === m.name}
+											<Check size={12} />
+										{:else}
+											<Copy size={12} />
+										{/if}
+									</button>
+									<button
+										class="row sf-row"
+										onclick={() => toggleMidi(m.name)}
+									>
+										{#if expandedMidi === m.name}
+											<ChevronDown size={14} />
+										{:else}
+											<ChevronRight size={14} />
+										{/if}
+										<span class="row-name">{m.name}</span>
+										{#if m.meta && m.meta.channels.length > 0}
+											<span class="row-meta">{m.meta.channels.length} ch</span>
+										{/if}
+									</button>
+									<button
+										class="row-action"
+										title="Remove {m.name}"
+										aria-label="Remove {m.name}"
+										onclick={() => removeMidi(m.name)}
+									>×</button>
+								</div>
+								{#if expandedMidi === m.name}
+									<div class="sf-presets">
+										{#if m.meta && m.meta.channels.length > 0}
+											{#each m.meta.channels as ch (ch.channel)}
+												<div class="preset-row">
+													<span class="preset-index">Ch {ch.channel + 1}</span>
+													<span class="preset-name">{gmProgramName(ch.program, ch.isDrum)}</span>
+													<span class="preset-bank">{ch.noteCount} notes</span>
+												</div>
+											{/each}
+										{:else}
+											<div class="empty">No note events detected.</div>
+										{/if}
+									</div>
+								{/if}
 							</li>
 						{/each}
 					</ul>
@@ -459,16 +583,11 @@
 		color: var(--text-secondary);
 		font-style: italic;
 	}
-	.chev {
-		display: inline-block;
-		width: 10px;
-		text-align: center;
-		font-size: 10px;
+	.section-header :global(svg),
+	.subsection-header :global(svg),
+	.sf-row :global(svg) {
 		color: var(--text-muted);
-		transition: transform var(--transition-fast);
-	}
-	.chev.open {
-		transform: rotate(90deg);
+		flex-shrink: 0;
 	}
 
 	.section-body {
@@ -543,6 +662,24 @@
 	}
 	.row-action:hover {
 		color: var(--error, #e0625a);
+		background: var(--bg-tertiary);
+	}
+	.row-copy {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		color: var(--text-muted);
+		background: transparent;
+		border: none;
+		border-radius: 2px;
+		cursor: pointer;
+		flex-shrink: 0;
+		padding: 0;
+	}
+	.row-copy:hover {
+		color: var(--accent-primary, #4caf50);
 		background: var(--bg-tertiary);
 	}
 
