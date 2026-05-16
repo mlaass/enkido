@@ -16,22 +16,25 @@
 
 ## 1. Executive Summary
 
-Today the nkido web IDE auto-saves a single buffer of code into `localStorage`. There is no way to share a patch with anyone except by copy-pasting the source. This PRD adds two things that together unlock the entire share-and-iterate loop:
+Today the nkido web IDE auto-saves a single buffer of code into `localStorage`. There is no way to share a patch with anyone except by copy-pasting the source. This PRD adds three things that together unlock the entire share-and-iterate loop:
 
-1. **Multi-draft local persistence.** The single `nkido-code` localStorage entry becomes a list of named drafts with a tab bar in the editor and a Patches tab in the sidebar.
-2. **Anonymous public shares.** A "Share" button POSTs the active draft to a small Cloudflare Worker, which returns a permalink at `share.nkido.cc/p/<slug>` (auto-redirects to `live.nkido.cc/p/<slug>` for human visitors, with OG metadata for link unfurls).
+1. **Inline URL sharing (no backend).** A "Copy inline link" action packs the active source into a hash-fragment URL `live.nkido.cc/p#code=<lz-base64url>`. Visiting the URL boots the IDE with that exact code. Zero servers, infinite TTL, works offline, never leaves the user's browser.
+2. **Multi-draft local persistence.** The single `nkido-editor-code` localStorage entry becomes a list of named drafts with a tab bar in the editor and a Patches tab in the sidebar.
+3. **Anonymous public shares (Worker permalink).** A "Share" button POSTs the active draft to a small Cloudflare Worker, which returns a permalink at `share.nkido.cc/p/<slug>` (auto-redirects to `live.nkido.cc/p/<slug>` for human visitors, with OG metadata for link unfurls).
 
-The backend is a hand-rolled ~150-LOC Worker backed by a D1 SQLite database. **No Supabase, no accounts, no auth.** Anonymous shares are immutable: edits to `/p/<slug>` save locally as a phantom draft, and "Fork" creates a new share with `parent_slug` recorded for fork history. The wire protocol is documented so self-hosters can run their own Worker.
+The backend is a hand-rolled ~150-LOC Worker backed by a D1 SQLite database. **No Supabase, no accounts, no auth.** Anonymous shares are immutable: edits to `/p/<slug>` (or `/p#code=...`) save locally as a phantom draft, and "Fork" creates a new Worker share with `parent_slug` recorded for fork history. The wire protocol is documented so self-hosters can run their own Worker; inline URLs work regardless of whether anyone is running a Worker at all.
 
 This PRD is intentionally narrow. It is the smallest deliverable that lets the future SaaS PRD (`nkido-pro/docs/prd-open-core-saas.md`) layer Supabase auth, private patches, asset uploads, and a gallery on top — by swapping in a different `StorageProvider` implementation. **Nothing closed-source touches this repo.**
 
 ### 1.1 Why now
 
-The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete) and the URI resolver consolidation is shipping. Shareable patches are the most-requested community feature and a precondition for any SaaS-tier work. Doing the local persistence + share UI in OSS first means the SaaS PRD becomes additive, not invasive.
+The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete) and the URI resolver consolidation has shipped. Shareable patches are the most-requested community feature and a precondition for any SaaS-tier work. Doing the local persistence + share UI in OSS first means the SaaS PRD becomes additive, not invasive.
 
 ### 1.2 Headline design decisions (locked during PRD intake)
 
-- **OSS-only slice.** This PRD ships anonymous shares + multi-draft local persistence. Accounts, gallery, profiles, hearts, comments, private patches, asset uploads — all deferred to the parent SaaS PRD.
+- **OSS-only slice.** This PRD ships inline URL sharing + multi-draft local persistence + anonymous Worker shares. Accounts, gallery, profiles, hearts, comments, private patches, asset uploads — all deferred to the parent SaaS PRD.
+- **Inline URLs are a first-class sharing modality, not a fallback.** Both Worker share and inline URL are always offered in the Share dialog. Worker share is "Permalink" (slug + OG unfurls); inline URL is "Inline link" (zero-backend, instant, larger URL). Users pick per share; both round-trip to the same `/p` viewer route.
+- **Inline URLs use hash fragments + lz-string compression.** `live.nkido.cc/p#code=<lz-base64url>`. Hash means the source is never sent to any server (no log/analytics/referrer leak); `lz-string`'s `compressToEncodedURIComponent` is the same library Strudel/JSFiddle use, ~4 KB gzipped, URL-safe output by construction.
 - **Pluggable `StorageProvider` interface.** OSS ships `LocalDraftProvider` (drafts) + `WorkerShareProvider` (anonymous shares via the reference Worker). The parent SaaS PRD will inject a `SupabaseStorageProvider` that fully implements the same interface.
 - **Cheap-and-portable backend, no Supabase.** Cloudflare Worker + D1 SQLite. Free tier covers expected traffic; OSS self-hosters can deploy their own with `wrangler publish` and one env var change. The SaaS PRD adds Postgres later when accounts arrive.
 - **Hand-rolled Worker, not a second SvelteKit app.** `web/share-api/` is ~150 LOC of TypeScript with a `wrangler.toml` and a `schema.sql`. Easier for self-hosters to read and fork than a framework-laden second app.
@@ -50,23 +53,23 @@ The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete)
 
 ### 2.1 Current state
 
-| Concern | Today |
-|---|---|
-| Patch persistence | Single `localStorage` key (`nkido-code`). One buffer. No naming. Auto-saved on type, on `beforeunload`. |
-| Sharing | Copy-paste source into a chat. No URLs, no link unfurls. |
-| Multiple WIPs | Not possible. Switching to a different idea overwrites the old one unless you copy it elsewhere first. |
-| Visiting someone else's code | Doesn't exist. There is no `/p/<slug>` route. |
-| OSS/SaaS boundary | None — there is no SaaS yet, but also no abstraction in place. Adding sharing without an interface means refactoring later. |
+| Concern | Today's surface | Issue |
+|---|---|---|
+| Patch persistence | Single `localStorage` key (`nkido-editor-code`) in `web/src/lib/stores/editor.svelte.ts:23`. One buffer. Auto-saved on type, on `beforeunload`. | One slot. Switching ideas overwrites the previous patch unless the user copies it elsewhere first. No naming, no list, no recovery. |
+| Sharing | None. Copy-paste source into a chat. | No URLs, no link unfurls. Asking "send me your patch" is a multi-step ritual. |
+| Multiple WIPs | Not possible from the UI. | Single-buffer model rules it out. Power users keep parallel notes outside the IDE. |
+| Visiting someone else's code | Not possible. There is no `/p/<slug>` route and no inline-URL load path. | Code only travels as opaque text blobs; no playable preview. |
+| OSS/SaaS boundary | None — there is no SaaS yet, and no abstraction in place. | Adding sharing without an interface means re-architecting once the SaaS PRD lands. Drift between OSS storage code and a future Supabase impl becomes inevitable. |
 
 ### 2.2 Proposed state
 
-| Concern | After this PRD |
-|---|---|
-| Patch persistence | List of named drafts in `localStorage` (`nkido-drafts` key); `nkido-code` migrated to draft `Untitled` on first launch. Active draft is what the editor shows. |
-| Sharing | "Share" button publishes the active draft to `share.nkido.cc/p/<slug>` via a Cloudflare Worker. Slug is shareable on social with OG metadata. |
-| Multiple WIPs | Editor has a tab bar; each tab is an open draft or a visited `/p/<slug>` phantom. Sidebar Patches tab lists all drafts + recently visited slugs. |
-| Visiting someone else's code | `live.nkido.cc/p/<slug>` boots the IDE in a special tab; auto-runs after click-to-unmute. Visitor edits save locally as a phantom; "Keep" promotes to a named draft, "Fork" creates a new share. |
-| OSS/SaaS boundary | `StorageProvider` interface in `web/src/lib/ide/storage/`. OSS ships `LocalDraftProvider` + `WorkerShareProvider`. SaaS PRD injects `SupabaseStorageProvider` later, no OSS-side changes needed. |
+| Concern | After this PRD | Mechanism |
+|---|---|---|
+| Patch persistence | List of named drafts in `localStorage` (`nkido-drafts` key); `nkido-editor-code` migrated to draft `Untitled` on first launch. Active draft is what the editor shows. | `LocalDraftProvider` + Svelte 5 rune store in `web/src/lib/stores/drafts.svelte.ts`. |
+| Sharing | Two modalities: **Worker share** publishes the active draft to `share.nkido.cc/p/<slug>` (slug, OG unfurls, fork chain). **Inline URL** packs source into `/p#code=<lz-base64url>` (zero-backend, instant, self-hosting-free). | Worker share: `WorkerShareProvider`. Inline URL: lz-string compression in the SPA viewer route, no server call. |
+| Multiple WIPs | Editor has a tab bar; each tab is an open draft or a visited `/p/<slug>` / `/p#code=...` phantom. Sidebar Patches tab lists all drafts + recently visited slugs. Open-tab set persists across reload. | New `EditorTabs.svelte` + `PatchesPanel.svelte`; `nkido-open-tabs` + `nkido-active-tab` localStorage keys. |
+| Visiting someone else's code | `live.nkido.cc/p/<slug>` boots the IDE in a new tab (Worker fetch); `live.nkido.cc/p#code=...` boots the IDE from the hash (no fetch). Both auto-run after click-to-unmute. Visitor edits save locally as a phantom; "Keep" promotes to a named draft, "Fork" creates a new Worker share. | New SPA route `src/routes/p/[[slug]]/+page.svelte`; phantom-draft lifecycle keyed by slug or by SHA-256 of inline code. |
+| OSS/SaaS boundary | `StorageProvider` interface in `web/src/lib/ide/storage/`. OSS ships `LocalDraftProvider` + `WorkerShareProvider`. SaaS PRD injects `SupabaseStorageProvider` later, no OSS-side changes needed. | TypeScript interface; factory in `storage/index.ts` picks impl based on env. |
 
 ---
 
@@ -74,25 +77,29 @@ The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete)
 
 ### 3.1 Goals
 
-1. **One-click anonymous share** with a permalink that loads on any device, anywhere, without signup.
-2. **Multiple drafts** survive across sessions; user can name them and switch via tabs.
-3. **Forkable shares** preserve a `parent_slug` chain so future PRDs can render fork trees.
-4. **Self-hostable backend** — the Worker is documented and shipped as reference code; a self-hoster can deploy their own with one env var change.
-5. **Clean abstraction boundary.** The `StorageProvider` interface is defined here so the SaaS PRD layers on without re-architecting.
-6. **No regression** in the existing single-buffer auto-save UX. First launch after the upgrade silently migrates old localStorage into a draft named "Untitled".
-7. **Link previews work.** Twitter/Discord/Slack unfurl `share.nkido.cc/p/<slug>` with title, description, and a code snippet preview.
+1. **Zero-backend inline URL sharing** that works the first day the feature ships, before any Worker is deployed and forever after — code packed into the URL hash, decoded in the browser.
+2. **One-click anonymous Worker share** with a permalink (slug) that loads on any device, anywhere, without signup, and unfurls with OG metadata.
+3. **Multiple drafts** survive across sessions; user can name them and switch via tabs.
+4. **Forkable Worker shares** preserve a `parent_slug` chain so future PRDs can render fork trees.
+5. **Self-hostable Worker backend** — the Worker is documented and shipped as reference code; a self-hoster can deploy their own with one env var change. Inline URLs need no self-hosting.
+6. **Clean abstraction boundary.** The `StorageProvider` interface is defined here so the SaaS PRD layers on without re-architecting.
+7. **No regression** in the existing single-buffer auto-save UX. First launch after the upgrade silently migrates old localStorage into a draft named "Untitled".
+8. **Link previews work** for Worker shares. Twitter/Discord/Slack unfurl `share.nkido.cc/p/<slug>` with title, description, and a code snippet preview. (Inline URLs do not unfurl; that's an inherent tradeoff of the hash-fragment design — see §3.2.)
 
 ### 3.2 Non-Goals (hard cuts)
 
 1. **Accounts, signin, profiles, gallery, hearts, comments.** All deferred to the SaaS PRD.
 2. **Private patches and asset uploads.** SaaS PRD only.
-3. **Editing a published share.** Anonymous shares are immutable. To change one, Fork.
+3. **Editing a published Worker share.** Anonymous Worker shares are immutable. To change one, Fork.
 4. **Edit tokens / "claim my anon share later".** No mechanism in v1. The SaaS PRD's "Import drafts on signup" flow handles claiming local drafts; anonymous shares from a different browser are permanently unattributed.
-5. **Patch-level versioning beyond fork.** Each share is a snapshot; reshare = new slug.
-6. **Public moderation UI.** `/report` endpoint flags rows; takedown is a SQL operation by the operator.
+5. **Patch-level versioning beyond fork.** Each Worker share is a snapshot; reshare = new slug.
+6. **Public moderation UI.** `/report` endpoint flags Worker-share rows; takedown is a SQL operation by the operator. Inline URLs cannot be reported or taken down — by design, no server knows they exist.
 7. **Real-time collab on a draft.** Out of scope.
-8. **Server-side rendering of the IDE.** Viewer at `live.nkido.cc/p/<slug>` is SPA; only the OG landing on `share.nkido.cc/p/<slug>` is server-rendered.
+8. **Server-side rendering of the IDE.** Viewer at `live.nkido.cc/p/<slug>` and `live.nkido.cc/p#code=...` is SPA; only the OG landing on `share.nkido.cc/p/<slug>` is server-rendered.
 9. **Param snapshot at share time.** Future PRD if real users miss it.
+10. **OG unfurls for inline URLs.** Hash fragments are not sent to servers, so neither the Worker nor any third party can render OG metadata for inline URLs. Users who want unfurls should use Worker share. Documented in the Share dialog.
+11. **Title/description metadata in inline URLs.** Inline URLs carry source only. Adding title/desc would lengthen URLs by 50–200 bytes for a feature (the tab title) better served by Worker share. Future PRD may add `#t=...&d=...` if real users miss it.
+12. **Fork-chain tracking for inline-URL visits.** A Fork from `/p#code=...` becomes a fresh Worker share with no `parent_slug` (the original was never on the server). Users who care about lineage should Worker-share first.
 
 ### 3.3 Success metrics
 
@@ -110,13 +117,27 @@ The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete)
 
 ### 4.1 Sharing your active draft
 
+The Share dialog offers two modalities, presented as tabs:
+
+**Tab A — Permalink (Worker share, default):**
+
 1. User edits in the IDE. Auto-save persists into the active draft (e.g., `draft-3`).
 2. They click **Share** in the toolbar.
-3. Modal opens with `Title` (defaults to draft name) and `Description` (optional, one line) fields. "Share publicly" button.
+3. Modal opens on the **Permalink** tab with `Title` (defaults to draft name) and `Description` (optional, one line) fields. "Share publicly" button.
 4. Click → POST to `share.nkido.cc/share`. Modal shows the returned URL `https://share.nkido.cc/p/k7gp2x` and a Copy button.
 5. Toast: "Link copied. Anyone with the URL can view this patch."
 
+**Tab B — Inline link (no backend):**
+
+1. From the Share dialog, user switches to the **Inline link** tab.
+2. Modal shows a live-updating URL `https://live.nkido.cc/p#code=NoIgxg9...` (built on every keystroke via lz-string compression) and a Copy button.
+3. Below the URL: the byte count + a green/yellow/red indicator. < 4000 bytes = green (fits everywhere). 4000–8000 = yellow (Discord/Slack OK, some SMS clients may truncate). > 8000 = red (may not paste reliably; suggests "Use Permalink instead").
+4. Click Copy → toast: "Link copied. Code travels inside the URL — no server required."
+5. The inline-link tab works even when `PUBLIC_SHARE_API_BASE` is unset (no Worker configured). The Permalink tab is disabled in that mode with a tooltip explaining why.
+
 ### 4.2 Visiting a share
+
+**Worker-share permalink (`/p/<slug>`):**
 
 1. Friend pastes `https://share.nkido.cc/p/k7gp2x` in Discord. Discord unfurls: title, description, code preview, "nkido" branding via OG tags.
 2. User clicks. `share.nkido.cc/p/k7gp2x` returns HTML with a `<meta http-equiv="refresh" content="0; url=https://live.nkido.cc/p/k7gp2x">` and a manual "Open in editor" link as a JS-disabled fallback.
@@ -124,13 +145,60 @@ The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete)
 4. Editor opens a new tab labeled with the title. Code loads. Big "Click anywhere to start audio" overlay (browser autoplay policy).
 5. User clicks. WASM compiles, hot-swaps, audio plays.
 
+**Inline URL (`/p#code=...`):**
+
+1. Friend pastes `https://live.nkido.cc/p#code=NoIgxg9...` in Discord. Discord does **not** unfurl (hash fragments are client-only; documented tradeoff in §3.2).
+2. User clicks. Browser navigates directly to `live.nkido.cc/p#code=...` (no Worker round-trip; no `share.nkido.cc` involvement at all).
+3. SPA boots, `+page.svelte` reads `location.hash`, calls `decodeInlineUrl(hash)`. On success: editor opens a new tab labeled "From inline link". On failure (truncated, malformed, version mismatch): tab shows "Couldn't decode inline link" with the raw hash preview + a "Back to editor" button.
+4. Tab is keyed by `inline:<sha256(code).slice(0,12)>` so the same link revisited reuses the same phantom.
+5. Editor shows code, click-to-unmute overlay, then audio plays — identical to the Worker-share flow from this point onward.
+
 ### 4.3 Editing what you've visited
+
+Phantom-draft lifecycle:
+
+```
+   ┌───────────────┐
+   │ Visit /p/<s>  │
+   │ or /p#code=…  │
+   └───────┬───────┘
+           │ fetch (Worker) or decode (hash)
+           ▼
+   ┌───────────────┐
+   │ Phantom open  │   ◄─── no localStorage entry yet
+   │ (read-only*)  │       (* user CAN edit; the entry
+   └───────┬───────┘         materializes on first key)
+           │ first keystroke
+           ▼
+   ┌───────────────┐
+   │ Phantom       │   localStorage: draft:p/<slug>
+   │ dirty (●)     │              or draft:inline/<sha256-12>
+   └─┬────┬────┬───┘
+     │    │    └─────────────────┐
+     │    │ Fork                  │ Close tab
+     │    │ (POST /share)         │ (no Keep/Fork)
+     │    ▼                       ▼
+     │  ┌─────────────────┐   ┌───────────────────┐
+     │  │ New share /p/<n>│   │ Phantom persists  │
+     │  │ phantom deleted │   │ in localStorage;  │
+     │  │ URL → /p/<n>    │   │ reachable from    │
+     │  └─────────────────┘   │ Recently visited  │
+     │ Keep                    └───────────────────┘
+     ▼
+   ┌────────────────────┐
+   │ Named draft        │   localStorage: nkido-drafts entry
+   │ Phantom deleted    │   tab title loses '●', URL → /
+   │ Active tab updated │
+   └────────────────────┘
+```
+
+Walkthrough (Worker-share visit; inline-hash flow is identical except no Fork distinction is meaningful until they Fork or Keep):
 
 1. User starts typing in the `/p/k7gp2x` tab.
 2. First keystroke: a phantom draft is auto-created with key `draft:p/k7gp2x`. The tab title shows a `●` (unsaved) indicator.
 3. From now on, every keystroke debounce-saves to the phantom. URL stays `/p/k7gp2x`.
 4. Two new buttons appear in the toolbar: **Keep** and **Fork**.
-5. **Keep** (local): promotes the phantom to a regular named draft. Modal asks for a name (defaults to `Fork of <title>`). Phantom is deleted; new draft is opened as the active tab. URL navigates to `/editor`.
+5. **Keep** (local): promotes the phantom to a regular named draft. Modal asks for a name (defaults to `Fork of <title>`). Phantom is deleted; new draft is opened as the active tab. URL navigates to `/`.
 6. **Fork** (publishes): POSTs the current code to `/share` with `parent_slug=k7gp2x`. Worker returns `{ slug: "9m2n7q" }`. Tab title updates; URL changes in place to `/p/9m2n7q`. Phantom under `draft:p/k7gp2x` is deleted. Local phantom for the new slug is unnecessary because the user just published exactly what was in the editor.
 7. If the user closes the tab without Keep or Fork, the phantom remains in localStorage and is reachable from the Patches sidebar under "Recently visited" → "k7gp2x (edited)".
 
@@ -179,15 +247,18 @@ That's it. The SPA now POSTs shares to their backend, reads `/p/<slug>` from the
 │  │   ├── local-draft.ts           LocalDraftProvider              │
 │  │   ├── worker-share.ts          WorkerShareProvider             │
 │  │   └── index.ts                                                 │
+│  ├── src/lib/ide/share/           ← Inline URL encoder            │
+│  │   └── inline-url.ts            encode/decode + caps            │
 │  ├── src/lib/components/                                          │
 │  │   ├── EditorTabs.svelte        new                             │
-│  │   ├── ShareDialog.svelte       new                             │
+│  │   ├── ShareDialog.svelte       new — two tabs: Permalink/Inline│
 │  │   └── Panel/PatchesPanel.svelte  new                           │
 │  ├── src/lib/stores/                                              │
 │  │   ├── drafts.svelte.ts         new — replaces single buffer    │
 │  │   └── editor.svelte.ts         modified — delegates to drafts  │
 │  ├── src/routes/                                                  │
-│  │   └── p/[slug]/+page.svelte    new — viewer route              │
+│  │   └── p/[[slug]]/+page.svelte  new — viewer route              │
+│  │                                  matches /p/<slug> AND /p#... │
 │  └── share-api/                   new — Cloudflare Worker         │
 │      ├── src/                                                     │
 │      │   ├── index.ts             ~150 LOC, hand-rolled router    │
@@ -360,7 +431,7 @@ function newSlug(): string {
 
 54^8 ≈ 7.2 × 10^13. At 1M shares total, collision odds < 10⁻⁵; retry-on-INSERT-collision is safety net, not a hot path.
 
-(The parent SaaS PRD specs 10-char Crockford base62; our shorter 8-char is friendlier to typing and still well over collision-safe at OSS-scale traffic. SaaS PRD can opt to migrate to 10-char if needed; existing 8-char slugs continue to resolve since the column accepts variable length up to PRIMARY KEY max.)
+**8 chars is the permanent choice for nkido OSS shares.** The parent SaaS PRD originally specced 10-char Crockford base62; we deliberately diverge for typing friendliness. If the SaaS layer wants its own namespace (e.g., authenticated-user URLs), it should use a path prefix like `/p/u/<handle>/<short-slug>` rather than lengthen the OSS slug — keeping every anonymous OSS `/p/<slug>` resolvable forever, with no "old slugs are 8 chars, new ones are 10" split URL shape.
 
 ### 5.6 Domains and CORS
 
@@ -373,7 +444,101 @@ function newSlug(): string {
 | `https://share.nkido.cc/share` | Cloudflare Worker | POST — anonymous publish |
 | `https://share.nkido.cc/report` | Cloudflare Worker | POST — flag for review |
 
-CORS: Worker sets `Access-Control-Allow-Origin: https://live.nkido.cc` (and `http://localhost:5173`/`5174` in dev via env). `Access-Control-Allow-Methods: GET, POST, OPTIONS`. `Access-Control-Allow-Headers: content-type`.
+CORS: Worker sets `Access-Control-Allow-Origin: https://live.nkido.cc` for production. In dev, the Worker is bound with `ALLOW_ORIGIN_DEV_PATTERN=^http://localhost:\d+$` (regex matched against the request's `Origin` header); the responding `Access-Control-Allow-Origin` echoes the matching origin verbatim. This avoids hardcoding 5173/5174/5175 — Vite picks the next free port and the Worker accepts whichever it lands on. Production wrangler.toml does **not** set `ALLOW_ORIGIN_DEV_PATTERN`. `Access-Control-Allow-Methods: GET, POST, OPTIONS`. `Access-Control-Allow-Headers: content-type`.
+
+### 5.7 Inline URL encoding (no-backend share)
+
+Inline URLs pack source code into the URL hash fragment so the entire share is the URL itself — no Worker, no D1, no server-side state, no asset hosting. The hash is read by the SPA on mount and decoded client-side.
+
+#### Format
+
+```
+https://live.nkido.cc/p#code=<lz-base64url-encoded source>
+```
+
+Single hash key: `code`. No other keys in v1. Decoded code is the literal Akkado source string.
+
+#### Library
+
+[`lz-string`](https://github.com/pieroxy/lz-string) — MIT, ~4 KB gzipped, the same library used by Strudel/JSFiddle/CodePen for URL-pack workflows. Specifically:
+
+- `LZString.compressToEncodedURIComponent(source: string): string` for encode (output is URL-safe by construction; no extra `encodeURIComponent` needed).
+- `LZString.decompressFromEncodedURIComponent(encoded: string): string | null` for decode.
+
+Compression ratio on representative Akkado patches: 2.5×–4× on typical 1–8 KB sources. A 16 KB raw patch (the upper cap that matches the Worker's `code` column constraint) typically lands at 4–6 KB inside the URL.
+
+#### Module: `web/src/lib/ide/share/inline-url.ts`
+
+```typescript
+import LZString from 'lz-string';
+
+const HASH_KEY = 'code';
+
+export interface InlineUrl {
+  url: string;          // full URL, e.g. https://live.nkido.cc/p#code=...
+  byteLength: number;   // byte length of the full URL (for cap warnings)
+  status: 'green' | 'yellow' | 'red';
+}
+
+export function encodeInlineUrl(code: string, base = window.location.origin): InlineUrl {
+  const encoded = LZString.compressToEncodedURIComponent(code);
+  const url = `${base}/p#${HASH_KEY}=${encoded}`;
+  const byteLength = new TextEncoder().encode(url).length;
+  const status =
+    byteLength < 4000 ? 'green' :
+    byteLength < 8000 ? 'yellow' :
+    'red';
+  return { url, byteLength, status };
+}
+
+export function decodeInlineHash(hash: string): string | null {
+  // hash includes the leading '#' from location.hash
+  const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  const encoded = params.get(HASH_KEY);
+  if (!encoded) return null;
+  try {
+    const code = LZString.decompressFromEncodedURIComponent(encoded);
+    return code && code.length > 0 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+export function inlineHashKey(code: string): string {
+  // Used as the phantom-draft key so the same inline link reuses the same phantom on revisit.
+  // SHA-256 truncated to 12 hex chars — collision-safe at OSS scale, short enough for a key.
+  // Implementation uses the SubtleCrypto API; caller awaits.
+  throw new Error('see implementation in inline-url.ts');
+}
+```
+
+#### URL caps and platform reality
+
+| Platform | Practical max URL length | Notes |
+|---|---|---|
+| Browsers (all modern) | 64 KB+ | Address bar, history, fetch — not a limiting factor. |
+| Discord, Slack, Twitter DMs | ~8000 chars | Above this, URL may be truncated mid-link. |
+| Email clients (Gmail, Outlook) | ~4000 chars conservatively | URL preservation depends on client; mailto: links cap lower. |
+| SMS, iMessage | ~1500 chars | Practically forces Worker share for non-trivial patches. |
+
+The status indicator (green/yellow/red) in the Share dialog (§4.1 Tab B) reflects these tiers. Above 8000 bytes the dialog actively recommends Worker share.
+
+#### Source-of-truth tradeoff
+
+Inline URLs are immutable strings of bytes — editing the code at `/p#code=...` does not change the URL. The phantom-draft mechanism (see §4.3) preserves edits locally; users who want a stable, shareable post-edit URL must Fork (Worker share) or generate a new inline link via the Share dialog.
+
+#### Versioning / future-proofing
+
+The v1 hash format has exactly one key (`code`). Future PRDs can add other keys without breaking decoders by:
+
+- Adding new keys (`#code=...&t=<title>&d=<desc>`): decoders ignore unknown keys.
+- Bumping a `v=` key when the encoder changes (`#v=2&code=<new-format>`): v1 decoders fail closed on `v >= 2`.
+
+The v1 decoder treats missing `v=` as v=1 (lz-string). This means **the v1 URL shape is permanent and forward-compatible** — old URLs never break.
+
+#### Privacy
+
+Hash fragments are never sent to the server in HTTP requests. The Worker's logs will not contain inline-URL contents; analytics, referrer headers, and CDN logs will not capture them. The code is visible to: (a) anyone the user shares the URL with, (b) browser history on the user's machine, (c) any browser extensions with `host_permissions` for `live.nkido.cc`. This matches the privacy properties of GitHub Gist URLs, Strudel hash shares, etc.
 
 ---
 
@@ -381,9 +546,16 @@ CORS: Worker sets `Access-Control-Allow-Origin: https://live.nkido.cc` (and `htt
 
 ### 6.1 Share dialog
 
+Two-tab modal. Default tab is **Permalink** (Worker share); user can switch to **Inline link** for the no-backend variant.
+
+**Permalink tab (default):**
+
 ```
 ┌────────────────────────────────────────┐
 │  Share patch                       [×] │
+│  ┌─────────────┬───────────────┐       │
+│  │ ● Permalink │  Inline link  │       │
+│  └─────────────┴───────────────┘       │
 │                                        │
 │  Title                                 │
 │  ┌──────────────────────────────────┐  │
@@ -402,7 +574,7 @@ CORS: Worker sets `Access-Control-Allow-Origin: https://live.nkido.cc` (and `htt
 └────────────────────────────────────────┘
 ```
 
-After publish:
+After publish (Permalink tab):
 ```
 ┌────────────────────────────────────────┐
 │  Shared!                           [×] │
@@ -411,6 +583,34 @@ After publish:
 │  [ Copy link ]   [ Open in new tab ]   │
 └────────────────────────────────────────┘
 ```
+
+**Inline link tab:**
+
+```
+┌────────────────────────────────────────┐
+│  Share patch                       [×] │
+│  ┌─────────────┬───────────────┐       │
+│  │   Permalink │ ● Inline link │       │
+│  └─────────────┴───────────────┘       │
+│                                        │
+│  https://live.nkido.cc/p#code=NoIgxg…  │
+│  [ Copy link ]                         │
+│                                        │
+│  ● 2,847 bytes — fits anywhere         │  ← green
+│                                        │
+│  ℹ Source is packed into the URL hash. │
+│  No server is contacted. Works offline,│
+│  forever. Does not unfurl in chat apps │
+│  — for OG previews, use Permalink.     │
+└────────────────────────────────────────┘
+```
+
+Status indicator variants:
+- `● 2,847 bytes — fits anywhere` (green, < 4000)
+- `● 5,210 bytes — Discord/Slack OK; some clients may truncate` (yellow, 4000–8000)
+- `● 9,604 bytes — too long for most messengers; use Permalink instead` (red, > 8000)
+
+When `PUBLIC_SHARE_API_BASE` is unset (self-host without Worker, or local dev), the Permalink tab is disabled with tooltip "Sharing is hosted at live.nkido.cc; set PUBLIC_SHARE_API_BASE to enable Permalink." Inline link tab remains available.
 
 ### 6.2 Editor tab bar
 
@@ -446,7 +646,7 @@ PATCHES
 
 ### 6.4 `/p/<slug>` viewer (SPA route)
 
-- Same IDE chrome as `/editor`, but with two subtle additions:
+- Same IDE chrome as `/`, but with two subtle additions:
   - Toolbar shows the patch title + "by anonymous" + a "Fork" button always visible.
   - First-time-visit overlay: "Click anywhere to start audio" (browser autoplay policy).
 - Editing the code is enabled. First keystroke creates the phantom draft. **Keep** button replaces the share-modal Share button while in this state. **Fork** button is always visible (for "publish my edits as a new share").
@@ -493,19 +693,48 @@ PATCHES
 | `web/src/lib/stores/editor.svelte.ts` | **Modified** | Single-buffer logic replaced with delegation to a new `drafts` store. Backwards-compat shim for first-launch migration. |
 | `web/static/worklet/cedar-processor.js` | **No change** | Audio path is unaffected. |
 | `web/svelte.config.js` (`adapter-static`) | **No change** | SPA stays static; Worker is a separate deploy. |
-| `web/netlify.toml` | **Minor change** | Add `share.nkido.cc` to permitted CSP `connect-src` once we tighten CSP (out of scope but flagged). |
-| `web/.env.example` | **Modified** | Add `PUBLIC_SHARE_API_BASE`. |
-| `web/share-api/` | **New** | Reference Worker. |
-| `web/src/lib/ide/storage/` | **New** | Interface + two impls. |
-| `web/src/lib/components/Panel/` | **Modified** | Add `PatchesPanel.svelte` to the tab list. |
-| `web/src/routes/p/[slug]/+page.svelte` | **New** | SPA viewer route. |
-| `web/src/routes/+page.svelte` | **Modified** | Mount editor with new tab bar. |
+| `netlify.toml` (repo root) | **Minor change** | Add `share.nkido.cc` to permitted CSP `connect-src` once we tighten CSP (out of scope but flagged). |
+| `web/.env.example` | **New** | Add `PUBLIC_SHARE_API_BASE` (file does not exist today; create in Phase 2). |
+| `web/package.json` | **Modified** | Add `lz-string` dep (Phase 0). |
+| `web/share-api/` | **New** | Reference Worker (Phase 2). |
+| `web/src/lib/ide/storage/` | **New** | Interface + two impls (Phase 1, 2). |
+| `web/src/lib/ide/share/inline-url.ts` | **New** | Inline URL encoder/decoder, lz-string wrapper (Phase 0). |
+| `web/src/lib/components/Panel/SidePanel.svelte` | **Modified** | Add `PatchesPanel` to the tab list (Phase 1). |
+| `web/src/routes/p/[[slug]]/+page.svelte` | **New** | SPA viewer route — matches both `/p/<slug>` and `/p#code=...` (optional param). |
+| `web/src/routes/+page.svelte` | **Modified** | Mount editor with new tab bar; add Share toolbar button (Phase 0 adds the button, Phase 2 wires the Permalink tab). |
 
 ---
 
 ## 8. Implementation Phases
 
 Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in `nkido/`; nothing in this PRD touches `nkido-pro/`.
+
+### Phase 0 — Inline URL sharing (no backend)
+
+**Goal:** Any browser visiting `live.nkido.cc/p#code=<lz-base64url>` boots the IDE with that code. A "Copy inline link" action in the toolbar produces such URLs from the current editor buffer. No Worker, no D1, no drafts, no tabs yet.
+
+**Why first:** This phase has zero external dependencies (no Cloudflare account, no DNS, no deploy infrastructure). Ships independently of Phases 1–3. Once live, it's a permanent fallback that survives Worker downtime, self-hosters without backends, and offline use.
+
+**Steps:**
+
+1. Add `lz-string` to `web/package.json` (`bun add lz-string`).
+2. Create `web/src/lib/ide/share/inline-url.ts` per §5.7: `encodeInlineUrl(code, base?)`, `decodeInlineHash(hash)`, `inlineHashKey(code)` (SHA-256 via SubtleCrypto, first 12 hex chars).
+3. Create `web/src/routes/p/[[slug]]/+page.svelte` + `+page.ts` (`export const prerender = false; export const ssr = false;`). The route is the same one Phase 2 uses for `/p/<slug>`; in Phase 0 the slug branch is a stub that shows "Slug shares require the Worker; see Inline link instead."
+4. The `/p` route on mount:
+   - If `location.hash` contains `code=...`, call `decodeInlineHash`. On success, load the code into the editor's single buffer (pre-Phase-1 there is no draft system yet). On failure, render "Couldn't decode inline link" with a "Back to editor" button.
+   - Strip the hash from the URL after successful decode (`history.replaceState`) so the address bar shows `/p` instead of the full hash payload (the original URL still works on revisit, just not in the address bar after decode).
+5. Add a "Copy inline link" toolbar button in `web/src/routes/+page.svelte`. On click: call `encodeInlineUrl(editorStore.code)`, copy to clipboard, show toast `"Inline link copied (2,847 bytes — fits anywhere)"` with byte count and color matching §6.1's status tiers.
+6. **Pre-Phase-1 safety:** visiting `/p#code=...` overwrites the single-buffer `nkido-editor-code` (because there is no draft system to host a phantom yet). Before the overwrite, show a one-shot modal: "Visiting an inline link will replace your current patch. Continue?" with "Continue" + "Cancel" + "Save current to clipboard first". This modal is removed in Phase 1 once phantom drafts exist.
+
+**Verification:**
+
+- In dev: edit some code, click "Copy inline link", paste in a fresh incognito window → IDE loads with the same code (after click-to-unmute).
+- Visit `live.nkido.cc/p#code=NoIgxg…` → after click, audio plays the encoded patch.
+- Round-trip property: for any string `s ∈ [1, 65536]` bytes of valid UTF-8, `decodeInlineHash(encodeInlineUrl(s).url.split('#')[1]) === s` (unit-tested per §11.2).
+- Visit `/p#code=GARBAGE!!!` → fail-closed renders "Couldn't decode inline link" without crashing.
+- Visit `/p#code=` (empty value) → same fail-closed path.
+- Visit `/p` (no hash) → before Phase 2, shows the Phase 0 stub message; after Phase 2, shows "Patch not found" only when an actual slug is in the path.
+- Visit `/p#code=<huge>` exceeding browser hash limits (browser-dependent, > 64 KB on Chrome) → browser truncates silently; decoder returns null; fail-closed UI.
 
 ### Phase 1 — Multi-draft local persistence
 
@@ -517,14 +746,16 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 2. Create `web/src/lib/ide/storage/local-draft.ts` (`LocalDraftProvider`).
 3. Create `web/src/lib/stores/drafts.svelte.ts` (Svelte 5 rune store wrapping the provider; exposes `drafts`, `activeDraftId`, `setActive`, `createDraft`, `renameDraft`, `deleteDraft`, `updateActiveCode`).
 4. Modify `web/src/lib/stores/editor.svelte.ts` to delegate `code`, `setCode`, persistence to `drafts`. Keep the old export shape for components that import it.
-5. **First-launch migration:** in the drafts store init, if `nkido-drafts` is absent and `nkido-code` is present, create a draft `{ name: 'Untitled', code: <old code> }`, set it active. Leave `nkido-code` untouched for one release as a recovery safety net (tracked under a future cleanup issue).
+5. **First-launch migration:** in the drafts store init, if `nkido-drafts` is absent and `nkido-editor-code` is present, create a draft `{ name: 'Untitled', code: <old code> }`, set it active, set the `nkido-drafts-migrated-v1` flag. Leave `nkido-editor-code` untouched for one release as a recovery safety net (tracked under a future cleanup issue). **If both keys are present at startup, `nkido-drafts` always wins** — do not re-migrate, do not merge (see §10.5).
 6. Create `EditorTabs.svelte` and place it above the editor in the main layout. Implements: tab list, active highlight, close button, "+ New draft" picker.
 7. Add `PatchesPanel.svelte` to the existing right-side Panel system. Sections: My drafts (with rename/delete via context menu), Recently visited (empty in this phase).
 8. Wire keyboard shortcut `Ctrl/Cmd+T` → new draft, `Ctrl/Cmd+W` → close active tab.
+9. **Persist open-tab set.** Drafts store writes `nkido-open-tabs` (ordered draft/phantom IDs) and `nkido-active-tab` (focused ID) on every tab open/close/switch. On reload, restore tabs in order; if `nkido-active-tab` is stale, fall back to the most-recently-updated remaining tab (or "Untitled" if none).
+10. **Promote Phase 0 inline-URL handling to phantom-tab.** Update `/p/[[slug]]/+page.svelte` so that when `#code=...` is present, it computes `inlineHashKey(code)` and opens a phantom tab id `inline:<hash>`. First keystroke materializes a `draft:inline/<hash>` phantom (same lifecycle as slug-keyed phantoms — see §4.3 diagram). Remove the Phase 0 "this will replace your current patch" modal — the phantom system now handles it cleanly.
 
 **Verification:**
 - Open IDE on a fresh browser → see one draft "Untitled" with the default sample code, single tab.
-- Open IDE with existing `nkido-code` → see one draft "Untitled" with the user's code preserved.
+- Open IDE with existing `nkido-editor-code` → see one draft "Untitled" with the user's code preserved.
 - Create three drafts, edit each, switch via tabs → each retains its code on switch and across reload.
 - Close a tab → tab disappears; sidebar still lists the draft; click in sidebar → tab reopens with code intact.
 - Rename a draft inline → name persists across reload.
@@ -542,14 +773,15 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 5. Configure DNS: `share.nkido.cc` → Worker, `live.nkido.cc` → Netlify (already in place per `prd-project-website.md`).
 6. Create `web/src/lib/ide/storage/worker-share.ts` (`WorkerShareProvider`) — composes a `LocalDraftProvider` and proxies `share`/`fetchShare`/`reportShare` to `PUBLIC_SHARE_API_BASE`.
 7. Add `PUBLIC_SHARE_API_BASE` to `.env.example`. Default to empty string locally → Share button is disabled with a tooltip "Sharing is hosted at live.nkido.cc; build with PUBLIC_SHARE_API_BASE set to your Worker URL."
-8. Create `ShareDialog.svelte` (the modal shown in §6.1). Wire to a Share toolbar button.
-9. Create `web/src/routes/p/[slug]/+page.svelte`:
-   - On mount: `await provider.fetchShare(slug)`. If null, render "Patch not found" with "Back to editor".
+8. Create `ShareDialog.svelte` (the two-tab modal shown in §6.1). Replace the Phase 0 "Copy inline link" toolbar button with a single **Share** button that opens the dialog. The **Inline link** tab reuses Phase 0's `encodeInlineUrl` (no new logic); the **Permalink** tab calls `WorkerShareProvider.share`.
+9. Extend `web/src/routes/p/[[slug]]/+page.svelte` (created in Phase 0) to handle the slug branch:
+   - If `params.slug` is present: `await provider.fetchShare(slug)`. If null, render "Patch not found" with "Back to editor".
    - If found: open as a new tab in the drafts store with id `phantom:p/<slug>`, set active. Mark phantom: true. Title from share.
    - Toolbar shows Title (read-only), "by anonymous", and "Fork" button.
    - Click-to-unmute overlay (browser autoplay policy).
+   - The `#code=...` branch (Phase 0 / Phase 1 step 10) and the slug branch share the same phantom-tab logic and the same Fork button — Fork from either creates a fresh Worker share (slug-branch Fork records `parent_slug`; inline-branch Fork omits it, per §3.2 non-goal 12).
 10. On first keystroke in a phantom tab, save edits under `draft:p/<slug>` localStorage key. Add a `●` to the tab title.
-11. Wire **Keep** button (visible only on phantoms): converts phantom to a regular draft, removes phantom storage key, navigates to `/editor`.
+11. Wire **Keep** button (visible only on phantoms): converts phantom to a regular draft, removes phantom storage key, navigates to `/`.
 12. Wire **Fork** button (always visible on phantoms; also shown on the share modal as an alternate action): POSTs current code with `parent_slug=<original_slug>`, navigates URL in place to `/p/<new_slug>`, deletes the original phantom from local storage.
 13. Wire `recordVisited` in `LocalDraftProvider`: each successful `fetchShare` records `{ slug, title, visitedAt: now }` in a localStorage list capped at N=20.
 14. Populate the "Recently visited" section of the Patches sidebar from `listRecentlyVisited`.
@@ -558,7 +790,7 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 - From the editor, click Share, fill title + description, publish. See the URL.
 - Open the URL in incognito → SPA loads, code visible, click → audio plays.
 - Edit the code in incognito → tab gets `●`. Close incognito browser, reopen URL → edit is gone (different storage); reopen on the original browser → edit persists.
-- Click Keep → modal asks for name → confirm → tab and address bar move to `/editor`, draft visible in sidebar.
+- Click Keep → modal asks for name → confirm → tab and address bar move to `/`, draft visible in sidebar.
 - Edit again, click Fork → new URL `/p/<new>`. Confirm in DB that `parent_slug = <original>`.
 - Curl `share.nkido.cc/p/<slug>` → see OG-tagged HTML with meta-refresh.
 - Paste URL in Discord → unfurl shows title/description.
@@ -603,16 +835,18 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 
 | File | Phase | Purpose |
 |---|---|---|
+| `web/src/lib/ide/share/inline-url.ts` | 0 | `encodeInlineUrl`, `decodeInlineHash`, `inlineHashKey` (lz-string + SubtleCrypto). |
+| `web/src/lib/ide/share/inline-url.test.ts` | 0 | Vitest — encode/decode round-trip property tests + corruption fail-closed. |
+| `web/src/routes/p/[[slug]]/+page.svelte` | 0, 2 | SPA viewer route. P0: decodes `#code=...`. P2: also fetches slug shares + Fork. |
+| `web/src/routes/p/[[slug]]/+page.ts` | 0 | `export const prerender = false; export const ssr = false;` (client-only since static adapter). |
 | `web/src/lib/ide/storage/types.ts` | 1 | `StorageProvider`, `DraftSummary`, `DraftFull`, `ShareInput`, `ShareSummary`, `ShareFull` interfaces. |
 | `web/src/lib/ide/storage/local-draft.ts` | 1 | `LocalDraftProvider` — drafts + recently-visited in localStorage. |
 | `web/src/lib/ide/storage/worker-share.ts` | 2 | `WorkerShareProvider` — composes local + share API proxy. |
 | `web/src/lib/ide/storage/index.ts` | 2 | Re-exports + factory `getProvider()` based on env. |
 | `web/src/lib/stores/drafts.svelte.ts` | 1 | Svelte 5 rune store: drafts list, active draft, mutations. |
 | `web/src/lib/components/EditorTabs.svelte` | 1 | Tab bar above the editor. |
-| `web/src/lib/components/ShareDialog.svelte` | 2 | Share modal. |
+| `web/src/lib/components/ShareDialog.svelte` | 2 | Share modal with Permalink + Inline link tabs (Inline tab reuses Phase 0 code). |
 | `web/src/lib/components/Panel/PatchesPanel.svelte` | 1, 2 | Sidebar tab. P1: drafts only. P2: + recently visited. |
-| `web/src/routes/p/[slug]/+page.svelte` | 2 | SPA viewer route. Loads share, opens phantom tab, click-to-unmute. |
-| `web/src/routes/p/[slug]/+page.ts` | 2 | `export const prerender = false; export const ssr = false;` (client-only since static adapter). |
 | `web/share-api/src/index.ts` | 2 | Worker entry — router. |
 | `web/share-api/src/handlers.ts` | 2 | `handleShare`, `handleApiGet`, `handleHtmlGet`, `handleReport`. |
 | `web/share-api/src/og.ts` | 2 | OG HTML template. |
@@ -629,7 +863,7 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 |---|---|---|
 | `web/src/lib/stores/editor.svelte.ts` | 1 | Delegate `code` getter/setter to `drafts.activeDraft.code`. Keep the same exported shape. Migration: see §8 step 5. |
 | `web/src/routes/+page.svelte` | 1 | Mount `EditorTabs` above the existing editor component. |
-| `web/src/lib/components/Panel/Panel.svelte` (or wherever the tab list lives) | 1 | Add the `PatchesPanel` tab. |
+| `web/src/lib/components/Panel/SidePanel.svelte` | 1 | Add the `PatchesPanel` to the tab list. |
 | `web/.env.example` | 2 | Add `PUBLIC_SHARE_API_BASE=` (empty default). Document both production (`https://share.nkido.cc`) and self-host examples. |
 | `web/README.md` | 4 | Add "Hosting your own share endpoint" section linking to `share-api/README.md`. |
 
@@ -642,6 +876,7 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 | `web/static/worklet/cedar-processor.js` | Audio path unaffected. |
 | `web/wasm/nkido_wasm.cpp` | No new WASM exports. |
 | `web/svelte.config.js` | Stays `adapter-static`. |
+| `web/src/routes/embed/+page.svelte` | Embed mode keeps the legacy single-buffer path (see §10.6). |
 
 ---
 
@@ -671,7 +906,7 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 - **Visitor revisits a share with a phantom:** The phantom code loads (not the original). UI shows a banner: "You have local edits to this patch. [Discard local edits] to view the original."
 - **localStorage full / quota exceeded:** Phantom save fails silently in v1; tab loses the `●` indicator. The drafts store should catch and console-warn. Future PRD: graceful UI for "your storage is full — please clean up drafts."
 - **Visitor closes tab while phantom has unsaved (in-flight debounce):** debounce flushes synchronously on `beforeunload`; same as the existing single-buffer behavior.
-- **Phantom for a slug that gets soft-deleted:** the phantom survives in localStorage; revisiting `/p/<slug>` shows "Patch not found", and the phantom is unreachable from there. The Patches sidebar "Recently visited" section still shows it; clicking offers to open in `/editor` with the phantom's code under a temporary draft.
+- **Phantom for a slug that gets soft-deleted:** the phantom survives in localStorage; revisiting `/p/<slug>` shows "Patch not found", and the phantom is unreachable from there. The Patches sidebar "Recently visited" section still shows it; clicking offers to open in `/` with the phantom's code under a temporary draft.
 
 ### 10.4 Forking
 
@@ -685,19 +920,45 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 - **20 drafts, 5 visited slugs, 25 tabs open at once:** allowed but noisy. UI provides a horizontal scroller on the tab bar.
 - **User deletes the active draft:** confirmation modal first. After confirm, switches active to the most-recently-updated remaining draft, or creates a fresh "Untitled" if none.
 - **All drafts deleted:** drafts store auto-creates "Untitled" with the default sample code so the editor is never empty.
-- **First-launch migration with corrupted `nkido-code`:** treat as absent; create empty "Untitled" with default sample.
+- **First-launch migration with corrupted `nkido-editor-code`:** treat as absent; create empty "Untitled" with default sample.
 - **First-launch migration runs twice (e.g., user clears `nkido-drafts` manually):** detect via a one-time flag `nkido-drafts-migrated-v1`. After it's set, never re-import — the user's deletion was intentional.
+- **Both `nkido-drafts` and `nkido-editor-code` present at startup:** `nkido-drafts` always wins. The legacy single-buffer key is treated as a stale safety-net (it survives one release post-migration). Do not merge, do not prompt, do not overwrite the legacy key.
+- **Open-tab set persists across reload.** The drafts store writes `nkido-open-tabs` (an ordered list of draft/phantom IDs) and `nkido-active-tab` (the focused ID) on every tab open/close/switch. On reload, the same tabs reappear in the same order, with the same active tab. Phantom-keyed tabs whose underlying phantom no longer exists (e.g., explicitly Forgotten from sidebar) are silently dropped on reload.
+- **`nkido-active-tab` points to a non-existent or deleted draft:** drafts store falls back to the most-recently-updated remaining tab; if none, opens "Untitled".
 
-### 10.6 Self-hosting
+### 10.6 Embed mode interaction
+
+The existing `/embed` route (`web/src/routes/embed/+page.svelte`) calls `editorStore.setPersistenceEnabled(false)` so iframed previews on the project website do not clobber the main app's saved code. This PRD **does not modify the embed route or change its single-buffer semantics**:
+
+- Embed mode bypasses the drafts store entirely. The tab bar, Patches sidebar, Share dialog, and Keep/Fork buttons are not rendered.
+- An embed visiting `/p/<slug>` or `/p#code=...` is acceptable behavior in a future PRD, but is **out of scope here** — for v1, `/embed` only supports the preloaded patch wired by the parent page's iframe `src`.
+- `web/src/routes/embed/+page.svelte` appears in §9.3 (files explicitly NOT changed).
+
+### 10.7 Self-hosting
 
 - **Self-hoster forgets to create the D1 database:** `wrangler deploy` succeeds, but POST /share returns 500. README covers this.
 - **Self-hoster uses HTTP instead of HTTPS for `PUBLIC_SHARE_API_BASE`:** dev only; production CSP/COOP would block. README warns.
 - **Two installs share a D1 instance:** allowed but slugs are global to that DB. README clarifies.
 
-### 10.7 Reporting
+### 10.8 Reporting
 
 - **Spam reports from one IP:** no rate limit on `/report` in v1. `report_count` increments freely; operator triages by `reported_at DESC` and uses judgment. If spam-of-reports becomes a real issue, add rate limit (future).
 - **Reporter clicks Report twice:** `report_count` increments twice. UX toast "Already reported" is best-effort client-side via a localStorage `reported-slugs` set; not enforced server-side.
+
+### 10.9 Inline URL sharing
+
+- **Empty hash (`/p#`) or missing `code` key (`/p#foo=bar`):** `decodeInlineHash` returns null. UI renders "Couldn't decode inline link" with "Back to editor".
+- **Malformed lz-string payload:** `decompressFromEncodedURIComponent` returns null or throws. Caught and fail-closed (same UI as empty hash).
+- **Browser truncated the URL mid-paste:** detected as malformed payload; fail-closed UI. The truncation is invisible to the SPA — no way to detect "this was originally valid".
+- **Hash decodes to empty string:** treat as null (no zero-byte patches).
+- **Hash payload too large for some old/middleware (browser-specific URL caps):** modern browsers accept 64 KB+ URLs; the share dialog's red status above 8000 bytes is the realistic cap, not a technical limit. If a user constructs a >64KB URL by hand it may be truncated by intermediate proxies — fail-closed UI on visit.
+- **User encodes code, then edits, then revisits the URL later:** original URL still decodes to the original code. Edits live in the phantom keyed by `inlineHashKey(<original code>)`. Same as slug-share phantom behavior.
+- **Same patch shared twice:** identical inline URLs (encoder is deterministic for identical input — lz-string output is a deterministic function of input). The phantom-tab key (`inline:<sha256-12>`) is also identical, so revisiting reuses the same phantom across both URLs.
+- **Two different patches with hash collision (probability < 2⁻⁴⁸ for random inputs):** the second visit reuses the first phantom, overwriting any in-progress edits. Acceptable risk at SHA-256-12 strength and OSS scale.
+- **Hash contains characters outside `[A-Za-z0-9_-]` (lz-string's URL-safe alphabet):** `decompressFromEncodedURIComponent` returns null or garbage; fail-closed UI.
+- **User pastes an inline URL into the address bar of an already-open IDE session:** browser navigates to `/p#code=...`; SvelteKit routes to `[[slug]]/+page.svelte`; phantom tab opens. Existing tabs are preserved (per §10.5 open-tab persistence).
+- **Hash present alongside a slug (`/p/abc123#code=...`):** ambiguous. Per §8 Phase 2 step 9, the slug branch always wins — `#code=...` is ignored when a slug is in the path. The Share dialog never generates this combination.
+- **`history.replaceState` to strip `#code=...` after decode:** the URL in the address bar becomes clean `/p`, but the page does not reload (no flash, no re-decode). Reload reads the cleaned URL → falls into the no-hash branch → shows "Patch not found" or the slug stub. This is intentional: the source of truth is now the phantom (localStorage); the URL was a one-shot transport.
 
 ---
 
@@ -727,10 +988,14 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 
 Vitest in `web/`:
 
+- `inline-url.ts` round-trip (Phase 0): for a fixture set of representative Akkado patches (1 line, 10 lines, 100 lines, 16 KB) — `decodeInlineHash(encodeInlineUrl(s).url.split('#')[1]) === s`. Plus byte-length status thresholds: 1 KB → green; 5 KB → yellow; 12 KB → red.
+- `inline-url.ts` fail-closed (Phase 0): `decodeInlineHash('')`, `decodeInlineHash('#')`, `decodeInlineHash('#code=')`, `decodeInlineHash('#code=GARBAGE!!!')`, `decodeInlineHash('#foo=bar')` all return `null` without throwing.
+- `inlineHashKey` determinism: same input → same 12-char hex; different inputs → different keys (fuzz with 1000 random strings).
 - `LocalDraftProvider` round-trip: save → list → load → delete; recently-visited insertion + cap at 20.
 - `WorkerShareProvider` against a stubbed fetch: share returns slug; fetchShare parses JSON.
-- `drafts.svelte.ts`: first-launch migration from `nkido-code`; switching active; delete-active fallback to most-recent; empty fallback to Untitled.
+- `drafts.svelte.ts`: first-launch migration from `nkido-editor-code`; both-keys-present → `nkido-drafts` wins (no re-migrate); switching active; delete-active fallback to most-recent; empty fallback to Untitled; **rune reactivity**: `setActive` triggers editor re-render, and deleting the active draft causes the editor to bind to the new active draft within one tick.
 - Phantom draft lifecycle: visit slug → no phantom; first keystroke → phantom created; Keep → phantom deleted + named draft created; Fork → phantom deleted, no named draft created (caller navigates).
+- Phantom draft lifecycle (inline branch): visit `/p#code=X` → no phantom; first keystroke → phantom keyed by `inline:<sha256-12 of X>` materializes; revisit same URL → reuses the same phantom (does NOT overwrite edits).
 
 ### 11.3 SPA E2E (manual checklist per phase)
 
@@ -743,6 +1008,8 @@ Each phase has a smoke-test checklist (under §8 Verification). Run on a staging
 - POST malformed JSON → 400.
 - POST with `slug` field in body → ignored; server-generated slug used.
 - Direct INSERT attempt against D1 from a different origin → CORS preflight fails.
+- Visit `/p#code=<javascript:alert(1)>` (encoded URL containing what looks like a script) → decoder returns null OR returns the literal string; either way the IDE never `eval`s it as JS — the source string only ever flows into the Akkado compiler. No XSS surface.
+- Visit `/p#code=<lz of code containing "</script>" or "<iframe>">` → decoder returns the literal string; editor renders it as plain text in the buffer; no XSS surface.
 
 ### 11.5 Performance verification
 
@@ -750,6 +1017,8 @@ Each phase has a smoke-test checklist (under §8 Verification). Run on a staging
 - Worker cold start < 100ms (Cloudflare Worker baseline).
 - D1 read for a single row < 30ms (Cloudflare baseline).
 - SPA initial bundle size delta < 10 KB gzipped (the storage providers + tab UI).
+- Inline-URL encode/decode latency: < 5 ms for a 16 KB patch on a mid-range laptop (lz-string benchmarks; functions are synchronous).
+- `lz-string` adds ~4 KB gzipped to the SPA bundle.
 
 ---
 
@@ -774,6 +1043,7 @@ Each phase has a smoke-test checklist (under §8 Verification). Run on a staging
 - **[OPEN QUESTION] CSP tightening.** Adding `share.nkido.cc` to `connect-src` is straightforward; reworking the existing `unsafe-eval` (required by some WASM tooling) needs separate audit. Out of scope here.
 - **[OPEN QUESTION] Recently-visited size cap N.** 20 is a guess. Could be a setting (5/20/100). v1 ships 20 hardcoded.
 - **[OPEN QUESTION] Tab bar on mobile.** Horizontal scroller is acceptable but cramped. Whether to switch to a tab dropdown < 600px wide is a UI polish question for Phase 1's v0.
+- **[OPEN QUESTION] Inline-URL byte cap warnings — actionable shorten suggestion?** If the user's patch produces a > 8000 byte URL, the dialog says "use Permalink instead". Should it also offer an inline "shorten via Worker share" one-click that auto-publishes and replaces the link? Probably yes once both modalities are wired; flagged as a Phase 2 polish.
 
 ---
 
@@ -786,9 +1056,11 @@ Out of v1 scope, but anticipated and worth flagging so the v1 design doesn't pai
 - **Fork tree visualization** on `/p/<slug>` (a "Forks of this patch" section reading by `parent_slug` in reverse). Requires GET /api/p/:slug/forks endpoint.
 - **Embedded share widget** for blog posts: `<iframe src="https://live.nkido.cc/embed/p/<slug>">`. Reuses the existing `/embed` route plus the new viewer.
 - **Slug aliases** ("vanity URLs") — `/p/my-cool-bass` mapping to a slug. Requires a `/u/<handle>` namespace, which is a SaaS feature.
-- **Cleanup of `nkido-code` localStorage key** after one release of safety-net retention.
+- **Cleanup of `nkido-editor-code` localStorage key** after one release of safety-net retention.
 - **Param snapshot at share time.** When a real user requests it, add a `params` JSONB column with the same field-level cap as code. Schema is forward-compatible.
 - **Soft-deleted patch tombstone page** ("This patch was removed. [Why?]"). v1 returns 404 indistinguishably.
+- **Inline-URL metadata extension** — add `t=<title>` and `d=<desc>` hash params (forward-compatible with v1 decoder, which ignores unknown keys per §5.7). Ship when real users request it.
+- **Inline-URL OG via service-worker injection** — a service worker could intercept fetches to `live.nkido.cc/p#code=...` and inject OG tags. Probably not worth it; users who care about unfurls use Worker share. Documented for completeness only.
 
 ---
 
@@ -797,7 +1069,7 @@ Out of v1 scope, but anticipated and worth flagging so the v1 design doesn't pai
 | PRD | Status | Dependency |
 |---|---|---|
 | `prd-nkido-web-ide.md` | PARTIAL | The IDE component being extended. No blocker. |
-| `prd-uri-resolver.md` | IN PROGRESS | None. This PRD does not touch the resolver. |
+| `prd-uri-resolver.md` | DONE | None. This PRD does not touch the resolver. |
 | `prd-project-website.md` | SHIPPED | Uses the existing Cloudflare/Netlify DNS setup. We add `share.nkido.cc` as a new Worker route. |
 | `nkido-pro/docs/prd-open-core-saas.md` | NOT STARTED | This PRD is the prerequisite. The SaaS PRD's Phase 1 (anonymous shares) is **fulfilled by this PRD** and will be marked complete once this lands. The SaaS PRD's Phases 2–4 (accounts, social, assets, billing) layer on top of the `StorageProvider` interface defined here. |
 
@@ -809,11 +1081,13 @@ Out of v1 scope, but anticipated and worth flagging so the v1 design doesn't pai
 |---|---|
 | **Draft** | A locally-stored patch in this user's browser. Has a name, code, `updatedAt`. Survives across reloads via `localStorage`. |
 | **Active draft** | The draft currently shown in the editor. Tracked in the drafts store; persisted in `localStorage`. |
-| **Phantom draft** | A localStorage entry keyed by `draft:p/<slug>` holding the visitor's local edits to a patch they did not author. Created on first keystroke at `/p/<slug>`. Promoted to a regular draft via Keep, or discarded via Fork. |
-| **Share** | An anonymous, immutable copy of a patch published to the share Worker. Identified by a `slug`. Persists indefinitely. |
+| **Phantom draft** | A localStorage entry keyed by `draft:p/<slug>` or `draft:inline/<sha256-12>` holding the visitor's local edits to a patch they did not author. Created on first keystroke at `/p/<slug>` or `/p#code=...`. Promoted to a regular draft via Keep, or replaced by a new Worker share via Fork. |
+| **Worker share** (or "Permalink") | An anonymous, immutable copy of a patch published to the Cloudflare Worker. Identified by a `slug` at `/p/<slug>`. Persists indefinitely. Unfurls with OG metadata. |
+| **Inline URL** (or "Inline link") | A self-contained share URL of the form `/p#code=<lz-base64url>`. Contains the source code itself, packed into the URL hash. Zero servers, no slug, no OG unfurls. Permanent and forward-compatible per §5.7 versioning. |
 | **Slug** | The 8-char base62 ID in `/p/<slug>` URLs. |
-| **Fork** | A new share whose `parent_slug` references an existing share. Created by clicking Fork on `/p/<slug>` (with or without local edits). |
+| **Fork** | A new Worker share. From `/p/<slug>`, `parent_slug` is recorded. From `/p#code=...`, no parent link is recorded (the original was never on the server). Created by clicking Fork on either kind of visit. |
 | **Keep** | Promote a phantom draft to a regular named draft, locally. No network call. |
 | **`StorageProvider`** | The TS interface in `web/src/lib/ide/storage/types.ts`. Two implementations ship in this PRD; the SaaS PRD adds a third. |
-| **share.nkido.cc** | The Cloudflare Worker handling POST /share, GET /api/p/:slug, GET /p/:slug (OG-tagged HTML), POST /report. |
-| **live.nkido.cc** | The Netlify-hosted SPA (this repo's `web/`). |
+| **`inline-url.ts`** | The Phase 0 module at `web/src/lib/ide/share/inline-url.ts` — `encodeInlineUrl`, `decodeInlineHash`, `inlineHashKey`. Wraps `lz-string` for source/URL transport and SHA-256 for phantom-key derivation. |
+| **share.nkido.cc** | The Cloudflare Worker handling POST /share, GET /api/p/:slug, GET /p/:slug (OG-tagged HTML), POST /report. Not involved in inline-URL flows. |
+| **live.nkido.cc** | The Netlify-hosted SPA (this repo's `web/`). Serves both `/p/<slug>` (Worker fetch) and `/p#code=...` (no fetch). |
