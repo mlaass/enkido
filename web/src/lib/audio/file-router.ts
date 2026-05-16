@@ -45,6 +45,31 @@ export function inferFromExtension(file: File): FileKind {
 }
 
 /**
+ * URL-equivalent of `inferFromExtension`. Strips query/fragment and
+ * the path before deciding. Used by the FilesPanel's generalized URL
+ * loader (PRD prd-unified-files-panel §3) so one input can route a
+ * `.sf2`, a `.wav`, or a `.mid` URL.
+ */
+export function inferFromUrl(url: string): FileKind {
+	// Drop query string / fragment, then take the trailing path segment.
+	const clean = url.split(/[?#]/)[0];
+	const tail = clean.split('/').pop() ?? clean;
+	if (endsWithAny(tail, SAMPLE_EXTS)) return 'sample';
+	if (endsWithAny(tail, SOUNDFONT_EXTS)) return 'soundfont';
+	if (endsWithAny(tail, MIDI_EXTS)) return 'midi';
+	return 'unknown';
+}
+
+/**
+ * Strip the path off a URL and return the basename — the akkado source
+ * references the basename, not the full URL.
+ */
+export function basenameFromUrl(url: string): string {
+	const clean = url.split(/[?#]/)[0];
+	return clean.split('/').pop() ?? clean;
+}
+
+/**
  * Route one file to the correct audioEngine API. The returned promise
  * resolves once the worklet acknowledges the load (or rejects with `ok:
  * false` and a human-readable `error`). The basename — not the original
@@ -98,4 +123,54 @@ export async function routeFile(file: File): Promise<RoutedFile> {
 export async function routeFiles(files: FileList | File[]): Promise<RoutedFile[]> {
 	const arr = Array.from(files);
 	return Promise.all(arr.map(routeFile));
+}
+
+/**
+ * Route a URL through the same per-kind audioEngine APIs the drag-drop
+ * path uses. PRD prd-unified-files-panel §3 — the Files panel's URL
+ * loader is just `inferFromUrl` + this dispatch. For `.mid` URLs we
+ * fetch the bytes and register with `midiBank` so subsequent
+ * `midi({file: name})` lookups resolve through the blob URL exactly
+ * like a drag-drop. For `.wav` / `.sf2` we delegate to
+ * `loadAsset(uri, kind, name)` which handles fetching + decoding.
+ */
+export async function routeUrl(url: string): Promise<RoutedFile> {
+	const name = basenameFromUrl(url);
+	const kind = inferFromUrl(url);
+	try {
+		switch (kind) {
+			case 'sample': {
+				const ok = await audioEngine.loadAsset(url, 'sample', name);
+				return { name, kind, ok };
+			}
+			case 'soundfont': {
+				const info = await audioEngine.loadAsset(url, 'soundfont', name);
+				return { name, kind, ok: info !== null };
+			}
+			case 'midi': {
+				// Fetch the bytes once so we can both populate the
+				// midiBank (for `midi({file: name})` lookups) and hand
+				// them to the worklet through the existing loader.
+				const resp = await fetch(url);
+				if (!resp.ok) {
+					return { name, kind, ok: false, error: `HTTP ${resp.status}` };
+				}
+				const data = await resp.arrayBuffer();
+				audioEngine.midiBank.register(name, data.slice(0));
+				const ok = await audioEngine.loadMidiFile(name, data);
+				if (!ok) audioEngine.midiBank.revoke(name);
+				return { name, kind, ok };
+			}
+			default:
+				return {
+					name,
+					kind: 'unknown',
+					ok: false,
+					error: 'Unrecognized URL extension'
+				};
+		}
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return { name, kind, ok: false, error: message };
+	}
 }

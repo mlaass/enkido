@@ -144,6 +144,35 @@ export interface SoundFontInfo {
 	name: string;
 	presetCount: number;
 	presets: SoundFontPresetInfo[];
+	// `builtin` = auto-loaded from DEFAULT_SOUNDFONTS; `user` = drag-drop
+	// or URL loader. The Files panel uses this to gate the remove button
+	// and to group built-in defaults into a separate sub-section.
+	origin: 'builtin' | 'user';
+}
+
+/**
+ * Reactive registry entry for a loaded sample. Mirrors the worklet's
+ * loaded-sample set so the Files panel can browse what's currently
+ * registered. The companion `Set<string>` index inside the audio store
+ * is kept in sync for O(1) `has()` lookups.
+ */
+export interface LoadedSample {
+	name: string;
+	origin: 'builtin' | 'user';
+	// For built-ins this is the bundled URL the sample was fetched from;
+	// for drag-drop uploads it's undefined (we only have the blob), for
+	// URL-loader uploads it's the user-supplied URL.
+	sourceUri?: string;
+}
+
+/**
+ * Reactive registry entry for a loaded MIDI file. Mirrors `midiBank`
+ * (which still owns the blob URLs) so the Files panel can list dropped
+ * `.mid` files.
+ */
+export interface LoadedMidiFile {
+	name: string;
+	origin: 'user';  // no built-in MIDI today; field is here for symmetry.
 }
 
 interface RequiredSoundFont {
@@ -311,6 +340,11 @@ interface AudioState {
 	samplesLoading: boolean;
 	isLoadingSamples: boolean;
 	loadedSoundfonts: SoundFontInfo[];
+	// PRD prd-unified-files-panel §4: reactive registries the Files panel
+	// browses. `loadedSamples` is the canonical list; the parallel
+	// `loadedSamplesIndex` Set is an O(1) lookup cache, not state.
+	loadedSamples: LoadedSample[];
+	loadedMidiFiles: LoadedMidiFile[];
 	params: ParamDecl[];
 	paramValues: Map<string, number>;
 	vizDecls: VizDecl[];
@@ -341,6 +375,8 @@ function createAudioEngine() {
 		samplesLoading: false,
 		isLoadingSamples: false,
 		loadedSoundfonts: [],
+		loadedSamples: [],
+		loadedMidiFiles: [],
 		params: [],
 		paramValues: new Map(),
 		vizDecls: [],
@@ -410,21 +446,68 @@ function createAudioEngine() {
 
 	// Track sample loading state: 'pending' | 'loading' | 'loaded' | 'error'
 	const sampleLoadState = new Map<string, 'pending' | 'loading' | 'loaded' | 'error'>();
-	// Track loaded sample names
-	const loadedSamples = new Set<string>();
-	// Pending sample load promises (for waiting on worklet confirmation)
-	const pendingSampleLoads = new Map<string, { resolve: (success: boolean) => void }>();
-	// Pending SoundFont load promises
-	const pendingSoundFontLoads = new Map<string, { resolve: (info: SoundFontInfo | null) => void }>();
+	// O(1) lookup index mirroring `state.loadedSamples`. Kept in sync via
+	// `addLoadedSample` / `removeLoadedSample` so existence checks don't
+	// have to scan the reactive array.
+	const loadedSamplesIndex = new Set<string>();
+	// Pending sample load promises. Origin / sourceUri are stashed here so
+	// the `sampleLoaded` worklet ack can attach them to the reactive entry
+	// without the handler knowing which path called it.
+	const pendingSampleLoads = new Map<string, {
+		resolve: (success: boolean) => void;
+		origin: 'builtin' | 'user';
+		sourceUri?: string;
+	}>();
+	// Pending SoundFont load promises (origin threaded for the Files panel).
+	const pendingSoundFontLoads = new Map<string, {
+		resolve: (info: SoundFontInfo | null) => void;
+		origin: 'builtin' | 'user';
+	}>();
 	// Pending wavetable bank load promises (resolves to assigned bank ID, -1 on failure)
 	const pendingWavetableLoads = new Map<string, { resolve: (bankId: number) => void }>();
 	// Track which wavetable bank IDs are currently registered in the worklet
 	// (kept in sync via clearWavetables / loadWavetable). Map: name → bankId.
 	const loadedWavetables = new Map<string, number>();
-	// Pending .mid file load promises (prd-midi-input Phase 5)
+	// Pending .mid file load promises (prd-midi-input Phase 5).
 	const pendingMidiFileLoads = new Map<string, { resolve: (success: boolean) => void }>();
-	// Track which .mid files are currently registered in the worklet by name
-	const loadedMidiFiles = new Set<string>();
+	// O(1) lookup index mirroring `state.loadedMidiFiles`.
+	const loadedMidiFilesIndex = new Set<string>();
+
+	// PRD prd-unified-files-panel §4: single helpers that keep the
+	// reactive registry and the O(1) index in sync. Every load path
+	// goes through these instead of touching state arrays directly.
+	function addLoadedSample(
+		name: string,
+		origin: 'builtin' | 'user',
+		sourceUri?: string
+	): void {
+		if (loadedSamplesIndex.has(name)) {
+			// Already registered — promote `origin` from `builtin` to `user`
+			// if the user manually drops a name that collided with a built-in
+			// (last-writer-wins for the UI label).
+			state.loadedSamples = state.loadedSamples.map((s) =>
+				s.name === name ? { name, origin, sourceUri } : s
+			);
+			return;
+		}
+		loadedSamplesIndex.add(name);
+		state.loadedSamples = [...state.loadedSamples, { name, origin, sourceUri }];
+	}
+	function removeLoadedSample(name: string): void {
+		if (!loadedSamplesIndex.has(name)) return;
+		loadedSamplesIndex.delete(name);
+		state.loadedSamples = state.loadedSamples.filter((s) => s.name !== name);
+	}
+	function addLoadedMidiFile(name: string): void {
+		if (loadedMidiFilesIndex.has(name)) return;
+		loadedMidiFilesIndex.add(name);
+		state.loadedMidiFiles = [...state.loadedMidiFiles, { name, origin: 'user' }];
+	}
+	function removeLoadedMidiFile(name: string): void {
+		if (!loadedMidiFilesIndex.has(name)) return;
+		loadedMidiFilesIndex.delete(name);
+		state.loadedMidiFiles = state.loadedMidiFiles.filter((m) => m.name !== name);
+	}
 
 	async function initialize() {
 		if (state.isInitialized || state.isLoading) return;
@@ -597,11 +680,16 @@ function createAudioEngine() {
 				break;
 			case 'sampleLoaded': {
 				const name = msg.name as string;
-				loadedSamples.add(name);
 				sampleLoadState.set(name, 'loaded');
-				console.log('[AudioEngine] Sample loaded:', name);
-				// Resolve any pending load promise
+				// Origin/uri come from the pending entry the caller created.
+				// If there's no pending entry (legacy raw `loadSampleFromFile`
+				// posts that don't wait for ack — currently none, but the
+				// fallback keeps the registry consistent if one is added),
+				// default to 'user' since that's the only path that wouldn't
+				// have set up a pending entry.
 				const pending = pendingSampleLoads.get(name);
+				addLoadedSample(name, pending?.origin ?? 'user', pending?.sourceUri);
+				console.log('[AudioEngine] Sample loaded:', name);
 				if (pending) {
 					pending.resolve(true);
 					pendingSampleLoads.delete(name);
@@ -612,18 +700,18 @@ function createAudioEngine() {
 				const sfName = msg.name as string;
 				if (msg.success) {
 					console.log('[AudioEngine] SoundFont loaded:', sfName, 'id:', msg.sfId, 'presets:', msg.presetCount);
+					const pendingSf = pendingSoundFontLoads.get(sfName);
 					const sfInfo: SoundFontInfo = {
 						sfId: msg.sfId as number,
 						name: sfName,
 						presetCount: msg.presetCount as number,
-						presets: (msg.presets as SoundFontPresetInfo[]) || []
+						presets: (msg.presets as SoundFontPresetInfo[]) || [],
+						origin: pendingSf?.origin ?? 'user'
 					};
 					// Add to reactive state (avoid duplicates by sfId)
 					if (!state.loadedSoundfonts.some(s => s.sfId === sfInfo.sfId)) {
 						state.loadedSoundfonts = [...state.loadedSoundfonts, sfInfo];
 					}
-					// Resolve pending promise
-					const pendingSf = pendingSoundFontLoads.get(sfName);
 					if (pendingSf) {
 						pendingSf.resolve(sfInfo);
 						pendingSoundFontLoads.delete(sfName);
@@ -642,7 +730,7 @@ function createAudioEngine() {
 				const midiName = msg.name as string;
 				if (msg.success) {
 					console.log('[AudioEngine] MIDI file loaded:', midiName);
-					loadedMidiFiles.add(midiName);
+					addLoadedMidiFile(midiName);
 					const pendingMidi = pendingMidiFileLoads.get(midiName);
 					if (pendingMidi) {
 						pendingMidi.resolve(true);
@@ -875,7 +963,8 @@ function createAudioEngine() {
 
 		// Clear sample tracking
 		sampleLoadState.clear();
-		loadedSamples.clear();
+		loadedSamplesIndex.clear();
+		state.loadedSamples = [];
 		pendingSampleLoads.clear();
 		pendingSoundFontLoads.clear();
 
@@ -905,7 +994,7 @@ function createAudioEngine() {
 	 */
 	async function ensureSampleLoaded(name: string): Promise<boolean> {
 		// Already loaded?
-		if (loadedSamples.has(name)) {
+		if (loadedSamplesIndex.has(name)) {
 			return true;
 		}
 
@@ -948,7 +1037,7 @@ function createAudioEngine() {
 		if (defaultSample) {
 			sampleLoadState.set(name, 'loading');
 			try {
-				const success = await loadAsset(pathToFetchUri(defaultSample.url), 'sample', name);
+				const success = await loadAsset(pathToFetchUri(defaultSample.url), 'sample', name, 'builtin');
 				// Note: loadAsset waits for worklet confirmation
 				// The 'sampleLoaded' handler will set state to 'loaded'
 				if (!success) {
@@ -973,7 +1062,7 @@ function createAudioEngine() {
 		const { bank, name, variant, qualifiedName } = sample;
 
 		// Already loaded?
-		if (loadedSamples.has(qualifiedName)) {
+		if (loadedSamplesIndex.has(qualifiedName)) {
 			return true;
 		}
 
@@ -1022,7 +1111,7 @@ function createAudioEngine() {
 			if (variantSample) {
 				sampleLoadState.set(qualifiedName, 'loading');
 				try {
-					const success = await loadAsset(pathToFetchUri(variantSample.url), 'sample', qualifiedName);
+					const success = await loadAsset(pathToFetchUri(variantSample.url), 'sample', qualifiedName, 'builtin');
 					if (!success) {
 						sampleLoadState.set(qualifiedName, 'error');
 					}
@@ -1038,7 +1127,7 @@ function createAudioEngine() {
 			if (baseSample) {
 				sampleLoadState.set(qualifiedName, 'loading');
 				try {
-					const success = await loadAsset(pathToFetchUri(baseSample.url), 'sample', qualifiedName);
+					const success = await loadAsset(pathToFetchUri(baseSample.url), 'sample', qualifiedName, 'builtin');
 					if (!success) {
 						sampleLoadState.set(qualifiedName, 'error');
 					}
@@ -1299,7 +1388,7 @@ function createAudioEngine() {
 			for (const src of requiredMidi) {
 				// MidiSourceKind.File = 2 (see akkado/include/akkado/codegen.hpp)
 				if (src.kind !== 2 || !src.name) continue;
-				if (loadedMidiFiles.has(src.name)) continue;
+				if (loadedMidiFilesIndex.has(src.name)) continue;
 				const blobUrl = midiBank.lookup(src.name);
 				const url = blobUrl ?? pathToFetchUri(src.name);
 				const ok = await loadAsset(url, 'midi', src.name);
@@ -1446,7 +1535,11 @@ function createAudioEngine() {
 	 * @param name Sample name (e.g., "kick", "snare")
 	 * @param file File object or Blob containing WAV data
 	 */
-	async function loadSampleFromFile(name: string, file: File | Blob): Promise<boolean> {
+	async function loadSampleFromFile(
+		name: string,
+		file: File | Blob,
+		origin: 'builtin' | 'user' = 'user'
+	): Promise<boolean> {
 		if (!workletNode) {
 			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
 			return false;
@@ -1456,14 +1549,27 @@ function createAudioEngine() {
 			const arrayBuffer = await file.arrayBuffer();
 			console.log('[AudioEngine] Loading audio sample:', name, 'size:', arrayBuffer.byteLength);
 
-			// Send raw bytes to worklet — C++/WASM decodes all formats
+			// Wait for the worklet ack so the reactive registry gets the
+			// origin tag (file drops weren't waited on historically; the
+			// promise is cheap and keeps the Files panel honest).
+			const loadPromise = new Promise<boolean>((resolve) => {
+				pendingSampleLoads.set(name, { resolve, origin });
+				setTimeout(() => {
+					if (pendingSampleLoads.has(name)) {
+						console.error('[AudioEngine] Sample load timeout:', name);
+						pendingSampleLoads.delete(name);
+						resolve(false);
+					}
+				}, 10000);
+			});
+
 			workletNode.port.postMessage({
 				type: 'loadSampleAudio',
 				name,
 				audioData: arrayBuffer
 			});
 
-			return true;
+			return await loadPromise;
 		} catch (err) {
 			console.error('[AudioEngine] Failed to load sample from file:', err);
 			return false;
@@ -1474,7 +1580,11 @@ function createAudioEngine() {
 	 * Load a sample from a URI (any scheme: file://, https://, github:, blob:, ...).
 	 * Internal helper called by `loadAsset(uri, 'sample', name)`.
 	 */
-	async function loadSampleFromUri(name: string, uri: string): Promise<boolean> {
+	async function loadSampleFromUri(
+		name: string,
+		uri: string,
+		origin: 'builtin' | 'user' = 'user'
+	): Promise<boolean> {
 		if (!workletNode) {
 			console.warn('[AudioEngine] Cannot load sample - worklet not initialized');
 			return false;
@@ -1488,7 +1598,7 @@ function createAudioEngine() {
 
 			// Create a promise that will be resolved when worklet confirms load
 			const loadPromise = new Promise<boolean>((resolve) => {
-				pendingSampleLoads.set(name, { resolve });
+				pendingSampleLoads.set(name, { resolve, origin, sourceUri: uri });
 				// Timeout after 10 seconds
 				setTimeout(() => {
 					if (pendingSampleLoads.has(name)) {
@@ -1553,10 +1663,11 @@ function createAudioEngine() {
 				if (sampleLoadState.get(sample.name) === 'pending') {
 					sampleLoadState.set(sample.name, 'loading');
 					try {
-						const success = await loadAsset(pathToFetchUri(sample.url), 'sample', sample.name);
+						const success = await loadAsset(pathToFetchUri(sample.url), 'sample', sample.name, 'builtin');
 						if (success) {
 							sampleLoadState.set(sample.name, 'loaded');
-							loadedSamples.add(sample.name);
+							// `addLoadedSample` already ran via the worklet ack —
+							// the explicit add here was redundant. Keep the counter only.
 							loaded++;
 						} else {
 							sampleLoadState.set(sample.name, 'error');
@@ -1590,7 +1701,7 @@ function createAudioEngine() {
 				let loaded = false;
 				for (const rawUrl of sf.urls) {
 					try {
-						const info = await loadAsset(pathToFetchUri(rawUrl), 'soundfont', sf.name);
+						const info = await loadAsset(pathToFetchUri(rawUrl), 'soundfont', sf.name, 'builtin');
 						if (info) {
 							console.log(`[AudioEngine] Default SoundFont '${sf.name}' loaded: ${info.presetCount} presets`);
 							loaded = true;
@@ -1649,7 +1760,11 @@ function createAudioEngine() {
 	 * @param data SF2 file data as ArrayBuffer
 	 * @returns SoundFont info with preset list, or null on failure
 	 */
-	async function loadSoundFont(name: string, data: ArrayBuffer): Promise<SoundFontInfo | null> {
+	async function loadSoundFont(
+		name: string,
+		data: ArrayBuffer,
+		origin: 'builtin' | 'user' = 'user'
+	): Promise<SoundFontInfo | null> {
 		if (!workletNode) {
 			console.warn('[AudioEngine] Cannot load SoundFont - worklet not initialized');
 			return null;
@@ -1657,7 +1772,7 @@ function createAudioEngine() {
 
 		// Create a promise that will be resolved when worklet confirms load
 		const loadPromise = new Promise<SoundFontInfo | null>((resolve) => {
-			pendingSoundFontLoads.set(name, { resolve });
+			pendingSoundFontLoads.set(name, { resolve, origin });
 			// Timeout after 30 seconds (large SF2 files can take time)
 			setTimeout(() => {
 				if (pendingSoundFontLoads.has(name)) {
@@ -1681,10 +1796,14 @@ function createAudioEngine() {
 	 * Load a SoundFont from a URI. Internal helper called by
 	 * `loadAsset(uri, 'soundfont', name)`.
 	 */
-	async function loadSoundFontFromUri(name: string, uri: string): Promise<SoundFontInfo | null> {
+	async function loadSoundFontFromUri(
+		name: string,
+		uri: string,
+		origin: 'builtin' | 'user' = 'user'
+	): Promise<SoundFontInfo | null> {
 		try {
 			const result = await loadFile(uri, { cache: true });
-			return await loadSoundFont(name, result.data);
+			return await loadSoundFont(name, result.data, origin);
 		} catch (err) {
 			console.error('[AudioEngine] Failed to fetch SoundFont:', err);
 			return null;
@@ -1774,6 +1893,19 @@ function createAudioEngine() {
 	}
 
 	/**
+	 * Drop a `.mid` registration from the main-thread bank (revokes the
+	 * blob URL) and from the reactive Files-panel list. The worklet's
+	 * sequence stays in `cedar_apply_midi_sources`-attached state for any
+	 * currently-running program; the next compile that references this
+	 * name will fail to resolve and surface a "missing asset" error,
+	 * which is the same failure mode an unloaded file already produces.
+	 */
+	function unregisterMidiFile(name: string): void {
+		midiBank.revoke(name);
+		removeLoadedMidiFile(name);
+	}
+
+	/**
 	 * Fetch a wavetable WAV from a URI and load it into the worklet.
 	 * Internal helper called by `loadAsset(uri, 'wavetable', name)`.
 	 */
@@ -1799,21 +1931,22 @@ function createAudioEngine() {
 	 * - 'wavetable'   → number (assigned bank ID, or -1 on failure)
 	 * - 'sample_bank' → boolean (manifest fetched + parsed successfully)
 	 */
-	function loadAsset(uri: string, kind: 'sample', name: string): Promise<boolean>;
-	function loadAsset(uri: string, kind: 'soundfont', name: string): Promise<SoundFontInfo | null>;
+	function loadAsset(uri: string, kind: 'sample', name: string, origin?: 'builtin' | 'user'): Promise<boolean>;
+	function loadAsset(uri: string, kind: 'soundfont', name: string, origin?: 'builtin' | 'user'): Promise<SoundFontInfo | null>;
 	function loadAsset(uri: string, kind: 'wavetable', name: string): Promise<number>;
 	function loadAsset(uri: string, kind: 'sample_bank', name?: string): Promise<boolean>;
 	function loadAsset(uri: string, kind: 'midi', name: string): Promise<boolean>;
 	function loadAsset(
 		uri: string,
 		kind: 'sample' | 'soundfont' | 'wavetable' | 'sample_bank' | 'midi',
-		name?: string
+		name?: string,
+		origin: 'builtin' | 'user' = 'user'
 	): Promise<boolean | SoundFontInfo | null | number> {
 		switch (kind) {
 			case 'sample':
-				return loadSampleFromUri(name!, uri);
+				return loadSampleFromUri(name!, uri, origin);
 			case 'soundfont':
-				return loadSoundFontFromUri(name!, uri);
+				return loadSoundFontFromUri(name!, uri, origin);
 			case 'wavetable':
 				return loadWavetableFromUri(name!, uri);
 			case 'sample_bank':
@@ -2349,12 +2482,12 @@ function createAudioEngine() {
 		get samplesLoaded() { return state.samplesLoaded; },
 		get samplesLoading() { return state.samplesLoading; },
 		get isLoadingSamples() { return state.isLoadingSamples; },
-		// Count of distinct sample names accepted by the worklet across the
-		// current session. Used by the FilesPanel (PRD §7.6) to surface a
-		// "{n} samples" summary. Not reactive — see TODO if a Svelte-reactive
-		// version is needed.
-		get loadedSampleCount() { return loadedSamples.size; },
+		// Reactive registries the Files panel browses (PRD prd-unified-files-panel).
+		// Origin-tagged so the panel can distinguish built-in defaults from
+		// user drag-drop / URL uploads.
+		get loadedSamples() { return state.loadedSamples; },
 		get loadedSoundfonts() { return state.loadedSoundfonts; },
+		get loadedMidiFiles() { return state.loadedMidiFiles; },
 		// Parameter exposure
 		get params() { return state.params; },
 		get paramValues() { return state.paramValues; },
@@ -2415,6 +2548,7 @@ function createAudioEngine() {
 		loadSoundFont,
 		// MIDI file API (prd-midi-input Phase 5)
 		loadMidiFile,
+		unregisterMidiFile,
 		midiBank,
 		// Wavetable API (Smooch)
 		loadWavetable,

@@ -1217,6 +1217,14 @@ new `inferFromExtension(file)` helper in
 explicit browsing but lose their drop zones. Promoted from the
 previous "TODO" in this section.
 
+> **Browser surface re-thought (2026-05-16):** the drop-zone half
+> shipped, but the browsing experience ("what is loaded right now?") was
+> incomplete — the leftover `SampleBrowser` tab only showed SoundFonts
+> and the default 808 kit was invisible. Superseded by
+> [`prd-unified-files-panel.md`](prd-unified-files-panel.md), which
+> collapses the two tabs into one real browser with built-in vs user
+> distinction and a generalized URL loader.
+
 **Verify**: ✅ confirmed 2026-05-16 —
 `./build/cedar/tests/cedar_tests "[midi]" "[midi-poly]"
 "[midi-soundfont]" "[midi-hotswap]" "[midi-mono]" "[midi-file-cc]"
@@ -1245,6 +1253,23 @@ otherwise leak on a single note-off). Regression test:
 `[midi-mono]` "note-off releases stack cleanly after many blocks (no
 hang)" parks the clock at ~59 s, then runs 200 press/release cycles
 across notes 60–71 and requires `mono_stack_depth == 0` after each.
+
+Also aligned the mono `gate` buffer with the documented pattern-path
+behavior: every note-on sample now writes `gate = 0` for one sample so
+the downstream ADSR/AR rising-edge detector at `envelopes.hpp:47`
+(`current_gate > 0 && prev_gate <= 0`) sees a fresh 0→1 edge on the
+next sample and retriggers cleanly between rapid notes. Mirrors
+`op_seqpat_gate`'s `retrigger_drop` logic at `sequencing.hpp:684-706`
+and the CLAUDE.md `.gate` spec. Without this drop, the envelope stayed
+in sustain through retriggers and the per-note `vel` step popped on its
+way through the un-reset sustain level (audible as subtle pops on the
+MPK + `midi-cc-filtermono.akk`). Legato pop-back to a still-held key
+does NOT drop — only note-on transitions qualify. Regression test:
+`[midi-mono]` "note-on emits a 1-sample gate drop for ADSR retrigger".
+Users who want smooth velocity transitions (independent of the
+envelope retrigger) can wrap with `interp_time(@.vel, 0.002)` or
+`glide(@.vel, 0.002)` in their patch — this is the idiomatic userspace
+approach; the engine does not bake vel smoothing into the mono buffers.
 
 **Phase 8 — Docs & polish (~0.5 day)**
 

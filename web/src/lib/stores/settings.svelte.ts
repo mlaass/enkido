@@ -2,7 +2,7 @@
  * Settings store with localStorage persistence
  */
 
-type TabName = 'controls' | 'files' | 'samples' | 'settings' | 'docs' | 'debug';
+type TabName = 'controls' | 'files' | 'settings' | 'docs' | 'debug';
 
 interface Settings {
 	panelPosition: 'left' | 'right';
@@ -38,7 +38,14 @@ function loadSettings(): Settings {
 	try {
 		const stored = localStorage.getItem('nkido-settings');
 		if (stored) {
-			return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+			const merged = { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+			// PRD prd-unified-files-panel: the old 'samples' tab no longer
+			// exists. Users with that tab persisted from a prior session
+			// would land on a blank panel without this migration.
+			if ((merged.activeTab as string) === 'samples') {
+				merged.activeTab = 'files';
+			}
+			return merged;
 		}
 	} catch (e) {
 		console.warn('Failed to load settings:', e);
