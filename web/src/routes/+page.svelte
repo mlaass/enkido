@@ -4,15 +4,19 @@
 	import EditorTabs from '$components/EditorTabs.svelte';
 	import SidePanel from '$components/Panel/SidePanel.svelte';
 	import Logo from '$components/Logo/Logo.svelte';
+	import ShareDialog from '$components/ShareDialog.svelte';
 	import { audioEngine } from '$stores/audio.svelte';
 	import { settingsStore } from '$stores/settings.svelte';
 	import { draftsStore } from '$stores/drafts.svelte';
-	import { Eye, Settings, BookmarkPlus } from 'lucide-svelte';
+	import { getProvider } from '$lib/ide/storage';
+	import { Eye, Settings, BookmarkPlus, Share2, GitFork } from 'lucide-svelte';
 
 	let panelPosition = $derived(settingsStore.panelPosition);
 	let activeIsPhantom = $derived(
 		draftsStore.drafts.find((d) => d.id === draftsStore.activeTabId)?.isPhantom ?? false
 	);
+	const canShare = typeof getProvider().share === 'function';
+	let shareOpen = $state(false);
 
 	function openSettings() {
 		settingsStore.setPanelCollapsed(false);
@@ -26,6 +30,10 @@
 		const name = window.prompt('Name this patch:', suggested);
 		if (!name || !name.trim()) return;
 		draftsStore.keepActiveAsNamed(name.trim());
+	}
+
+	function openShare() {
+		shareOpen = true;
 	}
 </script>
 
@@ -45,6 +53,25 @@
 					<BookmarkPlus size={16} />
 					<span>Keep</span>
 				</button>
+				{#if canShare}
+					<button
+						class="share-button"
+						title="Publish your edits as a new public patch"
+						onclick={openShare}
+					>
+						<GitFork size={16} />
+						<span>Fork</span>
+					</button>
+				{/if}
+			{:else}
+				<button
+					class="share-button"
+					title="Share this patch"
+					onclick={openShare}
+				>
+					<Share2 size={16} />
+					<span>Share</span>
+				</button>
 			{/if}
 			<button
 				class="icon-button"
@@ -58,6 +85,10 @@
 			</button>
 		</div>
 	</header>
+
+	{#if shareOpen}
+		<ShareDialog onClose={() => (shareOpen = false)} />
+	{/if}
 
 	<main class="main" class:panel-left={panelPosition === 'left'} class:panel-right={panelPosition === 'right'}>
 		{#if panelPosition === 'left'}
@@ -141,6 +172,25 @@
 
 	.keep-button:hover {
 		opacity: 0.85;
+	}
+
+	.share-button {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--text-primary);
+		background-color: var(--bg-primary);
+		border: 1px solid var(--border-default);
+		border-radius: 6px;
+		cursor: pointer;
+		transition: background-color var(--transition-fast);
+	}
+
+	.share-button:hover {
+		background-color: var(--bg-hover);
 	}
 
 	.main {
