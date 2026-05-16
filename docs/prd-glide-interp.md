@@ -1,7 +1,10 @@
-> **Status: SHIPPED** — Drafted 2026-05-15. Phases 1–3 landed 2026-05-15
-> / 2026-05-16. See `web/static/docs/concepts/glide-and-interpolation.md`
-> for the public-facing concept page and the `glide` / `interp*` sections
-> in `web/static/docs/reference/builtins/utility.md`.
+> **Status: SHIPPED** — Drafted 2026-05-15. Phases 1–3 landed 2026-05-15 / 2026-05-16
+> (commits `bada70c` kernel, `da7a7b6` akkado, `f5af8ab` docs), plus a follow-up
+> `ChannelCount::Match` widening for control-rate utilities in `25e8bd8` so the
+> canonical bare `saw(glide(@.freq, …))` form composes without `mono(...)`.
+> See `web/static/docs/concepts/glide-and-interpolation.md` for the public concept
+> page and the `glide` / `interp*` sections in
+> `web/static/docs/reference/builtins/utility.md`.
 
 # PRD: Time-Based Glide / Interpolation (`glide` / `interp`)
 
@@ -265,47 +268,57 @@ Four sister builtins sharing the opcode (analogous to the `edge_op`
 family `sah` / `gateup` / `gatedown` / `counter`):
 
 ```cpp
-// akkado/include/akkado/builtins.hpp
-{"interp",          {Opcode::INTERP_TIME, 2, 0, true,
+// akkado/include/akkado/builtins.hpp (as shipped)
+{"interp",          {cedar::Opcode::INTERP_TIME, 2, 0, true,
                      {"target","time"}, {NAN, NAN},
-                     "Time-based interpolator (linear).",
-                     0, {}, {}, ChannelCount::Stereo, true, /*inst_rate=*/0}},
-{"interp_ease_in",  {Opcode::INTERP_TIME, 2, 0, true, ... /*inst_rate=*/1}},
-{"interp_ease_out", {Opcode::INTERP_TIME, 2, 0, true, ... /*inst_rate=*/2}},
-{"interp_cos",      {Opcode::INTERP_TIME, 2, 0, true, ... /*inst_rate=*/3}},
+                     "Time-based interpolator (linear) — output width matches input",
+                     0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/0}},
+{"interp_ease_in",  {cedar::Opcode::INTERP_TIME, 2, 0, true, ... ChannelCount::Match, true, /*inst_rate=*/1}},
+{"interp_ease_out", {cedar::Opcode::INTERP_TIME, 2, 0, true, ... ChannelCount::Match, true, /*inst_rate=*/2}},
+{"interp_cos",      {cedar::Opcode::INTERP_TIME, 2, 0, true, ... ChannelCount::Match, true, /*inst_rate=*/3}},
 ```
 
 Each is independently callable (and documented; see §3 — they are
-exposed as the "primitive" form).
+exposed as the "primitive" form). The shipped declaration uses
+`ChannelCount::Match` (added in commit `25e8bd8`) rather than the
+initially-proposed `ChannelCount::Stereo`, so a mono pattern field
+stays mono into a downstream mono slot — see §3.4.
 
 ### 4.3 Userspace stdlib wrapper
 
-In `akkado/include/akkado/stdlib.hpp`, two new fns:
+In `akkado/include/akkado/stdlib.hpp`, one new fn (the `_interp_dispatch`
+helper sketched in early drafts was dropped — see notes below):
 
 ```akkado
 // glide(sig, time, curve, space) — time-based interpolation with
 // optional curve shape and value-space conversion.
 //
-// curve: "linear" (default) | "ease_in" | "ease_out" | "cosine"
-// space: "linear" (default) | "log"  — use "log" for musical pitch glide
+// curve: "linear" (default) | "ease_in" | "ease_out" | "cosine" / "cos"
+// space: "linear" (default) | "log"  — use "log" for pitch-uniform glide
 //
-// Default time = 0.05 (50 ms) so bare glide(@freq) adds a subtle
-// baseline portamento without forcing users to pick a number.
+// The curve+space match is inlined here (rather than delegated to a
+// helper fn) because param_literals_ is cleared at each user-fn
+// boundary; nested match keeps both `space` and `curve` resolvable at
+// compile time. Default time = 0.05 (50 ms) gives `glide(@freq)` a
+// subtle baseline portamento without forcing users to pick a number.
+// 1.4426950408889634 = 1/ln(2) converts natural log to log₂.
 fn glide(sig, time = 0.05, curve = "linear", space = "linear") -> match(space) {
-    "log": pow(2, _interp_dispatch(log(sig) * 1.4426950408889634, time, curve))
-    _:     _interp_dispatch(sig, time, curve)
-}
-
-// Internal: route a curve string to the right interp* builtin.
-// `match` resolves at compile time because `curve` is bound to a string
-// literal at every call site.
-fn _interp_dispatch(sig, time, curve) -> match(curve) {
-    "linear":   interp(sig, time)
-    "ease_in":  interp_ease_in(sig, time)
-    "ease_out": interp_ease_out(sig, time)
-    "cosine":   interp_cos(sig, time)
-    "cos":      interp_cos(sig, time)
-    _:          interp(sig, time)
+    "log": match(curve) {
+        "linear":   pow(2, interp(log(sig) * 1.4426950408889634, time))
+        "ease_in":  pow(2, interp_ease_in(log(sig) * 1.4426950408889634, time))
+        "ease_out": pow(2, interp_ease_out(log(sig) * 1.4426950408889634, time))
+        "cosine":   pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
+        "cos":      pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
+        _:          pow(2, interp(log(sig) * 1.4426950408889634, time))
+    }
+    _: match(curve) {
+        "linear":   interp(sig, time)
+        "ease_in":  interp_ease_in(sig, time)
+        "ease_out": interp_ease_out(sig, time)
+        "cosine":   interp_cos(sig, time)
+        "cos":      interp_cos(sig, time)
+        _:          interp(sig, time)
+    }
 }
 ```
 
@@ -317,6 +330,12 @@ Notes:
   FieldAccess scrutinee is not currently a compile-time match — only
   plain identifiers are, per `is_compile_time_match`
   (`akkado/src/codegen_functions.cpp:1213-1299`).
+- The shipped form **inlines** the curve match inside `glide`'s body
+  instead of routing through a `_interp_dispatch` helper. Phase 2
+  confirmed risk §10.1 — `param_literals_` clears at each user-fn
+  boundary, so the string literal would not propagate through two
+  user-fn calls and the inner `match` would not resolve at compile time.
+  Nested `match` inside the same body resolves correctly.
 
 ### 4.4 State struct
 
@@ -455,7 +474,13 @@ renamed.
 
 ## 8. Implementation Phases
 
-### 8.1 Phase 1 — Cedar opcode kernel
+> **All three phases shipped 2026-05-15 / 2026-05-16.** Plus a follow-up
+> in `25e8bd8` that converted the 11 control-rate utilities (`slew`,
+> `interp*`, `env_follower`, `sah` / `gateup` / `gatedown` / `counter`)
+> to `ChannelCount::Match`, removing the `mono(...)` / `mtof(...)` workaround
+> for mixing mono pattern fields with the new builtins.
+
+### 8.1 Phase 1 — Cedar opcode kernel — **DONE** (`bada70c`)
 
 Goal: ship `INTERP_TIME` opcode and validate it independently of any
 akkado plumbing.
@@ -479,7 +504,7 @@ Verification:
    pulse target into `INTERP_TIME` with `time=0.1`, render to WAV. Verify
    no clicks, smooth slope, correct duration.
 
-### 8.2 Phase 2 — Akkado layer
+### 8.2 Phase 2 — Akkado layer — **DONE** (`da7a7b6`, `25e8bd8`)
 
 Goal: surface the opcode in akkado and validate the stdlib wrapper.
 
@@ -505,7 +530,7 @@ Verification:
    should sound bottom-heavy.
 6. `experiments/test_glide_pattern.py` passes (§9.2).
 
-### 8.3 Phase 3 — Docs
+### 8.3 Phase 3 — Docs — **DONE** (`f5af8ab`)
 
 Goal: make the feature discoverable and the slew vs glide distinction
 obvious.
@@ -526,6 +551,11 @@ Verification:
 ---
 
 ## 9. Testing & Verification
+
+> **Shipped.** `experiments/test_op_interp_time.py` (11/11 sub-tests pass,
+> including a 305-second long-stability loop with 0 NaN and 0 overshoot
+> across 14.6M samples) and `experiments/test_glide_pattern.py` both
+> landed with Phase 1 / Phase 2.
 
 ### 9.1 `test_op_interp_time.py` (kernel test)
 
@@ -578,47 +608,40 @@ Assertions:
 ## 10. Risks / Open Questions
 
 1. **Compile-time `match()` resolution through a chained user-fn call.**
-   The proposed wrapper is `glide → _interp_dispatch → interp_*`. The
-   curve string is bound to `_interp_dispatch`'s `curve` parameter via
-   `glide`'s argument list. Need to verify that
-   `is_compile_time_match` (in `akkado/src/codegen_functions.cpp:1213-
-   1299`) walks back through two user-fn boundaries to find the string
-   literal — `unison()` doesn't exercise this path.
-   **Pre-implementation check**: write a 5-line akkado program
-   (`fn a(x) -> match(x) { "y": 1.0, _: 0.0 }`, `fn b(x) -> a(x)`,
-   `b("y") |> out(%)`) and confirm it compiles to a constant. If not,
-   inline the `match` into `glide`'s body directly and drop
-   `_interp_dispatch`.
+   — **Confirmed real, mitigated by inlining.** Phase 2 verified that
+   `param_literals_` is cleared at each user-fn boundary, so a
+   `glide → _interp_dispatch → interp_*` chain would not propagate the
+   curve string literal far enough for the inner `match` to resolve at
+   compile time. Resolution: the helper was dropped and the curve+space
+   match is inlined directly into `glide`'s body — see §4.3.
 
-2. **Python binding `inst.rate` mutability.** The kernel test must set
-   `inst.rate = N` to exercise non-linear curves. Verify that
-   `experiments/test_op_edge.py` (which already does this) uses an
-   exposed setter, and that the same mechanism works from
-   `cedar_core.Instruction`.
+2. **Python binding `inst.rate` mutability.** — **Resolved.** Kernel
+   test exercises all four `inst.rate` values via `cedar_core.Instruction`;
+   11/11 sub-tests pass in `experiments/test_op_interp_time.py`.
 
-3. **`STEREO_INPUT` flag on mono targets.** The opcode falls back to
-   `target_r = target_l` when `STEREO_INPUT` is unset. Verify the akkado
-   codegen path correctly produces a mono instruction when fed a mono
-   `@freq`. Should Just Work via existing channel inference, but worth a
-   trace check during Phase 2.
+3. **`STEREO_INPUT` flag on mono targets.** — **Superseded by
+   ChannelCount::Match (`25e8bd8`).** The mono-fallback path in the
+   opcode body still exists, but the akkado codegen layer now lets the
+   output width follow the primary signal input, so mono pattern fields
+   stay mono end-to-end and never collide with downstream mono slots.
 
-4. **State-pool collisions across the four sister builtins.** Because
-   they share `Opcode::INTERP_TIME`, two glide calls at different source
-   locations must produce different state-ids. The state-id is derived
-   from the semantic path (which includes the builtin name), so this
-   should be safe — verify by inspecting `compute_state_id` traces.
+4. **State-pool collisions across the four sister builtins.** —
+   **No collision in practice.** State-id derivation includes the
+   builtin name in the semantic path, so the four sister builtins keep
+   independent state. Stereo independence sub-test #8 in
+   `test_op_interp_time.py` covers the per-channel side of this.
 
-5. **Hot-swap behavior.** A user editing curve from `"linear"` to
-   `"cosine"` mid-program changes which builtin name codegen emits,
-   which changes the semantic-path hash, which means the new opcode gets
-   a fresh `InterpTimeState`. The old state is GC'd. Result: the running
-   ramp resets to the new target abruptly. Acceptable for v1 (matches
-   how other stateful opcode-family swaps behave) — flag in docs.
+5. **Hot-swap behavior.** — **Accepted as documented.** Editing curve
+   from `"linear"` to `"cosine"` mid-program changes the emitted
+   builtin name, which changes the semantic-path hash, which gives the
+   new opcode a fresh `InterpTimeState` (old state is GC'd). The
+   running ramp snaps to the new target abruptly. This matches every
+   other stateful opcode-family swap; flagged in the public concept
+   page.
 
-6. **Curve set growth path.** If users request a 5th curve, the
-   `inst.rate ≤ 4 values` guideline forces a migration to ExtendedParams
-   (or a second sister opcode). Documented as a future-work item;
-   should not block v1.
+6. **Curve set growth path.** — **Future work.** A 5th curve would
+   force migration to ExtendedParams (or a second sister opcode) per
+   the `inst.rate ≤ 4 values` guideline. No active request yet.
 
 ---
 
