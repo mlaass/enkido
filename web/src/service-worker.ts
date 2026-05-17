@@ -10,8 +10,11 @@ const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE = `nkido-cache-${version}`;
 
 // App shell: hashed JS/CSS bundles, static assets (icons, manifest,
-// WASM, AudioWorklet), and prerendered routes (the SPA fallback).
-const PRECACHE: readonly string[] = [...build, ...files, ...prerendered];
+// WASM, AudioWorklet), prerendered routes, AND the SPA fallback at `/`.
+// The root isn't in `prerendered` (no `export const prerender = true`),
+// but adapter-static's `fallback: 'index.html'` means `/` returns the
+// SPA shell — we need it explicitly so offline navigations resolve.
+const PRECACHE: readonly string[] = [...build, ...files, ...prerendered, '/'];
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(
@@ -72,6 +75,14 @@ async function handle(request: Request, url: URL): Promise<Response> {
 	} catch {
 		const hit = await cache.match(request);
 		if (hit) return hit;
+		// SPA navigation fallback: a client-routed URL (e.g. /p/abc) hits
+		// the SW with mode "navigate" but isn't in our precache; serving
+		// the cached `/` shell lets the router take over once online JS
+		// boots, instead of dumping a hard network error.
+		if (request.mode === 'navigate') {
+			const shell = await cache.match('/');
+			if (shell) return shell;
+		}
 		throw new Error(`offline and no cached response for ${url.pathname}`);
 	}
 }

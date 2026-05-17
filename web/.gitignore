@@ -24,3 +24,7 @@ Thumbs.db
 # WASM binaries (built separately)
 static/wasm/*.wasm
 static/wasm/*.wasm.map
+
+# Playwright e2e artefacts
+playwright-report/
+test-results/
