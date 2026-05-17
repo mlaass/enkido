@@ -1,0 +1,11 @@
+// Snare roll buildup — a 16-step pattern accelerates the snare hits
+// across the bar, climaxing on the downbeat. `<bd cp>` alternates
+// the kick and clap each cycle for an extra surprise.
+
+bpm = 120
+
+s"sd ~ sd ~ sd sd ~ sd [sd sd] sd [sd sd] sd [sd sd sd sd] sd ~ <bd cp>"
+    |> out(@ * 0.7)
+
+s"bd ~ ~ ~ bd ~ ~ ~"
+    |> out(@)

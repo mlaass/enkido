@@ -1,0 +1,9 @@
+// Four-on-the-floor — the house staple: kick on every quarter, claps
+// on the off-beats, hats on every eighth. Each space-separated token
+// is one slot in the bar; `~` is a rest.
+
+bpm = 124
+
+s"bd bd bd bd" |> out(@)
+s"~ cp ~ cp" |> out(@)
+s"hh hh hh hh hh hh hh hh" |> out(@ * 0.5)

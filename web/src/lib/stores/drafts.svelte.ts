@@ -14,20 +14,24 @@
 
 import { LocalDraftProvider } from '$lib/ide/storage/local-draft';
 import type { DraftFull, DraftSummary, RecentlyVisited } from '$lib/ide/storage/types';
+import { WELCOME_PATCHES } from '$lib/welcome-patches.generated';
 
 const OPEN_TABS_KEY = 'nkido-open-tabs';
 const ACTIVE_TAB_KEY = 'nkido-active-tab';
 const MIGRATED_KEY = 'nkido-drafts-migrated-v1';
 const LEGACY_CODE_KEY = 'nkido-editor-code';
 
-export const DEFAULT_CODE = `// Welcome to NKIDO!
-// Press Ctrl+Enter to evaluate
+// Used when no welcome patches are bundled (build skipped) and as the
+// initial mirror value before `init()` swaps in the active draft's code.
+export const FALLBACK_CODE = `// new sketch
 
-bpm = 120
-
-// Simple sine wave
-sin(440) |> out(@, @)
+osc("sin", 440) * 0.3 |> out(@)
 `;
+
+function pickWelcome(): string {
+	if (WELCOME_PATCHES.length === 0) return FALLBACK_CODE;
+	return WELCOME_PATCHES[Math.floor(Math.random() * WELCOME_PATCHES.length)];
+}
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -76,7 +80,7 @@ function freshDraft(over: Partial<DraftFull> = {}): DraftFull {
 	return {
 		id: newUuid(),
 		name: 'Untitled',
-		code: DEFAULT_CODE,
+		code: pickWelcome(),
 		updatedAt: Date.now(),
 		isPhantom: false,
 		phantomSlug: null,
@@ -104,7 +108,7 @@ function createDraftsStore() {
 		drafts: [],
 		openTabIds: [],
 		activeTabId: null,
-		activeCode: DEFAULT_CODE,
+		activeCode: FALLBACK_CODE,
 		recentlyVisited: []
 	});
 
@@ -207,7 +211,7 @@ function createDraftsStore() {
 
 		state.openTabIds = open;
 		state.activeTabId = active;
-		state.activeCode = active ? (allDrafts.find((d) => d.id === active)?.code ?? DEFAULT_CODE) : DEFAULT_CODE;
+		state.activeCode = active ? (allDrafts.find((d) => d.id === active)?.code ?? FALLBACK_CODE) : FALLBACK_CODE;
 		writeOpenTabs(open);
 		writeActiveTab(active);
 		syncSummariesFromAllDrafts();
@@ -283,7 +287,7 @@ function createDraftsStore() {
 	function createDraft(opts: { name?: string; code?: string; activate?: boolean } = {}): string {
 		const draft = freshDraft({
 			name: opts.name ?? `Untitled ${allDrafts.filter((d) => !d.isPhantom).length + 1}`,
-			code: opts.code ?? DEFAULT_CODE
+			code: opts.code ?? pickWelcome()
 		});
 		allDrafts.push(draft);
 		persistAll('create');

@@ -1,0 +1,14 @@
+// Generative texture — slow LFOs at incommensurate rates modulate
+// frequency and filter cutoff. Nothing repeats exactly, but the
+// contour drifts inside a comfortable musical range.
+
+bpm = 80
+
+slow1 = osc("sin", 0.073) * 200 + 220
+slow2 = osc("tri", 0.041) * 1200 + 1800
+
+osc("saw", slow1) * 0.12
+    |> lp(@, slow2, 1.4)
+    |> @ * 0.5 + freeverb(@, 0.8, 0.6) * 0.25
+    |> limiter(@, -1)
+    |> out(@)

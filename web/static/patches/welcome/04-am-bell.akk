@@ -1,0 +1,11 @@
+// Amplitude modulation — multiplying two sines creates sum-and-
+// difference frequencies. Audio-rate modulation produces metallic,
+// bell-like sidebands. Try non-integer ratios for inharmonic tones.
+
+bpm = 100
+
+carrier = osc("sin", 440)
+mod = osc("sin", 207)
+(carrier * mod * 0.25)
+    |> @ * 0.7 + freeverb(@, 0.75, 0.5) * 0.3
+    |> out(@)

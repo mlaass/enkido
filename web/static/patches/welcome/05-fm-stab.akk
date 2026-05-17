@@ -1,0 +1,13 @@
+// 2-operator FM stab — a sine carrier reads a sine modulator on its
+// frequency input. The modulator's AR envelope drops the FM index
+// over time, so the attack is bright and the tail decays to a clean
+// sine. The basis of every DX7 Rhodes patch.
+
+bpm = 100
+
+trig = trigger(1)
+mod_env = ar(trig, 0.001, 0.7)
+mod = osc("sin", 220) * mod_env * 800
+osc("sin", 220 + mod) * ar(trig, 0.005, 1.4) * 0.3
+    |> @ + freeverb(@, 0.5, 0.5) * 0.3
+    |> out(@)

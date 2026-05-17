@@ -8,7 +8,7 @@
  */
 
 import { audioEngine } from './audio.svelte';
-import { draftsStore, DEFAULT_CODE } from './drafts.svelte';
+import { draftsStore, FALLBACK_CODE } from './drafts.svelte';
 
 export interface EditorDiagnostic {
 	severity: number;  // 0=Info, 1=Warning, 2=Error
@@ -30,7 +30,7 @@ interface EditorState {
 
 function createEditorStore() {
 	let state = $state<EditorState>({
-		embedCode: DEFAULT_CODE,
+		embedCode: FALLBACK_CODE,
 		hasUnsavedChanges: false,
 		lastCompileError: null,
 		lastCompileTime: null,
@@ -101,9 +101,9 @@ function createEditorStore() {
 
 	function reset() {
 		if (persistenceEnabled) {
-			draftsStore.updateActiveCode(DEFAULT_CODE);
+			draftsStore.updateActiveCode(FALLBACK_CODE);
 		} else {
-			state.embedCode = DEFAULT_CODE;
+			state.embedCode = FALLBACK_CODE;
 		}
 		state.hasUnsavedChanges = false;
 		state.lastCompileError = null;

@@ -1,0 +1,11 @@
+// Reverb drone — root, fifth, and octave saws held continuously and
+// drowned in a massive reverb. No envelope, no pattern: the drone
+// rings out for as long as you let it.
+
+bpm = 60
+
+drone = osc("saw", 110) + osc("saw", 110 * 1.005) + osc("saw", 165) + osc("saw", 220)
+
+drone * 0.04
+    |> @ * 0.6 + freeverb(@, 0.93, 0.4) * 0.5
+    |> out(@)

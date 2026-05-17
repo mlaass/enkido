@@ -1,0 +1,8 @@
+// Polyrhythm — 3 against 4. Square brackets divide a beat evenly,
+// so `[bd*3]` fits three kicks in the same time that `[hh*4]` fits
+// four hats. Tap your foot and try to track both layers at once.
+
+bpm = 96
+
+s"[bd*3] [bd*3]" |> out(@)
+s"[hh*4] [hh*4]" |> out(@ * 0.5)

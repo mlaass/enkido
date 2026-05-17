@@ -1,0 +1,10 @@
+// Pulse-width modulation — a square whose duty cycle wobbles under
+// a slow sine. The duty swings between ~10% and 90%, giving the
+// tone a hollow, chorused, vintage-synth character.
+
+bpm = 110
+
+pw = osc("sin", 0.25) * 0.4 + 0.5
+sqr_pwm(110, pw) * 0.25
+    |> lp(@, 2400)
+    |> out(@)
