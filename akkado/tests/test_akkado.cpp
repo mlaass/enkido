@@ -2307,6 +2307,13 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
         REQUIRE(result.success);
     }
 
+    SECTION("pan accepts stereo input (PAN_STEREO dispatch)") {
+        auto result = akkado::compile(R"(
+            stereo(saw(440), saw(880)) |> pan(@, 0.3) |> out(@)
+        )");
+        REQUIRE(result.success);
+    }
+
     // ── 8. Match expression type flow ──
 
     SECTION("match arms produce signal type") {
