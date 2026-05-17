@@ -5,6 +5,6 @@
 bpm = 110
 
 src = n"e4 ~ ~ b3 ~ ~ g4 ~"
-    |> osc("tri", @.freq) * ar(@.trig, 0.001, 0.3) * 0.4
+    |> osc("tri", @freq) * ar(@trig, 0.001, 0.3) * 0.4
 
 src + pingpong(src, src, 0.375, 0.6) * 0.7 |> out(@)

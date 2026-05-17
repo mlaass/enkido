@@ -13,7 +13,7 @@ notes
 
 // Synth voice
 notes 
-    |> saw(@.freq) * ar(trigger(1), 0.002, 0.18)
+    |> saw(@freq) * ar(trigger(1), 0.002, 0.18)
     |> oscilloscope(@, "raw saw", {triggerLevel: 0})
     |> lp(@, 2400)
     |> spectrum(@, "filtered", {logScale: true, fft: 1024, minDb: -70})

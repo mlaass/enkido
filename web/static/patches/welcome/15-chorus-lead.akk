@@ -5,7 +5,7 @@
 bpm = 110
 
 dry = n"c4 eb4 g4 bb4 c5 bb4 g4 eb4"
-    |> osc("saw", @.freq) * ar(@.trig, 0.005, 0.18) * 0.4
+    |> osc("saw", @freq) * ar(@trig, 0.005, 0.18) * 0.4
     |> lp(@, 2400)
 
 dry * 0.4 + chorus(dry, 0.6, 0.5) * 0.6 |> out(@)

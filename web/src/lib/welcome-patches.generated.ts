@@ -117,7 +117,7 @@ env = ar(trigger(4), 0.001, 0.18)
 cutoff = param("cutoff", 600, 200, 4000)
 
 n"a2 a3 c3 a2 e3 a2 g3 c3"
-    |> osc("saw", @.freq) * 0.5
+    |> osc("saw", @freq) * 0.5
     |> moog(@, cutoff + env * 2400, 3.2, _, 1.6)
     |> out(@)
 `,
@@ -143,7 +143,7 @@ chord("Cmaj7 Am7 Dm7 G7")
 bpm = 120
 
 n"a3 c4 d4 e4 g4 e4 d4 c4"
-    |> osc("tri", @.freq) * ar(@.trig, 0.001, 0.25) * 0.4
+    |> osc("tri", @freq) * ar(@trig, 0.001, 0.25) * 0.4
     |> lp(@, 2400)
     |> @ + delay(@, 0.375, 0.4) * 0.35
     |> out(@)
@@ -167,7 +167,7 @@ drone * 0.04
 bpm = 110
 
 src = n"e4 ~ ~ b3 ~ ~ g4 ~"
-    |> osc("tri", @.freq) * ar(@.trig, 0.001, 0.3) * 0.4
+    |> osc("tri", @freq) * ar(@trig, 0.001, 0.3) * 0.4
 
 src + pingpong(src, src, 0.375, 0.6) * 0.7 |> out(@)
 `,
@@ -178,7 +178,7 @@ src + pingpong(src, src, 0.375, 0.6) * 0.7 |> out(@)
 bpm = 110
 
 dry = n"c4 eb4 g4 bb4 c5 bb4 g4 eb4"
-    |> osc("saw", @.freq) * ar(@.trig, 0.005, 0.18) * 0.4
+    |> osc("saw", @freq) * ar(@trig, 0.005, 0.18) * 0.4
     |> lp(@, 2400)
 
 dry * 0.4 + chorus(dry, 0.6, 0.5) * 0.6 |> out(@)
@@ -226,7 +226,7 @@ osc("saw", slow1) * 0.12
 bpm = 120
 
 n"c4 e4 g4 b4"
-    |> osc("tri", @.freq) * ar(@.trig, 0.001, 0.18) * 0.4
+    |> osc("tri", @freq) * ar(@trig, 0.001, 0.18) * 0.4
     |> lp(@, 3000)
     |> @ + delay(@, 0.375, 0.55) * 0.7
     |> out(@)
@@ -240,7 +240,7 @@ bpm = 90
 
 n"a3 a^3 a^^3 b3 c^4 d4 d^4 e4"
     |> tune("31edo", @)
-    |> osc("tri", @.freq) * ar(@.trig, 0.005, 0.4) * 0.3
+    |> osc("tri", @freq) * ar(@trig, 0.005, 0.4) * 0.3
     |> lp(@, 1800)
     |> @ + freeverb(@, 0.7, 0.5) * 0.4
     |> out(@)

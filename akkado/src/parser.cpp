@@ -87,6 +87,62 @@ void Parser::error_at(const Token& token, std::string_view message) {
     });
 }
 
+void Parser::error_with_code(const Token& token, std::string_view code,
+                             std::string_view message) {
+    if (panic_mode_) return;
+    panic_mode_ = true;
+
+    diagnostics_.push_back(Diagnostic{
+        .severity = Severity::Error,
+        .code = std::string(code),
+        .message = std::string(message),
+        .filename = filename_,
+        .location = token.location
+    });
+}
+
+void Parser::warn(const Token& token, std::string_view code,
+                  std::string_view message) {
+    // Warnings don't suppress on panic — they're additive lints, not errors.
+    diagnostics_.push_back(Diagnostic{
+        .severity = Severity::Warning,
+        .code = std::string(code),
+        .message = std::string(message),
+        .filename = filename_,
+        .location = token.location
+    });
+}
+
+namespace {
+
+// Identifier-or-keyword tokens accepted as field names in the dotless
+// hole-field shorthand (`@field` / `%field`). Excludes the string-prefix
+// pattern tokens (Timeline, ValuePat, NotePat, SamplePat, ChordPat)
+// because those only lex when followed by `"` and dragging them in would
+// hijack the trailing string literal.
+constexpr bool is_hole_field_token(TokenType t) {
+    switch (t) {
+        case TokenType::Identifier:
+        case TokenType::True:
+        case TokenType::False:
+        case TokenType::Match:
+        case TokenType::Fn:
+        case TokenType::As:
+        case TokenType::Const:
+        case TokenType::Import:
+        case TokenType::Pat:
+            return true;
+        default:
+            return false;
+    }
+}
+
+constexpr bool tokens_adjacent(const Token& a, const Token& b) {
+    return a.location.offset + a.location.length == b.location.offset;
+}
+
+} // namespace
+
 void Parser::synchronize() {
     panic_mode_ = false;
 
@@ -653,11 +709,35 @@ NodeIndex Parser::parse_hole() {
     Token tok = advance();  // consume '%' or '@'
     NodeIndex node = make_node(NodeType::Hole, tok);
 
-    // Check for field access: %.field
-    // But NOT if followed by '(' which indicates a method call: %.method()
+    // Dotless shorthand: `@field` / `%field` when an identifier or
+    // word-keyword token is immediately adjacent to the hole. Produces the
+    // same HoleData{field_name} AST as the dotted form.
+    if (is_hole_field_token(current().type) && tokens_adjacent(tok, current())) {
+        // `@ident(` is a method-call attempt and not permitted (E108).
+        // Recover by treating `ident` as a field name so downstream
+        // diagnostics stay localized.
+        if (current_idx_ + 1 < tokens_.size() &&
+            tokens_[current_idx_ + 1].type == TokenType::LParen) {
+            std::string hint_msg = "Method calls on holes require a dot: write `";
+            hint_msg += tok.lexeme;
+            hint_msg += '.';
+            hint_msg += current().lexeme;
+            hint_msg += "(...)` instead of `";
+            hint_msg += tok.lexeme;
+            hint_msg += current().lexeme;
+            hint_msg += "(...)`.";
+            error_with_code(current(), "E108", hint_msg);
+        }
+        Token field_tok = advance();
+        arena_[node].data = Node::HoleData{std::string(field_tok.lexeme)};
+        return node;
+    }
+
+    // Dotted form: `@.field` / `%.field` — kept for back-compat. Under
+    // `--strict` we suggest migrating to the dotless form (W201).
+    // Method calls (`@.method()`) restore position and let postfix handling
+    // pick up the dot.
     if (check(TokenType::Dot)) {
-        // Peek ahead: if it's identifier followed by '(', it's a method call
-        // In that case, don't consume the dot - let postfix handling do it
         std::size_t save_pos = current_idx_;
 
         advance();  // tentatively consume '.'
@@ -666,13 +746,22 @@ NodeIndex Parser::parse_hole() {
             Token field_tok = advance();  // tentatively consume identifier
 
             if (check(TokenType::LParen)) {
-                // This is a method call: %.method()
-                // Restore position and let postfix handling deal with it
+                // This is a method call: @.method() — restore and defer.
                 current_idx_ = save_pos;
                 arena_[node].data = Node::HoleData{std::nullopt};
             } else {
-                // This is field access: %.field
                 arena_[node].data = Node::HoleData{std::string(field_tok.lexeme)};
+                if (lint_strict_) {
+                    std::string msg = "Dotted hole-field access is deprecated; write `";
+                    msg += tok.lexeme;
+                    msg += field_tok.lexeme;
+                    msg += "` instead of `";
+                    msg += tok.lexeme;
+                    msg += '.';
+                    msg += field_tok.lexeme;
+                    msg += "`.";
+                    warn(tok, "W201", msg);
+                }
             }
         } else {
             error("Expected field name after hole '.' access");
@@ -1793,8 +1882,9 @@ std::vector<DestructureField> Parser::parse_destructure_fields(bool allow_defaul
 
 std::pair<Ast, std::vector<Diagnostic>>
 parse(std::vector<Token> tokens, std::string_view source,
-      std::string_view filename) {
+      std::string_view filename, bool lint_strict) {
     Parser parser(std::move(tokens), source, filename);
+    parser.set_lint_strict(lint_strict);
     Ast ast = parser.parse();
     return {std::move(ast), parser.diagnostics()};
 }

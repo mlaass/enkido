@@ -131,23 +131,23 @@ See also: [glide](#glide), [interp](#interp).
 | curve | string | `"linear"` | `"linear"`, `"ease_in"`, `"ease_out"`, `"cosine"` |
 | space | string | `"linear"` | `"linear"` or `"log"` (musical pitch glide)       |
 
-Detects target changes by exact value compare and ramps from the current emitted value to the new target over `time` seconds. Pattern fields (`@.freq`, `@.note`, `@.vel`) feed in cleanly because they arrive as sample-and-hold buffers. Use `space: "log"` for perceptually uniform glide over wide intervals — or feed `@.note` through `mtof`, which is already log-pitch by construction.
+Detects target changes by exact value compare and ramps from the current emitted value to the new target over `time` seconds. Pattern fields (`@freq`, `@note`, `@vel`) feed in cleanly because they arrive as sample-and-hold buffers. Use `space: "log"` for perceptually uniform glide over wide intervals — or feed `@note` through `mtof`, which is already log-pitch by construction.
 
-`glide` is stereo-native: it auto-widens a mono target to stereo. To compose it with a mono-only slot (like `saw(freq)`), either feed via `mtof(glide(@.note, …))` (`mtof` keeps the chain mono) or wrap with `mono(...)`. See the [Glide & Interpolation](../../concepts/glide-and-interpolation.md) concept page for the full discussion.
+`glide` is stereo-native: it auto-widens a mono target to stereo. To compose it with a mono-only slot (like `saw(freq)`), either feed via `mtof(glide(@note, …))` (`mtof` keeps the chain mono) or wrap with `mono(...)`. See the [Glide & Interpolation](../../concepts/glide-and-interpolation.md) concept page for the full discussion.
 
 ```akk
 // Default 50 ms portamento between notes
-n"c4 c5" |> saw(mtof(glide(@.note, 0.05))) |> out(@)
+n"c4 c5" |> saw(mtof(glide(@note, 0.05))) |> out(@)
 ```
 
 ```akk
 // 100 ms cosine S-curve glide
-n"c4 c5" |> saw(mtof(glide(@.note, 0.1, "cosine"))) |> out(@)
+n"c4 c5" |> saw(mtof(glide(@note, 0.1, "cosine"))) |> out(@)
 ```
 
 ```akk
 // Wide-interval portamento — log space keeps the slide pitch-uniform
-n"c2 c6" |> saw(mono(glide(@.freq, 0.2, "ease_out", "log"))) |> out(@)
+n"c2 c6" |> saw(mono(glide(@freq, 0.2, "ease_out", "log"))) |> out(@)
 ```
 
 ```akk
@@ -173,7 +173,7 @@ Same change-detection and ramp behavior as `glide(sig, time, "linear", "linear")
 
 ```akk
 // 100 ms linear ramp between targets
-n"c4 c5" |> saw(mtof(interp(@.note, 0.1))) |> out(@)
+n"c4 c5" |> saw(mtof(interp(@note, 0.1))) |> out(@)
 ```
 
 See also: [glide](#glide), [interp_ease_in](#interp_ease_in), [interp_ease_out](#interp_ease_out), [interp_cos](#interp_cos).
@@ -191,7 +191,7 @@ See also: [glide](#glide), [interp_ease_in](#interp_ease_in), [interp_ease_out](
 
 ```akk
 // Notes "settle into" their targets
-n"c4 c5" |> saw(mtof(interp_ease_in(@.note, 0.15))) |> out(@)
+n"c4 c5" |> saw(mtof(interp_ease_in(@note, 0.15))) |> out(@)
 ```
 
 See also: [glide](#glide) with `curve: "ease_in"`.
@@ -209,7 +209,7 @@ See also: [glide](#glide) with `curve: "ease_in"`.
 
 ```akk
 // Notes "spring toward" their targets
-n"c4 c5" |> saw(mtof(interp_ease_out(@.note, 0.15))) |> out(@)
+n"c4 c5" |> saw(mtof(interp_ease_out(@note, 0.15))) |> out(@)
 ```
 
 See also: [glide](#glide) with `curve: "ease_out"`.
@@ -227,7 +227,7 @@ See also: [glide](#glide) with `curve: "ease_out"`.
 
 ```akk
 // Slow S-shaped pitch sweep
-n"c4 c5" |> saw(mtof(interp_cos(@.note, 0.4))) |> out(@)
+n"c4 c5" |> saw(mtof(interp_cos(@note, 0.4))) |> out(@)
 ```
 
 See also: [glide](#glide) with `curve: "cosine"`.

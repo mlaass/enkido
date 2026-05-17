@@ -157,7 +157,7 @@ Chord patterns produce events with multiple voices per step. How those voices re
 
   ```akk
   // ✗ E410 — chord into a mono synth has no voice allocator
-  c"CM Am Dm G" |> osc("saw", @.freq) |> out(@)
+  c"CM Am Dm G" |> osc("saw", @freq) |> out(@)
 
   // ✓ poly() wraps the synth in N parallel voices
   fn lead(freq, gate, vel) =

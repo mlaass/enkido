@@ -10,7 +10,7 @@ bpm = 110
 
 n"a4 a^4 a^^4 g^4 g4 fv4 f4 e4@2 ~ c5 c^5 cv5 a^4 a4 f^4 e4 d4@2" 
     |> tune( "31edo", @)
-    |> osc("tri", @.freq) * adsr(@.gate, 0.05, 0.4, 0.6, 0.3)
+    |> osc("tri", @freq) * adsr(@gate, 0.05, 0.4, 0.6, 0.3)
     |> lp(@, 1800)
     |> (@ + freeverb(@, 0.85, 0.6) *.25) * 0.25
     |> saturate(@)

@@ -345,6 +345,30 @@ function detectDotContext(text: string, pos: number): DotCtx | null {
 	return { kind: 'identifier', name, from: insertFrom };
 }
 
+/**
+ * Detect the dotless hole-field shorthand: `@<partial>` or `%<partial>`
+ * adjacent to the cursor (no dot, no whitespace between hole and identifier).
+ * Returns a `hole` context so pattern-field suggestions surface the same
+ * way they do for the dotted form. Per PRD prd-hole-field-shorthand §3.4,
+ * whitespace defeats the shorthand — we honour that here so `@ as e`
+ * remains an `as`-binding intent, not a field-name autocompletion.
+ */
+function detectHoleDotlessContext(text: string, pos: number): DotCtx | null {
+	if (isInString(text, pos)) return null;
+
+	// Walk backwards skipping the (possibly partial) field name.
+	let i = pos - 1;
+	while (i >= 0 && /[a-zA-Z0-9_]/.test(text[i])) i--;
+
+	// The character immediately before the identifier must be `@` or `%`
+	// (no whitespace) — that is the adjacency rule from the parser.
+	if (i < 0) return null;
+	if (text[i] !== '@' && text[i] !== '%') return null;
+
+	// `from` is the first char of the (possibly empty) partial field name.
+	return { kind: 'hole', from: i + 1 };
+}
+
 function fieldDetailLabel(f: ShapeField): string {
 	if (f.aliasOf) return `${f.type} (alias of ${f.aliasOf})`;
 	if (f.source === 'set') return `${f.type} (custom)`;
@@ -433,6 +457,18 @@ export async function akkadoCompletions(context: CompletionContext): Promise<Com
 		// Fall through if no shape — let the general completions try
 		// (they're harmless after a dot since they validate against the
 		// identifier regex).
+	}
+
+	// Dotless hole-field shorthand: `@field` / `%field`. Per
+	// prd-hole-field-shorthand, the parser accepts a field name immediately
+	// adjacent to the hole; surface the same pattern-hole shape suggestions
+	// we do for the dotted form.
+	const holeCtx = detectHoleDotlessContext(docText, context.pos);
+	if (holeCtx) {
+		const shape = getPatternHoleShape();
+		if (shape && shape.fields.length > 0) {
+			return completionsFromShape(shape, holeCtx.from);
+		}
 	}
 
 	const options: Completion[] = [];

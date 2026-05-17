@@ -87,7 +87,7 @@ fn lead(freq, gate, vel, trig) -> {
     saw(glide(freq, 0.05)) * adsr(gate, 0.01, 0.15, 0.75, 0.35) * v
 }
 
-midi() |> lead(@.freq, @.gate, @.vel, @.trig)
+midi() |> lead(@freq, @gate, @vel, @trig)
     |> lp(@, 1800, 0.7)
     |> out(@)
 ```

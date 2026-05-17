@@ -89,18 +89,22 @@ struct CompileResult {
 /// @param filename Optional filename for error reporting
 /// @param sample_registry Optional sample registry for resolving sample names to IDs
 /// @param resolver Optional file resolver for import statements
+/// @param lint_strict Enable opt-in lint warnings (e.g. W201 dotted hole-field).
 /// @return Compilation result with bytecode and diagnostics
 CompileResult compile(std::string_view source, std::string_view filename = "<input>",
                      SampleRegistry* sample_registry = nullptr,
-                     const FileResolver* resolver = nullptr);
+                     const FileResolver* resolver = nullptr,
+                     bool lint_strict = false);
 
 /// Compile from file (creates a FilesystemResolver for the file's directory)
 /// @param path Path to the source file
 /// @param sample_registry Optional sample registry for resolving sample names to IDs
 /// @param resolver Optional file resolver (if null, creates a FilesystemResolver)
+/// @param lint_strict Enable opt-in lint warnings (e.g. W201 dotted hole-field).
 /// @return Compilation result
 CompileResult compile_file(const std::string& path,
                           SampleRegistry* sample_registry = nullptr,
-                          const FileResolver* resolver = nullptr);
+                          const FileResolver* resolver = nullptr,
+                          bool lint_strict = false);
 
 } // namespace akkado

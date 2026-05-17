@@ -8,7 +8,7 @@ bpm = 110
 // Plucky source: filtered saw with a fast envelope
 
 src = n"<a3 b3> e4 ab4 c#5 e5 c#5 ab4 e4"
-    |> saw(@.freq) * ar(trigger(4), 0.001, 0.18)
+    |> saw(@freq) * ar(trigger(4), 0.001, 0.18)
     |> lp(@, 2200)
 
 src

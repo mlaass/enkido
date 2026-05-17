@@ -5,7 +5,7 @@ p"[hh,bd] hh [hh,sd] [hh ~ ~ <rim [hh hh]>] [hh,bd] [hh,bd] [hh,sd] <hh oh>"
 
 // bass line with a saturated lowpass filter and pipe |> and hole @ syntax
 p"d2 [d2 <a1 [f#3 e3]>] [~ < ~ e3 >] ~"
-  |> tri(@.freq) * ar(@.trig, .1, .1) 
+  |> tri(@freq) * ar(@trig, .1, .1) 
   |> lp(@, 600, 1)
   |> saturate(@, 4)
   |> out(@ * 0.5) 

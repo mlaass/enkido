@@ -55,6 +55,6 @@ fn lead(freq, gate, vel, trig) ->{
 // Monophonic chain: take the latest MIDI note, run it through `lead`,
 // then a soft saturator for some grit before output.
 midi()
-    |> lead(@.freq, @.gate, @.vel, @.trig)
+    |> lead(@freq, @gate, @vel, @trig)
     |> saturate(@, 2)
     |> out(@)

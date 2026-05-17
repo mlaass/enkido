@@ -1688,6 +1688,185 @@ TEST_CASE("Parser >> and @ aliases", "[parser]") {
     }
 }
 
+// Helper: pull the hole node out of a `pat(...) |> <hole-expr>` program.
+// Returns NULL_NODE if the RHS isn't a Hole.
+static NodeIndex hole_rhs_of_pipe(const Ast& ast) {
+    NodeIndex pipe = ast.arena[ast.root].first_child;
+    if (ast.arena[pipe].type != NodeType::Pipe) return NULL_NODE;
+    NodeIndex lhs = ast.arena[pipe].first_child;
+    return ast.arena[lhs].next_sibling;
+}
+
+TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
+    SECTION("@field parses identical to @.field") {
+        auto dotless = parse_ok("pat(\"c4\") |> @freq");
+        auto dotted  = parse_ok("pat(\"c4\") |> @.freq");
+
+        NodeIndex h_less = hole_rhs_of_pipe(dotless);
+        NodeIndex h_dot  = hole_rhs_of_pipe(dotted);
+        REQUIRE(dotless.arena[h_less].type == NodeType::Hole);
+        REQUIRE(dotted.arena[h_dot].type == NodeType::Hole);
+
+        auto& less_data = dotless.arena[h_less].as_hole();
+        auto& dot_data  = dotted.arena[h_dot].as_hole();
+        REQUIRE(less_data.field_name.has_value());
+        REQUIRE(dot_data.field_name.has_value());
+        CHECK(less_data.field_name.value() == "freq");
+        CHECK(dot_data.field_name.value() == "freq");
+    }
+
+    SECTION("%field works as legacy alias") {
+        auto ast = parse_ok("pat(\"c4\") |> %freq");
+        NodeIndex h = hole_rhs_of_pipe(ast);
+        REQUIRE(ast.arena[h].type == NodeType::Hole);
+        auto& d = ast.arena[h].as_hole();
+        REQUIRE(d.field_name.has_value());
+        CHECK(d.field_name.value() == "freq");
+    }
+
+    SECTION("aliases (@v, @t, @f) parse as field names") {
+        auto ast = parse_ok("pat(\"c4\") |> @v");
+        NodeIndex h = hole_rhs_of_pipe(ast);
+        auto& d = ast.arena[h].as_hole();
+        REQUIRE(d.field_name.has_value());
+        CHECK(d.field_name.value() == "v");
+    }
+
+    SECTION("keyword `as` accepted as adjacent field name") {
+        auto ast = parse_ok("pat(\"c4\") |> @as");
+        NodeIndex h = hole_rhs_of_pipe(ast);
+        REQUIRE(ast.arena[h].type == NodeType::Hole);
+        auto& d = ast.arena[h].as_hole();
+        REQUIRE(d.field_name.has_value());
+        CHECK(d.field_name.value() == "as");
+    }
+
+    SECTION("keyword `match` accepted as adjacent field name") {
+        auto ast = parse_ok("pat(\"c4\") |> @match");
+        NodeIndex h = hole_rhs_of_pipe(ast);
+        auto& d = ast.arena[h].as_hole();
+        REQUIRE(d.field_name.has_value());
+        CHECK(d.field_name.value() == "match");
+    }
+
+    SECTION("whitespace defeats shorthand (`@ as e` keeps pipe binding)") {
+        // `@ as e` must parse `@` as a bare hole (NOT field "as") and treat
+        // `as e` as the pipe-binding suffix. The exact tree shape depends
+        // on precedence wrapping; the load-bearing invariant is that no
+        // Hole node in the tree has field_name == "as".
+        auto ast = parse_ok("pat(\"c4\") |> @ as e |> e + 1");
+
+        bool found_bare_hole = false;
+        bool found_as_field  = false;
+        for (NodeIndex i = 0; i < (NodeIndex)ast.arena.size(); ++i) {
+            if (ast.arena[i].type != NodeType::Hole) continue;
+            auto& d = ast.arena[i].as_hole();
+            if (!d.field_name.has_value()) {
+                found_bare_hole = true;
+            } else if (d.field_name.value() == "as") {
+                found_as_field = true;
+            }
+        }
+        CHECK(found_bare_hole);
+        CHECK_FALSE(found_as_field);
+
+        // The `as e` binding must have produced a PipeBinding{e} somewhere.
+        bool found_pipe_binding_e = false;
+        for (NodeIndex i = 0; i < (NodeIndex)ast.arena.size(); ++i) {
+            if (ast.arena[i].type != NodeType::PipeBinding) continue;
+            if (ast.arena[i].as_pipe_binding().binding_name == "e") {
+                found_pipe_binding_e = true;
+                break;
+            }
+        }
+        CHECK(found_pipe_binding_e);
+    }
+
+    SECTION("chained @foo.bar parses as (@foo).bar") {
+        auto ast = parse_ok("pat(\"c4\") |> @osc.freq");
+        NodeIndex rhs = hole_rhs_of_pipe(ast);
+        REQUIRE(ast.arena[rhs].type == NodeType::FieldAccess);
+
+        // First child of FieldAccess is the receiver — must be a Hole
+        // with field_name = "osc".
+        NodeIndex recv = ast.arena[rhs].first_child;
+        REQUIRE(ast.arena[recv].type == NodeType::Hole);
+        auto& hd = ast.arena[recv].as_hole();
+        REQUIRE(hd.field_name.has_value());
+        CHECK(hd.field_name.value() == "osc");
+    }
+
+    SECTION("@method() emits E108 with hint") {
+        auto [tokens, lex_diags] = lex("osc(\"saw\", 440) |> @lp(800)");
+        REQUIRE(lex_diags.empty());
+        auto [ast, diags] = parse(std::move(tokens),
+                                   "osc(\"saw\", 440) |> @lp(800)");
+
+        bool found_e108 = false;
+        for (const auto& d : diags) {
+            if (d.code == "E108") {
+                found_e108 = true;
+                CHECK(d.message.find("@.lp") != std::string::npos);
+            }
+        }
+        CHECK(found_e108);
+    }
+
+    SECTION("bare hole at end of expression is unaffected") {
+        auto ast = parse_ok("saw(440) |> lp(@, 1000)");
+        // The `@` inside lp's arg list is bare — no adjacency target
+        // (next token is `,`).
+        NodeIndex pipe = ast.arena[ast.root].first_child;
+        NodeIndex rhs = ast.arena[ast.arena[pipe].first_child].next_sibling;
+        REQUIRE(ast.arena[rhs].type == NodeType::Call);
+        // Don't deep-verify the @ AST — just confirm the program parses.
+    }
+
+    SECTION("dotted form still parses (back-compat)") {
+        auto ast = parse_ok("pat(\"c4\") |> @.freq * @.vel");
+        // Smoke test: no errors, AST exists. Detailed equivalence is
+        // checked by the first SECTION.
+        REQUIRE(ast.valid());
+    }
+
+    SECTION("W201 only fires under --strict") {
+        std::string_view src = "pat(\"c4\") |> @.freq";
+
+        // Default: no W201.
+        {
+            auto [tokens, _ld] = lex(src);
+            auto [_ast, diags] = parse(std::move(tokens), src);
+            for (const auto& d : diags) {
+                CHECK(d.code != "W201");
+            }
+        }
+
+        // Under strict: W201 fires with a suggestion mentioning `@freq`.
+        {
+            auto [tokens, _ld] = lex(src);
+            auto [_ast, diags] = parse(std::move(tokens), src, "<input>", true);
+            bool found = false;
+            for (const auto& d : diags) {
+                if (d.code == "W201") {
+                    found = true;
+                    CHECK(d.severity == Severity::Warning);
+                    CHECK(d.message.find("@freq") != std::string::npos);
+                }
+            }
+            CHECK(found);
+        }
+    }
+
+    SECTION("W201 does not fire for the new dotless form even under --strict") {
+        std::string_view src = "pat(\"c4\") |> @freq";
+        auto [tokens, _ld] = lex(src);
+        auto [_ast, diags] = parse(std::move(tokens), src, "<input>", true);
+        for (const auto& d : diags) {
+            CHECK(d.code != "W201");
+        }
+    }
+}
+
 TEST_CASE("Parser pipe binding", "[parser][records]") {
     SECTION("simple as binding") {
         auto ast = parse_ok("osc(\"sin\", 440) as sig |> lp(%, 1000)");

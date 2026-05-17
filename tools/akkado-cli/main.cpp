@@ -14,6 +14,7 @@ void print_usage(const char* program) {
               << "  --check              Check syntax only, don't generate bytecode\n"
               << "  --samples            List required samples\n"
               << "  --uris               List URI declarations (samples() and friends)\n"
+              << "  --strict             Enable opt-in lint warnings (e.g. W201)\n"
               << std::endl;
 }
 
@@ -33,6 +34,7 @@ int main(int argc, char* argv[]) {
     bool check_only = false;
     bool list_samples = false;
     bool list_uris = false;
+    bool lint_strict = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -67,6 +69,11 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        if (arg == "--strict") {
+            lint_strict = true;
+            continue;
+        }
+
         if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             output_file = argv[++i];
             continue;
@@ -96,7 +103,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Compile
-    auto result = akkado::compile_file(input_file);
+    auto result = akkado::compile_file(input_file, nullptr, nullptr, lint_strict);
 
     // Output diagnostics
     std::ifstream source_file(input_file);

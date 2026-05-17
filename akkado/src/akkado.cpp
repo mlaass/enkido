@@ -28,7 +28,8 @@ static std::size_t count_lines(std::string_view s) {
 
 CompileResult compile(std::string_view source, std::string_view filename,
                      SampleRegistry* sample_registry,
-                     const FileResolver* resolver) {
+                     const FileResolver* resolver,
+                     bool lint_strict) {
     CompileResult result;
 
     if (source.empty()) {
@@ -131,7 +132,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
     }
 
     // Phase 2: Parsing
-    auto [ast, parse_diags] = parse(std::move(tokens), combined_source, filename);
+    auto [ast, parse_diags] = parse(std::move(tokens), combined_source, filename,
+                                     lint_strict);
     source_map.adjust_all(parse_diags);
     result.diagnostics.insert(result.diagnostics.end(),
                               parse_diags.begin(), parse_diags.end());
@@ -228,7 +230,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
 
 CompileResult compile_file(const std::string& path,
                           SampleRegistry* sample_registry,
-                          const FileResolver* resolver) {
+                          const FileResolver* resolver,
+                          bool lint_strict) {
     std::ifstream file(path);
     if (!file) {
         CompileResult result;
@@ -254,11 +257,12 @@ CompileResult compile_file(const std::string& path,
         auto dir = p.parent_path().string();
         if (dir.empty()) dir = ".";
         FilesystemResolver default_resolver({dir});
-        return compile(buffer.str(), path, sample_registry, &default_resolver);
+        return compile(buffer.str(), path, sample_registry, &default_resolver,
+                       lint_strict);
     }
 #endif
 
-    return compile(buffer.str(), path, sample_registry, resolver);
+    return compile(buffer.str(), path, sample_registry, resolver, lint_strict);
 }
 
 } // namespace akkado

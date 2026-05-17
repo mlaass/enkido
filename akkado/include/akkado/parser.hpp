@@ -66,6 +66,10 @@ public:
         return akkado::has_errors(diagnostics_);
     }
 
+    /// Enable opt-in lint warnings (currently: W201 dotted hole-field).
+    /// Off by default — must be set before calling parse().
+    void set_lint_strict(bool strict) { lint_strict_ = strict; }
+
 private:
     // Token navigation
     [[nodiscard]] const Token& current() const;
@@ -79,6 +83,10 @@ private:
     // Error handling
     void error(std::string_view message);
     void error_at(const Token& token, std::string_view message);
+    void error_with_code(const Token& token, std::string_view code,
+                         std::string_view message);
+    void warn(const Token& token, std::string_view code,
+              std::string_view message);
     void synchronize();
 
     // Expression parsing (Pratt parser)
@@ -166,6 +174,7 @@ private:
 
     std::size_t current_idx_ = 0;
     bool panic_mode_ = false;
+    bool lint_strict_ = false;  // emit opt-in lint warnings (W201 etc.)
     std::size_t destr_counter_ = 0;  // unique counter for destructuring temp bindings
 };
 
@@ -173,9 +182,11 @@ private:
 /// @param tokens Tokens from lexer
 /// @param source Original source code
 /// @param filename Filename for error reporting
+/// @param lint_strict Emit opt-in lint warnings (W201 etc.). Off by default.
 /// @return Pair of AST and diagnostics
 std::pair<Ast, std::vector<Diagnostic>>
 parse(std::vector<Token> tokens, std::string_view source,
-      std::string_view filename = "<input>");
+      std::string_view filename = "<input>",
+      bool lint_strict = false);
 
 } // namespace akkado
