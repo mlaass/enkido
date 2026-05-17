@@ -127,17 +127,33 @@ stereo_sig
 
 **True stereo ping-pong delay** where echoes cross between L and R.
 
-| Param | Type   | Description |
-|-------|--------|-------------|
-| sig   | stereo | Stereo input |
-| time  | signal | Delay time (seconds) |
-| fb    | signal | Feedback (0..1) |
-| width | signal | Pan width (0 = centre, 1 = full ping-pong). Optional. |
+Convenience: `pingpong(stereo, time, fb, width?)`
+Explicit:    `pingpong(L, R, time, fb, width?)`
+
+| Param | Type   | Default | Description |
+|-------|--------|---------|-------------|
+| sig   | stereo | —       | Stereo input (or explicit L, R) |
+| time  | signal | —       | Delay time (seconds) |
+| fb    | signal | —       | Feedback (0..1) |
+| width | signal | 1.0     | Pan width (0 = centre, 1 = full ping-pong). Optional. |
+| dry   | signal | 1.0     | Dry-mix coefficient (Category A). Kwarg only. |
+| wet   | signal | 0.5     | Wet-mix coefficient (Category A). Kwarg only. |
+
+The output applies the unified mix line per channel: `out = dry_in * dry +
+delayed * wet`. Category A defaults give a balanced parallel mix where the
+echo sits 6 dB below the dry signal. Pass `wet: 1.0` to recover the
+pre-0.5.0 behaviour where the wet signal was added at full level on top of
+the dry source.
 
 ```akk
 osc("saw", 110)
   |> stereo()
-  |> pingpong(@, 0.375, 0.6)
+  |> pingpong(@, 0.375, 0.6)            // defaults: dry=1, wet=0.5
+  |> out(@)
+
+osc("saw", 110)
+  |> stereo()
+  |> pingpong(@, 0.375, 0.6, wet: 1.0)  // legacy-loud echo tail
   |> out(@)
 ```
 

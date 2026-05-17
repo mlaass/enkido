@@ -564,31 +564,56 @@ TypedValue CodeGenerator::handle_ms_decode_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
 }
 
-// pingpong(stereo, time, fb) or pingpong(L, R, time, fb, width?) -> true stereo ping-pong delay
+// pingpong(stereo, time, fb [, width [, dry, wet]])
+// pingpong(L, R, time, fb [, width [, dry, wet]])
+// dry/wet are kwargs (find_param("dry") = 5, find_param("wet") = 6) routed
+// through ExtendedParams<2>; the analyzer reorders kwargs and inserts `_`
+// placeholders for any gaps, which we resolve to PUSH_CONST defaults below.
 TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
-    auto args = extract_call_args(ast_->arena, n.first_child, 3, 5);
+    // Up to 7 children after analyzer reorder: 5 positional slots + dry + wet.
+    auto args = extract_call_args(ast_->arena, n.first_child, 3, 7);
 
     if (!args.valid || args.nodes.size() < 3) {
         error("E175", "pingpong() requires at least 3 arguments", n.location);
         return TypedValue::void_val();
     }
 
-    std::uint16_t left_buf, right_buf, time_buf, fb_buf, width_buf = BufferAllocator::BUFFER_UNUSED;
+    auto is_placeholder = [&](NodeIndex idx) -> bool {
+        if (idx == NULL_NODE) return true;
+        const Node& v = ast_->arena[idx];
+        return v.type == NodeType::Identifier &&
+               std::holds_alternative<Node::IdentifierData>(v.data) &&
+               v.as_identifier() == "_";
+    };
+
+    // Resolve a dry/wet extended-param slot: missing or `_` → leave as
+    // BUFFER_UNUSED so emit_extended_params_init() inlines the constant
+    // default. Otherwise visit the supplied arg.
+    auto resolve_ext = [&](std::size_t idx) -> std::uint16_t {
+        if (idx >= args.nodes.size() || is_placeholder(args.nodes[idx])) {
+            return BufferAllocator::BUFFER_UNUSED;
+        }
+        return visit(args.nodes[idx]).buffer;
+    };
+
+    std::uint16_t left_buf, right_buf, time_buf, fb_buf;
+    std::uint16_t width_buf = BufferAllocator::BUFFER_UNUSED;
+    std::uint16_t dry_buf, wet_buf;
 
     // Check first argument to determine form
     NodeIndex first_node = args.nodes[0];
     std::uint16_t first_buf = visit(first_node).buffer;
-
-    // Check stereo by both node and buffer
     bool first_is_stereo = is_stereo(first_node) || is_stereo_buffer(first_buf);
 
     if (first_is_stereo) {
-        // pingpong(stereo, time, fb, width?)
+        // pingpong(stereo, time, fb, width?, _?, dry?, wet?)
+        // After kwargs reorder both width (pos 3) and the unused pos-4 slot may
+        // be `_` placeholders — pos 4 is the explicit form's width and is
+        // ignored here, so we just consume the buffer for arg_buffers symmetry.
         StereoBuffers stereo;
         if (is_stereo(first_node)) {
             stereo = get_stereo_buffers(first_node);
         } else {
-            // Fall back to buffer-based lookup
             stereo = get_stereo_buffers_by_buffer(first_buf);
         }
         left_buf = stereo.left;
@@ -597,12 +622,14 @@ TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
         time_buf = visit(args.nodes[1]).buffer;
         fb_buf = visit(args.nodes[2]).buffer;
 
-        if (args.nodes.size() >= 4) {
+        // Stereo-form width sits at positional slot 3 (param "fb?" in the
+        // overloaded names array maps here for stereo callers).
+        if (args.nodes.size() >= 4 && !is_placeholder(args.nodes[3])) {
             width_buf = visit(args.nodes[3]).buffer;
         }
     } else {
-        // pingpong(L, R, time, fb, width?)
-        if (args.nodes.size() < 4) {
+        // pingpong(L, R, time, fb, width?, dry?, wet?)
+        if (args.nodes.size() < 4 || is_placeholder(args.nodes[3])) {
             error("E173", "pingpong() requires at least 4 arguments: pingpong(L, R, time, fb)", n.location);
             return TypedValue::void_val();
         }
@@ -617,10 +644,16 @@ TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
         time_buf = visit(args.nodes[2]).buffer;
         fb_buf = visit(args.nodes[3]).buffer;
 
-        if (args.nodes.size() >= 5) {
+        // Explicit-form width sits at positional slot 4.
+        if (args.nodes.size() >= 5 && !is_placeholder(args.nodes[4])) {
             width_buf = visit(args.nodes[4]).buffer;
         }
     }
+
+    // Extended-param slots: dry at position 5, wet at position 6 (set by the
+    // analyzer via find_param on extended_param_names).
+    dry_buf = resolve_ext(5);
+    wet_buf = resolve_ext(6);
 
     // Allocate output buffers
     std::uint16_t out_left = buffers_.allocate();
@@ -655,6 +688,17 @@ TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
     inst.rate = 0;
     inst.state_id = state_id;
     emit(inst);
+
+    // Emit ExtendedParams<2> for dry/wet. arg_buffers needs entries 0..6 so
+    // emit_extended_params_init() can read [total_params()+i] = [5+i]; the
+    // earlier slots aren't read by the helper but we populate them for clarity.
+    const BuiltinInfo* info = lookup_builtin("pingpong");
+    if (info && info->extended_param_count > 0) {
+        std::vector<std::uint16_t> arg_buffers = {
+            left_buf, right_buf, time_buf, fb_buf, width_buf, dry_buf, wet_buf
+        };
+        emit_extended_params_init(state_id, *info, arg_buffers);
+    }
 
     register_stereo(node, out_left, out_right);
     return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));

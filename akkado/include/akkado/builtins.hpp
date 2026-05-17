@@ -1043,40 +1043,50 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Extract right channel from stereo signal",
                  0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
-    // Pan mono signal to stereo position (-1=L, 0=center, 1=R)
+    // Pan signal to stereo position. Same-arity overload: mono input emits PAN
+    // (constant-power mono→stereo); stereo input emits PAN_STEREO (equal-power
+    // DAW-style balance). Dispatch handled by handle_pan_call in codegen_stereo.cpp.
     {"pan",     {cedar::Opcode::PAN, 2, 0, false,
-                 {"mono", "pos", "", "", "", ""},
+                 {"signal", "pos", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Pan mono to stereo (-1=L, 0=center, 1=R)",
+                 "Pan signal at position (-1=L, 0=center, 1=R) — mono→stereo, or DAW-style stereo balance",
                  0, {}, {}, ChannelCount::Stereo}},
     // Stereo width control (0=mono, 1=normal, >1=wide)
     // Convenience: width(stereo, amount) or explicit: width(L, R, amount)
     {"width",   {cedar::Opcode::WIDTH, 2, 0, false,
                  {"stereo/L", "amount/R", "amount?", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Stereo width (0=mono, 1=normal, >1=wide)",
+                 "Stereo width via M/S (0=mono, 1=normal, >1=wide) — width(stereo, amt) or width(L, R, amt)",
                  0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // Mid/side encoding
     // Convenience: ms_encode(stereo) or explicit: ms_encode(L, R)
     {"ms_encode", {cedar::Opcode::MS_ENCODE, 1, 0, false,
                    {"stereo/L", "R?", "", "", "", ""},
                    {NAN, NAN, NAN},
-                   "Convert stereo to mid/side",
+                   "Encode stereo to mid/side — ms_encode(stereo) or ms_encode(L, R)",
                    0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // Mid/side decoding
     // Convenience: ms_decode(ms) or explicit: ms_decode(M, S)
     {"ms_decode", {cedar::Opcode::MS_DECODE, 1, 0, false,
                    {"ms/M", "S?", "", "", "", ""},
                    {NAN, NAN, NAN},
-                   "Convert mid/side to stereo",
+                   "Decode mid/side to stereo — ms_decode(ms) or ms_decode(M, S)",
                    0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
     // True stereo ping-pong delay
     // Convenience: pingpong(stereo, time, fb) or explicit: pingpong(L, R, time, fb, width?)
-    {"pingpong", {cedar::Opcode::DELAY_PINGPONG, 3, 1, true,
-                  {"stereo/L", "time/R", "fb/time", "fb?", "width?", ""},
-                  {1.0f, NAN, NAN, NAN, NAN},
-                  "Ping-pong stereo delay",
-                  0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
+    // dry/wet ride in ExtendedParams<2> because all 5 input slots are used (L, R, time, fb, width).
+    // optional_count=2 keeps find_param("dry")/("wet") at total_params() + ext_idx = {5, 6}, away
+    // from the width slot — both width defaults are 1.0f and the custom handler picks the right one.
+    {"pingpong", {.opcode = cedar::Opcode::DELAY_PINGPONG,
+                  .input_count = 3, .optional_count = 2, .requires_state = true,
+                  .param_names = {"stereo/L", "time/R", "fb/time", "fb?", "width?", ""},
+                  .defaults = {1.0f, 1.0f, NAN, NAN, NAN},
+                  .description = "Ping-pong stereo delay — pingpong(stereo, t, fb, width?) or pingpong(L, R, t, fb, width?)",
+                  .extended_param_count = 2,
+                  .input_channels = {ChannelCount::Stereo},
+                  .output_channels = ChannelCount::Stereo,
+                  .extended_param_names = {"dry", "wet"},
+                  .extended_defaults = {1.0f, 0.5f}}},
 
     // Timing/Sequencing
     {"clock",   {cedar::Opcode::CLOCK,   0, 0, false,

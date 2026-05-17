@@ -6425,6 +6425,83 @@ TEST_CASE("Codegen: pingpong() emits DELAY_PINGPONG opcode", "[codegen][stereo]"
         auto* pingpong = find_instruction(insts, cedar::Opcode::DELAY_PINGPONG);
         REQUIRE(pingpong != nullptr);
     }
+
+    SECTION("stereo overload with dry/wet kwargs emits ExtendedParams init") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(220), saw(220))
+            pingpong(s, 0.25, 0.6, dry: 0.5, wet: 0.7)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* pingpong = find_instruction(insts, cedar::Opcode::DELAY_PINGPONG);
+        REQUIRE(pingpong != nullptr);
+
+        const akkado::StateInitData* ext = nullptr;
+        for (const auto& s : result.state_inits) {
+            if (s.type == akkado::StateInitData::Type::ExtendedParams &&
+                s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
+                ext = &s;
+                break;
+            }
+        }
+        REQUIRE(ext != nullptr);
+        CHECK(ext->ext_count == 2);
+        CHECK(ext->ext_buffer_indices[0] != 0xFFFF);  // dry → buffer
+        CHECK(ext->ext_buffer_indices[1] != 0xFFFF);  // wet → buffer
+    }
+
+    SECTION("explicit overload with width + dry/wet kwargs") {
+        auto result = akkado::compile(R"(
+            L = saw(220)
+            R = saw(221)
+            pingpong(L, R, 0.25, 0.6, 0.8, dry: 0.3, wet: 0.9)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* pingpong = find_instruction(insts, cedar::Opcode::DELAY_PINGPONG);
+        REQUIRE(pingpong != nullptr);
+        // width buf is at slot 4 — verify the analyzer didn't collapse it
+        // into the dry/wet slots after kwargs reorder.
+        CHECK(pingpong->inputs[4] != 0xFFFF);
+
+        const akkado::StateInitData* ext = nullptr;
+        for (const auto& s : result.state_inits) {
+            if (s.type == akkado::StateInitData::Type::ExtendedParams &&
+                s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
+                ext = &s;
+                break;
+            }
+        }
+        REQUIRE(ext != nullptr);
+        CHECK(ext->ext_count == 2);
+    }
+
+    SECTION("no kwargs falls back to Category A defaults") {
+        auto result = akkado::compile(R"(
+            s = stereo(saw(220), saw(220))
+            pingpong(s, 0.25, 0.6)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        auto* pingpong = find_instruction(insts, cedar::Opcode::DELAY_PINGPONG);
+        REQUIRE(pingpong != nullptr);
+
+        const akkado::StateInitData* ext = nullptr;
+        for (const auto& s : result.state_inits) {
+            if (s.type == akkado::StateInitData::Type::ExtendedParams &&
+                s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
+                ext = &s;
+                break;
+            }
+        }
+        REQUIRE(ext != nullptr);
+        CHECK(ext->ext_count == 2);
+        // Both slots should hold the Category A constants (dry=1.0, wet=0.5)
+        CHECK(ext->ext_buffer_indices[0] == 0xFFFF);
+        CHECK(ext->ext_buffer_indices[1] == 0xFFFF);
+        CHECK(ext->ext_constants[0] == 1.0f);
+        CHECK(ext->ext_constants[1] == 0.5f);
+    }
 }
 
 TEST_CASE("Codegen: out() with stereo signal", "[codegen][stereo]") {

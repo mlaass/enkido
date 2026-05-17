@@ -4,6 +4,7 @@
 #include "../vm/instruction.hpp"
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -190,6 +191,17 @@ inline void op_delay_pingpong(ExecutionContext& ctx, const Instruction& inst) {
 
     auto& state = ctx.states->get_or_create<PingPongDelayState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 1.0), ext[1] = wet (default 0.5)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 1.0f;
+    const float* wet_buf = nullptr; float wet_const = 0.5f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     // Allocate buffers for max 10 seconds
     float max_delay_sec = 10.0f;
     std::size_t max_samples = static_cast<std::size_t>(max_delay_sec * ctx.sample_rate) + 1;
@@ -267,9 +279,11 @@ inline void op_delay_pingpong(ExecutionContext& ctx, const Instruction& inst) {
         // Advance write position
         state.write_pos = (state.write_pos + 1) % state.buffer_size;
 
-        // Output: dry + wet (100% wet by default, user can mix externally)
-        out_left[i] = in_left[i] + delayed_left;
-        out_right[i] = in_right[i] + delayed_right;
+        // Unified dry/wet mix (Category A defaults: dry=1.0, wet=0.5)
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
+        out_left[i] = drywet::mix(in_left[i], delayed_left, dry, wet);
+        out_right[i] = drywet::mix(in_right[i], delayed_right, dry, wet);
     }
 }
 

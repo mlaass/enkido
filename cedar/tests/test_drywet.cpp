@@ -226,6 +226,140 @@ TEST_CASE("FILTER_SVF_LP (Category B): dry=1, wet=0 -> passthrough",
     }
 }
 
+TEST_CASE("DELAY_PINGPONG (Category A, ExtendedParams): dry=1, wet=0 -> passthrough",
+          "[drywet][pingpong]") {
+    constexpr std::uint16_t BUF_IN_L = 0;
+    constexpr std::uint16_t BUF_IN_R = 1;
+    constexpr std::uint16_t BUF_TIME = 2;
+    constexpr std::uint16_t BUF_FB   = 3;
+    constexpr std::uint16_t BUF_WIDTH = 4;
+    constexpr std::uint16_t BUF_OUT_L = 5;
+    // BUF_OUT_R = 6 implicit (out_buffer + 1)
+
+    Instruction pingpong{};
+    pingpong.opcode = Opcode::DELAY_PINGPONG;
+    pingpong.out_buffer = BUF_OUT_L;
+    pingpong.inputs[0] = BUF_IN_L;
+    pingpong.inputs[1] = BUF_IN_R;
+    pingpong.inputs[2] = BUF_TIME;
+    pingpong.inputs[3] = BUF_FB;
+    pingpong.inputs[4] = BUF_WIDTH;
+    pingpong.state_id = 0xDEAD0006u;
+
+    std::vector<Instruction> program{
+        push_const(BUF_TIME,  0.1f),
+        push_const(BUF_FB,    0.0f),  // no feedback so output is just delayed signal
+        push_const(BUF_WIDTH, 1.0f),
+        pingpong,
+    };
+
+    VM vm;
+    (void)vm.load_program(std::span(program));
+    {
+        auto& ep = vm.states().get_or_create<ExtendedParams<2>>(
+            ext_params_state_id(pingpong.state_id));
+        ep.set_constant(0, 1.0f);  // dry
+        ep.set_constant(1, 0.0f);  // wet
+    }
+
+    std::array<float, BLOCK_SIZE> L{}, R{};
+    fill_ramp(vm.buffers().get(BUF_IN_L));
+    fill_ramp(vm.buffers().get(BUF_IN_R));
+    std::array<float, BLOCK_SIZE> expected_l{}, expected_r{};
+    std::memcpy(expected_l.data(), vm.buffers().get(BUF_IN_L), BLOCK_SIZE * sizeof(float));
+    std::memcpy(expected_r.data(), vm.buffers().get(BUF_IN_R), BLOCK_SIZE * sizeof(float));
+    vm.process_block(L.data(), R.data());
+
+    const float* out_l = vm.buffers().get(BUF_OUT_L);
+    const float* out_r = vm.buffers().get(static_cast<std::uint16_t>(BUF_OUT_L + 1));
+    // dry=1, wet=0 must mirror input regardless of delay state.
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        REQUIRE(std::abs(out_l[i] - expected_l[i]) < 1e-5f);
+        REQUIRE(std::abs(out_r[i] - expected_r[i]) < 1e-5f);
+    }
+}
+
+TEST_CASE("DELAY_PINGPONG (Category A, ExtendedParams): custom dry/wet mix",
+          "[drywet][pingpong]") {
+    // Verify the unified mix formula: out = dry_in * dry + processed * wet.
+    // Drive a high feedback / short delay so the wet signal is non-trivial,
+    // then check that swapping dry/wet between two runs produces predictable
+    // amplitude differences.
+    constexpr std::uint16_t BUF_IN_L = 0;
+    constexpr std::uint16_t BUF_IN_R = 1;
+    constexpr std::uint16_t BUF_TIME = 2;
+    constexpr std::uint16_t BUF_FB   = 3;
+    constexpr std::uint16_t BUF_WIDTH = 4;
+    constexpr std::uint16_t BUF_OUT_L = 5;
+
+    auto run = [&](float dry, float wet, std::array<float, BLOCK_SIZE>& out_l,
+                   std::array<float, BLOCK_SIZE>& out_r) {
+        Instruction pingpong{};
+        pingpong.opcode = Opcode::DELAY_PINGPONG;
+        pingpong.out_buffer = BUF_OUT_L;
+        pingpong.inputs[0] = BUF_IN_L;
+        pingpong.inputs[1] = BUF_IN_R;
+        pingpong.inputs[2] = BUF_TIME;
+        pingpong.inputs[3] = BUF_FB;
+        pingpong.inputs[4] = BUF_WIDTH;
+        pingpong.state_id = 0xDEAD0007u;
+
+        std::vector<Instruction> program{
+            push_const(BUF_TIME,  0.005f),  // 5ms delay
+            push_const(BUF_FB,    0.5f),
+            push_const(BUF_WIDTH, 1.0f),
+            pingpong,
+        };
+
+        VM vm;
+        (void)vm.load_program(std::span(program));
+        {
+            auto& ep = vm.states().get_or_create<ExtendedParams<2>>(
+                ext_params_state_id(pingpong.state_id));
+            ep.set_constant(0, dry);
+            ep.set_constant(1, wet);
+        }
+
+        std::array<float, BLOCK_SIZE> L{}, R{};
+        // Run several blocks so the delay line fills and feedback stabilizes.
+        for (int b = 0; b < 4; ++b) {
+            fill_ramp(vm.buffers().get(BUF_IN_L));
+            fill_ramp(vm.buffers().get(BUF_IN_R));
+            vm.process_block(L.data(), R.data());
+        }
+        std::memcpy(out_l.data(), vm.buffers().get(BUF_OUT_L), BLOCK_SIZE * sizeof(float));
+        std::memcpy(out_r.data(), vm.buffers().get(static_cast<std::uint16_t>(BUF_OUT_L + 1)),
+                    BLOCK_SIZE * sizeof(float));
+    };
+
+    std::array<float, BLOCK_SIZE> dry_only_l{}, dry_only_r{};
+    std::array<float, BLOCK_SIZE> wet_only_l{}, wet_only_r{};
+    std::array<float, BLOCK_SIZE> mixed_l{}, mixed_r{};
+
+    run(1.0f, 0.0f, dry_only_l, dry_only_r);
+    run(0.0f, 1.0f, wet_only_l, wet_only_r);
+    run(0.3f, 0.7f, mixed_l, mixed_r);
+
+    // Compute the same input shape used inside `run` so we can rebuild the
+    // dry component the formula expects.
+    std::array<float, BLOCK_SIZE> in_l{};
+    fill_ramp(in_l.data());
+
+    // The mixed run must equal 0.3 * dry_only + 0.7 * wet_only sample-wise
+    // (delay state evolves identically across runs because seeds are the same).
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float expected_l = 0.3f * dry_only_l[i] + 0.7f * wet_only_l[i];
+        float expected_r = 0.3f * dry_only_r[i] + 0.7f * wet_only_r[i];
+        REQUIRE(std::abs(mixed_l[i] - expected_l) < 1e-4f);
+        REQUIRE(std::abs(mixed_r[i] - expected_r) < 1e-4f);
+    }
+
+    // Sanity: dry-only output equals input exactly.
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        REQUIRE(std::abs(dry_only_l[i] - in_l[i]) < 1e-5f);
+    }
+}
+
 TEST_CASE("FILTER_MOOG (Category B, ExtendedParams): dry=1, wet=0 -> passthrough",
           "[drywet][moog]") {
     constexpr std::uint16_t BUF_IN  = 0;

@@ -9,20 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠ BREAKING — delay-family default mix changed
 
-The `delay`, `delay_ms`, `delay_smp`, `tap_delay`, `tap_delay_ms`, and
-`tap_delay_smp` builtins migrated from `dry=0, wet=1` (100% wet) to the
-new unified Category-A defaults `dry=1, wet=0.5` (parallel mix). Patches
-that called `delay(in, time, fb)` and relied on a fully-wet output now
-get a balanced parallel mix and will sound different. Set `wet=1`
-(or `dry=0, wet=1`) explicitly to restore the previous behavior.
+The `delay`, `delay_ms`, `delay_smp`, `tap_delay`, `tap_delay_ms`,
+`tap_delay_smp`, and `pingpong` builtins migrated from full-wet output
+to the new unified Category-A defaults `dry=1, wet=0.5` (parallel mix).
+Patches that called `delay(in, time, fb)` or `pingpong(s, time, fb)`
+and relied on a fully-wet output now get a balanced parallel mix and
+will sound different. Set `wet=1` (or `dry=0, wet=1`) explicitly to
+restore the previous behaviour. The `pingpong` opcode previously did
+`out = in + delayed` (effectively `dry=1, wet=1`) — pass `wet: 1.0` to
+reproduce the prior echo loudness.
 
 ### Added
 
-- **Unified `dry`/`wet` convention across every effect builtin** — 32
-  builtins (delays, reverbs, modulation, comb, filters, distortion,
-  dynamics) now expose `dry` and `wet` as their last two parameters and
-  apply the standard mix `out = dry_in * dry + processed * wet` per
-  channel. Two category-based defaults:
+- **Unified `dry`/`wet` convention across every effect builtin** — all 33
+  effect builtins (delays incl. `pingpong`, reverbs, modulation, comb,
+  filters, distortion, dynamics) now expose `dry` and `wet` as their
+  last two parameters and apply the standard mix
+  `out = dry_in * dry + processed * wet` per channel. Two category-based
+  defaults:
   - **Category A — Additive** (delays, reverbs, modulation, comb):
     `dry=1.0, wet=0.5` (balanced parallel mix out of the box).
   - **Category B — Transform** (filters, distortion, dynamics):
@@ -47,8 +51,11 @@ get a balanced parallel mix and will sound different. Set `wet=1`
   `wet=1.0` to recover the previous +6 dB-peak topology. Math is
   bit-identical to the prior code at `dry=1, wet=1`.
 - `freeverb`, `dattorro`, `moog`, `diode`, `formant`, `sallenkey`,
-  `tape`, `xfmr`, `excite`, `gate`, `fold` migrate to
+  `tape`, `xfmr`, `excite`, `gate`, `fold`, `pingpong` migrate to
   `ExtendedParams<2>` for `dry`/`wet` (their input slots were full).
+  `pingpong`'s custom codegen handler now emits the ExtendedParams init
+  manually and accepts `dry:` / `wet:` as kwargs in both overloads
+  (`pingpong(stereo, t, fb)` and `pingpong(L, R, t, fb, width)`).
 - Documentation: every effect doc page in
   `web/static/docs/reference/builtins/` carries a Category-A/B intro
   paragraph and per-effect `dry`/`wet` rows in the parameter tables.
@@ -56,11 +63,6 @@ get a balanced parallel mix and will sound different. Set `wet=1`
 
 ### Known limitations / deferred work
 
-- `pingpong` is **not** migrated — its codegen has a custom handler for
-  the overloaded `pingpong(stereo, t, fb)` vs `pingpong(L, R, t, fb,
-  width)` signatures, and extending it touches `codegen_stereo.cpp`
-  beyond the "no codegen changes" promise of this PRD. Tracked for a
-  follow-up.
 - `experiments/test_op_phaser.py` notch-depth check now reports
   ~9–10 dB (threshold 12 dB) — investigation shows the algorithm is
   bit-identical pre/post when called with `dry=1, wet=1`, but the

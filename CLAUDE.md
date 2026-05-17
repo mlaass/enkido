@@ -415,13 +415,16 @@ resolve and `cedar::drywet::mix(dry_in, processed, dry, wet)` for the
 mix line — defined in `cedar/include/cedar/opcodes/drywet.hpp`. Every
 new effect should follow this convention.
 
-Two known exceptions deferred to follow-up PRDs:
-- `pingpong` has a custom codegen handler for its overloaded signatures
-  (`pingpong(stereo, t, fb)` vs `pingpong(L, R, t, fb, width)`); extending
-  it requires touching `codegen_stereo.cpp` and is out of scope here.
-- `fold` opcode has a latent BuiltinInfo/opcode mismatch (advertises 1
-  optional but reads `inputs[2]=symmetry`); it ships dry/wet via
-  `ExtendedParams<2>` without disturbing the slot wiring.
+`pingpong` follows the convention via `ExtendedParams<2>`: its custom
+codegen handler in `akkado/src/codegen_stereo.cpp` manually emits a
+`StateInitData{ExtendedParams}` after the `DELAY_PINGPONG` instruction
+because all 5 input slots are filled by `(L, R, time, fb, width)`. Both
+overloads (`pingpong(stereo, t, fb)` and `pingpong(L, R, t, fb, width)`)
+accept `dry:` / `wet:` kwargs.
+
+One latent issue remains: `fold` has a BuiltinInfo/opcode mismatch
+(advertises 1 optional but reads `inputs[2]=symmetry`); it ships dry/wet
+via `ExtendedParams<2>` without disturbing the slot wiring.
 
 Never bit-pack runtime-tunable params into `inst.rate` in new opcodes.
 Use the 5 input slots and ExtendedParams properly.
