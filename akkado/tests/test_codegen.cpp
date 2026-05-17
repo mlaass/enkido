@@ -2943,6 +2943,126 @@ TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
     }
 }
 
+// Regression: single-child `<X>` was wrapping in extra sub-sequences,
+// producing a different event layout than `[X]`. With pattern transforms
+// like late() the extra NORMAL wrapper caused double time-shifts because
+// the parent NORMAL evaluator re-applies `e.time` on top of the already-
+// shifted child events.
+TEST_CASE("Single-child <X> compiles identically to [X]",
+          "[codegen][patterns][regression]") {
+    SECTION("<X> with a single atom equals bare X") {
+        auto bare = akkado::compile(R"(pat("c4 e4 g4 b4"))");
+        auto wrapped = akkado::compile(R"(pat("c4 e4 <g4> b4"))");
+        REQUIRE(bare.success);
+        REQUIRE(wrapped.success);
+        REQUIRE_FALSE(bare.state_inits.empty());
+        REQUIRE_FALSE(wrapped.state_inits.empty());
+        const auto& a = bare.state_inits[0].sequence_events;
+        const auto& b = wrapped.state_inits[0].sequence_events;
+        REQUIRE(a.size() == b.size());
+        REQUIRE(a[0].size() == b[0].size());
+        for (std::size_t i = 0; i < a[0].size(); ++i) {
+            CHECK(a[0][i].time == Catch::Approx(b[0][i].time).margin(0.001f));
+            CHECK(a[0][i].duration == Catch::Approx(b[0][i].duration).margin(0.001f));
+            CHECK(a[0][i].midi_note == Catch::Approx(b[0][i].midi_note).margin(0.001f));
+        }
+    }
+
+    SECTION("<[X Y]> with a single compound child equals [X Y]") {
+        // The user's reported bug: these patterns differ audibly even
+        // though they should be identical.
+        auto bare = akkado::compile(R"(pat("c4 e4 [g4 b4] d4"))");
+        auto wrapped = akkado::compile(R"(pat("c4 e4 <[g4 b4]> d4"))");
+        REQUIRE(bare.success);
+        REQUIRE(wrapped.success);
+        REQUIRE_FALSE(bare.state_inits.empty());
+        REQUIRE_FALSE(wrapped.state_inits.empty());
+        const auto& a = bare.state_inits[0].sequence_events;
+        const auto& b = wrapped.state_inits[0].sequence_events;
+        REQUIRE(a.size() == b.size());
+        REQUIRE(a[0].size() == b[0].size());
+        for (std::size_t i = 0; i < a[0].size(); ++i) {
+            CHECK(a[0][i].time == Catch::Approx(b[0][i].time).margin(0.001f));
+            CHECK(a[0][i].duration == Catch::Approx(b[0][i].duration).margin(0.001f));
+            CHECK(a[0][i].midi_note == Catch::Approx(b[0][i].midi_note).margin(0.001f));
+        }
+    }
+
+    SECTION("<a!3> still creates the wrapper (post-!N expansion is >1)") {
+        // Per design: only literal single-child `<X>` is inlined. The
+        // `!N` repeat expansion case keeps the wrapper.
+        auto wrapped = akkado::compile(R"(pat("c4 <e4!3> g4"))");
+        REQUIRE(wrapped.success);
+        REQUIRE_FALSE(wrapped.state_inits.empty());
+        const auto& seqs = wrapped.state_inits[0].sequence_events;
+        CHECK(seqs.size() >= 2);
+    }
+}
+
+// Regression: late()/early() previously shifted events in EVERY sequence,
+// including sub-seqs whose event times are local to their parent slot.
+// This caused double-shifting via the NORMAL evaluator's
+// `event_time = time_offset + e.time * time_scale`.
+TEST_CASE("late()/early() only shift root sequence events",
+          "[codegen][patterns][regression]") {
+    SECTION("late(<[X Y]>, n) equals late([X Y], n)") {
+        auto bare = akkado::compile(R"(late(pat("c4 e4 [g4 b4] d4"), 0.125))");
+        auto wrapped = akkado::compile(R"(late(pat("c4 e4 <[g4 b4]> d4"), 0.125))");
+        REQUIRE(bare.success);
+        REQUIRE(wrapped.success);
+        const auto& a = bare.state_inits[0].sequence_events;
+        const auto& b = wrapped.state_inits[0].sequence_events;
+        REQUIRE(a.size() == b.size());
+        REQUIRE(a[0].size() == b[0].size());
+        for (std::size_t i = 0; i < a[0].size(); ++i) {
+            CHECK(a[0][i].time == Catch::Approx(b[0][i].time).margin(0.001f));
+            CHECK(a[0][i].midi_note == Catch::Approx(b[0][i].midi_note).margin(0.001f));
+        }
+    }
+
+    SECTION("late(<a b>, 0.25) leaves ALTERNATE sub-seq events untouched") {
+        auto base = akkado::compile(R"(pat("c4 <e4 g4> b4"))");
+        auto shifted = akkado::compile(R"(late(pat("c4 <e4 g4> b4"), 0.25))");
+        REQUIRE(base.success);
+        REQUIRE(shifted.success);
+        const auto& base_seqs = base.state_inits[0].sequence_events;
+        const auto& shifted_seqs = shifted.state_inits[0].sequence_events;
+        // Multi-child `<e4 g4>` keeps its ALTERNATE wrapper after the fix.
+        REQUIRE(base_seqs.size() >= 2);
+        REQUIRE(shifted_seqs.size() == base_seqs.size());
+        // Regression: sub-seq events must match the unshifted baseline.
+        for (std::size_t s = 1; s < base_seqs.size(); ++s) {
+            REQUIRE(shifted_seqs[s].size() == base_seqs[s].size());
+            for (std::size_t i = 0; i < base_seqs[s].size(); ++i) {
+                CHECK(shifted_seqs[s][i].time ==
+                      Catch::Approx(base_seqs[s][i].time).margin(0.001f));
+                CHECK(shifted_seqs[s][i].midi_note ==
+                      Catch::Approx(base_seqs[s][i].midi_note).margin(0.001f));
+            }
+        }
+    }
+
+    SECTION("early(<a b>, 0.25) leaves ALTERNATE sub-seq events untouched") {
+        auto base = akkado::compile(R"(pat("c4 <e4 g4> b4"))");
+        auto shifted = akkado::compile(R"(early(pat("c4 <e4 g4> b4"), 0.25))");
+        REQUIRE(base.success);
+        REQUIRE(shifted.success);
+        const auto& base_seqs = base.state_inits[0].sequence_events;
+        const auto& shifted_seqs = shifted.state_inits[0].sequence_events;
+        REQUIRE(base_seqs.size() >= 2);
+        REQUIRE(shifted_seqs.size() == base_seqs.size());
+        for (std::size_t s = 1; s < base_seqs.size(); ++s) {
+            REQUIRE(shifted_seqs[s].size() == base_seqs[s].size());
+            for (std::size_t i = 0; i < base_seqs[s].size(); ++i) {
+                CHECK(shifted_seqs[s][i].time ==
+                      Catch::Approx(base_seqs[s][i].time).margin(0.001f));
+                CHECK(shifted_seqs[s][i].midi_note ==
+                      Catch::Approx(base_seqs[s][i].midi_note).margin(0.001f));
+            }
+        }
+    }
+}
+
 TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
     SECTION("palindrome requires pattern argument") {
         auto result = akkado::compile("palindrome(42)");

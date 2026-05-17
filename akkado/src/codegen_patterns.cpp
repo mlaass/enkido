@@ -566,6 +566,17 @@ private:
     // MiniSequence <a b c>: ALTERNATE mode (one per call, cycles through)
     void compile_alternate_sequence(const Node& n, std::uint16_t parent_seq_idx,
                                      float time_offset, float time_span) {
+        // Single-child alternation is degenerate (always picks the same option).
+        // Inline directly to match `[X]` semantics so the compiled events are
+        // byte-identical and pattern transforms like late()/early() don't
+        // double-shift through a needless sub-sequence wrapper.
+        if (n.first_child != NULL_NODE &&
+            arena_[n.first_child].next_sibling == NULL_NODE &&
+            get_node_repeat(n.first_child) == 1) {
+            compile_into_sequence(n.first_child, parent_seq_idx, time_offset, time_span);
+            return;
+        }
+
         // Create a sub-sequence with ALTERNATE mode
         std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::ALTERNATE);
 
@@ -597,6 +608,15 @@ private:
     // MiniChoice a | b | c: RANDOM mode (pick one randomly)
     void compile_choice_sequence(const Node& n, std::uint16_t parent_seq_idx,
                                   float time_offset, float time_span) {
+        // Single-option choice is degenerate (always picks the same option).
+        // Inline directly so transforms don't double-shift through the wrapper.
+        if (n.first_child != NULL_NODE &&
+            arena_[n.first_child].next_sibling == NULL_NODE &&
+            get_node_repeat(n.first_child) == 1) {
+            compile_into_sequence(n.first_child, parent_seq_idx, time_offset, time_span);
+            return;
+        }
+
         // Create a sub-sequence with RANDOM mode
         std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::RANDOM);
 
@@ -2436,11 +2456,15 @@ static bool compile_pattern_for_transform(
                 }
             } else if (func_name == "early") {
                 // early(pat, n): t' = (t - n + 1) mod 1; wraps within [0,1).
+                // Only shift root sequence events. Sub-seq events have local
+                // time relative to their parent slot; shifting them double-applies
+                // when the parent NORMAL evaluator re-adds e.time.
                 auto amount = get_number_arg(ast, pat_node, 1);
                 if (!amount.has_value()) return false;
                 float a = std::fmod(*amount, 1.0f);
                 if (a < 0.0f) a += 1.0f;
-                for (auto& seq_events : out_events) {
+                if (!out_events.empty()) {
+                    auto& seq_events = out_events[0];
                     for (auto& event : seq_events) {
                         float t = event.time - a;
                         t = std::fmod(t, 1.0f);
@@ -2454,11 +2478,13 @@ static bool compile_pattern_for_transform(
                 }
             } else if (func_name == "late") {
                 // late(pat, n): t' = (t + n) mod 1; wraps within [0,1).
+                // Only shift root sequence events (see early() above for why).
                 auto amount = get_number_arg(ast, pat_node, 1);
                 if (!amount.has_value()) return false;
                 float a = std::fmod(*amount, 1.0f);
                 if (a < 0.0f) a += 1.0f;
-                for (auto& seq_events : out_events) {
+                if (!out_events.empty()) {
+                    auto& seq_events = out_events[0];
                     for (auto& event : seq_events) {
                         float t = event.time + a;
                         t = std::fmod(t, 1.0f);
@@ -4400,7 +4426,11 @@ TypedValue CodeGenerator::handle_early_call(NodeIndex node, const Node& n) {
 
     float a = std::fmod(*amount, 1.0f);
     if (a < 0.0f) a += 1.0f;
-    for (auto& seq_events : sequence_events) {
+    // Only shift root sequence events. Sub-seq events have local time relative
+    // to their parent slot; shifting them double-applies when the parent NORMAL
+    // evaluator re-adds e.time.
+    if (!sequence_events.empty()) {
+        auto& seq_events = sequence_events[0];
         for (auto& event : seq_events) {
             float t = event.time - a;
             t = std::fmod(t, 1.0f);
@@ -4463,7 +4493,9 @@ TypedValue CodeGenerator::handle_late_call(NodeIndex node, const Node& n) {
 
     float a = std::fmod(*amount, 1.0f);
     if (a < 0.0f) a += 1.0f;
-    for (auto& seq_events : sequence_events) {
+    // Only shift root sequence events (see handle_early_call for why).
+    if (!sequence_events.empty()) {
+        auto& seq_events = sequence_events[0];
         for (auto& event : seq_events) {
             float t = event.time + a;
             t = std::fmod(t, 1.0f);
