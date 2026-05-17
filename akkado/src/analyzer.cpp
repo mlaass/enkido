@@ -28,8 +28,10 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
     // Pass 1.5: Hide definitions from namespaced modules
     hide_namespaced_definitions();
 
-    // Pass 2: Rewrite pipes (builds new AST)
-    NodeIndex new_root = rewrite_pipes(ast.root);
+    // Pass 2: Rewrite pipes (builds new AST). Top-level program statements
+    // are NOT a binding-RHS context, so closure_allowed=false here — see
+    // the rewrite_pipes doc comment.
+    NodeIndex new_root = rewrite_pipes(ast.root, /*closure_allowed=*/false);
 
     // Pass 2.5: Update function body nodes to point to transformed AST
     update_function_body_nodes();
@@ -579,6 +581,89 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         symbols_.define_const_placeholder(name);
     }
 
+    if (n.type == NodeType::PipeBinding) {
+        // Top-level (or nested) `expr as name` binding. Register the name in
+        // Pass 1 so it is visible to Pass 2 (rewrite_pipes). Without this,
+        // a subsequent `name |> f(@)` statement looks at an empty symbol
+        // table, fails the lookup at rewrite_pipes' innermost-LHS check,
+        // and silently rewrites the pipe into a never-called closure —
+        // producing silent audio output.
+        //
+        // Type detection mirrors resolve_and_validate's PipeBinding handler
+        // so both passes agree on SymbolKind. The buffer index is unknown
+        // here (0xFFFF placeholder); codegen patches it in
+        // handle_pipe_binding.
+        //
+        // Destructure-bound pipes (`r as {a, b} |> a + b`) carry a synthetic
+        // binding_name (e.g. `__destr_0`) and a non-empty destructure_fields;
+        // those are scoped inside the pipe RHS via substitute_nodes and are
+        // never referenced as a free identifier in a later statement, so
+        // there is no silence-bug risk and Pass 3's existing registration
+        // is sufficient. Skip them here to avoid double-define interference.
+        const auto& binding_data = n.as_pipe_binding();
+        const std::string& binding_name = binding_data.binding_name;
+        const bool is_destructure = !binding_data.destructure_fields.empty();
+        NodeIndex bound_expr = n.first_child;
+
+        if (!binding_name.empty() && !is_destructure && bound_expr != NULL_NODE) {
+            const Node& expr_node = (*input_ast_).arena[bound_expr];
+
+            if (expr_node.type == NodeType::Identifier) {
+                std::string expr_name;
+                if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
+                    expr_name = expr_node.as_identifier();
+                }
+                auto sym = symbols_.lookup(expr_name);
+                if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+                    symbols_.define_record(binding_name, sym->record_type);
+                } else {
+                    symbols_.define_variable(binding_name, 0xFFFF);
+                }
+            } else if (expr_node.type == NodeType::RecordLit) {
+                // Inline record — register the field shape so destructuring
+                // and field access work in subsequent statements.
+                auto record_type = std::make_shared<RecordTypeInfo>();
+                record_type->source_node = bound_expr;
+                NodeIndex field_node = expr_node.first_child;
+                while (field_node != NULL_NODE) {
+                    const Node& field = (*input_ast_).arena[field_node];
+                    if (field.type == NodeType::Argument &&
+                        std::holds_alternative<Node::RecordFieldData>(field.data)) {
+                        RecordFieldInfo field_info;
+                        field_info.name = field.as_record_field().name;
+                        field_info.buffer_index = 0xFFFF;
+                        field_info.field_kind = SymbolKind::Variable;
+                        record_type->fields.push_back(std::move(field_info));
+                    }
+                    field_node = (*input_ast_).arena[field_node].next_sibling;
+                }
+                symbols_.define_record(binding_name, record_type);
+            } else if (expr_node.type == NodeType::MiniLiteral) {
+                PatternInfo pat_info{};
+                pat_info.pattern_node = bound_expr;
+                pat_info.is_sample_pattern = false;
+                symbols_.define_pattern(binding_name, pat_info);
+            } else if (expr_node.type == NodeType::Call) {
+                std::string call_name;
+                if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
+                    call_name = expr_node.as_identifier();
+                }
+                if (call_name == "chord" || call_name == "pat" ||
+                    call_name == "seq" || call_name == "value" ||
+                    call_name == "note") {
+                    PatternInfo pat_info{};
+                    pat_info.pattern_node = bound_expr;
+                    pat_info.is_sample_pattern = false;
+                    symbols_.define_pattern(binding_name, pat_info);
+                } else {
+                    symbols_.define_variable(binding_name, 0xFFFF);
+                }
+            } else {
+                symbols_.define_variable(binding_name, 0xFFFF);
+            }
+        }
+    }
+
     if (n.type == NodeType::FunctionDef) {
         // Register the user-defined function
         const auto& fn_data = n.as_function_def();
@@ -651,7 +736,7 @@ void SemanticAnalyzer::update_function_body_nodes() {
     symbols_.update_function_nodes(node_map_);
 }
 
-NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
+NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) {
     if (node == NULL_NODE) return NULL_NODE;
 
     const Node& n = (*input_ast_).arena[node];
@@ -710,7 +795,16 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
             innermost_lhs = (*input_ast_).arena[innermost_lhs].first_child;
         }
 
-        if (innermost_lhs != NULL_NODE) {
+        if (innermost_lhs != NULL_NODE && closure_allowed) {
+            // Only consider the closure-from-pipe sugar when this pipe sits
+            // in a binding-RHS context (e.g. `process = x |> lp(%, 1000)`).
+            // At expression-statement position the sugar is wrong: it would
+            // silently swallow a legitimate `var |> f(@)` whose `var` we
+            // failed to register (e.g. top-level `expr as var` registered
+            // late) and produce a closure that is never called → silent
+            // output. With closure_allowed=false we leave the pipe alone
+            // and let resolve_and_validate emit a clear E102 if the
+            // identifier really is undefined.
             const Node& lhs = (*input_ast_).arena[innermost_lhs];
             if (lhs.type == NodeType::Identifier) {
                 std::string name;
@@ -728,8 +822,10 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
             }
         }
 
-        // First, recursively rewrite the actual LHS (may contain nested pipes)
-        NodeIndex new_lhs = rewrite_pipes(actual_lhs);
+        // First, recursively rewrite the actual LHS (may contain nested
+        // pipes). Inherit closure_allowed — a nested pipe inside a binding
+        // RHS is still in binding-RHS context.
+        NodeIndex new_lhs = rewrite_pipes(actual_lhs, closure_allowed);
 
         // Now substitute all holes in RHS with the LHS value
         // This performs: a |> f(%) -> f(a)
@@ -760,8 +856,10 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node) {
         return new_rhs;
     }
 
-    // For non-pipe nodes, clone and recurse
-    return clone_subtree(node);
+    // For non-pipe nodes, clone and recurse. Inherit closure_allowed so a
+    // non-pipe wrapper (e.g. Argument, BinaryOp) inside a binding RHS still
+    // permits closure rewriting of any pipes within.
+    return clone_subtree(node, closure_allowed);
 }
 
 NodeIndex SemanticAnalyzer::clone_node(NodeIndex src_idx) {
@@ -782,7 +880,24 @@ NodeIndex SemanticAnalyzer::clone_node(NodeIndex src_idx) {
     return dst_idx;
 }
 
-NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
+// Node types whose children sit in a binding-RHS context — pipes nested
+// inside these are eligible for the closure-from-pipe sugar. See
+// rewrite_pipes' closure_allowed parameter.
+static bool clone_propagates_closure_allowed(NodeType type) {
+    switch (type) {
+        case NodeType::Assignment:
+        case NodeType::ConstDecl:
+        case NodeType::PipeBinding:
+        case NodeType::FunctionDef:
+        case NodeType::Closure:
+        case NodeType::DestructureAssignment:
+            return true;
+        default:
+            return false;
+    }
+}
+
+NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowed) {
     if (src_idx == NULL_NODE) return NULL_NODE;
 
     // Check if already cloned
@@ -793,9 +908,10 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
 
     const Node& src = (*input_ast_).arena[src_idx];
 
-    // Handle pipe nodes specially during cloning
+    // Handle pipe nodes specially during cloning — inherit closure_allowed
+    // from the parent context.
     if (src.type == NodeType::Pipe) {
-        return rewrite_pipes(src_idx);
+        return rewrite_pipes(src_idx, closure_allowed);
     }
 
     // Desugar method calls: receiver.method(a, b) -> method(receiver, a, b)
@@ -866,7 +982,8 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
                     dst_child = output_arena_.alloc(NodeType::Identifier, sc.location);
                     output_arena_[dst_child].data = Node::IdentifierData{pname};
                 } else {
-                    dst_child = clone_subtree(src_child);
+                    // Call arguments are not a binding-RHS context.
+                    dst_child = clone_subtree(src_child, /*closure_allowed=*/false);
                 }
 
                 if (dst_child != NULL_NODE) {
@@ -918,7 +1035,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         const auto& arm_data = src.as_match_arm();
         if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
             // Clone the guard expression
-            NodeIndex cloned_guard = clone_subtree(arm_data.guard_node);
+            NodeIndex cloned_guard = clone_subtree(arm_data.guard_node, closure_allowed);
             // Update the MatchArmData in the cloned node
             auto& dst_data = std::get<Node::MatchArmData>(output_arena_[dst_idx].data);
             dst_data.guard_node = cloned_guard;
@@ -930,7 +1047,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         std::holds_alternative<Node::RecordLitData>(src.data)) {
         const auto& rec_data = src.as_record_lit();
         if (rec_data.spread_source != NULL_NODE) {
-            NodeIndex cloned_spread = clone_subtree(rec_data.spread_source);
+            NodeIndex cloned_spread = clone_subtree(rec_data.spread_source, closure_allowed);
             auto& dst_data = std::get<Node::RecordLitData>(output_arena_[dst_idx].data);
             dst_data.spread_source = cloned_spread;
         }
@@ -943,7 +1060,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         std::holds_alternative<Node::ArgumentData>(src.data)) {
         const auto& arg_data = src.as_argument();
         if (arg_data.spread_source != NULL_NODE) {
-            NodeIndex cloned_spread = clone_subtree(arg_data.spread_source);
+            NodeIndex cloned_spread = clone_subtree(arg_data.spread_source, closure_allowed);
             auto& dst_data = std::get<Node::ArgumentData>(output_arena_[dst_idx].data);
             dst_data.spread_source = cloned_spread;
         }
@@ -959,7 +1076,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         for (std::size_t i = 0; i < dd_src.fields.size(); ++i) {
             if (dd_src.fields[i].default_node != NULL_NODE) {
                 dst_data.fields[i].default_node =
-                    clone_subtree(dd_src.fields[i].default_node);
+                    clone_subtree(dd_src.fields[i].default_node, /*closure_allowed=*/true);
             }
         }
     }
@@ -970,17 +1087,24 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx) {
         for (std::size_t i = 0; i < dp_src.fields.size(); ++i) {
             if (dp_src.fields[i].default_node != NULL_NODE) {
                 dst_data.fields[i].default_node =
-                    clone_subtree(dp_src.fields[i].default_node);
+                    clone_subtree(dp_src.fields[i].default_node, /*closure_allowed=*/true);
             }
         }
     }
 
-    // Clone children
+    // Clone children. Children of binding-RHS-context parents (Assignment,
+    // ConstDecl, PipeBinding, FunctionDef, Closure, DestructureAssignment)
+    // are themselves in binding-RHS context — pipes nested within them are
+    // eligible for the closure-from-pipe sugar. All other parents (Program,
+    // BinaryOp, Call, Argument, etc.) inherit closure_allowed from above.
+    const bool child_closure_allowed =
+        clone_propagates_closure_allowed(src.type) ? true : closure_allowed;
+
     NodeIndex src_child = src.first_child;
     NodeIndex prev_dst_child = NULL_NODE;
 
     while (src_child != NULL_NODE) {
-        NodeIndex dst_child = clone_subtree(src_child);
+        NodeIndex dst_child = clone_subtree(src_child, child_closure_allowed);
 
         if (dst_child != NULL_NODE) {
             if (prev_dst_child == NULL_NODE) {

@@ -52,7 +52,15 @@ private:
 
     // Pass 2: Rewrite pipes - transforms AST
     // Returns the index of the rewritten node in the new arena
-    NodeIndex rewrite_pipes(NodeIndex node);
+    //
+    // closure_allowed: true when this pipe sits in a binding-RHS context
+    // (Assignment/PipeBinding bound expr/FunctionDef body/Closure body/
+    // default value). Only then may an unbound-identifier LHS like
+    // `x |> f(%)` be silently rewritten into a closure `(x) -> f(x)`.
+    // At expression-statement position (closure_allowed=false), we leave
+    // the pipe alone and let resolve_and_validate emit E102 for the
+    // undefined identifier — the correct, debuggable failure mode.
+    NodeIndex rewrite_pipes(NodeIndex node, bool closure_allowed = false);
 
     // Pass 2.5: Update function body nodes to point to transformed AST
     void update_function_body_nodes();
@@ -63,8 +71,8 @@ private:
     // Helper: Clone a node from input AST to output AST
     NodeIndex clone_node(NodeIndex src_idx);
 
-    // Helper: Deep clone a subtree
-    NodeIndex clone_subtree(NodeIndex src_idx);
+    // Helper: Deep clone a subtree (see rewrite_pipes for closure_allowed)
+    NodeIndex clone_subtree(NodeIndex src_idx, bool closure_allowed = false);
 
     // Options for unified node substitution
     struct SubstituteOpts {

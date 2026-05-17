@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/akkado.hpp"
 #include <cedar/vm/instruction.hpp>
+#include <cedar/dsp/constants.hpp>  // cedar::BUFFER_UNUSED
 #include <cstring>
 #include <string>
 
@@ -1431,6 +1432,95 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
         CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+}
+
+// Regression: top-level `expr as name` followed by `name |> f(@)` used to be
+// silently rewritten into a never-called closure, producing silent audio
+// output. The visualizations.akk patch was the public symptom and was
+// initially misdiagnosed as visualizer opcodes "eating" the signal.
+//
+// Two-part fix lives in akkado/src/analyzer.cpp:
+//  - collect_definitions registers top-level PipeBinding names so
+//    rewrite_pipes' symbol-lookup sees them.
+//  - rewrite_pipes only fires the closure-from-pipe sugar when
+//    closure_allowed=true (binding-RHS context), not at expression-statement
+//    position — so a stray undefined identifier surfaces as E005 instead.
+TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
+          "[akkado][pipe][regression]") {
+    SECTION("bytecode wires OUTPUT to the bound expression's buffer") {
+        auto result = akkado::compile(R"(
+            saw(220) * 0.3 as x
+            x |> out(@)
+        )");
+        REQUIRE(result.success);
+
+        // Walk the bytecode and assert that OUTPUT reads from the MUL's
+        // out_buffer. Pre-fix, OUTPUT read a freshly-allocated closure-
+        // parameter buffer that was never written → silence.
+        const auto* inst = reinterpret_cast<const cedar::Instruction*>(
+            result.bytecode.data());
+        const size_t n = result.bytecode.size() / sizeof(cedar::Instruction);
+
+        std::uint16_t mul_out = cedar::BUFFER_UNUSED;
+        std::uint16_t output_in = cedar::BUFFER_UNUSED;
+        for (size_t i = 0; i < n; ++i) {
+            if (inst[i].opcode == cedar::Opcode::MUL) {
+                mul_out = inst[i].out_buffer;
+            } else if (inst[i].opcode == cedar::Opcode::OUTPUT) {
+                output_in = inst[i].inputs[0];
+            }
+        }
+        REQUIRE(mul_out != cedar::BUFFER_UNUSED);
+        REQUIRE(output_in != cedar::BUFFER_UNUSED);
+        CHECK(output_in == mul_out);
+    }
+
+    SECTION("closure-from-pipe sugar still works in binding RHS") {
+        // process = x |> ... is the documented sugar: x is a parameter of
+        // the implicit closure, not an undefined identifier. Fix 2 must
+        // preserve this path (closure_allowed=true on Assignment RHS).
+        auto result = akkado::compile(R"(
+            process = x |> lp(%, 1000, 0.7)
+            saw(440) |> process(%) |> out(%, %)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    SECTION("undefined identifier at top-level pipe is a diagnostic, not a closure") {
+        // Without Fix 2, this would silently compile as a closure
+        // `(xxs) -> osc(xxs, 220)` that never runs — silence with no error.
+        // Now it must surface as an undefined-identifier diagnostic so
+        // typos and stale references are caught.
+        auto result = akkado::compile(R"(
+            xxs |> osc(@, 220)
+        )");
+        REQUIRE_FALSE(result.success);
+        // Either E005 (Undefined identifier) or E102 — both are valid
+        // signals of "this identifier wasn't bound." We require *some*
+        // diagnostic, not silent closure conversion.
+        CHECK(result.diagnostics.size() >= 1);
+        bool flagged = has_diagnostic_code(result.diagnostics, "E005")
+                    || has_diagnostic_code(result.diagnostics, "E102");
+        CHECK(flagged);
+    }
+
+    SECTION("nested `as` binding inside a longer pipe chain") {
+        // Mirrors the visualizations.akk shape: a chain ending in `as v`
+        // followed by a separate `v |>` statement that feeds out().
+        auto result = akkado::compile(R"(
+            saw(220) * 0.3 |> lp(@, 2400) as v
+            v |> @ + freeverb(@, 0.5, 0.5) * 0.4 |> out(@)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        // Bytecode must include the freeverb opcode — proves the second
+        // statement actually compiled the signal chain rather than
+        // collapsing to a stranded closure.
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::REVERB_FREEVERB));
     }
 }
 
