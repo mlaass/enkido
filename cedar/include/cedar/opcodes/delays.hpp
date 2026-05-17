@@ -71,8 +71,8 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
         float target_delay = delay_time[i] * unit_factor;
         target_delay = std::clamp(target_delay, 1.0f, static_cast<float>(state.buffer_size - 2));
         float fb = std::clamp(feedback[i], 0.0f, 0.99f);
-        float dry = dry_level ? dry_level[i] : 0.0f;
-        float wet = wet_level ? wet_level[i] : 1.0f;
+        float dry = dry_level ? dry_level[i] : 1.0f;
+        float wet = wet_level ? wet_level[i] : 0.5f;
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -283,8 +283,8 @@ inline void op_delay_write(ExecutionContext& ctx, const Instruction& inst) {
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float fb = std::clamp(feedback[i], 0.0f, 0.99f);
-        float dry = dry_level ? dry_level[i] : 0.0f;
-        float wet = wet_level ? wet_level[i] : 1.0f;
+        float dry = dry_level ? dry_level[i] : 1.0f;
+        float wet = wet_level ? wet_level[i] : 0.5f;
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);

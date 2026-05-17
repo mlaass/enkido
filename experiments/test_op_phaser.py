@@ -59,13 +59,16 @@ def _build_phaser_program(host, lfo_rate, depth, min_freq, max_freq, stages, fee
     host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2))
     host.vm.load_program(host.program)
 
-    # ExtendedParams<3>: [feedback, stages, lfo_phase].
+    # ExtendedParams<5>: [feedback, stages, lfo_phase, dry, wet].
+    # dry=1.0, wet=1.0 reproduces the canonical Bode/MXR phaser sum
+    # (input + allpass cascade) — required for the existing notch-depth
+    # tests below, which were calibrated against the +6 dB-peak topology.
     feedback_f = float(feedback_int) / 15.0 * 0.99
     host.vm.init_extended_params(
         cedar.ext_params_state_id(state_id),
-        np.array([feedback_f, float(stages), float(lfo_phase)], dtype=np.float32),
-        np.array([0xFFFF, 0xFFFF, 0xFFFF], dtype=np.uint16),
-        3,
+        np.array([feedback_f, float(stages), float(lfo_phase), 1.0, 1.0], dtype=np.float32),
+        np.array([0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF], dtype=np.uint16),
+        5,
     )
 
 

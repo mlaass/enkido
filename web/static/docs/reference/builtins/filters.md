@@ -34,6 +34,8 @@ subfeatures:
 
 Filters shape the frequency content of signals by attenuating or boosting certain frequencies.
 
+All effects in this file expose `dry` and `wet` as their last two parameters (Category B defaults `dry=0, wet=1` for transform effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec.
+
 ## lp
 
 **Lowpass filter** - Passes frequencies below the cutoff, attenuates above.
@@ -43,6 +45,8 @@ Filters shape the frequency content of signals by attenuating or boosting certai
 | in    | signal | -       | Input signal |
 | cut   | signal | -       | Cutoff frequency in Hz |
 | q     | number | 0.707   | Resonance (0.5-20) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `lowpass`, `svflp`
 
@@ -76,6 +80,8 @@ Related: [hp](#hp), [bp](#bp), [moog](#moog)
 | in    | signal | -       | Input signal |
 | cut   | signal | -       | Cutoff frequency in Hz |
 | q     | number | 0.707   | Resonance (0.5-20) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `highpass`, `svfhp`
 
@@ -104,6 +110,8 @@ Related: [lp](#lp), [bp](#bp)
 | in    | signal | -       | Input signal |
 | cut   | signal | -       | Center frequency in Hz |
 | q     | number | 0.707   | Bandwidth (higher = narrower) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `bandpass`, `svfbp`
 
@@ -134,6 +142,8 @@ Related: [lp](#lp), [hp](#hp)
 | res   | number | 1.0     | Resonance (0-4, self-oscillates near 4) |
 | max_res | number | 4.0   | Maximum resonance / self-oscillation threshold |
 | input_scale | number | 0.5 | Input preamp drive (higher = more saturation) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `moogladder`
 
@@ -176,6 +186,8 @@ Related: [lp](#lp)
 | res   | number | 1.0     | Resonance (0-4, very aggressive) |
 | mode  | number | 0.0     | Filter mode (0.0 = lowpass, 1.0 = highpass) |
 | clip_thresh | number | 0.7 | Feedback clipping threshold |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `sk`, `ms20`
 

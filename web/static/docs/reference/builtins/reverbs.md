@@ -28,6 +28,8 @@ Reverbs simulate acoustic spaces by generating many delayed, filtered reflection
 
 All reverbs are **stereo-native**: a mono input widens into a genuinely stereo tail (cross-coupled tanks, decorrelated comb networks) — no `stereo()` wrapper needed. A stereo input is processed with real inter-channel coupling rather than as two independent mono reverbs.
 
+All effects in this file expose `dry` and `wet` as their last two parameters (Category A defaults `dry=1, wet=0.5` for additive effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec.
+
 ## freeverb
 
 **Freeverb** - Classic Schroeder-style algorithmic reverb.
@@ -39,6 +41,8 @@ All reverbs are **stereo-native**: a mono input widens into a genuinely stereo t
 | damp  | number | 0.5     | High frequency damping (0-1) |
 | room_scale | number | 0.28 | Density factor (affects comb filter feedback) |
 | room_offset | number | 0.7 | Decay baseline offset |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Aliases: `reverb`
 
@@ -83,6 +87,8 @@ Related: [dattorro](#dattorro), [fdn](#fdn)
 | predelay | number | 20.0  | Predelay in milliseconds |
 | in_diff | number | 0.75  | Input diffusion (smears input transients) |
 | dec_diff | number | 0.625 | Decay diffusion (smooths reverb tail) |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Aliases: `plate`
 
@@ -118,6 +124,8 @@ Related: [freeverb](#freeverb), [fdn](#fdn)
 | in    | signal | -       | Input signal |
 | decay | number | 0.8     | Decay time (0-1) |
 | damp  | number | 0.3     | High frequency damping (0-1) |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Aliases: `room`
 

@@ -12,8 +12,8 @@ TEST_CASE("BuiltinInfo methods", "[builtins]") {
 
     SECTION("total_params for lp filter") {
         const auto& lp = BUILTIN_FUNCTIONS.at("lp");
-        // lp has 2 required + 1 optional = 3
-        CHECK(lp.total_params() == 3);
+        // lp has 2 required + 3 optional (q, dry, wet) = 5
+        CHECK(lp.total_params() == 5);
     }
 
     SECTION("total_params for stateless functions") {

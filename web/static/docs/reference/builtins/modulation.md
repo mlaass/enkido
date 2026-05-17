@@ -30,13 +30,7 @@ subfeatures:
 
 Modulation effects use time-varying delays to add movement and spatial width to sounds.
 
-**Note:** All modulation effects output 100% wet signal. For dry/wet mixing, blend manually:
-
-```akk
-// 30% dry, 70% wet chorus
-dry = osc("saw", 220)
-dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(@)
-```
+All effects in this file expose `dry` and `wet` as their last two parameters (Category A defaults `dry=1, wet=0.5` for additive effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec.
 
 ## chorus
 
@@ -50,6 +44,8 @@ dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(@)
 | base_delay | number | 20.0 | Base chorus delay (ms) |
 | depth_range | number | 10.0 | Modulation depth range (ms) |
 | lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default stereo widening); 0.5 = anti-phase. |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Mixes the input with delayed copies that are slightly pitch-shifted by an LFO, producing a thicker, wider sound.
 
@@ -103,6 +99,8 @@ Related: [flanger](#flanger), [phaser](#phaser)
 | min_delay | number | 0.1 | Minimum sweep delay (ms) |
 | max_delay | number | 10.0 | Maximum sweep delay (ms) |
 | lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default); 0.5 = anti-phase. |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Similar to chorus but with shorter delay times and feedback, creating the characteristic "jet plane" sweep effect. Flanger is stereo-native: mono input widens via the `lfo_phase` offset on the right channel.
 
@@ -146,6 +144,8 @@ Related: [chorus](#chorus), [phaser](#phaser), [comb](#comb)
 | feedback | number | 0.5     | Feedback amount (0–0.99). Higher = sharper resonance. |
 | stages   | number | 4       | Number of allpass stages (2–12). Each pair of stages = one notch. |
 | lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default stereo notch sweep); 0.5 = anti-phase. |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Sweeps a chain of allpass-derived notches through the spectrum, producing a
 swirling effect distinct from chorus or flanger.
@@ -201,6 +201,8 @@ Related: [flanger](#flanger), [chorus](#chorus)
 | in    | signal | -       | Input signal |
 | time  | signal | -       | Delay time in seconds |
 | fb    | number | -       | Feedback amount (0-1) |
+| dry   | number | 1.0     | Dry signal level (Category A) |
+| wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 A comb filter creates a series of peaks and notches at harmonics of the delay frequency. The fundamental frequency is approximately 1/time Hz.
 

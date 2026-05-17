@@ -52,6 +52,8 @@ subfeatures:
 
 Distortion effects add harmonic content by clipping, saturating, or otherwise mangling signals.
 
+All effects in this file expose `dry` and `wet` as their last two parameters (Category B defaults `dry=0, wet=1` for transform effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec.
+
 ## saturate
 
 **Tanh saturation** - Smooth hyperbolic tangent waveshaping with drive control.
@@ -60,6 +62,8 @@ Distortion effects add harmonic content by clipping, saturating, or otherwise ma
 |-------|--------|---------|-------------|
 | in    | signal | -       | Input signal |
 | drive | number | 2.0     | Drive amount (1-10+) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `distort`
 
@@ -94,6 +98,8 @@ Related: [softclip](#softclip), [fold](#fold), [tanh (math)](math#tanh)
 |--------|--------|---------|-------------|
 | in     | signal | -       | Input signal |
 | thresh | number | 0.5     | Clipping threshold (0-1) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Softer than hard clipping, rounds off peaks smoothly. Lower threshold values create more aggressive distortion.
 
@@ -120,6 +126,8 @@ Related: [saturate](#saturate)
 | in    | signal | -       | Input signal |
 | bits  | number | 8.0     | Bit depth (1-16) |
 | rate  | number | 0.5     | Sample rate reduction (0-1) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `crush`
 
@@ -152,6 +160,8 @@ Related: [fold](#fold)
 |--------|--------|---------|-------------|
 | in     | signal | -       | Input signal |
 | thresh | number | 0.5     | Folding threshold (0-1) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `wavefold`
 
@@ -185,6 +195,8 @@ Related: [saturate](#saturate), [softclip](#softclip)
 | in    | signal | -       | Input signal |
 | drive | number | 5.0     | Drive amount (1-20) |
 | bias  | number | 0.1     | Asymmetry bias (0-0.3) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `valve`, `triode`
 
@@ -217,6 +229,8 @@ Related: [saturate](#saturate), [tape](#tape)
 |-------|--------|---------|-------------|
 | in    | signal | -       | Input signal |
 | drive | number | 5.0     | Drive amount (1-20) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `adaa`
 
@@ -252,6 +266,8 @@ Related: [saturate](#saturate), [tube](#tube)
 | warmth | number | 0.3     | HF rolloff (0-1) |
 | soft_thresh | number | 0.5 | Saturation onset threshold |
 | warmth_scale | number | 0.7 | HF rolloff amount |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Emulates magnetic tape characteristics: a wide linear region, soft compression at extremes, and subtle high-frequency rolloff. The warmth parameter controls how much the high frequencies are smoothed. Uses 2x oversampling internally.
 
@@ -291,6 +307,8 @@ Related: [tube](#tube), [saturate](#saturate)
 | drive | number | 3.0     | Drive amount (1-10) |
 | bass  | number | 5.0     | Bass saturation (1-10) |
 | bass_freq | number | 60.0 | Bass extraction cutoff (Hz) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `transformer`, `console`
 
@@ -333,6 +351,8 @@ Related: [tube](#tube), [tape](#tape)
 | freq   | number | 3000    | Corner frequency (1000-10000 Hz) |
 | harm_odd | number | 0.4   | Odd harmonic mix (0-1) |
 | harm_even | number | 0.6  | Even harmonic mix (0-1) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `exciter`, `aural`
 

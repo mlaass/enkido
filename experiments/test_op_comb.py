@@ -47,9 +47,13 @@ def test_resonance_frequency():
     buf_in = 0
     buf_time = host.set_param("time", delay_ms)
     buf_fb = host.set_param("feedback", 0.8)
+    # Post-unified-drywet: comb is Category A (default dry=1, wet=0.5). The
+    # legacy test measures the raw comb spectrum, so force dry=0, wet=1.
+    buf_dry = host.set_param("dry", 0.0)
+    buf_wet = host.set_param("wet", 1.0)
 
-    inst = cedar.Instruction.make_ternary(
-        cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb,
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb, buf_dry, buf_wet,
         cedar.hash("comb") & 0xFFFF
     )
     inst.rate = 0  # No damping
@@ -136,9 +140,11 @@ def test_feedback_sign():
         buf_in = 0
         buf_time = host.set_param("time", delay_ms)
         buf_fb = host.set_param("feedback", fb)
+        buf_dry = host.set_param("dry", 0.0)
+        buf_wet = host.set_param("wet", 1.0)
 
-        inst = cedar.Instruction.make_ternary(
-            cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb,
+        inst = cedar.Instruction.make_quinary(
+            cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb, buf_dry, buf_wet,
             cedar.hash("comb_sign") & 0xFFFF
         )
         inst.rate = 0
@@ -194,9 +200,11 @@ def test_damping():
         buf_in = 0
         buf_time = host.set_param("time", delay_ms)
         buf_fb = host.set_param("feedback", 0.8)
+        buf_dry = host.set_param("dry", 0.0)
+        buf_wet = host.set_param("wet", 1.0)
 
-        inst = cedar.Instruction.make_ternary(
-            cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb,
+        inst = cedar.Instruction.make_quinary(
+            cedar.Opcode.EFFECT_COMB, 1, buf_in, buf_time, buf_fb, buf_dry, buf_wet,
             cedar.hash("comb_damp") & 0xFFFF
         )
         inst.rate = damp

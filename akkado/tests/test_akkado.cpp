@@ -130,13 +130,16 @@ TEST_CASE("Akkado compilation", "[akkado]") {
     SECTION("pipe chain: saw(440) |> lp(%, 1000, 0.7) |> out(%)") {
         // lp is stereo-native (prd-stereo-native-opcodes Phase 4a) so it
         // produces a stereo output pair. out(%) takes the stereo pair.
+        // Post-unified-drywet: lp also takes dry+wet as optional inputs,
+        // so the chain has 2 extra PUSH_CONSTs for the dry=0/wet=1 defaults.
         auto result = akkado::compile("saw(440) |> lp(%, 1000, 0.7) |> out(%)");
 
         REQUIRE(result.success);
-        // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7), FILTER_SVF_LP, OUTPUT
-        REQUIRE(result.bytecode.size() == 6 * sizeof(cedar::Instruction));
+        // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7),
+        // PUSH_CONST(0.0) [dry], PUSH_CONST(1.0) [wet], FILTER_SVF_LP, OUTPUT
+        REQUIRE(result.bytecode.size() == 8 * sizeof(cedar::Instruction));
 
-        cedar::Instruction inst[6];
+        cedar::Instruction inst[8];
         std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
 
         // Check the chain
@@ -144,14 +147,16 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
         CHECK(inst[2].opcode == cedar::Opcode::PUSH_CONST);  // 1000
         CHECK(inst[3].opcode == cedar::Opcode::PUSH_CONST);  // 0.7
-        CHECK(inst[4].opcode == cedar::Opcode::FILTER_SVF_LP);  // SVF is default
-        CHECK(inst[5].opcode == cedar::Opcode::OUTPUT);
+        CHECK(inst[4].opcode == cedar::Opcode::PUSH_CONST);  // 0.0 (dry default)
+        CHECK(inst[5].opcode == cedar::Opcode::PUSH_CONST);  // 1.0 (wet default)
+        CHECK(inst[6].opcode == cedar::Opcode::FILTER_SVF_LP);  // SVF is default
+        CHECK(inst[7].opcode == cedar::Opcode::OUTPUT);
 
         // Filter input is saw output
-        CHECK(inst[4].inputs[0] == inst[1].out_buffer);
+        CHECK(inst[6].inputs[0] == inst[1].out_buffer);
         // Output left input is filter L output; right is L+1
-        CHECK(inst[5].inputs[0] == inst[4].out_buffer);
-        CHECK(inst[5].inputs[1] == inst[4].out_buffer + 1);
+        CHECK(inst[7].inputs[0] == inst[6].out_buffer);
+        CHECK(inst[7].inputs[1] == inst[6].out_buffer + 1);
     }
 
     SECTION("variable assignment") {

@@ -378,18 +378,53 @@ def test_something():
 
 ## Implementation Notes
 
-### Effect Parameters
-- **Dry/wet mixing convention**: All delays and filters should have explicit `dry` and `wet` parameters in their function signature. This is the standard interface for mixable effects.
-  ```akkado
-  delay(input, time, feedback, dry, wet)  // Standard delay signature
-  filter_lp(input, freq, q, dry, wet)     // Filters follow same pattern
-  ```
-- Effects without dry/wet params (chorus, flanger, phaser, reverbs) output 100% wet signal. Users mix manually:
-  ```akkado
-  dry = osc("saw", 220)
-  dry * 0.3 + chorus(dry, 0.5, 0.5) * 0.7 |> out(@)  // 30% dry, 70% wet
-  ```
-- Never use bit-packing tricks for parameters. Use the 5 input slots and extended params properly.
+### Effect Parameters (Unified Dry/Wet Convention)
+
+Every effect builtin exposes `dry` and `wet` as its last two parameters
+and applies the standard mix `out = dry_in * dry + processed * wet` per
+channel. Two category-based defaults:
+
+- **Category A — Additive** (parallel-mix effects: delays, reverbs,
+  modulation/chorus/flanger/phaser, comb): default **`dry=1.0,
+  wet=0.5`**. The dry source is musically essential; the effect adds
+  character on top.
+- **Category B — Transform** (filters, distortion, dynamics): default
+  **`dry=0.0, wet=1.0`**. The effect replaces the signal; parallel
+  processing (NY compression, parallel distortion, blended filter) is
+  one parameter away by setting `dry>0`.
+
+```akkado
+osc("saw", 220) |> chorus(@, 0.5, 0.5) |> out(@)           // default dry=1, wet=0.5
+osc("saw", 220) |> chorus(@, 0.5, 0.5, wet: 1.0) |> out(@) // fully wet
+osc("saw", 220) |> lp(@, 800) |> out(@)                    // default dry=0, wet=1 (pure filter)
+osc("saw", 220) |> comp(@, -12, 4, dry: 0.5) |> out(@)     // parallel compression
+```
+
+Slot strategy per builtin:
+- Effects with ≤3 used input slots wire `dry`/`wet` as ordinary optional
+  inputs (slots 3-4 typically). The opcode reads with the standard
+  `inst.inputs[N] != 0xFFFF` guard and falls back to the C++ constant.
+- Effects with all 5 slots used wire `dry`/`wet` via `ExtendedParams<N>`
+  (see "Extended Parameter Patterns" below). The opcode reads the
+  ExtendedParams slot pair with the `is_constant()` resolve pattern
+  (see `cedar/include/cedar/opcodes/reverbs.hpp` for the canonical
+  template).
+
+Shared helpers: `cedar::drywet::coeff(buf, i, fallback)` for per-sample
+resolve and `cedar::drywet::mix(dry_in, processed, dry, wet)` for the
+mix line — defined in `cedar/include/cedar/opcodes/drywet.hpp`. Every
+new effect should follow this convention.
+
+Two known exceptions deferred to follow-up PRDs:
+- `pingpong` has a custom codegen handler for its overloaded signatures
+  (`pingpong(stereo, t, fb)` vs `pingpong(L, R, t, fb, width)`); extending
+  it requires touching `codegen_stereo.cpp` and is out of scope here.
+- `fold` opcode has a latent BuiltinInfo/opcode mismatch (advertises 1
+  optional but reads `inputs[2]=symmetry`); it ships dry/wet via
+  `ExtendedParams<2>` without disturbing the slot wiring.
+
+Never bit-pack runtime-tunable params into `inst.rate` in new opcodes.
+Use the 5 input slots and ExtendedParams properly.
 
 ### Record-as-Options Convention
 Builtins that need more than ~3–4 parameters take a record literal as the last positional argument. Declare the option fields via `OptionSchema` on the `BuiltinInfo` (see `akkado/include/akkado/builtins.hpp` — visualizers like `waterfall` are the worked example). Codegen reads the caller's record through `codegen::extract_options(arena, node, schema)` (`akkado/include/akkado/codegen/options.hpp`); the helper validates field names, drops unknown fields silently into `OptionsPayload::unknown_fields` (reserved for a future `W160` warning pass), and emits canonical compact JSON via `to_json()`. Editor autocomplete picks up the schema automatically through `akkado_get_builtins_json()`.

@@ -4,6 +4,7 @@
 #include "../vm/instruction.hpp"
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -54,10 +55,14 @@ inline void op_filter_svf_lp(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* q = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<SVFState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         calc_svf(state, freq[i], q[i], ctx.sample_rate);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -66,7 +71,7 @@ inline void op_filter_svf_lp(ExecutionContext& ctx, const Instruction& inst) {
             float v2 = (state.ic2eq[ch] + DENORMAL_DC) + state.a2 * (state.ic1eq[ch] + DENORMAL_DC) + state.a3 * v3;
             state.ic1eq[ch] = clamp_audio(2.0f * v1 - state.ic1eq[ch]);
             state.ic2eq[ch] = clamp_audio(2.0f * v2 - state.ic2eq[ch]);
-            (ch == 0 ? out_l : out_r)[i] = v2;  // Lowpass output
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, v2, dry, wet);
         }
     }
 }
@@ -83,10 +88,14 @@ inline void op_filter_svf_hp(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* q = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<SVFState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         calc_svf(state, freq[i], q[i], ctx.sample_rate);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -96,7 +105,8 @@ inline void op_filter_svf_hp(ExecutionContext& ctx, const Instruction& inst) {
             state.ic1eq[ch] = clamp_audio(2.0f * v1 - state.ic1eq[ch]);
             state.ic2eq[ch] = clamp_audio(2.0f * v2 - state.ic2eq[ch]);
             // Highpass = input - k*bandpass - lowpass
-            (ch == 0 ? out_l : out_r)[i] = x - state.k * v1 - v2;
+            float hp = x - state.k * v1 - v2;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, hp, dry, wet);
         }
     }
 }
@@ -113,10 +123,14 @@ inline void op_filter_svf_bp(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* freq = ctx.buffers->get(inst.inputs[1]);
     const float* q = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<SVFState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         calc_svf(state, freq[i], q[i], ctx.sample_rate);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -125,7 +139,7 @@ inline void op_filter_svf_bp(ExecutionContext& ctx, const Instruction& inst) {
             float v2 = (state.ic2eq[ch] + DENORMAL_DC) + state.a2 * (state.ic1eq[ch] + DENORMAL_DC) + state.a3 * v3;
             state.ic1eq[ch] = clamp_audio(2.0f * v1 - state.ic1eq[ch]);
             state.ic2eq[ch] = clamp_audio(2.0f * v2 - state.ic2eq[ch]);
-            (ch == 0 ? out_l : out_r)[i] = v1;  // Bandpass output
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, v1, dry, wet);
         }
     }
 }
@@ -173,6 +187,17 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
     const float* input_scale_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<MoogState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
@@ -180,6 +205,8 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
         // Runtime tunable parameters (use defaults if zero/negative)
         float max_resonance = max_res_in[i] > 0.0f ? max_res_in[i] : MOOG_MAX_RESONANCE_DEFAULT;
         float input_scale = input_scale_in[i] > 0.0f ? input_scale_in[i] : MOOG_INPUT_SCALE_DEFAULT;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         // Update coefficients if parameters changed (shared across channels)
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -231,7 +258,8 @@ inline void op_filter_moog(ExecutionContext& ctx, const Instruction& inst) {
             }
 
             // Output is the 4-pole lowpass
-            (ch == 0 ? out_l : out_r)[i] = clamp_audio(state.stage[ch][3]);
+            float processed = clamp_audio(state.stage[ch][3]);
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(xin, processed, dry, wet);
         }
     }
 }
@@ -295,6 +323,17 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
     const float* fb_gain_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<DiodeState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
@@ -303,6 +342,8 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
         float vt = vt_in[i] > 0.0f ? vt_in[i] : DIODE_VT_DEFAULT;
         float vt_inv = 1.0f / vt;
         float fb_gain = fb_gain_in[i] > 0.0f ? fb_gain_in[i] : DIODE_FB_GAIN_DEFAULT;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         // Update coefficients if parameters changed (shared across channels)
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -361,7 +402,7 @@ inline void op_filter_diode(ExecutionContext& ctx, const Instruction& inst) {
             }
 
             // Output is the 4-pole lowpass
-            (ch == 0 ? out_l : out_r)[i] = state.cap[ch][3];
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(xin, state.cap[ch][3], dry, wet);
         }
     }
 }
@@ -409,11 +450,24 @@ inline void op_filter_formant(ExecutionContext& ctx, const Instruction& inst) {
     const float* q_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<FormantState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float va = std::clamp(vowel_a[i], 0.0f, 4.0f);
         float vb = std::clamp(vowel_b[i], 0.0f, 4.0f);
         float m = std::clamp(morph[i], 0.0f, 1.0f);
         float q = std::clamp(q_in[i], 1.0f, 20.0f);
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         // Check if we need to recalculate formant targets
         if (va != state.last_vowel_a || vb != state.last_vowel_b ||
@@ -495,7 +549,8 @@ inline void op_filter_formant(ExecutionContext& ctx, const Instruction& inst) {
             state.bp3_z2[ch] = clamp_audio(lp3);
 
             // Sum bandpasses with formant gains
-            (ch == 0 ? out_l : out_r)[i] = bp1 * state.g1 + bp2 * state.g2 + bp3 * state.g3;
+            float processed = bp1 * state.g1 + bp2 * state.g2 + bp3 * state.g3;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, processed, dry, wet);
         }
     }
 }
@@ -558,6 +613,17 @@ inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) 
     const float* clip_threshold_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<SallenkeyState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float cutoff = freq[i];
         float resonance = res[i];
@@ -565,6 +631,8 @@ inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) 
 
         // Runtime tunable parameter (use default if zero/negative)
         float clip_threshold = clip_threshold_in[i] > 0.0f ? clip_threshold_in[i] : SALLENKEY_CLIP_THRESHOLD_DEFAULT;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         // Update coefficients if needed (shared across channels)
         if (cutoff != state.last_freq || resonance != state.last_res) {
@@ -608,7 +676,8 @@ inline void op_filter_sallenkey(ExecutionContext& ctx, const Instruction& inst) 
             float hp = x - v1 * (1.0f + state.k * 0.5f) - v2;
 
             // Crossfade between LP and HP based on mode
-            (ch == 0 ? out_l : out_r)[i] = lp * (1.0f - m) + hp * m;
+            float processed = lp * (1.0f - m) + hp * m;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(xin, processed, dry, wet);
         }
     }
 }

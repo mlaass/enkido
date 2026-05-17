@@ -5,6 +5,7 @@
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -56,11 +57,24 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
+    // ExtendedParams<2>: ext[0] = dry (default 1.0), ext[1] = wet (default 0.5)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 1.0f;
+    const float* wet_buf = nullptr; float wet_const = 0.5f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     constexpr float ALLPASS_GAIN = 0.5f;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x_l = input[i];
         float x_r = stereo_in ? input_r[i] : x_l;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
         float room = std::clamp(room_size[i], 0.0f, 1.0f);
         float damp = std::clamp(damping[i], 0.0f, 1.0f);
 
@@ -120,8 +134,8 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
             y_lr[ch] = y;
         }
 
-        out_l[i] = y_lr[0];
-        out_r[i] = y_lr[1];
+        out_l[i] = drywet::mix(x_l, y_lr[0], dry, wet);
+        out_r[i] = drywet::mix(x_r, y_lr[1], dry, wet);
     }
 }
 
@@ -169,11 +183,24 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
+    // ExtendedParams<2>: ext[0] = dry (default 1.0), ext[1] = wet (default 0.5)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 1.0f;
+    const float* wet_buf = nullptr; float wet_const = 0.5f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
+
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float x_in_l = input[i];
         float x_in_r = stereo_in ? input_r[i] : x_in_l;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
         float dec = std::clamp(decay[i], 0.0f, 0.99f);
         float pre_ms = std::clamp(predelay_ms[i], 0.0f, 100.0f);
 
@@ -306,8 +333,8 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
         // Stereo output: L tap = branch-0 feedback, R tap = branch-1 feedback.
         // (Mono pre-PRD output was the 0.5*(L+R) average; recover with
         // (out_l + out_r) * 0.5 if needed.)
-        out_l[i] = state.tank_feedback[0];
-        out_r[i] = state.tank_feedback[1];
+        out_l[i] = drywet::mix(x_in_l, state.tank_feedback[0], dry, wet);
+        out_r[i] = drywet::mix(x_in_r, state.tank_feedback[1], dry, wet);
     }
 }
 
@@ -341,6 +368,8 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* decay = ctx.buffers->get(inst.inputs[1]);
     const float* damping = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<FDNState>(inst.state_id);
 
     float size_mod = 0.5f + static_cast<float>(inst.rate) / 255.0f;  // 0.5-1.5
@@ -357,6 +386,8 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
         float x = stereo_in ? 0.5f * (input[i] + input_r[i]) : input[i];
         float dec = std::clamp(decay[i], 0.0f, 0.99f);
         float damp = std::clamp(damping[i], 0.0f, 1.0f);
+        float dry = drywet::coeff(dry_level, i, 1.0f);
+        float wet = drywet::coeff(wet_level, i, 0.5f);
 
         // Read from all delay lines
         float delayed[FDNState::NUM_DELAYS];
@@ -396,8 +427,10 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
         // Stereo output: diagonal Hadamard taps. The 0.5 factor matches the
         // historic 0.25 sum normalization in total energy when summed back to
         // mono ((L+R)*0.5 ≈ output_sum*0.25 for uncorrelated taps).
-        out_l[i] = delayed[0] * 0.5f;
-        out_r[i] = delayed[1] * 0.5f;
+        float x_l_dry = stereo_in ? input[i] : x;
+        float x_r_dry = stereo_in ? input_r[i] : x;
+        out_l[i] = drywet::mix(x_l_dry, delayed[0] * 0.5f, dry, wet);
+        out_r[i] = drywet::mix(x_r_dry, delayed[1] * 0.5f, dry, wet);
     }
 }
 

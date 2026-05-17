@@ -62,13 +62,14 @@ def _run_stereo_flanger(host, n_samples, input_signal, *, rate=0.5, depth=0.8,
     ))
 
     host.vm.load_program(host.program)
-    # ExtendedParams<1> slot 0 = lfo_phase. Call after load_program so the
-    # state survives the program load.
+    # ExtendedParams<3>: slot 0 = lfo_phase, slot 1 = dry (1.0, Cat A),
+    # slot 2 = wet (0.5, Cat A). Call after load_program so the state
+    # survives the program load.
     host.vm.init_extended_params(
         cedar.ext_params_state_id(state_id),
-        np.array([float(lfo_phase)], dtype=np.float32),
-        np.array([0xFFFF], dtype=np.uint16),
-        1,
+        np.array([float(lfo_phase), 1.0, 0.5], dtype=np.float32),
+        np.array([0xFFFF, 0xFFFF, 0xFFFF], dtype=np.uint16),
+        3,
     )
     n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
     padded_len = n_blocks * cedar.BLOCK_SIZE

@@ -26,6 +26,8 @@ subfeatures:
 
 Dynamics processors control the volume envelope of signals, reducing dynamic range or removing unwanted quiet sections.
 
+All effects in this file expose `dry` and `wet` as their last two parameters (Category B defaults `dry=0, wet=1` for transform effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec.
+
 ## comp
 
 **Compressor** - Reduces dynamic range above threshold.
@@ -35,6 +37,8 @@ Dynamics processors control the volume envelope of signals, reducing dynamic ran
 | in     | signal | -       | Input signal |
 | thresh | number | -12.0   | Threshold in dB |
 | ratio  | number | 4.0     | Compression ratio |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `compress`, `compressor`
 
@@ -68,6 +72,8 @@ Related: [limiter](#limiter), [gate](#gate)
 | in      | signal | -       | Input signal |
 | ceiling | number | -0.1    | Maximum output level in dB |
 | release | number | 0.1     | Release time in seconds |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `limit`
 
@@ -97,6 +103,8 @@ Related: [comp](#comp)
 | thresh | number | -40.0   | Threshold in dB |
 | hyst   | number | 6.0     | Hysteresis in dB (open/close difference) |
 | close_time | number | 5.0 | Fade-out time (ms) |
+| dry   | number | 0.0     | Dry signal level (Category B) |
+| wet   | number | 1.0     | Wet (processed) signal level (Category B) |
 
 Aliases: `noisegate`
 

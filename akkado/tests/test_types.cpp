@@ -1116,9 +1116,12 @@ TEST_CASE("ExtendedParams: chorus emits StateInit with default lfo_phase=0.25",
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 1);
+    // Post-unified-drywet: chorus extended slots are [lfo_phase, dry, wet]
+    CHECK(ext->ext_count == 3);
     CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
     CHECK(ext->ext_constants[0] == Catch::Approx(0.25f));
+    CHECK(ext->ext_constants[1] == Catch::Approx(1.0f));  // dry default (Cat A)
+    CHECK(ext->ext_constants[2] == Catch::Approx(0.5f));  // wet default (Cat A)
 }
 
 TEST_CASE("ExtendedParams: chorus accepts named lfo_phase literal",
@@ -1129,7 +1132,7 @@ TEST_CASE("ExtendedParams: chorus accepts named lfo_phase literal",
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_count == 3);
     // Literal lowers via PUSH_CONST + buffer — buffer_idx != 0xFFFF.
     CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
 }
@@ -1142,11 +1145,14 @@ TEST_CASE("ExtendedParams: flanger default lfo_phase",
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 1);
+    // Post-unified-drywet: flanger extended slots are [lfo_phase, dry, wet]
+    CHECK(ext->ext_count == 3);
     CHECK(ext->ext_constants[0] == Catch::Approx(0.25f));
+    CHECK(ext->ext_constants[1] == Catch::Approx(1.0f));  // dry (Cat A)
+    CHECK(ext->ext_constants[2] == Catch::Approx(0.5f));  // wet (Cat A)
 }
 
-TEST_CASE("ExtendedParams: phaser emits 3-slot StateInit with defaults",
+TEST_CASE("ExtendedParams: phaser emits 5-slot StateInit with defaults",
           "[types][stereo-native][extended-params]") {
     auto result = akkado::compile(R"(
         saw(220) |> phaser(%, 0.5, 0.8) |> out(%)
@@ -1154,14 +1160,19 @@ TEST_CASE("ExtendedParams: phaser emits 3-slot StateInit with defaults",
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 3);
-    // Defaults: feedback=0.5, stages=4, lfo_phase=0.25
+    // Post-unified-drywet: phaser extended slots are
+    // [feedback, stages, lfo_phase, dry, wet]
+    CHECK(ext->ext_count == 5);
     CHECK(ext->ext_constants[0] == Catch::Approx(0.5f));
     CHECK(ext->ext_constants[1] == Catch::Approx(4.0f));
     CHECK(ext->ext_constants[2] == Catch::Approx(0.25f));
+    CHECK(ext->ext_constants[3] == Catch::Approx(1.0f));  // dry (Cat A)
+    CHECK(ext->ext_constants[4] == Catch::Approx(0.5f));  // wet (Cat A)
     CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
     CHECK(ext->ext_buffer_indices[1] == 0xFFFFu);
     CHECK(ext->ext_buffer_indices[2] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[3] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[4] == 0xFFFFu);
 }
 
 TEST_CASE("ExtendedParams: phaser feedback/stages/lfo_phase all customizable by name",
@@ -1172,8 +1183,8 @@ TEST_CASE("ExtendedParams: phaser feedback/stages/lfo_phase all customizable by 
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 3);
-    // All three should now be buffer-backed (lowered from literals via PUSH_CONST).
+    CHECK(ext->ext_count == 5);
+    // feedback/stages/lfo_phase are all buffer-backed; dry/wet take defaults.
     CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
     CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);
     CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);
@@ -1205,13 +1216,16 @@ TEST_CASE("ExtendedParams: skipping intermediate ext params keeps named arg alig
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    CHECK(ext->ext_count == 3);
+    CHECK(ext->ext_count == 5);
     // ext[0]=feedback, ext[1]=stages get defaults via the `_` placeholder
     // PUSH_CONST path so they're buffer-backed with the default value.
     // ext[2]=lfo_phase is also buffer-backed from the user's 0.3 literal.
     CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
     CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);
     CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);
+    // ext[3]=dry, ext[4]=wet remain as constants (not specified by user).
+    CHECK(ext->ext_buffer_indices[3] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[4] == 0xFFFFu);
 }
 
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {

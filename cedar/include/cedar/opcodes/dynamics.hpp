@@ -5,6 +5,7 @@
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -35,6 +36,8 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* threshold_db = ctx.buffers->get(inst.inputs[1]);
     const float* ratio = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<CompressorState>(inst.state_id);
 
     // Decode attack/release times from rate field (4 bits each, shared)
@@ -51,6 +54,8 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float thresh = std::clamp(threshold_db[i], -60.0f, 0.0f);
         float r = std::clamp(ratio[i], 1.0f, 20.0f);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -74,7 +79,7 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
             float gain = db_to_linear(gain_db);
             state.gain_reduction[ch] = gain;
 
-            (ch == 0 ? out_l : out_r)[i] = x * gain;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, x * gain, dry, wet);
         }
     }
 }
@@ -104,6 +109,8 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
         : nullptr;
     const float* ceiling_db = ctx.buffers->get(inst.inputs[1]);
     const float* release_ms = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<LimiterState>(inst.state_id);
 
     bool use_lookahead = inst.rate != 0;
@@ -112,9 +119,12 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
         float rel_ms = std::clamp(release_ms[i], 10.0f, 500.0f);
         float release_coeff = time_to_coeff(rel_ms * 0.001f, ctx.sample_rate);
         float ceiling = db_to_linear(std::clamp(ceiling_db[i], -12.0f, 0.0f));
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
-            float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            float x_in = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
+            float x = x_in;
 
             state.lookahead_buffer[ch][state.write_pos[ch]] = x;
 
@@ -141,7 +151,10 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
                 state.gain[ch] += release_coeff * (target_gain - state.gain[ch]);
             }
 
-            (ch == 0 ? out_l : out_r)[i] = x * state.gain[ch];
+            // Note: lookahead-mode dry is the lookahead-delayed sample (the same
+            // signal the limiter is gain-shaping), preserving phase alignment
+            // between dry and wet under parallel limiting.
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, x * state.gain[ch], dry, wet);
         }
     }
 }
@@ -180,6 +193,17 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     const float* close_time_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<GateState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& ed = ext->params[0];
+        if (ed.is_constant()) dry_const = ed.constant; else dry_buf = ctx.buffers->get(ed.buffer_idx);
+        const auto& ew = ext->params[1];
+        if (ew.is_constant()) wet_const = ew.constant; else wet_buf = ctx.buffers->get(ew.buffer_idx);
+    }
+
     float attack_ms = 0.1f + static_cast<float>((inst.rate >> 6) & 0x3) * (10.0f - 0.1f) / 3.0f;
     float hold_ms = static_cast<float>((inst.rate >> 4) & 0x3) * 200.0f / 3.0f;
     float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (500.0f - 10.0f) / 15.0f;
@@ -199,6 +223,8 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
         float thresh = std::clamp(threshold_db[i], -80.0f, 0.0f);
         float range = std::clamp(range_db[i], -80.0f, 0.0f);
         float close_coeff = 1.0f - std::exp(-1.0f / (close_time_ms * 0.001f * ctx.sample_rate));
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -236,7 +262,7 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
             }
             state.gain[ch] += gain_coeff * (target_gain - state.gain[ch]);
 
-            (ch == 0 ? out_l : out_r)[i] = x * state.gain[ch];
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, x * state.gain[ch], dry, wet);
         }
     }
 }

@@ -47,14 +47,19 @@ def test_delay_timing():
     buf_in = 0
     buf_delay = host.set_param("delay", delay_ms)
     buf_feedback = host.set_param("feedback", feedback)
+    # Post-unified-drywet: delay defaults to dry=1, wet=0.5 (Category A).
+    # The impulse-echo test wants echoes-only — force dry=0, wet=1.
+    buf_dry = host.set_param("dry", 0.0)
+    buf_wet = host.set_param("wet", 1.0)
     buf_out = 1
 
-    # DELAY: out = delay(in, delay_ms, feedback)
-    # Rate encodes mix (255 = fully wet)
-    inst = cedar.Instruction.make_ternary(
-        cedar.Opcode.DELAY, buf_out, buf_in, buf_delay, buf_feedback, cedar.hash("delay") & 0xFFFF
+    # DELAY: out = delay(in, delay_ms, feedback, dry, wet)
+    # inst.rate is the time-unit selector (0=sec, 1=ms, 2=samples) — set to 1 for ms.
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.DELAY, buf_out, buf_in, buf_delay, buf_feedback, buf_dry, buf_wet,
+        cedar.hash("delay") & 0xFFFF
     )
-    inst.rate = 255  # Fully wet
+    inst.rate = 1  # ms unit
     host.load_instruction(inst)
     host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out))
 

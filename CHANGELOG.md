@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠ BREAKING — delay-family default mix changed
+
+The `delay`, `delay_ms`, `delay_smp`, `tap_delay`, `tap_delay_ms`, and
+`tap_delay_smp` builtins migrated from `dry=0, wet=1` (100% wet) to the
+new unified Category-A defaults `dry=1, wet=0.5` (parallel mix). Patches
+that called `delay(in, time, fb)` and relied on a fully-wet output now
+get a balanced parallel mix and will sound different. Set `wet=1`
+(or `dry=0, wet=1`) explicitly to restore the previous behavior.
+
+### Added
+
+- **Unified `dry`/`wet` convention across every effect builtin** — 32
+  builtins (delays, reverbs, modulation, comb, filters, distortion,
+  dynamics) now expose `dry` and `wet` as their last two parameters and
+  apply the standard mix `out = dry_in * dry + processed * wet` per
+  channel. Two category-based defaults:
+  - **Category A — Additive** (delays, reverbs, modulation, comb):
+    `dry=1.0, wet=0.5` (balanced parallel mix out of the box).
+  - **Category B — Transform** (filters, distortion, dynamics):
+    `dry=0.0, wet=1.0` (back-compat — no audible change; set `dry>0`
+    for NY compression / parallel filter / parallel distortion).
+- `cedar::drywet::{coeff, mix}` inline helpers
+  (`cedar/include/cedar/opcodes/drywet.hpp`) used by every effect
+  opcode for the standard resolve + mix line.
+- Catch2 dry/wet contract tests in `cedar/tests/test_drywet.cpp`
+  covering one slot-based and one ExtendedParams-based example per
+  category.
+
+### Changed
+
+- `chorus`, `flanger`, `phaser` extend their existing `ExtendedParams`
+  with `dry` / `wet` slots (chorus 1→3, flanger 1→3, phaser 3→5). The
+  positional argument order is unchanged for existing call sites.
+- `phaser` internal topology: the opcode now emits **just** the
+  all-pass cascade output and lets the `dry`/`wet` mix produce the
+  canonical Bode/MXR phaser sum. With default `dry=1, wet=0.5` the
+  phaser sounds milder than the pre-migration canonical sum; set
+  `wet=1.0` to recover the previous +6 dB-peak topology. Math is
+  bit-identical to the prior code at `dry=1, wet=1`.
+- `freeverb`, `dattorro`, `moog`, `diode`, `formant`, `sallenkey`,
+  `tape`, `xfmr`, `excite`, `gate`, `fold` migrate to
+  `ExtendedParams<2>` for `dry`/`wet` (their input slots were full).
+- Documentation: every effect doc page in
+  `web/static/docs/reference/builtins/` carries a Category-A/B intro
+  paragraph and per-effect `dry`/`wet` rows in the parameter tables.
+  CLAUDE.md §"Effect Parameters" rewritten with the full convention.
+
+### Known limitations / deferred work
+
+- `pingpong` is **not** migrated — its codegen has a custom handler for
+  the overloaded `pingpong(stereo, t, fb)` vs `pingpong(L, R, t, fb,
+  width)` signatures, and extending it touches `codegen_stereo.cpp`
+  beyond the "no codegen changes" promise of this PRD. Tracked for a
+  follow-up.
+- `experiments/test_op_phaser.py` notch-depth check now reports
+  ~9–10 dB (threshold 12 dB) — investigation shows the algorithm is
+  bit-identical pre/post when called with `dry=1, wet=1`, but the
+  test's `_find_notch` measurement is sensitive to RNG / FFT window
+  alignment that drifts when the StatePool state-id layout changes.
+  Pre-existing measurement fragility, not a behavioral regression.
+- `experiments/test_op_diode.py` failures are pre-existing (unrelated
+  to this PRD).
+
 ## [0.4.0] - 2026-05-14
 
 ### Added

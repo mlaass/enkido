@@ -61,13 +61,14 @@ def _run_stereo_chorus(host, n_samples, input_signal, *, rate=0.5, depth=0.5,
     host.vm.load_program(host.program)
     # Init ExtendedParams AFTER load_program so the state survives
     # (load_program resets the active state pool slot for new program ids).
-    # ExtendedParams<1> slot 0 = lfo_phase (turns, default 0.25 = 90°).
+    # ExtendedParams<3>: slot 0 = lfo_phase (turns, default 0.25 = 90°),
+    # slot 1 = dry (default 1.0, Category A), slot 2 = wet (default 0.5).
     # Companion state lives at state_id XOR EXT_PARAMS_STATE_XOR.
     host.vm.init_extended_params(
         cedar.ext_params_state_id(state_id),
-        np.array([float(lfo_phase)], dtype=np.float32),
-        np.array([0xFFFF], dtype=np.uint16),
-        1,
+        np.array([float(lfo_phase), 1.0, 0.5], dtype=np.float32),
+        np.array([0xFFFF, 0xFFFF, 0xFFFF], dtype=np.uint16),
+        3,
     )
     n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
     padded_len = n_blocks * cedar.BLOCK_SIZE

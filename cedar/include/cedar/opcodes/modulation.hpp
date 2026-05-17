@@ -5,6 +5,7 @@
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -35,6 +36,8 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* delay_ms = ctx.buffers->get(inst.inputs[1]);
     const float* feedback = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<CombFilterState>(inst.state_id);
 
     float damp = static_cast<float>(inst.rate) / 255.0f;
@@ -52,6 +55,8 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
         float delay_samples = std::clamp(delay_ms[i], 0.1f, 100.0f) * 0.001f * ctx.sample_rate;
         delay_samples = std::min(delay_samples, static_cast<float>(CombFilterState::MAX_COMB_SAMPLES - 1));
         float fb = std::clamp(feedback[i], -0.99f, 0.99f);
+        float dry = drywet::coeff(dry_level, i, 1.0f);
+        float wet = drywet::coeff(wet_level, i, 0.5f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -64,7 +69,7 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
             state.buffer[ch][state.write_pos[ch]] = x + fb * state.filter_state[ch];
             state.write_pos[ch] = (state.write_pos[ch] + 1) % CombFilterState::MAX_COMB_SAMPLES;
 
-            (ch == 0 ? out_l : out_r)[i] = delayed;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, delayed, dry, wet);
         }
     }
 }
@@ -115,19 +120,21 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
     float feedback = (static_cast<float>((inst.rate >> 4) & 0x0F) / 7.5f) - 1.0f;
     feedback = std::clamp(feedback, -0.99f, 0.99f);
 
-    // Extended params: ext[0] = lfo_phase (turns, default 0.25). Resolve
-    // the slot once — at audio rate the slot is a const buffer pointer,
-    // at control rate it's a constant scalar.
-    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    // Extended params: ext[0] = lfo_phase (turns, default 0.25),
+    //                  ext[1] = dry (default 1.0), ext[2] = wet (default 0.5).
+    const auto* ext = ctx.states->get_if<ExtendedParams<3>>(ext_params_state_id(inst.state_id));
     const float* lfo_phase_buf = nullptr;
     float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    const float* dry_buf = nullptr; float dry_const = 1.0f;
+    const float* wet_buf = nullptr; float wet_const = 0.5f;
     if (ext) {
         const auto& slot = ext->params[0];
-        if (slot.is_constant()) {
-            lfo_phase_const = slot.constant;
-        } else {
-            lfo_phase_buf = ctx.buffers->get(slot.buffer_idx);
-        }
+        if (slot.is_constant()) lfo_phase_const = slot.constant;
+        else                    lfo_phase_buf   = ctx.buffers->get(slot.buffer_idx);
+        const auto& d = ext->params[1];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[2];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
     }
 
     // Ensure both per-channel buffers are allocated from arena
@@ -162,7 +169,6 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
                                             state.write_pos[0], delay_smp_l);
         state.buffer[0][state.write_pos[0]] = x_l + feedback * delayed_l;
         state.write_pos[0] = (state.write_pos[0] + 1) % FlangerState::MAX_FLANGER_SAMPLES;
-        out_l[i] = delayed_l;
 
         // R lane: LFO offset by user-tunable lfo_phase turns (default 0.25
         // = 90°). Decorrelates L/R on mono input; on stereo input adds
@@ -178,7 +184,11 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
                                             state.write_pos[1], delay_smp_r);
         state.buffer[1][state.write_pos[1]] = x_r + feedback * delayed_r;
         state.write_pos[1] = (state.write_pos[1] + 1) % FlangerState::MAX_FLANGER_SAMPLES;
-        out_r[i] = delayed_r;
+
+        float dry_mix = drywet::coeff(dry_buf, i, dry_const);
+        float wet_mix = drywet::coeff(wet_buf, i, wet_const);
+        out_l[i] = drywet::mix(x_l, delayed_l, dry_mix, wet_mix);
+        out_r[i] = drywet::mix(x_r, delayed_r, dry_mix, wet_mix);
     }
 }
 
@@ -216,17 +226,21 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
 
     state.ensure_buffers(ctx.arena);
 
-    // Extended params: ext[0] = lfo_phase (turns, default 0.25).
-    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    // Extended params: ext[0] = lfo_phase (turns, default 0.25),
+    //                  ext[1] = dry (default 1.0), ext[2] = wet (default 0.5).
+    const auto* ext = ctx.states->get_if<ExtendedParams<3>>(ext_params_state_id(inst.state_id));
     const float* lfo_phase_buf = nullptr;
     float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    const float* dry_buf = nullptr; float dry_const = 1.0f;
+    const float* wet_buf = nullptr; float wet_const = 0.5f;
     if (ext) {
         const auto& slot = ext->params[0];
-        if (slot.is_constant()) {
-            lfo_phase_const = slot.constant;
-        } else {
-            lfo_phase_buf = ctx.buffers->get(slot.buffer_idx);
-        }
+        if (slot.is_constant()) lfo_phase_const = slot.constant;
+        else                    lfo_phase_buf   = ctx.buffers->get(slot.buffer_idx);
+        const auto& d = ext->params[1];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[2];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
     }
 
     // LFO phase offsets for each voice (spread across cycle)
@@ -281,8 +295,10 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
             wet_lr[ch] = wet;
         }
 
-        out_l[i] = wet_lr[0];
-        out_r[i] = wet_lr[1];
+        float dry_mix = drywet::coeff(dry_buf, i, dry_const);
+        float wet_mix = drywet::coeff(wet_buf, i, wet_const);
+        out_l[i] = drywet::mix(x_l, wet_lr[0], dry_mix, wet_mix);
+        out_r[i] = drywet::mix(x_r, wet_lr[1], dry_mix, wet_mix);
     }
 }
 
@@ -325,10 +341,11 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
     const float* max_freq_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<PhaserState>(inst.state_id);
 
-    // Extended params: ext[0]=feedback, ext[1]=stages, ext[2]=lfo_phase.
+    // Extended params: ext[0]=feedback, ext[1]=stages, ext[2]=lfo_phase,
+    //                  ext[3]=dry (default 1.0), ext[4]=wet (default 0.5).
     // Resolve each slot once outside the sample loop; slots are either a
     // constant scalar or a buffer pointer.
-    const auto* ext = ctx.states->get_if<ExtendedParams<3>>(ext_params_state_id(inst.state_id));
+    const auto* ext = ctx.states->get_if<ExtendedParams<5>>(ext_params_state_id(inst.state_id));
     auto resolve_slot = [&](std::size_t idx, float default_val,
                             const float*& out_buf, float& out_const) {
         out_buf = nullptr;
@@ -344,9 +361,13 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
     const float* feedback_buf = nullptr; float feedback_const = 0.5f;
     const float* stages_buf   = nullptr; float stages_const   = 4.0f;
     const float* lfo_phase_buf = nullptr; float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    const float* dry_buf      = nullptr; float dry_const      = 1.0f;
+    const float* wet_buf      = nullptr; float wet_const      = 0.5f;
     resolve_slot(0, 0.5f,  feedback_buf,  feedback_const);
     resolve_slot(1, 4.0f,  stages_buf,    stages_const);
     resolve_slot(2, STEREO_LFO_OFFSET_DEFAULT_TURNS, lfo_phase_buf, lfo_phase_const);
+    resolve_slot(3, 1.0f,  dry_buf,       dry_const);
+    resolve_slot(4, 0.5f,  wet_buf,       wet_const);
 
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
@@ -400,11 +421,17 @@ inline void op_effect_phaser(ExecutionContext& ctx, const Instruction& inst) {
             }
 
             state.last_output[ch] = x;
-            y_lr[ch] = x_in + x;  // dry + allpass cascade
+            y_lr[ch] = x;  // allpass cascade output; dry/wet mix below
+                           // combines it with the dry source.
         }
 
-        out_l[i] = y_lr[0];
-        out_r[i] = y_lr[1];
+        // Unified dry/wet mix. dry=1, wet=1 reproduces the canonical
+        // Bode/MXR phaser sum (+6 dB peaks); dry=1, wet=0.5 is the
+        // default (milder notches); dry=0 silences the source.
+        float dry_mix = drywet::coeff(dry_buf, i, dry_const);
+        float wet_mix = drywet::coeff(wet_buf, i, wet_const);
+        out_l[i] = drywet::mix(x_in_l, y_lr[0], dry_mix, wet_mix);
+        out_r[i] = drywet::mix(x_in_r, y_lr[1], dry_mix, wet_mix);
     }
 }
 

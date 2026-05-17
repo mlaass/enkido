@@ -5,6 +5,7 @@
 #include "../dsp/constants.hpp"
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
+#include "drywet.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -29,11 +30,17 @@ inline void op_distort_tanh(ExecutionContext& ctx, const Instruction& inst) {
         ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
         : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
+    const float* dry_level = (inst.inputs[2] != 0xFFFF) ? ctx.buffers->get(inst.inputs[2]) : nullptr;
+    const float* wet_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::max(0.1f, drive[i]);
-        out_l[i] = std::tanh(input[i] * d);
-        out_r[i] = std::tanh((stereo_in ? input_r[i] : input[i]) * d);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
+        float x_l = input[i];
+        float x_r = stereo_in ? input_r[i] : x_l;
+        out_l[i] = drywet::mix(x_l, std::tanh(x_l * d), dry, wet);
+        out_r[i] = drywet::mix(x_r, std::tanh(x_r * d), dry, wet);
     }
 }
 
@@ -56,6 +63,8 @@ inline void op_distort_soft(ExecutionContext& ctx, const Instruction& inst) {
         ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
         : nullptr;
     const float* threshold = ctx.buffers->get(inst.inputs[1]);
+    const float* dry_level = (inst.inputs[2] != 0xFFFF) ? ctx.buffers->get(inst.inputs[2]) : nullptr;
+    const float* wet_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
 
     auto soft = [](float x) {
         if (x > 3.0f) return 1.0f;
@@ -66,8 +75,12 @@ inline void op_distort_soft(ExecutionContext& ctx, const Instruction& inst) {
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float t = std::clamp(threshold[i], 0.1f, 2.0f);
-        out_l[i] = soft(input[i] / t) * t;
-        out_r[i] = soft((stereo_in ? input_r[i] : input[i]) / t) * t;
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
+        float x_l = input[i];
+        float x_r = stereo_in ? input_r[i] : x_l;
+        out_l[i] = drywet::mix(x_l, soft(x_l / t) * t, dry, wet);
+        out_r[i] = drywet::mix(x_r, soft(x_r / t) * t, dry, wet);
     }
 }
 
@@ -92,6 +105,8 @@ inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) 
         : nullptr;
     const float* bits = ctx.buffers->get(inst.inputs[1]);
     const float* rate = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<BitcrushState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
@@ -99,6 +114,8 @@ inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) 
         float rate_factor = std::clamp(rate[i], 0.01f, 1.0f);
         float depth = std::clamp(bits[i], 1.0f, 16.0f);
         float levels = std::pow(2.0f, depth);
+        float dry = drywet::coeff(dry_level, i, 0.0f);
+        float wet = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -107,7 +124,7 @@ inline void op_distort_bitcrush(ExecutionContext& ctx, const Instruction& inst) 
                 state.phase[ch] -= 1.0f;
                 state.held_sample[ch] = std::round(x * levels) / levels;
             }
-            (ch == 0 ? out_l : out_r)[i] = state.held_sample[ch];
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, state.held_sample[ch], dry, wet);
         }
     }
 }
@@ -135,13 +152,26 @@ inline void op_distort_fold(ExecutionContext& ctx, const Instruction& inst) {
         ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
         : nullptr;
     const float* drive_in = ctx.buffers->get(inst.inputs[1]);
-    const float* symmetry = ctx.buffers->get(inst.inputs[2]);
+    const float* symmetry = (inst.inputs[2] != 0xFFFF) ? ctx.buffers->get(inst.inputs[2]) : nullptr;
     auto& state = ctx.states->get_or_create<FoldADAAState>(inst.state_id);
+
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& d = ext->params[0];
+        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
+        const auto& w = ext->params[1];
+        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
+    }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         // Mono control inputs (shared across channels)
         float drive = std::clamp(drive_in[i], 1.0f, 10.0f);
-        float sym = std::clamp(symmetry[i], 0.0f, 1.0f);
+        float sym = symmetry ? std::clamp(symmetry[i], 0.0f, 1.0f) : 0.5f;
+        float dry = drywet::coeff(dry_buf, i, dry_const);
+        float wet = drywet::coeff(wet_buf, i, wet_const);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float xin = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -160,7 +190,8 @@ inline void op_distort_fold(ExecutionContext& ctx, const Instruction& inst) {
 
             state.x_prev[ch] = x_scaled;
             state.ad_prev[ch] = ad;
-            (ch == 0 ? out_l : out_r)[i] = std::clamp(y, -1.0f, 1.0f);
+            float processed = std::clamp(y, -1.0f, 1.0f);
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(xin, processed, dry, wet);
         }
     }
 }
@@ -187,11 +218,15 @@ inline void op_distort_tube(ExecutionContext& ctx, const Instruction& inst) {
         : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
     const float* bias = ctx.buffers->get(inst.inputs[2]);
+    const float* dry_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
+    const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<TubeState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 20.0f);
         float b = std::clamp(bias[i], 0.0f, 0.3f);
+        float dry_m = drywet::coeff(dry_level, i, 0.0f);
+        float wet_m = drywet::coeff(wet_level, i, 1.0f);
 
         auto tube_core = [d, b](float s) {
             float driven = s * d + b;
@@ -214,7 +249,7 @@ inline void op_distort_tube(ExecutionContext& ctx, const Instruction& inst) {
 
             float y0 = tube_core(x0);
             float y1 = tube_core(x1);
-            (ch == 0 ? out_l : out_r)[i] = (y0 + y1) * 0.5f;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, (y0 + y1) * 0.5f, dry_m, wet_m);
             state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
         }
     }
@@ -240,10 +275,14 @@ inline void op_distort_smooth(ExecutionContext& ctx, const Instruction& inst) {
         ? ctx.buffers->get(static_cast<std::uint16_t>(inst.inputs[0] + 1))
         : nullptr;
     const float* drive = ctx.buffers->get(inst.inputs[1]);
+    const float* dry_level = (inst.inputs[2] != 0xFFFF) ? ctx.buffers->get(inst.inputs[2]) : nullptr;
+    const float* wet_level = (inst.inputs[3] != 0xFFFF) ? ctx.buffers->get(inst.inputs[3]) : nullptr;
     auto& state = ctx.states->get_or_create<SmoothSatState>(inst.state_id);
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 20.0f);
+        float dry_m = drywet::coeff(dry_level, i, 0.0f);
+        float wet_m = drywet::coeff(wet_level, i, 1.0f);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float xin = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -277,7 +316,7 @@ inline void op_distort_smooth(ExecutionContext& ctx, const Instruction& inst) {
 
             state.x_prev[ch] = x;
             state.ad_prev[ch] = ad;
-            (ch == 0 ? out_l : out_r)[i] = y;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(xin, y, dry_m, wet_m);
         }
     }
 }
@@ -315,11 +354,24 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
     const float* warmth_scale_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<TapeState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& ed = ext->params[0];
+        if (ed.is_constant()) dry_const = ed.constant; else dry_buf = ctx.buffers->get(ed.buffer_idx);
+        const auto& ew = ext->params[1];
+        if (ew.is_constant()) wet_const = ew.constant; else wet_buf = ctx.buffers->get(ew.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 10.0f);
         float w = std::clamp(warmth[i], 0.0f, 1.0f);
         float soft_threshold = soft_threshold_in[i] > 0.0f ? soft_threshold_in[i] : TAPE_SOFT_THRESHOLD_DEFAULT;
         float warmth_scale = warmth_scale_in[i] > 0.0f ? warmth_scale_in[i] : TAPE_WARMTH_SCALE_DEFAULT;
+        float dry_m = drywet::coeff(dry_buf, i, dry_const);
+        float wet_m = drywet::coeff(wet_buf, i, wet_const);
 
         auto tape_core = [d, soft_threshold](float s) {
             float driven = s * d;
@@ -355,7 +407,7 @@ inline void op_distort_tape(ExecutionContext& ctx, const Instruction& inst) {
             state.hs_z1[ch] = state.hs_z1[ch] + hf * (1.0f - w * warmth_scale);
             y = state.hs_z1[ch] + hf * (1.0f - w);
 
-            (ch == 0 ? out_l : out_r)[i] = std::clamp(y, -1.0f, 1.0f);
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, std::clamp(y, -1.0f, 1.0f), dry_m, wet_m);
             state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
         }
     }
@@ -390,11 +442,24 @@ inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
     const float* bass_freq_in = ctx.buffers->get(inst.inputs[3]);
     auto& state = ctx.states->get_or_create<XfmrState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& ed = ext->params[0];
+        if (ed.is_constant()) dry_const = ed.constant; else dry_buf = ctx.buffers->get(ed.buffer_idx);
+        const auto& ew = ext->params[1];
+        if (ew.is_constant()) wet_const = ew.constant; else wet_buf = ctx.buffers->get(ew.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float d = std::clamp(drive[i], 1.0f, 10.0f);
         float bs = std::clamp(bass_sat[i], 1.0f, 10.0f);
         float bass_freq = bass_freq_in[i] > 0.0f ? bass_freq_in[i] : XFMR_BASS_FREQ_DEFAULT;
         float lp_coeff = std::exp(-6.283185f * bass_freq / ctx.sample_rate);
+        float dry_m = drywet::coeff(dry_buf, i, dry_const);
+        float wet_m = drywet::coeff(wet_buf, i, wet_const);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -424,7 +489,7 @@ inline void op_distort_xfmr(ExecutionContext& ctx, const Instruction& inst) {
 
             float y0 = xfmr_core(x0);
             float y1 = xfmr_core(x1);
-            (ch == 0 ? out_l : out_r)[i] = (y0 + y1) * 0.5f;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, (y0 + y1) * 0.5f, dry_m, wet_m);
             state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
         }
     }
@@ -462,12 +527,25 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
     const float* harmonic_even_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<ExciterState>(inst.state_id);
 
+    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    const float* dry_buf = nullptr; float dry_const = 0.0f;
+    const float* wet_buf = nullptr; float wet_const = 1.0f;
+    if (ext) {
+        const auto& ed = ext->params[0];
+        if (ed.is_constant()) dry_const = ed.constant; else dry_buf = ctx.buffers->get(ed.buffer_idx);
+        const auto& ew = ext->params[1];
+        if (ew.is_constant()) wet_const = ew.constant; else wet_buf = ctx.buffers->get(ew.buffer_idx);
+    }
+
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float amt = std::clamp(amount[i], 0.0f, 1.0f);
         float f = std::clamp(freq[i], 1000.0f, 10000.0f);
         float harmonic_odd = harmonic_odd_in[i] > 0.0f ? harmonic_odd_in[i] : EXCITE_HARMONIC_ODD_DEFAULT;
         float harmonic_even = harmonic_even_in[i] > 0.0f ? harmonic_even_in[i] : EXCITE_HARMONIC_EVEN_DEFAULT;
         float coeff = std::exp(-6.283185f * f / ctx.sample_rate);
+        float dry_m = drywet::coeff(dry_buf, i, dry_const);
+        float wet_m = drywet::coeff(wet_buf, i, wet_const);
 
         for (std::size_t ch = 0; ch < 2; ++ch) {
             float x = (ch == 0) ? input[i] : (stereo_in ? input_r[i] : input[i]);
@@ -489,7 +567,8 @@ inline void op_distort_excite(ExecutionContext& ctx, const Instruction& inst) {
 
             float y0 = excite_core(x0);
             float y1 = excite_core(x1);
-            (ch == 0 ? out_l : out_r)[i] = std::clamp((y0 + y1) * 0.5f, -1.0f, 1.0f);
+            float processed = std::clamp((y0 + y1) * 0.5f, -1.0f, 1.0f);
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, processed, dry_m, wet_m);
             state.os_idx[ch] = (state.os_idx[ch] + 1) & 3;
         }
     }

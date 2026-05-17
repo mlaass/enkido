@@ -35,12 +35,18 @@ Delay effects create copies of a signal offset in time for echoes, rhythmic effe
 | in    | signal | -       | Input signal |
 | time  | signal | -       | Delay time in seconds (0-10) |
 | fb    | number | -       | Feedback amount (0-1) |
-| dry   | number | 0.0     | Dry signal level |
-| wet   | number | 1.0     | Wet (delayed) signal level |
+| dry   | number | 1.0     | Dry signal level (Category A default) |
+| wet   | number | 0.5     | Wet (delayed) signal level (Category A default) |
 
 A simple delay line with feedback. Use short times (< 50ms) for comb filtering effects, medium times for slapback, and longer times for distinct echoes.
 
-The optional `dry` and `wet` parameters control the output mix. Defaults (dry=0, wet=1) output 100% wet signal for backward compatibility. Set dry=1, wet=1 for classic delay pedal behavior.
+The `dry` and `wet` parameters follow the unified Category-A
+convention (`dry=1, wet=0.5` = balanced parallel mix out of the box).
+Use `wet=1` for the classic 100%-wet send/return; use `wet=0` to
+silence the delay entirely. **Behavior change in this release**:
+delays previously defaulted to `dry=0, wet=1` (fully wet) — patches
+that relied on that need to set `wet=1` (or `dry=0, wet=1`)
+explicitly.
 
 ```akk
 // Simple echo at quarter note (120 BPM = 0.5s)
