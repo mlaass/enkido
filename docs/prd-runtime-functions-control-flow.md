@@ -11,7 +11,7 @@ This PRD generalizes that special case into a uniform "callable block" mechanism
 1. **Code reuse / size reduction** — a shared subprogram table lets one `fn` body back many call-sites.
 2. **Conditional graph topology** — forward `SKIP_IF` opcodes bypass whole instruction ranges when a control value is zero, instead of always-evaluating both branches and muxing with `SELECT`.
 3. **Recursive / self-similar structures** — *deferred to a follow-up PRD*; the design admits compile-time-unrolled recursion at a later phase.
-4. **Higher-order DSL** — `notes.map(n => osc("sin", n.freq))` over dynamic event streams via a generalized `FOREACH_EVENT` opcode (POLY's algorithm, not its API).
+4. **Higher-order DSL** — `notes.each_voice(n => osc("sin", n.freq))` over dynamic event streams via a generalized `FOREACH_EVENT` opcode (POLY's algorithm, not its API). The `.map(...)` surface name is reserved for per-event *field rewrite* per the companion [prd-runtime-event-transforms.md](prd-runtime-event-transforms.md); see §13 for the disambiguation.
 
 Cedar's two load-bearing invariants are preserved: **bounded audio-callback time** and **zero allocation in the audio path**. The "RT for audio, non-RT for setup" relaxation is the key enabler — allocation, state-slot expansion, and per-callsite specialization happen at hot-swap/init time; the audio callback only executes a flat instruction stream.
 
@@ -20,9 +20,9 @@ Cedar's two load-bearing invariants are preserved: **bounded audio-callback time
 - **Hybrid layer model.** A few targeted VM primitives (L1 control flow + L2 subprogram table + L3 event iterator) plus compile-time work in Akkado. Not a full Turing-complete VM rewrite.
 - **Buffer addressing: swap-time expansion by default.** The compiler emits `BLOCK_CALL` at every call site; a swap-prepare pass inlines the body with absolute buffer indices patched. Audio path stays bit-identical to today's flat dispatch loop.
 - **Convention slots for event iterators.** `FOREACH_EVENT` (and its POLY/map/each specializations) use fixed param-buffer slots (POLY's existing 5-slot freq/gate/vel/trig/out scheme generalized) for true body sharing — no swap-time expansion, true table dispatch.
-- **Shared block by default; `@inline` opts back.** `fn foo(...)` becomes a shared block; `@inline fn foo(...)` keeps the current per-site inlining. Default flips so bytecode shrinks automatically; `@inline` exists for hot-path micro-bodies where dispatch overhead matters.
+- **Shared block by default; `#inline` opts back.** `fn foo(...)` becomes a shared block; `#inline fn foo(...)` keeps the current per-site inlining. Default flips so bytecode shrinks automatically; `#inline` exists for hot-path micro-bodies where dispatch overhead matters.
 - **POLY migration in same PRD.** POLY = `FOREACH_EVENT + voice allocator + BLOCK_CALL voice_body` from day one. Bit-exact behavior; no legacy code path.
-- **No recursion in v1.** Recursive `fn` definitions are rejected at compile time with a clear error. Compile-time-unrolled recursion (`@max_depth(N)`) is a deliberate follow-up PRD.
+- **No recursion in v1.** Recursive `fn` definitions are rejected at compile time with a clear error. Compile-time-unrolled recursion (`#max_depth(N)`) is a deliberate follow-up PRD.
 - **Forward-only skips.** L1 control flow has `SKIP_IF_ZERO`/`SKIP_IF_NONZERO`/`LOOP_STATIC` only. No backward JMP, no arbitrary control flow — cycles at the instruction-stream level remain impossible.
 
 ---
@@ -40,8 +40,8 @@ The brainstorm exploration confirmed:
 | Compile-time mode dispatch | `inst.rate` baked once (LFO shape, EDGE_OP mode, CLOCK mode, INTERP_TIME mode, ARRAY_INDEX wrap/clamp) | `cedar/include/cedar/opcodes/{edge_op,state_op,sequencing,utility,arrays}.hpp` |
 | Special-case "subroutine" | `POLY_BEGIN { body } POLY_END` — VM has `execute_poly_block()` that re-runs the inlined body once per active voice | `cedar/src/vm/vm.cpp:280-507`, `akkado/src/codegen_functions.cpp:1992-2285` |
 | User-defined functions | Parsed by Akkado, **fully inlined** at every call site (see [prd-advanced-functions.md](prd-advanced-functions.md) — explicitly preserves "no runtime function objects, no new VM opcodes") | `akkado/src/codegen.cpp`, `akkado/src/codegen_functions.cpp` |
-| Conditional logic | Sample-rate signal selection only — the [conditionals PRD](prd-conditionals-logic.md) §"Non-Goals" defers "compile-time conditionals (if/else statements)" to future work | (this PRD picks up the deferred work) |
-| State pool | Fixed 256-slot open-addressing table, FNV-1a hashed semantic IDs, pre-allocated based on compiled graph | `cedar/include/cedar/vm/state_pool.hpp:56-57` |
+| Conditional logic | Sample-rate signal selection only — the [conditionals PRD](prd-conditionals-logic.md) is **DONE** (opcodes 140–149 shipped: `SELECT`, `CMP_*`, `LOGIC_*`; infix syntax + `select()` builtin) | This PRD adds **block-rate conditional bypass** (`when()`), which is *not* the same as the "compile-time if/else statements" that PRD listed in Future Work — it's orthogonal. See §7.3 for the relationship |
+| State pool | Fixed 512-slot open-addressing table, FNV-1a hashed semantic IDs, pre-allocated based on compiled graph | `cedar/include/cedar/dsp/constants.hpp` (`MAX_STATES = 512`), `cedar/include/cedar/vm/state_pool.hpp` |
 | VM dispatch loop | Flat `while (ip < program.size())` for-loop; the only branch is `POLY_BEGIN` → `execute_poly_block()` returns next ip | `cedar/src/vm/vm.cpp:259-278` |
 
 ### 1.2 Concrete Limitations
@@ -51,7 +51,7 @@ The brainstorm exploration confirmed:
 | A reusable `fn` called from N sites | Per-site re-inlining | Bytecode and i-cache pressure grow linearly with N; state slot count multiplies; large patches blow past `MAX_STATES = 256` |
 | Bypass an effect chain when a toggle is off | `SELECT(toggle, sig * 0, sig \|> reverb(@))` | The reverb runs every block regardless; CPU not saved |
 | Tree-like / nested allpass / fractal feedback | Manually unroll, copy-paste body | Unreadable; state slot count explodes; depth must be statically chosen by hand |
-| `notes.map(n => osc("sin", n.freq))` over a runtime event stream | Manually expand into a fixed-size POLY block | API doesn't compose with arbitrary higher-order operators |
+| `notes.each_voice(n => osc("sin", n.freq))` over a runtime event stream | Manually expand into a fixed-size POLY block | API doesn't compose with arbitrary higher-order operators |
 
 ### 1.3 Why Now
 
@@ -68,18 +68,37 @@ The brainstorm exploration confirmed:
 - **L2**: A user `fn` called from N sites produces audio bit-exact to the current per-site-inlined behavior, and pre-expansion bytecode is measurably smaller than current.
 - **L2**: Hot-swap state preservation works per-call-site via the existing semantic-path scheme extended with a `block@callsite_N` component.
 - **L3**: POLY reimplemented as `FOREACH_EVENT + voice allocator + BLOCK_CALL voice_body` is bit-exact to today's POLY across all existing `akkado/tests/` cases.
-- **L3**: `pat(...).map(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI, with state preserved across hot-swap.
+- **L3**: `pat(...).each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI, with state preserved across hot-swap.
 - **No new audio-thread allocations.** Every new state slot, every new block-table entry, every voice-pool entry is allocated at swap-prepare or init time only.
 
 ### Non-Goals
 
-- **True recursion.** Rejected at compile time in v1 with `E2XX: recursive fn '<name>' not supported — see follow-up PRD`. Compile-time-unrolled recursion (`@max_depth(N)`) is a deliberate follow-up.
+- **True recursion.** Rejected at compile time in v1 with `E2XX: recursive fn '<name>' not supported — see follow-up PRD`. Compile-time-unrolled recursion (`#max_depth(N)`) is a deliberate follow-up.
 - **Frame-relative addressing.** Defer until a use case can't be served by swap-time expansion or convention slots. (Sketched in §5.3 as the "if we ever need it" option.)
 - **First-class fn values escaping the compile unit.** Block-refs in v1 are restricted: capture-only-by-buffer-index-and-constant, consumed by stdlib higher-order operators, do not survive across hot-swap as values.
 - **Backward JMP / arbitrary control flow.** Forward skips only. No cycles in the instruction stream.
 - **Run-time growth of state pool, subprogram table, or voice pool.** All sizing finalized at swap-prepare time.
 - **`inst.rate` runtime dispatch.** This PRD does *not* repurpose `inst.rate` for runtime mode selection. It stays as the canonical channel for compile-time mode dispatch (see [extended-params-mechanism.md](extended-params-mechanism.md) §5).
 - **Removing `SELECT` or the existing sample-rate logic operators.** They remain the right tool for per-sample signal muxing; L1 conditional-skip is the right tool for block-rate program-flow conditionals.
+
+### 2.1 What Stays vs What Changes
+
+| Subsystem | Stays the same | Changes |
+|---|---|---|
+| VM dispatch loop (`vm.cpp:259-278`) | Flat `while (ip < program.size())` for-loop | Adds skip-handling for `SKIP_IF_*` and `LOOP_STATIC`; adds `BLOCK_CALL` (pre-expansion only; post-swap the audio path sees zero) and `FOREACH_EVENT` dispatch into subprogram table |
+| `execute_poly_block()` (`vm.cpp:280-507`) | Algorithm (voice allocation, per-voice body re-execution, voice mixing) | Renamed to `execute_foreach_event()` with `VOICE_POOL` allocator branch; `PER_ITERATION` and `SHARED` branches added |
+| State pool (`state_pool.hpp`) | Fixed-size open-addressing table, FNV-1a hashed semantic IDs, pre-allocated at swap-prepare | No structural change; `MAX_STATES` re-audited (currently 512) |
+| Path-hash scheme (`codegen.hpp:354-355`, `codegen.cpp`) | `push_path()`/`pop_path()` mechanism, FNV-1a hash, `funcname#N` per-call counter | Adds `block:<name>@callsite_<N>` component for `BLOCK_CALL` sites; adds `foreach:<name>@callsite_<N>/iter_<voice_slot>` for `FOREACH_EVENT` iterations |
+| Triple-buffer hot-swap + micro-crossfade ([cedar-vm-hot-swap-implementation.md](cedar-vm-hot-swap-implementation.md)) | Atomic pointer swap at block boundaries, semantic-ID rebinding, 5–10ms crossfade | Unchanged — block bodies hash into the same path scheme |
+| Bytecode wire format | Header, main program, state inits | Adds `Subprograms` side-table (§8); old programs with no `fn`s remain backward-compatible |
+| User-fn machinery (`codegen_functions.cpp`) | Front-end parsing of `fn`, parameter typing, signature handling | Backend emission switches from per-site inlining to `Subprogram` + `BLOCK_CALL`; per-site inlining retained behind `#inline` annotation |
+| POLY user-facing API | `poly(events, instr, max_voices)` signature, instrument 3-arg contract `(freq, gate, vel)`, stereo support | Bit-exact behavior; internally dispatched through `FOREACH_EVENT(VOICE_POOL)` instead of `POLY_BEGIN`/`POLY_END`. `POLY_BEGIN`/`POLY_END` opcodes retained as no-op aliases for one release cycle, then removed |
+| `SELECT` and sample-rate logic operators (opcodes 140–149, `prd-conditionals-logic.md`) | All shipped behavior | Unchanged — `when()` is additive, not a replacement |
+| `inst.rate` policy ([extended-params-mechanism.md](extended-params-mechanism.md) §5) | Compile-time mode dispatch only; no runtime bit-packing | Unchanged — new opcodes follow the rule (FOREACH_EVENT `allocator_kind` is a compile-time enum ≤4 values, the legitimate `rate` use) |
+| Audio-path allocation invariant | Zero runtime allocations on audio thread | Unchanged — every new state slot, subprogram-table entry, voice-pool entry sized at swap-prepare time |
+| `nkido-cli`, `bytecode_dump.cpp`, web bytecode disassembler | Existing disassembly UX | Extended to render `Subprogram` side-table and toggle expanded/unexpanded views (Phase 2 UX detail) |
+| Akkado lexer | Existing tokens | Adds `#` as annotation-prefix lexeme |
+| Akkado parser | Existing precedence table, expression-vs-statement positions | Adds annotation parsing at statement position; adds `loop()` contextual keyword + block-expression form (see §7.6) |
 
 ---
 
@@ -138,7 +157,7 @@ Three new opcodes. All are **forward-only**: they shift `ip` ahead, never back. 
 |---|---|---|
 | `SKIP_IF_ZERO` | `inputs[0] = predicate_buf`, `rate = offset` (uint8) or `inputs[1] = offset_const_buf` for `offset > 255` | If `predicate_buf[0] == 0.0f` at block entry, advance `ip` by `offset + 1`; else execute next instruction normally |
 | `SKIP_IF_NONZERO` | symmetric | dual |
-| `LOOP_STATIC` | `inputs[0] = count_const_buf` (compile-time-known small integer), `rate = body_len` (uint8) | Execute the next `body_len` instructions `count` times in sequence. Each iteration sees fresh state-pool reads (loop body is *not* a separate frame; state is shared across iterations — caveat for stateful opcodes inside a loop) |
+| `LOOP_STATIC` | `rate = body_len` (uint8); count carried in `StateInitData::LoopStaticCount { count: u32 }` entry following the instruction (compile-time constant, not a buffer index) | Execute the next `body_len` instructions `count` times in sequence. Each iteration sees fresh state-pool reads (loop body is *not* a separate frame; state is shared across iterations — caveat for stateful opcodes inside a loop) |
 
 **Predicate is sampled once per block** — at `program[ip].inputs[0][0]`. This is the cheapest possible model and aligns with how `inst.rate`-style mode selection works today (per-block, not per-sample). User-visible semantics in Akkado:
 
@@ -153,17 +172,33 @@ sig |> when(mute_toggle, @ * 0, @ |> reverb(@))
 //   [merge: assign output buffer]
 ```
 
-A new builtin `when(cond, true_branch, false_branch)` provides the Akkado surface. It's distinct from `select(cond, a, b)` which remains sample-rate signal mux:
+A new builtin `when(cond, true_branch, false_branch)` provides the Akkado surface.
 
-| Construct | Rate | Cost when condition is false | Use case |
-|---|---|---|---|
-| `select(cond, a, b)` | sample | both branches fully evaluated, mux output | per-sample modulation, smooth crossfades |
-| `when(cond, a, b)` | block | only the taken branch executes | mute-bypass, A/B routing, expensive-effect gating |
+**Relationship to `select()` and "compile-time if/else":** three distinct concepts, each with its own scope.
+
+| Construct | Status | Rate | Both branches eval? | Use case |
+|---|---|---|---|---|
+| `select(cond, a, b)` (also infix `?:` deferred) | **DONE** (`prd-conditionals-logic.md`) | sample | yes | per-sample modulation, smooth crossfades |
+| `when(cond, a, b)` | **THIS PRD** (L1) | block | no — only taken branch runs | mute-bypass, A/B routing, expensive-effect gating |
+| Compile-time `if/else` (constant-folded) | **FUTURE** (per `prd-conditionals-logic.md` §Future Work) | n/a | n/a (resolved at compile time) | array operations, conditional codegen, constant-folded patches |
+
+`when()` is orthogonal to the deferred compile-time if/else: that one resolves at codegen, eliminating one branch entirely from bytecode; `when()` keeps both branches in bytecode but uses `SKIP_IF_*` opcodes to skip the not-taken branch at runtime. Users who want behavior closest to "C-style if/else" today should reach for `select()` (always evaluates both — the right choice when both branches are stateful or cheap) or `when()` (skips at block rate — the right choice when one branch is expensive and rarely taken).
 
 **Caveats documented in user-facing docs:**
 - `when()` decides at *block* boundaries (every 128 samples / 2.67ms). Not suitable for per-sample switching.
 - State inside the not-taken branch is *not* advanced. If a reverb is in the false branch and the condition flips back, its tail picks up where it left off — usually the desired behavior, but worth flagging.
 - `LOOP_STATIC` shares state across iterations; do not use it to instantiate N independent stateful UGens (that's what L3 `each` is for).
+
+**Edge-case behavior (explicit):**
+
+The non-trivial cases need committed semantics, not just docs caveats:
+
+| Case | Behavior in v1 |
+|---|---|
+| **(a) Feedback / decay state in skipped branch** (e.g., a reverb tail in the `false` branch when `cond` flips to `true`) | Reverb tail frozen — does *not* ring out while skipped. When `cond` flips back, tail resumes from its frozen sample. Documented as user-visible behavior; flagged in `when()` doc as "use `select()` if you need the tail to decay regardless". |
+| **(b) Sequencer / pattern state in skipped branch** | Pattern state (e.g., `pat(...)` inside the skipped branch) is *not* advanced — events for that block are lost. Cycle position resumes from its frozen value on un-skip. This is the same model as (a): skipped subgraphs are frozen, not silenced. Documented in `when()` doc as "patterns inside `when()` lose events while bypassed — pattern logic that needs to keep ticking belongs outside the bypass". |
+| **(c) Hot-swap mid-skip** | Skipped state still participates in semantic-ID rebinding. The next-compile's matching subgraph receives the frozen state — its DSP picks up where the pre-swap version left off, even though the swap happened during a block when it wasn't running. Falls out of the existing path-hash scheme; no new mechanism required. |
+| **(d) Chained `when(a, when(b, …))`** | Skips compose: the outer `SKIP_IF_*` advances `ip` past the entire inner construct (offset is computed at codegen). No special handling at runtime. Branches are independent — entering the outer's false branch does not implicitly enter the inner's false branch. |
 
 ### 4.2 Layer 2 — Subprogram Table & BLOCK_CALL
 
@@ -195,14 +230,15 @@ struct FrameDescriptor {
 
 | Opcode | Encoding | Semantics |
 |---|---|---|
-| `BLOCK_CALL` | `rate = block_id_low8`, `state_id = block_id_high8 \| callsite_disambiguator`, `inputs[0..4] = bound buffer indices for first 5 slots`, `output = output_buf` | (Pre-swap-expansion) Marker for swap-time expansion. (Post-expansion) replaced by an inlined copy of the body |
+| `BLOCK_CALL` | `inputs[0..4] = bound buffer indices for first 5 logical slots`; `output = output_buf`; `state_id = callsite_disambiguator`; `block_id` carried via following `StateInitData::BlockCallTarget { block_id: u32 }` entry (NOT bit-packed into `rate`). `rate` reserved for compile-time mode dispatch per CLAUDE.md §'Extended Parameter Patterns' | (Pre-swap-expansion) Marker for swap-time expansion. (Post-expansion) replaced by an inlined copy of the body |
+| `BLOCK_BIND` | `rate = slot_index` (uint8, range 5..255); `inputs[0] = buf_idx`; emitted as a leading sequence before `BLOCK_CALL` when a call site needs to bind logical slots beyond `inputs[0..4]` | Bind one additional logical input slot to a buffer before the immediately following `BLOCK_CALL`. Consumed and erased by `expand_block_calls()`. Multiple `BLOCK_BIND`s precede a single `BLOCK_CALL`; order doesn't matter (slot index is explicit) |
 | `RET` | no operands | Terminates a subprogram body. Required at end of every `Subprogram::body` |
 
 **Compile-time (Akkado):**
 
-1. Lower every `fn` definition (non-`@inline`) into a `Subprogram` entry. The fn's parameters become logical slots 0..N; its return value becomes the output slot.
+1. Lower every `fn` definition (non-`#inline`) into a `Subprogram` entry. The fn's parameters become logical slots 0..N; its return value becomes the output slot.
 2. At each call-site, emit `BLOCK_CALL` with the bound buffer indices from the call's argument expressions.
-3. For call-sites with more than 5 inputs (beyond the `inputs[0..4]` slot bank), emit a leading `BLOCK_BIND` opcode pair (`bind_id`, `buf_idx`) for slots 5..N. The body reads them via the same convention. (Most user fns fit in 5; this is a rare path.)
+3. For call-sites with more than 5 inputs (beyond the `inputs[0..4]` slot bank), emit a leading sequence of `BLOCK_BIND` opcodes — one per slot 5..N, each carrying `rate = slot_index` and `inputs[0] = buf_idx` — immediately before the `BLOCK_CALL`. The body reads slot K via the convention layout established by the `FrameDescriptor`. (Most user fns fit in 5; this is a rare path.) The `expand_block_calls()` pass consumes both the `BLOCK_BIND` prefix and the `BLOCK_CALL` itself in a single rewrite step.
 
 **Swap-time expansion (default addressing strategy):**
 
@@ -242,15 +278,22 @@ For L2, expansion is strictly better than dispatch. We pay the bytecode-size cos
 #### 4.3.1 `FOREACH_EVENT`
 
 ```
-FOREACH_EVENT event_src_state_id, block_id, allocator_kind, output
+FOREACH_EVENT event_src_state_id, allocator_kind, output
+  + StateInitData::ForeachConfig { block_id: u32, max_iterations: u16, frame_descriptor_id: u16 }
 ```
 
-| Field | Type | Meaning |
-|---|---|---|
-| `event_src_state_id` | uint16 | State ID of upstream `SequenceState` / `MidiQueueState` / `ArrayState` |
-| `block_id` | uint16 (split across `rate` + `inputs[0]`) | Subprogram to invoke per event |
-| `allocator_kind` | uint8 (in unused field) | `VOICE_POOL` (POLY semantics: gate-on allocates, gate-off releases, multiple events overlap), `PER_ITERATION` (each event gets a fresh state slice, released at end of block), `SHARED` (all iterations share state — e.g., a fold accumulator) |
-| `output` | uint16 | Mix bus for all iterations |
+Encoding (slot layout, per CLAUDE.md §'Extended Parameter Patterns' — no bit-packing of runtime-tunable values into `inst.rate`):
+
+| Field | Type | Carried in | Meaning |
+|---|---|---|---|
+| `event_src_state_id` | uint16 | `state_id` (the opcode's own state_id slot serves dual purpose: identifies this FOREACH instance, and the upstream is resolved via its own state_id stored in `StateInitData`) | State ID of upstream `SequenceState` / `MidiQueueState` / `ArrayState` |
+| `allocator_kind` | uint8 (enum, compile-time, ≤4 values) | `inst.rate` (legitimate use per CLAUDE.md: "small fixed enum modes ≤4 values") | `VOICE_POOL` (POLY semantics: gate-on allocates, gate-off releases, multiple events overlap), `PER_ITERATION` (each event gets a fresh state slice, released at end of block), `SHARED` (all iterations share state — e.g., a fold accumulator) |
+| `output` | uint16 | `inst.output` | Mix bus for all iterations |
+| `block_id` | uint32 | `StateInitData::ForeachConfig` entry following the instruction | Subprogram to invoke per event |
+| `max_iterations` | uint16 | `StateInitData::ForeachConfig` | Pre-sized cap on concurrent voices/iterations (used to pre-allocate state slots at swap-prepare time) |
+| `frame_descriptor_id` | uint16 | `StateInitData::ForeachConfig` | Index into a parallel `Bytecode::frame_descriptors[]` table; describes convention-slot layout |
+
+`inst.inputs[0..4]` are reserved for the convention-slot buffer indices the body reads from (freq/gate/vel/trig/out for POLY; user-defined layout for `map`/`each`/`fold` via the `FrameDescriptor`). This matches POLY's existing 5-slot scheme.
 
 VM execution (audio path, but allocator state pre-sized at swap time):
 
@@ -316,14 +359,14 @@ These restrictions exist to keep v1 shippable; they can relax in follow-ups as u
 **Stdlib higher-order operators (all implemented via `FOREACH_EVENT`):**
 
 ```akkado
-notes.map(n => osc("sin", n.freq) * 0.5)      // PER_ITERATION allocator
-notes.each(n => osc("sin", n.freq) |> out(@)) // PER_ITERATION, no return
-notes.fold(0.0, (acc, n) => acc + n.freq)     // SHARED allocator, single accumulator slot
+notes.each_voice(n => osc("sin", n.freq) * 0.5) // PER_ITERATION allocator
+notes.each(n => osc("sin", n.freq) |> out(@))   // PER_ITERATION, no return
+notes.fold(0.0, (acc, n) => acc + n.freq)       // SHARED allocator, single accumulator slot
 ```
 
-Each is a thin compile-time wrapper that emits a `FOREACH_EVENT` with the appropriate allocator and binds the lambda body as the `block_id`. The lambda's parameter list maps to the convention slots.
+Each is a thin compile-time wrapper that emits a `FOREACH_EVENT` with the appropriate allocator and binds the lambda body as the `block_id`. The lambda's parameter list maps to the convention slots. `each_voice` (this PRD) is distinct from `map` (the companion event-transforms PRD); see §13.
 
-**Restriction in v1**: the operand of `map`/`each`/`fold` must be one of:
+**Restriction in v1**: the operand of `each_voice`/`each`/`fold` must be one of:
 - a pattern result (`pat(...)`, `note(...)`, `seq(...)`),
 - a MIDI input event stream,
 - a literal array of records.
@@ -336,13 +379,13 @@ Each is a thin compile-time wrapper that emits a `FOREACH_EVENT` with the approp
 
 ### 5.1 Swap-Time Expansion (Default for L2)
 
-Used by every non-`@inline` user `fn` call. The body lives once in `bytecode.blocks`; at swap-prepare time it is inlined into `bytecode.main` at every `BLOCK_CALL` site with buffer indices and state IDs patched. Audio thread sees a flat, indistinguishable-from-today instruction stream.
+Used by every non-`#inline` user `fn` call. The body lives once in `bytecode.blocks`; at swap-prepare time it is inlined into `bytecode.main` at every `BLOCK_CALL` site with buffer indices and state IDs patched. Audio thread sees a flat, indistinguishable-from-today instruction stream.
 
 Cost: bytecode size grows linearly with call-site count (same as today's inlining). Benefit: zero audio-path complexity, zero new VM machinery for the L2 use case, identical runtime characteristics.
 
 ### 5.2 Convention Slots (For Event Iterators)
 
-Used by `FOREACH_EVENT` and its specializations (POLY, map, each, fold). The block body reads inputs from a fixed bank of param-buffer indices — for POLY today these are 5 slots (freq, gate, vel, trig, out); for `map(n => ...)` the layout is one slot per record field accessed (`n.freq`, `n.vel`, etc.) plus an output slot.
+Used by `FOREACH_EVENT` and its specializations (POLY, `each_voice`, `each`, `fold`). The block body reads inputs from a fixed bank of param-buffer indices — for POLY today these are 5 slots (freq, gate, vel, trig, out); for `each_voice(n => ...)` the layout is one slot per record field accessed (`n.freq`, `n.vel`, etc.) plus an output slot.
 
 The convention slot layout is part of the `FrameDescriptor` of each block. The caller writes event fields into the slots before dispatching into the body; the body reads from them. True body sharing in memory across all iterations.
 
@@ -367,11 +410,11 @@ This PRD extends the path scheme with:
 
 ### 6.2 MAX_STATES Sizing
 
-Currently 256 (`cedar/include/cedar/vm/state_pool.hpp:56-57`). With L2 swap-time expansion, state slot count for a 10-call-site fn equals 10 × (slots-per-body-copy) — same as today's per-site inlining. So L2 does *not* increase pressure relative to today.
+Currently 512 (`cedar/include/cedar/dsp/constants.hpp`). With L2 swap-time expansion, state slot count for a 10-call-site fn equals 10 × (slots-per-body-copy) — same as today's per-site inlining. So L2 does *not* increase pressure relative to today.
 
 L3 `FOREACH_EVENT` with `VOICE_POOL` allocator at `max_voices=N` consumes N × (state-slots-per-voice) slots. POLY today does the same.
 
-**Audit task before shipping:** instrument the swap-prepare pass to report peak state-slot consumption across representative user patches. If any patch exceeds 256, bump `MAX_STATES` to 512 (or 1024) — pure constant change, no architectural impact.
+**Audit task before shipping:** instrument the swap-prepare pass to report peak state-slot consumption across representative user patches. If any patch exceeds 512, bump `MAX_STATES` to 1024 — pure constant change, no architectural impact.
 
 ### 6.3 Hot-Swap Behavior
 
@@ -397,16 +440,16 @@ sig2 |> lp_chain(@, 1200) |> out(@)
 // after swap-prepare, sig1 and sig2 each see their own inlined copy with their own state.
 ```
 
-### 7.2 `@inline` — Opt Back into Per-Site Inlining
+### 7.2 `#inline` — Opt Back into Per-Site Inlining
 
 ```akkado
 // For hot-path micro-bodies where you genuinely want zero dispatch overhead
-@inline fn fast_mix(a, b) {
+#inline fn fast_mix(a, b) {
     a * 0.5 + b * 0.5
 }
 ```
 
-`@inline` matters mostly as a performance escape hatch. The default's bytecode-size win matters more for most user code. Two-instruction bodies in inner loops are a small minority; explicit annotation is fine.
+`#inline` matters mostly as a performance escape hatch. The default's bytecode-size win matters more for most user code. Two-instruction bodies in inner loops are a small minority; explicit annotation is fine.
 
 ### 7.3 `when` — Block-Rate Conditional Bypass (L1)
 
@@ -418,7 +461,7 @@ sig |> when(mute_toggle, @ * 0, @ |> reverb(@))
 hit_chain |> when(hit_button, @ |> dist(@, 4) |> lp(@, 800), @)
 ```
 
-Distinct from `select(cond, a, b)` (sample-rate, both branches always evaluated). The compiler emits `SKIP_IF_NONZERO` / `SKIP_IF_ZERO` opcodes.
+Distinct from `select(cond, a, b)` (sample-rate, both branches always evaluated) and from the deferred compile-time `if/else` (resolved at codegen time, eliminates one branch from bytecode). See §4.1's "Relationship to `select()`" table for the full three-way comparison. The compiler emits `SKIP_IF_NONZERO` / `SKIP_IF_ZERO` opcodes.
 
 ### 7.4 `for` / `loop` — Bounded Static Iteration (L1)
 
@@ -437,11 +480,11 @@ freqs.each(f => osc("sin", f) * 0.25) |> out(@)
 ### 7.5 Higher-Order DSL (L3)
 
 ```akkado
-// map: returns mixed output of all per-event signals
+// each_voice: per-event UGen instantiation; mixed output of all per-event signals
 pat("c4 e4 g4") as notes
-notes.map(n => osc("sin", n.freq) * 0.5) |> out(@)
+notes.each_voice(n => osc("sin", n.freq) * 0.5) |> out(@)
 
-// each: side-effecting, no return aggregation
+// each: side-effecting, no return aggregation (each iteration calls out() itself)
 notes.each(n => osc("sin", n.freq) |> out(@))
 
 // fold: shared accumulator
@@ -450,16 +493,54 @@ notes.fold(0.0, (acc, n) => acc + n.freq)
 
 Lambda parameter names map to convention slots; record field access (`n.freq`) maps to the per-iteration field-slot indices.
 
-### 7.6 Compile-Time Errors
+> **Naming note.** `each_voice` is the per-event signal-mixer. `map`, in this codebase, belongs to the companion `prd-runtime-event-transforms.md` and means per-event *field rewrite* (closure returns a record). See §13 for the rationale. Picking distinct names avoids two PRDs claiming the same `.map(...)` surface.
+
+### 7.6 Parser Changes
+
+This PRD adds three new pieces of Akkado surface syntax. None require changes to operator precedence; all extend the parser at parse-statement and parse-primary positions.
+
+**`#inline` annotation (statement-prefix):**
+
+A `#` token followed by an identifier at statement position parses as an *annotation* attached to the next `fn` declaration. Annotations are a small open-ended set; v1 defines `#inline` only.
+
+```akkado
+#inline fn fast_mix(a, b) { a * 0.5 + b * 0.5 }
+```
+
+`#` is reserved as the annotation-prefix lexeme. Outside annotation-context, `#` is reserved (currently produces a lex error). Future annotations (`#cold`, `#deprecated`, …) reuse the same lexical rule. This avoids any clash with the canonical hole token `@`.
+
+**`loop(N) { body }` block-expression:**
+
+`loop` is a contextual keyword (parsed as identifier in non-statement positions, treated as a control-flow form when followed by `(`). The body is a brace-delimited expression block whose value is the final expression (so it composes with `|>`).
+
+```akkado
+sig |> loop(4) { @ |> allpass(@, 800, 0.7) } |> out(@)
+```
+
+The count argument must be a **compile-time constant**: an integer literal, or a `let`-bound name whose initializer constant-folds to an integer. For v1, "constant-folds" means: integer literal, arithmetic on integer literals, or another `loop`-eligible name. A small compile-time evaluator (already implicit in mini-notation pre-processing) is extended to handle these cases. Non-foldable RHS produces `E211` (see §7.6).
+
+**`when(cond, true_branch, false_branch)` builtin:**
+
+`when` is a regular builtin call — no parser change. Lowering to `SKIP_IF_*` opcodes happens at codegen time. (The block-rate semantics matter at codegen, not at parse time.)
+
+### 7.7 Compile-Time Errors
+
+Codes are picked in the E200-block to avoid collision with `prd-runtime-event-transforms.md` (E170-E182).
 
 | Code | Trigger | Message |
 |---|---|---|
-| `E2XX` | Recursive `fn` definition (`fn foo() -> foo()`) | "recursive fn '<name>' not supported in v1 — see follow-up PRD" |
-| `E2XX` | Block-ref captured into a record field or returned from a fn | "block-ref values cannot escape the compile unit in v1" |
-| `E2XX` | `map`/`each`/`fold` applied to a non-event-stream operand | "map/each/fold operand must be a pattern, MIDI input, or array literal" |
-| `E2XX` | `LOOP_STATIC` with non-constant count | "loop count must be a compile-time constant" |
-| `E2XX` | `@inline` on a recursive fn | (same as recursion error) |
-| `E2XX` | `BLOCK_CALL` body exceeds expansion size limit (configurable) | "expanded fn body exceeds N instructions — add @inline or split" |
+| `E200` | Recursive `fn` definition (`fn foo() -> foo()`) | "recursive fn '<name>' not supported in v1 — see follow-up PRD" |
+| `E201` | Block-ref captured into a record field or returned from a fn (escapes compile unit) | "block-ref values cannot escape the compile unit in v1" |
+| `E202` | `each_voice`/`each`/`fold` applied to a non-event-stream operand | "each_voice/each/fold operand must be a pattern, MIDI input, or array literal" |
+| `E203` | `loop()` (lowering to `LOOP_STATIC`) with non-constant count | "loop count must be a compile-time constant (integer literal or const-folded name)" |
+| `E204` | `#inline` on a recursive fn | (same as E200) |
+| `E205` | `BLOCK_CALL` body exceeds expansion size limit (configurable; default 1024 instructions per expanded body) | "expanded fn body exceeds N instructions — add #inline or split" |
+| `E206` | `#inline` annotation applied to anything that isn't a `fn` declaration | "#inline must precede a `fn` declaration" |
+| `E207` | `when()` branches have mismatched output arity (one returns 1 channel, the other returns 2) | "when() branches must have matching output channel count" |
+| `E208` | `BLOCK_BIND` slot index ≥ `frame.param_count` for the target block | "slot index N is beyond the target block's parameter count" |
+| `E209` | Unknown annotation (e.g., `#unknown_name`) | "unknown annotation '#<name>' — see docs for supported annotations" |
+| `E210` | `#max_depth(N)` on a non-recursive fn (placeholder for the recursion follow-up; rejected in v1) | "#max_depth annotation reserved for future recursion support" |
+| `E211` | `loop()` count is a non-foldable expression (e.g., references a runtime signal) | "loop count must constant-fold to an integer" |
 
 ---
 
@@ -518,15 +599,17 @@ Three independent PRs. Each one is shippable on its own.
 - `when(toggle_off, expensive, cheap)` shows ≥ 80% CPU reduction vs `select` equivalent.
 - All existing tests pass.
 
+**Rollback plan:** L1 is fully additive (no existing opcodes or builtins changed). Revert the PR; new opcodes disappear from the enum; `when`/`loop` builtins disappear from the builtin table. No saved-bytecode compatibility risk — programs using `when()`/`loop()` fail to compile post-revert (clean failure mode).
+
 ### Phase 2 — L2: Subprogram Table & BLOCK_CALL (PR2)
 
 **Scope:**
 - Bytecode format extension: `Subprogram` table.
 - New opcodes: `BLOCK_CALL`, `RET`, optional `BLOCK_BIND`.
-- Akkado codegen emits `Subprogram` entries for all `fn` definitions (with `@inline` opt-out).
+- Akkado codegen emits `Subprogram` entries for all `fn` definitions (with `#inline` opt-out).
 - Swap-prepare pass: `expand_block_calls()` — walks main program, inlines bodies, patches buffer indices and state IDs.
 - State-ID path scheme extended with `"block:<name>@callsite_<N>"`.
-- New Akkado annotation: `@inline`.
+- New Akkado annotation: `#inline`.
 - Compile error for recursive `fn` definitions.
 
 **Files touched:**
@@ -543,6 +626,8 @@ Three independent PRs. Each one is shippable on its own.
 - Pre-expansion bytecode for a 10-call-site fn is ≥ 5× smaller than post-expansion (proves the table works).
 - Hot-swap state preservation works per-call-site (existing hot-swap test harness extended).
 - Recursive `fn` rejected at compile time with clear error.
+
+**Rollback plan:** Higher-risk than L1 because codegen for *all* `fn` definitions changes. Mitigation: ship behind a compiler flag `--inline-fns` (default off after acceptance passes); the flag forces per-site inlining (existing path) for an entire compile unit. Revert path: flip default, revert bytecode-format version bump, drop `BLOCK_CALL`/`BLOCK_BIND`/`RET` from the opcode enum, drop `Subprograms` table from the wire format. Saved-bytecode risk: any program saved with the new format would fail to load post-revert; users must recompile from source. Acceptable since saved bytecode is not the primary distribution channel.
 
 ### Phase 3 — L3: FOREACH_EVENT, POLY Migration, Higher-Order DSL (PR3)
 
@@ -567,9 +652,11 @@ Three independent PRs. Each one is shippable on its own.
 
 **Acceptance:**
 - All existing POLY tests pass bit-exact.
-- `pat(...).map(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI.
+- `pat(...).each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI.
 - A 300-second simulated render shows zero allocation events on the audio thread.
 - Hot-swap state preservation works across POLY migration (existing PolyAllocState path-hash unchanged).
+
+**Rollback plan:** Highest-risk phase because POLY behavior changes substrate. Mitigation: ship `FOREACH_EVENT` alongside existing `POLY_BEGIN`/`POLY_END` for one release cycle with a compiler flag `--legacy-poly` (default off after gate-1 acceptance: all POLY tests pass bit-exact). If a regression is detected post-release: flip default; existing `execute_poly_block()` code path is still intact. To revert fully: drop `FOREACH_EVENT` opcode + executor + higher-order builtins + Subprogram entries that target poly bodies; restore POLY codegen at `codegen_functions.cpp:1992-2285`. Saved-bytecode programs targeting `FOREACH_EVENT` will fail post-revert (clean recompile required). The `--legacy-poly` flag is the recommended single-knob disable for hot-fix scenarios.
 
 ---
 
@@ -592,7 +679,7 @@ These are gate-1 merge criteria for their respective PRs.
 
 Extend the existing hot-swap test harness with:
 - A program that defines a `fn` called from 3 sites; verify per-call-site state preservation across a swap that modifies an unrelated part of the program.
-- A program with a `pat(...).map(...)` block; verify per-iteration state preservation across pattern edits.
+- A program with a `pat(...).each_voice(...)` block; verify per-iteration state preservation across pattern edits.
 - A program using `poly()` (post-migration); verify all existing PolyAllocState preservation invariants hold.
 
 ### 10.4 CPU Benchmark (L1)
@@ -616,12 +703,12 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 
 ## 11. Open Questions (For Resolution During Implementation)
 
-1. **MAX_STATES sizing.** Bump from 256 to 512 or 1024? Measure peak slot consumption across representative patches in Phase 2 before deciding. Constant change only, but worth getting right once.
+1. **MAX_STATES sizing.** `MAX_STATES` is already 512. Measure peak slot consumption across representative patches in Phase 2 — is 512 still enough, or do we need to bump to 1024? Constant change only, but worth getting right once.
 2. **`Subprogram` dedup at swap time?** If two call-sites have identical buffer bindings, dedupe the expanded copies? Probably not worth it in v1; expansion size matches today's inlining cost.
 3. **Block-ref capture exhaustivity.** v1 captures buffer indices + constants. Should it also capture other block-refs? Records? Defer to L3 follow-up; reject explicitly in v1 with clear error.
 4. **`SKIP_IF_ZERO` predicate semantics.** Currently spec'd as "first sample of block." Should it also support "any sample in block is nonzero" / "all samples" / "RMS > threshold"? Decided per use case in Phase 1; document the chosen semantics explicitly.
 5. **POLY backward-compat for saved bytecode.** Keep `POLY_BEGIN`/`POLY_END` as no-op aliases for one release cycle, or break compat immediately? Default proposal: alias for one cycle, drop in the release after L3 ships.
-6. **`@inline` for very small fns.** Heuristic auto-inlining (≤ 3 instructions auto-inlined)? Recommend explicit-only in v1 for predictability; revisit if pre-expansion bytecode-size wins are smaller than expected in practice.
+6. **`#inline` for very small fns.** Heuristic auto-inlining (≤ 3 instructions auto-inlined)? Recommend explicit-only in v1 for predictability; revisit if pre-expansion bytecode-size wins are smaller than expected in practice.
 7. **Hot-swap semantics for renamed blocks.** Document user-visible behavior in Phase 2 user docs: renaming a `fn` loses its state, same as renaming any other named identifier. (Already implied by the existing FNV-1a path-hash scheme.)
 8. **CLI/web debug surface for subprogram tables.** Phase 2 needs `bytecode_dump.cpp` and the web UI to render both subprogram tables and expanded/unexpanded views. UX details TBD in Phase 2 design.
 9. **Where does `swap_prepare.cpp` live?** Investigate existing swap-prepare codepath during Phase 2 implementation; place new expansion pass next to it. May not need a new file.
@@ -631,7 +718,7 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 
 ## 12. Out of Scope (Explicit Non-Goals, Restated)
 
-- **True recursion.** Compile-time-unrolled recursion with `@max_depth(N)` annotation is a follow-up PRD. v1 rejects recursive `fn` definitions at compile time.
+- **True recursion.** Compile-time-unrolled recursion with `#max_depth(N)` annotation is a follow-up PRD. v1 rejects recursive `fn` definitions at compile time.
 - **Frame-relative addressing.** Defer until a use case can't be served by swap-time expansion or convention slots. Most likely triggered by the recursion follow-up.
 - **First-class fn values escaping the compile unit.** BlockRef values in v1 are capture-only-by-buffer-index-and-constant, single-call-site, consumed by stdlib higher-order operators only.
 - **Backward JMP / arbitrary control flow.** Forward skips only; no cycles at the instruction-stream level.
@@ -641,11 +728,37 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 
 ---
 
-## 13. References
+## 13. Relation to `prd-runtime-event-transforms.md`
+
+The companion draft [prd-runtime-event-transforms.md](prd-runtime-event-transforms.md) declares (its §0) a **hard external dependency** on a separate "runtime closure infrastructure" PRD: a `Closure` runtime value type, an `INVOKE_CLOSURE` opcode, and Akkado codegen support for closure values as `TypedValue` variants. **This PRD is that infrastructure PRD.** The mapping:
+
+| event-transforms PRD term | This PRD's mechanism |
+|---|---|
+| `Closure` runtime value | `BlockRef` (`{block_id, captured_buf_indices, capture_count}`) — see §4.3.3 |
+| `INVOKE_CLOSURE` opcode | `BLOCK_CALL` (and, when invoked per-event, `FOREACH_EVENT` dispatching into the bytecode's subprogram table) |
+| Closure-as-`TypedValue` codegen | BlockRef as a compile-time value flowing through Akkado's existing `TypedValue` (new `ValueType::BlockRef` variant) — see §4.3.3 |
+
+**Required adjustment to BlockRef semantics for event-transforms compatibility.** §4.3.3 lists v1 BlockRef restrictions including "does not survive across hot-swap as a value" and "cannot be stored in a record field". The event-transforms PRD requires closure handles stored in `StateInitData` so its `EVENT_MAP` opcode can dispatch the closure per event. To satisfy that, this PRD relaxes the restriction *only* for: (1) BlockRefs consumed directly by an `EVENT_MAP` / `EVENT_FILTER` / `FOREACH_EVENT` opcode at the call site they were declared in, (2) the BlockRef is stored as a `BlockId + capture-vector` reference in `StateInitData`, not as a heap-allocated value. The "no escape across hot-swap boundaries" and "no return from a fn" restrictions stand; only the "no storage in StateInitData" restriction lifts. Concretely: `event_map(events, (e) -> {...})` is supported; `fn make_xform() = (e) -> {...}` returning a closure is not.
+
+**Disambiguation of `notes.map(...)`.** Both PRDs proposed a `map` method on event streams with different semantics:
+
+| PRD | Name proposed | Semantics |
+|---|---|---|
+| **This PRD** (§7.5) | `notes.map(n => osc(...))` | Per-event UGen instantiation, mixed output. Closure body is a signal-producing expression; output is the sum across all currently-active events. |
+| **event-transforms PRD** (§3.2) | `notes.map(n => {note: ...})` | Per-event field rewrite. Closure body returns a record; output is an event stream with rewritten fields. |
+
+These are different operations and need different surface names. **Resolution (committed in this PRD):** this PRD's `notes.map(...)` is renamed to **`notes.each_voice(...)`** (matches the L3 stdlib op set: `each`, `each_voice`, `fold`). The event-transforms PRD keeps `notes.map(...)` for field rewrites. Both PRDs need to update their respective §7.5 / §3.3.
+
+The event-transforms PRD also needs to (a) drop its §0 from "hard external dependency" to "depends on this PRD", and (b) cross-link this section. That edit belongs in the event-transforms PRD, not here, but is required before either ships.
+
+---
+
+## 14. References
 
 | Doc | Relation |
 |---|---|
-| [prd-conditionals-logic.md](prd-conditionals-logic.md) | Existing sample-rate `SELECT` + comparators; this PRD picks up the "compile-time conditionals (if/else statements)" that PRD deferred |
+| [prd-runtime-event-transforms.md](prd-runtime-event-transforms.md) | Companion draft; depends on this PRD for closure infrastructure (see §13) |
+| [prd-conditionals-logic.md](prd-conditionals-logic.md) | **DONE** — sample-rate `SELECT` + comparators; this PRD adds `when()` (block-rate, distinct from `select`), NOT the "compile-time if/else" that PRD listed as future work |
 | [prd-advanced-functions.md](prd-advanced-functions.md) | Existing user-fn machinery; explicitly states "no runtime function objects, no new VM opcodes" — this PRD is where we change that |
 | [prd-compile-time-functions.md](prd-compile-time-functions.md) | The compile-time fn model this PRD extends |
 | [prd-closure-pipe-operator.md](prd-closure-pipe-operator.md) | Closure capture model for block-refs |
@@ -654,13 +767,13 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 | [cedar-architecture.md](cedar-architecture.md) | Existing VM dispatch loop, state pool, DAG model |
 | [dsp-experiment-methodology.md](dsp-experiment-methodology.md) | 300-second long-render requirement |
 | `cedar/src/vm/vm.cpp:259-507` | Main dispatch loop + `execute_poly_block()` to be refactored |
-| `cedar/include/cedar/vm/state_pool.hpp:56-57` | `MAX_STATES = 256` — bump candidate |
+| `cedar/include/cedar/dsp/constants.hpp` | `MAX_STATES = 512` — bump candidate to 1024 if audit warrants |
 | `akkado/src/codegen_functions.cpp:1992-2285` | Current POLY codegen — port target |
 | `akkado/include/akkado/codegen.hpp:351` | Path-hash mechanism extended for blocks |
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 - **Block** — a callable subprogram body (a sequence of Cedar instructions terminated by `RET`). Stored in `bytecode.blocks`.
 - **BLOCK_CALL** — opcode marker for a call site. Pre-swap-expansion: a dispatch instruction. Post-swap-expansion (L2): replaced by an inlined copy of the body.
@@ -671,5 +784,5 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 - **Frame-relative addressing** — addressing scheme where opcodes reference buffers via `frame + N` instead of absolute indices. Out of scope for v1.
 - **Subprogram table** — `bytecode.blocks`: the side-array of callable block bodies, separate from `bytecode.main`.
 - **Swap-time expansion** — the swap-prepare pass that inlines `BLOCK_CALL` sites with absolute buffer indices and state IDs patched. Audio thread sees flat dispatch only.
-- **`@inline`** — Akkado annotation opting back into per-site inlining for a `fn`. Default is shared block.
+- **`#inline`** — Akkado annotation opting back into per-site inlining for a `fn`. Default is shared block.
 - **`when()`** — block-rate conditional bypass builtin (L1). Distinct from sample-rate `select()`.
