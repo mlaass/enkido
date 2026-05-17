@@ -1,0 +1,32 @@
+{
+	"name": "NKIDO — Live Coding Synthesis",
+	"short_name": "NKIDO",
+	"description": "Live coding environment for audio synthesis with the Akkado DSL.",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "any",
+	"theme_color": "#0a0a0a",
+	"background_color": "#0a0a0a",
+	"categories": ["music", "productivity", "developer-tools"],
+	"icons": [
+		{
+			"src": "/img/icon-192.png",
+			"sizes": "192x192",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "/img/icon-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "/img/icon-maskable-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "maskable"
+		}
+	]
+}

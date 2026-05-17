@@ -278,4 +278,43 @@
 		z-index: 1100;
 		pointer-events: none;
 	}
+
+	/* Narrow viewports (tablet / phone): collapse the side panel into a
+	   bottom strip so the editor keeps full width. Overrides the
+	   user's saved panel-position silently. */
+	@media (max-width: 768px) {
+		.main {
+			flex-direction: column;
+		}
+		/* Panel goes below the editor regardless of left/right setting. */
+		.main :global(.panel.left),
+		.main :global(.panel.right) {
+			order: 2;
+		}
+		.editor-container {
+			order: 1;
+			min-height: 0;
+		}
+	}
+
+	/* Phone: pull header padding in and hide non-essential icon-button
+	   labels so transport stays usable. */
+	@media (max-width: 480px) {
+		.header {
+			padding: 0 var(--spacing-sm);
+			gap: var(--spacing-xs);
+		}
+		.header-left :global(.logo svg) {
+			width: 20px;
+			height: 20px;
+		}
+		.keep-button span,
+		.share-button span {
+			display: none;
+		}
+		.keep-button,
+		.share-button {
+			padding: 6px 8px;
+		}
+	}
 </style>

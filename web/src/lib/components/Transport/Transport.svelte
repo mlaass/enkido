@@ -209,4 +209,34 @@
 		width: 36px;
 		text-align: right;
 	}
+
+	/* Phone: tighten transport — drop volume-control entirely (still
+	   adjustable from the settings panel) and shrink BPM. Keeps play/stop
+	   as primary tap targets at full size. */
+	@media (max-width: 480px) {
+		.transport {
+			gap: var(--spacing-sm);
+		}
+		.volume-control {
+			display: none;
+		}
+		.bpm-control label {
+			display: none;
+		}
+		.bpm-control input {
+			width: 48px;
+		}
+	}
+
+	/* Touch input: bump play/stop hit targets above the 44px guideline. */
+	@media (pointer: coarse) {
+		.play-button {
+			width: 44px;
+			height: 44px;
+		}
+		.stop-button {
+			width: 40px;
+			height: 40px;
+		}
+	}
 </style>

@@ -486,4 +486,30 @@
 		background-color: var(--accent-primary);
 		color: var(--bg-primary);
 	}
+
+	/* Mobile/tablet: panel collapses to a bottom strip with full width
+	   and a fixed share of viewport height. The inline width style is
+	   overridden via !important — `+page.svelte` reflows the layout to
+	   column direction at this breakpoint. */
+	@media (max-width: 768px) {
+		.panel.left,
+		.panel.right {
+			width: 100% !important;
+			max-width: 100% !important;
+			height: 45vh;
+			max-height: 45vh;
+			min-height: 180px;
+			border-left: none;
+			border-right: none;
+			border-top: 1px solid var(--border-default);
+		}
+		.panel.collapsed {
+			height: auto !important;
+			min-height: 0;
+		}
+		/* Resize handle has no meaning when the panel is full-width. */
+		.panel :global(.resize-handle) {
+			display: none;
+		}
+	}
 </style>
