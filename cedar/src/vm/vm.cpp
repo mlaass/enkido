@@ -196,18 +196,29 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
     const ProgramSlot* old_slot = swap_controller_.previous_slot();
     const ProgramSlot* new_slot = swap_controller_.current_slot();
 
-    // Snapshot the live state pool so old + new programs each advance
-    // their stateful opcodes from the same starting point. Without this,
-    // dual-execution of the two programs against the shared pool causes
-    // OscState/EnvState/filter/delay-write_pos to advance twice per
-    // crossfade block — manifesting as audible clicks at the swap
-    // boundary (phase jumps in the oscillator, etc.). After both
-    // executions the live pool holds the NEW program's natural
-    // progression, which is what the next non-crossfade block expects.
+    // Deep-snapshot the entire live audio state so old + new programs
+    // each advance from the same starting point. Two parts:
+    //
+    //   1. shadow_state_pool_ ← state_pool_  — the StateEntry table
+    //      (OscState phase, EnvState stage, filter memory, delay
+    //      write_pos, etc., plus bump-allocator side effects).
+    //
+    //   2. shadow_audio_arena_ ← audio_arena_  — every DSP buffer
+    //      content (delay lines, reverb tank, sample voices, etc.)
+    //      that DSP states point into. Arena base address never moves,
+    //      so the pointers stored in state structs stay valid; only
+    //      the bytes those pointers reference are restored.
+    //
+    // Without this, dual-execution against shared state + shared buffers
+    // would double-mutate everything — clicks at swap boundary from
+    // oscillator phase jumps, reverb tank corruption, etc.
     shadow_state_pool_.copy_states_from(state_pool_);
+    [[maybe_unused]] const bool arena_snapshot_ok =
+        shadow_audio_arena_.copy_used_from(audio_arena_);
 
-    // Execute old program into crossfade buffers. Its state mutations
-    // happen in state_pool_; we restore from shadow afterwards.
+    // Execute old program into crossfade buffers. Its state + arena
+    // mutations happen in the live state_pool_ / audio_arena_; we
+    // restore both from their shadows afterwards.
     if (old_slot && old_slot->instruction_count > 0) {
         execute_program(old_slot,
                        crossfade_buffers_.old_left.data(),
@@ -219,9 +230,12 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
                   crossfade_buffers_.old_right.end(), 0.0f);
     }
 
-    // Roll the pool back to the snapshot so the new program sees the
-    // same starting state the old program saw.
+    // Roll BOTH pool and arena back to the snapshot so the new program
+    // sees the same starting state + buffer contents the old program saw.
     state_pool_.copy_states_from(shadow_state_pool_);
+    if (arena_snapshot_ok) {
+        (void) audio_arena_.copy_used_from(shadow_audio_arena_);
+    }
 
     // Execute new program into crossfade buffers. Its state mutations
     // are the ones that stick.

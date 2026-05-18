@@ -534,6 +534,15 @@ private:
                 MAX_WAVETABLE_BANKS> wavetable_pins_{};
 #endif
     AudioArena audio_arena_;
+    // Shadow arena used together with shadow_state_pool_ for the crossfade
+    // path. perform_crossfade() deep-copies both the active StatePool and
+    // the audio arena's used bytes into these shadows, runs the old
+    // program (which mutates state_pool_ + audio_arena_ contents), then
+    // restores both. Without arena snapshotting, dual-execution would
+    // corrupt delay/reverb buffer contents at positions both programs
+    // wrote to in the same block. Same address space, only contents move
+    // — pointers stored in DSP state structs remain valid.
+    AudioArena shadow_audio_arena_;
 
     // Parsed MIDI files keyed by the name the akkado source uses (see
     // RequiredMidiSource::name_or_path). Pointer values live in audio_arena_;

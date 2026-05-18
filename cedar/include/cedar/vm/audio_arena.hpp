@@ -150,6 +150,29 @@ public:
         return p >= base && p < base + size_;
     }
 
+    // Deep-copy the used portion of `src` into this arena, including its
+    // bump-allocator offset. Used by the VM's crossfade path to snapshot
+    // every DSP buffer (delay lines, reverb tanks, sample voices, etc.)
+    // owned by stateful opcodes so the dual-execution of old + new
+    // programs against shared arena memory doesn't corrupt the state new
+    // expects to see at the swap moment.
+    //
+    // Pointers stored in DSP state structs reference src.memory_+offset
+    // positions. Those pointers remain valid after a memcpy back into the
+    // SAME arena (this method writes into THIS arena, not into src's),
+    // because the base address is unchanged — only contents move.
+    //
+    // Requires this arena to be at least as large as src.used(). Returns
+    // false if not. Caller is responsible for matching the snapshot/
+    // restore pair on the same two arenas to keep the offset in sync.
+    [[nodiscard]] bool copy_used_from(const AudioArena& src) noexcept {
+        if (!memory_ || !src.memory_) return false;
+        if (src.offset_ > size_) return false;
+        std::memcpy(memory_, src.memory_, src.offset_);
+        offset_ = src.offset_;
+        return true;
+    }
+
 private:
     float* memory_ = nullptr;
     std::size_t size_ = 0;
