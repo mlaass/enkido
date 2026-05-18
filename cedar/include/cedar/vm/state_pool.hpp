@@ -160,6 +160,62 @@ public:
         touched_.fill(false);
     }
 
+    // Copy the active-state table from another pool, element-wise.
+    // Used by VM::perform_crossfade to snapshot/restore the pool so that
+    // dual-execution of old + new programs doesn't double-advance
+    // stateful opcodes (OscState phase, EnvState stage, filter memory,
+    // delay write_pos, etc.). Fading pool and touched bits are NOT
+    // copied — they're owned by their respective pool's GC lifecycle.
+    //
+    // Non-copyable variant alternatives (currently `MidiQueueState`,
+    // whose SPSC atomics + held-note arrays cannot safely be cloned)
+    // are not transferred: when `src` has one in slot i, we leave OUR
+    // slot i untouched. This is intentional — MidiQueueState is a
+    // drain-once event stream, so the live pool's state must persist
+    // across snapshot/restore (drains applied by old should remain
+    // applied; they should not be re-emitted to new).
+    //
+    // Buffer pointers into the audio arena (DelayState `buffer`,
+    // SequenceState `output.events`, etc.) are copied as-is. This is
+    // correct for crossfade since both old and new execute against the
+    // same arena and the second program's writes naturally overwrite
+    // the first's at the same buffer positions.
+    void copy_states_from(const StatePool& src) noexcept {
+        state_count_ = src.state_count_;
+        state_id_xor_ = src.state_id_xor_;
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            // Preserve our MidiQueueState — see comment above.
+            if (states_[i].occupied &&
+                std::holds_alternative<MidiQueueState>(states_[i].state)) {
+                continue;
+            }
+            const auto& s = src.states_[i];
+            if (!s.occupied) {
+                states_[i].occupied = false;
+                states_[i].key = 0;
+                states_[i].state.template emplace<std::monostate>();
+                continue;
+            }
+            // Skip slots in src that hold non-copyable variants.
+            bool copied = false;
+            std::visit([&](const auto& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_copy_constructible_v<T>) {
+                    states_[i].state.template emplace<T>(v);
+                    copied = true;
+                }
+            }, s.state);
+            if (copied) {
+                states_[i].occupied = true;
+                states_[i].key = s.key;
+            } else {
+                states_[i].occupied = false;
+                states_[i].key = 0;
+                states_[i].state.template emplace<std::monostate>();
+            }
+        }
+    }
+
     // PRD prd-midi-input §7.3: walk every MidiQueueState that is occupied but
     // not touched in the current frame and patch its held notes to release at
     // `now_beats`. Called by VM::handle_swap between rebind_states (which

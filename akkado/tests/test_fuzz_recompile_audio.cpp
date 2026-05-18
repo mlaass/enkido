@@ -194,6 +194,200 @@ StressResult run_stress(const akkado::CompileResult& cr,
 
 }  // namespace
 
+// ----------------------------------------------------------------------------
+// Click localization diagnostic.
+// ----------------------------------------------------------------------------
+// Tagged [.localize] so it stays out of the default run. Renders one
+// failing scenario keeping the full audio in memory, then walks samples
+// to dump every click: surrounding sample values, block index, distance
+// to the nearest swap event, and the crossfade phase at that block.
+// Run with:
+//   akkado_tests "[.localize]"
+
+namespace {
+
+struct LocalizedClick {
+    std::uint64_t sample_idx;
+    std::uint32_t block_idx;
+    float prev_sample;
+    float cur_sample;
+    float delta;
+    std::uint32_t nearest_swap_block;
+    std::int64_t blocks_from_swap;       // negative = before, positive = after
+};
+
+std::vector<LocalizedClick> render_and_localize(
+    const akkado::CompileResult& cr,
+    std::uint32_t blocks_per_segment,
+    std::uint32_t swap_count,
+    std::uint32_t crossfade_blocks,
+    float click_threshold,
+    std::vector<float>& out_audio,
+    std::vector<std::uint32_t>& out_swap_blocks) {
+
+    cedar::VM vm;
+    vm.set_crossfade_blocks(crossfade_blocks);
+
+    auto insts = to_inst_vector(cr);
+    REQUIRE(vm.load_program(insts) == cedar::VM::LoadResult::Success);
+    std::vector<std::vector<cedar::Sequence>> seq_storage;
+    apply_seq_state_inits(vm, cr, seq_storage);
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    std::uint32_t block_idx = 0;
+
+    auto render_segment = [&](std::uint32_t n) {
+        for (std::uint32_t b = 0; b < n; ++b) {
+            vm.process_block(L.data(), R.data());
+            out_audio.insert(out_audio.end(), L.begin(), L.end());
+            ++block_idx;
+        }
+    };
+
+    render_segment(blocks_per_segment);
+    for (std::uint32_t s = 0; s < swap_count; ++s) {
+        auto insts2 = insts;
+        cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
+        for (int retry = 0; retry < 64; ++retry) {
+            res = vm.load_program(insts2);
+            if (res == cedar::VM::LoadResult::Success) break;
+            render_segment(1);
+        }
+        REQUIRE(res == cedar::VM::LoadResult::Success);
+        out_swap_blocks.push_back(block_idx);
+        apply_seq_state_inits(vm, cr, seq_storage);
+        render_segment(blocks_per_segment);
+    }
+
+    // Walk audio, locate clicks, attach context.
+    std::vector<LocalizedClick> clicks;
+    for (std::size_t i = 1; i < out_audio.size(); ++i) {
+        const float d = std::fabs(out_audio[i] - out_audio[i - 1]);
+        if (d <= click_threshold) continue;
+        LocalizedClick c{};
+        c.sample_idx = i;
+        c.block_idx = static_cast<std::uint32_t>(i / cedar::BLOCK_SIZE);
+        c.prev_sample = out_audio[i - 1];
+        c.cur_sample = out_audio[i];
+        c.delta = d;
+        // Find nearest swap block.
+        std::int64_t best = INT64_MAX;
+        for (std::uint32_t sb : out_swap_blocks) {
+            std::int64_t df = static_cast<std::int64_t>(c.block_idx) - sb;
+            if (std::llabs(df) < std::llabs(best)) {
+                best = df;
+                c.nearest_swap_block = sb;
+            }
+        }
+        c.blocks_from_swap = best;
+        clicks.push_back(c);
+    }
+    return clicks;
+}
+
+}  // namespace
+
+TEST_CASE("recompile-audio: localize click — tonal program",
+          "[.localize][diag]") {
+    const char* src =
+        R"(pat("c4 e4 g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+    auto cr = akkado::compile(src);
+    REQUIRE(cr.success);
+
+    std::vector<float> audio;
+    std::vector<std::uint32_t> swaps;
+    auto clicks = render_and_localize(
+        cr, /*bps=*/60, /*swaps=*/25, /*crossfade=*/3, /*thr=*/0.5f, audio, swaps);
+
+    // Dump up to first 10 clicks.
+    std::ostringstream report;
+    report << "\n  total clicks: " << clicks.size()
+           << "\n  total samples: " << audio.size()
+           << "\n  crossfade_blocks=3\n";
+    for (std::size_t k = 0; k < clicks.size() && k < 10; ++k) {
+        const auto& c = clicks[k];
+        // Print sample window x[n-2..n+2] for context.
+        report << "    [" << k << "] sample=" << c.sample_idx
+               << " block=" << c.block_idx
+               << " (blocks_from_nearest_swap=" << c.blocks_from_swap
+               << ", swap_block=" << c.nearest_swap_block << ")"
+               << " δ=" << c.delta
+               << "\n      window:";
+        for (std::int64_t off = -2; off <= 2; ++off) {
+            std::int64_t pos = static_cast<std::int64_t>(c.sample_idx) + off;
+            if (pos >= 0 && pos < static_cast<std::int64_t>(audio.size())) {
+                report << " x[" << off << "]=" << audio[pos];
+            }
+        }
+        report << "\n";
+    }
+    UNSCOPED_INFO(report.str());
+    // Make the test "fail" so Catch2 prints the INFO. Cleaner than CAPTURE
+    // gymnastics — this case only runs when explicitly requested.
+    CHECK(clicks.empty());
+}
+
+TEST_CASE("recompile-audio: localize click — fixed-freq osc (no pattern)",
+          "[.localize][diag]") {
+    // Strip the pattern out — bare oscillator with constant frequency.
+    // If clicks still appear, the bug is in the OSC opcode's reaction to
+    // hot-swap (state lost / phase reset). If clean, the pattern->osc
+    // freq-buffer path is somehow involved.
+    const char* src = R"(osc("sin", 220) |> out(% * 0.3, % * 0.3))";
+    auto cr = akkado::compile(src);
+    REQUIRE(cr.success);
+
+    std::vector<float> audio;
+    std::vector<std::uint32_t> swaps;
+    auto clicks = render_and_localize(
+        cr, /*bps=*/60, /*swaps=*/25, /*crossfade=*/0, /*thr=*/0.05f,
+        audio, swaps);
+
+    std::ostringstream report;
+    report << "\n  fixed-freq osc (crossfade=0): clicks=" << clicks.size()
+           << " over " << audio.size() << " samples (threshold=0.05)\n";
+    for (std::size_t k = 0; k < clicks.size() && k < 5; ++k) {
+        const auto& c = clicks[k];
+        report << "    sample=" << c.sample_idx
+               << " block=" << c.block_idx
+               << " (blocks_from_swap=" << c.blocks_from_swap << ")"
+               << " δ=" << c.delta << " "
+               << c.prev_sample << " → " << c.cur_sample << "\n";
+    }
+    UNSCOPED_INFO(report.str());
+    CHECK(clicks.empty());
+}
+
+TEST_CASE("recompile-audio: localize click — crossfade=0 (isolation)",
+          "[.localize][diag]") {
+    // Same program, but disable the crossfade. If clicks disappear, the
+    // crossfade mixing path is the source. If they remain, the click is
+    // in the swap/rebind itself or in the program-execution boundary.
+    const char* src =
+        R"(pat("c4 e4 g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+    auto cr = akkado::compile(src);
+    REQUIRE(cr.success);
+
+    std::vector<float> audio;
+    std::vector<std::uint32_t> swaps;
+    auto clicks = render_and_localize(
+        cr, /*bps=*/60, /*swaps=*/25, /*crossfade=*/0, /*thr=*/0.5f, audio, swaps);
+
+    std::ostringstream report;
+    report << "\n  crossfade=0 (no mixing): total clicks=" << clicks.size()
+           << " over " << audio.size() << " samples\n";
+    for (std::size_t k = 0; k < clicks.size() && k < 5; ++k) {
+        const auto& c = clicks[k];
+        report << "    sample=" << c.sample_idx
+               << " block=" << c.block_idx
+               << " (blocks_from_swap=" << c.blocks_from_swap << ")"
+               << " δ=" << c.delta << " "
+               << c.prev_sample << " → " << c.cur_sample << "\n";
+    }
+    UNSCOPED_INFO(report.str());
+    CHECK(clicks.empty());
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

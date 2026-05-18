@@ -514,6 +514,12 @@ private:
     // Memory pools (owned)
     BufferPool buffer_pool_;
     StatePool state_pool_;
+    // Shadow pool used by perform_crossfade(): snapshot of state_pool_
+    // taken right before dual-execution so the OLD program's stateful
+    // opcodes don't share-mutate state with the NEW program's. Without
+    // this, OscState/EnvState/etc. get advanced twice per crossfade
+    // block, producing a phase discontinuity at the swap boundary.
+    StatePool shadow_state_pool_;
     EnvMap env_map_;
     SampleBank sample_bank_;
 #ifndef CEDAR_NO_SOUNDFONT

@@ -196,7 +196,18 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
     const ProgramSlot* old_slot = swap_controller_.previous_slot();
     const ProgramSlot* new_slot = swap_controller_.current_slot();
 
-    // Execute old program into crossfade buffers
+    // Snapshot the live state pool so old + new programs each advance
+    // their stateful opcodes from the same starting point. Without this,
+    // dual-execution of the two programs against the shared pool causes
+    // OscState/EnvState/filter/delay-write_pos to advance twice per
+    // crossfade block — manifesting as audible clicks at the swap
+    // boundary (phase jumps in the oscillator, etc.). After both
+    // executions the live pool holds the NEW program's natural
+    // progression, which is what the next non-crossfade block expects.
+    shadow_state_pool_.copy_states_from(state_pool_);
+
+    // Execute old program into crossfade buffers. Its state mutations
+    // happen in state_pool_; we restore from shadow afterwards.
     if (old_slot && old_slot->instruction_count > 0) {
         execute_program(old_slot,
                        crossfade_buffers_.old_left.data(),
@@ -208,7 +219,12 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
                   crossfade_buffers_.old_right.end(), 0.0f);
     }
 
-    // Execute new program into crossfade buffers
+    // Roll the pool back to the snapshot so the new program sees the
+    // same starting state the old program saw.
+    state_pool_.copy_states_from(shadow_state_pool_);
+
+    // Execute new program into crossfade buffers. Its state mutations
+    // are the ones that stick.
     if (new_slot && new_slot->instruction_count > 0) {
         execute_program(new_slot,
                        crossfade_buffers_.new_left.data(),
