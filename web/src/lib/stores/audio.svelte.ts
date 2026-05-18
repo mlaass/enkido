@@ -241,6 +241,7 @@ interface BuiltinParam {
 	type?: string;
 	optionFields?: OptionFieldSpec[];
 	acceptsSpread?: boolean;
+	extended?: boolean;
 }
 
 interface BuiltinInfo {

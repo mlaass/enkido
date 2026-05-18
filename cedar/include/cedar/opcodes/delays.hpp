@@ -3,6 +3,7 @@
 #include "../vm/context.hpp"
 #include "../vm/instruction.hpp"
 #include "../dsp/constants.hpp"
+#include "drywet.hpp"
 #include "dsp_state.hpp"
 #include <cmath>
 #include <algorithm>
@@ -99,7 +100,7 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
             state.buffer[ch][state.write_pos[ch]] = x + delayed * fb;
             state.write_pos[ch] = (state.write_pos[ch] + 1) % state.buffer_size;
 
-            (ch == 0 ? out_l : out_r)[i] = x * dry + delayed * wet;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, delayed, dry, wet);
         }
     }
 }
@@ -293,7 +294,7 @@ inline void op_delay_write(ExecutionContext& ctx, const Instruction& inst) {
             state.buffer[ch][state.write_pos[ch]] = x + proc * fb;
             state.write_pos[ch] = (state.write_pos[ch] + 1) % state.buffer_size;
 
-            (ch == 0 ? out_l : out_r)[i] = x * dry + state.tap_cache[ch][i] * wet;
+            (ch == 0 ? out_l : out_r)[i] = drywet::mix(x, state.tap_cache[ch][i], dry, wet);
         }
     }
 }

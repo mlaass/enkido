@@ -101,6 +101,28 @@ std::string serialize_builtins_json() {
             json << "}";
         }
 
+        // Extended params (PRD prd-extended-params §5) — appended after positional
+        // ones so the editor's signature-help and autocomplete surface them as
+        // additional optional kwargs. Common case: unified dry/wet for effects
+        // whose 5 input slots are full.
+        const std::size_t base = info.total_params();
+        for (std::uint8_t e = 0;
+             e < info.extended_param_count && e < MAX_EXTENDED_PARAMS; ++e) {
+            if (info.extended_param_names[e].empty()) break;
+
+            if (!first_param) json << ",";
+            first_param = false;
+
+            const std::size_t idx = base + e;
+            json << "{\"name\":\"" << escape_json(info.extended_param_names[e]) << "\""
+                 << ",\"required\":false"
+                 << ",\"extended\":true";
+            if (info.has_default(idx)) {
+                json << ",\"default\":" << info.get_default(idx);
+            }
+            json << "}";
+        }
+
         json << "],\"description\":\"" << escape_json(info.description) << "\"}";
     }
 

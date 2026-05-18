@@ -26,6 +26,8 @@ subfeatures:
 
 Delay effects create copies of a signal offset in time for echoes, rhythmic effects, and spatial depth.
 
+All effects in this file expose `dry` and `wet` as their last two parameters (Category A defaults `dry=1, wet=0.5` for additive effects). See [Effect Parameters Convention](/docs/concepts/effect-parameters) for the full spec, including the **breaking change** that moved the delay family from fully-wet to a balanced parallel mix.
+
 ## delay
 
 **Delay** - Creates a delayed copy of the input signal with feedback.

@@ -4,6 +4,7 @@
 export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
 	"record-as-options": "concepts/record-as-options.md",
+	"effect-parameters": "concepts/effect-parameters.md",
 	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
 	"signals": "concepts/signals.md",
 	"05-testing-progression": "tutorials/05-testing-progression.md",
@@ -281,6 +282,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "runtime-controls",
 			"title": "Runtime Controls"
+		},
+		{
+			"slug": "effect-parameters",
+			"title": "Effect Parameters Convention"
 		}
 	]
 };
@@ -430,6 +435,56 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "record-as-options",
 		"category": "concepts",
 		"title": "Records as Builtin Options"
+	},
+	"effect": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"dry": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"wet": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"mix": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"parallel": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"parameters": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"category": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"additive": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"transform": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
+	},
+	"drywet": {
+		"slug": "effect-parameters",
+		"category": "concepts",
+		"title": "Effect Parameters Convention"
 	},
 	"glide": {
 		"slug": "utility",
@@ -2397,11 +2452,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Delays"
 	},
-	"effect": {
-		"slug": "delays",
-		"category": "builtins",
-		"title": "Delays"
-	},
 	"bank": {
 		"slug": "samples-loading",
 		"category": "builtins",
@@ -3464,16 +3514,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Reverbs"
 	},
-	"wet": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "Reverbs"
-	},
-	"dry": {
-		"slug": "reverbs",
-		"category": "builtins",
-		"title": "Reverbs"
-	},
 	"carrier": {
 		"slug": "fm-synthesis",
 		"category": "builtins",
@@ -3568,6 +3608,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
+	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Channel count isn't a runtime property — it's a type...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
