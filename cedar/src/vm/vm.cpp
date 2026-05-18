@@ -256,15 +256,28 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
 }
 
 bool VM::requires_crossfade(const ProgramSlot* old_slot,
-                           [[maybe_unused]] const ProgramSlot* new_slot) const {
+                           const ProgramSlot* new_slot) const {
     if (!old_slot || old_slot->instruction_count == 0) {
         // First program load - no crossfade needed
         return false;
     }
 
-    // Always crossfade when replacing an existing program
-    // The signature-based detection misses changes to stateless instructions
-    // (arithmetic, routing, output) which can cause audible pops
+    // Skip the crossfade when the new bytecode is byte-identical to the
+    // old. With deep-copy state preservation, NEW would produce the exact
+    // same audio as OLD; running the equal-power dual-execution + mix
+    // then introduces a (cos+sin) gain swell up to √2 at the midpoint
+    // that does NOT exist in either signal alone, audibly clicking at
+    // each block boundary inside the crossfade. ProgramSignature now
+    // includes content_hash covering every instruction byte, so this
+    // check catches every identity recompile (the dominant live-coding
+    // case: re-evaluate the same source after an unrelated edit).
+    //
+    // Different content always crossfades — the equal-power gain swell
+    // is the correct mix law for two uncorrelated signals.
+    if (new_slot && old_slot->signature == new_slot->signature) {
+        return false;
+    }
+
     return true;
 }
 

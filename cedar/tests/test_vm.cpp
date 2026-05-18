@@ -897,7 +897,7 @@ TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
         CHECK_FALSE(vm.is_crossfading());
     }
 
-    SECTION("always crossfade even for identical structure") {
+    SECTION("skip crossfade when bytecode is identical") {
         // Program 1: oscillator with state_id = 50
         std::array<Instruction, 2> program1 = {
             make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
@@ -908,17 +908,20 @@ TEST_CASE("VM crossfade", "[vm][hotswap][crossfade]") {
         std::array<float, BLOCK_SIZE> left{}, right{};
         vm.process_block(left.data(), right.data());
 
-        // Program 2: IDENTICAL to program 1 (same state_id, same values)
+        // Program 2: IDENTICAL to program 1. With deep-copy state
+        // preservation + content_hash signature, the swap path detects
+        // this and skips the crossfade entirely — the dual-execution +
+        // equal-power mix would otherwise introduce a (cos+sin) gain
+        // swell up to √2 at the midpoint that audibly clicks against
+        // the unswelled non-crossfade blocks on either side.
         std::array<Instruction, 2> program2 = {
-            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),  // Same freq
-            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 50)      // Same state_id
+            make_const_instruction(Opcode::PUSH_CONST, 0, 440.0f),
+            Instruction::make_unary(Opcode::OSC_SIN, 1, 0, 50)
         };
         (void)vm.load_program(program2);
         vm.process_block(left.data(), right.data());
 
-        // Always crossfade when replacing a program to avoid pops from
-        // stateless instruction changes (arithmetic, constants, routing)
-        CHECK(vm.is_crossfading());
+        CHECK_FALSE(vm.is_crossfading());
     }
 
     SECTION("state preserved even with crossfade") {

@@ -12,11 +12,13 @@ namespace cedar {
 // Packed metadata about a program for structural change detection
 struct ProgramSignature {
     std::uint32_t dag_hash = 0;           // FNV-1a of all semantic IDs in order
+    std::uint32_t content_hash = 0;       // FNV-1a of every instruction byte
     std::uint32_t instruction_count = 0;
     std::uint32_t state_id_count = 0;
 
     bool operator==(const ProgramSignature& other) const noexcept {
         return dag_hash == other.dag_hash &&
+               content_hash == other.content_hash &&
                instruction_count == other.instruction_count &&
                state_id_count == other.state_id_count;
     }
@@ -84,6 +86,15 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
     void compute_signature() noexcept {
         state_id_count = 0;
         std::uint32_t dag_hash = 2166136261u;  // FNV-1a offset basis
+        std::uint32_t content_hash = 2166136261u;
+        constexpr std::uint32_t FNV_PRIME = 16777619u;
+
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(instructions.data());
+        const std::size_t total_bytes = static_cast<std::size_t>(instruction_count) * sizeof(Instruction);
+        for (std::size_t i = 0; i < total_bytes; ++i) {
+            content_hash ^= bytes[i];
+            content_hash *= FNV_PRIME;
+        }
 
         for (std::uint32_t i = 0; i < instruction_count; ++i) {
             const auto& inst = instructions[i];
@@ -92,7 +103,7 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
             if (inst.state_id != 0) {
                 // Add to hash
                 dag_hash ^= inst.state_id;
-                dag_hash *= 16777619u;  // FNV-1a prime
+                dag_hash *= FNV_PRIME;
 
                 // Add to unique state IDs (check for duplicates)
                 bool found = false;
@@ -109,6 +120,7 @@ struct alignas(64) ProgramSlot {  // Cache-line aligned
         }
 
         signature.dag_hash = dag_hash;
+        signature.content_hash = content_hash;
         signature.instruction_count = instruction_count;
         signature.state_id_count = state_id_count;
     }
