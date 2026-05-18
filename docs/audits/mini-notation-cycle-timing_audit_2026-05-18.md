@@ -1,6 +1,6 @@
-> **Status: AUDIT** — Diagnosis + remediation plan for a documented bug. 2026-05-18.
+> **Status: PRD** — Audit + remediation plan. Treat as the implementation contract for the fix. Drafted 2026-05-18.
 
-# Mini-notation cycle timing — audit
+# Mini-notation cycle timing — audit + remediation PRD
 
 ## 1. Summary
 
@@ -16,6 +16,8 @@ Akkado's mini-notation does **not** follow the Strudel/TidalCycles cycle-fitting
 The pattern evaluator (`pattern_eval.cpp`) is correct — it produces normalized `[0, 1)` event times. The bug lives one step further down the pipeline, in `codegen_patterns.cpp`, where those normalized times are rescaled by `num_top_level_elements` beats rather than by the canonical `4` beats per cycle.
 
 **Tag: breaking-change required.** The fix changes audible timing of every existing patch whose top-level mini-notation does not have exactly 4 elements.
+
+**Relationship to other PRDs:** `docs/prd-mini-notation-micro-timing.md` (per-note nudge, dot-padding) assumes a Strudel-correct cycle base. That PRD is blocked on this one — fix cycle-fitting first, then `nudge:` percentages and dot-padding act on the canonical cycle.
 
 ---
 
@@ -37,6 +39,39 @@ Our own docs assert the same model:
 - `CLAUDE.md:102-105` — "1 cycle = 4 beats by default".
 
 These contracts are what the implementation breaks.
+
+### 2.1 What stays vs what changes
+
+| Layer | Pre-fix | Post-fix | Notes |
+|---|---|---|---|
+| Mini-notation parser (`pattern_*.cpp`) | normalized `[0, 1)` | normalized `[0, 1)` | unchanged |
+| Pattern evaluator (`pattern_eval.cpp`) | events in `[0, 1)` | events in `[0, 1)` | unchanged — correct already |
+| Codegen `cycle_length` value | beats, derived from `num_top_level_elements` | **cycles** (unitless), always `1.0` at base | refactored to cycle units; see §7 |
+| Transform machinery (`compute_transformed_events`) | mutates beats base | mutates cycles base | semantic-preserving multipliers (`.slow(2)` still → 2× duration) |
+| Cedar handoff (`seq_init.cycle_length`) | takes beats | takes beats; `×4` conversion happens at handoff | one boundary for cycles→beats |
+| Cedar VM (`sequencing.hpp`) | schedules in beats | schedules in beats | unchanged |
+| Existing `.akk` patches | implicitly tuned to broken model | audibly different unless wrapped in `.slow()` | §10 patch review |
+| Existing `test_codegen.cpp` assertions | encode broken behavior | rewritten to canonical base | §8 |
+| Existing `test_mini_notation.cpp` assertions | eval-only | eval-only | unchanged — should stay green |
+
+### 2.5 Edge cases (post-fix expected behavior)
+
+| Pattern | Element count | Expected duration | Expected event times |
+|---|---|---|---|
+| `pat("c4")` | 1 | 1 cycle (4 beats) | beat 0 only |
+| `pat("c4 e4")` | 2 | 1 cycle (4 beats) | beats 0, 2 |
+| `pat("c4 e4 g4")` | 3 | 1 cycle (4 beats) | beats 0, ~1.333, ~2.667 |
+| `pat("c4 e4 g4 b4")` | 4 | 1 cycle (4 beats) | beats 0, 1, 2, 3 |
+| `pat("c d e f g a b c5")` | 8 | 1 cycle (4 beats) | beats 0, 0.5, 1, …, 3.5 |
+| `pat("a [b c] d")` | 3 (nested group counts as 1 slot) | 1 cycle (4 beats) | beat 0 (a), beat ~1.333 (b), beat ~2.0 (c), beat ~2.667 (d). Inner `[b c]` subdivides *within its 1/3 slot* — eval handles this; codegen is unchanged. |
+| `pat("a@2 b")` (weighted) | 2 elements, total weight 3 | 1 cycle (4 beats) | beat 0 (a, holds for 2/3 cycle = ~2.667 beats), beat ~2.667 (b) |
+| `pat("~ ~ ~")` | 3 | 1 cycle (4 beats), zero events emitted | (silence — rests produce no `PatternEvent`) |
+| `pat("")` | 0 (or 1, depending on parse) | 1 cycle (4 beats), zero events | safe fallback; sequencer schedules nothing |
+| `pat("<a b c d>")` (alternation) | 1 top-level | 1 cycle (4 beats); alternates a→b→c→d across 4 successive cycles | inner alternation is an eval-stage concern; codegen sees 1 slot |
+| `pat("a b").slow(2)` | 2, then ×2 | 2 cycles (8 beats) | beats 0, 4 |
+| `pat("a b c d").fast(2)` | 4, then ÷2 | ½ cycle (2 beats) | beats 0, 0.5, 1, 1.5 |
+
+All edge-case behaviors above derive from the rule "cycle length is 1.0 cycle (4 beats) regardless of element count; transforms compose multipliers on cycles."
 
 ---
 
@@ -75,7 +110,7 @@ The bug:
 
 The literal comment is the smoking gun: **"each element = 1 beat"**. That is not the Strudel model.
 
-This `cycle_length` is then handed to the Cedar VM via `seq_init.cycle_length` (`codegen_patterns.cpp:1385`), which `cedar/include/cedar/opcodes/sequencing.hpp:325` reads as the scheduling cycle length in beats:
+This `cycle_length` is then handed to the Cedar VM via `seq_init.cycle_length` (`codegen_patterns.cpp:1385`), which `cedar/include/cedar/opcodes/sequencing.hpp:326` reads as the scheduling cycle length in beats:
 ```cpp
 state.cycle_length = cycle_length;
 ```
@@ -93,7 +128,7 @@ The pattern-transform machinery (`compute_transformed_events` and `out_cycle_len
 - Stage B sets `cycle_length = 8.0f` beats.
 - Cedar schedules them at beats `0, 1, 2, …, 7` — one per beat, pattern length = 8 beats = **2 cycles**.
 
-Strudel-correct behaviour would set `cycle_length = 4.0f` always, giving beats `0, 0.5, 1.0, …, 3.5` — eight half-beat notes in **1 cycle**.
+Strudel-correct behaviour would set the equivalent of `cycle_length = 4.0f` beats always, giving beats `0, 0.5, 1.0, …, 3.5` — eight half-beat notes in **1 cycle**.
 
 ---
 
@@ -103,67 +138,161 @@ Both `Explore` sub-agents that audited this stopped at `pattern_eval.cpp` and sa
 
 **Reviewer note for any future timing audit**: do *not* stop at `pattern_eval`. The contract is upheld in eval and broken in codegen. Trace `seq_init.cycle_length` end-to-end (eval → codegen → `cedar/include/cedar/opcodes/sequencing.hpp` → VM scheduler) before drawing conclusions.
 
+The end-to-end regression test prescribed in §8 exists specifically to defend against this failure mode — it pins the contract at the *scheduling* layer, not just at eval.
+
 ---
 
-## 5. Remediation — code
+## 5. Non-goals
 
-### Primary fix
+The following are explicitly out of scope for this PRD:
 
-Replace the element-count derivation with the canonical 4-beats-per-cycle constant at all three sites:
+- **Pattern-eval rewrite.** `pattern_eval.cpp` and `pattern_event.hpp` are correct. Do not touch.
+- **Parser changes.** Mini-notation grammar (tokens, group brackets, weights, alternation) is unchanged.
+- **New mini-notation operators.** Per-note nudge / dot-padding belongs to `docs/prd-mini-notation-micro-timing.md` and lands *after* this fix.
+- **Cedar VM scheduler changes.** The VM continues to consume `cycle_length` in beats; the codegen→VM boundary is the single conversion point.
+- **`count_top_level_elements()` removal.** The helper stays (still used for metadata and diagnostics); only its use as a `cycle_length` derivation is removed.
+- **Patch *re-authoring* beyond what's needed to recover musical intent.** §10 is a per-patch review pass, not a redesign.
+- **Migration tooling.** No automatic `.akk` rewriter; users follow the §12 migration recipe by hand.
 
-- `akkado/src/codegen_patterns.cpp:1328`
-- `akkado/src/codegen_patterns.cpp:1692`
-- `akkado/src/codegen_patterns.cpp:1844`
+---
+
+## 6. Phasing
+
+The remediation lands across three phases, each independently shippable.
+
+### Phase 1 — Engine fix + tests + CLAUDE.md (one PR; blocks release)
+
+- Apply the §7 code changes at the three primary sites and seven transform sites.
+- Rewrite the failing `test_codegen.cpp` assertions per §8.
+- Add the new end-to-end timing regression test (§8).
+- Add the canonical-cycle clause to `CLAUDE.md` per §9.
+
+**Exit criterion:** `akkado_tests` and `cedar_tests` are green; the new regression test asserts beat-times for 1-/2-/4-/8-element patterns and `.slow(2)`/`.fast(2)` transforms.
+
+### Phase 2 — Doc tightening + CHANGELOG (one PR; can land alongside Phase 1 or immediately after)
+
+- Tighten `docs/mini-notation-implementation.md:24` per §9.
+- Verify (no edits expected) `docs/mini-notation-reference.md`, `web/static/docs/reference/mini-notation/basics.md`.
+- Add CHANGELOG entry per §12 (the migration recipe).
+
+**Exit criterion:** doc examples render correctly against the post-fix engine; `bun run build:docs` re-indexes successfully.
+
+### Phase 3 — Per-patch review (many small PRs; rolls out over time)
+
+- Review every `.akk` patch listed in §10. For each patch: decide preserve-old-feel-via-`.slow()` vs. accept new musical intent vs. no change needed (already 4 top-level elements).
+- Each migration PR must note its per-patch decision in the PR description (preserve / re-tune / unchanged) for the record.
+
+**Exit criterion:** all enumerated patches reviewed; welcome-tutorial patches remain musically defensible for first-time users.
+
+Phases 1 + 2 can ship together; Phase 3 is a slower follow-up. The release tagged with Phases 1+2 should call out the breaking change and ship the migration recipe even if Phase 3 patch updates lag.
+
+---
+
+## 7. Remediation — code
+
+### Primary fix (refactor `cycle_length` to cycle units)
+
+At the codegen layer, store `cycle_length` in **cycles** (unitless, base `1.0f`) instead of beats. Apply the `×4 beats/cycle` conversion only at the Cedar handoff. This is a single boundary for the unit conversion and eliminates the element-count derivation.
+
+Replace at all three sites:
+
+- `akkado/src/codegen_patterns.cpp:1326-1328`
+- `akkado/src/codegen_patterns.cpp:1690-1692`
+- `akkado/src/codegen_patterns.cpp:1842-1844`
 
 Before:
 ```cpp
+// Determine cycle length from top-level element count (each element = 1 beat)
 std::uint32_t num_elements = compiler.count_top_level_elements(pattern_node);
 float cycle_length = static_cast<float>(std::max(1u, num_elements));
 ```
+
 After:
 ```cpp
-float cycle_length = 4.0f;  // 1 cycle = 4 beats (Strudel/Tidal convention)
+// cycle_length is in cycles (unitless); converted to beats at the Cedar handoff
+float cycle_length = 1.0f;
 ```
 
 `count_top_level_elements` is no longer needed at these call sites (still used elsewhere — leave the method intact, drop only the local uses).
 
-### Secondary fix — transform pipeline
+### Secondary fix — transforms become pure multipliers in cycles
 
-In `compute_transformed_events` (`codegen_patterns.cpp:2194-2735`), every `out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));` rewrite (lines `2214, 2233, 2280, 2295, 2308, 2328, 2735`) must use `4.0f` as the base. The multiplicative rewrites that follow (`*= factor`, `/= factor`, `*= 2.0f`, `*= frac`) keep composing on that constant.
+In `compute_transformed_events` (`codegen_patterns.cpp:2194-2735`), every `out_cycle_length` initialization rewrite at lines `2214, 2233, 2280, 2295, 2308, 2328, 2735`:
 
-Concretely: a `slow(2)` on a base pattern previously produced `cycle_length = num_elements * 2` beats; after the fix it produces `4.0f * 2 = 8` beats. A `fast(2)` on the same base previously produced `num_elements / 2`; after, it produces `2.0f` beats. The relative meaning of `.fast()/.slow()` is preserved; only the base changes.
+Before:
+```cpp
+out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+```
+
+After:
+```cpp
+out_cycle_length = 1.0f;  // in cycles; multiplicative transforms compose on this base
+```
+
+The existing transform compositions (`*= factor`, `/= factor`, `*= 2.0f`, `*= frac`) keep working on cycles: `slow(2)` makes the base `2.0` (2 cycles = 8 beats after handoff), `fast(2)` makes it `0.5` (½ cycle = 2 beats), and so on. Relative semantics are preserved exactly; only the units change.
+
+### Cedar boundary — convert cycles → beats once
+
+At `akkado/src/codegen_patterns.cpp:1385` (and the equivalent line in the polyphonic and timeline emit paths — find via grep for `seq_init.cycle_length = `):
+
+Before:
+```cpp
+seq_init.cycle_length = cycle_length;
+```
+
+After:
+```cpp
+seq_init.cycle_length = cycle_length * 4.0f;  // cycles → beats at the Cedar VM boundary
+```
+
+`cedar/include/cedar/opcodes/sequencing.hpp:326` continues to consume `cycle_length` as beats; the VM contract is unchanged.
 
 ### Do not touch
 
-`akkado/src/pattern_eval.cpp` and `akkado/include/akkado/pattern_event.hpp` are correct. The fix is purely the eval→codegen scaling step.
-
-### Open design question (flag for the fix PRD; do not solve here)
-
-`cycle_length` is a `float` representing beats. After the fix the base is always `4.0f` but transforms still mutate it. Worth considering whether `cycle_length` should be expressed in **cycles** (always `1.0` base) at the codegen level, with the `× 4 beats/cycle` factor applied at the Cedar boundary. That's a cleaner model but a bigger refactor — leave for the fix PRD to decide.
+`akkado/src/pattern_eval.cpp` and `akkado/include/akkado/pattern_event.hpp` are correct. The fix is purely the codegen scaling and unit-handling steps.
 
 ---
 
-## 6. Remediation — tests
+## 8. Remediation — tests
 
-Tests that pin the broken behaviour and will fail after the fix (rewrite to assert Strudel-correct values):
+### Tests that pin the broken behavior and will fail after the fix (rewrite to assert Strudel-correct values)
 
-- `akkado/tests/test_codegen.cpp:1375-1390` — `cycle_length` and `expected_duration = cycle_length / 3.0f` derived from element count. Recompute against `4.0f` base.
-- `akkado/tests/test_codegen.cpp:2183-2300` — `pat("c4 e4")` cluster: every `CHECK(si.cycle_length == Catch::Approx(2.0f))` and `Approx(4.0f)` and `Approx(1.0f)` (for fast/slow combinations) needs re-derivation. The new identity-pattern base is `4`, not `num_elements`.
+- `akkado/tests/test_codegen.cpp:1375-1390` — `cycle_length` and `expected_duration = cycle_length / 3.0f` derived from element count. Recompute against `cycle_length = 4.0f` (post-handoff) base.
+- `akkado/tests/test_codegen.cpp:2183-2300` — `pat("c4 e4")` cluster: every `CHECK(si.cycle_length == Catch::Approx(2.0f))` and `Approx(4.0f)` and `Approx(1.0f)` (for fast/slow combinations) needs re-derivation. The new identity-pattern post-handoff base is `4`, not `num_elements`.
 - `akkado/tests/test_codegen.cpp:3071-3442` — palindrome / linger / zoom / segment / run pattern-transform asserts: each `Approx(N.0f)` value was derived as `num_elements × transform_factor`; new expected values are `4 × transform_factor`.
 
-Tests that should keep passing (verify after the fix, no edit needed):
+### New test — end-to-end timing regression
+
+Add `akkado/tests/test_codegen_cycle_timing.cpp` (or extend an existing file) with explicit eval → codegen → VM-handoff assertions. The goal: catch any future regression that re-breaks codegen scaling while keeping eval-only tests green.
+
+Suggested assertions:
+
+| Test name | Input | Asserts |
+|---|---|---|
+| `cycle_timing_single_element` | `pat("c4")` | `seq_init.cycle_length == 4.0f`; 1 event at beat 0 |
+| `cycle_timing_two_elements` | `pat("c4 e4")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 2 |
+| `cycle_timing_four_elements` | `pat("c4 d4 e4 f4")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 1, 2, 3 |
+| `cycle_timing_eight_elements` | `pat("c d e f g a b c5")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 0.5, 1, …, 3.5 |
+| `cycle_timing_slow_2` | `pat("c d").slow(2)` | `seq_init.cycle_length == 8.0f`; events at beats 0, 4 |
+| `cycle_timing_fast_2` | `pat("c d e f").fast(2)` | `seq_init.cycle_length == 2.0f`; events at beats 0, 0.5, 1, 1.5 |
+| `cycle_timing_alternation` | `pat("<a b c d>")` | `seq_init.cycle_length == 4.0f`; 1 event per cycle, cycling a→b→c→d |
+| `cycle_timing_weighted` | `pat("a@2 b")` | `seq_init.cycle_length == 4.0f`; events at beats 0 (a, dur ~2.667) and ~2.667 (b) |
+
+Each assertion must trace through the actual compile → `seq_init` → scheduled event times, not just the eval stage. This is the test the audit in §4 says should have existed.
+
+### Tests that should keep passing (verify after the fix, no edit needed)
 
 - `akkado/tests/test_mini_notation.cpp` — operates on normalized `[0, 1)` event times from `pattern_eval`. Untouched by the fix; if these fail something else is wrong.
 - `akkado/tests/test_hot_swap_determinism.cpp:230`, `test_fuzz_determinism.cpp:233`, `test_fuzz_recompile_audio.cpp:59` — they only forward `init.cycle_length` to the VM; numeric values will shift but determinism properties hold.
 
 ---
 
-## 7. Remediation — docs
+## 9. Remediation — docs
 
 ### Reference docs (currently correct; verify after fix)
 
 - `docs/mini-notation-reference.md` — examples in the quick-reference table already describe the cycle-fitted model. Cross-check examples after the fix lands; no rewrites expected.
-- `docs/mini-notation-implementation.md:22` — currently says "one iteration of the pattern, *typically* 4 beats". Tighten to "exactly 4 beats by default" once the fix is in.
+- `docs/mini-notation-implementation.md:24` — currently says "one iteration of the pattern, *typically* 4 beats". Tighten to "exactly 4 beats by default" once the fix is in.
 - `web/static/docs/reference/mini-notation/basics.md` — currently the most Strudel-faithful doc. Validate examples post-fix.
 
 ### Source-of-truth additions
@@ -178,9 +307,9 @@ Tests that should keep passing (verify after the fix, no edit needed):
 
 ---
 
-## 8. Remediation — example patches
+## 10. Remediation — example patches
 
-The fix changes audible timing of every `.akk` patch whose mini-notation strings don't have exactly 4 top-level elements. The cleanup is a follow-up task — this audit only enumerates the affected files.
+The fix changes audible timing of every `.akk` patch whose mini-notation strings don't have exactly 4 top-level elements. The cleanup is Phase 3 — this section enumerates the affected files.
 
 ### `web/static/patches/*.akk` — main patches
 
@@ -217,12 +346,14 @@ These are seen by every first-time user and must continue to sound musically sen
 - `experiments/phase2_smoke.akk`
 - `experiments/phase21_smoke.akk`
 
-### Per-file review checklist
+### Per-file review checklist (Phase 3)
 
 For each affected patch, decide:
 1. Was the pattern authored to the broken "1 beat per step" model? → Likely sounds at wrong tempo after fix; consider wrapping in `.slow(num_elements/4)` to preserve the old feel, *or* leave alone if the new (faster, denser) timing is musically defensible.
 2. Was an external `trigger(N)` rate chosen to match the broken pattern length? → Will desynchronise after fix; recompute `N` against the cycle-fitted length.
 3. Does the patch use `pat()` with exactly 4 top-level elements? → No change needed, behaviour identical.
+
+**Per-patch decision logging.** Every Phase-3 migration PR must record its choice in the PR description: `preserve` (wrapped in `.slow()` to keep old feel) / `retune` (accepted new musical intent, possibly with light rewrites) / `unchanged` (4 top-level elements; no audible change). This is especially important for `welcome/` patches — the decision shouldn't be silent. The log creates a record for future onboarding-content reviews.
 
 ### Tutorials
 
@@ -230,21 +361,70 @@ The synthesis tutorial (`web/static/docs/tutorials/03-synthesis.md`) and the tes
 
 ---
 
-## 9. Breaking-change call-out
+## 11. Acceptance criteria
 
-- This is **not** a backwards-compatible fix. Every existing patch's audible timing changes unless it happens to have exactly 4 top-level mini-notation elements per pattern.
-- Strudel/Tidal users will find the new behaviour *less* surprising; existing Akkado users will need to relearn pattern timing intuition or apply `.slow()` / `.fast()` to recover the previous feel.
-- **Migration recipe** to put in release notes: an old N-element pattern that "felt right" can be recovered with `pat("…").slow(N / 4.0)`. E.g. an 8-element pattern that used to take 2 cycles now takes 1, so wrap in `.slow(2)` to restore.
-- Recommended rollout: bundle the fix in a minor-version release, with a `CHANGELOG.md` entry under **Breaking changes** and the migration recipe above. The release itself is user-driven via `scripts/bump-version.sh` — not run by the implementer.
+Phase 1 is complete when **all** of the following hold:
+
+1. The three primary `codegen_patterns.cpp` sites set `cycle_length = 1.0f` (in cycles), not derived from `count_top_level_elements`.
+2. The seven transform sites set `out_cycle_length = 1.0f`; multiplicative transform composition (`slow`, `fast`, `palindrome`, `linger`, `zoom`, `segment`, `run`) is preserved.
+3. The Cedar boundary at `seq_init.cycle_length = cycle_length * 4.0f` (and equivalent emit sites) performs the cycle→beat conversion.
+4. The new end-to-end timing regression test (§8) is added and passes, asserting beat-times through eval → codegen → `seq_init` for the 8 cases in §8.
+5. The existing `test_codegen.cpp` cycle-length assertions at lines `1375-1390`, `2183-2300`, `3071-3442` are rewritten and pass with the canonical-base values.
+6. `test_mini_notation.cpp` remains green without edits (eval invariant unchanged).
+7. `test_hot_swap_determinism.cpp`, `test_fuzz_determinism.cpp`, `test_fuzz_recompile_audio.cpp` remain green (determinism preserved; values shift).
+8. `CLAUDE.md` Clock System section includes the explicit canonical-cycle clause from §9.
+
+Phase 2 is complete when:
+
+9. `docs/mini-notation-implementation.md` is tightened per §9 and re-indexed via `bun run build:docs`.
+10. CHANGELOG entry per §12 is in place.
+
+Phase 3 is complete when:
+
+11. Every patch in §10 has been reviewed, with a logged preserve/retune/unchanged decision.
 
 ---
 
-## 10. Critical files referenced
+## 12. Breaking-change call-out
+
+- This is **not** a backwards-compatible fix. Every existing patch's audible timing changes unless it happens to have exactly 4 top-level mini-notation elements per pattern.
+- Strudel/Tidal users will find the new behaviour *less* surprising; existing Akkado users will need to relearn pattern timing intuition or apply `.slow()` / `.fast()` to recover the previous feel.
+- **Migration recipe**: an old N-element pattern that "felt right" can be recovered with `pat("…").slow(N / 4.0)`. E.g. an 8-element pattern that used to take 2 cycles now takes 1, so wrap in `.slow(2)` to restore.
+- Recommended rollout: bundle the fix in a **minor**-version release (pre-1.0 SemVer allows breaking changes in minor bumps), with a `CHANGELOG.md` entry under **Breaking changes**. The release itself is user-driven via `scripts/bump-version.sh` — not run by the implementer.
+
+### CHANGELOG draft (Keep a Changelog format)
+
+```markdown
+### Breaking changes
+
+- **Mini-notation cycle timing now matches Strudel/Tidal.** A mini-notation
+  string is exactly one cycle (4 beats) by default, regardless of element
+  count. Previously, each top-level element occupied one beat, so
+  `pat("c d e f g a b c5")` ran for 2 cycles; it now fits in 1 cycle with
+  eight half-beat notes. Only patterns with exactly 4 top-level elements
+  are unaffected.
+
+  **Migration**: to restore a pattern's old timing, wrap it in
+  `.slow(N / 4.0)`, where N is the top-level element count.
+  Example: `pat("c d e f g a b c5")` → `pat("c d e f g a b c5").slow(2)`.
+
+  This restores conformance with the cycle-fitting convention documented
+  in `docs/mini-notation-reference.md` and Strudel/Tidal — the prior
+  behavior was a long-standing bug in the codegen layer
+  (`akkado/src/codegen_patterns.cpp`). See
+  `docs/audits/mini-notation-cycle-timing_audit_2026-05-18.md` for the
+  full audit + rationale.
+```
+
+---
+
+## 13. Critical files referenced
 
 - `akkado/src/codegen_patterns.cpp` — site of the bug (lines 1326-1328, 1690-1692, 1842-1844; transforms 2194-2735)
 - `akkado/src/pattern_eval.cpp` — correct, do not touch
 - `akkado/include/akkado/pattern_event.hpp` — defines the normalized eval context
-- `cedar/include/cedar/opcodes/sequencing.hpp` — consumes `cycle_length` downstream (lines 325, 383-419)
+- `cedar/include/cedar/opcodes/sequencing.hpp` — consumes `cycle_length` downstream (lines 326, 383-419)
 - `akkado/tests/test_codegen.cpp` — pins the broken behaviour, needs rewriting
 - `akkado/tests/test_mini_notation.cpp` — eval-stage tests, should remain green
 - `docs/mini-notation-reference.md`, `docs/mini-notation-implementation.md`, `web/static/docs/reference/mini-notation/basics.md`, `CLAUDE.md` — the contract docs
+- `docs/prd-mini-notation-micro-timing.md` — downstream PRD; blocked on this fix
