@@ -396,8 +396,8 @@ Phase 1 is complete when **all** of the following hold (✓ marks items satisfie
 
 Phase 2 is complete when:
 
-9. `docs/mini-notation-implementation.md` is tightened per §9 and re-indexed via `bun run build:docs`.
-10. CHANGELOG entry per §12 is in place.
+9. ✓ `docs/mini-notation-implementation.md` is tightened per §9 and re-indexed via `bun run build:docs` (57 docs / 627 lookup entries, manifest unchanged because the edit was body prose only).
+10. ✓ CHANGELOG entry per §12 is in place (added under `[Unreleased]` using the existing `### ⚠ BREAKING — <summary>` style for consistency with the delay-family entry already there).
 
 Phase 3 is complete when:
 

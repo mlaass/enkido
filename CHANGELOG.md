@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠ BREAKING — mini-notation cycle timing now matches Strudel/Tidal
+
+A mini-notation string is exactly one cycle (4 beats) by default,
+regardless of element count. Previously, each top-level element
+occupied one beat, so `pat("c d e f g a b c5")` ran for 2 cycles; it
+now fits in 1 cycle with eight half-beat notes. Only patterns with
+exactly 4 top-level elements are unaffected.
+
+**Migration**: to restore a pattern's old timing, wrap it in
+`.slow(N / 4.0)`, where N is the top-level element count. Example:
+`pat("c d e f g a b c5")` → `pat("c d e f g a b c5").slow(2)`.
+
+This restores conformance with the cycle-fitting convention documented
+in `docs/mini-notation-reference.md` and Strudel/Tidal — the prior
+behavior was a long-standing bug in the codegen layer
+(`akkado/src/codegen_patterns.cpp`). See
+`docs/audits/mini-notation-cycle-timing_audit_2026-05-18.md` for the
+full audit + rationale.
+
 ### ⚠ BREAKING — delay-family default mix changed
 
 The `delay`, `delay_ms`, `delay_smp`, `tap_delay`, `tap_delay_ms`,

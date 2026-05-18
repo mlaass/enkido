@@ -21,7 +21,7 @@ Pattern String → Lexer → Parser → AST → Evaluator → Events → Codegen
 
 ### Cycle-Based Evaluation Model
 
-Mini-notation patterns are evaluated on a per-cycle basis. A "cycle" represents one iteration of the pattern, typically 4 beats at default tempo.
+Mini-notation patterns are evaluated on a per-cycle basis. A "cycle" is exactly 4 beats by default (the Strudel/Tidal convention). Every mini-notation string fits into one cycle regardless of element count — more notes mean shorter notes, the cycle length stays fixed. To span multiple cycles use alternation (`<a b c>`, one element per cycle) or `.slow(n)`; to fit more repeats into a slot use `*n` or `.fast(n)`.
 
 For simple patterns, a single cycle evaluation suffices. For patterns with alternating sequences (`<a b c>`), multi-cycle evaluation expands all alternatives into a combined event stream.
 
