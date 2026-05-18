@@ -1323,9 +1323,8 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // Determine cycle length from top-level element count (each element = 1 beat)
-    std::uint32_t num_elements = compiler.count_top_level_elements(pattern_node);
-    float cycle_length = static_cast<float>(std::max(1u, num_elements));
+    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
+    float cycle_length = 4.0f;
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1687,9 +1686,8 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // Determine cycle length from top-level element count (each element = 1 beat)
-    std::uint32_t num_elements = compiler.count_top_level_elements(mini_pattern);
-    float cycle_length = static_cast<float>(std::max(1u, num_elements));
+    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
+    float cycle_length = 4.0f;
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1839,9 +1837,8 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Determine cycle length from top-level element count
-    std::uint32_t num_elements = compiler.count_top_level_elements(pattern_root);
-    float cycle_length = static_cast<float>(std::max(1u, num_elements));
+    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
+    float cycle_length = 4.0f;
 
     // Allocate buffers for outputs
     std::uint16_t value_buf = buffers_.allocate();
@@ -2211,7 +2208,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+        out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
         return true;
     }
 
@@ -2230,7 +2227,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+        out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
         return true;
     }
 
@@ -2277,7 +2274,7 @@ static bool compile_pattern_for_transform(
             if (!compiler.compile(out_pattern_node)) return false;
             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
             out_events = compiler.sequence_events();
-            out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
             return true;
         }
 
@@ -2292,7 +2289,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, n_int));
             out_events = compiler.sequence_events();
-            out_cycle_length = static_cast<float>(out_num_elements);
+            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
             return true;
         }
         if (func_name == "binary") {
@@ -2305,7 +2302,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
-            out_cycle_length = static_cast<float>(out_num_elements);
+            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
             return true;
         }
         if (func_name == "binaryN") {
@@ -2325,7 +2322,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
-            out_cycle_length = static_cast<float>(out_num_elements);
+            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
             return true;
         }
 
@@ -2732,7 +2729,7 @@ static bool compile_pattern_for_transform(
                         if (compiler.compile(out_pattern_node)) {
                             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
                             out_events = compiler.sequence_events();
-                            out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+                            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
                             return true;
                         }
                     }
@@ -5071,7 +5068,7 @@ TypedValue CodeGenerator::handle_run_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = static_cast<float>(std::max(1, n_int));
+    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,
@@ -5104,7 +5101,7 @@ TypedValue CodeGenerator::handle_binary_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = static_cast<float>(std::max(1, bits));
+    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,
@@ -5145,7 +5142,7 @@ TypedValue CodeGenerator::handle_binary_n_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = static_cast<float>(std::max(1, bits));
+    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,

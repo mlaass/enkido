@@ -2180,15 +2180,15 @@ TEST_CASE("Pattern transform chaining compiles", "[codegen][patterns]") {
 
 TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][patterns]") {
     SECTION("slow(pat(...), 2) doubles cycle length, event times unchanged") {
-        // pat("c4 e4") has 2 elements -> base cycle_length = 2
-        // slow(2) -> cycle_length = 4, event times stay normalized
+        // pat("c4 e4") base: cycle_length = 4 beats (Strudel canonical, regardless of element count)
+        // slow(2) -> cycle_length = 8 beats, event times stay normalized
         // Runtime formula (e.time * cycle_length) handles the scaling
         auto result = akkado::compile(R"(slow(pat("c4 e4"), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
@@ -2196,15 +2196,15 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     }
 
     SECTION("slow(fast(pat(...), 2), 2) is identity") {
-        // pat("c4 e4") base: cycle_length=2, times at 0, 0.5
-        // fast(2): cycle_length=1, times unchanged
-        // slow(2): cycle_length=2, times unchanged -> identity
+        // pat("c4 e4") base: cycle_length=4, times at 0, 0.5
+        // fast(2): cycle_length=2, times unchanged
+        // slow(2): cycle_length=4, times unchanged -> identity
         auto result = akkado::compile(R"(slow(fast(pat("c4 e4"), 2), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        CHECK(si.cycle_length == Catch::Approx(4.0f));
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
@@ -2212,8 +2212,8 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     }
 
     SECTION("transpose(slow(pat(...), 2), 12) applies both transforms") {
-        // pat("c4 e4") base: cycle_length=2
-        // slow(2): cycle_length=4
+        // pat("c4 e4") base: cycle_length=4 beats
+        // slow(2): cycle_length=8
         // transpose(12): frequencies doubled (octave up)
         auto result = akkado::compile(R"(transpose(slow(pat("c4 e4"), 2), 12))");
         REQUIRE(result.success);
@@ -2221,7 +2221,7 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
 
         const auto& si = result.state_inits[0];
         // Cycle length should be doubled from slow
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
 
         // Events should have transposed frequencies
         REQUIRE_FALSE(si.sequence_events.empty());
@@ -2232,26 +2232,26 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     }
 
     SECTION("fast(fast(pat(...), 2), 3) compounds speed") {
-        // pat("c4 e4") base: cycle_length=2
-        // fast(2): cycle_length=1
-        // fast(3): cycle_length=1/3
+        // pat("c4 e4") base: cycle_length=4 beats
+        // fast(2): cycle_length=2
+        // fast(3): cycle_length=2/3
         auto result = akkado::compile(R"(fast(fast(pat("c4 e4"), 2), 3))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f / 6.0f));
+        CHECK(si.cycle_length == Catch::Approx(4.0f / 6.0f));
     }
 
     SECTION("fast(pat(...), 2) halves cycle length, event times unchanged") {
-        // pat("c4 e4") has 2 elements -> base cycle_length = 2
-        // fast(2) -> cycle_length = 1, event times stay normalized
+        // pat("c4 e4") base: cycle_length = 4 beats (Strudel canonical)
+        // fast(2) -> cycle_length = 2, event times stay normalized
         auto result = akkado::compile(R"(fast(pat("c4 e4"), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(1.0f));
+        CHECK(si.cycle_length == Catch::Approx(2.0f));
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
@@ -2266,7 +2266,7 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        CHECK(si.cycle_length == Catch::Approx(4.0f));
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
         // After rev: original event at 0.5 moves to 0.0, original at 0.0 moves to 0.5
@@ -2281,15 +2281,15 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     }
 
     SECTION("rev(slow(pat(...), 2)) reverses within normalized range") {
-        // pat("c4 e4") base: cycle_length=2, events at 0.0, 0.5
-        // slow(2): cycle_length=4, events still at 0.0, 0.5
-        // rev: events reversed to 0.0, 0.5 (swapped values), cycle_length=4
+        // pat("c4 e4") base: cycle_length=4, events at 0.0, 0.5
+        // slow(2): cycle_length=8, events still at 0.0, 0.5
+        // rev: events reversed to 0.0, 0.5 (swapped values), cycle_length=8
         auto result = akkado::compile(R"(rev(slow(pat("c4 e4"), 2)))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
         // All events should be in [0, 1) range
@@ -3073,8 +3073,8 @@ TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        // pat has 2 elements -> base cycle_length = 2; palindrome doubles -> 4
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        // pat: canonical cycle_length = 4 beats; palindrome doubles -> 8
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
         // 2 forward + 2 reverse = 4 events
         REQUIRE(si.sequence_events[0].size() == 4);
         // All events in [0, 1)
@@ -3198,11 +3198,11 @@ TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(linger(pat("c4 e4"), 1.0))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        CHECK(si.cycle_length == Catch::Approx(4.0f));
         REQUIRE(si.sequence_events[0].size() == 2);
     }
     SECTION("linger(pat, 0.5) keeps first half, halves cycle_length") {
-        // pat("c4 e4 g4 b4"): events at 0.0, 0.25, 0.5, 0.75; base cycle=4.
+        // pat("c4 e4 g4 b4"): events at 0.0, 0.25, 0.5, 0.75; canonical cycle=4 beats.
         // Keep events with time < 0.5: {c4@0.0, e4@0.25}
         // Scale by 1/0.5=2: c4@0.0, e4@0.5; durations also scaled.
         // cycle_length *= 0.5 -> 2.
@@ -3409,7 +3409,8 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(8.0f));
+        // canonical cycle_length = 4 beats regardless of element count
+        CHECK(si.cycle_length == Catch::Approx(4.0f));
         REQUIRE(si.sequence_events[0].size() == 8);
         for (std::size_t i = 0; i < 8; ++i) {
             const auto& e = si.sequence_events[0][i];
@@ -3438,7 +3439,7 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile("slow(run(4), 2)");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
-        // run(4) cycle_length = 4; slow(2) doubles -> 8
+        // canonical cycle_length = 4; slow(2) doubles -> 8
         CHECK(si.cycle_length == Catch::Approx(8.0f));
         REQUIRE(si.sequence_events[0].size() == 4);
     }
@@ -3498,7 +3499,8 @@ TEST_CASE("Pattern generator: binaryN()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile("binaryN(5, 8)");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(8.0f));
+        // canonical cycle_length = 4 beats regardless of bit count
+        CHECK(si.cycle_length == Catch::Approx(4.0f));
         REQUIRE(si.sequence_events[0].size() == 8);
         std::array<bool, 8> expected{false, false, false, false, false, true, false, true};
         for (std::size_t i = 0; i < 8; ++i) {
@@ -3804,8 +3806,8 @@ TEST_CASE("Phase 2 transforms compose with existing transforms", "[codegen][patt
         auto result = akkado::compile(R"(palindrome(slow(pat("c4 e4"), 2)))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
-        // pat: cycle=2; slow(2): cycle=4; palindrome: cycle=8
-        CHECK(si.cycle_length == Catch::Approx(8.0f));
+        // pat: cycle=4 (canonical); slow(2): cycle=8; palindrome: cycle=16
+        CHECK(si.cycle_length == Catch::Approx(16.0f));
     }
     SECTION("compress + early chain") {
         auto result = akkado::compile(R"(early(compress(pat("c4 e4 g4 b4"), 0.0, 0.5), 0.1))");
@@ -3835,8 +3837,8 @@ TEST_CASE("Pattern transform: velocity in chain", "[codegen][patterns]") {
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        // slow(2) doubles cycle_length: 2 * 2 = 4
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        // slow(2) doubles canonical cycle_length: 4 * 2 = 8
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
         // velocity(0.5) sets velocity to 0.5
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 1);
@@ -3877,7 +3879,8 @@ TEST_CASE("Pattern transform: string literal as pattern", "[codegen][patterns]")
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        // canonical cycle_length = 4 beats; slow(2) -> 8
+        CHECK(si.cycle_length == Catch::Approx(8.0f));
     }
     SECTION("chained transform on string literal") {
         auto result = akkado::compile(R"(transpose(slow("c4 e4", 2), 12))");
@@ -5391,7 +5394,7 @@ TEST_CASE("Codegen: Sample pattern event inspection", "[codegen][samples][debug]
         REQUIRE(!result.state_inits.empty());
         const auto& si = result.state_inits[0];
         CHECK(si.type == akkado::StateInitData::Type::SequenceProgram);
-        CHECK(si.cycle_length == 8.0f);  // 8 top-level elements
+        CHECK(si.cycle_length == 4.0f);  // canonical 1 cycle = 4 beats, regardless of element count
         CHECK(si.is_sample_pattern == true);
 
         // Root sequence should have 10 events (8 top-level, groups expand inline)
@@ -5552,7 +5555,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         CHECK(si.is_sample_pattern == true);
-        CHECK(si.cycle_length == 2.0f);  // 2 top-level group halves
+        CHECK(si.cycle_length == 4.0f);  // canonical 1 cycle = 4 beats, regardless of element count
         const auto& events = si.sequence_events[0];
         REQUIRE(events.size() == 8);
 

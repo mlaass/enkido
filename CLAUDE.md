@@ -101,6 +101,8 @@ wave = dropdown("wave", ["sin", "saw", "tri"])
 
 ### Clock System
 - 1 cycle = 4 beats by default
+- Every mini-notation string is exactly one cycle by default, regardless of element count. More notes → shorter notes; the cycle length stays fixed (Strudel/Tidal convention).
+- Use `<a b c>` alternation to span multiple cycles (one element per cycle). Use `.slow(n)` / `.fast(n)` for runtime rescales.
 - `co`: cycle offset (0-1 ramp)
 - `beat(n)`: phasor completing every n beats
 
