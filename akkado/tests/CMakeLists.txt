@@ -47,6 +47,7 @@ add_executable(akkado_tests
     test_sample_emission_golden.cpp
     test_hot_swap_determinism.cpp
     test_fuzz_determinism.cpp
+    test_fuzz_recompile_audio.cpp
 )
 
 target_link_libraries(akkado_tests
