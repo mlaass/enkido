@@ -313,3 +313,102 @@ TEST_CASE("Analyzer: Spread arg defers count check", "[analyzer][spread]") {
         CHECK(has_error(diags, "E006"));
     }
 }
+
+// =============================================================================
+// Field access through pattern-producer bindings (regression for the codegen
+// audit follow-up — `docs/audits/mini-notation-cycle-timing_audit_2026-05-18.md`
+// §10.2). The records-and-field-access PRD claims transforms preserve fields
+// uniformly across every pattern producer; this block pins every row of that
+// variant table.
+// =============================================================================
+
+TEST_CASE("Analyzer: field access on pattern bindings (audit §10.2)",
+          "[analyzer][field-access]") {
+    auto pattern_kind = [](const CompileResult& r,
+                           const std::string& name) -> std::optional<SymbolKind> {
+        if (!r.symbols) return std::nullopt;
+        auto sym = r.symbols->lookup(name);
+        if (!sym) return std::nullopt;
+        return sym->kind;
+    };
+
+    SECTION("inline n\"…\" with no transform compiles") {
+        auto r = compile("n\"c4 e4\" |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK_FALSE(has_error(r.diagnostics, "E124"));
+    }
+
+    SECTION("inline n\"…\".slow(2) compiles") {
+        auto r = compile("n\"c4 e4\".slow(2) |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK_FALSE(has_error(r.diagnostics, "E124"));
+    }
+
+    SECTION("var bound to n\"…\" without transform — Pattern kind, field access works") {
+        auto r = compile("notes = n\"c4 e4\"\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("var bound to n\"…\".slow(2) — Pattern kind, field access works (BUG FIX)") {
+        auto r = compile("notes = n\"c4 e4\".slow(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK_FALSE(has_error(r.diagnostics, "E124"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("var bound to n\"…\" then transform at use — works (workaround form)") {
+        auto r = compile("notes = n\"c4 e4\"\nnotes.slow(2) |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("var bound to pat(\"…\").slow(2) — Pattern kind, field access works (BUG FIX)") {
+        auto r = compile("notes = pat(\"c4 e4\").slow(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK_FALSE(has_error(r.diagnostics, "E124"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("var bound to note(\"…\") — Pattern kind, field access works (BUG FIX)") {
+        auto r = compile("notes = note(\"c4 e4\")\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK_FALSE(has_error(r.diagnostics, "E124"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("var bound to note(\"…\").fast(2) — analyzer classifies as Pattern; codegen path is a separate bug") {
+        // The analyzer's symbol classification is the contract this test
+        // block exists to enforce — that part works. End-to-end compile
+        // currently fails with E130 because the transform handlers
+        // (handle_fast_call/handle_slow_call) don't recognize Call-to-
+        // pattern-producer receivers (only MiniLiteral); inline
+        // `note("…").fast(2) |> …` fails for the same reason. That's a
+        // separate codegen bug; tracked as a follow-up to this fix.
+        auto r = compile("notes = note(\"c4 e4\").fast(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("chained transforms: n\"…\".slow(2).rev() — Pattern kind, field access works") {
+        auto r = compile("notes = n\"c4 e4 g4 b4\".slow(2).rev()\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        CHECK(r.success);
+        CHECK_FALSE(has_error(r.diagnostics, "E061"));
+        CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
+    }
+
+    SECTION("field access on plain scalar variable still triggers E061") {
+        // Guards against over-classification regression: non-pattern bindings
+        // must still reject field access.
+        auto r = compile("x = 440\nout(x.freq)");
+        CHECK_FALSE(r.success);
+        CHECK(has_error(r.diagnostics, "E061"));
+    }
+}

@@ -1657,6 +1657,21 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
 
     const Node& pattern_n = ast_->arena[pattern_node];
     if (pattern_n.type != NodeType::MiniLiteral) {
+        // Bindings whose RHS is a transform-on-pattern or a pattern-producer
+        // call (e.g. `notes = n"…".slow(2)` or `notes = note("c d")`) arrive
+        // here as Call nodes after the analyzer's method-call desugaring.
+        // Delegate to the regular visit machinery — the transform / producer
+        // handlers (handle_slow_call, handle_note_call, etc.) know how to
+        // turn them into the correct sequenced TypedValue. Push the binding
+        // name onto the path so internal state_ids stay tied to the name
+        // for hot-swap state preservation.
+        if (pattern_n.type == NodeType::Call ||
+            pattern_n.type == NodeType::MethodCall) {
+            push_path(name);
+            TypedValue result = visit(pattern_node);
+            pop_path();
+            return result;
+        }
         error("E124", "Pattern variable '" + name + "' does not refer to a pattern", loc);
         return TypedValue::void_val();
     }

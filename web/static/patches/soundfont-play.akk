@@ -12,11 +12,11 @@
 
 bpm = 100
 
-melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@1.25 eb4@2 c4@1.75 ~@8"
+melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@1.25 eb4@2 c4@1.75 ~@8".slow(6)
 
 // Lead piano: dry voice + small freeverb tail. 0.3 leaves headroom for the
 // transient peaks that exceed the steady-state RMS by ~3x.
-melody.slow(6)
+melody
     |> soundfont(@, "gm", 0) * 0.3
     |> @ + freeverb(@, 0.65, 0.4) * 0.15
     |> out(@)
@@ -24,6 +24,6 @@ melody.slow(6)
 // Sub-octave bright piano, delayed by a quarter beat for a layered feel.
 // dattorro is fully wet, so we attenuate after the effect and add only a
 // quiet dry blend (no doubled-amplitude `+@` trick from the old patch).
-bass = melody.slow(6) |> transpose(@, -12).late(.25) |> soundfont(@, "gm", 1) * 0.22
+bass = melody |> transpose(@, -12).late(.25) |> soundfont(@, "gm", 1) * 0.22
 
 dattorro(bass) * 0.6 + bass * 0.5 |> out(@)

@@ -450,6 +450,8 @@ Variants tested:
 
 The records-and-field-access PRD audit (2026-05-13) claims transforms preserve record fields uniformly — this bug breaks that claim along the variable-binding path. The workaround used in this PR is to apply `.slow()` / `.fast()` at the read site rather than baking it into the variable's definition. The codegen bug should be filed as a separate issue and fixed independently.
 
+> **Fixed 2026-05-18 (same day).** The analyzer's `collect_definitions` had no case for `Assignment` RHS of type `MethodCall`, so transformed-pattern bindings fell through to `define_variable` and lost their Pattern symbol-kind. Added a `MethodCall` branch (and a `is_pattern_producing_expr` helper that walks the receiver chain) in `akkado/src/analyzer.cpp`, plus a `Call`-branch case for `chord`/`pat`/`seq`/`value`/`note` callees. Codegen's `handle_pattern_reference` (`akkado/src/codegen_patterns.cpp`) now delegates Call/MethodCall `pattern_node`s to `visit()`, which routes through the existing transform handlers (`handle_slow_call`, `handle_note_call`, etc.). The workaround-form `.slow()` / `.fast()` calls in `visualizations.akk` and `soundfont-play.akk` were reverted to the natural `notes = n"…".slow(N)` form. Regression tests pin every row of the variant table in `akkado/tests/test_analyzer.cpp` under `[analyzer][field-access]`. One remaining limit: transforming a Call-to-pattern-producer inline (e.g. `note("…").fast(2) |> …`) still fails with E130 because the transform handlers only recognise MiniLiteral receivers; that is a separate codegen bug, untouched by this fix.
+
 ---
 
 ## 11. Acceptance criteria

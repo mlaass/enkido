@@ -5,6 +5,39 @@
 
 namespace akkado {
 
+bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
+    if (idx == NULL_NODE || input_ast_ == nullptr) return false;
+    const Node& n = (*input_ast_).arena[idx];
+    switch (n.type) {
+        case NodeType::MiniLiteral:
+            return true;
+        case NodeType::MethodCall:
+            // Method calls preserve pattern-ness of the receiver
+            // (.slow/.fast/.rev/.transpose/etc. all return patterns).
+            return is_pattern_producing_expr(n.first_child);
+        case NodeType::Call: {
+            std::string call_name;
+            if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+                call_name = n.as_identifier();
+            }
+            return call_name == "chord" || call_name == "pat" ||
+                   call_name == "seq"   || call_name == "value" ||
+                   call_name == "note";
+        }
+        case NodeType::Identifier: {
+            std::string name;
+            if (std::holds_alternative<Node::IdentifierData>(n.data)) {
+                name = n.as_identifier();
+            }
+            if (name.empty()) return false;
+            auto sym = symbols_.lookup(name);
+            return sym && sym->kind == SymbolKind::Pattern;
+        }
+        default:
+            return false;
+    }
+}
+
 AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filename,
                                           const SourceMap* source_map,
                                           std::span<const ModuleNamespace> namespaces) {
@@ -512,6 +545,21 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     sym.buffer_index = 0xFFFF;
                     sym.is_state_cell = true;
                     symbols_.define(sym);
+                } else if (callee_name == "chord" || callee_name == "pat" ||
+                           callee_name == "seq"   || callee_name == "value" ||
+                           callee_name == "note") {
+                    // Pattern-producing builtin call bound to a variable:
+                    // `notes = note("c d")`. Register as Pattern so that
+                    // downstream `notes |> saw(@freq)` field access passes
+                    // E061. (`pat("…")` is normally parsed as MiniLiteral
+                    // by the parser's prefix handler, but the spread/named-
+                    // arg path can still produce a Call node here, so list
+                    // it for completeness — mirrors the PipeBinding
+                    // handler's name set.)
+                    PatternInfo pat_info{};
+                    pat_info.pattern_node = rhs;
+                    pat_info.is_sample_pattern = false;
+                    symbols_.define_pattern(name, pat_info);
                 } else {
                     symbols_.define_variable(name, 0xFFFF);
                 }
@@ -535,6 +583,24 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 sym.buffer_index = 0xFFFF;
                 sym.is_state_cell = true;
                 symbols_.define(sym);
+            } else {
+                symbols_.define_variable(name, 0xFFFF);
+            }
+        } else if (rhs != NULL_NODE &&
+                   (*input_ast_).arena[rhs].type == NodeType::MethodCall) {
+            // Pattern + transform bound to a variable, e.g.
+            // `notes = n"…".slow(2)` or `notes = pat("…").fast(3).rev()`.
+            // The records-and-field-access PRD (`docs/prd-records-and-
+            // field-access.md`) requires transforms to preserve record
+            // fields uniformly; without this branch the binding defaults
+            // to Variable kind and downstream `notes |> saw(@freq)` fails
+            // with E061. The check walks the method-call chain back to
+            // the innermost producer (see is_pattern_producing_expr).
+            if (is_pattern_producing_expr(rhs)) {
+                PatternInfo pat_info{};
+                pat_info.pattern_node = rhs;
+                pat_info.is_sample_pattern = false;
+                symbols_.define_pattern(name, pat_info);
             } else {
                 symbols_.define_variable(name, 0xFFFF);
             }

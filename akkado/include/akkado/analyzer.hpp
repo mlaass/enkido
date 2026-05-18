@@ -126,6 +126,16 @@ private:
     void check_closure_captures(NodeIndex node, const std::set<std::string>& params,
                                 SourceLocation closure_loc);
 
+    // Helper: returns true if `idx` (in input_ast_) is a pattern-producing
+    // expression — directly (MiniLiteral, or Call to a pattern-producer
+    // builtin like pat/note/chord/seq/value), transitively through a chain
+    // of method calls (.slow/.fast/.rev/etc.) ending in such a producer, or
+    // through an Identifier already bound to a Pattern symbol. Used by
+    // collect_definitions so that `notes = n"…".slow(2)` and friends
+    // register the binding as Pattern (not Variable), letting downstream
+    // `notes |> saw(@freq)` field access pass the E061 check.
+    bool is_pattern_producing_expr(NodeIndex idx) const;
+
     // Error reporting helpers
     void error(const std::string& message, SourceLocation loc);
     void error(const std::string& code, const std::string& message, SourceLocation loc);
