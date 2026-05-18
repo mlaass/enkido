@@ -1,4 +1,4 @@
-> **Status: FIRST DRAFT — NOT READY FOR IMPLEMENTATION.** This PRD is a captured first-draft design from a brainstorming session. It has hard external dependencies and several open questions that must be resolved before the design is locked. See §0 (Dependencies) and §11 (Open Questions) before treating any decision as final. Do not begin implementation until the dependency PRD lands AND the open questions are resolved.
+> **Status: FIRST DRAFT — NOT READY FOR IMPLEMENTATION.** This PRD is a captured first-draft design from a brainstorming session. It has **two** hard external dependencies and several open questions that must be resolved before the design is locked. See §§0–0.5 (Dependencies) and §11 (Open Questions) before treating any decision as final. Do not begin implementation until both dependency PRDs land AND the open questions are resolved.
 
 # PRD: Runtime Event-Stream Transforms (Pattern-Modifier Rework)
 
@@ -17,6 +17,7 @@ This PRD specifies a **rework into runtime event-stream transforms**: every modi
 - **`fast`/`slow` become continuous rate scalers.** Signal-rate multiplier on the phase feeding upstream `SEQPAT_QUERY`, sample-accurate.
 - **Scope includes** core modifiers + scale quantize (snap to scale/key) + voicing/chord expansion/inversion + filter/predicate ops (`degrade`, `mask`).
 - **Phased delivery in 5 phases** (see §9), each independently testable.
+- **Assumes cycles-pure clock model has landed.** Hard prereq per §0.5 — every `e.time` reference, the `fast`/`slow` phase rescaler, and the `EventStreamPayload` cleanup are written in cycles-pure terms.
 
 ---
 
@@ -34,6 +35,31 @@ The clean `event_map(events, (e) -> ...)` design depends on **first-class runtim
 **This PRD assumes that infrastructure exists.** Without it, we would fall back to a codegen-inlining approach (specialised `TransformKind` enum + per-RHS-pattern matching + a small per-event mini-VM bytecode for arbitrary expressions). That fallback is workable but is documented here only as an escape hatch — not the recommended design.
 
 > **PRD reviewers**: §0 is load-bearing. If the closure PRD is descoped or significantly changes shape, every section below (especially §3, §4, §5, §9) needs revisiting.
+
+---
+
+## 0.5. Hard Dependency: Cycles-Pure Clock Model (separate PRD)
+
+A second PRD — **"Cycles-pure clock model — drop beats from Cedar"** — must land **before this PRD's Phase 1**. The cycles-pure refactor removes `cycle_length` from `SequenceState` / `PatternPayload`, drops the "1 cycle = 4 beats" convention, makes the cycle the only musician-facing time unit (BPM → CPS), and normalises every event to cycle phase `[0, 1)`. The captured design lives in the project-memory entry `project_strudel_cycles_pure_model_followup.md`.
+
+**Why it's a hard prereq (not a follow-up)**:
+
+- §3.1's signal-sampling formula in the original draft referenced `spb` (samples per beat). Post-refactor that's `spc` (samples per cycle), and the event-onset sample is derived directly from the scheduler — no `cycle_length` arithmetic.
+- §3.3's stdlib `early` / `late` are already cycle-phase by design (`mod 1.0`) — they are *forward-compatible* with cycles-pure but would need a "this is cycles, not beats" disclaimer if shipped before the refactor.
+- §3.3's `swing` / `swingBy` definitionally assumed a beat-grid; cycles-pure forces an explicit grid-subdivision argument (see §11 OQ-10).
+- §3.4's Phase B `EventStreamPayload` cleanup must drop `cycle_length`, not carry the dead field forward.
+- §11 OQ-7's interaction between `fast`/`slow` and `cycle_length` largely *evaporates* post-refactor — there is no `cycle_length` to mutate, only the cycle-phase rate feeding `SEQPAT_QUERY`.
+
+**Touch-points in this PRD that depend on cycles-pure semantics**:
+
+- §3.1 — event-onset sampling derived from scheduler in sample units.
+- §3.3 — `e.time` is cycle phase; `swing` defers to OQ-10.
+- §3.4 — Phase B drops `cycle_length`.
+- §7 — file list overlaps with the cycles-pure refactor's scope.
+- §11 OQ-7 — rewritten in cycles-pure terms.
+- §11 OQ-9, OQ-10 — new questions specific to cycle-pure event semantics.
+
+> **PRD reviewers**: §0.5 is load-bearing in the same way §0 is. If the cycles-pure PRD is descoped or significantly changes shape, every time-related reference below needs revisiting.
 
 ---
 
@@ -127,7 +153,7 @@ Common conventions:
 - **State**: each instance owns a `SequenceState` (reuses the existing struct — no new `DSPState` variant). `OutputEvents` is the wire format.
 - **Upstream `state_id`**: packed across `inputs[2]+inputs[3]` (32 bits in two 16-bit slots). Leaves `inputs[0..1]` for the two most-common signal parameters; 3+-param transforms use `ExtendedParams<N>` per `docs/extended-params-mechanism.md`.
 - **Closure handle**: stored in `StateInitData` as a runtime closure reference (delivered by the closure PRD per §0).
-- **Signal sampling at event onset**: when a closure body reads an external buffer (`e.note + lfo`), the opcode computes `offset = (e.time - block_start_beat) * spb` and indexes the buffer once per event. Latched per event; no mid-event re-sampling.
+- **Signal sampling at event onset**: when a closure body reads an external buffer (`e.note + lfo`), the opcode indexes the buffer at the event's scheduled onset sample within the current block (provided directly by the runtime scheduler — no `samples-per-beat` arithmetic; per §0.5 cycles-pure, `cycle_length` is gone). Latched per event; no mid-event re-sampling.
 - **Downstream**: PatternPayload/EventStream pointers are rewired to the final transform's state_id; `as e |> osc(@, e.freq)` keeps working because SEQPAT_STEP still reads OutputEvents and refills per-field buffers.
 - **Per-block memory budget**: each opcode allocates an `OutputEvents` buffer sized to `upstream_cap × fanout_factor`. See §11 OQ-4 for chain-length caps.
 
@@ -171,12 +197,14 @@ fn late(events, t)        = event_map(events, (e) -> {time: (e.time + t) mod 1.0
 fn tune(events, cents)    = event_map(events, (e) -> {micro: e.micro + cents})
 ```
 
+Per §0.5, `e.time` is **cycle phase** `[0, 1)` within the current cycle (matching Strudel's `co`), so `early(p, 0.25)` shifts by a quarter-cycle. For closures that need cross-cycle reasoning, `e.cycle` exposes the absolute cycle count as a float (e.g., `3.25` = quarter-way through cycle 3) — see §11 OQ-9 for final field naming. `swing` / `swingBy` need an explicit grid-subdivision argument under cycles-pure (the old implicit "8th-note grid" assumed 4 beats per cycle) — see §11 OQ-10.
+
 Structural transforms (`rev`, `ply`, `palindrome`, etc.) stay builtins because they don't fit the per-event-record-rewrite shape — they lower directly to `EVENT_FANOUT` / `EVENT_REORDER`. `fast`/`slow` stay builtins for the same reason — they lower to `EVENT_RATE_SCALE`. `bank`/`variant` keep their compile-time sample-resolution path (sample-ref propagation is unchanged) but stamp `type_id` at runtime through `EVENT_MAP` with a small `BANK_SET` helper. See §11 OQ-3.
 
 ### 3.4 TypedValue evolution (two phases)
 
 - **Phase A (compatible)**: add `upstream_state_id` and `transform_chain` fields to `PatternPayload` (`akkado/include/akkado/typed_value.hpp:50-120`). Existing `as e |> osc(@, e.freq)` keeps working — `SEQPAT_FIELD` just points at the final transform's `state_id`.
-- **Phase B (cleanup)**: collapse `EventSourcePayload` into a unified `EventStreamPayload`, deprecate `ValueType::EventSource`. Pattern and MIDI become the same type.
+- **Phase B (cleanup)**: collapse `EventSourcePayload` into a unified `EventStreamPayload`, deprecate `ValueType::EventSource`. Pattern and MIDI become the same type. Per §0.5, the unified payload does **not** carry `cycle_length` (removed by the cycles-pure refactor).
 
 ---
 
@@ -276,6 +304,8 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 
 ## 7. Critical Files
 
+> Several files below overlap with the §0.5 cycles-pure refactor's scope (`sequence.hpp`, `dsp_state.hpp`, `state_pool.hpp`, `SEQPAT_TRANSPORT`, `typed_value.hpp`). Per §0.5, cycles-pure lands first; this PRD assumes `cycle_length` plumbing and `spb` math are already gone.
+
 **Cedar (engine):**
 - `cedar/include/cedar/vm/instruction.hpp` — new `Opcode` enum entries.
 - `cedar/include/cedar/opcodes/sequence.hpp` — `OutputEvents` struct (existing); add `op_event_map`, `op_event_filter`, `op_event_fanout`, `op_event_reorder`, `op_event_rate_scale`, `op_event_quantize`.
@@ -321,7 +351,8 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 
 | Phase | Deliverable                                                                                                                                                                                | Tests                                                                                       |
 |-------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| **0** | **External PRD**: runtime closure / first-class fn infrastructure in Cedar lands (§0)                                                                                                       | Owned by the closure PRD                                                                    |
+| **0a** | **External PRD**: cycles-pure clock model lands (§0.5)                                                                                                                                    | Owned by the cycles-pure PRD                                                                |
+| **0b** | **External PRD**: runtime closure / first-class fn infrastructure in Cedar lands (§0)                                                                                                     | Owned by the closure PRD                                                                    |
 | **1** | Substrate: `EVENT_MAP` + `EVENT_FILTER` opcodes; manually-wired `transpose` and `velocity` in C++ codegen (no closures yet, constants only)                                                | `cedar/tests/test_event_map.cpp`, `experiments/test_op_event_map.py` (≥300 s)               |
 | **2** | `event_map` / `event_filter` builtins taking closures; migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers                                  | `akkado/tests/test_event_map.cpp` for closure plumbing                                      |
 | **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input; `early`/`late`/`swing` via `event_map`                                                                                       | Rate-scaled WAV experiments                                                                 |
@@ -371,18 +402,32 @@ Hard cutover (Option A in §8), or `--legacy-modifiers` flag for one release (Op
 **OQ-6. `event_map` codegen lowering when a field's RHS is a closed-form known to fit a specialised TransformKind.**
 Even with runtime closures available, certain RHS patterns (`e.X + const`, `e.X * buf`) could lower to a specialised faster path that doesn't invoke the closure dispatcher per event. Worth pursuing as an optimisation? Or keep dispatch uniform for simplicity?
 
-**OQ-7. `fast` / `slow` interaction with `cycle_length`.**
-The old compile-time path mutated `Sequence::duration` / `cycle_length`. The new `EVENT_RATE_SCALE` path leaves the upstream sequence unmodified and changes the rate at which it is queried. What should `co` (cycle offset) report downstream of `fast(p, 2)` — the original or the scaled cycle? This may affect any patch that reads `co` after the modifier.
+**OQ-7. `fast` / `slow` and downstream `co`.**
+Per §0.5, `cycle_length` is removed by the cycles-pure refactor — `EVENT_RATE_SCALE` simply rescales the cycle-phase signal feeding upstream `SEQPAT_QUERY`. The remaining question: what should `co` (cycle offset) report downstream of `fast(p, 2)` — the *consumer's* cycle phase (unchanged) or the *inner pattern's* accelerated phase? Strudel's semantics: outer `co` is unchanged; the inner pattern produces 2× as many cycles' worth of events per outer cycle. Confirm and lock.
 
 **OQ-8. Closure-PRD coupling points.**
 List every API surface this PRD assumes the closure PRD will provide. Cross-reference both PRDs explicitly in their respective "Dependencies" sections.
+
+**OQ-9. `e.time` vs `e.cycle` field naming.**
+Per §0.5 cycles-pure, event records expose two time-like fields: phase within the current cycle (`[0, 1)`, used by `early` / `late` / `swing` stdlib) and the absolute cycle count (float, e.g. `3.25`, useful for cross-cycle reasoning inside closures). Proposed naming: `e.time` = phase, `e.cycle` = absolute count. Alternatives: `e.phase` + `e.time`, or `e.t` + `e.cycle`. Lock the names before stdlib ships.
+
+**OQ-10. `swing` / `swingBy` grid spec under cycles-pure.**
+The old `swing` assumed an 8th-note grid (4 beats / cycle → 8 grid positions). Under cycles-pure there is no "beat" — `swing` must take an explicit subdivision count or grid fraction.
+Options:
+- `swing(p, amount)` with implicit grid derived from the upstream pattern's natural top-level step count.
+- `swing(p, amount, grid: 8)` explicit subdivision argument with default 8 (preserves observable behaviour for typical 8-step patterns).
+- `swing(p, amount, grid_fraction: 1/8)` cycle-fraction form.
+
+**OQ-11. Cycles-pure-PRD coupling points.**
+List every API surface this PRD assumes the cycles-pure PRD will provide (`spc` accessor, scheduler's per-event sample timestamp, `EventStreamPayload` without `cycle_length`, `e.time` = phase, `e.cycle` = absolute count). Cross-reference both PRDs explicitly in their respective "Dependencies" sections.
 
 ---
 
 ## 12. Next Step
 
-1. **Land the runtime-closure PRD** (§0) — design, review, implement.
-2. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision.
-3. **Implement Phase 1** of §9. Each subsequent phase is reviewed and merged independently.
+1. **Land the cycles-pure PRD** (§0.5) — design, review, implement.
+2. **Land the runtime-closure PRD** (§0) — design, review, implement. Can proceed in parallel with cycles-pure; both must merge before Phase 1.
+3. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision.
+4. **Implement Phase 1** of §9. Each subsequent phase is reviewed and merged independently.
 
 **Do not begin implementation while this PRD is in `FIRST DRAFT` status.**
