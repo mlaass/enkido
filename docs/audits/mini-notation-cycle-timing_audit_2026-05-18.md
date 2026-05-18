@@ -1,4 +1,6 @@
 > **Status: PRD** — Audit + remediation plan. Treat as the implementation contract for the fix. Drafted 2026-05-18.
+>
+> **Phase 1 shipped 2026-05-18** in commit `5c1c0ca` with one intentional divergence from the prescribed approach: the implementation keeps `cycle_length` in **beats throughout** (set `cycle_length = 4.0f` at every site) rather than the originally-prescribed "cycles inside codegen, `× 4` at the Cedar boundary." The two forms are semantically identical, but beats-throughout avoids scattering a magic conversion constant across 16+ handoff sites. Sections 2.1, 7, and 11 below are updated to reflect what actually shipped; the prior "cycles + boundary conversion" text is preserved at the end of §7 for posterity. Phase 1 also expanded the engine fix to cover the `run`/`binary`/`binaryN` synthetic-pattern handlers, which had the same element-count bug pattern but were not in the original §3/§7 enumeration. The "cycles everywhere — drop beats from Cedar entirely" model surfaced during implementation as the principled long-term direction; it is filed as a separate future PRD and is **not** part of this remediation.
 
 # Mini-notation cycle timing — audit + remediation PRD
 
@@ -40,18 +42,19 @@ Our own docs assert the same model:
 
 These contracts are what the implementation breaks.
 
-### 2.1 What stays vs what changes
+### 2.1 What stays vs what changes (as shipped in 5c1c0ca)
 
 | Layer | Pre-fix | Post-fix | Notes |
 |---|---|---|---|
 | Mini-notation parser (`pattern_*.cpp`) | normalized `[0, 1)` | normalized `[0, 1)` | unchanged |
 | Pattern evaluator (`pattern_eval.cpp`) | events in `[0, 1)` | events in `[0, 1)` | unchanged — correct already |
-| Codegen `cycle_length` value | beats, derived from `num_top_level_elements` | **cycles** (unitless), always `1.0` at base | refactored to cycle units; see §7 |
-| Transform machinery (`compute_transformed_events`) | mutates beats base | mutates cycles base | semantic-preserving multipliers (`.slow(2)` still → 2× duration) |
-| Cedar handoff (`seq_init.cycle_length`) | takes beats | takes beats; `×4` conversion happens at handoff | one boundary for cycles→beats |
+| Codegen `cycle_length` value | beats, derived from `num_top_level_elements` | **beats**, canonical `4.0f` at base, independent of element count | element-count derivation removed (§7) |
+| Transform machinery (`compute_transformed_events`) | mutates beats base | mutates beats base | semantic-preserving multipliers (`.slow(2)` still → 2× duration) |
+| Synthetic-pattern handlers (`handle_run_call`, `handle_binary_call`, `handle_binary_n_call`) | beats, derived from N / bits | canonical `4.0f` beats | same bug, fixed in 5c1c0ca (not in original §3 enumeration) |
+| Cedar handoff (`seq_init.cycle_length`) | takes beats | takes beats; **no boundary conversion** — bare `seq_init.cycle_length = cycle_length;` | beats-throughout means no unit translation step |
 | Cedar VM (`sequencing.hpp`) | schedules in beats | schedules in beats | unchanged |
 | Existing `.akk` patches | implicitly tuned to broken model | audibly different unless wrapped in `.slow()` | §10 patch review |
-| Existing `test_codegen.cpp` assertions | encode broken behavior | rewritten to canonical base | §8 |
+| Existing `test_codegen.cpp` assertions | encode broken behavior | rewritten to canonical base (`4 × transform_factor`) | §8 |
 | Existing `test_mini_notation.cpp` assertions | eval-only | eval-only | unchanged — should stay green |
 
 ### 2.5 Edge cases (post-fix expected behavior)
@@ -188,17 +191,17 @@ Phases 1 + 2 can ship together; Phase 3 is a slower follow-up. The release tagge
 
 ---
 
-## 7. Remediation — code
+## 7. Remediation — code (as shipped in 5c1c0ca)
 
-### Primary fix (refactor `cycle_length` to cycle units)
+### Primary fix — set canonical `cycle_length = 4.0f`
 
-At the codegen layer, store `cycle_length` in **cycles** (unitless, base `1.0f`) instead of beats. Apply the `×4 beats/cycle` conversion only at the Cedar handoff. This is a single boundary for the unit conversion and eliminates the element-count derivation.
+At the codegen layer, keep `cycle_length` in **beats** (its existing unit) and just stop deriving it from element count. The Strudel convention "1 cycle = 4 beats" becomes a literal at the source, not a runtime computation.
 
 Replace at all three sites:
 
-- `akkado/src/codegen_patterns.cpp:1326-1328`
-- `akkado/src/codegen_patterns.cpp:1690-1692`
-- `akkado/src/codegen_patterns.cpp:1842-1844`
+- `akkado/src/codegen_patterns.cpp:1326-1328` (monophonic)
+- `akkado/src/codegen_patterns.cpp:1690-1692` (polyphonic)
+- `akkado/src/codegen_patterns.cpp:1842-1844` (chord/timeline)
 
 Before:
 ```cpp
@@ -209,47 +212,63 @@ float cycle_length = static_cast<float>(std::max(1u, num_elements));
 
 After:
 ```cpp
-// cycle_length is in cycles (unitless); converted to beats at the Cedar handoff
-float cycle_length = 1.0f;
+// 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
+float cycle_length = 4.0f;
 ```
 
 `count_top_level_elements` is no longer needed at these call sites (still used elsewhere — leave the method intact, drop only the local uses).
 
-### Secondary fix — transforms become pure multipliers in cycles
+### Secondary fix — transform base becomes canonical
 
-In `compute_transformed_events` (`codegen_patterns.cpp:2194-2735`), every `out_cycle_length` initialization rewrite at lines `2214, 2233, 2280, 2295, 2308, 2328, 2735`:
+In `compute_transformed_events` (`codegen_patterns.cpp:2194-2735`), every `out_cycle_length` initialization at lines `2214, 2233, 2280, 2295, 2308, 2328, 2735`:
 
 Before:
 ```cpp
-out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));
+out_cycle_length = static_cast<float>(std::max(1u, out_num_elements));   // or bare static_cast<float>(out_num_elements)
 ```
 
 After:
 ```cpp
-out_cycle_length = 1.0f;  // in cycles; multiplicative transforms compose on this base
+out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
 ```
 
-The existing transform compositions (`*= factor`, `/= factor`, `*= 2.0f`, `*= frac`) keep working on cycles: `slow(2)` makes the base `2.0` (2 cycles = 8 beats after handoff), `fast(2)` makes it `0.5` (½ cycle = 2 beats), and so on. Relative semantics are preserved exactly; only the units change.
+The existing transform compositions (`*= factor`, `/= factor`, `*= 2.0f`, `*= frac`) keep working on beats: `slow(2)` makes it `8.0` beats, `fast(2)` makes it `2.0` beats, identity stays at `4.0` beats. Relative semantics preserved exactly.
 
-### Cedar boundary — convert cycles → beats once
+### Tertiary fix — synthetic-pattern handlers (not in original §3 enumeration)
 
-At `akkado/src/codegen_patterns.cpp:1385` (and the equivalent line in the polyphonic and timeline emit paths — find via grep for `seq_init.cycle_length = `):
+`run`, `binary`, `binaryN` populate the compiler with synthetic events directly and bypass `compute_transformed_events`. They had the same element-count bug pattern. Sites:
+
+- `akkado/src/codegen_patterns.cpp:5072` (`handle_run_call`)
+- `akkado/src/codegen_patterns.cpp:5105` (`handle_binary_call`)
+- `akkado/src/codegen_patterns.cpp:5146` (`handle_binary_n_call`)
 
 Before:
 ```cpp
-seq_init.cycle_length = cycle_length;
+float cycle_length = static_cast<float>(std::max(1, n_int));   // or bits
 ```
 
 After:
 ```cpp
-seq_init.cycle_length = cycle_length * 4.0f;  // cycles → beats at the Cedar VM boundary
+float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
 ```
 
-`cedar/include/cedar/opcodes/sequencing.hpp:326` continues to consume `cycle_length` as beats; the VM contract is unchanged.
+### Cedar handoff — unchanged
+
+`seq_init.cycle_length = cycle_length;` stays bare at all 8 handoff sites (3 primary + 5 transform-emit paths). No `* 4.0f` conversion: `cycle_length` is already in beats. `cedar/include/cedar/opcodes/sequencing.hpp:326` continues to consume `cycle_length` as beats; the VM contract is unchanged.
+
+The `payload->cycle_length = cycle_length;` writes (9 sites) likewise stay bare. The struct field's documented unit is beats (`typed_value.hpp:78`).
 
 ### Do not touch
 
-`akkado/src/pattern_eval.cpp` and `akkado/include/akkado/pattern_event.hpp` are correct. The fix is purely the codegen scaling and unit-handling steps.
+`akkado/src/pattern_eval.cpp` and `akkado/include/akkado/pattern_event.hpp` are correct. The fix is purely the codegen-side literal-vs-derived choice.
+
+---
+
+### Historical: the originally-prescribed approach (cycles + boundary conversion)
+
+For reference, the audit originally prescribed storing `cycle_length` in **cycles** (unitless, `1.0f` base) inside codegen and multiplying by `4.0f` at every Cedar handoff site. That approach is semantically identical to the as-shipped beats-throughout fix, but it scatters a magic conversion constant at 16+ handoff sites (8 `seq_init.cycle_length` writes + 9 `payload->cycle_length` writes), introduces a half-and-half model where the same name carries different units at different file locations, and arguably makes the code harder to read. The beats-throughout form was chosen during implementation; see commit `5c1c0ca` for the discussion.
+
+The deeper "cycles-only model — drop beats from Cedar entirely" is a separate future PRD, not in scope here.
 
 ---
 
@@ -363,16 +382,17 @@ The synthesis tutorial (`web/static/docs/tutorials/03-synthesis.md`) and the tes
 
 ## 11. Acceptance criteria
 
-Phase 1 is complete when **all** of the following hold:
+Phase 1 is complete when **all** of the following hold (✓ marks items satisfied by commit `5c1c0ca`):
 
-1. The three primary `codegen_patterns.cpp` sites set `cycle_length = 1.0f` (in cycles), not derived from `count_top_level_elements`.
-2. The seven transform sites set `out_cycle_length = 1.0f`; multiplicative transform composition (`slow`, `fast`, `palindrome`, `linger`, `zoom`, `segment`, `run`) is preserved.
-3. The Cedar boundary at `seq_init.cycle_length = cycle_length * 4.0f` (and equivalent emit sites) performs the cycle→beat conversion.
-4. The new end-to-end timing regression test (§8) is added and passes, asserting beat-times through eval → codegen → `seq_init` for the 8 cases in §8.
-5. The existing `test_codegen.cpp` cycle-length assertions at lines `1375-1390`, `2183-2300`, `3071-3442` are rewritten and pass with the canonical-base values.
-6. `test_mini_notation.cpp` remains green without edits (eval invariant unchanged).
-7. `test_hot_swap_determinism.cpp`, `test_fuzz_determinism.cpp`, `test_fuzz_recompile_audio.cpp` remain green (determinism preserved; values shift).
-8. `CLAUDE.md` Clock System section includes the explicit canonical-cycle clause from §9.
+1. ✓ The three primary `codegen_patterns.cpp` sites set `cycle_length = 4.0f` (canonical beats, Strudel "1 cycle = 4 beats" convention), not derived from `count_top_level_elements`.
+2. ✓ The seven transform sites set `out_cycle_length = 4.0f`; multiplicative transform composition (`slow`, `fast`, `palindrome`, `linger`, `zoom`, `segment`, `run`) is preserved.
+3. ✓ The Cedar boundary at `seq_init.cycle_length = cycle_length;` stays bare (no `* 4.0f` conversion needed — `cycle_length` is already in beats).
+4. ✓ The synthetic-pattern handlers (`handle_run_call`, `handle_binary_call`, `handle_binary_n_call`) set `cycle_length = 4.0f` instead of deriving from N / bits. *(Added during implementation; not in the original §3 enumeration.)*
+5. ✓ The new end-to-end timing regression test `akkado/tests/test_codegen_cycle_timing.cpp` is added and passes, asserting beat-times through eval → codegen → `seq_init` for the 8 cases in §8 (55 assertions / 8 cases, tagged `[cycle_timing]`).
+6. ✓ The existing `test_codegen.cpp` cycle-length assertions are rewritten and pass with the canonical-base values (clusters around `1375-1390`, `2183-2300`, `3071-3442`, plus sample-pattern assertions near `5394`, `5555`).
+7. ✓ `test_mini_notation.cpp` remains green without edits (eval invariant unchanged).
+8. ✓ `test_hot_swap_determinism.cpp`, `test_fuzz_determinism.cpp`, `test_fuzz_recompile_audio.cpp` remain green (determinism preserved; values shift).
+9. ✓ `CLAUDE.md` Clock System section includes the explicit canonical-cycle clause from §9.
 
 Phase 2 is complete when:
 
