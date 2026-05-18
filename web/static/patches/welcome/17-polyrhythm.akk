@@ -4,5 +4,5 @@
 
 bpm = 96
 
-s"[bd*3] [bd*3]" |> out(@)
-s"[hh*4] [hh*4]" |> out(@ * 0.5)
+s"[bd*3] [bd*3]".fast(2) |> out(@)
+s"[hh*4] [hh*4]".fast(2) |> out(@ * 0.5)

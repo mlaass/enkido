@@ -1,6 +1,8 @@
 > **Status: PRD** — Audit + remediation plan. Treat as the implementation contract for the fix. Drafted 2026-05-18.
 >
 > **Phase 1 shipped 2026-05-18** in commit `5c1c0ca` with one intentional divergence from the prescribed approach: the implementation keeps `cycle_length` in **beats throughout** (set `cycle_length = 4.0f` at every site) rather than the originally-prescribed "cycles inside codegen, `× 4` at the Cedar boundary." The two forms are semantically identical, but beats-throughout avoids scattering a magic conversion constant across 16+ handoff sites. Sections 2.1, 7, and 11 below are updated to reflect what actually shipped; the prior "cycles + boundary conversion" text is preserved at the end of §7 for posterity. Phase 1 also expanded the engine fix to cover the `run`/`binary`/`binaryN` synthetic-pattern handlers, which had the same element-count bug pattern but were not in the original §3/§7 enumeration. The "cycles everywhere — drop beats from Cedar entirely" model surfaced during implementation as the principled long-term direction; it is filed as a separate future PRD and is **not** part of this remediation.
+>
+> **Phase 3 shipped 2026-05-18** in the same per-patch sweep: 9 patches received `.slow()` / `.fast()` wraps to preserve their pre-fix musical intent (8 main + welcome patches kept their original tempo via append-`.slow(N/4)`, plus `dnb-amen` had its `.fast()` factor doubled), 11 patches were retuned (accepted the new cycle-fitted timing as the canonical density), and the rest were unchanged (no patterns, or already 4-element). One pre-existing akkado codegen bug surfaced during this work: chaining `.slow()` / `.fast()` onto a pattern that is then bound to a variable causes downstream record-field access (`@freq`, `@gate`, etc.) to fail with E061. The workaround used in this PR is to bind the bare pattern and apply the transform inline at each use site (see `visualizations.akk` and `soundfont-play.akk`). The bug should be filed as a follow-up — the records-and-field-access PRD audit (2026-05-13) claims transforms preserve record fields, but the variable-binding path breaks that contract.
 
 # Mini-notation cycle timing — audit + remediation PRD
 
@@ -378,6 +380,76 @@ For each affected patch, decide:
 
 The synthesis tutorial (`web/static/docs/tutorials/03-synthesis.md`) and the testing-progression tutorial (`web/static/docs/tutorials/05-testing-progression.md`) use `trigger(N)` decoupled from pattern length throughout. These examples were already independent of the bug, but should be reviewed for any text that implicitly references the broken model.
 
+### 10.1 Per-patch decision log (Phase 3, 2026-05-18)
+
+Every affected `.akk` was reviewed. Decisions:
+
+**Preserve** (`.slow(N/4)` appended, or `.fast(F)` factor adjusted) — kept the pre-fix musical feel because the pattern is coupled to an external `trigger(N)`, a `{beats: N}` viewport, a "32-step amen-cut" comment, a long meditative phrase, a dense chord progression that needs space, or otherwise has artistic intent tied to the pre-fix duration:
+
+| Patch | Top-level count | Change |
+|---|---|---|
+| `web/static/patches/dnb-amen.akk` (amen chop) | 8 | appended `.slow(2)` (keeps "32-step amen-cut" 16ths comment-true) |
+| `web/static/patches/dnb-amen.akk` (jungbass) | 2 | changed `.fast(2)` → `.fast(4)` (keeps 8th-note bass) |
+| `web/static/patches/effects-chain.akk` | 8 | inlined `.slow(2)` (coupled to `trigger(4)` envelope) |
+| `web/static/patches/microtonal-raga.akk` | 17 | appended `.slow(4)` (raga alap pace) |
+| `web/static/patches/poly-chords.akk` | 8 | appended `.slow(2)` (chord progression needs space) |
+| `web/static/patches/soundfont-play.akk` | 26 | inlined `.slow(6)` at each read site (long breathy melody) |
+| `web/static/patches/visualizations.akk` | 8 | inlined `.slow(2)` at each read site (coupled to `trigger(1)` envelope + pianoroll `{beats: 8}` viewport) |
+| `web/static/patches/welcome/10-acid-303.akk` | 8 | appended `.slow(2)` (coupled to `trigger(4)` envelope) |
+| `web/static/patches/welcome/17-polyrhythm.akk` (both lines) | 2 | appended `.fast(2)` (preserves "`[bd*3]` fits in 1 beat" comment) |
+
+**Retune** (no change; accept the new cycle-fitted density as canonical):
+
+| Patch | Top-level count | Why the new timing is musically defensible |
+|---|---|---|
+| `web/static/patches/drum-machine.akk` (drums + hats) | 8 / 8 | Drum loop fitting one cycle = standard groove. |
+| `web/static/patches/rock-groove.akk` (drums) | 8 | Drum loop fitting one cycle. |
+| `web/static/patches/unison-lead.akk` | 8 | Lead arpeggio at 8th notes per cycle. |
+| `web/static/patches/wavetable-scan.akk` | 8 | Flowing 8th-note arp at bpm=90 (comment claimed "four-note arpeggio" — already inaccurate). |
+| `web/static/patches/welcome/07-four-floor.akk` (hats) | 8 | 8th-note hats are canonical house. |
+| `web/static/patches/welcome/08-drum-groove.akk` (hats) | 8 | 8th-note hat shuffle is canonical. |
+| `web/static/patches/welcome/12-pentatonic-arp.akk` | 8 | Pentatonic 8th-note arp. |
+| `web/static/patches/welcome/14-pingpong.akk` | 8 | Sparse pattern with rests; 8th-note pulse works at bpm=110. |
+| `web/static/patches/welcome/15-chorus-lead.akk` | 8 | 8th-note lead. |
+| `web/static/patches/welcome/16-snare-roll.akk` | 16 | Snare roll comment explicitly says "across the bar" — 16ths fit a bar. |
+| `web/static/patches/welcome/20-microtonal.akk` | 8 | Modal arpeggio at 8ths. |
+
+**Unchanged** (no patterns, exactly 4 top-level elements, or already wrapped with appropriate `.slow()`):
+
+`chord-stab.akk`, `fm-piano.akk`, `hello-sine.akk`, `interactive-params.akk`, `midi-cc-filter.akk`, `midi-cc-filtermono.akk`, `midi-keys.akk`, `midi-soundfont.akk`, `stepper-demo.akk`, `unison-pad.akk`, `dnb-amen.akk` bass line (`.slow(4)` already), `drum-machine.akk` sub-bass (`.slow(4)` already), `rock-groove.akk` bass (4 elements), `welcome/01-sine-vibrato.akk` … `welcome/06-noise-wind.akk`, `welcome/09-euclid-bass.akk` (4 elements), `welcome/11-chord-pad.akk` (4), `welcome/13-reverb-drone.akk` (no pattern), `welcome/16-snare-roll.akk` second line (4), `welcome/18-generative.akk` (no pattern), `welcome/19-arp-echo.akk` (4), `experiments/phase2_smoke.akk` and `phase21_smoke.akk` (smoke tests; small tempo shifts on 3-element pats are acceptable for compile/run smoke).
+
+**Skipped**: `web/static/patches/test__dont_commit__.akk` — filename indicates a scratch file the patch author does not want touched.
+
+### 10.2 Codegen bug surfaced during Phase 3
+
+Two of the preserve edits (`visualizations.akk`, `soundfont-play.akk`) initially hit `E061: Cannot access field 'freq' on non-record value` when the natural form was used:
+
+```akkado
+notes = n"…".slow(2)
+notes |> saw(@freq) |> …    // FAILS with E061
+```
+
+Minimal reproducer:
+
+```akkado
+notes = n"c4 e4 g4 b4".slow(2)
+notes |> saw(@freq) * ar(trigger(1), 0.002, 0.18) |> out(@)
+// → E061 at @freq
+```
+
+Variants tested:
+
+| Form | Compiles? |
+|---|---|
+| `n"…" \|> saw(@freq) \|> …` (inline, no var, no transform) | ✓ |
+| `n"…".slow(2) \|> saw(@freq) \|> …` (inline, no var, with transform) | ✓ |
+| `notes = n"…"; notes \|> saw(@freq) \|> …` (var, no transform) | ✓ |
+| `notes = n"…".slow(2); notes \|> saw(@freq) \|> …` (var + transform on def) | ✗ E061 |
+| `notes = n"…"; notes.slow(2) \|> saw(@freq) \|> …` (var, transform at use) | ✓ |
+| Same with `pat("…")` or `note("…")` instead of `n"…"` | ✗ E061 |
+
+The records-and-field-access PRD audit (2026-05-13) claims transforms preserve record fields uniformly — this bug breaks that claim along the variable-binding path. The workaround used in this PR is to apply `.slow()` / `.fast()` at the read site rather than baking it into the variable's definition. The codegen bug should be filed as a separate issue and fixed independently.
+
 ---
 
 ## 11. Acceptance criteria
@@ -401,7 +473,7 @@ Phase 2 is complete when:
 
 Phase 3 is complete when:
 
-11. Every patch in §10 has been reviewed, with a logged preserve/retune/unchanged decision.
+11. ✓ Every patch in §10 has been reviewed, with a logged preserve/retune/unchanged decision (see §10.1 for the per-patch log).
 
 ---
 
