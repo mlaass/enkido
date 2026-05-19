@@ -827,6 +827,18 @@ public:
             std::uint32_t seq_steps[SNAPSHOT_MAX_SEQS] = {};
         };
         PlaybackSnapshot snap{};
+        // Capture the existing per-cycle output cache too. SEQPAT_QUERY
+        // skips its query when current_cycle == last_queried_cycle AND
+        // output.num_events > 0 (see op_seqpat_query). If we restore
+        // last_queried_cycle but leave the new output buffer empty (the
+        // default after re-alloc below), the FIRST query after recompile
+        // misses cache, re-fires for the same cycle, and advances every
+        // ALTERNATE sub-sequence's step counter by 1 — one extra step
+        // per recompile. We preserve the OLD output pointer + count and
+        // copy the events into the freshly allocated buffer after the
+        // structural-match check passes.
+        const OutputEvents::OutputEvent* old_output_events = nullptr;
+        std::uint32_t old_output_num_events = 0;
         if (auto* existing = get_if<SequenceState>(state_id)) {
             snap.valid = true;
             snap.num_sequences = existing->num_sequences;
@@ -840,6 +852,8 @@ public:
             for (std::uint32_t i = 0; i < copy_count; ++i) {
                 snap.seq_steps[i] = existing->sequences[i].step;
             }
+            old_output_events = existing->output.events;
+            old_output_num_events = existing->output.num_events;
         }
 
         auto& state = get_or_create<SequenceState>(state_id);
@@ -957,6 +971,21 @@ public:
                 // applies `step % num_events` itself, so the counter stays
                 // monotonic even when num_events changes between compiles.
                 state.sequences[i].step = snap.seq_steps[i];
+            }
+            // Repopulate the per-cycle output cache from the OLD output
+            // buffer. The arena is bump-allocated and never frees, so the
+            // OLD pointer is still valid here. Copying the events keeps
+            // SEQPAT_QUERY's cache-hit check satisfied on the next call,
+            // preventing a spurious re-query that would advance ALTERNATE
+            // step counters mid-cycle.
+            if (old_output_events && state.output.events &&
+                state.output.capacity > 0 && old_output_num_events > 0) {
+                const std::uint32_t copy_n =
+                    std::min(old_output_num_events, state.output.capacity);
+                for (std::uint32_t i = 0; i < copy_n; ++i) {
+                    state.output.events[i] = old_output_events[i];
+                }
+                state.output.num_events = copy_n;
             }
         }
     }

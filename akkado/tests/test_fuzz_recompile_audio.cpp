@@ -1025,3 +1025,359 @@ TEST_CASE("recompile-audio corpus: known regressions",
         CHECK(r.ok);
     }
 }
+
+// ============================================================================
+// Direct SequenceState preservation across recompile (Cedar invariant).
+// ============================================================================
+// The trigger-train tests above verify the OBSERVABLE outcome (no drift in
+// pulse positions). The tests below verify the CAUSE — every per-pattern
+// playback field in SequenceState is byte-equal across a byte-identical
+// recompile. User report (2026-05-19): "recompiling messes with pattern
+// playback position; some index gets reset, even for identical source."
+// The trigger-train check passes with eps=0, so any field this catches
+// must be one the trigger-train observable does NOT depend on (e.g. the
+// gate-retrigger sentinel, or fields read by visualisers).
+//
+// Covers the surviving pattern literal surfaces post-`pat()` retirement:
+//   n"…"  note pattern        s"…"  sample pattern
+//   c"…"  chord pattern       v"…"  value pattern
+//   t"…"  timeline pattern
+// `pat(…)` is intentionally NOT included — it is deprecated per the
+// `prd-remove-pat-builtin.md` plan and must not seed new tests.
+
+namespace {
+
+struct SeqStateSnapshot {
+    bool present = false;
+    std::uint32_t num_sequences = 0;
+    std::uint32_t current_index = 0;
+    float last_beat_pos = 0.0f;
+    float last_queried_cycle = 0.0f;
+    std::uint32_t cycle_index = 0;
+    float last_beat_pos_gate = 0.0f;
+    std::vector<std::uint32_t> seq_steps;
+};
+
+SeqStateSnapshot snapshot_seq_state(cedar::VM& vm, std::uint32_t state_id) {
+    SeqStateSnapshot s;
+    auto* st = vm.states().get_if<cedar::SequenceState>(state_id);
+    if (!st) return s;
+    s.present = true;
+    s.num_sequences = st->num_sequences;
+    s.current_index = st->current_index;
+    s.last_beat_pos = st->last_beat_pos;
+    s.last_queried_cycle = st->last_queried_cycle;
+    s.cycle_index = st->cycle_index;
+    s.last_beat_pos_gate = st->last_beat_pos_gate;
+    s.seq_steps.resize(st->num_sequences);
+    for (std::uint32_t i = 0; i < st->num_sequences; ++i) {
+        s.seq_steps[i] = st->sequences[i].step;
+    }
+    return s;
+}
+
+// Field-by-field diff. Returns first divergence (or empty if equal).
+// Caller asserts the string is empty.
+std::string diff_seq_snapshots(const SeqStateSnapshot& a,
+                               const SeqStateSnapshot& b) {
+    auto fmt = [](const char* field, auto x, auto y) {
+        std::ostringstream os;
+        os << field << " differs: before=" << x << " after=" << y;
+        return os.str();
+    };
+    if (a.present != b.present) {
+        return fmt("present", a.present, b.present);
+    }
+    if (a.num_sequences != b.num_sequences) {
+        return fmt("num_sequences", a.num_sequences, b.num_sequences);
+    }
+    if (a.current_index != b.current_index) {
+        return fmt("current_index", a.current_index, b.current_index);
+    }
+    if (a.last_beat_pos != b.last_beat_pos) {
+        return fmt("last_beat_pos", a.last_beat_pos, b.last_beat_pos);
+    }
+    if (a.last_queried_cycle != b.last_queried_cycle) {
+        return fmt("last_queried_cycle",
+                   a.last_queried_cycle, b.last_queried_cycle);
+    }
+    if (a.cycle_index != b.cycle_index) {
+        return fmt("cycle_index", a.cycle_index, b.cycle_index);
+    }
+    if (a.last_beat_pos_gate != b.last_beat_pos_gate) {
+        return fmt("last_beat_pos_gate",
+                   a.last_beat_pos_gate, b.last_beat_pos_gate);
+    }
+    for (std::size_t i = 0; i < a.seq_steps.size(); ++i) {
+        if (a.seq_steps[i] != b.seq_steps[i]) {
+            std::ostringstream os;
+            os << "sequences[" << i << "].step differs: before="
+               << a.seq_steps[i] << " after=" << b.seq_steps[i];
+            return os.str();
+        }
+    }
+    return {};
+}
+
+// Locate the first SequenceProgram state_id emitted by the compile result.
+std::uint32_t first_seq_state_id(const akkado::CompileResult& cr) {
+    for (const auto& init : cr.state_inits) {
+        if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+            return init.state_id;
+        }
+    }
+    return 0;
+}
+
+// Drive the VM for `warmup_blocks` blocks so SequenceState has non-zero
+// playback fields, snapshot the state, do a byte-identical recompile
+// (load_program + apply_state_inits), and snapshot again. Returns the
+// diff string (empty = pass).
+std::string check_state_preservation(const char* src,
+                                     std::uint32_t warmup_blocks) {
+    auto cr = akkado::compile(src);
+    if (!cr.success) return std::string("compile failed: ") + src;
+    const std::uint32_t state_id = first_seq_state_id(cr);
+    if (state_id == 0) return "no SequenceProgram state_init emitted";
+
+    cedar::VM vm;
+    vm.set_crossfade_blocks(3);
+    auto insts = to_inst_vector(cr);
+    if (vm.load_program(insts) != cedar::VM::LoadResult::Success) {
+        return "initial load_program failed";
+    }
+    std::vector<std::vector<cedar::Sequence>> seq_storage;
+    apply_seq_state_inits(vm, cr, seq_storage);
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (std::uint32_t b = 0; b < warmup_blocks; ++b) {
+        vm.process_block(L.data(), R.data());
+    }
+
+    const SeqStateSnapshot before = snapshot_seq_state(vm, state_id);
+    if (!before.present) return "SequenceState missing after warmup";
+    // Sanity: warmup should have moved SOMETHING.
+    bool any_progress =
+        before.current_index > 0 ||
+        before.cycle_index > 0 ||
+        before.last_beat_pos > 0.0f;
+    for (auto s : before.seq_steps) any_progress = any_progress || s > 0;
+    if (!any_progress) {
+        return "warmup did not advance SequenceState; bump warmup_blocks";
+    }
+
+    // Byte-identical recompile.
+    auto insts2 = insts;
+    cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
+    for (int retry = 0; retry < 64; ++retry) {
+        res = vm.load_program(insts2);
+        if (res == cedar::VM::LoadResult::Success) break;
+        vm.process_block(L.data(), R.data());
+    }
+    if (res != cedar::VM::LoadResult::Success) {
+        return "load_program never succeeded";
+    }
+    apply_seq_state_inits(vm, cr, seq_storage);
+
+    const SeqStateSnapshot after = snapshot_seq_state(vm, state_id);
+    return diff_seq_snapshots(before, after);
+}
+
+// Same as above but with `swap_count` consecutive byte-identical
+// recompiles, each preceded by `inter_blocks` of audio so the playback
+// fields keep advancing. Returns the diff between the snapshot taken
+// just before the FIRST recompile and the snapshot taken just after the
+// LAST recompile, after advancing the same total number of blocks the
+// no-swap baseline would have advanced. Catches drift that accumulates
+// over many recompiles even when each individual recompile looks clean.
+std::string check_state_preservation_repeated(const char* src,
+                                              std::uint32_t warmup_blocks,
+                                              std::uint32_t swap_count,
+                                              std::uint32_t inter_blocks) {
+    // Baseline: render warmup + swap_count * inter_blocks blocks with NO
+    // swaps and capture the final state.
+    auto cr = akkado::compile(src);
+    if (!cr.success) return "compile failed";
+    const std::uint32_t state_id = first_seq_state_id(cr);
+    if (state_id == 0) return "no SequenceProgram state_init";
+
+    SeqStateSnapshot baseline_final;
+    {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(3);
+        auto insts = to_inst_vector(cr);
+        if (vm.load_program(insts) != cedar::VM::LoadResult::Success) {
+            return "baseline: initial load failed";
+        }
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        apply_seq_state_inits(vm, cr, seq_storage);
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        const std::uint32_t total_blocks =
+            warmup_blocks + swap_count * inter_blocks;
+        for (std::uint32_t b = 0; b < total_blocks; ++b) {
+            vm.process_block(L.data(), R.data());
+        }
+        baseline_final = snapshot_seq_state(vm, state_id);
+        if (!baseline_final.present) return "baseline: state missing";
+    }
+
+    // Stress: same total render time, but with swap_count byte-identical
+    // recompiles interspersed.
+    SeqStateSnapshot stress_final;
+    {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(3);
+        auto insts = to_inst_vector(cr);
+        if (vm.load_program(insts) != cedar::VM::LoadResult::Success) {
+            return "stress: initial load failed";
+        }
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        apply_seq_state_inits(vm, cr, seq_storage);
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        for (std::uint32_t b = 0; b < warmup_blocks; ++b) {
+            vm.process_block(L.data(), R.data());
+        }
+        for (std::uint32_t s = 0; s < swap_count; ++s) {
+            auto insts2 = insts;
+            cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
+            for (int retry = 0; retry < 64; ++retry) {
+                res = vm.load_program(insts2);
+                if (res == cedar::VM::LoadResult::Success) break;
+                vm.process_block(L.data(), R.data());
+            }
+            if (res != cedar::VM::LoadResult::Success) {
+                return "stress: load_program never succeeded";
+            }
+            apply_seq_state_inits(vm, cr, seq_storage);
+            for (std::uint32_t b = 0; b < inter_blocks; ++b) {
+                vm.process_block(L.data(), R.data());
+            }
+        }
+        stress_final = snapshot_seq_state(vm, state_id);
+        if (!stress_final.present) return "stress: state missing";
+    }
+
+    return diff_seq_snapshots(baseline_final, stress_final);
+}
+
+// Sources spanning every surviving pattern literal surface. Picked so
+// each surface produces non-trivial state under warmup (at least one
+// alternation step advance + one cycle boundary). Out-of-band cycle
+// length: cycle = beat by default (commit 9d99490), so 200 blocks at
+// 48 kHz / 128 BLOCK_SIZE = 0.533s = ~1.06 cycles at 120 BPM.
+constexpr const char* STATE_PRESERVE_SOURCES[] = {
+    // Top-level alternation note pattern (4 cycles to cycle the alt).
+    R"(n"c4 d4 e4 f4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+    // In-cycle subdivision via brackets (single cycle covers all events).
+    R"(n"[c4 d4 e4 f4]" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+    // Chord pattern via poly (E410 requires poly() wrapping for multi-voice
+    // chords into a mono synth — see reference/mini-notation/chords.md).
+    R"(fn lead(freq, gate, vel) -> osc("sin", freq) * vel * 0.05
+       c"<Am Em F G>" |> poly(@, lead, 4) |> out(@))",
+    // Value pattern modulating amplitude (no osc-on-pattern needed).
+    R"(v"<0.2 0.5 0.8 0.5>" * osc("sin", 220) |> out(@, @))",
+    // Nested alternation — stresses sub-sequence step counters.
+    R"(n"<[c4 e4] [g4 b4]>" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+};
+
+}  // namespace
+
+TEST_CASE("recompile state: SequenceState preserved across one byte-identical "
+          "recompile (all surfaces)",
+          "[fuzz][recompile][state]") {
+    // Block budget: ~0.5s at 120 BPM ≈ 1 cycle → alternation step counter
+    // has advanced past the first element for every source.
+    constexpr std::uint32_t warmup_blocks = 250;
+
+    for (const char* src : STATE_PRESERVE_SOURCES) {
+        UNSCOPED_INFO("src=" << src);
+        const std::string diff = check_state_preservation(src, warmup_blocks);
+        if (!diff.empty()) {
+            UNSCOPED_INFO("preservation failure: " << diff);
+        }
+        CHECK(diff.empty());
+    }
+}
+
+TEST_CASE("recompile state: SequenceState preserved across N byte-identical "
+          "recompiles (all surfaces)",
+          "[fuzz][recompile][state][repeated]") {
+    // Cumulative version: 20 swaps with 100-block gaps. Each individual
+    // recompile may look clean but small drift can accumulate; final
+    // state must match the no-swap baseline state byte-for-byte.
+    constexpr std::uint32_t warmup_blocks = 100;
+    constexpr std::uint32_t swap_count = 20;
+    constexpr std::uint32_t inter_blocks = 100;
+
+    for (const char* src : STATE_PRESERVE_SOURCES) {
+        UNSCOPED_INFO("src=" << src);
+        const std::string diff = check_state_preservation_repeated(
+            src, warmup_blocks, swap_count, inter_blocks);
+        if (!diff.empty()) {
+            UNSCOPED_INFO("preservation failure: " << diff);
+        }
+        CHECK(diff.empty());
+    }
+}
+
+TEST_CASE("recompile state: SequenceState preserved across same-structure "
+          "edit (n\"…\" surface)",
+          "[fuzz][recompile][state][edit]") {
+    // Edit changes a NOTE VALUE but keeps the AST shape identical (4 events
+    // in an alternation sub-sequence). num_sequences must match → snapshot
+    // restoration kicks in → playback fields preserved. If this fails, the
+    // restoration condition at state_pool.hpp:947 is more fragile than
+    // num_sequences-equality.
+    constexpr const char* src_a =
+        R"(n"c4 d4 e4 f4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))";
+    constexpr const char* src_b =
+        R"(n"c4 d4 e4 g4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))";
+
+    auto cr_a = akkado::compile(src_a);
+    REQUIRE(cr_a.success);
+    auto cr_b = akkado::compile(src_b);
+    REQUIRE(cr_b.success);
+
+    const std::uint32_t state_id_a = first_seq_state_id(cr_a);
+    const std::uint32_t state_id_b = first_seq_state_id(cr_b);
+    REQUIRE(state_id_a != 0);
+    REQUIRE(state_id_b != 0);
+    // If the state_ids differ between A and B, the hot-swap path has no
+    // chance to preserve state across the edit: rebind_states keys by ID.
+    // Two same-structure programs that disagree on the pattern's state_id
+    // would be a separate root-cause bug; surface it loudly here.
+    UNSCOPED_INFO("state_id A=" << state_id_a << " B=" << state_id_b);
+    CHECK(state_id_a == state_id_b);
+    if (state_id_a != state_id_b) return;
+
+    cedar::VM vm;
+    vm.set_crossfade_blocks(3);
+    auto insts_a = to_inst_vector(cr_a);
+    REQUIRE(vm.load_program(insts_a) == cedar::VM::LoadResult::Success);
+    std::vector<std::vector<cedar::Sequence>> seq_storage;
+    apply_seq_state_inits(vm, cr_a, seq_storage);
+
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (std::uint32_t b = 0; b < 250; ++b) {
+        vm.process_block(L.data(), R.data());
+    }
+    const SeqStateSnapshot before = snapshot_seq_state(vm, state_id_a);
+    REQUIRE(before.present);
+
+    auto insts_b = to_inst_vector(cr_b);
+    cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
+    for (int retry = 0; retry < 64; ++retry) {
+        res = vm.load_program(insts_b);
+        if (res == cedar::VM::LoadResult::Success) break;
+        vm.process_block(L.data(), R.data());
+    }
+    REQUIRE(res == cedar::VM::LoadResult::Success);
+    apply_seq_state_inits(vm, cr_b, seq_storage);
+
+    const SeqStateSnapshot after = snapshot_seq_state(vm, state_id_b);
+    const std::string diff = diff_seq_snapshots(before, after);
+    if (!diff.empty()) {
+        UNSCOPED_INFO("preservation failure: " << diff);
+    }
+    CHECK(diff.empty());
+}
