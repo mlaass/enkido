@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — No curve notation parsing.
+> **Status: SHIPPED** — Curve notation fully implemented, tested, and documented. Feature branch `feature/timeline-curve-notation` merged to master in `bf5c164` (2026-03-26): lexer/parser/AST/codegen/pattern-eval/WASM across 22 files. Audited COMPLETE on 2026-05-01 (`3cbce3e`, see `docs/audits/prd-timeline-curve-notation_audit_2026-05-01.md`) — all 4 PRD goals Met, no stubs, no regressions, test sections `[curve_lexer]`/`[timeline_codegen]`/`[timeline_e2e]`/`[timeline_edge_cases]` green; user docs at `web/static/docs/reference/mini-notation/curve-notation.md`. (This header was stale: `3cbce3e`'s message claimed a NOT STARTED → COMPLETE flip but never edited this file; the header had carried the 2026-02-11 bulk-added default since `d4f16f5`.)
 
 # Timeline Curve Notation PRD
 
