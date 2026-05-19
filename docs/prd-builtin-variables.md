@@ -1,5 +1,7 @@
 # PRD: Builtin Variables (`bpm`, `sr`)
 
+> **Status: MOSTLY SHIPPED** — Compile-time setter path (`bpm = 120` → override → `_cedar_set_bpm`) and the Transport-sync round-trip work end-to-end: `BUILTIN_VARIABLES` registry, analyzer E170/E171/E172, codegen Identifier desugar to `ENV_GET("__bpm")`, WASM override exports, worklet override application, audio-store sync, and Transport `$effect` re-bind. **Remaining gap:** PRD step 8's live-tracking writes are not wired — the worklet's `setBpm` handler (`cedar-processor.js:165`) does not also `cedar_set_param("__bpm", value)`, and there is no init-time write for `__sr`. Effect: reads like `60 / bpm` return the PUSH_CONST fallback (120 / 48000) instead of the live Transport BPM. Verification step 3 (live tracking) is therefore unmet; verification steps 1–2 pass.
+
 ## Context
 
 `bpm = 120` appears in the default editor code, tutorials, language spec, and examples — but it does nothing. It compiles as a regular variable assignment (stores 120 in a buffer). The actual BPM is controlled externally via the Transport UI → AudioWorklet → WASM → `VM::set_bpm()`. We need to make `bpm = 120` actually set the tempo, and add the general concept of "builtin variables" (readable/writable identifiers backed by VM state).
