@@ -1317,6 +1317,11 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"pattern", "vel", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Set velocity on pattern events (0-1)."}},
+    {"transport", {cedar::Opcode::SEQPAT_TRANSPORT, 2, 2, true,
+                 {"pattern", "trig", "step", "reset", "", ""},
+                 {1.0f, NAN, NAN, NAN, NAN},
+                 "Trigger-driven pattern transport — decouples a pattern from "
+                 "the global clock; each trigger edge advances playback."}},
     // Phase 2.1 PRD §11.2: standalone note-property transforms
     {"bend",       {cedar::Opcode::NOP, 2, 0, false,
                     {"pattern", "value", "", "", "", ""},

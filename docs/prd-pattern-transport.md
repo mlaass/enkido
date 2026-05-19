@@ -1,11 +1,7 @@
-> **Status: PARTIALLY SHIPPED (2026-05-20)** — SEQPAT_TRANSPORT opcode, clock
-> overrides, and the `transport()` codegen handler all shipped in `5cb4eda`
-> (Feb 2026). **But `transport()` is unreachable from Akkado source**: no
-> analyzer-facing builtin entry was ever registered in `builtins.hpp`, so the
-> compiler never recognises `transport(...)` as a call. The opcode body +
-> codegen are done and correct (verified by the ExtendedParams audit guard,
-> see [prd-extended-params-migration.md](prd-extended-params-migration.md)
-> §4.9), but the feature has no user-facing surface. See **Follow-Up** below.
+> **Status: SHIPPED (2026-05-20)** — SEQPAT_TRANSPORT opcode, clock overrides,
+> and the `transport()` codegen handler shipped in `5cb4eda` (Feb 2026); the
+> `transport` builtin entry that makes them reachable from Akkado source, plus
+> `akkado/tests/test_transport.cpp` compile-level tests, landed 2026-05-20.
 
 # PRD: Pattern Transport
 
@@ -278,29 +274,23 @@ TransportState is preserved across hot-swaps via semantic ID matching, like all 
 | `akkado/include/akkado/builtins.hpp` | transport() builtin definition |
 | `akkado/src/codegen_patterns.cpp` | transport() codegen — emit SEQPAT_TRANSPORT, patch clock slots |
 
-## Follow-Up — Register the `transport()` builtin (REQUIRED to ship)
+## Closed Follow-Up — `transport()` builtin registration (2026-05-20)
 
-The opcode (`SEQPAT_TRANSPORT`), the VM dispatch, and the `transport()` codegen
-handler all exist and are correct. The feature is **not actually usable** because
-the builtin entry described in §4 of this PRD ("Compiler: transport() Builtin")
-was never added to `akkado/include/akkado/builtins.hpp`. Without it the analyzer
-treats `transport(...)` as an unknown identifier and codegen is never reached.
+For ~3 months after `5cb4eda` the opcode + codegen handler existed but were
+dead code: no `BuiltinInfo` entry was registered in
+`akkado/include/akkado/builtins.hpp`, so the analyzer rejected `transport(...)`
+with `E004 "Unknown function"` before codegen ran. Closed 2026-05-20:
 
-To close this PRD:
-
-1. **Register the builtin** in `akkado/include/akkado/builtins.hpp` — the
-   `{"transport", {cedar::Opcode::SEQPAT_TRANSPORT, ...}}` entry from §4.
-2. **Confirm the codegen path is wired** — verify the §4 codegen in
-   `akkado/src/codegen_patterns.cpp` actually fires once the builtin resolves
-   (it may have been written against the pre-`5cb4eda` codegen layout).
-3. **Add an Akkado compile-level test** — every example in the Syntax section
-   must compile. The current ExtendedParams audit guard only exercises the
-   opcode body, not the source-to-bytecode path.
-4. **Editor autocomplete** — once registered the builtin appears automatically
-   via `akkado_get_builtins_json()`; spot-check it surfaces.
-
-Until this lands, `transport()` should be treated as **not shipped** from a
-user's perspective.
+- **Builtin registered** — `{"transport", {SEQPAT_TRANSPORT, 2, 2, true, ...}}`
+  added to `BUILTIN_FUNCTIONS`, alongside the other pattern-transform builtins.
+- **Codegen path confirmed** — `handle_transport_call`
+  (`akkado/src/codegen_patterns.cpp`) fires via the `special_handlers` map and
+  is already ExtendedParams-current; no change needed.
+- **Compile-level tests** — `akkado/tests/test_transport.cpp` compiles all six
+  Syntax examples, asserts `SEQPAT_TRANSPORT`/`SEQPAT_QUERY` emission, and
+  covers the arg-count / non-pattern error paths.
+- **Autocomplete** — `transport` surfaces automatically via
+  `akkado_get_builtins_json()` now that it is in `BUILTIN_FUNCTIONS`.
 
 ## Non-Goals
 
