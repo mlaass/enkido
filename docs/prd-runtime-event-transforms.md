@@ -63,6 +63,20 @@ A second PRD — **"Cycles-pure clock model — drop beats from Cedar"** — mus
 
 ---
 
+## 0.6. Soft Dependency: Pattern Event Arrays (separate PRD)
+
+A third PRD — **`prd-pattern-event-arrays.md`** ("Pattern Event Arrays — Userspace Access to Chord & Polyphonic Data") — is a **soft** dependency, gating **§11 OQ-1 only**. It surfaces `OutputEvent.values[]` as a first-class dynamic-array value type (`DynArray`), adds `notes(e)` / `freqs(e)` accessors (with `e.notes` / `e.freqs` UFCS sugar), makes `len()` polymorphic, and — per its own Q3 — defines `map()` over runtime-varying-length arrays.
+
+**Why soft, not hard**: property modifiers that rewrite only the *primary* voice (`transpose`, `velocity`, `dur`, `bend` acting on `e.note`) need nothing from it. Only **chord-wide** transforms — rewriting every note in `values[]` — need the dynamic-array model. Per §11 OQ-1, the chord-wide closure form `(e) -> {notes: map(e.notes, (v) -> v + 7)}` is only well-defined once Pattern Event Arrays lands: that PRD owns both the `DynArray` type and `map`-over-`DynArray`.
+
+**Shared boundary**: both PRDs operate on the same `OutputEvents` wire format. Pattern Event Arrays' `notes(e)` accessor reads `OutputEvent.values[]`; every `EVENT_*` opcode in this PRD reads and writes `OutputEvents`. Consequently `notes(e)` composes downstream of a transform chain for free — `n"[c4,e4,g4]".transpose(7) … e.notes` works with no extra wiring, because PatternPayload still points at the final transform's `state_id`.
+
+**Sequencing**: Pattern Event Arrays is unblocked today (its own prerequisite, `prd-userspace-state-and-edge-primitives.md`, shipped 2026-04-26) and should land before this PRD's **Phase 2** (`event_map` closures). **Phase 1** (constant-only `EVENT_MAP` / `EVENT_FILTER`, primary-voice) does not depend on it.
+
+> **PRD reviewers**: unlike §0 / §0.5, descoping this dependency does not block the PRD — it only forces OQ-1 to collapse to "primary-voice-only, no chord-wide closure form."
+
+---
+
 ## 1. Current State
 
 ### 1.1 What exists today
@@ -380,9 +394,9 @@ End-to-end checks once Phase 5 lands:
 
 Resolution required before locking the PRD.
 
-**OQ-1. Chord events vs. field arithmetic.**
+**OQ-1. Chord events vs. field arithmetic.** *(gated by §0.6 — Pattern Event Arrays)*
 Should `(e) -> {note: e.note + 7}` transpose only the primary voice or every voice in `values[]`?
-Proposed default: primary voice only; explicit `e.values` access for chord-wide transforms (`(e) -> {values: map(e.values, (v) -> v + 7)}`).
+Proposed default: primary voice only. Chord-wide transforms reuse the dynamic-array model from `prd-pattern-event-arrays.md` — `(e) -> {notes: map(e.notes, (v) -> v + 7)}`, where `e.notes` is that PRD's `notes(e)` accessor (UFCS sugar) returning a `DynArray`, and `map`-over-`DynArray` is that PRD's Q3. **Use `e.notes` consistently — do not introduce a separate `e.values` spelling for the same chord data.** If Pattern Event Arrays is descoped, OQ-1 collapses to "primary-voice-only, no chord-wide form."
 
 **OQ-2. Closure return-value passthrough merge spec.**
 If the closure returns a record missing some fields, do unspecified fields pass through unchanged?
@@ -427,7 +441,7 @@ List every API surface this PRD assumes the cycles-pure PRD will provide (`spc` 
 
 1. **Land the cycles-pure PRD** (§0.5) — design, review, implement.
 2. **Land the runtime-closure PRD** (§0) — design, review, implement. Can proceed in parallel with cycles-pure; both must merge before Phase 1.
-3. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision.
+3. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision. OQ-1 in particular is gated on `prd-pattern-event-arrays.md` landing (see §0.6) — it should land before this PRD's Phase 2.
 4. **Implement Phase 1** of §9. Each subsequent phase is reviewed and merged independently.
 
 **Do not begin implementation while this PRD is in `FIRST DRAFT` status.**

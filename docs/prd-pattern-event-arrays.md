@@ -1,6 +1,6 @@
 # PRD: Pattern Event Arrays — Userspace Access to Chord & Polyphonic Data
 
-> **Status: NOT STARTED** — Surfaces the chord-note array carried inside every pattern event (`OutputEvent.values[]`) as first-class dynamic arrays in Akkado, so userspace closures can write arpeggiators, harmonizers, riff machines, and other polyphonic transforms without new C++ opcodes per use case. Removes the unused `ChordLit` (`C4'`) syntax. Depends on `prd-userspace-state-and-edge-primitives.md` landing first (for `step`, `state`, `counter`, UFCS).
+> **Status: NOT STARTED** — Surfaces the chord-note array carried inside every pattern event (`OutputEvent.values[]`) as first-class dynamic arrays in Akkado, so userspace closures can write arpeggiators, harmonizers, riff machines, and other polyphonic transforms without new C++ opcodes per use case. Removes the unused `ChordLit` (`C4'`) syntax. Depended on `prd-userspace-state-and-edge-primitives.md` (for `step`, `state`, `counter`, UFCS) — that PRD shipped 2026-04-26, so this prerequisite is satisfied and the PRD is unblocked.
 
 ## 1. Overview
 
@@ -8,7 +8,7 @@ Akkado patterns already carry chord/polyphonic data in their internal event form
 
 This blocks an entire class of live-coding tools: arpeggiators, harmonizers, riff machines, ostinatos, voicing transformers — anything that wants to *iterate over* or *transform* the notes of a chord rather than just sound them. Each one currently requires a new C++ opcode.
 
-This PRD surfaces the chord array as a first-class **dynamic array** value type — an array whose length varies per pattern event at runtime. Combined with the in-flight state-and-edge primitives PRD (which provides `step(arr, trig)`, `counter`, `state` cells, and UFCS method calls), all four target use cases become small userspace closures.
+This PRD surfaces the chord array as a first-class **dynamic array** value type — an array whose length varies per pattern event at runtime. Combined with the now-shipped state-and-edge primitives PRD (which provides `step(arr, trig)`, `counter`, `state` cells, and UFCS method calls — shipped 2026-04-26), all four target use cases become small userspace closures.
 
 ### Why?
 
@@ -42,7 +42,7 @@ This PRD surfaces the chord array as a first-class **dynamic array** value type 
 | `ChordLit` (`C4'`) syntax → root frequency only | ⚠️ MVP stub, unused in any shipped patch | `akkado/src/codegen.cpp:206` ("For MVP, emit first note (root) of chord") |
 | Static array literals `[60, 64, 67]` + `arr[i]` indexing | ✅ | `akkado/src/codegen.cpp:220-262`, `cedar/include/cedar/opcodes/arrays.hpp:37` |
 | `len(arr)` compile-time constant | ✅ | `arrays.hpp:77`, `codegen.cpp` (named-builtin special case) |
-| `state(init)` cells, `step(arr, trig)`, `counter`, UFCS | ❌ | Designed in `prd-userspace-state-and-edge-primitives.md`; NOT STARTED |
+| `state(init)` cells, `step(arr, trig)`, `counter`, UFCS | ✅ | Shipped by `prd-userspace-state-and-edge-primitives.md` (2026-04-26) |
 | Userspace access to chord notes as transformable data | ❌ | — |
 | Dynamic-length arrays (length as a runtime signal) | ❌ | — |
 
@@ -82,7 +82,7 @@ The closest existing surface — `e.freq` — is locked to the first chord note.
 
 - **No `notes("Am7", 4)` builtin** for constructing chord arrays from strings. Patterns are the canonical source of chord data; for static arrays users write `[60, 64, 67]` directly.
 - **No per-note `vels(e)` / `gates(e)` / `trigs(e)` array accessors in v1.** The internal `OutputEvent` carries a single velocity / gate / trig per event — a per-note version requires extending `OutputEvent` and the mini-notation. Documented as future work; v1 ships only `notes(e)` and `freqs(e)`.
-- **No auto-fan-out of stateful UGens over dynamic arrays.** Use `poly()`. (Static arrays continue to fan out at compile time as today.)
+- **No auto-fan-out of stateful UGens over dynamic arrays.** Use `poly()`. (Static arrays continue to fan out at compile time as today.) The eventual runtime mechanism for this is `EVENT_FANOUT` in `prd-runtime-event-transforms.md` — see Future Work and §10 Q3.
 - **No new pattern-syntax features** for per-note attributes (e.g. `[c4!.8, e4!.5]` for per-note velocity). Future work.
 - **No new chord-construction builtins**, including `voicing()`, `expand_chord()`, etc.
 - **No backward-compatibility shims for `ChordLit`.** Hard removal; sweep done in this PRD.
@@ -315,7 +315,7 @@ Pure deletion sweep. No new code; just removal:
 
 ### Phase 0 — Prerequisite: state PRD must be merged
 
-This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and UFCS from `prd-userspace-state-and-edge-primitives.md`. Phase 1+ here cannot land before that PRD is in. Confirm prerequisite is shipped before opening Phase 1.
+This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and UFCS from `prd-userspace-state-and-edge-primitives.md`. **Satisfied** — that PRD shipped 2026-04-26 (all four phases; implementation audit at `docs/audits/prd-userspace-state-and-edge-primitives_audit_2026-05-01.md`). Phase 1 may open immediately.
 
 ### Phase 1 — Remove ChordLit
 
@@ -368,7 +368,7 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
 - Mini-notation per-note attributes (`[c4!.8, e4!.5]`)
 - Static-array form for chord construction (e.g. transpose-aware chord builders) — only if a use case emerges that patterns can't address
 - Promotion to a `chord_arp` opcode if the userspace composition is too costly in practice
-- Allow auto-fan-out over dynamic arrays via runtime voice slot allocation (effectively a `poly`-like opcode triggered by the auto-expansion path)
+- Allow auto-fan-out over dynamic arrays via runtime voice slot allocation (effectively a `poly`-like opcode triggered by the auto-expansion path). **`prd-runtime-event-transforms.md`'s `EVENT_FANOUT` opcode is the intended runtime mechanism** — once it lands, the §4.5 compile error can soften into runtime polyphony for chord events instead of forcing `poly()`.
 
 ---
 
@@ -403,7 +403,7 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
   
   Likely answer: option 1 (packed) — minimal allocation, fits existing instruction format, `ARRAY_INDEX` already consumes single-buffer arrays this way.
 
-- **Q3: Should `map(dyn_arr, fn)` work?** `map` over a runtime-varying-length array is a useful primitive (per-note transforms inside a chord event). Specifying it requires deciding whether `map` outputs a same-shape DynArray or fans out at compile time. **Recommend: allow `map` over DynArray, output is same-length DynArray, executed via element-wise loop with runtime length.** Carries through to Phase 3.
+- **Q3: Should `map(dyn_arr, fn)` work?** `map` over a runtime-varying-length array is a useful primitive (per-note transforms inside a chord event). Specifying it requires deciding whether `map` outputs a same-shape DynArray or fans out at compile time. **Recommend: allow `map` over DynArray, output is same-length DynArray, executed via element-wise loop with runtime length.** Carries through to Phase 3. **This decision is also consumed by `prd-runtime-event-transforms.md` OQ-1**, whose chord-wide closure form `(e) -> {notes: map(e.notes, (v) -> v + 7)}` is only well-defined once `map`-over-`DynArray` is specified here — that PRD treats this one as a soft dependency (its §0.6).
 
 - **Q4: Should `notes(e)` / `freqs(e)` accept a Pattern variable that is the result of a pattern-literal *expression* (not a `pipe-bound` variable)?** I.e. is `notes(n"...")` allowed, or must it be `n"..." as e |> notes(e) ...`? Likely answer: both — `notes(e)` accepts any TypedValue::Pattern. Confirm during Phase 3.
 
