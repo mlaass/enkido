@@ -1,8 +1,14 @@
-> **Status: NOT STARTED** — Separate project, no implementation exists.
+> **Status: Shipped** — superseded by the standalone `godot-nkido-addon` repo.
+> This 1st draft's `NkidoPlayer` Node + `NkidoEngine` singleton design was
+> rejected during implementation and replaced by a VM-per-`AudioStream`
+> architecture. The canonical, current PRDs live in `godot-nkido-addon/docs/`
+> — see `prd-godot-extension.md` (v1 MVP, complete) and
+> `prd-audio-stream-refactor.md` (the architecture decision that removed
+> `NkidoPlayer`/`NkidoEngine`). This file is kept for historical reference only.
 
 # PRD: Godot Extension for Nkido
 
-**Status:** Draft
+**Status:** Shipped (superseded — see banner above)
 **Author:** Claude
 **Date:** 2026-01-27
 
