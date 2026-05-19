@@ -55,23 +55,27 @@ pat("f#3")          // F sharp, octave 3
 pat("Bb5")          // B flat, octave 5
 ```
 
-## Sequences
+## Sequences (top-level alternation)
 
-Space-separated notes play in sequence over one cycle:
+Top-level spaces play one element per cycle. **One cycle equals one beat by default**, so `"c4 e4 g4 c5"` plays four notes across four cycles — one per beat.
 
 ```akk
-// Four notes per cycle
+// One note per cycle (= one note per beat)
 pat("c4 e4 g4 c5")
-    |> ((f) -> osc("sin", f) * ar(trigger(4)))
+    |> ((f) -> osc("sin", f) * ar(trigger(1)))
     |> out(@)
 ```
+
+This is a **deliberate divergence from Strudel/Tidal**, which treats top-level as subdivision. We chose per-cycle alternation so long melodies stay readable as `"c d e f g a b c5"` without anyone having to count elements to predict the playback speed.
+
+`<a b c d>` is documented as a synonym of the top-level form — same per-cycle alternation.
 
 ## Rests
 
 Use `~` or `_` for silence:
 
 ```akk
-// Rest on beat 3
+// Rest on cycle 3
 pat("c4 e4 ~ g4")
 ```
 
@@ -83,16 +87,19 @@ For chord symbols (`Am7`, `Cmaj7`), inline chord brackets (`[c4 e4 g4]`), and vo
 // Inline chord, three notes at once
 pat("[c4 e4 g4]")
 
-// Chord-symbol progression
+// Chord-symbol progression — one chord per cycle
 chord("Am C G F")
 ```
 
-## Grouping
+## Grouping (`[…]`) — pack into one cycle
 
-Use square brackets to subdivide time:
+Use square brackets to pack multiple elements into a single cycle:
 
 ```akk
-// Second beat subdivided
+// Four notes packed into one cycle (= four sixteenths per beat at default)
+pat("[c4 e4 g4 c5]")
+
+// Mix: c4 cycle, then [e4 f4] subdivided into one cycle, then g4 cycle, then c5
 pat("c4 [e4 f4] g4 c5")
 ```
 

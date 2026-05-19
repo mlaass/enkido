@@ -15,7 +15,6 @@ bpm = 176
 // then an alternating fill of higher slices in the last beat.
 s"amencutup:0 amencutup:1 amencutup:2 amencutup:3 amencutup:4 amencutup:5 amencutup:6 <amencutup:7*2 amencutup:15 amencutup:7 amencutup:15*4>"
     .fast(4)
-    .slow(2)
     .bank("Dirt-Samples")
     .saturate(1.2)
     .limiter()
@@ -24,7 +23,7 @@ s"amencutup:0 amencutup:1 amencutup:2 amencutup:3 amencutup:4 amencutup:5 amencu
 // Jungle sub-bass: short attack, deep saturated sine on the kick beats.
 s"jungbass:0 ~ "
     .bank("Dirt-Samples")
-    .fast(4)
+    .fast(2)
     |> out(@*.5)
 
 

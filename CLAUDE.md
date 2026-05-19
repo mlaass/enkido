@@ -100,11 +100,13 @@ wave = dropdown("wave", ["sin", "saw", "tri"])
 ```
 
 ### Clock System
-- 1 cycle = 4 beats by default
-- Every mini-notation string is exactly one cycle by default, regardless of element count. More notes → shorter notes; the cycle length stays fixed (Strudel/Tidal convention).
-- Use `<a b c>` alternation to span multiple cycles (one element per cycle). Use `.slow(n)` / `.fast(n)` for runtime rescales.
+- **1 cycle = 1 beat.** Cycle and beat are the same unit; BPM directly sets the cycle rate.
+- **Top-level mini-notation = per-cycle alternation.** `"a b c d"` plays four cycles in sequence — one element per cycle, exactly equivalent to `<a b c d>`. Long melodies stay readable as `"c d e f g a b c5"` without doing element-count math to predict speed.
+- **`[a b c d]` subdivides one cycle** into N events. Use this when you want Strudel-style "all elements in one cycle" packing.
+- This is a **deliberate divergence from Strudel/Tidal**, which treats top-level as subdivision. Migration: wrap any pattern you wanted to subdivide in `[…]`.
+- `<a b c>` is a synonym of top-level. Use `.slow(n)` / `.fast(n)` for runtime rescaling.
 - `co`: cycle offset (0-1 ramp)
-- `beat(n)`: phasor completing every n beats
+- `beat(n)`: phasor completing every n beats (= every n cycles)
 
 ## Key DSP Opcodes
 

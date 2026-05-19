@@ -74,8 +74,8 @@ struct PatternPayload {
     /// POLY_BEGIN — there is intentionally no per-voice buffer plumbing here.
     std::uint32_t state_id = 0;
 
-    /// Cycle length in beats
-    float cycle_length = 4.0f;
+    /// Cycle length in beats (1 cycle = 1 beat under the cycle=beat model)
+    float cycle_length = 1.0f;
 
     /// PRD prd-patterns-as-scalar-values §5.3.
     /// Pattern→Signal coerce inspects these flags to decide whether the
@@ -143,7 +143,7 @@ struct ArrayPayload {
 /// schedule and don't support pattern transforms.
 struct EventSourcePayload {
     std::uint32_t state_id = 0;
-    float         cycle_length = 4.0f;
+    float         cycle_length = 1.0f;
 };
 
 /// A typed value produced by the code generator.

@@ -12,7 +12,7 @@ pad = (freq, gate, vel) -> {
         |> lp(@, 1400 + ar(gate, 0.02, 0.6) * 1800)
 }
 
-chord("Cmaj9 Am11@.5 Dm9@2 G13@.5 Cmaj9 Em7@.5 A7@2 Dm9@.5").slow(2)
+chord("Cmaj9 Am11@.5 Dm9@2 G13@.5 Cmaj9 Em7@.5 A7@2 Dm9@.5")
     |> poly(@, pad)
     |> limiter(@,-0.5)
     |> @ + delay(@, 0.5, 0.35) * 0.4

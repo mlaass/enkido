@@ -132,7 +132,7 @@ TEST_CASE("Golden: G2 polyrhythm s\"[hh,bd] ~ ~ ~\"",
 // G3 — record-suffix property propagation, single atom.
 TEST_CASE("Golden: G3 single-atom {vel} s\"bd{vel:0.25} ~ ~ ~\"",
           "[golden][sample][emission][velocity]") {
-    auto r = akkado::compile(R"(s"bd{vel:0.25} ~ ~ ~")");
+    auto r = akkado::compile(R"(s"[bd{vel:0.25} ~ ~ ~]")");
     check_pattern_tail(r);
     // Per-voice velocity rides on velocities[0]; event.velocity stays at 1.0.
     REQUIRE(!r.state_inits.empty());
@@ -145,7 +145,7 @@ TEST_CASE("Golden: G3 single-atom {vel} s\"bd{vel:0.25} ~ ~ ~\"",
 // G4 — property propagation through polyrhythm. Per-voice independence.
 TEST_CASE("Golden: G4 polyrhythm with {vel} on one voice",
           "[golden][sample][emission][polyrhythm][velocity]") {
-    auto r = akkado::compile(R"(s"[hh,bd{vel:0.25}] ~ ~ ~")");
+    auto r = akkado::compile(R"(s"[[hh,bd{vel:0.25}] ~ ~ ~]")");
     check_pattern_tail(r);
     REQUIRE(!r.state_inits.empty());
     const auto& events = r.state_inits[0].sequence_events[0];

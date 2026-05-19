@@ -21,42 +21,53 @@ Pattern String → Lexer → Parser → AST → Evaluator → Events → Codegen
 
 ### Cycle-Based Evaluation Model
 
-Mini-notation patterns are evaluated on a per-cycle basis. A "cycle" is exactly 4 beats by default (the Strudel/Tidal convention). Every mini-notation string fits into one cycle regardless of element count — more notes mean shorter notes, the cycle length stays fixed. To span multiple cycles use alternation (`<a b c>`, one element per cycle) or `.slow(n)`; to fit more repeats into a slot use `*n` or `.fast(n)`.
+Mini-notation patterns are evaluated on a per-cycle basis. **One cycle equals one beat**; BPM directly sets the cycle rate. Every top-level element occupies one full cycle (per-cycle alternation) — `"a b c d"` plays four cycles in sequence, one element per cycle. This is a **deliberate divergence from Strudel/Tidal**, which subdivides one cycle by element count. To pack multiple events into a single cycle, use the explicit subdivision form `[a b c d]`.
 
-For simple patterns, a single cycle evaluation suffices. For patterns with alternating sequences (`<a b c>`), multi-cycle evaluation expands all alternatives into a combined event stream.
+For simple patterns, a single cycle evaluation suffices. For patterns with alternating sequences (top-level or `<a b c>`), multi-cycle evaluation cycles through the children in turn.
 
 ## Grouping Constructs
 
 | Construct | Name | Behavior |
 |-----------|------|----------|
-| `a b c` | Sequence | Items subdivide parent duration equally |
-| `[a b c]` | Group/Subdivision | Same as sequence, explicit grouping for nesting |
-| `<a b c>` | Slow Concatenation | Each item gets 1 full cycle; pattern spans N cycles |
+| `a b c` | Top-level alternation | Each item plays for one cycle; pattern spans N cycles (synonym of `<a b c>`) |
+| `[a b c]` | Group/Subdivision | Items subdivide one cycle equally |
+| `<a b c>` | Alternation | Synonym of top-level; each item gets 1 full cycle; pattern spans N cycles |
 | `[a, b]` | Polyrhythm | Items play simultaneously |
 | `{a b}%n` | Polymeter | Pattern forced to n steps |
 
+### Top-level Alternation (default)
+
+Spaces at the top level of a mini-notation string create per-cycle alternation:
+
+```
+"a b c d" = 4 elements spanning 4 cycles
+  - Element 'a' plays in cycle 0
+  - Element 'b' plays in cycle 1
+  - Element 'c' plays in cycle 2
+  - Element 'd' plays in cycle 3
+  - With cycle_length=1 beat → one element per beat
+```
+
 ### Subdivision (`[]`)
 
-Square brackets create subdivisions within the parent time span:
+Square brackets pack their children into one cycle:
 
 ```
 [a b c d] = 4 elements in 1 cycle
   - Each element gets 1/4 of the cycle
   - Events at normalized times 0, 0.25, 0.5, 0.75
-  - With cycle_length=4 beats → events at beats 0, 1, 2, 3
+  - With cycle_length=1 beat → events at beats 0, 0.25, 0.5, 0.75
 ```
 
-### Slow Concatenation (`<>`)
+### Alternation (`<>`)
 
-Angle brackets create alternating patterns that span multiple cycles:
+Angle brackets behave identically to the top-level form — they're a documented synonym:
 
 ```
 <a b c> = 3 elements spanning 3 cycles
   - Element 'a' plays in cycle 0
   - Element 'b' plays in cycle 1
   - Element 'c' plays in cycle 2
-  - Events at normalized times 0, 1, 2
-  - With cycle_length=12 beats → events at beats 0, 4, 8
 ```
 
 ### Polyrhythm (`[a, b]`)

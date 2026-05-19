@@ -1,4 +1,4 @@
-> **Status: FIRST DRAFT — NOT READY FOR IMPLEMENTATION.** Drafted 2026-05-19 from the captured first-draft goal in `project_strudel_cycles_pure_model_followup.md`. This PRD is a hard prereq of `docs/prd-runtime-event-transforms.md` (see its §0.5). Resolve §11 Open Questions before locking the design.
+> **Status: ON HOLD — superseded in part by the 2026-05-19 parser revert.** The "cycle = beat" default and the `* 4` removal in `samples_per_cycle()` already shipped as part of the mini-notation top-level-alternation revert (see CHANGELOG Unreleased). What remains is the deeper plumbing cleanup — removing the per-pattern `cycle_length` field, replacing the `MidiQueueState` sentinel with a `streaming: bool` flag, dropping `beat_phase`/`bar_phase` for a single `cycle_offset`, and renaming the beat-coupled opcode units. Rewrite the body in cycle-per-element terms before resuming implementation. Originally drafted 2026-05-19; hard prereq of `docs/prd-runtime-event-transforms.md` (see its §0.5).
 
 # PRD: Cycles-Pure Clock Model — drop "beats" from Cedar/Akkado
 

@@ -1937,7 +1937,7 @@ static bool has_diagnostic_code(const std::vector<akkado::Diagnostic>& diagnosti
 
 TEST_CASE("tune() compiles end-to-end", "[tuning]") {
     SECTION("basic tune() compiles successfully") {
-        auto result = akkado::compile(R"(tune("24edo", pat("c4 c^4")))");
+        auto result = akkado::compile(R"(tune("24edo", pat("[c4 c^4]")))");
         INFO("Diagnostics:");
         for (const auto& d : result.diagnostics) {
             INFO("  " << d.code << ": " << d.message);
@@ -1983,7 +1983,7 @@ TEST_CASE("tune() emits correct Hz for microtonal notes", "[tuning][hz_roundtrip
     using Catch::Matchers::WithinRel;
 
     SECTION("12-EDO default: c^4 == c#4 (one semitone)") {
-        auto result = akkado::compile(R"(pat("c4 c^4 c#4"))");
+        auto result = akkado::compile(R"(pat("[c4 c^4 c#4]"))");
         REQUIRE(result.success);
         auto hz = extract_event_hz(result);
         REQUIRE(hz.size() == 3);
@@ -1993,7 +1993,7 @@ TEST_CASE("tune() emits correct Hz for microtonal notes", "[tuning][hz_roundtrip
     }
 
     SECTION("24-EDO: c^4 is a quarter tone above c4") {
-        auto result = akkado::compile(R"(tune("24edo", pat("c4 c^4")))");
+        auto result = akkado::compile(R"(tune("24edo", pat("[c4 c^4]")))");
         REQUIRE(result.success);
         auto hz = extract_event_hz(result);
         REQUIRE(hz.size() == 2);
@@ -2003,7 +2003,7 @@ TEST_CASE("tune() emits correct Hz for microtonal notes", "[tuning][hz_roundtrip
     }
 
     SECTION("31-EDO: c^4 step is ~38.7¢") {
-        auto result = akkado::compile(R"(tune("31edo", pat("c4 c^4")))");
+        auto result = akkado::compile(R"(tune("31edo", pat("[c4 c^4]")))");
         REQUIRE(result.success);
         auto hz = extract_event_hz(result);
         REQUIRE(hz.size() == 2);
@@ -2012,7 +2012,7 @@ TEST_CASE("tune() emits correct Hz for microtonal notes", "[tuning][hz_roundtrip
     }
 
     SECTION("d alias produces -1 micro_offset (sesquiflat cbd4)") {
-        auto result = akkado::compile(R"(tune("24edo", pat("c4 cbd4")))");
+        auto result = akkado::compile(R"(tune("24edo", pat("[c4 cbd4]")))");
         REQUIRE(result.success);
         auto hz = extract_event_hz(result);
         REQUIRE(hz.size() == 2);
@@ -2023,7 +2023,7 @@ TEST_CASE("tune() emits correct Hz for microtonal notes", "[tuning][hz_roundtrip
     }
 
     SECTION("\\ alias produces -1 micro_offset") {
-        auto result = akkado::compile(R"(tune("24edo", pat("c\\4 c4")))");
+        auto result = akkado::compile(R"(tune("24edo", pat("[c\\4 c4]")))");
         REQUIRE(result.success);
         auto hz = extract_event_hz(result);
         REQUIRE(hz.size() == 2);

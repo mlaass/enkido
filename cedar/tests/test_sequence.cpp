@@ -84,7 +84,7 @@ TEST_CASE("Event default construction", "[sequence]") {
 TEST_CASE("Sequence default construction", "[sequence]") {
     Sequence seq;
     CHECK(seq.num_events == 0);
-    CHECK(seq.duration == 4.0f);
+    CHECK(seq.duration == 1.0f);
     CHECK(seq.step == 0);
     CHECK(seq.mode == SequenceMode::NORMAL);
 }

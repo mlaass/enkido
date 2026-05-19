@@ -103,7 +103,7 @@ struct Sequence {
     Event* events = nullptr;          // Pointer to arena-allocated events
     std::uint32_t num_events = 0;
     std::uint32_t capacity = 0;       // Allocated event count
-    float duration = 4.0f;            // Total duration in beats
+    float duration = 1.0f;            // Total duration in beats (cycle = beat)
     std::uint32_t step = 0;           // Current step (for ALTERNATE mode)
     SequenceMode mode = SequenceMode::NORMAL;
 
@@ -194,7 +194,7 @@ struct SequenceState {
     std::uint32_t seq_capacity = 0;   // Allocated sequence count
 
     // Pattern parameters
-    float cycle_length = 4.0f;
+    float cycle_length = 1.0f;
     std::uint64_t pattern_seed = 0;
     bool is_sample_pattern = false;
 

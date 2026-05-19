@@ -7,7 +7,7 @@ bpm = 130
 env = ar(trigger(4), 0.001, 0.18)
 cutoff = param("cutoff", 600, 200, 4000)
 
-n"a2 a3 c3 a2 e3 a2 g3 c3".slow(2)
+n"a2 a3 c3 a2 e3 a2 g3 c3"
     |> osc("saw", @freq) * 0.5
     |> moog(@, cutoff + env * 2400, 3.2, _, 1.6)
     |> out(@)

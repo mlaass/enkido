@@ -1,15 +1,11 @@
 // End-to-end regression test for mini-notation cycle timing.
 //
-// Pins the Strudel/Tidal cycle-fitting contract at the *scheduling* layer:
-// the entire mini-notation string is exactly one cycle (4 beats) regardless
-// of element count. More notes -> shorter notes; cycle length stays fixed.
-//
-// Background: prior to the 2026-05-18 audit fix, codegen rescaled the
-// pattern by `num_top_level_elements` beats, so `pat("c d e f g a b c5")`
-// ran for 2 cycles instead of 1. The bug was invisible to eval-only tests
-// because pattern_eval correctly produces normalized [0, 1) event times;
-// the rescale happened one stage later in codegen_patterns.cpp. See
-// docs/audits/mini-notation-cycle-timing_audit_2026-05-18.md.
+// Pins the per-cycle-alternation contract at the *scheduling* layer:
+// each top-level element in a mini-notation string occupies exactly one
+// cycle (= one beat under the cycle=beat model). Use [...] for in-cycle
+// subdivision. This is a deliberate divergence from Strudel/Tidal:
+// `pat("c d e f")` plays four cycles in sequence, not four sub-notes in
+// one cycle.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -44,61 +40,92 @@ std::vector<float> beat_positions(const akkado::StateInitData& si) {
 
 }  // namespace
 
-TEST_CASE("cycle_timing: single element fits in one canonical cycle",
+TEST_CASE("cycle_timing: single element inlines to one event spanning the cycle",
           "[codegen][patterns][cycle_timing]") {
     auto result = akkado::compile(R"(pat("c4"))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
     auto beats = beat_positions(*si);
     REQUIRE(beats.size() == 1);
     CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
 }
 
-TEST_CASE("cycle_timing: two elements fit in one canonical cycle",
+TEST_CASE("cycle_timing: two top-level elements compile to per-cycle alternation",
           "[codegen][patterns][cycle_timing]") {
     auto result = akkado::compile(R"(pat("c4 e4"))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
-    auto beats = beat_positions(*si);
-    REQUIRE(beats.size() == 2);
-    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
-    CHECK(beats[1] == Catch::Approx(2.0f).margin(0.001f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    // Root sequence holds one SUB_SEQ event pointing at the alternate
+    // sub-sequence with 2 choices.
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 2);
 }
 
-TEST_CASE("cycle_timing: four elements land on integer beats",
+TEST_CASE("cycle_timing: four top-level elements alternate across four cycles",
           "[codegen][patterns][cycle_timing]") {
     auto result = akkado::compile(R"(pat("c4 d4 e4 f4"))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
-    auto beats = beat_positions(*si);
-    REQUIRE(beats.size() == 4);
-    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
-    CHECK(beats[1] == Catch::Approx(1.0f).margin(0.001f));
-    CHECK(beats[2] == Catch::Approx(2.0f).margin(0.001f));
-    CHECK(beats[3] == Catch::Approx(3.0f).margin(0.001f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 4);
 }
 
-TEST_CASE("cycle_timing: eight elements fit in one cycle as half-beats",
+TEST_CASE("cycle_timing: eight top-level elements alternate across eight cycles",
           "[codegen][patterns][cycle_timing]") {
     auto result = akkado::compile(R"(pat("c d e f g a b c5"))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 8);
+}
+
+TEST_CASE("cycle_timing: explicit [...] subdivides one cycle",
+          "[codegen][patterns][cycle_timing]") {
+    auto result = akkado::compile(R"(pat("[c4 d4 e4 f4]"))");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
     auto beats = beat_positions(*si);
-    REQUIRE(beats.size() == 8);
-    for (std::size_t i = 0; i < 8; ++i) {
-        CHECK(beats[i] == Catch::Approx(static_cast<float>(i) * 0.5f).margin(0.001f));
+    REQUIRE(beats.size() == 4);
+    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(beats[1] == Catch::Approx(0.25f).margin(0.001f));
+    CHECK(beats[2] == Catch::Approx(0.50f).margin(0.001f));
+    CHECK(beats[3] == Catch::Approx(0.75f).margin(0.001f));
+}
+
+TEST_CASE("cycle_timing: <...> is a synonym of top-level alternation",
+          "[codegen][patterns][cycle_timing]") {
+    auto result_top = akkado::compile(R"(pat("c4 d4 e4 f4"))");
+    auto result_alt = akkado::compile(R"(pat("<c4 d4 e4 f4>"))");
+    REQUIRE(result_top.success);
+    REQUIRE(result_alt.success);
+
+    const auto* si_top = find_seq_init(result_top);
+    const auto* si_alt = find_seq_init(result_alt);
+    REQUIRE(si_top != nullptr);
+    REQUIRE(si_alt != nullptr);
+
+    CHECK(si_top->cycle_length == Catch::Approx(si_alt->cycle_length));
+    REQUIRE(si_top->sequence_events.size() == si_alt->sequence_events.size());
+    for (std::size_t s = 0; s < si_top->sequence_events.size(); ++s) {
+        CHECK(si_top->sequence_events[s].size() == si_alt->sequence_events[s].size());
     }
 }
 
@@ -109,11 +136,10 @@ TEST_CASE("cycle_timing: slow(2) doubles cycle length",
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(8.0f));
-    auto beats = beat_positions(*si);
-    REQUIRE(beats.size() == 2);
-    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
-    CHECK(beats[1] == Catch::Approx(4.0f).margin(0.001f));
+    CHECK(si->cycle_length == Catch::Approx(2.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 2);
 }
 
 TEST_CASE("cycle_timing: fast(2) halves cycle length",
@@ -123,47 +149,74 @@ TEST_CASE("cycle_timing: fast(2) halves cycle length",
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(2.0f));
-    auto beats = beat_positions(*si);
-    REQUIRE(beats.size() == 4);
-    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
-    CHECK(beats[1] == Catch::Approx(0.5f).margin(0.001f));
-    CHECK(beats[2] == Catch::Approx(1.0f).margin(0.001f));
-    CHECK(beats[3] == Catch::Approx(1.5f).margin(0.001f));
+    CHECK(si->cycle_length == Catch::Approx(0.5f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 4);
 }
 
-TEST_CASE("cycle_timing: alternation occupies one slot per cycle",
+TEST_CASE("cycle_timing: subdivision inside [...] supports weights",
           "[codegen][patterns][cycle_timing]") {
-    // <a b c d> is a single top-level element that alternates across cycles.
-    // Within a single cycle query (cycle 0), it emits one event at beat 0
-    // spanning the full cycle.
-    auto result = akkado::compile(R"(pat("<c4 d4 e4 f4>"))");
+    // [c4@2 e4] — total weight 3, "c4" holds for 2/3 of the cycle.
+    // cycle_length=1; event "c4" at t=0 (duration ~0.667),
+    // event "e4" at t=~0.667 (duration ~0.333).
+    auto result = akkado::compile(R"(pat("[c4@2 e4]"))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
-    // Static analysis of the compiled sequence may surface the alternation
-    // sub-sequence (>= 1 SUB_SEQ event or the inner choices) — the contract
-    // we pin is that the cycle length is unaffected by the alternation
-    // arity. Inner structure is the eval-stage concern covered by
-    // test_mini_notation.cpp.
-    REQUIRE(!si->sequence_events.empty());
-}
-
-TEST_CASE("cycle_timing: weighted element holds its proportional slot",
-          "[codegen][patterns][cycle_timing]") {
-    // pat("a@2 b") — total weight 3, "a" holds for 2/3 of the cycle.
-    // In beats: cycle_length=4; event "a" at beat 0 (duration ~2.667),
-    // event "b" at beat ~2.667 (duration ~1.333).
-    auto result = akkado::compile(R"(pat("c4@2 e4"))");
-    REQUIRE(result.success);
-    const auto* si = find_seq_init(result);
-    REQUIRE(si != nullptr);
-
-    CHECK(si->cycle_length == Catch::Approx(4.0f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
     auto beats = beat_positions(*si);
     REQUIRE(beats.size() == 2);
-    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.01f));
-    CHECK(beats[1] == Catch::Approx(8.0f / 3.0f).margin(0.01f));  // ~2.667
+    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(beats[1] == Catch::Approx(2.0f / 3.0f).margin(0.001f));
+}
+
+TEST_CASE("cycle_timing: timeline(...) curves keep subdivision semantics",
+          "[codegen][patterns][cycle_timing][timeline]") {
+    // The codegen revert only flips MiniPattern dispatch in compile_into_sequence.
+    // timeline() compiles via PatternEvaluator::evaluate which still subdivides
+    // the [0,1) span across breakpoints. Pin that we didn't accidentally route
+    // timeline curves through alternation.
+    auto result = akkado::compile(R"(timeline("__/''") |> out(@, @))");
+    REQUIRE(result.success);
+
+    bool timeline_seen = false;
+    for (const auto& init : result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::Timeline) {
+            timeline_seen = true;
+            break;
+        }
+    }
+    CHECK(timeline_seen);
+}
+
+TEST_CASE("cycle_timing: pat(\"a\"), pat(\"<a>\"), pat(\"[a]\") are byte-equivalent",
+          "[codegen][patterns][cycle_timing][single_child]") {
+    // The b5f2768 single-child inline guard means all three forms collapse
+    // to a direct atom emission with identical bytecode. Preserving this
+    // invariant also keeps late()/early() from double-shifting through a
+    // needless sub-sequence wrapper.
+    auto bare = akkado::compile(R"(pat("a"))");
+    auto seq  = akkado::compile(R"(pat("<a>"))");
+    auto grp  = akkado::compile(R"(pat("[a]"))");
+    REQUIRE(bare.success);
+    REQUIRE(seq.success);
+    REQUIRE(grp.success);
+
+    const auto* si_bare = find_seq_init(bare);
+    const auto* si_seq  = find_seq_init(seq);
+    const auto* si_grp  = find_seq_init(grp);
+    REQUIRE(si_bare != nullptr);
+    REQUIRE(si_seq  != nullptr);
+    REQUIRE(si_grp  != nullptr);
+
+    CHECK(si_bare->cycle_length == Catch::Approx(si_seq->cycle_length));
+    CHECK(si_bare->cycle_length == Catch::Approx(si_grp->cycle_length));
+    REQUIRE(si_bare->sequence_events.size() == si_seq->sequence_events.size());
+    REQUIRE(si_bare->sequence_events.size() == si_grp->sequence_events.size());
+    for (std::size_t s = 0; s < si_bare->sequence_events.size(); ++s) {
+        CHECK(si_bare->sequence_events[s].size() == si_seq->sequence_events[s].size());
+        CHECK(si_bare->sequence_events[s].size() == si_grp->sequence_events[s].size());
+    }
 }

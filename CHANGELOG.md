@@ -7,24 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### ⚠ BREAKING — mini-notation cycle timing now matches Strudel/Tidal
+### ⚠ BREAKING — mini-notation: cycle = beat, top-level = alternation
 
-A mini-notation string is exactly one cycle (4 beats) by default,
-regardless of element count. Previously, each top-level element
-occupied one beat, so `pat("c d e f g a b c5")` ran for 2 cycles; it
-now fits in 1 cycle with eight half-beat notes. Only patterns with
-exactly 4 top-level elements are unaffected.
+The clock unit and the mini-notation top-level grouping rule both
+change to a single coherent model:
 
-**Migration**: to restore a pattern's old timing, wrap it in
-`.slow(N / 4.0)`, where N is the top-level element count. Example:
-`pat("c d e f g a b c5")` → `pat("c d e f g a b c5").slow(2)`.
+- **1 cycle = 1 beat.** BPM directly sets the cycle rate.
+- **Top-level spaces play one element per cycle.** `"a b c d"` plays
+  four cycles in sequence (one element per cycle), exactly equivalent
+  to the angle-bracket form `<a b c d>`.
+- **`[a b c d]` packs four elements into one cycle** (the explicit
+  subdivision form). Use this when you want Strudel/Tidal-style
+  in-cycle subdivision.
+- **`<a b c>` is a documented synonym of the top-level form.**
 
-This restores conformance with the cycle-fitting convention documented
-in `docs/mini-notation-reference.md` and Strudel/Tidal — the prior
-behavior was a long-standing bug in the codegen layer
-(`akkado/src/codegen_patterns.cpp`). See
-`docs/audits/mini-notation-cycle-timing_audit_2026-05-18.md` for the
-full audit + rationale.
+This is a **deliberate divergence from Strudel/Tidal**, which treats
+top-level as subdivision. We chose per-cycle alternation so long
+melodies stay readable as `"c d e f g a b c5"` without anyone having
+to count elements to predict playback speed.
+
+Engine-side: `ExecutionContext::samples_per_cycle()` no longer
+multiplies by 4; every `cycle_length` default flipped from 4 beats to
+1 beat; bar phase collapses to beat phase. The codegen dispatch for
+`MiniPattern` routes through `compile_alternate_sequence` (the same
+path as `<…>`), with the existing single-child inline guard preserving
+`pat("a") ≡ pat("<a>") ≡ pat("[a]")` byte-equivalence.
 
 ### ⚠ BREAKING — delay-family default mix changed
 

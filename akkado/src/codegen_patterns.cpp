@@ -333,7 +333,9 @@ private:
 
         switch (n.type) {
             case NodeType::MiniPattern:
-                compile_pattern_node(ast_idx, n, seq_idx, time_offset, time_span);
+                // Top-level: each element occupies its own cycle (per-cycle alternation).
+                // Use [...] for in-cycle subdivision. Deliberate divergence from Strudel.
+                compile_alternate_sequence(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniAtom:
                 compile_atom_event(n, seq_idx, time_offset, time_span);
@@ -363,39 +365,6 @@ private:
             default:
                 // Unknown node type - skip
                 break;
-        }
-    }
-
-    // MiniPattern: root containing children (sequential concatenation)
-    void compile_pattern_node(NodeIndex /*ast_idx*/, const Node& n, std::uint16_t seq_idx,
-                               float time_offset, float time_span) {
-        // Count children and their weights
-        std::vector<NodeIndex> children;
-        std::vector<float> weights;
-        float total_weight = 0.0f;
-
-        NodeIndex child = n.first_child;
-        while (child != NULL_NODE) {
-            float weight = get_node_weight(child);
-            int repeat = get_node_repeat(child);
-            for (int i = 0; i < repeat; ++i) {
-                children.push_back(child);
-                weights.push_back(weight);
-                total_weight += weight;
-            }
-            child = arena_[child].next_sibling;
-        }
-
-        if (children.empty()) return;
-        if (total_weight <= 0.0f) total_weight = static_cast<float>(children.size());
-
-        // Subdivide time among children
-        float accumulated_time = 0.0f;
-        for (std::size_t i = 0; i < children.size(); ++i) {
-            float child_span = (weights[i] / total_weight) * time_span;
-            float child_offset = time_offset + accumulated_time;
-            compile_into_sequence(children[i], seq_idx, child_offset, child_span);
-            accumulated_time += child_span;
         }
     }
 
@@ -519,7 +488,6 @@ private:
     // MiniGroup [a b c]: sequential concatenation, subdivide time
     void compile_group_events(const Node& n, std::uint16_t seq_idx,
                                float time_offset, float time_span) {
-        // Same logic as compile_pattern_node
         std::vector<NodeIndex> children;
         std::vector<float> weights;
         float total_weight = 0.0f;
@@ -1323,8 +1291,8 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
-    float cycle_length = 4.0f;
+    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
+    float cycle_length = 1.0f;
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1701,8 +1669,8 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
-    float cycle_length = 4.0f;
+    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
+    float cycle_length = 1.0f;
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1852,8 +1820,8 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // 1 cycle = 4 beats by default (Strudel convention). Independent of element count.
-    float cycle_length = 4.0f;
+    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
+    float cycle_length = 1.0f;
 
     // Allocate buffers for outputs
     std::uint16_t value_buf = buffers_.allocate();
@@ -2223,7 +2191,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+        out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
         return true;
     }
 
@@ -2242,7 +2210,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+        out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
         return true;
     }
 
@@ -2289,7 +2257,7 @@ static bool compile_pattern_for_transform(
             if (!compiler.compile(out_pattern_node)) return false;
             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
             out_events = compiler.sequence_events();
-            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
             return true;
         }
 
@@ -2304,7 +2272,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, n_int));
             out_events = compiler.sequence_events();
-            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
             return true;
         }
         if (func_name == "binary") {
@@ -2317,7 +2285,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
-            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
             return true;
         }
         if (func_name == "binaryN") {
@@ -2337,7 +2305,7 @@ static bool compile_pattern_for_transform(
             out_pattern_node = pat_node.first_child;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
-            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
             return true;
         }
 
@@ -2744,7 +2712,7 @@ static bool compile_pattern_for_transform(
                         if (compiler.compile(out_pattern_node)) {
                             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
                             out_events = compiler.sequence_events();
-                            out_cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+                            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
                             return true;
                         }
                     }
@@ -2975,7 +2943,7 @@ TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n)
     timeline_init.type = StateInitData::Type::Timeline;
     timeline_init.timeline_breakpoints = std::move(breakpoints);
     timeline_init.timeline_loop = true;
-    timeline_init.timeline_loop_length = 4.0f * stream.cycle_span;  // 1 cycle = 4 beats
+    timeline_init.timeline_loop_length = stream.cycle_span;  // cycle = beat
     state_inits_.push_back(std::move(timeline_init));
 
     pop_path();
@@ -3078,7 +3046,7 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
     timeline_init.type = StateInitData::Type::Timeline;
     timeline_init.timeline_breakpoints = std::move(breakpoints);
     timeline_init.timeline_loop = true;
-    timeline_init.timeline_loop_length = 4.0f * stream.cycle_span;
+    timeline_init.timeline_loop_length = stream.cycle_span;  // cycle = beat
     state_inits_.push_back(std::move(timeline_init));
 
     pop_path();
@@ -5083,7 +5051,7 @@ TypedValue CodeGenerator::handle_run_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+    float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,
@@ -5116,7 +5084,7 @@ TypedValue CodeGenerator::handle_binary_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+    float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,
@@ -5157,7 +5125,7 @@ TypedValue CodeGenerator::handle_binary_n_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     auto sequence_events = compiler.sequence_events();
-    float cycle_length = 4.0f;  // 1 cycle = 4 beats by default (Strudel convention)
+    float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, instructions_, state_inits_, required_samples_,
@@ -6002,7 +5970,7 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
     // future migrations) that OutputEvents is the source of truth.
     auto payload = std::make_shared<PatternPayload>();
     payload->state_id                 = state_id;
-    payload->cycle_length             = 4.0f;
+    payload->cycle_length             = 1.0f;
     payload->max_voices               = 1;
     payload->is_runtime_event_source  = true;
     payload->fields[PatternPayload::FREQ] = freq_buf;

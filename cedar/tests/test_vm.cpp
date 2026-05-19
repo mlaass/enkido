@@ -462,7 +462,7 @@ TEST_CASE("VM CLOCK opcode", "[vm][sequencing]") {
         }
     }
 
-    SECTION("bar_phase is 4x slower than beat_phase") {
+    SECTION("bar_phase matches beat_phase (cycle = beat)") {
         Instruction inst = Instruction::make_nullary(Opcode::CLOCK, 0, 1);
         inst.rate = 1;  // bar_phase mode
         vm.load_program(std::span{&inst, 1});
@@ -472,8 +472,8 @@ TEST_CASE("VM CLOCK opcode", "[vm][sequencing]") {
 
         const float* result = vm.buffers().get(0);
 
-        // Bar phase should be 4x slower, so increment should be 4x smaller
-        float expected_increment = 1.0f / (24000.0f * 4.0f);  // samples_per_bar
+        // Under cycle=beat, bar_phase advances at the same rate as beat_phase.
+        float expected_increment = 1.0f / 24000.0f;  // samples_per_beat
         float actual_increment = result[1] - result[0];
 
         CHECK_THAT(actual_increment, WithinAbs(expected_increment, 1e-7f));

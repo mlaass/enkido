@@ -23,9 +23,9 @@ The Value mode adds a numeric-atom path to the lexer: signed decimals, scientifi
 
 | Syntax | Name | Example | Description |
 |--------|------|---------|-------------|
-| `a b c` | Sequence | `c4 e4 g4` | Subdivide cycle equally |
-| `[a b]` | Group | `[c4 e4] g4` | Explicit subdivision |
-| `<a b>` | Alternation | `<c4 e4>` | Rotate per cycle |
+| `a b c` | Top-level alternation | `c4 e4 g4` | One element per cycle (synonym of `<…>`) |
+| `[a b]` | Group / Subdivision | `[c4 e4] g4` | Pack elements into one cycle |
+| `<a b>` | Alternation | `<c4 e4>` | Synonym of top-level — one element per cycle |
 | `[a, b]` | Polyrhythm | `[c4 e4, g4]` | Simultaneous layers |
 | `{a b}%n` | Polymeter | `{c4 e4}%3` | Fixed step count |
 | `*n` | Speed | `c4*2` | Repeat n times |

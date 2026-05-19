@@ -254,7 +254,7 @@ struct TriggerState {
 // Transport state for trigger-driven pattern clock
 struct TransportState {
     float beat_pos = 0.0f;
-    float cycle_length = 4.0f;
+    float cycle_length = 1.0f;
     float last_trig = 0.0f;
     float last_reset = 0.0f;
 };

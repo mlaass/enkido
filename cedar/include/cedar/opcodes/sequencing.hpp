@@ -190,9 +190,9 @@ inline void op_euclid(ExecutionContext& ctx, const Instruction& inst) {
         state.prev_step = UINT32_MAX;
     }
 
-    // One bar = 4 beats
+    // 1 bar = 1 beat = 1 cycle under the cycle=beat model.
     const float spb = ctx.samples_per_beat();
-    const float samples_per_bar = spb * 4.0f;
+    const float samples_per_bar = spb;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         // Direct calculation: which step are we in?

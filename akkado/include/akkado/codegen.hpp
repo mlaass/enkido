@@ -132,7 +132,7 @@ struct StateInitData {
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
-    float cycle_length = 4.0f;
+    float cycle_length = 1.0f;
 
     // For Timeline: [time, value, curve, ...] triplets (existing usage)
 

@@ -57,19 +57,16 @@ struct ExecutionContext {
     std::uint64_t block_counter = 0;
 
     // Derived timing values (updated per block)
-    float beat_phase = 0.0f;       // 0-1 phase within current beat
-    float bar_phase = 0.0f;        // 0-1 phase within current bar (4 beats)
+    // Under the cycle=beat model, beat_phase == bar_phase == cycle phase.
+    float beat_phase = 0.0f;       // 0-1 phase within current beat (= cycle)
+    float bar_phase = 0.0f;        // 0-1 phase within current bar (= beat = cycle)
 
     // Update derived timing values
     void update_timing() {
         float samples_per_beat = (60.0f / bpm) * sample_rate;
-        float samples_per_bar = samples_per_beat * 4.0f;
-
         float sample_in_beat = static_cast<float>(global_sample_counter % static_cast<std::uint64_t>(samples_per_beat));
-        float sample_in_bar = static_cast<float>(global_sample_counter % static_cast<std::uint64_t>(samples_per_bar));
-
         beat_phase = sample_in_beat / samples_per_beat;
-        bar_phase = sample_in_bar / samples_per_bar;
+        bar_phase = beat_phase;
     }
 
     // Set sample rate and update derived values
@@ -84,11 +81,11 @@ struct ExecutionContext {
     }
 
     [[nodiscard]] float samples_per_bar() const noexcept {
-        return samples_per_beat() * 4.0f;
+        return samples_per_beat();
     }
 
     [[nodiscard]] float samples_per_cycle() const noexcept {
-        return samples_per_bar();  // 1 cycle = 4 beats = 1 bar
+        return samples_per_beat();  // 1 cycle = 1 beat
     }
 
     // Get beat position for a specific sample offset within current block

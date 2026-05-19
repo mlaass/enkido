@@ -12,7 +12,7 @@
 
 bpm = 100
 
-melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@1.25 eb4@2 c4@1.75 ~@8".slow(6)
+melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@1.25 eb4@2 c4@1.75 ~@8"
 
 // Lead piano: dry voice + small freeverb tail. 0.3 leaves headroom for the
 // transient peaks that exceed the steady-state RMS by ~3x.
