@@ -1,7 +1,23 @@
-> **Status: NOT STARTED** — Drafted 2026-05-15. Note: as of 2026-05-15, `@` is
-> the canonical hole token in nkido docs and examples; `%` continues to parse
-> as a legacy alias. This PRD's spec covers both, but new prose/examples
-> should prefer `@`.
+> **Status: SHIPPED** — Landed in commit `0de384c` on 2026-05-17. The parser
+> accepts `@field` / `%field` whenever the field name is immediately adjacent
+> to the hole (`akkado/src/parser.cpp:708`); whitespace defeats the shorthand
+> so `@ as e` still parses as a pipe binding. `@method()` produces E108 with
+> a hint pointing to the dotted form. The opt-in `W201` lint is wired through
+> `akkado::compile()` and the `--strict` CLI flag. Test coverage: 11 sections
+> under tag `[hole-shorthand]` in `akkado/tests/test_parser.cpp:1700` covering
+> AST equivalence, aliases, keyword-as-field, whitespace defeat, chained
+> access, E108, and W201 strict/default behaviour. The full in-repo corpus
+> (16 patches + 4 docs) was migrated to the canonical dotless form and is
+> W201-clean under `--strict`. Editor autocomplete in the web IDE now triggers
+> on bare adjacent `@` / `%` (`web/src/lib/editor/akkado-completions.ts`).
+> Minor doc gap: §10's "update `prd-records-and-field-access.md` §2.3 to
+> cross-reference this PRD" was not done — that PRD is itself marked DONE
+> and the user-facing callout in `web/static/docs/reference/language/records.md`
+> already explains both forms compile to the same code.
+>
+> As of 2026-05-15, `@` is the canonical hole token in nkido docs and
+> examples; `%` continues to parse as a legacy alias. This PRD's spec covers
+> both, and new prose/examples should prefer `@`.
 
 # PRD: Dotless Hole Field Shorthand (`@field`, with `%field` legacy alias)
 
