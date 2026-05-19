@@ -34,7 +34,7 @@ Provide a compact, visual ASCII-art syntax for defining automation curves that:
 1. Compiles to TIMELINE breakpoints at compile time
 2. Integrates with existing mini-notation features (grouping, alternation, modifiers)
 3. Always outputs 0.0-1.0 (user scales with math)
-4. Feels natural alongside existing `pat()` and `seq()` patterns
+4. Feels natural alongside existing `n"…"`/`v"…"`/`s"…"`/`c"…"` and `seq()` patterns
 
 ---
 
@@ -92,7 +92,7 @@ Without `~`, a level character holds its value for the entire slot (type = hold)
 timeline("___/''''\\___")
 ```
 
-**String prefix** -- syntactic sugar (like `p"..."` for `pat()`):
+**String prefix** -- syntactic sugar (a typed pattern literal, like `n"..."`):
 
 ```akkado
 t"___/''''\\___"
@@ -165,7 +165,7 @@ osc("saw", 220) |> lp(@, t"__/''\\__" * 3000 + 200) |> out(@, @)
 osc("sin", 440) * t"['^]*8" |> out(@, @)
 
 // Sidechain-style ducking (4 pumps per cycle)
-drums = pat("bd _ _ _")
+drums = s"bd _ _ _"
 synth = osc("saw", C4') * t"[_/'']*4" |> out(@, @)
 
 // Panning automation
@@ -173,7 +173,7 @@ sig = osc("saw", 220)
 sig |> out(sig * t"_/'\\__", sig * t"__/'\\_ ")
 
 // Envelope on pluck
-pat("c4 e4 g4") as e |>
+n"c4 e4 g4" as e |>
     osc("sin", e.freq) * t"'/\\___" * e.vel |>
     out(@, @)
 ```
@@ -340,9 +340,9 @@ case MiniAtomKind::CurveRamp:
 
 ### 4.5 `t"..."` String Prefix
 
-Add the `t"..."` prefix following the same pattern as `p"..."`:
+Add the `t"..."` prefix following the same pattern as `n"..."`:
 
-**Lexer** (`akkado/src/lexer.cpp`): In `lex_identifier()`, after the `p"..."` check:
+**Lexer** (`akkado/src/lexer.cpp`): In `lex_identifier()`, after the `n"..."` check:
 
 ```cpp
 // Check for timeline string prefix: t"..." or t`...`
@@ -727,7 +727,7 @@ cmake --build build && ./build/akkado/tests/akkado_tests "[timeline]"
 
 ### Phase 1: Lexer & Token Infrastructure
 - [ ] Add `Timeline` to `TokenType` enum in `token.hpp`
-- [ ] Add `t"..."` / `t\`...\`` detection in `lexer.cpp` (following `p"..."` pattern)
+- [ ] Add `t"..."` / `t\`...\`` detection in `lexer.cpp` (following `n"..."` pattern)
 - [ ] Add `token_type_name()` entry for `Timeline`
 - [ ] Add `CurveLevel`, `CurveRamp`, `CurveSmooth` to `MiniTokenType` in `mini_token.hpp`
 - [ ] Add `MiniCurveLevelData` struct to `mini_token.hpp`

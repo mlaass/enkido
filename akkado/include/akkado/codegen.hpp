@@ -487,23 +487,11 @@ private:
     /// Handle chord() function calls - Strudel-compatible chord expansion
     TypedValue handle_chord_call(NodeIndex node, const Node& n);
 
-    /// PRD prd-patterns-as-scalar-values: explicit call-form for the typed prefixes.
-    /// value("…") parses with MiniParseMode::Value (numeric atoms, no mtof).
-    /// note("…")  parses with MiniParseMode::Note  (note names + bare MIDI ints).
-    /// scalar(p)  is the explicit Pattern→Signal cast (sugar for p.freq on
+    /// scalar(p) is the explicit Pattern→Signal cast (sugar for p.freq on
     /// monophonic non-sample patterns; idempotent on Signal arg).
-    TypedValue handle_value_call(NodeIndex node, const Node& n);
-    TypedValue handle_note_call(NodeIndex node, const Node& n);
     TypedValue handle_scalar_call(NodeIndex node, const Node& n);
 
-    /// Helper: shared body for chord/value/note pattern calls — parses the
-    /// string in the requested mode and emits SEQPAT machinery. The mode
-    /// determines per-atom semantics; payload flags reflect the result.
-    TypedValue compile_typed_pattern_call(NodeIndex node, const Node& n,
-                                          MiniParseMode mode,
-                                          std::string_view fn_name);
-
-    /// Handle MiniLiteral (pattern) nodes - pat("c4 e4 g4"), etc.
+    /// Handle MiniLiteral (pattern) nodes - n"c4 e4 g4", v"…", s"…", c"…", t"…".
     TypedValue handle_mini_literal(NodeIndex node, const Node& n);
 
     /// Handle timeline curve literal nodes - t"__/'", etc.

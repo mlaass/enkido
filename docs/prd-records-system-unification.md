@@ -76,7 +76,7 @@ This PRD owns Phase 2 of the records system: closing those four gaps. It does **
 - **G1**: Static schema for builtin record-shaped option params, declared in `BuiltinInfo`, exported through the existing `akkado_get_builtins_json()` WASM call.
 - **G2**: Analyzer-driven shape index exported via a new WASM call `akkado_get_shape_index(source) → JSON`, returning record/pattern shapes for every binding visible at top level.
 - **G3**: Editor autocomplete shows field-name completions on `r.`, `%.`, and inside record-typed argument literals (e.g. `pianoroll(sig, "name", { …` → suggests viz option fields).
-- **G4**: Editor autocomplete includes pattern's `custom_fields` (source-derived attached props from `pat("c4").set("cutoff", …)`-style chains).
+- **G4**: Editor autocomplete includes pattern's `custom_fields` (source-derived attached props from `n"c4".set("cutoff", …)`-style chains).
 - **G5**: Standalone destructuring statement `{x, y} = r` binds each named field as an immutable variable.
 - **G6**: Function-parameter destructuring `fn f({x, y}) -> …` accepts a record from the caller and destructures inline. Composes with argument spread (`f(..r)` from prerequisite PRD) when shipped.
 - **G7**: Default values in destructuring `{x = 1, y = 2} = r` — missing fields fall back to declared defaults.
@@ -174,13 +174,13 @@ synth_cfg = {wave: "saw", cutoff: 2000, q: 0.7}
 synth_cfg.|     // ← editor suggests: wave, cutoff, q
 
 // 3. Pattern fields, fixed (analyzer dump)
-pat("c4 e4") |> osc("sin", %.|)    // ← suggests: freq, vel, trig, gate, type,
+n"c4 e4" |> osc("sin", %.|)    // ← suggests: freq, vel, trig, gate, type,
                                    //   note, dur, chance, time, phase, sample_id
                                    //   (plus aliases: pitch/f, velocity/v,
                                    //   trigger/t, midi/n, sample/s, frequency, p)
 
 // 4. Pattern fields including custom_fields (analyzer dump)
-beat = pat("c4 e4").set("cutoff", saw(0.5)).set("res", 0.7)
+beat = n"c4 e4".set("cutoff", saw(0.5)).set("res", 0.7)
 beat |> lp(osc("sin", %.freq), %.|)   // ← suggests: all 11 fixed fields above
                                       //   plus cutoff, res (custom fields from
                                       //   .set() calls)
@@ -759,7 +759,7 @@ Revisit deferred items (nested-field write, pipe-position write, `modify`) only 
 **Verification:**
 - Unit tests for `ShapeIndexBuilder` covering: simple record, nested record, pattern with `.set()`-derived custom fields, partial source after parse error.
 - Manual: define `cfg = {a: 1, b: 2}` in editor; type `cfg.|`; popup shows `a` and `b`.
-- Manual: define `beat = pat("c4").set("cutoff", saw(0.5))`; type `beat |> osc("sin", %.|`; popup shows `freq, vel, trig, gate, type, cutoff` (+ aliases).
+- Manual: define `beat = n"c4".set("cutoff", saw(0.5))`; type `beat |> osc("sin", %.|`; popup shows `freq, vel, trig, gate, type, cutoff` (+ aliases).
 
 ### Phase 3 — Destructuring (4–6 days)
 
@@ -909,7 +909,7 @@ The records audit (`audits/prd-records-and-field-access_audit_2026-05-05.md`) fl
 ### 10.5 Custom Pattern Fields
 
 - **Same field name from multiple `.set()` calls.** Last wins (existing `custom_fields` map semantics).
-- **Custom field name collides with a fixed field.** Resolved by inspecting current behavior in `akkado/src/typed_value.cpp:66–84` (`pattern_field()`): the lookup checks the **fixed-field table first**, falling back to `custom_fields` only if no fixed match. Therefore `pat("c4").set("freq", x)` *silently allocates a `custom_fields["freq"]` buffer that is unreachable via `%.freq` or `pat.freq`* — the fixed `freq` buffer wins at every access site. The collision is data-loss-quiet; for editor autocomplete this PRD treats it as a correctness issue and **deduplicates by name in the shape-index emitter** (fixed entry exported, custom entry suppressed) so the autocomplete cannot mislead the user into typing a colliding `.set()` and assuming `%.freq` will read it. A user-visible warning at the `.set()` site is recommended as a follow-up but explicitly out of scope for this PRD (pattern-build-time emitter changes).
+- **Custom field name collides with a fixed field.** Resolved by inspecting current behavior in `akkado/src/typed_value.cpp:66–84` (`pattern_field()`): the lookup checks the **fixed-field table first**, falling back to `custom_fields` only if no fixed match. Therefore `n"c4".set("freq", x)` *silently allocates a `custom_fields["freq"]` buffer that is unreachable via `%.freq` or `pat.freq`* — the fixed `freq` buffer wins at every access site. The collision is data-loss-quiet; for editor autocomplete this PRD treats it as a correctness issue and **deduplicates by name in the shape-index emitter** (fixed entry exported, custom entry suppressed) so the autocomplete cannot mislead the user into typing a colliding `.set()` and assuming `%.freq` will read it. A user-visible warning at the `.set()` site is recommended as a follow-up but explicitly out of scope for this PRD (pattern-build-time emitter changes).
 - **Custom field referenced before `.set()` chain completes.** Already handled — codegen visits the chain before emitting field accesses.
 
 ---
@@ -939,7 +939,7 @@ TEST_CASE("editor surfaces user record fields") {
 
 TEST_CASE("editor surfaces pattern custom fields") {
     const char* src = R"(
-        beat = pat("c4 e4").set("filt", saw(0.5))
+        beat = n"c4 e4".set("filt", saw(0.5))
     )";
     auto idx = json::parse(akkado_get_shape_index(src));
     auto fields = idx["bindings"]["beat"]["fields"];
@@ -1024,7 +1024,7 @@ TEST_CASE("nested-field write is deferred") {
 
 1. Run dev server (`cd web && bun run dev`), open editor.
 2. Type `cfg = {a: 1, b: 2}` then on a new line `cfg.` — popup must show `a` and `b`.
-3. Type `pat("c4").set("foo", 1) as e |> osc("sin", e.` — popup must include `freq`, `vel`, …, plus `foo`.
+3. Type `n"c4".set("foo", 1) as e |> osc("sin", e.` — popup must include `freq`, `vel`, …, plus `foo`.
 4. Type `waterfall(sig, "x", { gra` — popup must show `gradient`.
 5. Define `synth = fn({freq = 440, wave = "saw"}) -> osc(wave, freq)`; call `synth({})` — should compile and produce a saw at 440 Hz.
 6. Define a button-triggered state-cell update; verify audio responds and that hot-reloading the patch preserves the cell value.

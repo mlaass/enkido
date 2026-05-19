@@ -22,7 +22,7 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 
 - **Stdlib-first.** New stateless shapers ship as userspace `fn` definitions in `akkado/include/akkado/stdlib.hpp`, not new opcodes. Stdlib `fn`s are fully inlined at every call site (per `docs/agent-guide-userspace-functions.md:144`), so a userspace `hardclip(sig, thresh) -> clamp(sig, -thresh, thresh)` compiles to a single `CLAMP` opcode with no function-call overhead. Only stateful / ADAA / polynomial-fit shapers earn an opcode.
 - **No unified `shape(in, drive, mode)` opcode.** An early design considered consolidating multiple shapers into one mode-dispatched opcode. The Plan-mode review pushed back: stdlib `fn` inlining already eliminates the runtime branch a multiplexer opcode would re-introduce. A `match(algo)` dispatcher in stdlib gives users the same named-mode UX without any per-sample switch.
-- **`dist(algo, sig, ...)` mirrors `osc(type, freq, ...)`.** Same compile-time `match()` pattern. Drive is the always-present second runtime param; `p` is the optional secondary param (asym bias, bitcrush rate, tube bias). All existing distortion opcodes are exposed through `dist` for uniformity.
+- **`dist(algo, sig, ...)` mirrors `osc(type, freq, ...)`.** Same compile-time `match()` pattern. Drive is the always-present second runtime param; `n` is the optional secondary param (asym bias, bitcrush rate, tube bias). All existing distortion opcodes are exposed through `dist` for uniformity.
 - **No `sine` or `cosine` stdlib shapers.** `sine` collides with `osc("sin", ...)`; `cosine` is `cos(x) * scale`, too thin to justify a named slot. Both were dropped from the initial brain-dump after user review.
 - **Filter-feedback saturation is opt-in.** Adding `tanh` to SVF/Formant feedback changes their impulse response. Gate behind an `ExtendedParams<1> fb_sat` (default 0=off) so existing patches and regression tests stay bit-identical.
 - **ADAA upgrade scoped to `tube` only.** `tape`, `xfmr`, `excite` already use 2× oversampling with ~24 dB aliasing headroom; the visible win is `tube` at extreme drive (per `prd-squelch-engine.md:104`). Defer the others until a user actually hits aliasing.
@@ -185,7 +185,7 @@ fn dist(algo, sig, drive = 1.0, p = 0.0) -> match(algo) {
 
 #### Param convention for `dist`
 
-| algo | `drive` means | `p` means |
+| algo | `drive` means | `n` means |
 |---|---|---|
 | `"hardclip"` | thresh | — |
 | `"softclip"` | thresh | — |
@@ -253,7 +253,7 @@ shaper(sig, drive = 1.0, c = {c0: 0, c1: 1, c2: 0, c3: 0, c4: 0, c5: 0, c6: 0, c
 ```akkado
 "shaper" -> shaper(sig, drive, p)   // p here is the coeffs record
 ```
-(This requires `dist` to accept record-typed `p`; verify Akkado supports that or accept a more limited form like `dist("shaper", sig, drive)` that uses default coeffs.)
+(This requires `dist` to accept record-typed `n`; verify Akkado supports that or accept a more limited form like `dist("shaper", sig, drive)` that uses default coeffs.)
 
 ---
 
@@ -311,6 +311,6 @@ Each phase is independently shippable and independently verifiable.
 
 ## 9. Open Questions
 
-- **`shaper` in `dist` dispatcher with record-typed `p`** — does Akkado's `match` arm support passing a record through? If not, `dist("shaper", ...)` uses default coeffs only and users must call `shaper(...)` directly for custom coeffs.
+- **`shaper` in `dist` dispatcher with record-typed `n`** — does Akkado's `match` arm support passing a record through? If not, `dist("shaper", ...)` uses default coeffs only and users must call `shaper(...)` directly for custom coeffs.
 - **`MATH_SIGN` primitive** — `foldback` currently uses `select(sig >= 0, 1, -1)` for sign carry. If multiple stdlib fns need this pattern, consider promoting to a `MATH_SIGN` primitive opcode (single comparison). Decide after Phase 2.
 - **True Linkwitz-Riley `multiband` variant** — defer until a user files a phase-coherence complaint. If one does, ship `lr_split2(sig, f) -> {lo, hi}` returning a record (verify record returns from `fn` first).

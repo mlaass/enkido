@@ -33,7 +33,7 @@ The IDE has settled (`prd-nkido-web-ide.md` Phases 1–6 substantially complete)
 ### 1.2 Headline design decisions (locked during PRD intake)
 
 - **OSS-only slice.** This PRD ships inline URL sharing + multi-draft local persistence + anonymous Worker shares. Accounts, gallery, profiles, hearts, comments, private patches, asset uploads — all deferred to the parent SaaS PRD.
-- **Inline URLs are a first-class sharing modality, not a fallback.** Both Worker share and inline URL are always offered in the Share dialog. Worker share is "Permalink" (slug + OG unfurls); inline URL is "Inline link" (zero-backend, instant, larger URL). Users pick per share; both round-trip to the same `/p` viewer route.
+- **Inline URLs are a first-class sharing modality, not a fallback.** Both Worker share and inline URL are always offered in the Share dialog. Worker share is "Permalink" (slug + OG unfurls); inline URL is "Inline link" (zero-backend, instant, larger URL). Users pick per share; both round-trip to the same `/n` viewer route.
 - **Inline URLs use hash fragments + lz-string compression.** `live.nkido.cc/p#code=<lz-base64url>`. Hash means the source is never sent to any server (no log/analytics/referrer leak); `lz-string`'s `compressToEncodedURIComponent` is the same library Strudel/JSFiddle use, ~4 KB gzipped, URL-safe output by construction.
 - **Pluggable `StorageProvider` interface.** OSS ships `LocalDraftProvider` (drafts) + `WorkerShareProvider` (anonymous shares via the reference Worker). The parent SaaS PRD will inject a `SupabaseStorageProvider` that fully implements the same interface.
 - **Cheap-and-portable backend, no Supabase.** Cloudflare Worker + D1 SQLite. Free tier covers expected traffic; OSS self-hosters can deploy their own with `wrangler publish` and one env var change. The SaaS PRD adds Postgres later when accounts arrive.
@@ -720,9 +720,9 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 1. Add `lz-string` to `web/package.json` (`bun add lz-string`).
 2. Create `web/src/lib/ide/share/inline-url.ts` per §5.7: `encodeInlineUrl(code, base?)`, `decodeInlineHash(hash)`, `inlineHashKey(code)` (SHA-256 via SubtleCrypto, first 12 hex chars).
 3. Create `web/src/routes/p/[[slug]]/+page.svelte` + `+page.ts` (`export const prerender = false; export const ssr = false;`). The route is the same one Phase 2 uses for `/p/<slug>`; in Phase 0 the slug branch is a stub that shows "Slug shares require the Worker; see Inline link instead."
-4. The `/p` route on mount:
+4. The `/n` route on mount:
    - If `location.hash` contains `code=...`, call `decodeInlineHash`. On success, load the code into the editor's single buffer (pre-Phase-1 there is no draft system yet). On failure, render "Couldn't decode inline link" with a "Back to editor" button.
-   - Strip the hash from the URL after successful decode (`history.replaceState`) so the address bar shows `/p` instead of the full hash payload (the original URL still works on revisit, just not in the address bar after decode).
+   - Strip the hash from the URL after successful decode (`history.replaceState`) so the address bar shows `/n` instead of the full hash payload (the original URL still works on revisit, just not in the address bar after decode).
 5. Add a "Copy inline link" toolbar button in `web/src/routes/+page.svelte`. On click: call `encodeInlineUrl(editorStore.code)`, copy to clipboard, show toast `"Inline link copied (2,847 bytes — fits anywhere)"` with byte count and color matching §6.1's status tiers.
 6. **Pre-Phase-1 safety:** visiting `/p#code=...` overwrites the single-buffer `nkido-editor-code` (because there is no draft system to host a phantom yet). Before the overwrite, show a one-shot modal: "Visiting an inline link will replace your current patch. Continue?" with "Continue" + "Cancel" + "Save current to clipboard first". This modal is removed in Phase 1 once phantom drafts exist.
 
@@ -733,7 +733,7 @@ Each phase ends with a deployable, demo-able artifact. Phases run end-to-end in 
 - Round-trip property: for any string `s ∈ [1, 65536]` bytes of valid UTF-8, `decodeInlineHash(encodeInlineUrl(s).url.split('#')[1]) === s` (unit-tested per §11.2).
 - Visit `/p#code=GARBAGE!!!` → fail-closed renders "Couldn't decode inline link" without crashing.
 - Visit `/p#code=` (empty value) → same fail-closed path.
-- Visit `/p` (no hash) → before Phase 2, shows the Phase 0 stub message; after Phase 2, shows "Patch not found" only when an actual slug is in the path.
+- Visit `/n` (no hash) → before Phase 2, shows the Phase 0 stub message; after Phase 2, shows "Patch not found" only when an actual slug is in the path.
 - Visit `/p#code=<huge>` exceeding browser hash limits (browser-dependent, > 64 KB on Chrome) → browser truncates silently; decoder returns null; fail-closed UI.
 
 ### Phase 1 — Multi-draft local persistence
@@ -958,7 +958,7 @@ The existing `/embed` route (`web/src/routes/embed/+page.svelte`) calls `editorS
 - **Hash contains characters outside `[A-Za-z0-9_-]` (lz-string's URL-safe alphabet):** `decompressFromEncodedURIComponent` returns null or garbage; fail-closed UI.
 - **User pastes an inline URL into the address bar of an already-open IDE session:** browser navigates to `/p#code=...`; SvelteKit routes to `[[slug]]/+page.svelte`; phantom tab opens. Existing tabs are preserved (per §10.5 open-tab persistence).
 - **Hash present alongside a slug (`/p/abc123#code=...`):** ambiguous. Per §8 Phase 2 step 9, the slug branch always wins — `#code=...` is ignored when a slug is in the path. The Share dialog never generates this combination.
-- **`history.replaceState` to strip `#code=...` after decode:** the URL in the address bar becomes clean `/p`, but the page does not reload (no flash, no re-decode). Reload reads the cleaned URL → falls into the no-hash branch → shows "Patch not found" or the slug stub. This is intentional: the source of truth is now the phantom (localStorage); the URL was a one-shot transport.
+- **`history.replaceState` to strip `#code=...` after decode:** the URL in the address bar becomes clean `/n`, but the page does not reload (no flash, no re-decode). Reload reads the cleaned URL → falls into the no-hash branch → shows "Patch not found" or the slug stub. This is intentional: the source of truth is now the phantom (localStorage); the URL was a one-shot transport.
 
 ---
 

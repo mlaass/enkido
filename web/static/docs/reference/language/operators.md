@@ -75,8 +75,8 @@ Combine boolean signals. Inputs are treated as truthy when `> 0`. Outputs are `0
 
 ```akk
 // Layered gates
-g1 = pat("1 0 0 0")
-g2 = pat("0 0 1 0")
+g1 = n"1 0 0 0"
+g2 = n"0 0 1 0"
 combined = g1 || g2  // "1 0 1 0"
 
 // Accent only when both conditions fire
@@ -94,7 +94,7 @@ There is no infix ternary; use the `select` function:
 
 ```akk
 // Switch oscillators based on a gate
-gate = pat("1 0 1 0")
+gate = n"1 0 1 0"
 select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@)
 ```
 

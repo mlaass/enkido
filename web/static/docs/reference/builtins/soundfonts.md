@@ -46,7 +46,7 @@ The **General MIDI** bank, preloaded on engine startup. Filename `"gm"` resolves
 
 ```akk
 // Acoustic Grand Piano (preset 0)
-pat("c4 e4 g4 c5") |> soundfont(@, "gm", 0) |> out(@)
+n"c4 e4 g4 c5" |> soundfont(@, "gm", 0) |> out(@)
 ```
 
 ## preset

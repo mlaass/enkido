@@ -1264,24 +1264,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Chord expansion (Am, C7, Fmaj7, etc.)"}},
 
-    // Pattern keywords (handled specially by parser, not codegen)
-    // These appear in builtins for signature help but parse as MiniLiteral nodes
-    {"pat",     {cedar::Opcode::PUSH_CONST, 1, 0, false,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Mini-notation pattern. Returns values based on cycle position."}},
-    // PRD prd-patterns-as-scalar-values: explicit forms for the typed prefixes.
-    // value(str) corresponds to v"…" — raw numeric atoms (no mtof).
-    // note(str) corresponds to n"…" — note names + bare MIDI ints (mtof).
     // scalar(p) is the explicit Pattern→Signal cast.
-    {"value",   {cedar::Opcode::PUSH_CONST, 1, 0, false,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Numeric scalar pattern (raw values, no mtof). Equivalent to v\"…\"."}},
-    {"note",    {cedar::Opcode::PUSH_CONST, 1, 0, false,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Note-name pattern (note names + MIDI ints both → Hz). Equivalent to n\"…\"."}},
     {"scalar",  {cedar::Opcode::NOP, 1, 0, false,
                  {"pattern", "", "", "", "", ""},
                  {NAN, NAN, NAN},

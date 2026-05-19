@@ -46,7 +46,7 @@ RENDER_SECONDS = 320.0  # > 300 per PRD §10.3
 SR = 48000
 
 AKK_SRC = """
-melody = pat("c4 e4 g4 b4").palindrome()
+melody = n"c4 e4 g4 b4".palindrome()
 mtof(melody) |> osc("sin", %) * 0.2 |> out(%, %)
 """
 

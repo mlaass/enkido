@@ -149,7 +149,7 @@ const fn wavetable(n) -> range(0, n) |> map(@, (i) -> sin(2 * 3.14159265 * i / n
 **Forbidden in body:**
 - Stateful builtins (`osc`, `lp`, `delay`, etc.)
 - `out()`, `param()`, `toggle()`, `button()`
-- Pattern functions (`pat()`, `seq()`)
+- Pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`, `seq()`)
 - Anything producing audio-rate signals
 - References to non-const variables
 
@@ -416,7 +416,7 @@ match(event) {
 
 **`as` binding syntax:**
 ```akkado
-pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> @ * vel
+n"c4 e4 g4" as {freq, vel, trig} |> osc("sin", freq) |> @ * vel
 ```
 
 **Semantics:**
@@ -530,7 +530,7 @@ match(r) {
 }
 
 // As binding destructuring
-pat("c4 e4 g4") as {freq, vel, trig} |> osc("sin", freq) |> @ * vel |> out(@, @)
+n"c4 e4 g4" as {freq, vel, trig} |> osc("sin", freq) |> @ * vel |> out(@, @)
 
 // With guard
 match(event) {
@@ -552,14 +552,14 @@ match(x) {
 
 > **Status: Implemented** — via dot-call (`0dc05a3`) + TypedValue type checking (`57bf870`)
 
-**Pattern transforms callable as methods: `pat("c4 e4").slow(2).transpose(12)`**
+**Pattern transforms callable as methods: `n"c4 e4".slow(2).transpose(12)`**
 
 ### Specification
 
 ```akkado
 // These are equivalent:
-pat("c4 e4 g4").slow(2).transpose(12).velocity(0.8)
-velocity(transpose(slow(pat("c4 e4 g4"), 2), 12), 0.8)
+n"c4 e4 g4".slow(2).transpose(12).velocity(0.8)
+velocity(transpose(slow(n"c4 e4 g4", 2), 12), 0.8)
 ```
 
 ### Dependencies
@@ -571,7 +571,7 @@ velocity(transpose(slow(pat("c4 e4 g4"), 2), 12), 0.8)
 
 This feature is essentially **free** once dot-call and the type system exist:
 
-1. Dot-call already desugars `pat("c4").slow(2)` to `slow(pat("c4"), 2)`
+1. Dot-call already desugars `n"c4".slow(2)` to `slow(n"c4", 2)`
 2. Codegen already handles `slow(pat, factor)` via `handle_slow_call()` (`codegen_patterns.cpp:1586-1654`)
 3. Type system (3C) validates first argument is Pattern type
 
@@ -591,11 +591,11 @@ This feature is essentially **free** once dot-call and the type system exist:
 
 ```akkado
 // Method-style chaining
-pat("c4 e4 g4").slow(2)                    // → slow(pat("c4 e4 g4"), 2)
-pat("c4 e4").transpose(12).velocity(0.8)   // → velocity(transpose(pat("c4 e4"), 12), 0.8)
+n"c4 e4 g4".slow(2)                    // → slow(n"c4 e4 g4", 2)
+n"c4 e4".transpose(12).velocity(0.8)   // → velocity(transpose(n"c4 e4", 12), 0.8)
 
 // Mixed with pipe
-pat("c4 e4").slow(2) |> poly(4, (f, g, v) -> ...)
+n"c4 e4".slow(2) |> poly(4, (f, g, v) -> ...)
 
 // Error (with type system): not a pattern
 osc("sin", 440).slow(2)                    // ERROR: slow expects Pattern, got Signal
@@ -900,7 +900,7 @@ extended.pan                                // → 0.5
 extended.freq                               // → 440
 
 // Spread pattern into record
-pat("c4 e4") as e
+n"c4 e4" as e
 custom = {..e, vel: 0.3}                   // override velocity
 osc("sin", custom.freq) * custom.vel
 
@@ -950,7 +950,7 @@ For each feature:
 
 ```akkado
 // Dot-call + pattern methods + destructuring
-pat("c4 e4 g4")
+n"c4 e4 g4"
     .slow(2)
     .transpose(12)
     as {freq, vel, trig}
@@ -964,7 +964,7 @@ base_note = {freq: mtof(60), vel: 0.8}
 fn play(note = {..base_note, vel: 0.5}) -> osc("sin", note.freq) * note.vel
 
 // Range patterns + match destructuring
-pat("c4 e4 g4") as {freq, vel} |>
+n"c4 e4 g4" as {freq, vel} |>
 match(vel) {
     0.0..0.3: osc("sin", freq) * vel
     0.3..0.7: osc("tri", freq) * vel

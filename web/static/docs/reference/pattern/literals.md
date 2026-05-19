@@ -2,7 +2,7 @@
 title: Pattern Literals
 category: pattern
 order: 1
-keywords: [pattern, literal, prefix, value, note, sample, chord, scalar, coerce, v"…", n"…", s"…", c"…", p"…", typed prefix]
+keywords: [pattern, literal, prefix, value, note, sample, chord, scalar, coerce, v"…", n"…", s"…", c"…", t"…", typed prefix]
 ---
 
 # Pattern Literals
@@ -15,9 +15,7 @@ Patterns can be written as typed string prefixes that disambiguate parse semanti
 | `n"…"` | Note names + bare MIDI ints (both → Hz)     | Yes                |
 | `s"…"` | Sample names: `bd`, `sd`, `kick:2`          | Audio output       |
 | `c"…"` | Chord symbols: `Am`, `C7`, `F#m7b5`         | No (use `poly()`)  |
-| `p"…"` | Auto-detect, backwards-compatible legacy    | Inherits           |
-
-The legacy `pat(string)` / `p"…"` form still works and infers the mode per atom.
+| `t"…"` | Timeline curve breakpoints: `0 1 0.5`       | Yes                |
 
 ## v"…" value patterns
 
@@ -37,7 +35,7 @@ v"-0.5 0.25 1e3 -1.25e-2"
 
 ## n"…" note patterns
 
-Note names and bare integers both map to Hz via `mtof`. Identical to `pat()` for note input, but rejects sample-name fallback.
+Note names and bare integers both map to Hz via `mtof`. Rejects sample-name fallback.
 
 ```akk
 osc("sin", n"c4 e4 g4")

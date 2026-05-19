@@ -12,7 +12,7 @@
 | 1. Compile curve notation to TIMELINE breakpoints at compile time | Met | `akkado/src/codegen_patterns.cpp:2718` — `events_to_breakpoints()` converts curve events to breakpoints, emits `TIMELINE` opcode at line 2747/2850 |
 | 2. Integrate with existing mini-notation features (grouping, alternation, modifiers) | Met | `akkado/src/mini_parser.cpp` — curve atoms parsed and work with subdivision `[]`, alternation `<>`, repeat `*`, slow `/`, weight `@`, replicate `!`, chance `?` (tested in `test_mini_notation.cpp:1966+`) |
 | 3. Always output 0.0-1.0 (user scales with math) | Met | `akkado/src/codegen_patterns.cpp:2718` — `events_to_breakpoints()` produces 0-1 values; user math happens after (`test_codegen.cpp:6166+`) |
-| 4. Feel natural alongside existing `pat()` and `seq()` patterns | Met | `akkado/src/parser.cpp:1152+` — `t"..."` prefix follows same pattern as `p"..."`; `timeline()` function call also works |
+| 4. Feel natural alongside existing `n"…"`/`v"…"`/`s"…"`/`c"…"` and `seq()` patterns | Met | `akkado/src/parser.cpp:1152+` — `t"..."` prefix follows same pattern as `n"..."`; `timeline()` function call also works |
 
 ## Validation Commands
 

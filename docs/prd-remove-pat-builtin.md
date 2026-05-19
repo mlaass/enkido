@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — Removal of the `pat` keyword/builtin and the `p"…"` auto-detect literal in favor of typed pattern prefixes.
+> **Status: SHIPPED (2026-05-20)** — Removal of the `pat` keyword/builtin and the `p"…"` auto-detect literal in favor of typed pattern prefixes. All three phases landed in one bundled change on `master`. See [§11 Implementation Status](#11-implementation-status).
 
 # Remove `pat` Builtin PRD — Typed Pattern Literals Only
 
@@ -483,3 +483,64 @@ grep -rn '\bpat(\|[^a-zA-Z]p"' docs web/static/docs akkado/tests   # expect: no 
   plays identically.
 - Confirm F1 help no longer surfaces `pat`; confirm autocomplete no longer
   offers it.
+
+---
+
+## 11. Implementation Status
+
+**Shipped 2026-05-20.** Phases 1–3 were bundled into a single change on
+`master` (per the §9 phasing note) so the test suite never went red.
+
+### 11.1 What was done
+
+| Area | Outcome |
+|------|---------|
+| `pat` keyword + `p"…"`/`p\`…\`` prefix | Removed from `lexer.cpp`; `TokenType::Pat` deleted from `token.hpp` |
+| `parse_mini_literal` | `TokenType::Pat` arm, `is_pat_call`, `has_parens`, closure branch all removed; `mode_marker` assignment is now unconditional |
+| `value` / `note` call forms | `handle_value_call`, `handle_note_call`, `compile_typed_pattern_call` deleted from `codegen_patterns.cpp` + `codegen.hpp`; dispatch entries removed from `codegen.cpp`. `scalar()` kept |
+| `pat` closure-form codegen | The `closure_node` pickup and `(t,v,p)` callback block in `handle_mini_literal` deleted |
+| Builtin entries | `pat`, `value`, `note` removed from `builtins.hpp`; doc comment in `builtins_json.hpp` fixed; **hardcoded keyword list in `builtins_json.cpp:138` fixed (not in original §8.1)** |
+| Pattern-call recognition | `pat`/`value`/`note` dropped from `is_pattern_call` (`codegen_patterns.cpp`), `shape_index.cpp`, and **four** `analyzer.cpp` lists (§8.1 listed one; there were four) |
+| `MiniParseMode::Auto` | Enum value + `to_string` arm + auto-detect fallbacks deleted from `mini_token.hpp`, `mini_lexer.cpp`, `mini_parser.cpp` |
+| Docs / tutorials / examples | ~600 sites rewritten across `docs/`, `web/static/docs/`, `experiments/`; 12 closure examples in `tutorials/05-testing-progression.md` rewritten to `poly()`; `literals.md` lost the `p"…"` row + legacy sentence |
+| Tests | ~390 `pat`/`p"`/`value`/`note` sites in `akkado/tests/` rewritten to typed prefixes; `test_lexer.cpp` keyword assertions → identifier assertions; new §10.1 coverage added (`pat`/`p` as identifiers; `pat()`/`value()`/`note()` error as unknown builtins); two fuzzers (`test_fuzz_determinism`, `test_fuzz_recompile_audio`) updated to emit `n"…"` |
+| Editor tooling (Phase 2) | `syntax-builtins.ts` + `static/generated/builtins.json` regenerated from `builtins.hpp`; F1 docs index rebuilt |
+
+### 11.2 Deviations from the PRD
+
+1. **`mode` is NOT a required argument.** §8.1 called for dropping the
+   `= MiniParseMode::Auto` default and making `mode` required (~120 test
+   call-site edits). Instead the default was changed to
+   `MiniParseMode::Note`. Rationale: `Note` mode is behaviourally identical
+   to the old `Auto` for every letter-leading atom (chord→pitch→sample
+   detection is unchanged); only bare digits differ (now MIDI notes, which
+   is the desired post-removal semantics). This kept ~120 lexer/parser test
+   calls green without edits and eliminated misclassification risk. The
+   `Auto` **enum value and its auto-detect branch are still fully removed** —
+   the ambiguity the PRD targeted is gone.
+2. **`builtins_json.cpp:138`** had a hardcoded `"keywords"` array including
+   `"pat"` that §8.1 did not list. It was fixed.
+3. **`analyzer.cpp`** had four pattern-call recognition lists, not the one
+   §8.1 referenced. All four were trimmed.
+
+### 11.3 Latent bug found & fixed
+
+Typed-prefix modes (`n"…"`, `v"…"`) did **not** lex the polymeter step
+count (`{a b}%3`) or euclidean arguments (`c4(3,8)`) as numbers — under
+`note`/`value` mode the digits were captured as note/value atoms, producing
+`MP01 "Expected step count after '%'"`. The old `pat` `Auto` mode happened
+to avoid this because it never routed digits through atom lexing. Fixed in
+`mini_lexer.cpp` by (a) setting `last_was_modifier_` on `%`, and (b) adding
+a `paren_depth_` counter so euclidean `( … )` arguments always lex as
+`Number`. This was pre-existing and only surfaced once the `pat` tests
+became typed-prefix tests.
+
+### 11.4 Verification results
+
+- `akkado_tests`: **780 cases / 140269 assertions — all pass**
+- `cedar_tests`: **263 cases pass, 1 skipped**
+- `cd web && bun run check`: **0 errors, 0 warnings**
+- `grep -rn '\bpat(\|[^a-zA-Z]p"' docs web/static/docs experiments`: clean
+  (only `prd-remove-pat-builtin.md` itself and a C++ `__p"` false positive).
+- Residual `pat(` in `akkado/tests/`: intentional only — the §10.1
+  negative tests (`pat("…")` must error) and migration-context comments.

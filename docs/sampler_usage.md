@@ -78,14 +78,14 @@ vm.sample_bank_.load_wav_memory("sample", wav_data, wav_size);
 
 ```akkado
 // Simple drum pattern - automatically uses sampler
-pat("bd sd bd sd")
+s"bd sd bd sd"
 
 // With modifiers
-pat("bd sd hh sd")*2  // Double speed
+s"bd sd hh sd"*2  // Double speed
 
 // Multiple patterns
-kick = pat("bd ~ bd ~")
-snare = pat("~ sd ~ sd")
+kick = s"bd ~ bd ~"
+snare = s"~ sd ~ sd"
 out(kick + snare)
 ```
 
@@ -114,7 +114,7 @@ sample(trig, lfo(0.5) + 1.0, "bd")
 
 #### When to use which form
 
-- **Mini-notation `s"bd sd hh"` / `pat("bd sd hh")`** — when you want a *sequence* of samples driven by the cycle clock. The compiler handles trigger generation and per-step sample-name resolution.
+- **Mini-notation `s"bd sd hh"` / `s"bd sd hh"`** — when you want a *sequence* of samples driven by the cycle clock. The compiler handles trigger generation and per-step sample-name resolution.
 - **Direct `sample(trig, pitch, "name")`** — when you want a *one-shot* on an arbitrary trigger source (button, envelope, edge detector, custom clock). The same name resolution is used; the compiler emits a placeholder PUSH_CONST that the host patches with the bank-resolved ID once samples are loaded.
 - **Direct `sample(trig, pitch, <int>)`** — only when you've already programmatically registered samples with specific IDs (e.g. embedding nkido in a host that pre-populates the bank). Most patches should never need this.
 
@@ -151,9 +151,9 @@ int main() {
 
     // Compile Akkado code
     std::string code = R"(
-        kick = pat("bd ~ bd ~")
-        snare = pat("~ sd ~ sd")
-        hats = pat("hh hh hh hh")*2
+        kick = s"bd ~ bd ~"
+        snare = s"~ sd ~ sd"
+        hats = s"hh hh hh hh"*2
 
         drums = kick + snare + hats
         out(drums * 0.8)
@@ -192,18 +192,18 @@ int main() {
 
 ```akkado
 // Basic drum machine
-kick = pat("bd ~ ~ ~")
-snare = pat("~ ~ sd ~")
-hats = pat("hh hh hh hh")
+kick = s"bd ~ ~ ~"
+snare = s"~ ~ sd ~"
+hats = s"hh hh hh hh"
 out(kick + snare + hats)
 
 // With effects
-drums = pat("bd sd bd cp")
+drums = s"bd sd bd cp"
 drums_reverb = freeverb(drums, 0.8, 0.5)
 out(drums_reverb)
 
 // Pitch-shifted samples
-melody = pat("bd bd bd bd")
+melody = s"bd bd bd bd"
 pitched = sample(trigger(4), seq([1.0, 1.5, 2.0, 1.25]), 1)
 out(pitched)
 

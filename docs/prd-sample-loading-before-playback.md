@@ -12,7 +12,7 @@ Additionally, a small loading indicator appears next to the play/stop buttons wh
 
 ### Current Behavior
 
-When the user first compiles `pat("hh hh hh [hh hh] hh hh hh [hh oh]") |> out(@)`:
+When the user first compiles `s"hh hh hh [hh hh] hh hh hh [hh oh]" |> out(@)`:
 
 1. Required samples (hh, oh) load correctly before the program starts
 2. `loadDefaultSamples()` fires immediately on worklet init, sending **all** default drum kit samples (~38 files) to the worklet for C++ decoding
@@ -202,8 +202,8 @@ Remove all `std::printf("[WASM]..."`, `[SEQPAT_STEP]`, `[SAMPLE_PLAY]` debug log
 
 ## Verification
 
-1. **First compile test**: Open fresh page, type `pat("hh hh hh [hh hh] hh hh hh [hh oh]") |> out(@)`, press Ctrl+Enter. ALL events should play from beat 0 with no silent gap.
-2. **Hot-swap test**: While playing, change pattern to `pat("bd sd bd sd") |> out(@)`. New samples (bd, sd) load, then swap — no audio gap on the new pattern.
+1. **First compile test**: Open fresh page, type `s"hh hh hh [hh hh] hh hh hh [hh oh]" |> out(@)`, press Ctrl+Enter. ALL events should play from beat 0 with no silent gap.
+2. **Hot-swap test**: While playing, change pattern to `s"bd sd bd sd" |> out(@)`. New samples (bd, sd) load, then swap — no audio gap on the new pattern.
 3. **Loading indicator test**: When compiling a pattern with unloaded samples, the spinner appears briefly next to the stop button and disappears when loading completes.
 4. **No background blocking**: Check browser console — no `[CedarProcessor] Output silent for N blocks` messages during normal playback.
 5. **Rapid recompile test**: Press Ctrl+Enter multiple times quickly — no crashes, no orphaned loading states.

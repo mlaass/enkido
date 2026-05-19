@@ -1,4 +1,6 @@
 > **Status: NOT STARTED** — Follow-up to the ExtendedParams mechanism (shipped 2026-05-13). Migrates the remaining `inst.rate` bit-pack offenders and the `inputs[3]/[4]` halving trick to the canonical mechanism; surfaces parameters that the C++ implementations already support but the Akkado builtins hide.
+>
+> **Note (2026-05-19):** §4.5 (freeverb `dry`/`wet`) was incidentally accomplished by the unified dry/wet convention PRD (commits `8052c18`, `80db1dd`) — freeverb now exposes `dry`/`wet` via `ExtendedParams<2>` and the stale rate-field comment is gone. Defaults differ from this PRD's plan: shipped as `dry=1.0, wet=0.5` (Category A convention) rather than the originally-planned `dry=0.0, wet=1.0`. All other phases (comp/limiter/gate attack/release/hold, dattorro damping/mod_depth/lfo_rate, flanger feedback, comb damping, delay_sync mix + builtin, seqpat_transport cycle_length) remain untouched.
 
 # ExtendedParams Migration — Remaining Opcodes PRD
 

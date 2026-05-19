@@ -259,7 +259,7 @@ master((s) -> s
     |> softclip(@, 0.85)
 )
 
-pat("c4 e4 g4") as e
+n"c4 e4 g4" as e
     |> osc("saw", e.freq)
     |> @ * e.vel
     |> out(@)

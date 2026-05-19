@@ -12,10 +12,10 @@
 ## Executive Summary
 
 Today, the only way to feed musical events into `poly()` is a pattern
-(`pat()`, `seq()`, `note()`, `chord()`). This PRD adds a single new builtin,
+(`n"…"`/`v"…"`/`s"…"`/`c"…"`, `seq()`, `chord()`). This PRD adds a single new builtin,
 `midi(...)`, that emits the same `OutputEvent` stream patterns produce — so
 **`midi() |> poly(piano, 8)` is a drop-in replacement for**
-**`pat(...) |> poly(...)`**, and Phase 7 extends the same drop-in equivalence
+**`n"…" |> poly(...)`**, and Phase 7 extends the same drop-in equivalence
 to `soundfont(...)` and to monophonic pipelines
 (`midi() as e |> osc("saw", e.freq) |> @ * adsr(e.gate) |> out`). The source
 is selected explicitly via a record literal: bare `midi()` opens the default
@@ -123,7 +123,7 @@ No MIDI libraries are currently linked anywhere.
 ### Goals
 
 - `midi(source?, channel?, loop?, tempo?)` builtin returns a pattern-shaped
-  event stream usable wherever `pat()` is.
+  event stream usable wherever a typed pattern literal is.
 - Live device input: browser (Web MIDI API) and CLI (RtMidi). Default = first
   detected device.
 - `.mid` file playback at runtime, with tempo follow (default) and tempo file
@@ -528,7 +528,7 @@ lines of code; no behavioral change for pattern users.
 ```
 
 **ChannelCount enum addition** — today `ChannelCount::Pattern` is declared
-(`builtins.hpp:32`) but unused; `pat()`/`note()`/`value()` bypass
+(`builtins.hpp:32`) but unused; typed pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`) bypass
 `output_channels` entirely because they are handled as parser `MiniLiteral`
 nodes. To give `midi()` a clean type to flow through `|> poly`, add a new
 `ChannelCount::EventSource` value (or rename `Pattern` → `EventSource` —
@@ -1017,7 +1017,7 @@ the old queue per §4.12.
   cc/pb/at).
 - `midi() |> poly(synth, 8)` compiles: bytecode dump shows `MIDI_QUERY`
   before `POLY_BEGIN` with matching state link.
-- `pat("c4") |> poly(...) ; midi() |> poly(...)` two independent POLY
+- `n"c4" |> poly(...) ; midi() |> poly(...)` two independent POLY
   blocks work in one program.
 - `fn x() = midi() |> ...` is a compile error.
 
@@ -1384,8 +1384,8 @@ by current CI:
 - [`prd-polyphony-system.md`](prd-polyphony-system.md) — defines `POLY_BEGIN`,
   `PolyAllocState`, and the `NoteEvent` abstraction this PRD inherits.
   Section 1.3 previews the syntax as `midi_in() |> poly(...)`; this PRD
-  shortens the builtin to `midi()` for symmetry with `pat()`/`note()`/
-  `value()`. Same semantics. **§7 "Future: Configurable Voice Release"
+  shortens the builtin to `midi()` for symmetry with typed pattern
+  literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`). Same semantics. **§7 "Future: Configurable Voice Release"
   ships via this PRD's Phase 7.2** — once Phase 7 lands, polyphony PRD
   §7 should be marked shipped with a back-link here.
 - `prd-runtime-event-transforms.md` *(not yet drafted)* — the natural

@@ -39,7 +39,7 @@ TEST_CASE("Analyzer: Variable reassignment errors", "[analyzer][errors]") {
     }
 
     SECTION("reassign pattern - E150") {
-        auto result = compile("p = pat(\"c4\")\np = pat(\"e4\")");
+        auto result = compile("p = n\"c4\"\np = n\"e4\"");
         REQUIRE_FALSE(result.success);
         CHECK(has_error(result.diagnostics, "E150"));
     }
@@ -177,13 +177,41 @@ TEST_CASE("Analyzer: Scope resolution", "[analyzer]") {
     }
 
     SECTION("pattern variable succeeds") {
-        auto result = compile("p = pat(\"c4 e4 g4\")\np");
+        auto result = compile("p = n\"c4 e4 g4\"\np");
         CHECK(result.success);
     }
 
     SECTION("array variable succeeds") {
         auto result = compile("arr = [1, 2, 3]\nsum(arr)");
         CHECK(result.success);
+    }
+
+    // PRD prd-remove-pat-builtin §6.2: `pat` and `p` are ordinary identifiers
+    // after the builtin removal.
+    SECTION("pat is usable as an ordinary identifier") {
+        auto result = compile("pat = n\"c4 e4\"\npat |> osc(\"sin\", @.freq) |> out(@, @)");
+        CHECK(result.success);
+    }
+
+    SECTION("p is usable as an ordinary identifier") {
+        auto result = compile("p = osc(\"sin\", 440)\nout(p, p)");
+        CHECK(result.success);
+    }
+
+    // PRD prd-remove-pat-builtin §10.1: the removed builtins error generically.
+    SECTION("n'…' call errors as unknown builtin") {
+        auto result = compile("pat(\"c4 e4\") |> out(@, @)");
+        CHECK_FALSE(result.success);
+    }
+
+    SECTION("value() call errors as unknown builtin") {
+        auto result = compile("value(\"0.5\") |> out(@, @)");
+        CHECK_FALSE(result.success);
+    }
+
+    SECTION("note() call errors as unknown builtin") {
+        auto result = compile("note(\"c4 e4\") |> out(@, @)");
+        CHECK_FALSE(result.success);
     }
 }
 
@@ -198,7 +226,7 @@ TEST_CASE("Analyzer: Pipe transformations", "[analyzer]") {
     }
 
     SECTION("pipe with pattern") {
-        auto result = compile("pat(\"c4 e4 g4\") |> osc(\"sin\", %.freq)");
+        auto result = compile("n\"c4 e4 g4\" |> osc(\"sin\", %.freq)");
         CHECK(result.success);
     }
 
@@ -368,31 +396,31 @@ TEST_CASE("Analyzer: field access on pattern bindings (audit §10.2)",
         CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
     }
 
-    SECTION("var bound to pat(\"…\").slow(2) — Pattern kind, field access works (BUG FIX)") {
-        auto r = compile("notes = pat(\"c4 e4\").slow(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
+    SECTION("var bound to n\"…\".slow(2) — Pattern kind, field access works (BUG FIX)") {
+        auto r = compile("notes = n\"c4 e4\".slow(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
         CHECK(r.success);
         CHECK_FALSE(has_error(r.diagnostics, "E061"));
         CHECK_FALSE(has_error(r.diagnostics, "E124"));
         CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
     }
 
-    SECTION("var bound to note(\"…\") — Pattern kind, field access works (BUG FIX)") {
-        auto r = compile("notes = note(\"c4 e4\")\nnotes |> osc(\"sin\", @freq) |> out(@)");
+    SECTION("var bound to n\"…\" — Pattern kind, field access works (BUG FIX)") {
+        auto r = compile("notes = n\"c4 e4\"\nnotes |> osc(\"sin\", @freq) |> out(@)");
         CHECK(r.success);
         CHECK_FALSE(has_error(r.diagnostics, "E061"));
         CHECK_FALSE(has_error(r.diagnostics, "E124"));
         CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
     }
 
-    SECTION("var bound to note(\"…\").fast(2) — analyzer classifies as Pattern; codegen path is a separate bug") {
+    SECTION("var bound to n\"…\".fast(2) — analyzer classifies as Pattern; codegen path is a separate bug") {
         // The analyzer's symbol classification is the contract this test
         // block exists to enforce — that part works. End-to-end compile
         // currently fails with E130 because the transform handlers
         // (handle_fast_call/handle_slow_call) don't recognize Call-to-
         // pattern-producer receivers (only MiniLiteral); inline
-        // `note("…").fast(2) |> …` fails for the same reason. That's a
+        // `n"…".fast(2) |> …` fails for the same reason. That's a
         // separate codegen bug; tracked as a follow-up to this fix.
-        auto r = compile("notes = note(\"c4 e4\").fast(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
+        auto r = compile("notes = n\"c4 e4\".fast(2)\nnotes |> osc(\"sin\", @freq) |> out(@)");
         CHECK_FALSE(has_error(r.diagnostics, "E061"));
         CHECK(pattern_kind(r, "notes") == SymbolKind::Pattern);
     }

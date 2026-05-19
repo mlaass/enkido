@@ -192,9 +192,9 @@ ds_drum("bd:sd:hh:hh") |> out(@, @)
 ds_drum("bd hh*4 sd?", { bd: { freq: 60, decay: 0.7 } })
 ```
 
-`ds_drum()` is a **special-handler builtin** (codegen-special, like `pat()`) that:
+`ds_drum()` is a **special-handler builtin** (codegen-special, like the typed pattern literals) that:
 1. Parses the mini-notation pattern at compile time.
-2. Emits one drum-voice opcode per active step name plus a triggered `pat()`-driven gate.
+2. Emits one drum-voice opcode per active step name plus a triggered pattern-driven gate.
 3. Sums all voices into a single buffer.
 
 A live-coder gets a working drum kit from a single line.
@@ -412,11 +412,11 @@ The existing POLY block's per-voice trigger fan-out (gate/freq/vel/trig wiring f
 
 ### 5.6 The `ds_drum()` macro
 
-`ds_drum()` is a **special-handler builtin** in the codegen (mirrors `pat()`, `wt_load()`):
+`ds_drum()` is a **special-handler builtin** in the codegen (mirrors typed pattern literals, `wt_load()`):
 
 1. Parse the mini-notation pattern at compile time using existing `MiniNotationAst`.
 2. For each unique drum symbol (`bd`, `sd`, `hh`, `hh_open`, `cp`, etc.), emit one DaisySP voice opcode with a default preset.
-3. Wire each voice's `trig` input to a `pat()`-driven trigger that fires on the right step.
+3. Wire each voice's `trig` input to a pattern-driven trigger that fires on the right step.
 4. Sum all voice outputs into a single buffer with `ADD` opcodes.
 5. Optional record argument override per-voice (uses the existing record-spread pattern from `prd-record-argument-spread.md`):
    ```akkado
@@ -719,6 +719,6 @@ Add a CI check that:
 - **[OPEN]** `harmonic_osc` and `osc_bank` accept a magnitudes array. Akkado's existing array support (`ARRAY_PACK` etc.) can carry up to 128 elements but DaisySP's HarmonicOscillator is templated on `<int kNumHarmonics>` (default 16). Decide the fixed N at vendoring time. Default proposal: N=16.
 - **[OPEN]** `granular()` URI scheme: reuse the existing `cedar::UriResolver` (per `prd-uri-resolver.md`) or define a new one? Proposal: reuse.
 - **[OPEN]** `looper` write buffer size: DaisySP defaults to several seconds at 48 kHz. Pick a fixed, documented size — e.g. 8 seconds — since Cedar avoids dynamic allocation.
-- **[OPEN]** `ds_drum()` mini-notation extension: the existing `pat()` mini-notation supports `*`, `?`, rest, etc. — does `ds_drum()` reuse `pat()` parsing or fork it? Proposal: reuse `pat()` parsing wholesale; the special handler only differs in *what each step compiles to*.
+- **[OPEN]** `ds_drum()` mini-notation extension: the existing pattern-literal mini-notation supports `*`, `?`, rest, etc. — does `ds_drum()` reuse that parsing or fork it? Proposal: reuse the mini-notation parsing wholesale; the special handler only differs in *what each step compiles to*.
 - **[OPEN]** Should drums emit stereo with a built-in pan? Proposal: no — they're mono; users pan with `pan()` after.
 - **[OPEN]** Whether to expose DaisySP's internal helpers (`Source/Utility/dsp.h` softclip / fold / etc.) as Akkado primitives. Proposal: skip; we have equivalents.

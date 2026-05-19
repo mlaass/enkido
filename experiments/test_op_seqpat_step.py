@@ -50,7 +50,7 @@ SR = 48000
 # Akkado source: iter(4) over 4 pitched notes. Pulse envelope (AR with short
 # attack/release on the trigger) keeps each note audible without bleed.
 AKK_SRC = """
-arp = pat("c4 e4 g4 b4").iter(4)
+arp = n"c4 e4 g4 b4".iter(4)
 mtof(arp) |> osc("sin", %) * 0.2 |> out(%, %)
 """
 

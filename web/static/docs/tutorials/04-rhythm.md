@@ -70,11 +70,11 @@ osc("sin", 55) * ar(euclid(3, 8, 1), 0.01, 0.15) |> out(@)
 
 ## Step sequencing
 
-Use `pat()` mini-notation for melodic patterns:
+Use `n"…"` mini-notation for melodic patterns:
 
 ```akk
 // 4-note melodic pattern
-pat("c3 e3 g3 c4") |> ((f) ->
+n"c3 e3 g3 c4" |> ((f) ->
     osc("saw", f) * ar(trigger(4)) |> lp(@, 800)
 ) |> out(@)
 ```
@@ -85,7 +85,7 @@ A complete sequence:
 
 ```akk
 // Bass line with rhythm
-pat("c2 g2 d#2 a#1") |> ((f) ->
+n"c2 g2 d#2 a#1" |> ((f) ->
     osc("saw", f)
         |> moog(@, 400 + ar(trigger(2)) * 800, 2)
         * ar(trigger(2), 0.01, 0.2)
@@ -146,7 +146,7 @@ For melodic sequences, use mini-notation:
 
 ```akk
 // Melodic pattern
-pat("c3 e3 g3 c4") |> ((f) ->
+n"c3 e3 g3 c4" |> ((f) ->
     osc("saw", f) |> lp(@, 800) * ar(trigger(4))
 ) |> out(@)
 ```
@@ -173,7 +173,7 @@ The `>` operator outputs `1.0` whenever its left-hand side is greater than its r
 
 ```akk
 // Alternate timbre on every other beat
-flip = pat("1 0 1 0")
+flip = n"1 0 1 0"
 voice = select(flip, osc("saw", 110), osc("sqr", 110))
 voice * ar(trigger(2), 0.005, 0.2) |> out(@)
 ```
@@ -186,8 +186,8 @@ Logical AND (`&&`) fires only when both inputs are truthy. Logical OR (`||`) fir
 
 ```akk
 // OR: layer two patterns into a single gate
-g1 = pat("1 0 0 0")
-g2 = pat("0 0 1 0")
+g1 = n"1 0 0 0"
+g2 = n"0 0 1 0"
 combined = g1 || g2  // "1 0 1 0"
 osc("sin", 55) * ar(combined, 0.005, 0.15) |> out(@)
 ```

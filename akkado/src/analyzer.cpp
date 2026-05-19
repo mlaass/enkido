@@ -20,9 +20,7 @@ bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
                 call_name = n.as_identifier();
             }
-            return call_name == "chord" || call_name == "pat" ||
-                   call_name == "seq"   || call_name == "value" ||
-                   call_name == "note";
+            return call_name == "chord" || call_name == "seq";
         }
         case NodeType::Identifier: {
             std::string name;
@@ -545,16 +543,13 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     sym.buffer_index = 0xFFFF;
                     sym.is_state_cell = true;
                     symbols_.define(sym);
-                } else if (callee_name == "chord" || callee_name == "pat" ||
-                           callee_name == "seq"   || callee_name == "value" ||
-                           callee_name == "note") {
-                    // Pattern-producing builtin call bound to a variable:
-                    // `notes = note("c d")`. Register as Pattern so that
-                    // downstream `notes |> saw(@freq)` field access passes
-                    // E061. (`pat("…")` is normally parsed as MiniLiteral
-                    // by the parser's prefix handler, but the spread/named-
-                    // arg path can still produce a Call node here, so list
-                    // it for completeness — mirrors the PipeBinding
+                } else if (callee_name == "chord" || callee_name == "seq") {
+                    // Pattern-producing builtin call bound to a variable.
+                    // Register as Pattern so downstream `notes |> saw(@freq)`
+                    // field access passes E061. (Typed-prefix literals like
+                    // `n"…"` parse as MiniLiteral, but the spread/named-arg
+                    // path can still produce a Call node here, so list it
+                    // for completeness — mirrors the PipeBinding
                     // handler's name set.)
                     PatternInfo pat_info{};
                     pat_info.pattern_node = rhs;
@@ -714,9 +709,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
                     call_name = expr_node.as_identifier();
                 }
-                if (call_name == "chord" || call_name == "pat" ||
-                    call_name == "seq" || call_name == "value" ||
-                    call_name == "note") {
+                if (call_name == "chord" || call_name == "seq") {
                     PatternInfo pat_info{};
                     pat_info.pattern_node = bound_expr;
                     pat_info.is_sample_pattern = false;
@@ -1982,13 +1975,12 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 pat_info.is_sample_pattern = false;
                 symbols_.define_pattern(binding_name, pat_info);
             } else if (expr_node.type == NodeType::Call) {
-                // Check if this is a pattern-producing call (chord, pat, etc.)
+                // Check if this is a pattern-producing call (chord, seq, etc.)
                 std::string call_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
                     call_name = expr_node.as_identifier();
                 }
-                if (call_name == "chord" || call_name == "pat" || call_name == "seq" ||
-                    call_name == "value" || call_name == "note") {
+                if (call_name == "chord" || call_name == "seq") {
                     // Pattern-producing call - define as Pattern for field access
                     PatternInfo pat_info{};
                     pat_info.pattern_node = bound_expr;

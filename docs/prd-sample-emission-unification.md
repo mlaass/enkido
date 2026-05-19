@@ -397,7 +397,7 @@ Each phase is a single commit, independently reviewable, leaves the tree green.
 
 **Goal:** Extract the property loop in `compile_atom_event` into `apply_atom_properties`. Migrate `flatten_to_timelines` to call the same helper. Extend `BranchEvent` with `prop_vals` (sized to `cedar::MAX_PROPS_PER_EVENT`) + `prop_vals_used` (`uint32_t` bitmap with a `static_assert` pinning the relationship). Update `compile_polyrhythm_events` merge to copy `prop_vals` onto the emitted `cedar::Event` using a **bitmap-aware** merge: for slot S, take the first branch with bit S set in `prop_vals_used`. This preserves an explicit `{cutoff:0}` (a "first non-zero" merge would drop it; see §10 E3).
 
-This phase changes one observable behavior: custom property slots (cutoff, bend, etc.) that were previously dropped on the polyrhythm path now propagate. Add a targeted akkado test for `pat("[hh, bd{cutoff:0.3}]")` asserting the merged event's `prop_vals[cutoff_slot] == 0.3`.
+This phase changes one observable behavior: custom property slots (cutoff, bend, etc.) that were previously dropped on the polyrhythm path now propagate. Add a targeted akkado test for `s"[hh, bd{cutoff:0.3}]"` asserting the merged event's `prop_vals[cutoff_slot] == 0.3`.
 
 **Files:**
 - `akkado/src/codegen_patterns.cpp` (BranchEvent, compile_atom_event, flatten_to_timelines, compile_polyrhythm_events)
@@ -478,7 +478,7 @@ After Phase 4, render `web/static/patches/test.akk` (the user's pattern from the
 
 ### E1. Empty pattern (no events)
 
-`pat("")` — the SequenceCompiler returns no events; `is_sample_pattern` is false; `emit_sample_chain` is never called. **No change.**
+`n""` — the SequenceCompiler returns no events; `is_sample_pattern` is false; `emit_sample_chain` is never called. **No change.**
 
 ### E2. Rest-only polyrhythm `[~, ~]`
 

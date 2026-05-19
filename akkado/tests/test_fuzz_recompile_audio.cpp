@@ -290,7 +290,7 @@ std::vector<LocalizedClick> render_and_localize(
 TEST_CASE("recompile-audio: localize click — tonal program",
           "[.localize][diag]") {
     const char* src =
-        R"(pat("c4 e4 g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -396,7 +396,7 @@ TEST_CASE("recompile-audio: localize click — crossfade=0 (isolation)",
     // crossfade mixing path is the source. If they remain, the click is
     // in the swap/rebind itself or in the program-execution boundary.
     const char* src =
-        R"(pat("c4 e4 g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -430,11 +430,11 @@ TEST_CASE("recompile-audio: continuity over rapid same-source swaps",
     // state; the audio should look like a single uninterrupted render.
     static const char* sources[] = {
         // single sine through a pattern of pitches
-        R"(pat("c4 e4 g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
         // alternation — exercises the sequence step-counter we just fixed
-        R"(pat("<c4 e4> g4 b4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"<c4 e4> g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
         // group + repeat
-        R"(pat("[c4 e4] g4 c4*2") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"[c4 e4] g4 c4*2" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
         // chord via soundfont — exercises poly + sample paths
         R"(c"<[Am Am7] [Dm7 Dm] G CM>" |> soundfont(@, "gm", 0) |> out(@ * 0.4))",
     };
@@ -467,9 +467,9 @@ TEST_CASE("recompile-audio: trigger pulse count survives rapid swaps",
         std::uint32_t pulses_per_cycle;
     };
     static const Case cases[] = {
-        {R"(pat("c4 c4 c4 c4") |> %.trig |> out(%, %))", 4},
-        {R"(pat("c4 c4 c4") |> %.trig |> out(%, %))", 3},
-        {R"(pat("[c4 c4] c4 c4") |> %.trig |> out(%, %))", 4},
+        {R"(n"c4 c4 c4 c4" |> %.trig |> out(%, %))", 4},
+        {R"(n"c4 c4 c4" |> %.trig |> out(%, %))", 3},
+        {R"(n"[c4 c4] c4 c4" |> %.trig |> out(%, %))", 4},
     };
 
     StressConfig cfg;
@@ -649,9 +649,9 @@ void check_continuity_against_baseline(const char* src,
 // shape variety is to catch any failure mode that's specific to a payload
 // type.
 constexpr const char* CONTINUITY_PROGRAMS[] = {
-    R"(pat("c4 c4 c4 c4") |> %.trig |> out(%, %))",
-    R"(pat("<c4 e4 g4 b4>") |> %.trig |> out(%, %))",
-    R"(pat("c4 c4 c4 c4 c4 c4 c4 c4") |> %.trig |> out(%, %))",
+    R"(n"c4 c4 c4 c4" |> %.trig |> out(%, %))",
+    R"(n"<c4 e4 g4 b4>" |> %.trig |> out(%, %))",
+    R"(n"c4 c4 c4 c4 c4 c4 c4 c4" |> %.trig |> out(%, %))",
 };
 
 }  // namespace
@@ -692,7 +692,7 @@ TEST_CASE("recompile-audio: trigger train byte-identical to no-swap baseline",
 // downstream signal flow changes.
 //
 // Each STRESS swap cycles through variants A → B → C → A → ... All variants
-// share the same trigger-bearing prefix `pat("…") |> %.trig`, differing
+// share the same trigger-bearing prefix `n"…" |> %.trig`, differing
 // only in the output side, so the trigger SEMANTIC is unchanged across
 // every swap. The baseline uses variant A.
 
@@ -703,9 +703,9 @@ namespace {
 // pattern + trigger should match across all three (same source text in
 // the pattern prefix → same semantic ID).
 constexpr const char* MULTI_VARIANTS[] = {
-    R"(pat("c4 c4 c4 c4") |> %.trig |> out(% * 1.0, % * 1.0))",
-    R"(pat("c4 c4 c4 c4") |> %.trig |> out(% * 0.9, % * 0.9))",
-    R"(pat("c4 c4 c4 c4") |> %.trig |> out(% * 0.8, % * 0.8))",
+    R"(n"c4 c4 c4 c4" |> %.trig |> out(% * 1.0, % * 1.0))",
+    R"(n"c4 c4 c4 c4" |> %.trig |> out(% * 0.9, % * 0.9))",
+    R"(n"c4 c4 c4 c4" |> %.trig |> out(% * 0.8, % * 0.8))",
 };
 
 StressResult run_multi_source_stress(
@@ -827,7 +827,7 @@ TEST_CASE("recompile-audio: beat position monotonic across many swaps",
     // counter corruption, a seek mid-fuzz, or block-counter mis-tracking
     // during the swap path. We assert strict monotonicity.
     auto cr = akkado::compile(
-        R"(pat("c4 e4 g4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))");
+        R"(n"c4 e4 g4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))");
     REQUIRE(cr.success);
 
     StressConfig cfg;
@@ -948,8 +948,8 @@ TEST_CASE("recompile-audio: random-program stress over many seeds",
         std::string body = note_atom(rng);
         for (int i = 1; i < n; ++i) body += " " + note_atom(rng);
         std::ostringstream os;
-        os << "pat(\"" << body
-           << R"(") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+        os << "n\"" << body
+           << R"(" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
         return os.str();
     };
 
@@ -1007,10 +1007,10 @@ TEST_CASE("recompile-audio corpus: known regressions",
         // tripping trigger/pattern systems. Seeded as a baseline so that
         // any future regression in pulse-count continuity surfaces here.
         {"user-trigger-pattern",
-         R"(pat("c4 c4 c4 c4") |> %.trig |> out(%, %))",
+         R"(n"c4 c4 c4 c4" |> %.trig |> out(%, %))",
          trig_cfg},
         {"user-alternating-osc",
-         R"(pat("<c4 e4> g4") |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+         R"(n"<c4 e4> g4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
          audio_cfg},
     };
 

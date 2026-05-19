@@ -230,15 +230,15 @@ Once samples are loaded, they can be used in mini-notation patterns:
 
 ```akkado
 // Simple drum pattern
-pat("bd sd bd sd")
+s"bd sd bd sd"
 
 // With modifiers
-pat("bd sd hh sd")*2
+s"bd sd hh sd"*2
 
 // Multiple patterns
-kick = pat("bd ~ bd ~")
-snare = pat("~ sd ~ sd")
-hats = pat("hh hh hh hh")*2
+kick = s"bd ~ bd ~"
+snare = s"~ sd ~ sd"
+hats = s"hh hh hh hh"*2
 
 out(kick + snare + hats)
 ```

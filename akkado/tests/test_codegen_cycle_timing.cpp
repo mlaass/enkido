@@ -4,7 +4,7 @@
 // each top-level element in a mini-notation string occupies exactly one
 // cycle (= one beat under the cycle=beat model). Use [...] for in-cycle
 // subdivision. This is a deliberate divergence from Strudel/Tidal:
-// `pat("c d e f")` plays four cycles in sequence, not four sub-notes in
+// `n"c d e f"` plays four cycles in sequence, not four sub-notes in
 // one cycle.
 
 #include <catch2/catch_test_macros.hpp>
@@ -42,7 +42,7 @@ std::vector<float> beat_positions(const akkado::StateInitData& si) {
 
 TEST_CASE("cycle_timing: single element inlines to one event spanning the cycle",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c4"))");
+    auto result = akkado::compile(R"(n"c4")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -55,7 +55,7 @@ TEST_CASE("cycle_timing: single element inlines to one event spanning the cycle"
 
 TEST_CASE("cycle_timing: two top-level elements compile to per-cycle alternation",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c4 e4"))");
+    auto result = akkado::compile(R"(n"c4 e4")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -70,7 +70,7 @@ TEST_CASE("cycle_timing: two top-level elements compile to per-cycle alternation
 
 TEST_CASE("cycle_timing: four top-level elements alternate across four cycles",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c4 d4 e4 f4"))");
+    auto result = akkado::compile(R"(n"c4 d4 e4 f4")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -83,7 +83,7 @@ TEST_CASE("cycle_timing: four top-level elements alternate across four cycles",
 
 TEST_CASE("cycle_timing: eight top-level elements alternate across eight cycles",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c d e f g a b c5"))");
+    auto result = akkado::compile(R"(n"c d e f g a b c5")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -96,7 +96,7 @@ TEST_CASE("cycle_timing: eight top-level elements alternate across eight cycles"
 
 TEST_CASE("cycle_timing: explicit [...] subdivides one cycle",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("[c4 d4 e4 f4]"))");
+    auto result = akkado::compile(R"(n"[c4 d4 e4 f4]")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -112,8 +112,8 @@ TEST_CASE("cycle_timing: explicit [...] subdivides one cycle",
 
 TEST_CASE("cycle_timing: <...> is a synonym of top-level alternation",
           "[codegen][patterns][cycle_timing]") {
-    auto result_top = akkado::compile(R"(pat("c4 d4 e4 f4"))");
-    auto result_alt = akkado::compile(R"(pat("<c4 d4 e4 f4>"))");
+    auto result_top = akkado::compile(R"(n"c4 d4 e4 f4")");
+    auto result_alt = akkado::compile(R"(n"<c4 d4 e4 f4>")");
     REQUIRE(result_top.success);
     REQUIRE(result_alt.success);
 
@@ -131,7 +131,7 @@ TEST_CASE("cycle_timing: <...> is a synonym of top-level alternation",
 
 TEST_CASE("cycle_timing: slow(2) doubles cycle length",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c4 e4").slow(2))");
+    auto result = akkado::compile(R"(n"c4 e4".slow(2))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -144,7 +144,7 @@ TEST_CASE("cycle_timing: slow(2) doubles cycle length",
 
 TEST_CASE("cycle_timing: fast(2) halves cycle length",
           "[codegen][patterns][cycle_timing]") {
-    auto result = akkado::compile(R"(pat("c4 d4 e4 f4").fast(2))");
+    auto result = akkado::compile(R"(n"c4 d4 e4 f4".fast(2))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -160,7 +160,7 @@ TEST_CASE("cycle_timing: subdivision inside [...] supports weights",
     // [c4@2 e4] — total weight 3, "c4" holds for 2/3 of the cycle.
     // cycle_length=1; event "c4" at t=0 (duration ~0.667),
     // event "e4" at t=~0.667 (duration ~0.333).
-    auto result = akkado::compile(R"(pat("[c4@2 e4]"))");
+    auto result = akkado::compile(R"(n"[c4@2 e4]")");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
@@ -191,15 +191,15 @@ TEST_CASE("cycle_timing: timeline(...) curves keep subdivision semantics",
     CHECK(timeline_seen);
 }
 
-TEST_CASE("cycle_timing: pat(\"a\"), pat(\"<a>\"), pat(\"[a]\") are byte-equivalent",
+TEST_CASE("cycle_timing: n\"a\", n\"<a>\", n\"[a]\" are byte-equivalent",
           "[codegen][patterns][cycle_timing][single_child]") {
     // The b5f2768 single-child inline guard means all three forms collapse
     // to a direct atom emission with identical bytecode. Preserving this
     // invariant also keeps late()/early() from double-shifting through a
     // needless sub-sequence wrapper.
-    auto bare = akkado::compile(R"(pat("a"))");
-    auto seq  = akkado::compile(R"(pat("<a>"))");
-    auto grp  = akkado::compile(R"(pat("[a]"))");
+    auto bare = akkado::compile(R"(n"a")");
+    auto seq  = akkado::compile(R"(n"<a>")");
+    auto grp  = akkado::compile(R"(n"[a]")");
     REQUIRE(bare.success);
     REQUIRE(seq.success);
     REQUIRE(grp.success);

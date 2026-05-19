@@ -20,7 +20,7 @@ namespace akkado {
 ///       }, ...
 ///     },
 ///     "aliases": { "<from>": "<to>", ... },
-///     "keywords": ["fn", "pat", ...]
+///     "keywords": ["fn", "seq", "timeline", ...]
 ///   }
 ///
 /// The optional `optionFields` block is emitted when a parameter is typed as

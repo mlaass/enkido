@@ -68,7 +68,7 @@ The brainstorm exploration confirmed:
 - **L2**: A user `fn` called from N sites produces audio bit-exact to the current per-site-inlined behavior, and pre-expansion bytecode is measurably smaller than current.
 - **L2**: Hot-swap state preservation works per-call-site via the existing semantic-path scheme extended with a `block@callsite_N` component.
 - **L3**: POLY reimplemented as `FOREACH_EVENT + voice allocator + BLOCK_CALL voice_body` is bit-exact to today's POLY across all existing `akkado/tests/` cases.
-- **L3**: `pat(...).each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI, with state preserved across hot-swap.
+- **L3**: `n"…".each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI, with state preserved across hot-swap.
 - **No new audio-thread allocations.** Every new state slot, every new block-table entry, every voice-pool entry is allocated at swap-prepare or init time only.
 
 ### Non-Goals
@@ -196,7 +196,7 @@ The non-trivial cases need committed semantics, not just docs caveats:
 | Case | Behavior in v1 |
 |---|---|
 | **(a) Feedback / decay state in skipped branch** (e.g., a reverb tail in the `false` branch when `cond` flips to `true`) | Reverb tail frozen — does *not* ring out while skipped. When `cond` flips back, tail resumes from its frozen sample. Documented as user-visible behavior; flagged in `when()` doc as "use `select()` if you need the tail to decay regardless". |
-| **(b) Sequencer / pattern state in skipped branch** | Pattern state (e.g., `pat(...)` inside the skipped branch) is *not* advanced — events for that block are lost. Cycle position resumes from its frozen value on un-skip. This is the same model as (a): skipped subgraphs are frozen, not silenced. Documented in `when()` doc as "patterns inside `when()` lose events while bypassed — pattern logic that needs to keep ticking belongs outside the bypass". |
+| **(b) Sequencer / pattern state in skipped branch** | Pattern state (e.g., a pattern literal inside the skipped branch) is *not* advanced — events for that block are lost. Cycle position resumes from its frozen value on un-skip. This is the same model as (a): skipped subgraphs are frozen, not silenced. Documented in `when()` doc as "patterns inside `when()` lose events while bypassed — pattern logic that needs to keep ticking belongs outside the bypass". |
 | **(c) Hot-swap mid-skip** | Skipped state still participates in semantic-ID rebinding. The next-compile's matching subgraph receives the frozen state — its DSP picks up where the pre-swap version left off, even though the swap happened during a block when it wasn't running. Falls out of the existing path-hash scheme; no new mechanism required. |
 | **(d) Chained `when(a, when(b, …))`** | Skips compose: the outer `SKIP_IF_*` advances `ip` past the entire inner construct (offset is computed at codegen). No special handling at runtime. Branches are independent — entering the outer's false branch does not implicitly enter the inner's false branch. |
 
@@ -367,7 +367,7 @@ notes.fold(0.0, (acc, n) => acc + n.freq)       // SHARED allocator, single accu
 Each is a thin compile-time wrapper that emits a `FOREACH_EVENT` with the appropriate allocator and binds the lambda body as the `block_id`. The lambda's parameter list maps to the convention slots. `each_voice` (this PRD) is distinct from `map` (the companion event-transforms PRD); see §13.
 
 **Restriction in v1**: the operand of `each_voice`/`each`/`fold` must be one of:
-- a pattern result (`pat(...)`, `note(...)`, `seq(...)`),
+- a pattern result (`n"…"`, `v"…"`, `s"…"`, `c"…"`, `seq(...)`),
 - a MIDI input event stream,
 - a literal array of records.
 
@@ -481,7 +481,7 @@ freqs.each(f => osc("sin", f) * 0.25) |> out(@)
 
 ```akkado
 // each_voice: per-event UGen instantiation; mixed output of all per-event signals
-pat("c4 e4 g4") as notes
+n"c4 e4 g4" as notes
 notes.each_voice(n => osc("sin", n.freq) * 0.5) |> out(@)
 
 // each: side-effecting, no return aggregation (each iteration calls out() itself)
@@ -652,7 +652,7 @@ Three independent PRs. Each one is shippable on its own.
 
 **Acceptance:**
 - All existing POLY tests pass bit-exact.
-- `pat(...).each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI.
+- `n"…".each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI.
 - A 300-second simulated render shows zero allocation events on the audio thread.
 - Hot-swap state preservation works across POLY migration (existing PolyAllocState path-hash unchanged).
 
@@ -679,7 +679,7 @@ These are gate-1 merge criteria for their respective PRs.
 
 Extend the existing hot-swap test harness with:
 - A program that defines a `fn` called from 3 sites; verify per-call-site state preservation across a swap that modifies an unrelated part of the program.
-- A program with a `pat(...).each_voice(...)` block; verify per-iteration state preservation across pattern edits.
+- A program with a `n"…".each_voice(...)` block; verify per-iteration state preservation across pattern edits.
 - A program using `poly()` (post-migration); verify all existing PolyAllocState preservation invariants hold.
 
 ### 10.4 CPU Benchmark (L1)

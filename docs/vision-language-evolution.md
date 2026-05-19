@@ -258,7 +258,7 @@ saw(440) |> lp(%, 800) |> delay(%, 0.3, 0.5)
 
 **Compiles to:** Desugars to regular function calls at parse time. The parser already has `NodeType::MethodCall` in the AST — it just needs to rewrite to `Call` nodes.
 
-**Unlocks:** Ergonomic chaining for all functions, especially user-defined ones. Makes `|>` optional for simple chains. Enables pattern method syntax: `pat("c4 e4").slow(2).transpose(12)`.
+**Unlocks:** Ergonomic chaining for all functions, especially user-defined ones. Makes `|>` optional for simple chains. Enables pattern method syntax: `n"c4 e4".slow(2).transpose(12)`.
 
 **Complexity:** Low. Parser rewrite only. The AST node type already exists.
 
@@ -397,10 +397,10 @@ fn my_chorus(sig, rate = 0.5, depth = 0.5) -> {
 **Proposed syntax:**
 ```akkado
 // Current
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel
 
 // With destructuring
-pat("c4 e4 g4") as {freq, vel} |> osc("sin", freq) |> % * vel
+n"c4 e4 g4" as {freq, vel} |> osc("sin", freq) |> % * vel
 
 // In match arms
 fn process(event) -> match(event) {
@@ -425,13 +425,13 @@ fn process(event) -> match(event) {
 **Proposed syntax:**
 ```akkado
 // Current
-transpose(slow(pat("c4 e4 g4"), 2), 12)
+transpose(slow(n"c4 e4 g4", 2), 12)
 
 // With methods
-pat("c4 e4 g4").slow(2).transpose(12)
+n"c4 e4 g4".slow(2).transpose(12)
 
 // Chaining
-pat("c4 e4 g4")
+n"c4 e4 g4"
     .slow(2)
     .transpose(12)
     .velocity(0.8)

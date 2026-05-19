@@ -53,7 +53,7 @@ osc("saw", 220) |> waterfall(@) |> out(@)
 Pattern-event visualization on a pitch-time grid. See [pianoroll](pianoroll) for the full reference.
 
 ```akk
-pat("c4 e4 g4 b4") |> pianoroll(@)
+n"c4 e4 g4 b4" |> pianoroll(@)
 ```
 
 Related: [oscilloscope](oscilloscope), [waveform](waveform), [spectrum](spectrum), [waterfall](waterfall), [pianoroll](pianoroll)

@@ -105,12 +105,12 @@ private:
 /// @param pattern The pattern string content
 /// @param arena Reference to the AST arena
 /// @param base_location Location for error reporting
-/// @param mode Parse mode (Auto/Note/Sample/Chord/Value/Curve)
+/// @param mode Parse mode (Note/Sample/Chord/Value/Curve)
 /// @return Pair of root node index and diagnostics
 std::pair<NodeIndex, std::vector<Diagnostic>>
 parse_mini(std::string_view pattern, AstArena& arena,
            SourceLocation base_location = {},
-           MiniParseMode mode = MiniParseMode::Auto);
+           MiniParseMode mode = MiniParseMode::Note);
 
 /// Backward-compat overload using the old bool flags.
 std::pair<NodeIndex, std::vector<Diagnostic>>

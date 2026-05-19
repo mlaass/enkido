@@ -49,7 +49,7 @@ On the CLI, `yt-dlp` is invoked directly as a subprocess — no backend server n
 
 - **G1:** `samples(uri, clips_dict)` compiles as a new `UriKind::VideoClip` entry in `requiredUris`.
 - **G2:** Web host calls the backend proxy to extract clips; CLI shells out to `yt-dlp` directly.
-- **G3:** Extracted clips register as a synthetic sample bank, usable in patterns: `pat("kick snare hh") .bank("VideoName") |> out`.
+- **G3:** Extracted clips register as a synthetic sample bank, usable in patterns: `s"kick snare hh" .bank("VideoName") |> out`.
 - **G4:** Backend caches the full extracted audio per URL so recompiles are fast.
 - **G5:** Per-clip error reporting — if one clip fails, others still load.
 - **G6:** Timestamps accept both float seconds (`s: 32.0`) and MM:SS strings (`s: "1:02"`).
@@ -81,7 +81,7 @@ samples("https://youtube.com/watch?v=dQw4W9WgXcQ", {
 })
 
 // Use in patterns — bank name derived from video title
-pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(@, @)
+s"kick snare kick snare" .bank("Never Gonna Give You Up") |> out(@, @)
 ```
 
 ### 3.2 Multiple variants per sample
@@ -94,7 +94,7 @@ samples("https://youtube.com/watch?v=abc123", {
 })
 
 // Access variants by index
-pat("hh:0 hh:1 hh:2 hh:0") .bank("abc123") |> out(@, @)
+s"hh:0 hh:1 hh:2 hh:0" .bank("abc123") |> out(@, @)
 ```
 
 ### 3.3 Timestamp formats
@@ -143,7 +143,7 @@ The bank name is derived from the video/page title returned by yt-dlp (sanitized
 samples("https://youtube.com/watch?v=abc", {kick: {s: 0, e: 2}})
 // → bank name: "My Cool Video" (from yt-dlp title)
 
-pat("kick") .bank("My Cool Video") |> out(@, @)
+s"kick" .bank("My Cool Video") |> out(@, @)
 ```
 
 ### 3.6 Error: clip fails
@@ -198,7 +198,7 @@ samples("https://youtube.com/watch?v=abc", {
 ┌──────────────────────────────────────────────────────────────────┐
 │  Cedar VM (audio thread)                                         │
 │  - Samples available in registry, usable by sample patterns       │
-│  - pat("kick") .bank("VideoName") resolves to Cedar sample ID    │
+│  - s"kick" .bank("VideoName") resolves to Cedar sample ID    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -578,7 +578,7 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 - `tools/nkido-cli/asset_loader.hpp` — declarations
 
 **Verification:**
-- `nkido-cli render --seconds 1 -o out.wav --source 'samples("https://youtube.com/...", {kick: {s: 0, e: 2}}); pat("kick") |> out'` works
+- `nkido-cli render --seconds 1 -o out.wav --source 'samples("https://youtube.com/...", {kick: {s: 0, e: 2}}); s"kick" |> out'` works
 - yt-dlp not installed → error with install instructions
 - Clip extraction uses cached audio on re-run
 - `nkido-cli` without video clip sources → unchanged behavior
@@ -714,7 +714,7 @@ curl -X POST http://localhost:8765/extract \
        hh:    [{s: 10, e: 11}, {s: 25, e: 26}],
    })
 
-   pat("kick snare hh:0 hh:1") .bank("Never Gonna Give You Up") |> out(@, @)
+   s"kick snare hh:0 hh:1" .bank("Never Gonna Give You Up") |> out(@, @)
    ```
 3. Verify: samples load, then play. No audio gaps.
 4. Recompile same source — verify: fast (cache hit).
@@ -731,7 +731,7 @@ nkido-cli render --seconds 5 -o /tmp/test.wav \
         kick: {s: 32, e: 34},
         snare: {s: 60, e: 62},
     })
-    pat("kick snare kick snare") .bank("Never Gonna Give You Up") |> out(@, @)
+    s"kick snare kick snare" .bank("Never Gonna Give You Up") |> out(@, @)
   '
 
 # Listen to /tmp/test.wav

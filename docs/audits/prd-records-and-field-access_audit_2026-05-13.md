@@ -10,7 +10,7 @@
 
 ## Summary
 
-- Goals met: 5 of 5. The §3 gap from the 2026-05-05 audit is closed: extended pattern fields (`note`, `dur`, `chance`, `time`, `phase`, `sample_id` + aliases) now resolve uniformly on every pattern producer — bare `pat()`, mini-notation literals, **and every transform** (`fast`, `slow`, `rev`, `velocity`, `bank`, `variant`, `transpose`, `early`, `late`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `iter`, `tune`, …).
+- Goals met: 5 of 5. The §3 gap from the 2026-05-05 audit is closed: extended pattern fields (`note`, `dur`, `chance`, `time`, `phase`, `sample_id` + aliases) now resolve uniformly on every pattern producer — bare typed pattern literals, mini-notation literals, **and every transform** (`fast`, `slow`, `rev`, `velocity`, `bank`, `variant`, `transpose`, `early`, `late`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `iter`, `tune`, …).
 - Unmet from prior audit: `voice` field (removed from spec per polyphony pivot), `§3.6` bare-`%` auto-detection (formally deferred to a follow-up PRD).
 - Convention drift resolved: PRD §6 diagnostic codes updated from spec placeholders `E062/E063/E064/E065` to the actually-emitted `E135/E136/E140` + parser duplicate-field error.
 - Tests added: 1 new `TEST_CASE` (`"Codegen: Extended pattern fields on transforms"`), 9 sections, **126 new assertions** tagged `[codegen][records-extended]`. Covers every canonical field + alias × 6 transform shapes, plus opcode-emission check and chained-transform regression.
@@ -69,8 +69,8 @@ All five sites now exit with the same `PatternPayload` shape, so `%.note`/`%.dur
 | `./build/akkado/tests/akkado_tests "[records]"` | Pass | All previously-green records cases still green. |
 | `./build/akkado/tests/akkado_tests "[records-extended]"` | Pass — **1 / 1** (126 assertions) | New bucket: every field × six transform paths + opcode-emission check + chained-transform regression. |
 | `./build/cedar/tests/cedar_tests` | Pass — **184 / 185** | One pre-existing skip, unrelated. |
-| `akkado-cli --check` loop over `pat("c4 e4 g4") \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | Bare-pat path. |
-| `akkado-cli --check` loop over `fast(pat("c4 e4 g4"), 2) \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | This was the failing case in the 2026-05-05 audit. |
+| `akkado-cli --check` loop over `n"c4 e4 g4" \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | Bare-pat path. |
+| `akkado-cli --check` loop over `fast(n"c4 e4 g4", 2) \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | This was the failing case in the 2026-05-05 audit. |
 | `akkado-cli --check` on `velocity(...)`, `bank(s"...")`, `variant(s"...")` with `%.note`/`%.dur`/`%.gate`/`%.sample_id`/`%.phase` | All exit 0 | Each of the four formerly-broken transform paths verified individually. |
 
 ## Findings
@@ -88,7 +88,7 @@ None.
 
 ### Regressions
 
-None. Full `akkado_tests` green on HEAD. The 5-into-1 helper refactor produces identical opcode counts to the old inlined path for the bare-`pat()` case (`SEQPAT_FIELD == 5`, `SEQPAT_PHASE == 1`, `SEQPAT_GATE == 1`, `SEQPAT_TYPE == 1`), verified by the new `SEQPAT opcodes emitted on transformed pattern` section.
+None. Full `akkado_tests` green on HEAD. The 5-into-1 helper refactor produces identical opcode counts to the old inlined path for the bare pattern-literal case (`SEQPAT_FIELD == 5`, `SEQPAT_PHASE == 1`, `SEQPAT_GATE == 1`, `SEQPAT_TYPE == 1`), verified by the new `SEQPAT opcodes emitted on transformed pattern` section.
 
 ### Coverage Gaps
 
@@ -134,7 +134,7 @@ Resolved. PRD §6 diagnostic codes now match the implementation. Recorded in §6
 | `akkado/src/codegen_patterns.cpp` | Added helper implementation; refactored `emit_per_voice_seqpat` to call it; wired `emit_pattern_with_state`, `handle_velocity_call`, `handle_bank_call`, `handle_variant_call` to call it after setting FREQ/VEL/TRIG. | Closes §3 gap on all five `PatternPayload` construction sites. |
 | `akkado/tests/test_codegen.cpp` | New `TEST_CASE`. | Coverage for the four formerly-broken transform paths. |
 | `docs/prd-records-and-field-access.md` | §3.3, §3.4, §3.6, §6 rewritten; status banner updated. | Voice removed; auto-detection deferred; diagnostic codes reconciled; status flipped to DONE. |
-| `web/static/docs/reference/language/records.md` | Pattern-event field table corrected (`p` is `freq` alias not `phase`; `phase` aliases `cycle`/`co`; `dur`/`time`/`gate` aliases filled in); lead sentence rewritten ("All eleven fields work on every pattern producer"); added three working examples. | User-facing docs were stale relative to the implementation; the existing `p`-on-`phase` row was an outright bug. All three new examples verified via `akkado-cli --check`. |
+| `web/static/docs/reference/language/records.md` | Pattern-event field table corrected (`n` is `freq` alias not `phase`; `phase` aliases `cycle`/`co`; `dur`/`time`/`gate` aliases filled in); lead sentence rewritten ("All eleven fields work on every pattern producer"); added three working examples. | User-facing docs were stale relative to the implementation; the existing `n`-on-`phase` row was an outright bug. All three new examples verified via `akkado-cli --check`. |
 
 ## Post-Finalize Validation
 
@@ -150,7 +150,7 @@ Resolved. PRD §6 diagnostic codes now match the implementation. Recorded in §6
 
 Adding typed-prefix smoke tests surfaced an asymmetric divergence not caught by the original §3 fix:
 
-- `pat("c4 e4 g4")`, `v"0.5 0.8"`, `s"bd sd"`, and `n"c4 e4 g4"` all produced full 11-field `PatternPayload`s, but `n"60 64 67"` (raw MIDI numbers in Note mode) silently compiled to a 5-instruction `PUSH_CONST 0.0 / OUTPUT` stub — no SEQPAT opcodes at all. Symbol-bound access (`x = n"60 64 67"; x.note`) reported `E136 "Unknown field 'note' on pattern. Available: freq, vel, trig, gate, type"` because `handle_field_access` falls back to a hardcoded "freq, vel, …" string when the actual TypedValue is not a `Pattern` (`akkado/src/codegen.cpp:2596–2599`). Bare pipe access tripped `E135 "Cannot access field 'note' on Signal value"` for the same reason.
+- `n"c4 e4 g4"`, `v"0.5 0.8"`, `s"bd sd"`, and `n"c4 e4 g4"` all produced full 11-field `PatternPayload`s, but `n"60 64 67"` (raw MIDI numbers in Note mode) silently compiled to a 5-instruction `PUSH_CONST 0.0 / OUTPUT` stub — no SEQPAT opcodes at all. Symbol-bound access (`x = n"60 64 67"; x.note`) reported `E136 "Unknown field 'note' on pattern. Available: freq, vel, trig, gate, type"` because `handle_field_access` falls back to a hardcoded "freq, vel, …" string when the actual TypedValue is not a `Pattern` (`akkado/src/codegen.cpp:2596–2599`). Bare pipe access tripped `E135 "Cannot access field 'note' on Signal value"` for the same reason.
 
 **Root cause** — `note_mode_` was declared in `akkado/src/mini_lexer.cpp:28` but **never consulted in the lex loop**. So Note mode lexed identically to Auto mode, where raw digits don't produce pitch atoms. The mini-AST came out empty, `SequenceCompiler::compile()` returned false, and `handle_mini_literal` took the empty-pattern branch (`codegen_patterns.cpp:1292–1300`) which returns a `Signal(0)`. The misleading error message made it look like a wiring gap; it was actually a parser gap.
 
@@ -162,7 +162,7 @@ Adding typed-prefix smoke tests surfaced an asymmetric divergence not caught by 
 3. Same through `fast()` transform
 4-7. `v"…"` and `s"…"` mirror coverage (bare + fast)
 8. Symbol-bound forms (`x = n"60 64 67"; x.<field>`) — the exact reproduction
-9. SEQPAT opcode-count parity between `n"…"` and `pat(…)`
+9. SEQPAT opcode-count parity across typed pattern literals
 10. `c"…"` lockdown SECTIONs: bare use rejected with E160/E410, `poly()`-wrapped closure params remain Signal-typed (E061 on field access) per the polyphony pivot
 
 **`c"…"` field access through `poly()` closure remains out of scope** — closure parameters are bound to Signal scalars at `akkado/src/codegen_functions.cpp:2012–2015` by the polyphony pivot's design. Per-voice field access (`e.note`, `e.dur` inside the closure) would require a separate PRD that rethinks how the closure's `e` is typed. The two `c"…"` lockdown SECTIONs are the regression markers that would need to flip if that PRD lands.
@@ -185,7 +185,7 @@ Adding typed-prefix smoke tests surfaced an asymmetric divergence not caught by 
 | `./build/akkado/tests/akkado_tests "[records-extended]"` | Pass — **2 cases / 335 assertions** |
 | 4 prefixes × 28 names/aliases bare `--check` matrix | **145 / 145 pass** |
 | 4 prefixes × 19 names/aliases symbol-bound `--check` matrix | **76 / 76 pass** |
-| Bytecode diff: `pat("c4 e4 g4")` vs `n"60 64 67"` | Identical SEQPAT-family instruction counts (1 QUERY + 1 STEP + 1 GATE + 1 TYPE + 5 FIELD + 1 PHASE) |
+| Bytecode diff: `n"c4 e4 g4"` vs `n"60 64 67"` | Identical SEQPAT-family instruction counts (1 QUERY + 1 STEP + 1 GATE + 1 TYPE + 5 FIELD + 1 PHASE) |
 
 ## PRD Status
 

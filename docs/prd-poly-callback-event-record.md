@@ -46,8 +46,8 @@ At runtime `VM::execute_poly_block` (`cedar/src/vm/vm.cpp:262`) fills `freq_buf`
 | Callback must have *exactly* 3 params | `(freq) -> saw(freq)` is a compile error even though gate/vel are unused |
 | Params bound by position to `freq, gate, vel` only | `note`, `dur`, `chance`, `time`, `phase`, `type`, `sample_id` are unreachable inside a voice |
 | `trig` buffer allocated but unbound | The per-voice trigger pulse exists in the VM but no callback can read it |
-| Custom `.set()` / mini-notation `{…}` fields invisible | `pat("c4{cutoff:0.8} e4{cutoff:0.3}") \|> poly(...)` cannot use per-note `cutoff` |
-| No record-style access | Inconsistent with `pat(...) as {freq, vel}` pipe destructuring and `fn f({x, y})` param destructuring, which already work everywhere else |
+| Custom `.set()` / mini-notation `{…}` fields invisible | `n"c4{cutoff:0.8} e4{cutoff:0.3}" \|> poly(...)` cannot use per-note `cutoff` |
+| No record-style access | Inconsistent with `n"…" as {freq, vel}` pipe destructuring and `fn f({x, y})` param destructuring, which already work everywhere else |
 
 The rest of the language already treats every pattern event as an 11-field record with custom fields (`web/static/docs/reference/language/records.md` §"Pattern events are records"). The poly callback is the one place that ignores this.
 
@@ -66,13 +66,13 @@ The rest of the language already treats every pattern event as an 11-field recor
 
 ```akkado
 // 1 param — just frequency
-pat("c4 e4 g4") |> poly(@, (freq) -> saw(freq)) |> out(@)
+n"c4 e4 g4" |> poly(@, (freq) -> saw(freq)) |> out(@)
 
 // 3 params — the historical form, still valid verbatim
-pat("c4 e4 g4 b4") |> poly(@, (freq, gate, vel) -> osc("sin", freq) * vel * gate, 8) |> out(@)
+n"c4 e4 g4 b4" |> poly(@, (freq, gate, vel) -> osc("sin", freq) * vel * gate, 8) |> out(@)
 
 // More positionals — canonical order continues past vel
-pat("c4 e4 g4") |> poly(@, (freq, gate, vel, trig, type, note) ->
+n"c4 e4 g4" |> poly(@, (freq, gate, vel, trig, type, note) ->
     osc("sin", freq) * ar(trig, 0.01, 0.3) * vel) |> out(@)
 ```
 
@@ -92,22 +92,22 @@ chord("C Em Am G") |> poly(@, ({freq, vel, gate}) ->
     saw(freq) * ar(gate, 0.05, 0.4) * vel) |> out(@)
 
 // Reach fields that positional users never could
-pat("c4 e4 g4") |> poly(@, ({freq, note, dur, phase}) ->
+n"c4 e4 g4" |> poly(@, ({freq, note, dur, phase}) ->
     osc("sin", freq) * (1 - phase) * (dur > 0.5 ? 1 : 0.6)) |> out(@)
 
 // Custom per-note fields straight off mini-notation record suffixes
-pat("c4{cutoff:0.9} e4{cutoff:0.3} g4{cutoff:0.6}") |> poly(@, ({freq, gate, cutoff}) ->
+n"c4{cutoff:0.9} e4{cutoff:0.3} g4{cutoff:0.6}" |> poly(@, ({freq, gate, cutoff}) ->
     saw(freq) |> lp(@, cutoff * 4000) |> @ * ar(gate, 0.01, 0.3)) |> out(@)
 
 // Aliases resolve like everywhere else (pitch → freq, n → note, …)
-pat("c4 e4 g4") |> poly(@, ({pitch, v}) -> osc("sin", pitch) * v) |> out(@)
+n"c4 e4 g4" |> poly(@, ({pitch, v}) -> osc("sin", pitch) * v) |> out(@)
 ```
 
 ### 2.3 Mixed — positional prefix + trailing destructure
 
 ```akkado
 // freq/gate/vel positionally (familiar), cutoff/dur by name
-pat("c4{cutoff:0.8} e4 g4") |> poly(@, (freq, gate, vel, {cutoff, dur}) ->
+n"c4{cutoff:0.8} e4 g4" |> poly(@, (freq, gate, vel, {cutoff, dur}) ->
     saw(freq) |> lp(@, cutoff * 5000) |> @ * adsr(gate, 0.01, dur * 0.4, 0.6, 0.2) * vel)
     |> out(@)
 ```
@@ -125,7 +125,7 @@ chord("C Em Am G") |> poly(@, (...e) ->
     |> out(@)
 
 // Rest may follow positionals too
-pat("c4 e4 g4") |> poly(@, (freq, ...e) -> osc("saw", freq) * e.vel) |> out(@)
+n"c4 e4 g4" |> poly(@, (freq, ...e) -> osc("saw", freq) * e.vel) |> out(@)
 ```
 
 ### 2.5 Defaults for absent fields
@@ -133,7 +133,7 @@ pat("c4 e4 g4") |> poly(@, (freq, ...e) -> osc("saw", freq) * e.vel) |> out(@)
 ```akkado
 // Pattern has no `cutoff` on some/all notes → cutoff binds to 0 by default,
 // or to the explicit default when one is given.
-pat("c4 e4{cutoff:0.7} g4") |> poly(@, ({freq, gate, cutoff = 0.5}) ->
+n"c4 e4{cutoff:0.7} g4" |> poly(@, ({freq, gate, cutoff = 0.5}) ->
     saw(freq) |> lp(@, cutoff * 4000) |> @ * ar(gate, 0.01, 0.3)) |> out(@)
 // note c4 → cutoff 0.5 (default), e4 → 0.7, g4 → 0.5
 ```
@@ -141,10 +141,10 @@ pat("c4 e4{cutoff:0.7} g4") |> poly(@, ({freq, gate, cutoff = 0.5}) ->
 ### 2.6 mono / legato — identical callback rules
 
 ```akkado
-pat("c2 e2 g2 c3") |> mono(({freq, gate, vel}) ->
+n"c2 e2 g2 c3" |> mono(({freq, gate, vel}) ->
     saw(freq) * adsr(gate, 0.01, 0.1, 0.6, 0.3) * vel) |> out(@)
 
-pat("c2 e2 g2 c3") |> legato((freq, gate) ->
+n"c2 e2 g2 c3" |> legato((freq, gate) ->
     saw(freq) * adsr(gate, 0.01, 0.2, 0.8, 0.4)) |> out(@)
 ```
 
@@ -216,7 +216,7 @@ For each referenced field:
 
 The compiler needs the **name → `prop_vals` slot** mapping to build `PolyFieldBinding.prop_index`. That mapping lives in `SequenceCompiler::custom_slots_` (`map<name, uint8_t slot>`), used today by `emit_custom_property_buffers`; `handle_poly_call` reads the same source. `MAX_PROPS_PER_EVENT` is 4, so at most 4 custom fields exist per pattern.
 
-> Note: `web/static/docs/reference/language/records.md` currently shows `pat(...).set("cutoff", saw(0.5))` as a signal-valued custom field. No pattern-level `.set` builtin exists in codegen today (only state-cell `.set`); that doc example is out of scope for this PRD and its accuracy should be tracked separately.
+> Note: `web/static/docs/reference/language/records.md` currently shows `n"…".set("cutoff", saw(0.5))` as a signal-valued custom field. No pattern-level `.set` builtin exists in codegen today (only state-cell `.set`); that doc example is out of scope for this PRD and its accuracy should be tracked separately.
 
 ### 3.4 POLY_BEGIN field-buffer table
 
@@ -369,7 +369,7 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 - `handle_poly_call` reads `SequenceCompiler::custom_slots_` for the name→slot map; custom destructure names become `PolyFieldBinding` entries with `field_id = CUSTOM`, `prop_index = slot`.
 - VM fills the per-voice buffer from `OutputEvent::prop_vals[slot]` for the voice's event.
 - Unknown destructure names → constant-`0` buffer; honour explicit `= expr` defaults.
-- **Verify:** `pat("c4{cutoff:0.9} e4{cutoff:0.3}") |> poly(@, ({freq, gate, cutoff}) -> …)` — each voice's `cutoff` matches its note; `{cutoff = 0.5}` default applies when the note omits `cutoff`; an undeclared name binds to `0`.
+- **Verify:** `n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, ({freq, gate, cutoff}) -> …)` — each voice's `cutoff` matches its note; `{cutoff = 0.5}` default applies when the note omits `cutoff`; an undeclared name binds to `0`.
 
 ### Phase 4 — mono / legato parity
 **Goal:** `mono` and `legato` accept every callback shape.

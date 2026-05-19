@@ -1,6 +1,6 @@
 > **Status: SHIPPED (2026-04-27)** — Phases A–C and D1+D2 implemented; D3 (custom-property pipe-binding accessor `e.cutoff`) deferred; coverage closed by audit 2026-04-28 (`docs/audits/prd-pattern-array-note-extensions-phase-2_audit_2026-04-28.md`). Follow-up to `prd-pattern-array-note-extensions.md`. Closes the four unmet goals from `docs/audits/prd-pattern-array-note-extensions_audit_2026-04-24.md`: time/structure modifiers (Phase 7), algorithmic generators (Phase 8), voicing system (Phase 4), and extended note properties (Phase 5).
 >
-> **Deferred to follow-up:** §5.5a custom-property pipe-binding accessor (`pat("c4{cutoff:0.3}") as e |> ... e.cutoff`) — requires new cedar runtime buffer plumbing to expose per-event property values to synth code. Custom keys are parsed and stored on `MiniAtomData.properties` but not yet reachable from runtime. The standalone `bend()` / `aftertouch()` / `dur()` *transforms* (PRD §4.4 first form) are also deferred for the same reason — bend/aftertouch need cedar `Event` fields and SEQPAT plumbing. Only `dur()` and `vel` propagate to runtime today (via the existing velocity buffer and `cedar::Event.duration`).
+> **Deferred to follow-up:** §5.5a custom-property pipe-binding accessor (`n"c4{cutoff:0.3}" as e |> ... e.cutoff`) — requires new cedar runtime buffer plumbing to expose per-event property values to synth code. Custom keys are parsed and stored on `MiniAtomData.properties` but not yet reachable from runtime. The standalone `bend()` / `aftertouch()` / `dur()` *transforms* (PRD §4.4 first form) are also deferred for the same reason — bend/aftertouch need cedar `Event` fields and SEQPAT plumbing. Only `dur()` and `vel` propagate to runtime today (via the existing velocity buffer and `cedar::Event.duration`).
 
 # PRD: Strudel-Style Pattern System Extensions — Phase 2
 
@@ -13,7 +13,7 @@ The original `prd-pattern-array-note-extensions.md` shipped its foundational lay
 3. **Phase 4 — Voicing system**: `anchor`, `mode`, voice leading, `addVoicings`.
 4. **Phase 5 — Extended note properties**: `bend`, `aftertouch`, `dur` fields and transforms.
 
-Phase 2 of this PRD ships all four. It does **not** revisit string-as-pattern auto-parsing — that question is closed by the existing `p"..."` prefix and by sampler-vs-note autodetection in the codegen. It does not add new opcodes except for one targeted change to `SEQPAT_STEP` to expose a runtime cycle counter for `iter`/`iterBack`/(optionally) `palindrome`.
+Phase 2 of this PRD ships all four. It does **not** revisit string-as-pattern auto-parsing — that question is closed by the existing `n"..."` prefix and by sampler-vs-note autodetection in the codegen. It does not add new opcodes except for one targeted change to `SEQPAT_STEP` to expose a runtime cycle counter for `iter`/`iterBack`/(optionally) `palindrome`.
 
 ### Key Design Decisions
 
@@ -59,7 +59,7 @@ The user-visible consequence: idiomatic Strudel patterns that lean on `early`, `
 
 ### Non-Goals
 
-- **String-as-pattern auto-parsing of bare strings.** Already addressed via `p"..."` prefix and sampler-vs-note autodetection in `codegen_patterns.cpp:337,731`. Bare strings remain bare strings outside pattern slots.
+- **String-as-pattern auto-parsing of bare strings.** Already addressed via `n"..."` prefix and sampler-vs-note autodetection in `codegen_patterns.cpp:337,731`. Bare strings remain bare strings outside pattern slots.
 - **MIDI export of `bend` / `aftertouch`.** Phase 2 plumbs the values through; consuming them in a MIDI-out path is a separate PRD.
 - **`inside` / `outside` higher-order transforms.** Listed as deferred in the original PRD §8; remains deferred.
 - **Optimal-path voice leading (DP).** Greedy nearest-voicing only.
@@ -73,35 +73,35 @@ The user-visible consequence: idiomatic Strudel patterns that lean on `early`, `
 
 ```akkado
 // Functional and dot-call forms work identically (existing desugaring)
-early(pat("c4 e4 g4"), 0.25)
-pat("c4 e4 g4").early(0.25)
+early(n"c4 e4 g4", 0.25)
+n"c4 e4 g4".early(0.25)
 
 // Time shifts (wrap around cycle)
-pat("bd sd hh cp").early(0.125)   // shift earlier by 1/8 cycle
-pat("bd sd hh cp").late(0.125)    // shift later by 1/8 cycle
+s"bd sd hh cp".early(0.125)   // shift earlier by 1/8 cycle
+s"bd sd hh cp".late(0.125)    // shift later by 1/8 cycle
 
 // Reversal modifiers
-pat("c4 e4 g4 b4").palindrome()   // forward, then reverse, every 2 cycles
+n"c4 e4 g4 b4".palindrome()   // forward, then reverse, every 2 cycles
 
 // Subdivision-based
-pat("c4 e4 g4 b4").iter(4)        // start subdivision rotates per cycle
-pat("c4 e4 g4 b4").iterBack(4)    // same, opposite direction
+n"c4 e4 g4 b4".iter(4)        // start subdivision rotates per cycle
+n"c4 e4 g4 b4".iterBack(4)    // same, opposite direction
 
 // Density
-pat("bd sd").ply(3)               // each event repeats 3x in its slot
-pat("c4 e4 g4 b4").linger(0.5)    // keep first half, repeat to fill cycle
+s"bd sd".ply(3)               // each event repeats 3x in its slot
+n"c4 e4 g4 b4".linger(0.5)    // keep first half, repeat to fill cycle
 
 // Time-window
-pat("bd sd hh cp").zoom(0.25, 0.75)   // play middle 50%, stretched to fill cycle
-pat("bd sd hh cp").compress(0.25, 0.75) // squash whole pattern into [0.25, 0.75)
+s"bd sd hh cp".zoom(0.25, 0.75)   // play middle 50%, stretched to fill cycle
+s"bd sd hh cp".compress(0.25, 0.75) // squash whole pattern into [0.25, 0.75)
 
 // Discretization
-pat("c4 e4 g4 b4").segment(8)    // sample at 8 evenly-spaced points
+n"c4 e4 g4 b4".segment(8)    // sample at 8 evenly-spaced points
 
 // Swing
-pat("bd hh sd hh").swing()        // shorthand for swingBy(1/3, 4)
-pat("bd hh sd hh").swing(8)       // 8-slice swing
-pat("bd hh sd hh").swingBy(0.4, 4) // custom delay amount
+s"bd hh sd hh".swing()        // shorthand for swingBy(1/3, 4)
+s"bd hh sd hh".swing(8)       // 8-slice swing
+s"bd hh sd hh".swingBy(0.4, 4) // custom delay amount
 ```
 
 ### 4.2 Algorithmic Generators
@@ -163,24 +163,24 @@ chord("CM Am7 Dm7 G7").voicing("piano-jazz")
 
 ```akkado
 // Transforms (mirror velocity() pattern)
-note("c4 e4 g4").bend("<0 0.5 -0.5>")
-note("c4 e4 g4").aftertouch(0.7)
-note("c4 e4 g4").dur(0.5)         // override per-event duration
+n"c4 e4 g4".bend("<0 0.5 -0.5>")
+n"c4 e4 g4".aftertouch(0.7)
+n"c4 e4 g4".dur(0.5)         // override per-event duration
 
 // Mini-notation record suffix (new)
-pat("c4{vel:0.8, bend:0.2} e4{vel:1.0} g4{vel:0.5, bend:-0.3}")
+n"c4{vel:0.8, bend:0.2} e4{vel:1.0} g4{vel:0.5, bend:-0.3}"
 
 // Custom user properties via the same record suffix
-pat("c4{vel:0.8, cutoff:0.3} e4{cutoff:0.7}")
+n"c4{vel:0.8, cutoff:0.3} e4{cutoff:0.7}"
 // The `cutoff` value lands in PatternEvent.properties as ("cutoff", 0.3).
 // Reachable from synth code via record field access on the bound event:
-pat("c4{cutoff:0.3} e4{cutoff:0.7}") as e
+n"c4{cutoff:0.3} e4{cutoff:0.7}" as e
   |> osc("saw", e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
 
 // Existing positional shorthand still works
-pat("c4:0.8 e4:1.0")              // colon = velocity (unchanged)
+n"c4:0.8 e4:1.0"              // colon = velocity (unchanged)
 ```
 
 > **Note:** `bend` is per-event in Phase 2 — it sets a value on each event, like `velocity`. Continuous (signal-rate) pitch-bend is a richer model and is out of scope here; see §11.
@@ -384,7 +384,7 @@ Custom properties from `c4{cutoff:0.3}` need to be reachable from synth code. AS
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `pat()`, `chord()`, `seq()`, `timeline()` | **Stays** | Constructors unchanged. |
+| `n"…"`/`v"…"`/`s"…"`/`c"…"`, `chord()`, `seq()`, `timeline()` | **Stays** | Constructors unchanged. |
 | Existing transforms (`slow`, `fast`, `rev`, `transpose`, `velocity`, `bank`, `variant`, `tune`) | **Stays** | Implementation pattern unchanged; new transforms follow the same shape. |
 | `is_pattern_call()` switch | **Modified** | Add 12 new transform names + 3 new constructors. |
 | `compile_pattern_for_transform()` | **Modified** | Add 12 new event-list rewrite branches; `iter`/`iterBack` set state instead of rewriting events. |
@@ -445,10 +445,10 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 
 **Verification per step:**
 - Unit test per transform: input pattern + expected output event list.
-- Mini-notation/dot-call integration test for each: confirm `pat(...).x(args)` and `x(pat(...), args)` produce identical output.
+- Mini-notation/dot-call integration test for each: confirm `n"…".x(args)` and `x(n"…", args)` produce identical output.
 - For `iter`/`iterBack`: Python experiment in `experiments/test_op_seqpat_step.py` exercising the cycle-counter rotation across multiple cycles.
 
-**Acceptance:** `pat("c4 e4 g4 b4").palindrome().ply(2)` compiles, plays, and event list matches hand-computed expectation.
+**Acceptance:** `n"c4 e4 g4 b4".palindrome().ply(2)` compiles, plays, and event list matches hand-computed expectation.
 
 ### Phase B — Algorithmic Generators
 
@@ -496,10 +496,10 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 
 **Verification:**
 - Transform tests: input event with default field, apply transform, assert field is set.
-- Mini-notation test: parse `pat("c4{vel:0.8,bend:0.2}")`, assert resulting `PatternEvent.velocity == 0.8` and `event.bend == 0.2`.
-- Custom property test: `pat("c4{cutoff:0.3}") as e |> lp(@, 200 + e.cutoff * 4000)` compiles to the expected cutoff.
+- Mini-notation test: parse `n"c4{vel:0.8,bend:0.2}"`, assert resulting `PatternEvent.velocity == 0.8` and `event.bend == 0.2`.
+- Custom property test: `n"c4{cutoff:0.3}" as e |> lp(@, 200 + e.cutoff * 4000)` compiles to the expected cutoff.
 
-**Acceptance:** `note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)` audibly bends.
+**Acceptance:** `n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)` audibly bends.
 
 ### Phase E — Cross-Phase Smoke Acceptance
 
@@ -515,7 +515,7 @@ chord("Am C G F").anchor("c4").mode("below") as ch
   |> out(@, @)
 
 // 2. Time-modified pattern (Phase A)
-pat("c4 e4 g4 b4").early(0.125).palindrome() as p
+n"c4 e4 g4 b4".early(0.125).palindrome() as p
   |> mtof(p)
   |> osc("saw", @)
   |> out(@, @)
@@ -524,7 +524,7 @@ pat("c4 e4 g4 b4").early(0.125).palindrome() as p
 binary(0b10110010) |> sampler(@, "hh") |> out(@, @)
 
 // 4. Bend + aftertouch + custom-property pattern (Phase D)
-pat("c4{vel:0.8, bend:0.2, cutoff:0.3} e4{vel:1.0, cutoff:0.7}") as e
+n"c4{vel:0.8, bend:0.2, cutoff:0.3} e4{vel:1.0, cutoff:0.7}" as e
   |> osc("saw", e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
@@ -603,10 +603,10 @@ This phase blocks PRD closure — no Phase A–D claim is "done" until they all 
 
 ### 10.2 Integration Tests
 
-- `pat("c4 e4 g4 b4").early(0.25).palindrome()` — chained transforms produce expected event list.
+- `n"c4 e4 g4 b4".early(0.25).palindrome()` — chained transforms produce expected event list.
 - `run(8).fast(2)` — generator + transform composition.
 - `chord("Am C G F").anchor("c4").mode("below")` — voicing produces expected MIDI notes.
-- `pat("c4{vel:0.8,bend:0.2}") as e |> osc("sin", e.freq + e.bend * 100)` — full pipeline compiles and runs.
+- `n"c4{vel:0.8,bend:0.2}" as e |> osc("sin", e.freq + e.bend * 100)` — full pipeline compiles and runs.
 
 ### 10.3 Experiments (Cedar runtime)
 
@@ -642,13 +642,13 @@ up as a Phase 2.1 follow-up.
 **Status:** AST + lexer + parser shipped; runtime exposure deferred.
 
 **What works today:**
-- `pat("c4{cutoff:0.3} e4{cutoff:0.7}")` parses cleanly. The `cutoff` key is
+- `n"c4{cutoff:0.3} e4{cutoff:0.7}"` parses cleanly. The `cutoff` key is
   preserved on `MiniAtomData.properties`. Recognized short-form keys (`vel`,
   `dur`) already populate `cedar::Event` fields and reach runtime.
 - `as e |> ... e.freq` (existing fixed-field accessor) still works.
 
 **What's missing:**
-- `pat("c4{cutoff:0.3}") as e |> lp(@, 200 + e.cutoff * 4000)` — the `e.cutoff`
+- `n"c4{cutoff:0.3}" as e |> lp(@, 200 + e.cutoff * 4000)` — the `e.cutoff`
   member-access path. `pattern_field_index()` returns -1 for unrecognized
   keys; per the PRD §5.5a design, the resolver needs to fall through to
   `tv.pattern->custom_fields` (a `std::unordered_map<std::string, std::uint16_t>`
@@ -664,7 +664,7 @@ up as a Phase 2.1 follow-up.
 
 **Acceptance test (unblocked by this work):**
 ```akkado
-pat("c4{vel:0.8, cutoff:0.3} e4{vel:1.0, cutoff:0.7}") as e
+n"c4{vel:0.8, cutoff:0.3} e4{vel:1.0, cutoff:0.7}" as e
   |> osc("saw", e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
@@ -694,7 +694,7 @@ runtime fields not added.
 
 **Acceptance test (unblocked by this work):**
 ```akkado
-note("c4 e4 g4").bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @) |> out(@, @)
+n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @) |> out(@, @)
 ```
 
 ### 11.3 Implementation sequencing

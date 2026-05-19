@@ -365,7 +365,7 @@ The string contains mini-notation (see Section 9). The optional closure receives
 
 Examples:
 ```
-pat("bd sd bd sd")
+s"bd sd bd sd"
 seq("c4 e4 g4", (t, v, p) -> osc("saw", p) * v)
 ```
 

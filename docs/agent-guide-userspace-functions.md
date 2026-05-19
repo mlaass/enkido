@@ -202,7 +202,7 @@ voice(440) |> reverb(%) |> out(%, %)
 osc("saw", 220) |> my_filter(%, 1000)
 
 // Pipe binding with `as` for multi-field access
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
 ```
 
 Functions can also appear inside closures:
@@ -347,7 +347,7 @@ fn voice(freq, gate, wave = "saw", cut = 2000) -> {
 
 cutoff = param("cutoff", 2000, 100, 8000)
 
-pat("c4 e4 g4 c5") as e
+n"c4 e4 g4 c5" as e
   |> voice(e.freq, e.trig, "saw", cutoff)
   |> % * e.vel
   |> delay(%, 0.375, 0.4, 1.0, 0.3)

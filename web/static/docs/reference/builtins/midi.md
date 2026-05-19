@@ -11,7 +11,7 @@ tagline: Live MIDI device or .mid file as an event source.
 
 # MIDI Input
 
-`midi()` exposes runtime MIDI events the same way `pat()` exposes baked pattern events. Drop it into the same pipe stages — `midi() |> poly(@, synth, 8) |> out(@)` for polyphony, or `midi() as e |> osc("saw", e.freq) ...` for monophonic field access. The source is either a live device (USB keyboard, virtual port) or a `.mid` file.
+`midi()` exposes runtime MIDI events the same way typed pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`) expose baked pattern events. Drop it into the same pipe stages — `midi() |> poly(@, synth, 8) |> out(@)` for polyphony, or `midi() as e |> osc("saw", e.freq) ...` for monophonic field access. The source is either a live device (USB keyboard, virtual port) or a `.mid` file.
 
 ## midi
 

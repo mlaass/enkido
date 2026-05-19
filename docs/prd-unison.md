@@ -118,7 +118,7 @@ fn voice(freq, gate, vel, ext) ->
     saw(freq) * ar(gate, 0.05, 0.4) * vel
 
 // Drive it with a single note source
-e = pat("c4") as evt
+e = n"c4" as evt
 unison(evt.freq, evt.gate, evt.vel, voice) |> out(%, %)
 ```
 
@@ -170,7 +170,7 @@ unison(440, 1, 1, fat_lead, voices = 5, detune = 0.4) |> out(%, %)
 fn fat_voice(freq, gate, vel) -> 
     unison(freq, gate, vel, (f, g, v, ext) -> saw(f) * v, voices = 4, detune = 0.2)
 
-pat("c4 e4 g4 b4") |> poly(%, fat_voice, 4) |> out(%, %)
+n"c4 e4 g4 b4" |> poly(%, fat_voice, 4) |> out(%, %)
 ```
 
 Note `poly`'s actual signature is `poly(input, instrument, voices=64)` — instrument second, max-voices third (compile-time literal, default 64). Each note triggers a 4-voice unison cluster; up to 4 notes ring simultaneously → up to 16 oscillators alive in the state pool at once. CPU scales with `poly_voices × unison_voices`.
@@ -413,7 +413,7 @@ Tasks:
 - [x] Detect stereo instrument body (visit the body once, observe the resulting `TypedValue.channels`, then re-emit with the right buffer wiring — or visit speculatively and patch).
 - [x] Allocate stereo voice-out buffers and a stereo `mix_buf` when the body is stereo.
 - [x] Update `POLY_BEGIN` / `POLY_END` payload to optionally carry the right-channel buffer indices; mono path unchanged.
-- [x] Test: `pat("c4") |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)))` compiles and produces stereo output.
+- [x] Test: `n"c4" |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)))` compiles and produces stereo output.
 - [x] Test: existing mono `poly` patches produce bit-identical bytecode.
 
 ### Phase 0c — Generalized N-arity closure helper
@@ -535,7 +535,7 @@ Tasks:
 - [~] ~~Test: error on `voices = 0`~~ — N/A, soft limits (see note above).
 - [~] ~~Test: error on `voices > 16`~~ — N/A, soft limits (see note above).
 - [x] Test: `voices` not a compile-time literal → error from `linspace` (E173).
-- [x] Test: composing with `poly` — `pat("c4 e4") |> poly(%, fat, 2)` where `fat` calls `unison(… voices: 4)` internally — compiles and produces stereo output.
+- [x] Test: composing with `poly` — `n"c4 e4" |> poly(%, fat, 2)` where `fat` calls `unison(… voices: 4)` internally — compiles and produces stereo output.
 - [x] Extra: `ext` record fields accessible inside the instrument; runtime-modulatable `detune`; defaulted-`voices` const-folding regression test.
 
 ### Phase 2 — Documentation and demo
@@ -674,14 +674,14 @@ SECTION("sum mixes mono and stereo (mono duplicates)") {
 ```cpp
 SECTION("poly accepts stereo instrument") {
     auto src = R"(
-        pat("c4 e4") |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)), 2) |> out(%, %)
+        n"c4 e4" |> poly(%, (f,g,v) -> stereo(saw(f), saw(f*1.01)), 2) |> out(%, %)
     )";
     REQUIRE_NOTHROW(compile(src));
     // Output TypedValue is stereo.
 }
 
 SECTION("mono poly bytecode unchanged") {
-    auto src = R"(pat("c4") |> poly(%, (f,g,v) -> saw(f), 4) |> out(%, %))";
+    auto src = R"(n"c4" |> poly(%, (f,g,v) -> saw(f), 4) |> out(%, %))";
     auto bc_before = compile_to_bytecode_str_master(src);
     auto bc_after  = compile_to_bytecode_str_branch(src);
     REQUIRE(bc_before == bc_after);
@@ -763,7 +763,7 @@ SECTION("unison composes with poly (stereo poly required)") {
     auto src = R"(
         fn voice(f, g, v, e) -> saw(f)
         fn fat(f, g, v) -> unison(f, g, v, voice, voices=4)
-        pat("c4 e4") |> poly(%, fat, 2) |> out(%, %)
+        n"c4 e4" |> poly(%, fat, 2) |> out(%, %)
     )";
     REQUIRE_NOTHROW(compile(src));
     // poly is a runtime voice allocator; the unison body is compiled once

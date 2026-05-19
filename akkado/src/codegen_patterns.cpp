@@ -1258,17 +1258,14 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     }
 
     NodeIndex pattern_node = n.first_child;
-    NodeIndex closure_node = NULL_NODE;
-
-    if (pattern_node != NULL_NODE) {
-        closure_node = ast_->arena[pattern_node].next_sibling;
-    }
 
     if (pattern_node == NULL_NODE) {
         error("E114", "Pattern has no parsed content", n.location);
         return TypedValue::void_val();
     }
 
+    // PRD prd-remove-pat-builtin §6.3: keep "pat" path segments unchanged
+    // to preserve hot-swap semantic-ID hashes across the migration.
     std::uint32_t pat_count = call_counters_["pat"]++;
     push_path("pat#" + std::to_string(pat_count));
     std::uint32_t state_id = compute_state_id();
@@ -1381,47 +1378,9 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
             return TypedValue::signal(value_buf);  // Return value buffer as fallback
         }
         result_buf = output_buf;
-    } else if (closure_node != NULL_NODE) {
-        // Handle closure for pitch patterns
-        const Node& closure = ast_->arena[closure_node];
-        std::vector<std::string> param_names;
-        NodeIndex child = closure.first_child;
-        NodeIndex body = NULL_NODE;
-
-        while (child != NULL_NODE) {
-            const Node& child_node = ast_->arena[child];
-            if (child_node.type == NodeType::Identifier) {
-                if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
-                    param_names.push_back(child_node.as_closure_param().name);
-                } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                    param_names.push_back(child_node.as_identifier());
-                } else {
-                    body = child;
-                    break;
-                }
-            } else {
-                body = child;
-                break;
-            }
-            child = ast_->arena[child].next_sibling;
-        }
-
-        if (param_names.size() >= 1) symbols_->define_variable(param_names[0], trigger_buf);
-        if (param_names.size() >= 2) symbols_->define_variable(param_names[1], velocity_buf);
-        if (param_names.size() >= 3) symbols_->define_variable(param_names[2], value_buf);
-
-        if (body != NULL_NODE) {
-            result_buf = visit(body).buffer;
-        }
     }
 
     pop_path();
-
-    // If closure is present, clear polyphonic tracking since the user
-    // processes pattern events manually through closure parameters
-    if (closure_node != NULL_NODE && max_voices > 1) {
-        polyphonic_pattern_nodes_.erase(node);
-    }
 
     pattern_payload->state_id = state_id;
     pattern_payload->cycle_length = cycle_length;
@@ -1900,59 +1859,6 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::make_pattern(payload, value_buf));
 }
 
-// PRD prd-patterns-as-scalar-values §5.4–5.6: explicit call forms.
-// value("…") and note("…") parse the string in the requested mode and emit
-// the same SEQPAT machinery as `pat()`. Sharing one implementation keeps the
-// behaviour identical between prefix forms (parsed in parser.cpp) and call
-// forms (which arrive here as Call nodes).
-TypedValue CodeGenerator::compile_typed_pattern_call(NodeIndex node, const Node& n,
-                                                     MiniParseMode mode,
-                                                     std::string_view fn_name) {
-    NodeIndex arg = n.first_child;
-    if (arg == NULL_NODE) {
-        error("E125", std::string(fn_name) + "() requires exactly 1 argument", n.location);
-        return TypedValue::void_val();
-    }
-    const Node& arg_node = ast_->arena[arg];
-    NodeIndex str_node = (arg_node.type == NodeType::Argument) ? arg_node.first_child : arg;
-    if (str_node == NULL_NODE) {
-        error("E125", std::string(fn_name) + "() requires a string argument", n.location);
-        return TypedValue::void_val();
-    }
-    const Node& str_n = ast_->arena[str_node];
-    if (str_n.type != NodeType::StringLit) {
-        error("E126", std::string(fn_name) + "() argument must be a string literal",
-              str_n.location);
-        return TypedValue::void_val();
-    }
-
-    std::string body = str_n.as_string();
-    auto& arena = const_cast<AstArena&>(ast_->arena);
-    auto [pattern_root, diags] = parse_mini(body, arena, str_n.location, mode);
-    for (auto& d : diags) {
-        if (d.severity == Severity::Error) diagnostics_.push_back(d);
-    }
-    if (pattern_root == NULL_NODE) {
-        error("E127", std::string(fn_name) + "() failed to parse pattern: \"" + body + "\"",
-              str_n.location);
-        return TypedValue::void_val();
-    }
-
-    // Synthesize a MiniLiteral node so we can route through handle_mini_literal,
-    // which already handles SEQPAT emission, polyphony, custom properties, etc.
-    NodeIndex lit = arena.alloc(NodeType::MiniLiteral, n.location);
-    arena.add_child(lit, pattern_root);
-    return handle_mini_literal(lit, arena[lit]);
-}
-
-TypedValue CodeGenerator::handle_value_call(NodeIndex node, const Node& n) {
-    return compile_typed_pattern_call(node, n, MiniParseMode::Value, "value");
-}
-
-TypedValue CodeGenerator::handle_note_call(NodeIndex node, const Node& n) {
-    return compile_typed_pattern_call(node, n, MiniParseMode::Note, "note");
-}
-
 // PRD prd-patterns-as-scalar-values §5.6: explicit Pattern→Signal cast.
 // scalar(p) returns p.freq for monophonic non-sample patterns; idempotent
 // on a Signal arg. Sample / polyphonic patterns error E161.
@@ -2058,10 +1964,8 @@ static std::optional<std::string> get_string_arg(const Ast& ast, const Node& n, 
 static bool is_pattern_call(const Node& n) {
     if (n.type != NodeType::Call) return false;
     const std::string& func_name = n.as_identifier();
-    return func_name == "pat" || func_name == "timeline" ||
+    return func_name == "timeline" ||
            func_name == "chord" ||
-           // PRD prd-patterns-as-scalar-values: typed-prefix call forms
-           func_name == "value" || func_name == "note" ||
            func_name == "slow" || func_name == "fast" ||
            func_name == "rev" || func_name == "transpose" || func_name == "velocity" ||
            func_name == "bank" || func_name == "variant" || func_name == "transport" ||
@@ -4162,6 +4066,8 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     push_path("transport#" + std::to_string(transport_count));
     std::uint32_t transport_state_id = compute_state_id();
 
+    // PRD prd-remove-pat-builtin §6.3: keep "pat" path segment unchanged
+    // to preserve hot-swap semantic-ID hashes after the pat builtin removal.
     push_path("pat");
     std::uint32_t seq_state_id = compute_state_id();
     pop_path();

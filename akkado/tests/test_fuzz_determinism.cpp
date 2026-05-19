@@ -37,7 +37,7 @@ namespace fuzz {
 //   program       := chord_chain | note_chain
 //   chord_chain   := 'c"' chord_mini '"' '|> soundfont(@, "gm", 0)'
 //                    out_chain
-//   note_chain    := 'pat("' note_mini '")' '|> osc("sin", %.freq)'
+//   note_chain    := 'n"' note_mini '"' '|> osc("sin", %.freq)'
 //                    out_chain
 //   out_chain     := '|> out(@ * 0.5)'
 //   chord_mini    := slowcat(group(chord)+) | seq(chord+) | chord
@@ -125,8 +125,8 @@ private:
 
     std::string note_chain() {
         std::ostringstream os;
-        os << "pat(\"" << mini_term([this]() { return note_atom(); }, 2)
-           << "\") |> osc(\"sin\", %.freq) |> out(% * 0.3, % * 0.3)";
+        os << "n\"" << mini_term([this]() { return note_atom(); }, 2)
+           << "\" |> osc(\"sin\", %.freq) |> out(% * 0.3, % * 0.3)";
         return os.str();
     }
 };

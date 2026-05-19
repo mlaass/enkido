@@ -128,7 +128,7 @@ Mini-notation: "c#^4"
 
 ```akkado
 tune("31edo") {
-    pat("c^4 e4 gv4") |> poly(%, 8, lead) |> out(%, %)
+    n"c^4 e4 gv4" |> poly(%, 8, lead) |> out(%, %)
 }
 ```
 
@@ -213,7 +213,7 @@ Users will be able to load .scl (Scala) and .tun files. Deferred to post-MVP.
 ```akkado
 load_tuning("slendro", "assets/slendro.scl")
 tune("slendro") {
-    pat("n0 n1 n2") |> poly(%, 4, inst) |> out(%, %)
+    n"n0 n1 n2" |> poly(%, 4, inst) |> out(%, %)
 }
 ```
 

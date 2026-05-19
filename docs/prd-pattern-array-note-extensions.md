@@ -125,7 +125,7 @@ drums.slow(2).rev() |> sampler(@) |> out(@, @)
 | `s()` | Sample patterns |
 | `note()` | Pitch patterns |
 | `chord()` | Chord patterns |
-| `pat()` / `seq()` | Alternative pattern constructors |
+| `n"…"` / `v"…"` / `s"…"` / `c"…"` / `seq()` | Pattern constructors |
 
 ### 2.9 Polymeter
 
@@ -146,15 +146,15 @@ drums.slow(2).rev() |> sampler(@) |> out(@, @)
 | Mini-notation parser | ✓ Complete | AST nodes for groups, sequences |
 | Pattern evaluation | ✓ Complete | Time division, modifiers |
 | Array type + map() | ✓ Complete | Multi-buffer expansion at compile time |
-| Chord expansion | ✓ Complete | Chords in mini-notation expand to multi-voice via `pat()`/`chord()` |
+| Chord expansion | ✓ Complete | Chords in mini-notation expand to multi-voice via `c"…"`/`chord()` |
 | Chord parsing | ✓ Complete | Strudel-compatible `chord("Am")` inside patterns |
-| `C4'` standalone syntax | Deprecated | Stub (root only) — use chords inside `pat()`/`chord()` instead |
-| Dot-call syntax | ✓ Complete | `pat("c4").slow(2)` desugars to `slow(pat("c4"), 2)` |
+| `C4'` standalone syntax | Deprecated | Stub (root only) — use chords inside `c"…"`/`chord()` instead |
+| Dot-call syntax | ✓ Complete | `n"c4".slow(2)` desugars to `slow(n"c4", 2)` |
 | Pattern transforms | ✓ Partial | `slow`, `fast`, `rev`, `transpose`, `velocity`, `bank`, `variant` done. Time/structure modifiers (Phase 7) in progress |
 | Polymeter `{x}` | ✓ Complete | Tokens, lexer, parser, AST node, evaluator all implemented and tested |
 | TypedValue system | ✓ Complete | Full type tracking replaces ad-hoc maps (see prd-compiler-type-system) |
 | Voicing system | Deferred | Algorithms not yet implemented |
-| String-as-pattern | Deferred | Explicit `pat()` is the endorsed approach |
+| String-as-pattern | Deferred | Explicit typed pattern literals are the endorsed approach |
 | Algorithmic generators | Partial | `euclid(k, n, rot)` exists as Cedar opcode. `run()`, `binary()` not yet implemented |
 
 ## 4. Implementation Phases
@@ -306,7 +306,7 @@ drums.slow(2).rev() |> out(@, @)
 **Syntax**:
 ```akkado
 "c4 e4 g4".velocity("0.8 0.5 1.0").bend("<0 0.5 0>")
-note("c4").velocity(0.7).dur(0.5)
+n"c4".velocity(0.7).dur(0.5)
 ```
 
 **Files to Modify**:
@@ -376,7 +376,7 @@ note("c4").velocity(0.7).dur(0.5)
 
 **Already implemented:**
 - `euclid(hits, steps, rot)` — Cedar opcode `EUCLID`, runtime euclidean rhythm generator with optional rotation
-- Euclidean in mini-notation — `(k,n)` syntax inside `pat()`
+- Euclidean in mini-notation — `(k,n)` syntax inside pattern literals
 
 **To implement** — pattern constructors that generate event sequences at compile time:
 
@@ -386,7 +386,7 @@ note("c4").velocity(0.7).dur(0.5)
 | `binary(n)` | n: int | Binary representation of n as trigger pattern (1=trigger, 0=rest) |
 | `binaryN(n, bits)` | n: int, bits: int | Fixed-width binary pattern (zero-padded to `bits` width) |
 
-**Implementation approach**: These are pattern *constructors* (like `pat()`), not transforms. They generate a `PatternEventStream` at compile-time, then emit `SEQPAT_QUERY`/`SEQPAT_STEP` instructions referencing the generated events.
+**Implementation approach**: These are pattern *constructors* (like the typed pattern literals), not transforms. They generate a `PatternEventStream` at compile-time, then emit `SEQPAT_QUERY`/`SEQPAT_STEP` instructions referencing the generated events.
 
 ## 5. Open Questions
 
@@ -455,17 +455,17 @@ Edge cases where valid mini-notation could also be a valid string:
 
 ### Resolved: Method Chaining via Dot-Call Desugaring
 
-The original blocker for Phase 7 was method chaining. This has been resolved via **dot-call desugaring**: `pat("c4").slow(2)` is parsed and desugared to `slow(pat("c4"), 2)` at the AST level. This works for all pattern transforms, array operations, and audio functions uniformly.
+The original blocker for Phase 7 was method chaining. This has been resolved via **dot-call desugaring**: `n"c4".slow(2)` is parsed and desugared to `slow(n"c4", 2)` at the AST level. This works for all pattern transforms, array operations, and audio functions uniformly.
 
 All time/structure modifiers can be implemented as regular functions and automatically gain dot-call syntax. No special object system needed.
 
 ```akkado
 // Both forms work identically today:
-slow(pat("c4 e4"), 2)       // functional
-pat("c4 e4").slow(2)        // dot-call (desugars to above)
+slow(n"c4 e4", 2)       // functional
+n"c4 e4".slow(2)        // dot-call (desugars to above)
 
 // Chaining works:
-pat("c4 e4").slow(2).rev()  // desugars to rev(slow(pat("c4 e4"), 2))
+n"c4 e4".slow(2).rev()  // desugars to rev(slow(n"c4 e4", 2))
 ```
 
 ### Resolved: TypedValue System
@@ -483,7 +483,7 @@ The `TypedValue` struct, `ValueType` enum, and `visit()` returning typed values 
 
 **String-as-Pattern auto-parsing**:
 - `"bd sd".slow(2)` — auto-parsing bare strings as patterns
-- Current approach: explicit `pat("bd sd").slow(2)`
+- Current approach: explicit `s"bd sd".slow(2)`
 - Deferred: design question about disambiguation, not a technical blocker
 
 **Scope modifiers** (lower priority):

@@ -11,7 +11,7 @@ tagline: One-shot and looping playback with kit shortcuts.
 
 # Samplers
 
-Samplers play recorded audio. The common path is a **sample pattern** like `pat("bd sd hh sd")`, which triggers events from the loaded sample bank. nkido ships with a default 808 drum kit so common drum names work out of the box. For trigger-driven one-shots — e.g. firing a kick on a button press — `sample()` accepts the same names as patterns. `sample_loop()` plays a sample looped while a gate is held.
+Samplers play recorded audio. The common path is a **sample pattern** like `s"bd sd hh sd"`, which triggers events from the loaded sample bank. nkido ships with a default 808 drum kit so common drum names work out of the box. For trigger-driven one-shots — e.g. firing a kick on a button press — `sample()` accepts the same names as patterns. `sample_loop()` plays a sample looped while a gate is held.
 
 ## sample
 
@@ -71,7 +71,7 @@ The **bass drum**. Default kit slot for `bd` patterns; variants `bd2` through `b
 
 ```akk
 // Four-on-the-floor kick
-pat("bd bd bd bd") |> out(@)
+s"bd bd bd bd" |> out(@)
 ```
 
 ## sd
@@ -80,7 +80,7 @@ The **snare drum**. Default kit slot for `sd`; variants `sd2`–`sd8` give alter
 
 ```akk
 // Backbeat
-pat("~ sd ~ sd") |> out(@)
+s"~ sd ~ sd" |> out(@)
 ```
 
 ## hh
@@ -89,7 +89,7 @@ The **hi-hat closed**. Variants like `oh` (open hat), `cp` (clap), `rim` (rimsho
 
 ```akk
 // 16th-note hats
-pat("hh*16") |> out(@)
+s"hh*16" |> out(@)
 ```
 
 ## oh
@@ -98,7 +98,7 @@ The **open hi-hat**. Use it to vary the closed-hat pattern; typical syncopation 
 
 ```akk
 // Closed/open hat variation
-pat("hh hh oh hh") |> out(@)
+s"hh hh oh hh" |> out(@)
 ```
 
 ## cp
@@ -107,7 +107,7 @@ The **clap**. Layered on the backbeat for a snare reinforcement.
 
 ```akk
 // Snare + clap layered
-pat("~ [sd cp] ~ [sd cp]") |> out(@)
+s"~ [sd cp] ~ [sd cp]" |> out(@)
 ```
 
 Related: [samples-loading](samples-loading), [soundfonts](soundfonts), [sequencing](sequencing)

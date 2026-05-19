@@ -639,7 +639,7 @@ std::pair<NodeIndex, std::vector<Diagnostic>>
 parse_mini(std::string_view pattern, AstArena& arena, SourceLocation base_location,
            bool sample_only, bool curve_mode) {
     MiniParseMode m = curve_mode ? MiniParseMode::Curve
-                                 : (sample_only ? MiniParseMode::Sample : MiniParseMode::Auto);
+                                 : (sample_only ? MiniParseMode::Sample : MiniParseMode::Note);
     return parse_mini(pattern, arena, base_location, m);
 }
 

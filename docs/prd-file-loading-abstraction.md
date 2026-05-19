@@ -427,7 +427,7 @@ Fetch manifest → parse JSON
 Register bank (samples NOT loaded yet)
          │
          ▼
-Compile: pat("bd").bank("TR808")
+Compile: s"bd".bank("TR808")
          │
          ▼
 CompileResult.required_samples = [{bank: "TR808", name: "bd", variant: 0}]

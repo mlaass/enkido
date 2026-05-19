@@ -2,7 +2,7 @@
 
 # Mini-Notation Reference
 
-This document provides a comprehensive reference for Akkado's mini-notation syntax, used in pattern functions like `pat()` and `timeline()`.
+This document provides a comprehensive reference for Akkado's mini-notation syntax, used in typed pattern literals like `n"…"`, `v"…"`, `s"…"`, `c"…"` and `timeline()`.
 
 ## Typed Prefixes
 
@@ -14,7 +14,7 @@ Pattern strings carry a parse-mode prefix that selects per-atom rules:
 | `n"…"`  | Note    | Note names + bare MIDI ints (both → Hz)            | mtof'd freq           |
 | `s"…"`  | Sample  | Sample names — `bd`, `sd`, `kick:2`                | Sample IDs            |
 | `c"…"`  | Chord   | Chord symbols — `Am`, `C7`, `F#m7b5`               | Multi-voice chord     |
-| `p"…"`  | Auto    | Detect per-atom (legacy, backwards compatible)     | Inherits              |
+| `n"…"`  | Auto    | Detect per-atom (legacy, backwards compatible)     | Inherits              |
 | `t"…"`  | Curve   | `_`, `.`, `-`, `^`, `'` for breakpoints; `~` smooth| Timeline curve        |
 
 The Value mode adds a numeric-atom path to the lexer: signed decimals, scientific notation, and finite reals are accepted; note names / sample names / chord symbols error E163.
@@ -199,7 +199,7 @@ fires all three. Up to 4 voices per stack; extra voices fall back to the
 older per-child interleave so nothing is silently dropped.
 
 ```
-pat("[[bd, hh] hh [sd, hh] hh]")    // Standard rock groove
+s"[[bd, hh] hh [sd, hh] hh]"    // Standard rock groove
 ```
 
 ### Polymeter `{...}%n`
@@ -387,7 +387,7 @@ n"c4 e4 g4 b4".dur(2)
 
 **Example:**
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
 ```
 
 ## Chord Qualities
@@ -453,35 +453,35 @@ Akkado's mini-notation is designed to be compatible with Strudel and Tidal:
 
 ### Simple Melody
 ```
-pat("c4 e4 g4 e4")
+n"c4 e4 g4 e4"
 ```
 
 ### With Rests
 ```
-pat("c4 ~ e4 ~ g4 ~ e4 ~")
+n"c4 ~ e4 ~ g4 ~ e4 ~"
 ```
 
 ### Chord Progression
 ```
-pat("Am F C G")
+n"Am F C G"
 ```
 
 ### Euclidean Drum Pattern
 ```
-pat("bd(3,8) sd(2,8) hh(5,8)")
+s"bd(3,8) sd(2,8) hh(5,8)"
 ```
 
 ### Polyrhythm
 ```
-pat("[c4 e4 g4, d4 f4]")
+n"[c4 e4 g4, d4 f4]"
 ```
 
 ### Complex Pattern
 ```
-pat("<c4 e4>*2 [g4 a4]?0.5 b4/2")
+n"<c4 e4>*2 [g4 a4]?0.5 b4/2"
 ```
 
 ### With Alternation
 ```
-pat("<[c4 e4] [d4 f4] [e4 g4]>")
+n"<[c4 e4] [d4 f4] [e4 g4]>"
 ```

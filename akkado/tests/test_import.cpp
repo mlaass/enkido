@@ -269,7 +269,7 @@ TEST_CASE("Direct import: all definition types", "[import][direct]") {
     }
 
     SECTION("pattern") {
-        resolver.register_module("mod", "my_pat = pat(\"c4 e4 g4\")");
+        resolver.register_module("mod", "my_pat = n\"c4 e4 g4\"");
         auto result = akkado::compile(
             "import \"mod\"\nmy_pat.freq",
             "main.ak", nullptr, &resolver);
@@ -333,7 +333,7 @@ TEST_CASE("Namespace import: all definition types", "[import][namespace]") {
     }
 
     SECTION("pattern field") {
-        resolver.register_module("mod", "my_pat = pat(\"c4 e4 g4\")");
+        resolver.register_module("mod", "my_pat = n\"c4 e4 g4\"");
         auto result = akkado::compile(
             "import \"mod\" as m\nm.my_pat.freq",
             "main.ak", nullptr, &resolver);
@@ -398,7 +398,7 @@ TEST_CASE("Namespace hiding: all definition types", "[import][namespace]") {
     }
 
     SECTION("pattern hidden") {
-        resolver.register_module("mod", "my_pat = pat(\"c4 e4 g4\")");
+        resolver.register_module("mod", "my_pat = n\"c4 e4 g4\"");
         auto result = akkado::compile(
             "import \"mod\" as m\nmy_pat",
             "main.ak", nullptr, &resolver);

@@ -186,7 +186,7 @@ The editor is the primary view with inline visualizations. A collapsible side pa
 
 1. **Custom Akkado Language Mode**
    - Syntax highlighting for: keywords, operators (`|>`, `@`), numbers, strings, pitches (`'c4'`), chords
-   - Mini-notation parsing inside `pat()`, `seq()`, `timeline()` strings
+   - Mini-notation parsing inside typed pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`), `seq()`, `timeline()` strings
    - Bracket matching for `()`, `[]`, `{}`
 
 2. **Live Pattern Highlighting**

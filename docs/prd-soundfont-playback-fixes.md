@@ -37,7 +37,7 @@ bool gate_on = (current_gate > 0.0f && state.prev_gate <= 0.0f);
 bool gate_off = (current_gate <= 0.0f && state.prev_gate > 0.0f);
 ```
 
-Only fires `gate_on` when gate transitions from ≤0 to >0. But `SEQPAT_GATE` (`sequencing.hpp:589-655`) outputs sustained 1.0 for any sample inside an event's `[time, time+duration)` window. For sequential notes like `pat("c4 e4 g4")`:
+Only fires `gate_on` when gate transitions from ≤0 to >0. But `SEQPAT_GATE` (`sequencing.hpp:589-655`) outputs sustained 1.0 for any sample inside an event's `[time, time+duration)` window. For sequential notes like `n"c4 e4 g4"`:
 
 ```
 beat:  0.0─────1.0─────2.0─────3.0─────4.0
@@ -362,7 +362,7 @@ A test SF2 file is also needed. Options: use the GM SoundFont from the web app's
 **Steps:**
 1. Rebuild WASM: `cd web && bun run build:wasm`
 2. Start dev server: `bun run dev`
-3. Test with: `pat("c4 e4 g4") |> soundfont(@, "gm", 0) |> out(@, @)`
+3. Test with: `n"c4 e4 g4" |> soundfont(@, "gm", 0) |> out(@, @)`
 4. Verify all three notes are audible with legato overlap
 
 ---
@@ -375,9 +375,9 @@ A test SF2 file is also needed. Options: use the GM SoundFont from the web app's
 **Boundary:** A pitch sweep crossing a semitone boundary (e.g., 261→277 Hz, C4→C#4) will trigger a new voice. This is correct behavior — the SoundFont zone may change at semitone boundaries.
 
 ### 7.2 Same Note Repeated
-**Situation:** Pattern like `pat("c4 c4 c4")` — same note, back-to-back.
+**Situation:** Pattern like `n"c4 c4 c4"` — same note, back-to-back.
 **Behavior (with trigger wired):** `trigger_on` fires at each event boundary. The same-note fast-release code (lines 85-93) detects matching note number, fast-releases the old voice (5ms), and starts a new one. Each repetition re-articulates cleanly.
-**Behavior (without trigger, fallback):** `note_change` is false (same MIDI note). The existing voice sustains through. Users must use gaps (`pat("c4 ~ c4 ~")`) for re-articulation. This is acceptable for direct-drive use cases.
+**Behavior (without trigger, fallback):** `note_change` is false (same MIDI note). The existing voice sustains through. Users must use gaps (`n"c4 ~ c4 ~"`) for re-articulation. This is acceptable for direct-drive use cases.
 
 ### 7.3 Voice Exhaustion Under Legato
 **Situation:** Long sequence of different notes with legato overlap. Each note allocates new voices while old ones sustain.
@@ -445,14 +445,14 @@ cmake --build build
 Manual test in browser after WASM rebuild:
 ```akkado
 // Test 1: Sequential melody — different notes with legato overlap
-pat("c4 e4 g4") |> soundfont(@, "gm", 0) |> out(@, @)
+n"c4 e4 g4" |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 2: Same-note repetition — should re-articulate each hit
-pat("c4 c4 c4 c4") |> soundfont(@, "gm", 0) |> out(@, @)
+n"c4 c4 c4 c4" |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 3: Sustained single note — verify no spurious retrigger
-pat("c4") |> soundfont(@, "gm", 0) |> out(@, @)
+n"c4" |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Test 4: Notes with rests — verify gate release works
-pat("c4 ~ e4 ~ g4 ~") |> soundfont(@, "gm", 0) |> out(@, @)
+n"c4 ~ e4 ~ g4 ~" |> soundfont(@, "gm", 0) |> out(@, @)
 ```

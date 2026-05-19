@@ -28,7 +28,7 @@ subfeatures:
 
 # Chords
 
-Two paths to chordal patterns: the `chord()` function with chord-symbol literals (`Am7`, `Cmaj7`), and inline chord brackets in `pat()` strings (`[c4 e4 g4]`). For voice leading, the `anchor`, `mode`, `voicing`, and `addVoicings` transforms reshape chord events into musical voicings.
+Two paths to chordal patterns: the `chord()` function with chord-symbol literals (`Am7`, `Cmaj7`), and inline chord brackets in `n"…"` strings (`[c4 e4 g4]`). For voice leading, the `anchor`, `mode`, `voicing`, and `addVoicings` transforms reshape chord events into musical voicings.
 
 ## chord
 
@@ -135,12 +135,12 @@ c"Cmaj9 Am11 D13 G13" |> soundfont(@, "gm", 0) |> out(@)
 
 ```akk
 // C major as inline chord
-pat("[c4 e4 g4]")
+n"[c4 e4 g4]"
 ```
 
 ```akk
 // Mixed sequence and chord
-pat("c4 [c4 e4 g4] e4 g4")
+n"c4 [c4 e4 g4] e4 g4"
 ```
 
 ## polyphony

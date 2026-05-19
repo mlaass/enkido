@@ -126,7 +126,7 @@ Examples (file:line refs in `akkado/src/codegen_patterns.cpp`):
 ### 2.2 Non-Goals (deferred)
 
 - **Runtime closure infrastructure itself.** Owned by §0's separate PRD.
-- **Removing pattern compile-time baking entirely.** `pat("c4 e4 g4")` still bakes a `cedar::Sequence` at compile time — only the *modifier* layer becomes runtime.
+- **Removing pattern compile-time baking entirely.** `n"c4 e4 g4"` still bakes a `cedar::Sequence` at compile time — only the *modifier* layer becomes runtime.
 - **Replacing `bank` / `variant` sample resolution with runtime asset loading.** Sample assets must still resolve at compile time so `RequiredSamples` propagation works. (See §11 OQ-3 for nuance.)
 - **A `with`-record-literal sugar syntax.** Explicitly rejected by the user in favour of closure-only ergonomics.
 - **Per-sample mid-event signal re-sampling for closure parameters.** Event-onset latching only (§3.1).
@@ -213,11 +213,11 @@ Structural transforms (`rev`, `ply`, `palindrome`, etc.) stay builtins because t
 ### 4.1 Static transpose (constant)
 
 ```akkado
-pat("c4 e4 g4").transpose(7) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".transpose(7) |> osc("sin", @.freq) |> out(@)
 ```
 
 Codegen:
-- `pat("c4 e4 g4")` → `SEQPAT_QUERY` populating `SequenceState A` per block.
+- `n"c4 e4 g4"` → `SEQPAT_QUERY` populating `SequenceState A` per block.
 - `transpose(p, 7)` lowers (via stdlib) to `event_map(p, (e) -> {note: e.note + 7})`.
 - `EVENT_MAP` opcode reads `SequenceState A`'s `OutputEvents`, applies the closure (constant +7), writes to `SequenceState B`.
 - Downstream `SEQPAT_STEP` reads `SequenceState B`, fills FREQ buffer with transposed frequencies.
@@ -226,7 +226,7 @@ Codegen:
 
 ```akkado
 lfo = osc("sin", 0.2) * 6
-pat("c4 e4 g4").transpose(lfo) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".transpose(lfo) |> osc("sin", @.freq) |> out(@)
 ```
 
 Closure body becomes `(e) -> {note: e.note + lfo[event_offset]}`. The runtime `EVENT_MAP` opcode, for each event firing at sample-offset `t`, reads `lfo[t]` and adds it to the event's note before writing.
@@ -242,7 +242,7 @@ midi("ctrl1").transpose(12).velocity(0.7) |> poly(@, instr, 8)
 ### 4.4 Continuous rate scaling
 
 ```akkado
-pat("c d e f g").fast(osc("sin", 0.1) * 1.5 + 2) |> ...
+n"c d e f g".fast(osc("sin", 0.1) * 1.5 + 2) |> ...
 ```
 
 `fast(p, sig)` lowers to `EVENT_RATE_SCALE` which produces a modulated phase signal that replaces `SEQPAT_QUERY`'s clock input (uses the existing external-clock path at `sequencing.hpp:372-380`).
@@ -253,7 +253,7 @@ pat("c d e f g").fast(osc("sin", 0.1) * 1.5 + 2) |> ...
 fn arp_up(events, steps) =
   event_map(events, (e) -> {note: e.note + (cycle_count() mod steps) * 12})
 
-pat("c4 g4").arp_up(3) |> osc("saw", @.freq) |> out(@)
+n"c4 g4".arp_up(3) |> osc("saw", @.freq) |> out(@)
 ```
 
 Userland-defined modifier in 1 line, working on patterns or MIDI.
@@ -369,9 +369,9 @@ End-to-end checks once Phase 5 lands:
 
 - `cmake --build build && ./build/cedar/tests/cedar_tests "[event-transform]" && ./build/akkado/tests/akkado_tests "[event-map]"` — all unit tests pass.
 - `cd experiments && ./run_all.sh` — every `test_op_event_*.py` produces a clean WAV and a green pass.
-- **Manual** (web dev server): paste `pat("c4 e4 g4").transpose(7).velocity(0.8) |> osc("sin", @.freq) * @.vel |> out(@)`, verify transposed playback.
+- **Manual** (web dev server): paste `n"c4 e4 g4".transpose(7).velocity(0.8) |> osc("sin", @.freq) * @.vel |> out(@)`, verify transposed playback.
 - **Manual MIDI parity**: `midi("ctrl1").transpose(12) |> poly(@, instr, 8)` — confirms MIDI parity.
-- **Manual signal scaling**: `pat("c d e").fast(lfo("sin", 0.2) * 1.5 + 2) |> ...` — confirms continuous rate-scaling works.
+- **Manual signal scaling**: `n"c d e".fast(lfo("sin", 0.2) * 1.5 + 2) |> ...` — confirms continuous rate-scaling works.
 - **Manual composability**: a user-defined akkado modifier (`fn arp_up(events, steps) = ...`) compiles, runs on patterns AND MIDI.
 
 ---

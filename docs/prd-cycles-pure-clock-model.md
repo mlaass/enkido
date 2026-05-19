@@ -116,7 +116,7 @@ The 2026-05-18 mini-notation cycle-timing fix scoped this refactor out explicitl
 ```akkado
 // Default: 1 cycle = 1 beat (Strudel-pure)
 bpm = 120          // → cps = 2.0 (because beats_per_cycle = 1)
-pat("c4 e4 g4")    // exactly 1 cycle = 0.5s long at 120 BPM
+n"c4 e4 g4"    // exactly 1 cycle = 0.5s long at 120 BPM
 ```
 
 ### 3.2 Classical-time-signature feel
@@ -125,7 +125,7 @@ pat("c4 e4 g4")    // exactly 1 cycle = 0.5s long at 120 BPM
 bpm = 120
 beats_per_cycle = 4   // recovers the old "1 cycle = 4 beats = 1 bar" feel
                       // cps now = 0.5; one cycle takes 2s
-pat("c4 e4 g4 c5")    // one cycle, four notes, 0.5s apart
+n"c4 e4 g4 c5"    // one cycle, four notes, 0.5s apart
 ```
 
 ### 3.3 Setting via CPS (akkado-source-level)
@@ -143,7 +143,7 @@ osc("saw", 220) |> delay_sync(@, 0.25)     // 1/4-cycle delay
 osc("saw", 220) |> delay_sync(@, beats(1)) // 1 beat — equivalent to 1/4 cycle when beats_per_cycle = 4
 
 // SEQPAT_TRANSPORT
-transport(pat("c4 e4 g4"), trig(4), 0.25)  // 1/4-cycle step per trigger
+transport(n"c4 e4 g4", trig(4), 0.25)  // 1/4-cycle step per trigger
 ```
 
 ### 3.5 `beat()` builtin re-spec
@@ -523,7 +523,7 @@ Hot-swap path picks up new `beats_per_cycle` at swap time. Patterns that were in
 
 ### Long-form WAV experiments (≥300s per CLAUDE.md)
 
-- `experiments/test_op_seq_cycles_pure.py`: render `pat("c4 d4 e4 f4")` with `bpm=120` (default `bpc=1` → 0.5s cycles) and with `beats_per_cycle=4` (→ 2s cycles). Confirm both render cleanly for 300s.
+- `experiments/test_op_seq_cycles_pure.py`: render `n"c4 d4 e4 f4"` with `bpm=120` (default `bpc=1` → 0.5s cycles) and with `beats_per_cycle=4` (→ 2s cycles). Confirm both render cleanly for 300s.
 - `experiments/test_op_delay_sync_cycles.py`: render `osc("saw", 220) |> delay_sync(@, 0.25) |> out(@)` over 300s. Confirm 1/4-cycle delay at default tempo.
 - `experiments/test_op_transport_cycles.py`: re-render the transport step examples with the new cycle-unit step arg.
 

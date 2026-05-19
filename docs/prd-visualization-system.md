@@ -27,8 +27,8 @@ Refactor the current inline piano roll and introduce an extensible visualization
 
 ```akkado
 // Piano roll for pattern events (beat-aligned note display)
-pat("c4 e4 g4") |> pianoroll(@, "melody")
-pat("c4 e4 g4") |> pianoroll(@, "melody", {height: 64, scale: "chromatic"})
+n"c4 e4 g4" |> pianoroll(@, "melody")
+n"c4 e4 g4" |> pianoroll(@, "melody", {height: 64, scale: "chromatic"})
 
 // Oscilloscope (beat-aligned waveform cycles)
 osc("saw", 220) |> oscilloscope(@, "osc1")

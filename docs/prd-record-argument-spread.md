@@ -718,13 +718,13 @@ This is consistent with how non-record dot-calls work today.
 |-------|-------------------|
 | `r = {a: 1}; g = (x) -> x; g(..r)` | Record spread applies to closure call. |
 | `arr = [1]; g = (x) -> x; g(..arr)` | Array spread applies to closure call. |
-| `pat("c4") \|> {..r, freq: 440} as cfg \|> osc("sin", cfg.freq)` | Record spread in pipe binding works (existing feature). |
+| `n"c4" \|> {..r, freq: 440} as cfg \|> osc("sin", cfg.freq)` | Record spread in pipe binding works (existing feature). |
 
 ### 9.5 Spread with Pattern as Source
 
 | Input | Expected Behavior |
 |-------|-------------------|
-| `p = pat("c4"); f(..p)` | Pattern as record spread source — has `freq`, `vel`, `trig` fields. Fields match function params by name. |
+| `p = n"c4"; f(..p)` | Pattern as record spread source — has `freq`, `vel`, `trig` fields. Fields match function params by name. |
 
 ### 9.6 Nested Spread in Record + Argument Spread
 
@@ -777,7 +777,7 @@ This is consistent with how non-record dot-calls work today.
 | Non-record/array spread | `x = 42; f(..x)` | Error E140 |
 | Mutual exclusivity | `r = {a: 1}; arr = [2]; f(..r, ..arr)` | Error E180 |
 | Undefined spread source | `f(..unknown)` | Undefined variable error (existing) |
-| Pattern as spread source | `p = pat("c4"); f(..p)` | No error (pattern has record fields) |
+| Pattern as spread source | `p = n"c4"; f(..p)` | No error (pattern has record fields) |
 | Array literal spread | `a = [1, 2]; [..a, 3]` | No error |
 | Array literal non-array spread | `x = 42; [..x]` | Error E140 |
 

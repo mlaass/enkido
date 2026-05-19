@@ -130,7 +130,6 @@ constexpr bool is_hole_field_token(TokenType t) {
         case TokenType::As:
         case TokenType::Const:
         case TokenType::Import:
-        case TokenType::Pat:
             return true;
         default:
             return false;
@@ -149,7 +148,6 @@ void Parser::synchronize() {
     while (!is_at_end()) {
         // Synchronize at statement boundaries
         switch (current().type) {
-            case TokenType::Pat:
             case TokenType::Timeline:
             case TokenType::ValuePat:
             case TokenType::NotePat:
@@ -616,7 +614,6 @@ NodeIndex Parser::parse_prefix() {
             return parse_array();
         case TokenType::LBrace:
             return parse_record_literal();
-        case TokenType::Pat:
         case TokenType::Timeline:
         case TokenType::ValuePat:
         case TokenType::NotePat:
@@ -1365,13 +1362,11 @@ NodeIndex Parser::parse_mini_literal() {
     Token kw_tok = advance();
 
     bool is_timeline = (kw_tok.type == TokenType::Timeline);
-    bool is_pat_call = (kw_tok.type == TokenType::Pat);
 
     // Map token type to MiniParseMode for the prefix forms.
-    MiniParseMode mode = MiniParseMode::Auto;
+    MiniParseMode mode = MiniParseMode::Note;
     std::string mode_marker;
     switch (kw_tok.type) {
-        case TokenType::Pat:       mode = MiniParseMode::Auto;   mode_marker = "pat";    break;
         case TokenType::Timeline:  mode = MiniParseMode::Curve;  mode_marker = "timeline"; break;
         case TokenType::ValuePat:  mode = MiniParseMode::Value;  mode_marker = "value";  break;
         case TokenType::NotePat:   mode = MiniParseMode::Note;   mode_marker = "note";   break;
@@ -1383,14 +1378,6 @@ NodeIndex Parser::parse_mini_literal() {
     }
 
     NodeIndex node = make_node(NodeType::MiniLiteral, kw_tok);
-
-    // Only `pat()` accepts the function-call-with-closure form. The typed
-    // prefix and timeline forms are bare string literals.
-    bool has_parens = false;
-    if (is_pat_call && check(TokenType::LParen)) {
-        has_parens = true;
-        advance(); // consume '('
-    }
 
     // First argument: the mini-notation string
     if (!check(TokenType::String)) {
@@ -1421,26 +1408,9 @@ NodeIndex Parser::parse_mini_literal() {
         arena_.add_child(node, pattern_ast);
     }
 
-    // Tag the MiniLiteral so codegen knows the parse mode.
-    // "pat" is the default and uses no marker; everything else gets a tag.
-    if (mode != MiniParseMode::Auto) {
-        arena_[node].data = Node::StringData{.value = mode_marker};
-    }
-
-    if (has_parens) {
-        // Optional second argument: closure (only in function-call form)
-        if (match(TokenType::Comma)) {
-            if (check(TokenType::LParen)) {
-                advance();  // consume '('
-                NodeIndex closure = parse_closure();
-                arena_.add_child(node, closure);
-            } else {
-                error("Expected closure after comma in pattern");
-            }
-        }
-
-        consume(TokenType::RParen, "Expected ')' after pattern arguments");
-    }
+    // Tag the MiniLiteral so codegen knows the parse mode. Every remaining
+    // token type has an explicit mode marker.
+    arena_[node].data = Node::StringData{.value = mode_marker};
 
     return node;
 }

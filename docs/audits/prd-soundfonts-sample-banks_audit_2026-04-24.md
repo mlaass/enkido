@@ -26,7 +26,7 @@
 
 ### Unmet Goals
 
-- **Success Metrics (§10) — all 9 checkboxes still unchecked in the PRD.** Six are demonstrably met by code (bank loading, `pat("bd").bank("TR808")`, variants via `:N` and `variant()`, SF2 preset listing, polyphonic playback, no audio glitches design). Three are not directly testable from static inspection: correct pitch across keyboard (relies on runtime), volume envelopes/no clicks on note-off (runtime behavior, no automated test), memory usage <500MB (runtime).
+- **Success Metrics (§10) — all 9 checkboxes still unchecked in the PRD.** Six are demonstrably met by code (bank loading, `s"bd".bank("TR808")`, variants via `:N` and `variant()`, SF2 preset listing, polyphonic playback, no audio glitches design). Three are not directly testable from static inspection: correct pitch across keyboard (relies on runtime), volume envelopes/no clicks on note-off (runtime behavior, no automated test), memory usage <500MB (runtime).
 - **Non-Goals vs. implementation drift.** PRD §1.4 lists "SoundFont synthesis features (modulators, effects units)" as non-goals, but the shipped opcode implements per-voice SVF lowpass filter (`cedar/include/cedar/opcodes/soundfont.hpp:178-190`) and DAHDSR envelope — which is consistent with "basic playback" but goes past the minimalist non-goal list. Not a violation per se; PRD should be updated to reflect the synthesis features that WERE included.
 
 ### Stubs

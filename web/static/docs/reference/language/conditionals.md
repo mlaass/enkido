@@ -38,7 +38,7 @@ Sample-by-sample mux. There is no infix ternary syntax; use `select(cond, a, b)`
 
 ```akk
 // Switch oscillators on a gate pattern
-gate = pat("1 0 1 0")
+gate = n"1 0 1 0"
 select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@)
 ```
 
@@ -137,7 +137,7 @@ Equivalent to the `==` operator. The epsilon protects against floating-point dri
 
 ```akk
 // Trigger only on exact step matches
-freq = pat("c4 e4 g4 c5") |> @freq
+freq = n"c4 e4 g4 c5" |> @freq
 hit = eq(freq, 261.6)  // 1.0 only on c4 (~261.6 Hz)
 ```
 
@@ -156,7 +156,7 @@ Equivalent to the `!=` operator. The exact inverse of `eq` (same epsilon).
 
 ```akk
 // Drop a voice on the rest steps only
-freq = pat("c4 ~ g4 c5") |> @freq
+freq = n"c4 ~ g4 c5" |> @freq
 voice = osc("saw", freq) * neq(freq, 0)
 voice |> out(@)
 ```
@@ -196,8 +196,8 @@ Equivalent to the `||` operator.
 
 ```akk
 // Layer two rhythmic patterns into one gate
-g1 = pat("1 0 0 0")
-g2 = pat("0 0 1 0")
+g1 = n"1 0 0 0"
+g2 = n"0 0 1 0"
 combined = bor(g1, g2)  // "1 0 1 0"
 ```
 

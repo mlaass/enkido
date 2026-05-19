@@ -97,7 +97,7 @@ fn voice(freq, gate, vel, ext) -> saw(freq, ext.phase)
 fn voice(freq, gate, vel, ext) ->
     saw(freq, ext.phase) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel
 
-pat("c4 e4 g4") as e
+n"c4 e4 g4" as e
   |> unison(e.freq, e.gate, e.vel, voice, voices: 5, detune: 0.3)
   |> out(@)
 ```

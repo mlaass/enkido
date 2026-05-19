@@ -62,7 +62,7 @@ Without `~`, a level character holds its value for the entire slot (type = hold)
 timeline("___/''''\\___")
 ```
 
-**String prefix**: syntactic sugar (like `p"..."` for `pat()`):
+**String prefix**: syntactic sugar (a typed pattern literal, like `n"..."`):
 
 ```akkado
 t"___/''''\\___"
@@ -121,7 +121,7 @@ osc("saw", 220) |> lp(@, t"__/''\\__" * 3000 + 200) |> out(@)
 osc("sin", 440) * t"['^]*8" |> out(@)
 
 // Sidechain-style ducking (4 pumps per cycle)
-drums = pat("bd _ _ _")
+drums = s"bd _ _ _"
 synth = osc("saw", C4') * t"[_/'']*4" |> out(@)
 
 // Panning automation
@@ -129,7 +129,7 @@ sig = osc("saw", 220)
 sig |> out(sig * t"_/'\\__", sig * t"__/'\\_ ")
 
 // Envelope on pluck
-pat("c4 e4 g4") as e |>
+n"c4 e4 g4" as e |>
     osc("sin", e.freq) * t"'/\\___" * e.vel |>
     out(@)
 ```
@@ -159,4 +159,4 @@ t"_@3 /"                // hold at 0 for 3/4, ramp for 1/4
 - Curve notation compiles to `TIMELINE` opcode breakpoints at compile time
 - Integrates with existing mini-notation features (grouping, alternation, modifiers)
 - Always outputs 0.0–1.0 (user scales with math)
-- Works alongside existing `pat()` and `seq()` patterns
+- Works alongside existing `n"…"`/`v"…"`/`s"…"`/`c"…"` and `seq()` patterns

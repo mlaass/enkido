@@ -622,7 +622,7 @@ Parser panic mode already suppresses cascading errors within a single recovery r
 Errors in stdlib code (line numbers in the combined source before user code) should be filtered or mapped correctly by the existing SourceMap. The source context line in the error panel uses `editorStore.code` (user code only), so stdlib-internal errors won't have a displayable source line — show only the message.
 
 ### 9.7 Error in mini-notation string
-Errors inside `pat("c4 [ e4")` use M001/MP01 codes and have locations within the pattern string. These need the pattern's offset added to display correctly in the editor. This already works via SourceMap adjustment — verify it still works with the new length field.
+Errors inside `n"c4 [ e4"` use M001/MP01 codes and have locations within the pattern string. These need the pattern's offset added to display correctly in the editor. This already works via SourceMap adjustment — verify it still works with the new length field.
 
 ---
 
@@ -676,7 +676,7 @@ TEST_CASE("Analyzer survives broken sub-ASTs", "[diagnostics][robustness]") {
         "fn f() = ",                       // missing function body
         "y = osc(",                        // unclosed call
         "z = (1 + ) * 2",                  // missing operand
-        "pat(\"c4 [ e4\")",                // unclosed mini bracket
+        "n\"c4 [ e4\"",                    // unclosed mini bracket
         "x = @\ny = z * 2",                // lex error + later semantic ref
     }) {
         auto result = compile(src);

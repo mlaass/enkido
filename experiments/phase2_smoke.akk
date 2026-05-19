@@ -4,11 +4,11 @@
 
 // Block A: time/structure modifiers stacked (Phase A1 + A2 + A3)
 //   palindrome doubles cycle; ply repeats each event 2x; swing adds groove.
-melody = pat("c4 e4 g4 b4").palindrome().ply(2).swing(8)
+melody = n"c4 e4 g4 b4".palindrome().ply(2).swing(8)
 
 // Block A2: iter rotation (Phase A4) — runtime cycle counter rotates events
 //   1/4 of cycle each cycle, so the pattern advances over 4 cycles.
-arp = pat("c4 e4 g4 b4").iter(4)
+arp = n"c4 e4 g4 b4".iter(4)
 
 // Block B: algorithmic generators (Phase B)
 //   binary(178) = 0b10110010 — 8-step trigger pattern over the cycle.
@@ -21,7 +21,7 @@ prog = chord("Am C G F").anchor("c4").mode("below")
 
 // Block D: record-suffix mini-notation (Phase D)
 //   `vel` from `{vel:0.x}` populates per-event velocity at compile time.
-hits = pat("c4{vel:0.8} e4{vel:0.5} g4{vel:1.0} c5{vel:0.6}")
+hits = n"c4{vel:0.8} e4{vel:0.5} g4{vel:1.0} c5{vel:0.6}"
 
 // Mix it all together.
 mtof(melody) |> osc("sin", %) * 0.15 +

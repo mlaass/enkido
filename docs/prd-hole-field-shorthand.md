@@ -99,13 +99,13 @@ Users typing `@.freq` reach across the dot every time. Patches end up
 visually noisy:
 
 ```akkado
-pat("c4 e4 g4") |> osc("sin", @.freq) * @.vel * ar(@.trig, 0.01, 0.1)
+n"c4 e4 g4" |> osc("sin", @.freq) * @.vel * ar(@.trig, 0.01, 0.1)
 ```
 
 vs. the proposed:
 
 ```akkado
-pat("c4 e4 g4") |> osc("sin", @freq) * @vel * ar(@trig, 0.01, 0.1)
+n"c4 e4 g4" |> osc("sin", @freq) * @vel * ar(@trig, 0.01, 0.1)
 ```
 
 The corpus is small (6 patches, 3 doc files, a handful of test strings —
@@ -149,7 +149,7 @@ see §5.4) so the corpus migration is mechanical.
 - **Lexer changes.** No new token type — adjacency is enforced by the parser.
 - **Underscore placeholder interaction.** `_` is unrelated; this PRD only
   touches `parse_hole`.
-- **Mini-notation `@`.** `@2` inside `pat("c4@2")` is the weight modifier
+- **Mini-notation `@`.** `@2` inside `n"c4@2"` is the weight modifier
   (mini-lexer, separate codepath) — unaffected.
 
 ---
@@ -160,19 +160,19 @@ see §5.4) so the corpus migration is mechanical.
 
 ```akkado
 // Today
-pat("c4 e4 g4") |> osc("sin", @.freq) * @.vel |> out(@, @)
+n"c4 e4 g4" |> osc("sin", @.freq) * @.vel |> out(@, @)
 
 // After (canonical dotless form)
-pat("c4 e4 g4") |> osc("sin", @freq) * @vel |> out(@, @)
+n"c4 e4 g4" |> osc("sin", @freq) * @vel |> out(@, @)
 
 // Legacy `%` alias accepts the same shorthand
-pat("c4 e4 g4") |> osc("sin", %freq) * %vel |> out(%, %)
+n"c4 e4 g4" |> osc("sin", %freq) * %vel |> out(%, %)
 ```
 
 ### 3.2 Aliases work the same
 
 ```akkado
-pat("c4") |> osc("sin", @f) * @v * ar(@t, 0.01, 0.1)
+n"c4" |> osc("sin", @f) * @v * ar(@t, 0.01, 0.1)
 //                       │     │       │
 //                       │     │       └─ @t → trig
 //                       │     └─ @v → vel
@@ -195,7 +195,7 @@ Whitespace defeats the shorthand, so `@ as e` keeps its today-meaning:
 
 ```akkado
 // Bare hole + pipe binding — still works.
-pat("c4 e4") as e |> osc("sin", e.freq) |> @ as raw |> raw * 0.5 + reverb(raw)
+n"c4 e4" as e |> osc("sin", e.freq) |> @ as raw |> raw * 0.5 + reverb(raw)
 //                                          └─ space between @ and `as` → bare hole, then binding
 
 // Field shorthand named `as` (rare but possible).
@@ -209,10 +209,10 @@ must equal column of the hole + 1.
 
 ```akkado
 // Hypothetical nested record on a pattern event.
-pat("c4") as e |> osc("sin", e.osc.freq)   // works today
+n"c4" as e |> osc("sin", e.osc.freq)   // works today
 
 // Dotless equivalent via hole — chains naturally.
-pat("c4") |> osc("sin", @osc.freq)
+n"c4" |> osc("sin", @osc.freq)
 //                       └────┴─ (@osc).freq
 ```
 
@@ -521,7 +521,7 @@ suggestions.
 
 ```bash
 cd web && bun run check
-# Manual: type `@` in a pat() context, confirm field suggestions appear.
+# Manual: type `@` in a pattern context, confirm field suggestions appear.
 ```
 
 ### Phase 5 — Opt-in lint warning (W201)
@@ -549,7 +549,7 @@ cd web && bun run check
 ```akkado
 out(@, @)
 saw(440) |> lp(@, 1000)
-pat("c4") |> @                  // bare hole, equivalent to @.freq
+n"c4" |> @                  // bare hole, equivalent to @.freq
 ```
 
 The shorthand only kicks in when the next token is an **adjacent**
@@ -579,7 +579,7 @@ when adjacent. Without adjacency, the keyword token retains its keyword
 meaning:
 
 ```akkado
-pat("c4") as e |> osc("sin", e.freq)   // `as` here is the pipe-binding keyword
+n"c4" as e |> osc("sin", e.freq)   // `as` here is the pipe-binding keyword
 ```
 
 ### 8.4 `@ as e` keeps working as bare-hole pipe binding
@@ -636,8 +636,8 @@ Same behavior as today.
 
 ```akkado
 fn double_freq(e) -> e.freq * 2
-pat("c4") |> double_freq(@)         // bare hole, no field — works
-pat("c4") |> double_freq(@freq)     // works — field access shorthand
+n"c4" |> double_freq(@)         // bare hole, no field — works
+n"c4" |> double_freq(@freq)     // works — field access shorthand
 ```
 
 When the next token is `)`, `,`, `|>`, an operator, EOF, or whitespace,
@@ -646,7 +646,7 @@ the hole stays bare.
 ### 8.10 Mixed dotted and dotless in the same expression
 
 ```akkado
-pat("c4") |> osc("sin", @freq) * @.vel    // both forms; both compile
+n"c4" |> osc("sin", @freq) * @.vel    // both forms; both compile
 ```
 
 Mixed usage is legal; W201 (under `--strict`) fires once per dotted site.
@@ -673,18 +673,18 @@ The suggestion picks the closest available alias via simple edit-distance
 
 ```cpp
 SECTION("dotless hole field — basic") {
-    auto ast = parse_ok("pat(\"c4\") |> osc(\"sin\", @freq)");
+    auto ast = parse_ok("n\"c4\" |> osc(\"sin\", @freq)");
     // Walk AST, find the Hole node, assert HoleData::field_name == "freq".
 }
 
 SECTION("dotless equivalence with dotted") {
-    auto a = parse_ok("pat(\"c4\") |> %.freq");
-    auto b = parse_ok("pat(\"c4\") |> %freq");
+    auto a = parse_ok("n\"c4\" |> %.freq");
+    auto b = parse_ok("n\"c4\" |> %freq");
     REQUIRE(ast_equal_ignoring_locations(a, b));
 }
 
 SECTION("whitespace defeats shorthand") {
-    auto ast = parse_ok("pat(\"c4\") |> @ as e |> osc(\"sin\", e.freq)");
+    auto ast = parse_ok("n\"c4\" |> @ as e |> osc(\"sin\", e.freq)");
     // Assert the `@` parses as bare hole; `as e` parses as pipe binding.
 }
 
@@ -716,8 +716,8 @@ dotless sibling and assert identical bytecode:
 
 ```cpp
 SECTION("dotless bytecode equivalence") {
-    auto dotted = akkado::compile("pat(\"c4 e4 g4\") |> osc(\"sin\", @.freq) |> out(@, @)");
-    auto dotless = akkado::compile("pat(\"c4 e4 g4\") |> osc(\"sin\", @freq) |> out(@, @)");
+    auto dotted = akkado::compile("n\"c4 e4 g4\" |> osc(\"sin\", @.freq) |> out(@, @)");
+    auto dotless = akkado::compile("n\"c4 e4 g4\" |> osc(\"sin\", @freq) |> out(@, @)");
     REQUIRE(dotted.success);
     REQUIRE(dotless.success);
     REQUIRE(dotted.bytecode == dotless.bytecode);
@@ -727,8 +727,8 @@ SECTION("dotless bytecode equivalence") {
 Aliases:
 
 ```cpp
-for (auto alias : {"f", "p", "pitch", "frequency"}) {
-    auto r = akkado::compile("pat(\"c4\") |> osc(\"sin\", @" + alias + ") |> out(@, @)");
+for (auto alias : {"f", "n", "pitch", "frequency"}) {
+    auto r = akkado::compile("n\"c4\" |> osc(\"sin\", @" + alias + ") |> out(@, @)");
     REQUIRE(r.success);
 }
 ```
@@ -738,12 +738,12 @@ for (auto alias : {"f", "p", "pitch", "frequency"}) {
 ```cpp
 SECTION("W201 fires under --strict") {
     CompilerOptions opts; opts.strict = true;
-    auto r = akkado::compile("pat(\"c4\") |> osc(\"sin\", @.freq)", opts);
+    auto r = akkado::compile("n\"c4\" |> osc(\"sin\", @.freq)", opts);
     REQUIRE(has_warning(r, "W201"));
 }
 
 SECTION("W201 silent without --strict") {
-    auto r = akkado::compile("pat(\"c4\") |> osc(\"sin\", @.freq)");
+    auto r = akkado::compile("n\"c4\" |> osc(\"sin\", @.freq)");
     REQUIRE_FALSE(has_warning(r, "W201"));
 }
 
@@ -762,7 +762,7 @@ After Phase 3 migration:
 ```bash
 # Every shipped patch must still compile and produce non-silent audio.
 for p in web/static/patches/*.akk; do
-    ./build/tools/akkado-cli/akkado-cli "$p" --check
+    ./build/tools/akkado-cli/akkado-cli "$n" --check
 done
 ```
 

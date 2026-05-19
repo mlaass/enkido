@@ -1132,7 +1132,7 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
 TEST_CASE("Pattern variables", "[akkado][pattern]") {
     SECTION("pattern variable assignment") {
         auto result = akkado::compile(R"(
-            drums = pat("bd sd")
+            drums = s"bd sd"
             drums
         )");
 
@@ -1153,7 +1153,7 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
     SECTION("pattern variable reuse") {
         // Using the same pattern variable multiple times should work
         auto result = akkado::compile(R"(
-            melody = pat("c4 e4 g4")
+            melody = n"c4 e4 g4"
             melody
         )");
 
@@ -1162,8 +1162,8 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
 
     SECTION("multiple pattern variables") {
         auto result = akkado::compile(R"(
-            drums = pat("bd sd")
-            bass = pat("c2 e2 g2")
+            drums = s"bd sd"
+            bass = n"c2 e2 g2"
             drums
         )");
 
@@ -1172,7 +1172,7 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
 
     SECTION("pitch pattern variable") {
         auto result = akkado::compile(R"(
-            notes = pat("c4 e4 g4")
+            notes = n"c4 e4 g4"
             notes
         )");
 
@@ -1192,7 +1192,7 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
 
     SECTION("sample pattern in state_inits") {
         auto result = akkado::compile(R"(
-            drums = pat("bd sd hh")
+            drums = s"bd sd hh"
             drums
         )");
 
@@ -2063,7 +2063,7 @@ TEST_CASE("TypedValue type checking", "[akkado][types]") {
 
     SECTION("field access on pattern works") {
         auto result = akkado::compile(R"(
-            pat("c4 e4 g4").freq |> out(%, %)
+            n"c4 e4 g4".freq |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -2078,7 +2078,7 @@ TEST_CASE("TypedValue type checking", "[akkado][types]") {
 
     SECTION("slow() accepts MiniLiteral pattern") {
         auto result = akkado::compile(R"(
-            slow(pat("c4 e4"), 2).freq |> saw(%) |> out(%, %)
+            slow(n"c4 e4", 2).freq |> saw(%) |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -2142,28 +2142,28 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
 
     SECTION("pattern pipe binding with field access") {
         auto result = akkado::compile(R"(
-            pat("c4 e4") as p |> saw(p.freq) |> % * p.vel |> out(%, %)
+            n"c4 e4" as p |> saw(p.freq) |> % * p.vel |> out(%, %)
         )");
         REQUIRE(result.success);
     }
 
     SECTION("pattern transform result retains type through binding") {
         auto result = akkado::compile(R"(
-            slow(pat("c4 e4"), 2) as p |> p.freq |> saw(%) |> out(%, %)
+            slow(n"c4 e4", 2) as p |> p.freq |> saw(%) |> out(%, %)
         )");
         REQUIRE(result.success);
     }
 
     SECTION("chained pattern transforms preserve type") {
         auto result = akkado::compile(R"(
-            pat("c4 e4") |> slow(%, 2) |> fast(%, 3) |> transpose(%, 5)
+            n"c4 e4" |> slow(%, 2) |> fast(%, 3) |> transpose(%, 5)
         )");
         REQUIRE(result.success);
     }
 
     SECTION("nested pattern transform with field access") {
         auto result = akkado::compile(R"(
-            slow(fast(pat("c4 e4"), 2), 3).freq |> saw(%) |> out(%, %)
+            slow(fast(n"c4 e4", 2), 3).freq |> saw(%) |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -2345,7 +2345,7 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
     }
 
     SECTION("out accepts Pattern argument") {
-        auto result = akkado::compile(R"(out(pat("c4")))");
+        auto result = akkado::compile(R"(out(n"c4"))");
         REQUIRE(result.success);
     }
 }

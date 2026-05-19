@@ -6,9 +6,9 @@
 - `akkado/include/akkado/typed_value.hpp` — `PatternPayload` cleanup
 
 **Symptom (user-reported):**
-> `p"[bd, [hh hh hh hh]]" |> out(@)` should play the bd every cycle alongside four 16th-note hihats. Today only the hihats play; the kick is silently dropped. Arbitrary nesting of polyrhythm should be a simple recursive algorithm — the fact that this doesn't work suggests the codegen got too complex.
+> `n"[bd, [hh hh hh hh]]" |> out(@)` should play the bd every cycle alongside four 16th-note hihats. Today only the hihats play; the kick is silently dropped. Arbitrary nesting of polyrhythm should be a simple recursive algorithm — the fact that this doesn't work suggests the codegen got too complex.
 
-**Reproducer:** `pat("[bd, [hh hh hh hh]]") |> out(%, %)`. Codegen test confirms the bug at `akkado/tests/test_codegen.cpp:3170` (new) — pre-fix, only 4 events were emitted (the four hihats), with the bd merged-into-nowhere because the merge fast-path couldn't accept compound children.
+**Reproducer:** `s"[bd, [hh hh hh hh]]" |> out(%, %)`. Codegen test confirms the bug at `akkado/tests/test_codegen.cpp:3170` (new) — pre-fix, only 4 events were emitted (the four hihats), with the bd merged-into-nowhere because the merge fast-path couldn't accept compound children.
 
 ---
 
@@ -97,7 +97,7 @@ The user, relayed from earlier exploration: "`payload->voice_fields` is never po
 
 ```
 fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.3
-pat("[c4, e4]") |> poly(%, lead, 4) |> out(%, %)
+n"[c4, e4]" |> poly(%, lead, 4) |> out(%, %)
 ```
 
 Rendered 2 s with `nkido-cli render`, then FFT'd:
@@ -121,7 +121,7 @@ The exploration agent saw:
 2. The `voice_fields` field existed on `PatternPayload`.
 3. The buffers were never copied into `voice_fields`.
 
-Conclusion *appeared* to be: "the wiring step is missing." The piece nobody read was the runtime — `POLY_BEGIN` doesn't go through `voice_fields`. The per-voice `SEQPAT_STEP` buffers are wired up to support pitch-pattern-as-control-signal use cases (e.g., `pat("c4 e4") |> osc("sin", %)`), where each voice's frequency drives an oscillator. Removing them would break those uses; they just don't talk to `poly()`.
+Conclusion *appeared* to be: "the wiring step is missing." The piece nobody read was the runtime — `POLY_BEGIN` doesn't go through `voice_fields`. The per-voice `SEQPAT_STEP` buffers are wired up to support pitch-pattern-as-control-signal use cases (e.g., `n"c4 e4" |> osc("sin", %)`), where each voice's frequency drives an oscillator. Removing them would break those uses; they just don't talk to `poly()`.
 
 The lesson: when the diagnosis is "X is missing in the codegen," confirm by tracing the *consumer* in the runtime. A field declared but never read is dead code, not a wiring bug.
 

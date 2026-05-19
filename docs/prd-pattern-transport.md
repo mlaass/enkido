@@ -21,22 +21,22 @@ These are fundamental for polyrhythmic composition, pattern-based sequencing of 
 
 ```akkado
 // Basic: step through pattern on each trigger, 1 beat per step
-transport(pat("c4 e4 g4"), trigger(2)) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2)) as e |> osc("sin", e.freq)
 
 // Custom step size: advance 0.5 beats per trigger
-transport(pat("c4 e4 g4"), trigger(4), 0.5) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(4), 0.5) as e |> osc("sin", e.freq)
 
 // Cross-pattern triggers: one pattern drives another
-transport(pat("c4 e4 g4"), pat("x x x x").trig) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", n"x x x x".trig) as e |> osc("sin", e.freq)
 
 // Pipe style (@ is Pattern thanks to type system)
-pat("c4 e4 g4") |> transport(@, trigger(2)) as e |> osc("sin", e.freq)
+n"c4 e4 g4" |> transport(@, trigger(2)) as e |> osc("sin", e.freq)
 
 // Negative step: reverse playback
-transport(pat("c4 e4 g4"), trigger(2), -1.0) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2), -1.0) as e |> osc("sin", e.freq)
 
 // With reset trigger (4th arg)
-transport(pat("c4 e4 g4"), trigger(2), 1.0, trigger(0.5)) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2), 1.0, trigger(0.5)) as e |> osc("sin", e.freq)
 ```
 
 ### Arguments
@@ -275,5 +275,5 @@ TransportState is preserved across hot-swaps via semantic ID matching, like all 
 
 - **Continuous transport (non-trigger).** Smoothly ramping through a pattern at a different BPM is a different feature (clock multiplication/division). This PRD focuses on trigger-driven stepping only.
 - **Pattern-level seeks.** Jumping to an arbitrary beat position via `seek(pattern, 2.5)` is out of scope. The reset trigger covers the "go to start" case.
-- **Nested transport.** `transport(transport(pat(...), trig1), trig2)` — while it should technically work (transport returns a Pattern), optimizing nested clock overrides is not a goal.
+- **Nested transport.** `transport(transport(n"…", trig1), trig2)` — while it should technically work (transport returns a Pattern), optimizing nested clock overrides is not a goal.
 - **Sample-accurate trigger quantization.** Triggers advance the position at the exact sample they fire. No quantization to beat grid.

@@ -190,15 +190,15 @@ Two pieces of infra make this cheap to land:
 ### 3.1 Dot-padding shorthand (Phase 2)
 
 ```akkado
-pat("c4 ..d4 e4 f4")              // d4 nudged late by 2/3 of slot
-pat("c4 d4 e4 f4...")             // f4 on beat, duration shrunk to 1/4
-pat("c4 ..d4... e4 f4")           // d4 starts at 2/6, dur 1/6
-pat("[c4 ..d4 e4 f4]")            // d4 nudged inside its 1/4-slot
-pat("..[a b c]")                  // group nudged late by 2/3
-pat("[a b c]...")                 // group on beat, interior compressed
-pat("..<a b c>...")               // alternation group, late by 2/6
-pat("..(3,8)")                    // euclidean group, late by 2/3
-pat("..{a, b, c}")                // polymeter group, late by 2/3
+n"c4 ..d4 e4 f4"              // d4 nudged late by 2/3 of slot
+n"c4 d4 e4 f4..."             // f4 on beat, duration shrunk to 1/4
+n"c4 ..d4... e4 f4"           // d4 starts at 2/6, dur 1/6
+n"[c4 ..d4 e4 f4]"            // d4 nudged inside its 1/4-slot
+n"..[a b c]"                  // group nudged late by 2/3
+n"[a b c]..."                 // group on beat, interior compressed
+n"..<a b c>..."               // alternation group, late by 2/6
+n"..(3,8)"                    // euclidean group, late by 2/3
+n"..{a, b, c}"                // polymeter group, late by 2/3
 ```
 
 Divider math:
@@ -218,10 +218,10 @@ the parser expands it to the equivalent subdivision.
 ### 3.2 Record-suffix `nudge:` precision (Phase 1)
 
 ```akkado
-pat("c4 d4{nudge: 0.07} e4 f4")   // d4 shifted late by 7% of cycle
-pat("c4 d4 e4{nudge: -0.05} f4")  // e4 shifted early by 5%
-pat("bd sd{nudge: 0.02} bd cp")   // groove on snare
-pat("c4 ..d4{nudge: 0.03} e4")    // dots + nudge: stack
+n"c4 d4{nudge: 0.07} e4 f4"   // d4 shifted late by 7% of cycle
+n"c4 d4 e4{nudge: -0.05} f4"  // e4 shifted early by 5%
+s"bd sd{nudge: 0.02} bd cp"   // groove on snare
+n"c4 ..d4{nudge: 0.03} e4"    // dots + nudge: stack
 ```
 
 `nudge:` is a float in **cycles**, range `[-1.0, 1.0]`. Positive =
@@ -232,15 +232,15 @@ caught early with a clear message.
 
 ```akkado
 // Atom-level: dots and nudge stack additively
-pat("..c4{nudge: 0.03}")
+n"..c4{nudge: 0.03}"
 // event.time = scope.start + (2/3)*scope.dur + 0.03
 
 // Group-level: dots on group, nudge applies per-event inside
-pat("..[c4 d4{nudge: 0.05} e4]")
+n"..[c4 d4{nudge: 0.05} e4]"
 // outer pad shrinks the group; d4 inside is nudged further by 0.05
 
 // Mixed atom kinds
-pat("..bd ..sd:2 ..C4'")          // pad on sample, sample-variant, chord
+s"..bd ..sd:2 ..C4'"          // pad on sample, sample-variant, chord
 ```
 
 ### 3.4 Composition with existing modifiers
@@ -647,7 +647,7 @@ independent.)
 
 ### 9.6 Trailing pad on the last atom of a cycle
 
-`pat("c4 d4 e4 f4...")` — f4 occupies its 1/4-cycle slot for only
+`n"c4 d4 e4 f4..."` — f4 occupies its 1/4-cycle slot for only
 1/4 of that slot's duration. The remaining 3/4 is silence inside f4's
 slot (no wrap to next cycle).
 

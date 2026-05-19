@@ -19,7 +19,7 @@ The tracking document claimed two items as FIXED (pattern transform chaining wit
 | §2.2 Method calls | **Met via UFCS** | `desugar_method_call` at `akkado/src/analyzer.cpp:1098` rewrites `a.f(b)` → `f(a, b)`; tests at `akkado/tests/test_codegen.cpp:1760-1898` check bytecode equivalence |
 | §2.3 Post statements | **Intentionally unimplemented** | `akkado/src/codegen.cpp:1518-1520` still fires E115; syntax is `post(closure)` per `akkado/src/parser.cpp:302-322`. No shipping code uses it. Not a blocker. |
 | §2.4 Field access on arbitrary expressions | **Met for valid cases** | `handle_field_access` type-dispatches to Pattern/Record; E135 at `akkado/src/codegen.cpp:1968-1983` correctly rejects field access on Signal/Number/Array/Function/String/Void |
-| §3.1 Chord expansion (`C4'`) | **Correctly obsolete** | `C4'` deprecated in favor of `chord("Am")` inside `pat()`; PRD already notes this |
+| §3.1 Chord expansion (`C4'`) | **Correctly obsolete** | `C4'` deprecated in favor of `chord("Am")` / `c"…"`; PRD already notes this |
 | §3.2 Array indexing | **Met (stale PRD claim)** | `ARRAY_INDEX` opcode exists in Cedar; `akkado/src/codegen.cpp:294-420` emits it for dynamic indices and constant-folds static ones; new tests at `akkado/tests/test_codegen.cpp:3503-3557` |
 
 ## Validation Commands
@@ -60,7 +60,7 @@ None. The PRD's "Test Commands" section only lists the command to invoke tests; 
 None flagged. `CLAUDE.md` conventions around commit messages, bun/npm, test-behavior preservation were followed.
 
 ### Suggestions
-- The edge case `p = pat(...); p.slow(2)` errors with E130 on the pattern-arg compile path — the method call is correctly rewritten to `slow(p, 2)`, but `compile_pattern_for_transform` in `codegen_patterns.cpp` doesn't follow `p` back to its `pat(...)` binding. Not an MVP blocker (direct `pat("c4 e4").slow(2)` works), but worth noting in a future pattern-arg polish pass. Documented inline in the PRD as a known edge.
+- The edge case `p = n"…"; p.slow(2)` errors with E130 on the pattern-arg compile path — the method call is correctly rewritten to `slow(p, 2)`, but `compile_pattern_for_transform` in `codegen_patterns.cpp` doesn't follow `n` back to its pattern-literal binding. Not an MVP blocker (direct `n"c4 e4".slow(2)` works), but worth noting in a future pattern-arg polish pass. Documented inline in the PRD as a known edge.
 - If `post(closure)` is to stay unimplemented long-term, consider either removing the grammar/parser support (currently accepts the syntax just to error in codegen), or implementing minimal "run this closure at end of block" semantics.
 
 ## Decisions Recorded

@@ -346,6 +346,16 @@
           "name": "q",
           "required": false,
           "default": 0.707
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "State-variable lowpass filter",
@@ -365,6 +375,16 @@
           "name": "q",
           "required": false,
           "default": 0.707
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "State-variable highpass filter",
@@ -384,6 +404,16 @@
           "name": "q",
           "required": false,
           "default": 0.707
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "State-variable bandpass filter",
@@ -589,7 +619,7 @@
           "required": true
         }
       ],
-      "description": "One-shot sample playback. id accepts a sample name (\\\"bd\\\", \\\"bd:3\\\", \\\"Bank/name:variant\\\") or numeric sample-bank ID.",
+      "description": "Stereo-native one-shot sample playback. id accepts a sample ",
       "requires_state": true
     },
     "sample_loop": {
@@ -607,7 +637,7 @@
           "required": true
         }
       ],
-      "description": "Looping sample playback. id accepts a sample name or numeric sample-bank ID.",
+      "description": "Stereo-native looping sample playback. id accepts a ",
       "requires_state": true
     },
     "soundfont": {
@@ -625,7 +655,31 @@
           "required": false
         }
       ],
-      "description": "SoundFont playback: soundfont(pattern, \\\"file.sf2\\\", preset)",
+      "description": "SoundFont playback: soundfont(pattern, \\\"file.sf2\\\", preset). Accepts midi() upstream for live polyphonic SF2 playback.",
+      "requires_state": true
+    },
+    "midi": {
+      "params": [
+        {
+          "name": "options",
+          "required": false
+        }
+      ],
+      "description": "MIDI event source. Bare midi() opens the default live device. ",
+      "requires_state": true
+    },
+    "midi_cc": {
+      "params": [
+        {
+          "name": "name",
+          "required": true
+        },
+        {
+          "name": "options",
+          "required": false
+        }
+      ],
+      "description": "Route an incoming MIDI CC / pitch-bend / channel-aftertouch to a ",
       "requires_state": false
     },
     "delay": {
@@ -645,12 +699,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Delay line (time in seconds, 0-10)",
@@ -673,12 +727,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Delay line (time in milliseconds, 0-10000)",
@@ -701,12 +755,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Delay line (time in samples, direct control)",
@@ -733,12 +787,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Tap delay with feedback chain (time in seconds)",
@@ -765,12 +819,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Tap delay with feedback chain (time in milliseconds)",
@@ -797,12 +851,12 @@
         {
           "name": "dry",
           "required": false,
-          "default": 0
+          "default": 1
         },
         {
           "name": "wet",
           "required": false,
-          "default": 1
+          "default": 0.5
         }
       ],
       "description": "Tap delay with feedback chain (time in samples)",
@@ -883,6 +937,16 @@
           "name": "damp",
           "required": false,
           "default": 0.3
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 1
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 0.5
         }
       ],
       "description": "Feedback delay network reverb",
@@ -915,7 +979,7 @@
           "default": 10
         }
       ],
-      "description": "Stereo chorus effect",
+      "description": "Stereo-native chorus (mono input widens; stereo input ",
       "requires_state": true
     },
     "flanger": {
@@ -945,7 +1009,7 @@
           "default": 10
         }
       ],
-      "description": "Classic flanger effect",
+      "description": "Stereo-native flanger. lfo_phase tunes the R-LFO offset.",
       "requires_state": true
     },
     "phaser": {
@@ -973,19 +1037,9 @@
           "name": "max_freq",
           "required": false,
           "default": 4000
-        },
-        {
-          "name": "stages",
-          "required": false,
-          "default": 4
-        },
-        {
-          "name": "feedback",
-          "required": false,
-          "default": 0.5
         }
       ],
-      "description": "Multi-stage phaser effect",
+      "description": "Stereo-native multi-stage phaser. ",
       "requires_state": true
     },
     "comb": {
@@ -1001,6 +1055,16 @@
         {
           "name": "fb",
           "required": true
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 1
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 0.5
         }
       ],
       "description": "Comb filter (resonant delay)",
@@ -1016,6 +1080,16 @@
           "name": "drive",
           "required": false,
           "default": 2
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Soft saturation (tanh) distortion",
@@ -1031,6 +1105,16 @@
           "name": "thresh",
           "required": false,
           "default": 0.5
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Soft clipper distortion",
@@ -1051,6 +1135,16 @@
           "name": "rate",
           "required": false,
           "default": 0.5
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Bit depth and sample rate reducer",
@@ -1086,6 +1180,16 @@
           "name": "bias",
           "required": false,
           "default": 0.1
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Tube amp emulation with bias",
@@ -1101,6 +1205,16 @@
           "name": "drive",
           "required": false,
           "default": 5
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "ADAA alias-free saturation",
@@ -1206,6 +1320,16 @@
           "name": "ratio",
           "required": false,
           "default": 4
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Dynamic range compressor",
@@ -1226,6 +1350,16 @@
           "name": "release",
           "required": false,
           "default": 0.1
+        },
+        {
+          "name": "dry",
+          "required": false,
+          "default": 0
+        },
+        {
+          "name": "wet",
+          "required": false,
+          "default": 1
         }
       ],
       "description": "Peak limiter with lookahead",
@@ -1768,7 +1902,63 @@
           "required": true
         }
       ],
-      "description": "Slew rate limiter (portamento)",
+      "description": "Slew rate limiter (portamento) — output width matches input",
+      "requires_state": true
+    },
+    "interp": {
+      "params": [
+        {
+          "name": "target",
+          "required": true
+        },
+        {
+          "name": "time",
+          "required": true
+        }
+      ],
+      "description": "Time-based interpolator (linear) — output width matches input",
+      "requires_state": true
+    },
+    "interp_ease_in": {
+      "params": [
+        {
+          "name": "target",
+          "required": true
+        },
+        {
+          "name": "time",
+          "required": true
+        }
+      ],
+      "description": "Time-based interpolator (ease-in, t²) — output width matches input",
+      "requires_state": true
+    },
+    "interp_ease_out": {
+      "params": [
+        {
+          "name": "target",
+          "required": true
+        },
+        {
+          "name": "time",
+          "required": true
+        }
+      ],
+      "description": "Time-based interpolator (ease-out, 1-(1-t)²) — output width matches input",
+      "requires_state": true
+    },
+    "interp_cos": {
+      "params": [
+        {
+          "name": "target",
+          "required": true
+        },
+        {
+          "name": "time",
+          "required": true
+        }
+      ],
+      "description": "Time-based interpolator (cosine S-curve) — output width matches input",
       "requires_state": true
     },
     "sah": {
@@ -1782,7 +1972,7 @@
           "required": true
         }
       ],
-      "description": "Sample and hold",
+      "description": "Sample and hold — output width matches input",
       "requires_state": true
     },
     "gateup": {
@@ -1792,7 +1982,7 @@
           "required": true
         }
       ],
-      "description": "1.0 on rising edge of sig",
+      "description": "1.0 on rising edge of sig — output width matches input",
       "requires_state": true
     },
     "gatedown": {
@@ -1802,7 +1992,7 @@
           "required": true
         }
       ],
-      "description": "1.0 on falling edge of sig",
+      "description": "1.0 on falling edge of sig — output width matches input",
       "requires_state": true
     },
     "counter": {
@@ -1820,7 +2010,7 @@
           "required": false
         }
       ],
-      "description": "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset",
+      "description": "Increment on rising edge of trig; reset to start (or 0) on rising edge of reset — output width matches input",
       "requires_state": true
     },
     "out": {
@@ -1874,7 +2064,7 @@
     "pan": {
       "params": [
         {
-          "name": "mono",
+          "name": "signal",
           "required": true
         },
         {
@@ -1882,7 +2072,7 @@
           "required": true
         }
       ],
-      "description": "Pan mono to stereo (-1=L, 0=center, 1=R)",
+      "description": "Pan signal at position (-1=L, 0=center, 1=R) — mono→stereo, or DAW-style stereo balance",
       "requires_state": false
     },
     "width": {
@@ -1896,7 +2086,7 @@
           "required": true
         }
       ],
-      "description": "Stereo width (0=mono, 1=normal, >1=wide)",
+      "description": "Stereo width via M/S (0=mono, 1=normal, >1=wide) — width(stereo, amt) or width(L, R, amt)",
       "requires_state": false
     },
     "ms_encode": {
@@ -1906,7 +2096,7 @@
           "required": true
         }
       ],
-      "description": "Convert stereo to mid/side",
+      "description": "Encode stereo to mid/side — ms_encode(stereo) or ms_encode(L, R)",
       "requires_state": false
     },
     "ms_decode": {
@@ -1916,7 +2106,7 @@
           "required": true
         }
       ],
-      "description": "Convert mid/side to stereo",
+      "description": "Decode mid/side to stereo — ms_decode(ms) or ms_decode(M, S)",
       "requires_state": false
     },
     "pingpong": {
@@ -1937,9 +2127,14 @@
           "name": "fb?",
           "required": false,
           "default": 1
+        },
+        {
+          "name": "width?",
+          "required": false,
+          "default": 1
         }
       ],
-      "description": "Ping-pong stereo delay",
+      "description": "Ping-pong stereo delay — pingpong(stereo, t, fb, width?) or pingpong(L, R, t, fb, width?)",
       "requires_state": true
     },
     "clock": {
@@ -2056,7 +2251,7 @@
           "required": true
         }
       ],
-      "description": "Apply function to each element of array",
+      "description": "Apply function to each element: map(array, (val) -> ...) or map(array, (val, idx) -> ...)",
       "requires_state": false
     },
     "sum": {
@@ -2066,7 +2261,7 @@
           "required": true
         }
       ],
-      "description": "Sum all elements of array",
+      "description": "Sum signals per-channel, preserving stereo: sum(array) or sum(a, b, ...)",
       "requires_state": false
     },
     "reduce": {
@@ -2291,9 +2486,13 @@
         {
           "name": "voices",
           "required": false
+        },
+        {
+          "name": "release",
+          "required": false
         }
       ],
-      "description": "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128.",
+      "description": "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128. `release` (seconds) extends per-voice mix tail past note-off.",
       "requires_state": true
     },
     "mono": {
@@ -2305,9 +2504,13 @@
         {
           "name": "input",
           "required": false
+        },
+        {
+          "name": "release",
+          "required": false
         }
       ],
-      "description": "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager",
+      "description": "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager. `release` (seconds) extends mix tail past note-off in voice-manager mode.",
       "requires_state": false
     },
     "legato": {
@@ -2319,9 +2522,13 @@
         {
           "name": "input",
           "required": false
+        },
+        {
+          "name": "release",
+          "required": false
         }
       ],
-      "description": "Legato voice manager",
+      "description": "Legato voice manager. `release` (seconds) extends mix tail past note-off.",
       "requires_state": false
     },
     "spread": {
@@ -2419,36 +2626,6 @@
         }
       ],
       "description": "Chord expansion (Am, C7, Fmaj7, etc.)",
-      "requires_state": false
-    },
-    "pat": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        }
-      ],
-      "description": "Mini-notation pattern. Returns values based on cycle position.",
-      "requires_state": false
-    },
-    "value": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        }
-      ],
-      "description": "Numeric scalar pattern (raw values, no mtof). Equivalent to v\\\"…\\\".",
-      "requires_state": false
-    },
-    "note": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        }
-      ],
-      "description": "Note-name pattern (note names + MIDI ints both → Hz). Equivalent to n\\\"…\\\".",
       "requires_state": false
     },
     "scalar": {

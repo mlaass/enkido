@@ -27,7 +27,7 @@ subfeatures:
   - name: Pattern Transforms
     anchor: pattern-transforms
     tagline: early, late, swing, palindrome, ply.
-    snippet: 'pat("c4 e4 g4 b4").early(0.25)'
+    snippet: 'n"c4 e4 g4 b4".early(0.25)'
   - name: Pattern Generators
     anchor: pattern-generators
     tagline: binary, run, iter, iterBack.
@@ -111,7 +111,7 @@ osc("noise") |> hp(@, 8000) * ar(trigger(2), 0.001, 0.05) |> out(@)
 
 ```akk
 // Fast arpeggio triggers
-pat("c4 e4 g4 c5")
+n"c4 e4 g4 c5"
     |> ((f) -> osc("saw", f) * ar(trigger(8)))
     |> out(@)
 ```
@@ -151,14 +151,14 @@ Related: [trigger](#trigger), [timelines](timelines)
 
 ## Pattern transforms
 
-Compile-time event-list rewriters that wrap a pattern. All compose via dot-call (`pat(...).slow(2).rev()`) and the equivalent functional form.
+Compile-time event-list rewriters that wrap a pattern. All compose via dot-call (`n"…".slow(2).rev()`) and the equivalent functional form.
 
 ### early
 
 `early(pattern, amount)` shifts events earlier by `amount` cycles, wrapping within `[0, 1)`.
 
 ```akk
-pat("c4 e4 g4 b4").early(0.25)  // each event plays 1/4 cycle earlier
+n"c4 e4 g4 b4".early(0.25)  // each event plays 1/4 cycle earlier
 ```
 
 ### late
@@ -171,7 +171,7 @@ pat("c4 e4 g4 b4").early(0.25)  // each event plays 1/4 cycle earlier
 
 ```akk
 // c4 e4 g4 b4 b4 g4 e4 c4 over 2× cycles
-pat("c4 e4 g4 b4").palindrome()
+n"c4 e4 g4 b4".palindrome()
 ```
 
 ### compress
@@ -201,8 +201,8 @@ pat("c4 e4 g4 b4").palindrome()
 `swing(pattern, n=4)` applies a 1/3 swing on an `n`-slice grid (default 4). `swingBy(pattern, amount, n=4)` lets you set the swing amount explicitly.
 
 ```akk
-pat("bd hh sd hh").swing()           // default 1/3 on 4 slices
-pat("bd hh sd hh").swingBy(0.5, 8)   // half-amount on 8 slices
+s"bd hh sd hh".swing()           // default 1/3 on 4 slices
+s"bd hh sd hh".swingBy(0.5, 8)   // half-amount on 8 slices
 ```
 
 ### iter / iterBack
@@ -210,7 +210,7 @@ pat("bd hh sd hh").swingBy(0.5, 8)   // half-amount on 8 slices
 `iter(pattern, n)` rotates the pattern's start by `1/n` per cycle (forward); `iterBack` rotates the opposite way. Implemented as a runtime rotation on the SequenceState; no compile-time event explosion.
 
 ```akk
-pat("c4 e4 g4 b4").iter(4)  // advance start by 1/4 each cycle
+n"c4 e4 g4 b4".iter(4)  // advance start by 1/4 each cycle
 ```
 
 ## Pattern generators

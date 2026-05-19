@@ -45,7 +45,7 @@ pos.y                     // 2
 Inside a pipe, the hole `@` carries the upstream value. When the upstream is a record (e.g. a pattern event), `@field` reads off it:
 
 ```akk
-pat("c4 e4 g4") |> osc("sin", @freq) |> out(@)
+n"c4 e4 g4" |> osc("sin", @freq) |> out(@)
 ```
 
 > **Both forms work.** `@field` (canonical) and `@.field` (legacy dotted form) compile to the same code. The dot is optional only when the field name is *immediately adjacent* to the hole — whitespace defeats the shorthand so `@ as e` still parses as a bare hole followed by a pipe binding. Method calls always require the dot: `@.method()`.
@@ -76,13 +76,13 @@ Spread is positional: fields written after the spread override fields from the s
 `as` binds the upstream value to a name so multiple downstream stages can read off it:
 
 ```akk
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
 ```
 
 Inline destructure inside `as` lifts the named fields directly into scope:
 
 ```akk
-pat("c4 e4 g4") as {freq, vel}
+n"c4 e4 g4" as {freq, vel}
     |> osc("sin", freq)
     |> @ * vel
     |> out(@)
@@ -164,11 +164,11 @@ voice.gate = 1
 
 ## Pattern events are records
 
-Every event a pattern produces is a record. All eleven fields work on every pattern producer — bare `pat()` and every transform (`fast`, `slow`, `rev`, `velocity`, `bank`, `variant`, `transpose`, `early`, `late`, `palindrome`, …).
+Every event a pattern produces is a record. All eleven fields work on every pattern producer — bare typed pattern literals and every transform (`fast`, `slow`, `rev`, `velocity`, `bank`, `variant`, `transpose`, `early`, `late`, `palindrome`, …).
 
 | Field | Aliases | Meaning |
 |---|---|---|
-| `freq` | `frequency`, `pitch`, `f`, `p` | Frequency in Hz |
+| `freq` | `frequency`, `pitch`, `f`, `n` | Frequency in Hz |
 | `vel` | `velocity`, `v` | Velocity, 0–1 |
 | `trig` | `trigger`, `t` | Trigger pulse at event onset |
 | `gate` | `g` | Event is currently active (sustain) |
@@ -184,25 +184,25 @@ Examples — every field works in pipes and after transforms:
 
 ```akk
 // @dur picks up event duration; great for pitch-from-velocity tricks
-pat("c4 e4 g4") |> osc("sin", @freq) * @vel * @gate |> out(@)
+n"c4 e4 g4" |> osc("sin", @freq) * @vel * @gate |> out(@)
 
 // Event-scoped phase ramps 0→1 once per note — perfect for envelopes
-fast(pat("c4 e4 g4"), 2)
+fast(n"c4 e4 g4", 2)
     |> osc("sin", @freq) * (1 - @phase)
     |> out(@)
 
 // MIDI note number flows through transforms
-slow(pat("c4 e4 g4"), 2) |> osc("sin", mtof(@note)) |> out(@)
+slow(n"c4 e4 g4", 2) |> osc("sin", mtof(@note)) |> out(@)
 ```
 
 Custom fields attached via `.set("name", value)` chains live alongside these and are visible in autocomplete:
 
 ```akk
-beat = pat("c4 e4").set("cutoff", saw(0.5)).set("res", 0.7)
+beat = n"c4 e4".set("cutoff", saw(0.5)).set("res", 0.7)
 beat |> lp(osc("sin", @freq), @cutoff, @res) |> out(@)
 ```
 
-A custom field that collides with one of the fixed names is silently shadowed by the fixed slot — `pat("c4").set("freq", x)` will not change what `@freq` reads. The editor's autocomplete deduplicates by name so the suggestions never mislead.
+A custom field that collides with one of the fixed names is silently shadowed by the fixed slot — `n"c4".set("freq", x)` will not change what `@freq` reads. The editor's autocomplete deduplicates by name so the suggestions never mislead.
 
 ## Records as builtin options
 

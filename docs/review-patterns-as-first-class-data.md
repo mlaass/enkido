@@ -4,7 +4,7 @@
 
 ## Context
 
-Akkado has a powerful mini-notation system for defining musical patterns (`pat("c4 e4 g4")`), and a rich set of typed primitives (records, arrays, numbers, signals). However, these two worlds are largely disconnected. Patterns are opaque compile-time artifacts — you can create them from strings, access their output fields, and apply a fixed set of transforms, but you cannot construct, decompose, inspect, or manipulate them using the same record/array/number primitives that the rest of the language provides.
+Akkado has a powerful mini-notation system for defining musical patterns (`n"c4 e4 g4"`), and a rich set of typed primitives (records, arrays, numbers, signals). However, these two worlds are largely disconnected. Patterns are opaque compile-time artifacts — you can create them from strings, access their output fields, and apply a fixed set of transforms, but you cannot construct, decompose, inspect, or manipulate them using the same record/array/number primitives that the rest of the language provides.
 
 More critically, pattern *content* is entirely static at runtime. Once compiled, the events in a pattern cannot be changed by signals, parameters, or external input. This rules out dynamic arpeggiators, evolving melodies, reactive compositions, and any use case where pattern data needs to respond to the live state of the system.
 
@@ -15,7 +15,7 @@ This document catalogs what's already possible, identifies the gaps, and propose
 ## 1. What Already Works
 
 ### Pattern Creation
-- **Mini-notation strings**: `pat("c4 e4 g4")`, `pat("bd sd [hh hh] cp")`
+- **Mini-notation strings**: `n"c4 e4 g4"`, `s"bd sd [hh hh] cp"`
 - **Chord patterns**: `chord("Am C7 F G")` with Strudel-compatible symbol parsing
 - **Algorithmic**: `euclid(k, n, rot)` as a Cedar opcode (runtime), Euclidean syntax `bd(3,8)` in mini-notation
 - **Timeline curves**: `timeline("0 0.5 1 0.5")` for automation breakpoints
@@ -31,14 +31,14 @@ These are extracted into audio-rate buffers by `SEQPAT_STEP`/`SEQPAT_GATE`/`SEQP
 
 ### Named Bindings and Destructuring
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel
-pat("c4 e4 g4") as {freq, vel} |> osc("sin", freq) |> % * vel
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel
+n"c4 e4 g4" as {freq, vel} |> osc("sin", freq) |> % * vel
 ```
 
 ### Compile-Time Pattern Transforms
 `slow`, `fast`, `rev`, `transpose`, `velocity`, `bank`, `variant` — all modify the compiled `Sequence` event list before bytecode emission. Callable via both functional and dot-call syntax:
 ```akkado
-pat("c4 e4 g4").slow(2).transpose(12).velocity(0.8)
+n"c4 e4 g4".slow(2).transpose(12).velocity(0.8)
 ```
 
 ### Type System Foundation
@@ -84,7 +84,7 @@ Patterns can *only* originate from string literals parsed by the mini-notation p
 You cannot get a pattern's events out as an array:
 ```akkado
 // IMPOSSIBLE today:
-p = pat("c4 e4 g4")
+p = n"c4 e4 g4"
 events = p.events      // does not exist
 first = events[0]
 first.freq
@@ -98,7 +98,7 @@ The only way to "read" a pattern is through its 5 audio-rate field buffers.
 You cannot map, filter, or transform individual events using the language's functional tools:
 ```akkado
 // IMPOSSIBLE today:
-pat("c4 e4 g4 b4")
+n"c4 e4 g4 b4"
   |> filter_events(%, e -> e.freq > 400)
   |> map_events(%, e -> {..e, vel: e.vel * 0.5})
 ```
@@ -110,8 +110,8 @@ The existing transforms (`slow`, `transpose`, etc.) are a closed set. Users cann
 You cannot merge, concatenate, or interleave patterns:
 ```akkado
 // IMPOSSIBLE today:
-kicks = pat("bd ~ bd ~")
-snares = pat("~ sd ~ sd")
+kicks = s"bd ~ bd ~"
+snares = s"~ sd ~ sd"
 combined = stack(kicks, snares)
 appended = cat(kicks, snares)
 ```
@@ -163,7 +163,7 @@ This is the gap that most limits Akkado's expressiveness for live performance an
 ```akkado
 // Arpeggiator: chord input writes into a pattern's event slots
 chord_notes = chord_detect(midi_in)  // produces array of frequencies
-p = pat("x x x x")  // 4-slot rhythmic scaffold
+p = n"x x x x"  // 4-slot rhythmic scaffold
 
 // Each event's pitch comes from the live chord
 p.set_freq(0, chord_notes[0])
@@ -206,7 +206,7 @@ pitch_table.set(2, 329.6)  // E4
 // ... etc
 
 // Pattern references table indices, not literal pitches
-pat("0 2 4 7").lookup(pitch_table) as e
+n"0 2 4 7".lookup(pitch_table) as e
   |> osc("sin", e.freq)
   |> out(%, %)
 
@@ -237,7 +237,7 @@ pitch_table.set(0, 440.0)  // now slot 0 plays A4 instead of C4
 
 ```akkado
 // Pattern provides triggers only (rhythm)
-p = pat("x x x [x x]")
+p = n"x x x [x x]"
 
 // Signal provides values (melody)
 melody = lfo("sah", 1) * 500 + 200  // random S&H melody
@@ -275,7 +275,7 @@ my_pat = pattern([
 ])
 
 // Decomposition: pattern -> array of event records
-events = pat("c4 e4 g4").events
+events = n"c4 e4 g4".events
 
 // Manipulation: use existing array tools
 loud = events |> map(%, e -> {..e, vel: 1.0})
@@ -287,16 +287,16 @@ pattern(loud) |> osc("sin", %.freq) |> out(%, %)
 
 **Why this is complementary, not primary**: All operations are compile-time — no runtime dynamism. But it's the foundation for programmatic pattern *generation*. You'd use this to algorithmically construct the initial pattern structure, then use Approaches A/B/C to make it dynamic at runtime.
 
-**Implementation**: Define a canonical event record shape. Add `pattern(events_array)` that feeds into `SequenceCompiler`. Add `.events` accessor that returns compiled events as an Array of Records. Round-trip guarantee: `p.events |> pattern(%)` ≡ `p`.
+**Implementation**: Define a canonical event record shape. Add `pattern(events_array)` that feeds into `SequenceCompiler`. Add `.events` accessor that returns compiled events as an Array of Records. Round-trip guarantee: `p.events |> pattern(%)` ≡ `n`.
 
 ### Approach E: Pattern Combinators
 
 **Core idea**: Composition operators that work on Pattern-typed values.
 
 ```akkado
-stack(pat("bd ~ bd ~"), pat("~ sd ~ sd"))  // layer (simultaneous)
-cat(pat("c4 e4"), pat("g4 b4"))            // sequence (consecutive)
-interleave(pat("c4 e4 g4"), pat("d4 f4 a4"))  // alternate events
+stack(s"bd ~ bd ~", s"~ sd ~ sd")  // layer (simultaneous)
+cat(n"c4 e4", n"g4 b4")            // sequence (consecutive)
+interleave(n"c4 e4 g4", n"d4 f4 a4")  // alternate events
 ```
 
 **If patterns are decomposable** (Approach D), these are array operations: `stack` = concat events + time-scale, `cat` = concat with time offset, etc. Dedicated combinators would be more ergonomic and could produce optimized compiled output.
@@ -363,7 +363,7 @@ interleave(pat("c4 e4 g4"), pat("d4 f4 a4"))  // alternate events
 
 10. **Filter semantics**: If you filter events out of a pattern, what happens to timing? Absolute times (leaving gaps) vs. redistribute (closing gaps)? Both are useful — probably need both modes.
 
-11. **Round-trip fidelity**: Should `pat("c4 e4").events` return the *same* record shape as what `pattern()` accepts? Perfect round-tripping is valuable but means exposing internal details like `type_id` and `source_offset`.
+11. **Round-trip fidelity**: Should `n"c4 e4".events` return the *same* record shape as what `pattern()` accepts? Perfect round-tripping is valuable but means exposing internal details like `type_id` and `source_offset`.
 
 ### Syntax
 

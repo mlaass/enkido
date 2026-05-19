@@ -4,7 +4,7 @@
 
 ## 1. Overview
 
-Akkado patterns already carry chord/polyphonic data in their internal event format: `OutputEvent.values[MAX_VALUES_PER_EVENT=8]` plus `num_values` (`cedar/include/cedar/opcodes/sequencing.hpp:412,498`). When you write `pat("[c4,e4,g4] g3 [a3,c4]")` or `chord("Am G C")`, each event carries up to 8 notes. Today, only the **first** note of any event surfaces in user code — `e.freq` and `e.note` (`akkado/src/codegen.cpp` `pattern_field()` ~line 1865+) extract `values[0]` only. To play the chord polyphonically, the user wraps with `poly(...)` and the runtime voice allocator silently dispatches each chord note to a separate voice. **The user never sees the chord as data they can transform.**
+Akkado patterns already carry chord/polyphonic data in their internal event format: `OutputEvent.values[MAX_VALUES_PER_EVENT=8]` plus `num_values` (`cedar/include/cedar/opcodes/sequencing.hpp:412,498`). When you write `n"[c4,e4,g4] g3 [a3,c4]"` or `chord("Am G C")`, each event carries up to 8 notes. Today, only the **first** note of any event surfaces in user code — `e.freq` and `e.note` (`akkado/src/codegen.cpp` `pattern_field()` ~line 1865+) extract `values[0]` only. To play the chord polyphonically, the user wraps with `poly(...)` and the runtime voice allocator silently dispatches each chord note to a separate voice. **The user never sees the chord as data they can transform.**
 
 This blocks an entire class of live-coding tools: arpeggiators, harmonizers, riff machines, ostinatos, voicing transformers — anything that wants to *iterate over* or *transform* the notes of a chord rather than just sound them. Each one currently requires a new C++ opcode.
 
@@ -35,7 +35,7 @@ This PRD surfaces the chord array as a first-class **dynamic array** value type 
 | Capability | Status | Reference |
 |---|---|---|
 | `OutputEvent.values[8]` carries up to 8 notes per event | ✅ | `cedar/include/cedar/opcodes/sequencing.hpp:412,498` |
-| `pat("[c4,e4,g4]")` mini-notation chord events | ✅ | `akkado/src/mini_lexer.cpp:449`, `pattern_eval.cpp:198` |
+| `n"[c4,e4,g4]"` mini-notation chord events | ✅ | `akkado/src/mini_lexer.cpp:449`, `pattern_eval.cpp:198` |
 | `chord("Am G C")` builtin (pattern-of-chords) | ✅ | `akkado/src/codegen_patterns.cpp:1173` |
 | `e.freq`, `e.note` scalar field access on pattern events | ✅ (first-note only) | `akkado/src/codegen.cpp` `pattern_field()` ~1865+ |
 | `poly(pattern, instrument, voices)` runtime voice allocator | ✅ | `akkado/src/codegen_functions.cpp:1437` |
@@ -96,8 +96,8 @@ The closest existing surface — `e.freq` — is locked to the first chord note.
 ### 4.1 Read chord notes from a pattern event
 
 ```akkado
-// pat() emits chord events; notes(e) gives the array; len() tells us its size
-pat("[c4, e4, g4] g3 [a3, c4]") as e
+// the pattern emits chord events; notes(e) gives the array; len() tells us its size
+n"[c4, e4, g4] g3 [a3, c4]" as e
 e.notes        // dynamic array of MIDI [60, 64, 67] then [55] then [57, 60] per event
 e.freqs        // same as Hz: [261.6, 329.6, 392.0] then [196.0] then ...
 len(e.notes)   // dynamic signal: 3, then 1, then 2
@@ -107,7 +107,7 @@ len(e.notes)   // dynamic signal: 3, then 1, then 2
 
 ```akkado
 // Walk the current chord on every 8th note, sound through a sine
-pat("[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]") as e
+n"[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]" as e
   |> e.notes.step(trigger(8))   // UFCS from state PRD: step(notes(e), trigger(8))
   |> note(@)                    // MIDI → Hz
   |> osc("sin", @)
@@ -120,7 +120,7 @@ pat("[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]") as e
 
 ```akkado
 // Add a 3rd and 5th to every melody note; play the chord with poly
-pat("c4 e4 g4 e4") as e
+n"c4 e4 g4 e4" as e
   |> map([0, 4, 7], (i) -> e.note + i)   // [n, n+4, n+7] — a static array of 3 elements
   |> poly(@, (f, g, v) -> osc("sin", note(f)) * ar(g, 0.01, 0.3) * v)
   |> out(@, @)
@@ -136,14 +136,14 @@ intervals = [0, 4, 7]
 len(intervals)         // PUSH_CONST 3 — known at compile time
 
 // Dynamic array — runtime length signal
-pat("[c4, e4, g4] [a3, c4]") as e
+n"[c4, e4, g4] [a3, c4]" as e
 len(e.notes)           // signal: 3 for first event, 2 for second event
 ```
 
 ### 4.5 Compile error on auto-fan-out of dynamic arrays
 
 ```akkado
-pat("[c4, e4, g4]") as e
+n"[c4, e4, g4]" as e
 osc("sin", e.freqs)
 // E???: Stateful operators cannot auto-expand over dynamic arrays
 //       (chord size varies per pattern event). Wrap with poly() for runtime polyphony:
@@ -244,7 +244,7 @@ Pure deletion sweep. No new code; just removal:
 | `case NodeType::ChordLit` in `codegen.cpp:206-218` | Delete |
 | Lexer paths in `lexer.cpp:419, 554, 672` | Delete |
 | ~30 ChordLit test cases in `akkado/tests/test_lexer.cpp` | Delete |
-| `akkado/include/akkado/chord_parser.hpp` | **Stays** — still used by `mini_lexer.cpp` and `pattern_eval.cpp` for parsing chord symbols inside `pat()` strings |
+| `akkado/include/akkado/chord_parser.hpp` | **Stays** — still used by `mini_lexer.cpp` and `pattern_eval.cpp` for parsing chord symbols inside pattern-literal strings |
 
 ---
 
@@ -384,7 +384,7 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
 | `osc("sin", [60, 64, 67])` (stateful fan-out over static Array) | Unchanged — fans out to 3 oscillators with stable per-element state IDs | Static arrays preserve existing behavior |
 | `map(e.notes, fn)` (dynamic array through a stateless map) | **Open** — does map auto-iterate up to current `len`? Or also reject? | Likely allowed since `map` is stateless; documented in implementation notes |
 | `e.freq` on a chord event (existing accessor) | Returns first chord note's frequency (today's behavior, unchanged) | Backward compatibility for monophonic patches |
-| Pattern with mixed monophonic + chord events (e.g. `pat("c4 [e4,g4] a4")`) | `e.notes` length signal is `1, 2, 1` per event in turn | Naturally falls out of the per-event fill |
+| Pattern with mixed monophonic + chord events (e.g. `n"c4 [e4,g4] a4"`) | `e.notes` length signal is `1, 2, 1` per event in turn | Naturally falls out of the per-event fill |
 | Hot-swap: pattern source code edited | Pattern state preserved per state PRD semantics; DynArray is recreated each block from current event | DynArray has no persistent state of its own |
 | Defining a closure named `notes` or `freqs` | Same as state PRD: reserved-builtin error if codegen depends on name resolution; otherwise lexical shadowing wins | Match state PRD's `state`/`get`/`set` precedent if needed |
 | `e.notes` as the input to `poly()` | **Future work** — `poly()` consumes a Pattern TypedValue today, not a DynArray. Could be extended to "spawn one voice per dynamic-array element per event" but is out of scope | Composition happens via `poly(e, ...)` (existing) |
@@ -405,7 +405,7 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
 
 - **Q3: Should `map(dyn_arr, fn)` work?** `map` over a runtime-varying-length array is a useful primitive (per-note transforms inside a chord event). Specifying it requires deciding whether `map` outputs a same-shape DynArray or fans out at compile time. **Recommend: allow `map` over DynArray, output is same-length DynArray, executed via element-wise loop with runtime length.** Carries through to Phase 3.
 
-- **Q4: Should `notes(e)` / `freqs(e)` accept a Pattern variable that is the result of a `pat()` *expression* (not a `pipe-bound` variable)?** I.e. is `notes(pat("..."))` allowed, or must it be `pat("...") as e |> notes(e) ...`? Likely answer: both — `notes(e)` accepts any TypedValue::Pattern. Confirm during Phase 3.
+- **Q4: Should `notes(e)` / `freqs(e)` accept a Pattern variable that is the result of a pattern-literal *expression* (not a `pipe-bound` variable)?** I.e. is `notes(n"...")` allowed, or must it be `n"..." as e |> notes(e) ...`? Likely answer: both — `notes(e)` accepts any TypedValue::Pattern. Confirm during Phase 3.
 
 - **Q5: Per-note vels/gates** — when do we promote `vels(e)` / `gates(e)` / `trigs(e)` from "future work" to a real PRD? Trigger: when a real use case (e.g. accent patterns within a chord) is requested.
 
@@ -438,9 +438,9 @@ Use a synthetic-DynArray test fixture (no pattern integration yet) to exercise t
 Akkado tests in `akkado/tests/test_pattern_event_arrays.cpp`:
 
 ```
-- notes(pat("[c4,e4,g4]")) yields a DynArray; sample 0 = 60.0, sample 1 = 64.0, sample 2 = 67.0; len = 3
-- freqs(pat("[c4,e4,g4]")) yields the MTOF-converted equivalents; len = 3
-- pat("c4 [e4,g4] a4") drives len signal through 1, 2, 1 across events
+- notes(n"[c4,e4,g4]") yields a DynArray; sample 0 = 60.0, sample 1 = 64.0, sample 2 = 67.0; len = 3
+- freqs(n"[c4,e4,g4]") yields the MTOF-converted equivalents; len = 3
+- n"c4 [e4,g4] a4" drives len signal through 1, 2, 1 across events
 - e.notes UFCS sugar produces identical bytecode to notes(e) (requires state PRD's UFCS)
 - e.notes[counter(trig)] (with state PRD primitives) compiles and steps correctly
 - e.freq (existing scalar) continues to return first-note value, bit-identical to today

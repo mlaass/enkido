@@ -14,10 +14,10 @@ Akkado's mini-notation does **not** follow the Strudel/TidalCycles cycle-fitting
 
 | Pattern | Strudel-correct length | Akkado actual length |
 |---|---|---|
-| `pat("c d")` | 1 cycle (4 beats) | **2 beats** (½ cycle) |
-| `pat("c d e f")` | 1 cycle (4 beats) | 4 beats (1 cycle) — correct by coincidence |
-| `pat("c d e f g a b c5")` | 1 cycle (4 beats) | **8 beats** (2 cycles) |
-| `pat("<a b c d>")` (alternation, 1 top-level element) | 4 cycles | **1 beat per cycle**, 1 cycle total |
+| `n"c d"` | 1 cycle (4 beats) | **2 beats** (½ cycle) |
+| `n"c d e f"` | 1 cycle (4 beats) | 4 beats (1 cycle) — correct by coincidence |
+| `n"c d e f g a b c5"` | 1 cycle (4 beats) | **8 beats** (2 cycles) |
+| `n"<a b c d>"` (alternation, 1 top-level element) | 4 cycles | **1 beat per cycle**, 1 cycle total |
 
 The pattern evaluator (`pattern_eval.cpp`) is correct — it produces normalized `[0, 1)` event times. The bug lives one step further down the pipeline, in `codegen_patterns.cpp`, where those normalized times are rescaled by `num_top_level_elements` beats rather than by the canonical `4` beats per cycle.
 
@@ -65,18 +65,18 @@ These contracts are what the implementation breaks.
 
 | Pattern | Element count | Expected duration | Expected event times |
 |---|---|---|---|
-| `pat("c4")` | 1 | 1 cycle (4 beats) | beat 0 only |
-| `pat("c4 e4")` | 2 | 1 cycle (4 beats) | beats 0, 2 |
-| `pat("c4 e4 g4")` | 3 | 1 cycle (4 beats) | beats 0, ~1.333, ~2.667 |
-| `pat("c4 e4 g4 b4")` | 4 | 1 cycle (4 beats) | beats 0, 1, 2, 3 |
-| `pat("c d e f g a b c5")` | 8 | 1 cycle (4 beats) | beats 0, 0.5, 1, …, 3.5 |
-| `pat("a [b c] d")` | 3 (nested group counts as 1 slot) | 1 cycle (4 beats) | beat 0 (a), beat ~1.333 (b), beat ~2.0 (c), beat ~2.667 (d). Inner `[b c]` subdivides *within its 1/3 slot* — eval handles this; codegen is unchanged. |
-| `pat("a@2 b")` (weighted) | 2 elements, total weight 3 | 1 cycle (4 beats) | beat 0 (a, holds for 2/3 cycle = ~2.667 beats), beat ~2.667 (b) |
-| `pat("~ ~ ~")` | 3 | 1 cycle (4 beats), zero events emitted | (silence — rests produce no `PatternEvent`) |
-| `pat("")` | 0 (or 1, depending on parse) | 1 cycle (4 beats), zero events | safe fallback; sequencer schedules nothing |
-| `pat("<a b c d>")` (alternation) | 1 top-level | 1 cycle (4 beats); alternates a→b→c→d across 4 successive cycles | inner alternation is an eval-stage concern; codegen sees 1 slot |
-| `pat("a b").slow(2)` | 2, then ×2 | 2 cycles (8 beats) | beats 0, 4 |
-| `pat("a b c d").fast(2)` | 4, then ÷2 | ½ cycle (2 beats) | beats 0, 0.5, 1, 1.5 |
+| `n"c4"` | 1 | 1 cycle (4 beats) | beat 0 only |
+| `n"c4 e4"` | 2 | 1 cycle (4 beats) | beats 0, 2 |
+| `n"c4 e4 g4"` | 3 | 1 cycle (4 beats) | beats 0, ~1.333, ~2.667 |
+| `n"c4 e4 g4 b4"` | 4 | 1 cycle (4 beats) | beats 0, 1, 2, 3 |
+| `n"c d e f g a b c5"` | 8 | 1 cycle (4 beats) | beats 0, 0.5, 1, …, 3.5 |
+| `n"a [b c] d"` | 3 (nested group counts as 1 slot) | 1 cycle (4 beats) | beat 0 (a), beat ~1.333 (b), beat ~2.0 (c), beat ~2.667 (d). Inner `[b c]` subdivides *within its 1/3 slot* — eval handles this; codegen is unchanged. |
+| `n"a@2 b"` (weighted) | 2 elements, total weight 3 | 1 cycle (4 beats) | beat 0 (a, holds for 2/3 cycle = ~2.667 beats), beat ~2.667 (b) |
+| `n"~ ~ ~"` | 3 | 1 cycle (4 beats), zero events emitted | (silence — rests produce no `PatternEvent`) |
+| `n""` | 0 (or 1, depending on parse) | 1 cycle (4 beats), zero events | safe fallback; sequencer schedules nothing |
+| `n"<a b c d>"` (alternation) | 1 top-level | 1 cycle (4 beats); alternates a→b→c→d across 4 successive cycles | inner alternation is an eval-stage concern; codegen sees 1 slot |
+| `n"a b".slow(2)` | 2, then ×2 | 2 cycles (8 beats) | beats 0, 4 |
+| `n"a b c d".fast(2)` | 4, then ÷2 | ½ cycle (2 beats) | beats 0, 0.5, 1, 1.5 |
 
 All edge-case behaviors above derive from the rule "cycle length is 1.0 cycle (4 beats) regardless of element count; transforms compose multipliers on cycles."
 
@@ -101,7 +101,7 @@ The bug is split across two stages of the pipeline. Stage A is correct; the bug 
   };
   ```
 - `akkado/src/pattern_eval.cpp:146-176` (`eval_pattern`) and `:261-290` (`eval_group`) — divide the parent `duration` by `total_weight`, giving each child its proportional slice. Correct.
-- `akkado/tests/test_mini_notation.cpp:569-586` confirms `pat("c4 e4 g4")` produces events at normalized times `[0.0, 0.333, 0.666]`. These are *cycle-relative* — the eval stage is doing the right thing.
+- `akkado/tests/test_mini_notation.cpp:569-586` confirms `n"c4 e4 g4"` produces events at normalized times `[0.0, 0.333, 0.666]`. These are *cycle-relative* — the eval stage is doing the right thing.
 
 ### Stage B — codegen (WRONG: rescales `[0, 1)` by element count)
 
@@ -130,7 +130,7 @@ The pattern-transform machinery (`compute_transformed_events` and `out_cycle_len
 
 ### Worked example end-to-end
 
-`pat("c d e f g a b c5")` (8 notes) at default bpm:
+`n"c d e f g a b c5"` (8 notes) at default bpm:
 - Stage A produces 8 events at times `0, 0.125, 0.25, …, 0.875` (in `[0, 1)`).
 - Stage B sets `cycle_length = 8.0f` beats.
 - Cedar schedules them at beats `0, 1, 2, …, 7` — one per beat, pattern length = 8 beats = **2 cycles**.
@@ -281,7 +281,7 @@ The deeper "cycles-only model — drop beats from Cedar entirely" is a separate 
 ### Tests that pin the broken behavior and will fail after the fix (rewrite to assert Strudel-correct values)
 
 - `akkado/tests/test_codegen.cpp:1375-1390` — `cycle_length` and `expected_duration = cycle_length / 3.0f` derived from element count. Recompute against `cycle_length = 4.0f` (post-handoff) base.
-- `akkado/tests/test_codegen.cpp:2183-2300` — `pat("c4 e4")` cluster: every `CHECK(si.cycle_length == Catch::Approx(2.0f))` and `Approx(4.0f)` and `Approx(1.0f)` (for fast/slow combinations) needs re-derivation. The new identity-pattern post-handoff base is `4`, not `num_elements`.
+- `akkado/tests/test_codegen.cpp:2183-2300` — `n"c4 e4"` cluster: every `CHECK(si.cycle_length == Catch::Approx(2.0f))` and `Approx(4.0f)` and `Approx(1.0f)` (for fast/slow combinations) needs re-derivation. The new identity-pattern post-handoff base is `4`, not `num_elements`.
 - `akkado/tests/test_codegen.cpp:3071-3442` — palindrome / linger / zoom / segment / run pattern-transform asserts: each `Approx(N.0f)` value was derived as `num_elements × transform_factor`; new expected values are `4 × transform_factor`.
 
 ### New test — end-to-end timing regression
@@ -292,14 +292,14 @@ Suggested assertions:
 
 | Test name | Input | Asserts |
 |---|---|---|
-| `cycle_timing_single_element` | `pat("c4")` | `seq_init.cycle_length == 4.0f`; 1 event at beat 0 |
-| `cycle_timing_two_elements` | `pat("c4 e4")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 2 |
-| `cycle_timing_four_elements` | `pat("c4 d4 e4 f4")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 1, 2, 3 |
-| `cycle_timing_eight_elements` | `pat("c d e f g a b c5")` | `seq_init.cycle_length == 4.0f`; events at beats 0, 0.5, 1, …, 3.5 |
-| `cycle_timing_slow_2` | `pat("c d").slow(2)` | `seq_init.cycle_length == 8.0f`; events at beats 0, 4 |
-| `cycle_timing_fast_2` | `pat("c d e f").fast(2)` | `seq_init.cycle_length == 2.0f`; events at beats 0, 0.5, 1, 1.5 |
-| `cycle_timing_alternation` | `pat("<a b c d>")` | `seq_init.cycle_length == 4.0f`; 1 event per cycle, cycling a→b→c→d |
-| `cycle_timing_weighted` | `pat("a@2 b")` | `seq_init.cycle_length == 4.0f`; events at beats 0 (a, dur ~2.667) and ~2.667 (b) |
+| `cycle_timing_single_element` | `n"c4"` | `seq_init.cycle_length == 4.0f`; 1 event at beat 0 |
+| `cycle_timing_two_elements` | `n"c4 e4"` | `seq_init.cycle_length == 4.0f`; events at beats 0, 2 |
+| `cycle_timing_four_elements` | `n"c4 d4 e4 f4"` | `seq_init.cycle_length == 4.0f`; events at beats 0, 1, 2, 3 |
+| `cycle_timing_eight_elements` | `n"c d e f g a b c5"` | `seq_init.cycle_length == 4.0f`; events at beats 0, 0.5, 1, …, 3.5 |
+| `cycle_timing_slow_2` | `n"c d".slow(2)` | `seq_init.cycle_length == 8.0f`; events at beats 0, 4 |
+| `cycle_timing_fast_2` | `n"c d e f".fast(2)` | `seq_init.cycle_length == 2.0f`; events at beats 0, 0.5, 1, 1.5 |
+| `cycle_timing_alternation` | `n"<a b c d>"` | `seq_init.cycle_length == 4.0f`; 1 event per cycle, cycling a→b→c→d |
+| `cycle_timing_weighted` | `n"a@2 b"` | `seq_init.cycle_length == 4.0f`; events at beats 0 (a, dur ~2.667) and ~2.667 (b) |
 
 Each assertion must trace through the actual compile → `seq_init` → scheduled event times, not just the eval stage. This is the test the audit in §4 says should have existed.
 
@@ -374,7 +374,7 @@ These are seen by every first-time user and must continue to sound musically sen
 For each affected patch, decide:
 1. Was the pattern authored to the broken "1 beat per step" model? → Likely sounds at wrong tempo after fix; consider wrapping in `.slow(num_elements/4)` to preserve the old feel, *or* leave alone if the new (faster, denser) timing is musically defensible.
 2. Was an external `trigger(N)` rate chosen to match the broken pattern length? → Will desynchronise after fix; recompute `N` against the cycle-fitted length.
-3. Does the patch use `pat()` with exactly 4 top-level elements? → No change needed, behaviour identical.
+3. Does the patch use a pattern literal with exactly 4 top-level elements? → No change needed, behaviour identical.
 
 **Per-patch decision logging.** Every Phase-3 migration PR must record its choice in the PR description: `preserve` (wrapped in `.slow()` to keep old feel) / `retune` (accepted new musical intent, possibly with light rewrites) / `unchanged` (4 top-level elements; no audible change). This is especially important for `welcome/` patches — the decision shouldn't be silent. The log creates a record for future onboarding-content reviews.
 
@@ -448,11 +448,11 @@ Variants tested:
 | `notes = n"…"; notes \|> saw(@freq) \|> …` (var, no transform) | ✓ |
 | `notes = n"…".slow(2); notes \|> saw(@freq) \|> …` (var + transform on def) | ✗ E061 |
 | `notes = n"…"; notes.slow(2) \|> saw(@freq) \|> …` (var, transform at use) | ✓ |
-| Same with `pat("…")` or `note("…")` instead of `n"…"` | ✗ E061 |
+| Same with `n"…"` or `n"…"` instead of `n"…"` | ✗ E061 |
 
 The records-and-field-access PRD audit (2026-05-13) claims transforms preserve record fields uniformly — this bug breaks that claim along the variable-binding path. The workaround used in this PR is to apply `.slow()` / `.fast()` at the read site rather than baking it into the variable's definition. The codegen bug should be filed as a separate issue and fixed independently.
 
-> **Fixed 2026-05-18 (same day).** The analyzer's `collect_definitions` had no case for `Assignment` RHS of type `MethodCall`, so transformed-pattern bindings fell through to `define_variable` and lost their Pattern symbol-kind. Added a `MethodCall` branch (and a `is_pattern_producing_expr` helper that walks the receiver chain) in `akkado/src/analyzer.cpp`, plus a `Call`-branch case for `chord`/`pat`/`seq`/`value`/`note` callees. Codegen's `handle_pattern_reference` (`akkado/src/codegen_patterns.cpp`) now delegates Call/MethodCall `pattern_node`s to `visit()`, which routes through the existing transform handlers (`handle_slow_call`, `handle_note_call`, etc.). The workaround-form `.slow()` / `.fast()` calls in `visualizations.akk` and `soundfont-play.akk` were reverted to the natural `notes = n"…".slow(N)` form. Regression tests pin every row of the variant table in `akkado/tests/test_analyzer.cpp` under `[analyzer][field-access]`. One remaining limit: transforming a Call-to-pattern-producer inline (e.g. `note("…").fast(2) |> …`) still fails with E130 because the transform handlers only recognise MiniLiteral receivers; that is a separate codegen bug, untouched by this fix.
+> **Fixed 2026-05-18 (same day).** The analyzer's `collect_definitions` had no case for `Assignment` RHS of type `MethodCall`, so transformed-pattern bindings fell through to `define_variable` and lost their Pattern symbol-kind. Added a `MethodCall` branch (and a `is_pattern_producing_expr` helper that walks the receiver chain) in `akkado/src/analyzer.cpp`, plus a `Call`-branch case for `chord`/`pat`/`seq`/`value`/`note` callees. Codegen's `handle_pattern_reference` (`akkado/src/codegen_patterns.cpp`) now delegates Call/MethodCall `pattern_node`s to `visit()`, which routes through the existing transform handlers (`handle_slow_call`, `handle_note_call`, etc.). The workaround-form `.slow()` / `.fast()` calls in `visualizations.akk` and `soundfont-play.akk` were reverted to the natural `notes = n"…".slow(N)` form. Regression tests pin every row of the variant table in `akkado/tests/test_analyzer.cpp` under `[analyzer][field-access]`. One remaining limit: transforming a Call-to-pattern-producer inline (e.g. `n"…".fast(2) |> …`) still fails with E130 because the transform handlers only recognise MiniLiteral receivers; that is a separate codegen bug, untouched by this fix.
 
 ---
 
@@ -485,7 +485,7 @@ Phase 3 is complete when:
 
 - This is **not** a backwards-compatible fix. Every existing patch's audible timing changes unless it happens to have exactly 4 top-level mini-notation elements per pattern.
 - Strudel/Tidal users will find the new behaviour *less* surprising; existing Akkado users will need to relearn pattern timing intuition or apply `.slow()` / `.fast()` to recover the previous feel.
-- **Migration recipe**: an old N-element pattern that "felt right" can be recovered with `pat("…").slow(N / 4.0)`. E.g. an 8-element pattern that used to take 2 cycles now takes 1, so wrap in `.slow(2)` to restore.
+- **Migration recipe**: an old N-element pattern that "felt right" can be recovered with `n"…".slow(N / 4.0)`. E.g. an 8-element pattern that used to take 2 cycles now takes 1, so wrap in `.slow(2)` to restore.
 - Recommended rollout: bundle the fix in a **minor**-version release (pre-1.0 SemVer allows breaking changes in minor bumps), with a `CHANGELOG.md` entry under **Breaking changes**. The release itself is user-driven via `scripts/bump-version.sh` — not run by the implementer.
 
 ### CHANGELOG draft (Keep a Changelog format)
@@ -496,13 +496,13 @@ Phase 3 is complete when:
 - **Mini-notation cycle timing now matches Strudel/Tidal.** A mini-notation
   string is exactly one cycle (4 beats) by default, regardless of element
   count. Previously, each top-level element occupied one beat, so
-  `pat("c d e f g a b c5")` ran for 2 cycles; it now fits in 1 cycle with
+  `n"c d e f g a b c5"` ran for 2 cycles; it now fits in 1 cycle with
   eight half-beat notes. Only patterns with exactly 4 top-level elements
   are unaffected.
 
   **Migration**: to restore a pattern's old timing, wrap it in
   `.slow(N / 4.0)`, where N is the top-level element count.
-  Example: `pat("c d e f g a b c5")` → `pat("c d e f g a b c5").slow(2)`.
+  Example: `n"c d e f g a b c5"` → `n"c d e f g a b c5".slow(2)`.
 
   This restores conformance with the cycle-fitting convention documented
   in `docs/mini-notation-reference.md` and Strudel/Tidal — the prior

@@ -370,7 +370,7 @@ TEST_CASE("Parser assignments", "[parser]") {
 
 TEST_CASE("Parser mini-notation", "[parser]") {
     SECTION("simple pat") {
-        auto ast = parse_ok("pat(\"bd sd\")");
+        auto ast = parse_ok("s\"bd sd\"");
         NodeIndex mini = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
 
@@ -381,20 +381,9 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         CHECK(ast.arena.child_count(pattern) == 2);
     }
 
-    SECTION("pat with closure") {
-        auto ast = parse_ok("pat(\"c4 e4 g4\", (t, v, p) -> saw(p))");
-        NodeIndex mini = ast.arena[ast.root].first_child;
-        REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
-
-        // Should have 2 children: MiniPattern and closure
-        CHECK(ast.arena.child_count(mini) == 2);
-
-        NodeIndex pattern = ast.arena[mini].first_child;
-        CHECK(ast.arena[pattern].type == NodeType::MiniPattern);
-
-        NodeIndex closure = ast.arena[pattern].next_sibling;
-        CHECK(ast.arena[closure].type == NodeType::Closure);
-    }
+    // PRD prd-remove-pat-builtin: the `pat("…", closure)` form is gone.
+    // The per-event callback role is covered by `poly()` consuming a typed
+    // literal — exercised in the polyphony tests.
 }
 
 TEST_CASE("Parser complex expressions", "[parser]") {
@@ -1023,7 +1012,7 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
 TEST_CASE("Parser rejects deferred destructure forms", "[parser][destructure]") {
     SECTION("defaults in pipe-binding `as {x = 1}` is a parse error") {
         auto [tokens, lex_diags] = lex(R"(
-            pat("c4") as {freq = 440} |> osc("sin", freq)
+            n"c4" as {freq = 440} |> osc("sin", freq)
         )");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
@@ -1611,7 +1600,7 @@ TEST_CASE("Parser field access", "[parser][records]") {
 
 TEST_CASE("Parser hole field access", "[parser][records]") {
     SECTION("hole with field") {
-        auto ast = parse_ok("pat(\"c4\") |> %.freq");
+        auto ast = parse_ok("n\"c4\" |> %.freq");
         NodeIndex root = ast.root;
         NodeIndex pipe = ast.arena[root].first_child;
         REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
@@ -1667,7 +1656,7 @@ TEST_CASE("Parser >> and @ aliases", "[parser]") {
     }
 
     SECTION("@ with field access") {
-        auto ast = parse_ok("pat(\"c4\") >> @.freq");
+        auto ast = parse_ok("n\"c4\" >> @.freq");
         NodeIndex root = ast.root;
         NodeIndex pipe = ast.arena[root].first_child;
         REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
@@ -1699,8 +1688,8 @@ static NodeIndex hole_rhs_of_pipe(const Ast& ast) {
 
 TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     SECTION("@field parses identical to @.field") {
-        auto dotless = parse_ok("pat(\"c4\") |> @freq");
-        auto dotted  = parse_ok("pat(\"c4\") |> @.freq");
+        auto dotless = parse_ok("n\"c4\" |> @freq");
+        auto dotted  = parse_ok("n\"c4\" |> @.freq");
 
         NodeIndex h_less = hole_rhs_of_pipe(dotless);
         NodeIndex h_dot  = hole_rhs_of_pipe(dotted);
@@ -1716,7 +1705,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("%field works as legacy alias") {
-        auto ast = parse_ok("pat(\"c4\") |> %freq");
+        auto ast = parse_ok("n\"c4\" |> %freq");
         NodeIndex h = hole_rhs_of_pipe(ast);
         REQUIRE(ast.arena[h].type == NodeType::Hole);
         auto& d = ast.arena[h].as_hole();
@@ -1725,7 +1714,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("aliases (@v, @t, @f) parse as field names") {
-        auto ast = parse_ok("pat(\"c4\") |> @v");
+        auto ast = parse_ok("n\"c4\" |> @v");
         NodeIndex h = hole_rhs_of_pipe(ast);
         auto& d = ast.arena[h].as_hole();
         REQUIRE(d.field_name.has_value());
@@ -1733,7 +1722,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("keyword `as` accepted as adjacent field name") {
-        auto ast = parse_ok("pat(\"c4\") |> @as");
+        auto ast = parse_ok("n\"c4\" |> @as");
         NodeIndex h = hole_rhs_of_pipe(ast);
         REQUIRE(ast.arena[h].type == NodeType::Hole);
         auto& d = ast.arena[h].as_hole();
@@ -1742,7 +1731,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("keyword `match` accepted as adjacent field name") {
-        auto ast = parse_ok("pat(\"c4\") |> @match");
+        auto ast = parse_ok("n\"c4\" |> @match");
         NodeIndex h = hole_rhs_of_pipe(ast);
         auto& d = ast.arena[h].as_hole();
         REQUIRE(d.field_name.has_value());
@@ -1754,7 +1743,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
         // `as e` as the pipe-binding suffix. The exact tree shape depends
         // on precedence wrapping; the load-bearing invariant is that no
         // Hole node in the tree has field_name == "as".
-        auto ast = parse_ok("pat(\"c4\") |> @ as e |> e + 1");
+        auto ast = parse_ok("n\"c4\" |> @ as e |> e + 1");
 
         bool found_bare_hole = false;
         bool found_as_field  = false;
@@ -1783,7 +1772,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("chained @foo.bar parses as (@foo).bar") {
-        auto ast = parse_ok("pat(\"c4\") |> @osc.freq");
+        auto ast = parse_ok("n\"c4\" |> @osc.freq");
         NodeIndex rhs = hole_rhs_of_pipe(ast);
         REQUIRE(ast.arena[rhs].type == NodeType::FieldAccess);
 
@@ -1823,14 +1812,14 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("dotted form still parses (back-compat)") {
-        auto ast = parse_ok("pat(\"c4\") |> @.freq * @.vel");
+        auto ast = parse_ok("n\"c4\" |> @.freq * @.vel");
         // Smoke test: no errors, AST exists. Detailed equivalence is
         // checked by the first SECTION.
         REQUIRE(ast.valid());
     }
 
     SECTION("W201 only fires under --strict") {
-        std::string_view src = "pat(\"c4\") |> @.freq";
+        std::string_view src = "n\"c4\" |> @.freq";
 
         // Default: no W201.
         {
@@ -1858,7 +1847,7 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
     }
 
     SECTION("W201 does not fire for the new dotless form even under --strict") {
-        std::string_view src = "pat(\"c4\") |> @freq";
+        std::string_view src = "n\"c4\" |> @freq";
         auto [tokens, _ld] = lex(src);
         auto [_ast, diags] = parse(std::move(tokens), src, "<input>", true);
         for (const auto& d : diags) {

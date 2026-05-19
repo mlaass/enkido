@@ -11,7 +11,7 @@ This PRD splits `SOUNDFONT_VOICE` into:
 1. A new single-voice **`SF_VOICE`** opcode — the per-voice inner loop (zone lookup, sample interpolation, per-voice SVF filter, DAHDSR envelope) with no voice management — wrapped in the standard `(freq, gate, vel) -> signal` instrument convention so it slots into `poly` like any other instrument.
 2. A new **envelope-done signal** that lets `poly` free a voice when its envelope finishes, restoring the SF-aware stealing intelligence that today's pool has but generic poly doesn't.
 3. Per-event **`channel`** and **`program`** fields on `OutputEvent`, populated from MIDI source (live + file) by preserving program-change events through the parser, so a single `poly(...)` call can route a multi-channel General MIDI file to the right preset per channel.
-4. A userspace **akkado stdlib sugar** that keeps the old `pat(...) |> soundfont(@, file, preset)` API working as a one-liner — `fn soundfont(input, file, preset) = input |> poly(@, sf_voice(file, preset, _, _, _))` — collapsing all special-case codegen into ordinary user-level akkado.
+4. A userspace **akkado stdlib sugar** that keeps the old `n"…" |> soundfont(@, file, preset)` API working as a one-liner — `fn soundfont(input, file, preset) = input |> poly(@, sf_voice(file, preset, _, _, _))` — collapsing all special-case codegen into ordinary user-level akkado.
 
 ### Key design decisions (from the question rounds, 2026-05-17)
 
@@ -70,7 +70,7 @@ This PRD is the execution PRD that consolidates all three.
 3. **GM file routing.** A single `poly(...)` chain can play a multi-channel GM `.mid` file with per-channel program selection driven by the file's own program-change events.
 4. **Per-event `channel` and `program` fields** on `OutputEvent`, populated from both live MIDI and file MIDI; overridable from pattern source via mini-notation record suffix `{channel:N, program:M}`.
 5. **Envelope-done voice stealing.** `poly` learns to free voices when their envelope finishes (not just oldest/quietest-releasing heuristics), so SF_VOICE stealing is at least as audibly correct as today's `SOUNDFONT_VOICE` pool.
-6. **Backward compatibility for the old API.** `pat(...) |> soundfont(@, file, preset)` keeps working unchanged, via a one-line userspace akkado stdlib function.
+6. **Backward compatibility for the old API.** `n"…" |> soundfont(@, file, preset)` keeps working unchanged, via a one-line userspace akkado stdlib function.
 
 ### Non-Goals
 
@@ -88,7 +88,7 @@ This PRD is the execution PRD that consolidates all three.
 
 ```akkado
 // One soundfont voice per pattern note, full poly machinery
-pat("c4 e4 g4 b4")
+n"c4 e4 g4 b4"
     |> poly(@, (f, g, v) -> sf_voice("piano.sf2", 0, f, g, v))
     |> out(@, @)
 ```
@@ -97,7 +97,7 @@ pat("c4 e4 g4 b4")
 
 ```akkado
 // Equivalent shorthand using `prd-advanced-functions.md`-shipped `_` placeholder
-pat("C4' Am7' G4'")
+n"C4' Am7' G4'"
     |> poly(@, sf_voice("piano.sf2", 0, _, _, _), 32)
     |> out(@, @)
 ```
@@ -106,7 +106,7 @@ pat("C4' Am7' G4'")
 
 ```akkado
 // Unchanged from today's user-facing API
-pat("C4' Am7'") |> soundfont(@, "gm", 0) |> out(@, @)
+n"C4' Am7'" |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Lowering happens in the akkado stdlib:
 fn soundfont(input, file, preset) =
@@ -150,11 +150,11 @@ The web UI exposes an equivalent settings panel. Resolution order: directive →
 
 ### 3.6 Pattern-source overrides for channel and program
 
-When the event source is `pat()` or `chord()`, `@.channel` and `@.program` default to `0`. Mini-notation record-suffix syntax overrides per note:
+When the event source is a typed pattern literal or `chord()`, `@.channel` and `@.program` default to `0`. Mini-notation record-suffix syntax overrides per note:
 
 ```akkado
 // Multi-instrument arrangement driven by patterns rather than a .mid file
-pat("c4{channel:1, program:0} d4{channel:2, program:24} e4{channel:9, program:0}")
+n"c4{channel:1, program:0} d4{channel:2, program:24} e4{channel:9, program:0}"
     |> poly(@, ({freq, gate, vel, channel, program}) ->
         sf_voice("gm", gm_route(channel, program), freq, gate, vel))
     |> out(@, @)
@@ -167,7 +167,7 @@ pat("c4{channel:1, program:0} d4{channel:2, program:24} e4{channel:9, program:0}
 // SF_VOICE writes its DAHDSR level to the done-signal buffer each block.
 // When level drops below threshold (e.g., -60 dB), poly considers the voice
 // free for reuse, even though gate is still nominally on.
-pat("c1 c1 c1 c1") |> poly(@, sf_voice("gm", 0, _, _, _), 4) |> out(@)
+n"c1 c1 c1 c1" |> poly(@, sf_voice("gm", 0, _, _, _), 4) |> out(@)
 ```
 
 For instruments that should be force-released by gate-off only (older behavior), the existing `release:` parameter on `poly` retains the time-based release window from `prd-polyphony-system.md` §7.
@@ -245,7 +245,7 @@ Re-verify struct alignment + size after the addition. Bump the `OutputEvents` ar
 
 **Live MIDI** (`cedar/src/opcodes/midi.cpp`): same logic — program-change byte updates `channel_program[chan]`; next note-on reads the current value.
 
-**Field-access aliases** (`akkado/src/codegen.cpp`): register `channel`, `c` for channel; `program`, `prog`, `p` for program. Update the available-fields list at `codegen.cpp:2623` (the error message that lists valid field names).
+**Field-access aliases** (`akkado/src/codegen.cpp`): register `channel`, `c` for channel; `program`, `prog`, `n` for program. Update the available-fields list at `codegen.cpp:2623` (the error message that lists valid field names).
 
 **Pattern-source override**: when a pattern event carries a record-suffix like `c4{channel:2, program:24}`, the values land in `evt.channel` and `evt.program` directly (or via `prop_vals[]` if we choose to keep the existing custom-field path; design detail decided during implementation).
 
@@ -297,13 +297,13 @@ fn gm_route(channel, program) =
 | MIDI parser | **Modified** | Preserves program-change events; surfaces them via `MidiQueueState` |
 | `MidiQueueState` | **Modified** | Tracks per-channel program; populates `evt.channel` / `evt.program` |
 | `SoundFontRegistry` | **Modified** | Adds alias map + lookup; runtime config wiring |
-| Akkado field aliases | **Modified** | `channel`, `c`, `program`, `prog`, `p` registered |
+| Akkado field aliases | **Modified** | `channel`, `c`, `program`, `prog`, `n` registered |
 | Mini-notation record suffix | **Modified** | `{channel:N, program:M}` recognized; routed to event struct |
 | Akkado stdlib | **New** | `fn soundfont(...)` + `fn gm_route(...)` |
 | `$soundfont_alias` directive | **New** | Parser already accepts `$directives`; new directive name |
 | CLI flag `--soundfont-alias` | **New** | One per alias; comma-separated also acceptable |
 | Web UI settings | **New** | Settings panel for alias key/path pairs |
-| Old `pat(...) |> soundfont(@, file, preset)` patches | **Compatible** | Userspace stdlib `fn soundfont` restores the API |
+| Old `n"…" |> soundfont(@, file, preset)` patches | **Compatible** | Userspace stdlib `fn soundfont` restores the API |
 | Live MIDI patches using `midi() |> soundfont(@, ...)` | **Compatible** | Same stdlib sugar; `poly` happily consumes `midi()` events |
 
 ---
@@ -380,7 +380,7 @@ fn gm_route(channel, program) =
 ## 7. Implementation Phases
 
 ### Phase 1 — `SF_VOICE` opcode + builtin + alias table
-**Goal**: `pat("c4 e4 g4") |> poly(@, sf_voice("piano.sf2", 0, _, _, _)) |> out(@, @)` plays correctly.
+**Goal**: `n"c4 e4 g4" |> poly(@, sf_voice("piano.sf2", 0, _, _, _)) |> out(@, @)` plays correctly.
 
 - Add `SF_VOICE` opcode (`instruction.hpp`, `vm.cpp`).
 - Implement `op_sf_voice` by factoring the per-voice loop out of `op_soundfont_voice` (`soundfont.hpp:246-667`).
@@ -400,7 +400,7 @@ fn gm_route(channel, program) =
 - MIDI parser: preserve program-change (`midi_sequence.hpp:87`); `ProgramChange` event type; merged timeline.
 - `MidiQueueState`: per-channel `program[16]`; populated on emission.
 - Live MIDI: 0xC0 handler updates the same state.
-- Akkado field aliases (`channel`/`c`, `program`/`prog`/`p`); available-fields list update.
+- Akkado field aliases (`channel`/`c`, `program`/`prog`/`n`); available-fields list update.
 - Mini-notation `{channel:N, program:M}` override path.
 
 **Tests** (this phase): `.mid` file with program-change emits correct programs; pattern record-suffix override; live MIDI program-change simulation.
@@ -468,7 +468,7 @@ MIDI emits 0xC0 while a note is sounding on the same channel. **Behavior**: the 
 
 ### 8.5 Channel field on chord events
 
-`chord("C")` produces a single event with `num_values > 1` (one event, multiple frequencies). `evt.channel` is a scalar; all voices spawned from that event share the same channel. To assign different channels to different notes, use `pat("c4{channel:1} e4{channel:2} g4{channel:3}")` instead of a chord.
+`chord("C")` produces a single event with `num_values > 1` (one event, multiple frequencies). `evt.channel` is a scalar; all voices spawned from that event share the same channel. To assign different channels to different notes, use `n"c4{channel:1} e4{channel:2} g4{channel:3}"` instead of a chord.
 
 ### 8.6 Live MIDI with no program-change ever
 
@@ -476,7 +476,7 @@ Many MIDI controllers never send program-change. `channel_program[chan]` stays a
 
 ### 8.7 Mini-notation `{program:N}` on a pattern that also routes through `midi()`
 
-Not applicable — `midi()` and `pat()` are separate event sources. If both feed the same poly (via `+` or similar), each event carries its own channel/program (MIDI from MIDI source, mini-notation override from pattern source).
+Not applicable — `midi()` and typed pattern literals are separate event sources. If both feed the same poly (via `+` or similar), each event carries its own channel/program (MIDI from MIDI source, mini-notation override from pattern source).
 
 ### 8.8 Envelope-done false-positive
 
@@ -498,13 +498,13 @@ A chord event spawns N voices in poly; each voice receives one freq. SF_VOICE in
 
 **Goal**: old `soundfont()` API produces equivalent output via the new path.
 
-Test: compile and render `pat("C4'") |> soundfont(@, "test.sf2", 0) |> out(@)` both before this PRD lands (capture WAV baseline) and after (via the userspace stdlib sugar). Diff. Small differences from generic-vs-SF-pool stealing acceptable when envelope-done is enabled; bit-identical not required.
+Test: compile and render `n"C4'" |> soundfont(@, "test.sf2", 0) |> out(@)` both before this PRD lands (capture WAV baseline) and after (via the userspace stdlib sugar). Diff. Small differences from generic-vs-SF-pool stealing acceptable when envelope-done is enabled; bit-identical not required.
 
 ### 9.2 Retrigger regression
 
 **Goal**: the fix from [`prd-soundfont-playback-fixes.md`](prd-soundfont-playback-fixes.md) must not regress.
 
-Test: `pat("c4 e4 g4") |> soundfont(@, "piano.sf2", 0) |> out(@)`. Verify each pattern step retriggers — measure attack envelope per note-onset, confirm no "single sustained gate eats all notes" bug.
+Test: `n"c4 e4 g4" |> soundfont(@, "piano.sf2", 0) |> out(@)`. Verify each pattern step retriggers — measure attack envelope per note-onset, confirm no "single sustained gate eats all notes" bug.
 
 ### 9.3 GM routing end-to-end
 

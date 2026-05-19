@@ -11,19 +11,19 @@ subfeatures:
   - name: Sequences
     anchor: sequences
     tagline: Bracketed step sequences.
-    snippet: 'pat("c4 e4 g4 c5") |> ((f) -> osc("sin", f) * ar(trigger(4)))'
+    snippet: 'n"c4 e4 g4 c5" |> ((f) -> osc("sin", f) * ar(trigger(4)))'
   - name: Polyrhythms
     anchor: polyrhythms
     tagline: Stacked patterns at different lengths.
-    snippet: 'pat("c4 e4 g4, c3 g3 c3 g3")'
+    snippet: 'n"c4 e4 g4, c3 g3 c3 g3"'
   - name: Alternation
     anchor: alternation
     tagline: Round-robin and probabilistic choice.
-    snippet: 'pat("<c4 e4 g4>")'
+    snippet: 'n"<c4 e4 g4>"'
   - name: Modifiers
     anchor: modifiers
     tagline: Speed, repeat, and chance operators.
-    snippet: 'pat("c4*4 e4")'
+    snippet: 'n"c4*4 e4"'
 ---
 
 # Mini-Notation
@@ -40,7 +40,7 @@ Mini-notation strings carry a parse-mode prefix that disambiguates atom semantic
 | `n"…"` | Note names + bare MIDI ints (both → Hz)     | `n"c4 e4 g4"`          |
 | `s"…"` | Sample names                                | `s"bd ~ bd ~"`         |
 | `c"…"` | Chord symbols                               | `c"Am C G"`            |
-| `p"…"` | Auto-detect (legacy, still works)           | `p"c4 bd Am"`          |
+| `n"…"` | Auto-detect (legacy, still works)           | `n"c4 bd Am"`          |
 
 See [Pattern Literals](../pattern/literals.md) for full coverage of typed prefixes and the `scalar()` cast.
 
@@ -50,9 +50,9 @@ Specify notes with letter name and octave:
 
 ```akk
 // Single notes
-pat("c4")           // Middle C
-pat("f#3")          // F sharp, octave 3
-pat("Bb5")          // B flat, octave 5
+n"c4"           // Middle C
+n"f#3"          // F sharp, octave 3
+n"Bb5"          // B flat, octave 5
 ```
 
 ## Sequences (top-level alternation)
@@ -61,7 +61,7 @@ Top-level spaces play one element per cycle. **One cycle equals one beat by defa
 
 ```akk
 // One note per cycle (= one note per beat)
-pat("c4 e4 g4 c5")
+n"c4 e4 g4 c5"
     |> ((f) -> osc("sin", f) * ar(trigger(1)))
     |> out(@)
 ```
@@ -76,7 +76,7 @@ Use `~` or `_` for silence:
 
 ```akk
 // Rest on cycle 3
-pat("c4 e4 ~ g4")
+n"c4 e4 ~ g4"
 ```
 
 ## Chords
@@ -85,7 +85,7 @@ For chord symbols (`Am7`, `Cmaj7`), inline chord brackets (`[c4 e4 g4]`), and vo
 
 ```akk
 // Inline chord, three notes at once
-pat("[c4 e4 g4]")
+n"[c4 e4 g4]"
 
 // Chord-symbol progression — one chord per cycle
 chord("Am C G F")
@@ -97,10 +97,10 @@ Use square brackets to pack multiple elements into a single cycle:
 
 ```akk
 // Four notes packed into one cycle (= four sixteenths per beat at default)
-pat("[c4 e4 g4 c5]")
+n"[c4 e4 g4 c5]"
 
 // Mix: c4 cycle, then [e4 f4] subdivided into one cycle, then g4 cycle, then c5
-pat("c4 [e4 f4] g4 c5")
+n"c4 [e4 f4] g4 c5"
 ```
 
 ## Polyrhythms
@@ -109,7 +109,7 @@ Comma separates parallel patterns:
 
 ```akk
 // 3 against 4
-pat("c4 e4 g4, c3 g3 c3 g3")
+n"c4 e4 g4, c3 g3 c3 g3"
 ```
 
 ## Modifiers
@@ -122,10 +122,10 @@ Repeat an element n times in its time slot:
 
 ```akk
 // Repeat c4 four times (fits 4 notes in 1 slot)
-pat("c4*4 e4")
+n"c4*4 e4"
 
 // Speed up a group
-pat("[c4 e4]*2 g4")  // [c4 e4 c4 e4] in first half
+n"[c4 e4]*2 g4"  // [c4 e4 c4 e4] in first half
 ```
 
 ### Slow (`/n`)
@@ -134,10 +134,10 @@ Stretch an element to span n times its normal duration:
 
 ```akk
 // Stretch pattern to 2 cycles
-pat("[c4 e4 g4 b4]/2")  // Events at beats 0, 2, 4, 6
+n"[c4 e4 g4 b4]/2"  // Events at beats 0, 2, 4, 6
 
 // Slow down individual note
-pat("c4/2 e4 g4")
+n"c4/2 e4 g4"
 ```
 
 ### Repeat (`!n`)
@@ -146,11 +146,11 @@ Replicate an element n times (extends the sequence):
 
 ```akk
 // a!2 b = a a b (3 elements, each takes 1/3 of time)
-pat("c4!2 e4")  // c4 appears twice, then e4
+n"c4!2 e4"  // c4 appears twice, then e4
 
 // Compare with speed (*n) which compresses:
 // a*2 b = [a a] b (2 elements, first has 2 notes in half the time)
-pat("c4*2 e4")  // c4 plays twice quickly, then e4
+n"c4*2 e4"  // c4 plays twice quickly, then e4
 ```
 
 ### Chance (`?n`)
@@ -159,7 +159,7 @@ Set probability (0-1) of the element playing:
 
 ```akk
 // 50% chance each note plays
-pat("c4?0.5 e4?0.5 g4?0.5")
+n"c4?0.5 e4?0.5 g4?0.5"
 ```
 
 ### Weight/Elongation (`@n`)
@@ -168,10 +168,10 @@ Adjust temporal weight (how much time an element takes relative to siblings):
 
 ```akk
 // First note takes twice as much time
-pat("c4@2 e4 g4")  // c4: 50%, e4: 25%, g4: 25%
+n"c4@2 e4 g4"  // c4: 50%, e4: 25%, g4: 25%
 
 // Create uneven rhythms
-pat("bd@3 sn")    // bd: 75%, sn: 25%
+s"bd@3 sn"    // bd: 75%, sn: 25%
 ```
 
 ## Alternation
@@ -180,10 +180,10 @@ Use angle brackets for elements that alternate each cycle:
 
 ```akk
 // Plays c4 on cycle 1, e4 on cycle 2, g4 on cycle 3, then repeats
-pat("<c4 e4 g4>")
+n"<c4 e4 g4>"
 
 // Alternate between groups
-pat("<[c4 e4] [g4 b4]>")
+n"<[c4 e4] [g4 b4]>"
 ```
 
 ## Modifier placement
@@ -192,27 +192,27 @@ pat("<[c4 e4] [g4 b4]>")
 
 ```akk
 // CORRECT: modifier inside string
-pat("[bd sn]/2")   // Pattern plays over 2 cycles
+s"[bd sn]/2"   // Pattern plays over 2 cycles
 
 // WRONG: modifier outside string
-pat("bd sn")/2     // This divides the SIGNAL by 2, not the pattern!
+s"bd sn"/2     // This divides the SIGNAL by 2, not the pattern!
 ```
 
 ## Pattern functions
 
-### pat()
+### Typed pattern literals
 
 Basic pattern playback:
 
 ```akk
-pat("c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(@)
+n"c4 e4 g4" |> ((f) -> osc("sin", f)) |> out(@)
 ```
 
 ## Practical examples
 
 ```akk
 // Simple melody
-pat("c4 e4 g4 e4") |> ((f) ->
+n"c4 e4 g4 e4" |> ((f) ->
     osc("saw", f) |> lp(@, 1500) * ar(trigger(4))
 ) |> out(@)
 ```
@@ -226,7 +226,7 @@ chord("C Em Am G") |> ((f) ->
 
 ```akk
 // Rhythmic pattern with rests
-pat("c4 ~ e4 ~ g4 ~ e4 ~") |> ((f) ->
+n"c4 ~ e4 ~ g4 ~ e4 ~" |> ((f) ->
     osc("tri", f) * ar(trigger(8), 0.01, 0.1)
 ) |> out(@)
 ```

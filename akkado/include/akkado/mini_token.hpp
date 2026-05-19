@@ -13,7 +13,6 @@ namespace akkado {
 /// Selects per-atom rules for mini-notation parsing. Subsumes the legacy
 /// `sample_only` and `curve_mode` boolean flags into a single enum.
 enum class MiniParseMode : std::uint8_t {
-    Auto,    // p"…" — current behavior, detect per atom
     Note,    // n"…" — note names + bare MIDI ints both → mtof
     Sample,  // s"…" — atom = sample name (replaces `sample_only = true`)
     Chord,   // c"…" — atom = chord symbol
@@ -23,7 +22,6 @@ enum class MiniParseMode : std::uint8_t {
 
 constexpr const char* mini_parse_mode_name(MiniParseMode m) {
     switch (m) {
-        case MiniParseMode::Auto:   return "auto";
         case MiniParseMode::Note:   return "note";
         case MiniParseMode::Sample: return "sample";
         case MiniParseMode::Chord:  return "chord";

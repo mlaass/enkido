@@ -17,7 +17,6 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
     {"as",       TokenType::As},
     {"const",    TokenType::Const},
     {"import",   TokenType::Import},
-    {"pat",      TokenType::Pat},
 };
 
 } // namespace
@@ -419,14 +418,6 @@ Token Lexer::lex_identifier() {
     // We're positioned after the first character which was already consumed
     if (auto chord = try_lex_strudel_chord()) {
         return *chord;
-    }
-
-    // Check for pattern string prefix: p"..." or p`...`
-    if (source_[start_] == 'p' && current_ == start_ + 1) {
-        char next = peek();
-        if (next == '"' || next == '`') {
-            return make_token(TokenType::Pat);
-        }
     }
 
     // Check for timeline string prefix: t"..." or t`...`

@@ -19,7 +19,7 @@
 
 | Goal | Status | Evidence |
 |---|---|---|
-| G1: Field access on pattern event data via `%.field` | **Partial** | Parser handles `%.field` at `akkado/src/parser.cpp:547-578`. Codegen dispatches via `pattern_field()` at `akkado/src/typed_value.cpp:44-62`. Implemented: `freq`/`pitch`/`f`, `vel`/`velocity`/`v`, `trig`/`trigger`/`t`, `gate`/`g`, `type`. **Missing**: `note`/`midi`/`n`, `sample`/`s`, `dur`/`duration`, `chance`, `time`/`t0`/`start`, `phase`/`cycle`/`co`, `voice`, `sample_id`, plus aliases `frequency` and `p`. Confirmed via `./build/tools/akkado-cli/akkado-cli --check` against each of `%.note`, `%.dur`, `%.chance`, `%.voice`, `%.sample_id`, `%.midi`, `%.time` — all error E136 with message *"Unknown field … Available: freq, vel, trig, gate, type"*. |
+| G1: Field access on pattern event data via `%.field` | **Partial** | Parser handles `%.field` at `akkado/src/parser.cpp:547-578`. Codegen dispatches via `pattern_field()` at `akkado/src/typed_value.cpp:44-62`. Implemented: `freq`/`pitch`/`f`, `vel`/`velocity`/`v`, `trig`/`trigger`/`t`, `gate`/`g`, `type`. **Missing**: `note`/`midi`/`n`, `sample`/`s`, `dur`/`duration`, `chance`, `time`/`t0`/`start`, `phase`/`cycle`/`co`, `voice`, `sample_id`, plus aliases `frequency` and `n`. Confirmed via `./build/tools/akkado-cli/akkado-cli --check` against each of `%.note`, `%.dur`, `%.chance`, `%.voice`, `%.sample_id`, `%.midi`, `%.time` — all error E136 with message *"Unknown field … Available: freq, vel, trig, gate, type"*. |
 | G2: Record literals `{field: value, ...}` | Met | `akkado/src/parser.cpp:1503-1577` (incl. empty record, trailing comma, duplicate detection, shorthand `{x, y}`, spread `{..base, …}`). AST nodes `akkado/include/akkado/ast.hpp:66-67, 259-273`. Codegen `akkado/src/codegen.cpp:1959-2070`. Tests `akkado/tests/test_parser.cpp:1210-1284`, `test_codegen.cpp:3681-3759`. |
 | G3: Field access on any record via `expr.field` | Met | Parser postfix path `akkado/src/parser.cpp:984-1037`. Codegen `akkado/src/codegen.cpp:2072-2208` dispatches by ValueType. Triply-nested test at `test_codegen.cpp:3740-3758`. |
 | G4: Compile-time expansion (no runtime record type) | Met | `TypedValue::record` is a `shared_ptr<RecordPayload>` populated at compile time (`akkado/include/akkado/typed_value.hpp:90-92, 195-203`). `handle_field_access` resolves to a concrete buffer index — no RECORD_* opcodes exist in Cedar VM. |
@@ -35,7 +35,7 @@
 | §2.4 Pipe binding `as` | Met (incl. destructuring) | `parser.cpp:366-404`; `test_parser.cpp:1420-1450`; `test_codegen.cpp:4035-4038`. |
 | §2.5 Shorthand field `{x, y}` | Met | `parser.cpp:1560-1568`; `test_parser.cpp:1240-1284`. |
 | §2.6 Field access vs method call disambiguation | Met | `parser.cpp:984-1019` keys on `(`. Test `test_parser.cpp:1336`. |
-| §3.1 Core pattern fields `trig/vel/freq/note/sample` + aliases | Partial | Only `trig/vel/freq` (+ short aliases) implemented; `note/sample` and full aliases (`frequency`, `p`) missing. |
+| §3.1 Core pattern fields `trig/vel/freq/note/sample` + aliases | Partial | Only `trig/vel/freq` (+ short aliases) implemented; `note/sample` and full aliases (`frequency`, `n`) missing. |
 | §3.2 Extended pattern fields `dur/chance/time/phase` | **Not implemented** | None present in `pattern_field_index()` (`typed_value.cpp:30-42`). |
 | §3.3 Unified scalar event model fields (`type`, `voice`, `sample_id`) | Partial | `type` present; `voice` and `sample_id` absent. |
 | §3.4 Polyphony per-voice routing via `match(e.voice)` | **Not implemented** | Design pivoted (see Decisions Recorded): polyphony is opt-in via `poly()` / `sampler()` wrappers; polyphonic patterns at scalar slots error E160 by design (`typed_value.hpp:58-65`). |
@@ -62,7 +62,7 @@
 
 ### Unmet Goals
 
-1. **Extended pattern fields (PRD §3.1, §3.2, §3.3)** — `note/midi/n`, `sample/s`, `dur/duration`, `chance`, `time/t0/start`, `phase/cycle/co`, `voice`, `sample_id`, plus aliases `frequency` and `p`, are listed in the PRD as part of the pattern event record but are not in `pattern_field_index()` (`akkado/src/typed_value.cpp:30-42`). Compile-time access to any of them errors E136. **User decision:** PRD should not be marked DONE until these ship. Held open.
+1. **Extended pattern fields (PRD §3.1, §3.2, §3.3)** — `note/midi/n`, `sample/s`, `dur/duration`, `chance`, `time/t0/start`, `phase/cycle/co`, `voice`, `sample_id`, plus aliases `frequency` and `n`, are listed in the PRD as part of the pattern event record but are not in `pattern_field_index()` (`akkado/src/typed_value.cpp:30-42`). Compile-time access to any of them errors E136. **User decision:** PRD should not be marked DONE until these ship. Held open.
 
 2. **Default field for bare `%` (PRD §3.6)** — auto-detection of pattern type (pitch / sample / note) and corresponding default field is not implemented. Held open under same decision.
 
@@ -133,7 +133,7 @@ None. All passing tests on HEAD pass; no test that passed on `<base>` fails on H
 
 ## Recommended Next Steps
 
-1. Implement the extended pattern fields (`note`, `dur`, `chance`, `time`, `phase`, `voice`, `sample_id`) plus aliases `frequency` and `p` in `pattern_field_index()` and ensure `PatternPayload::fields[]` (or `custom_fields`) carries the data. Wire each field from the `PatternEvent` already produced by `codegen_patterns.cpp` (`duration`, `chance`, `time`, `velocity`, `num_values`, `values[]` are already there).
+1. Implement the extended pattern fields (`note`, `dur`, `chance`, `time`, `phase`, `voice`, `sample_id`) plus aliases `frequency` and `n` in `pattern_field_index()` and ensure `PatternPayload::fields[]` (or `custom_fields`) carries the data. Wire each field from the `PatternEvent` already produced by `codegen_patterns.cpp` (`duration`, `chance`, `time`, `velocity`, `num_values`, `values[]` are already there).
 2. Update `available_fields()` to enumerate the full set so E136 messages stay truthful.
 3. Add codegen tests asserting each new field round-trips an expected value through a small pattern.
 4. Reconcile PRD §6 diagnostic codes with implementation (either implement E062/E063/E064/E065, or update the PRD to reflect E135/E136/E140).

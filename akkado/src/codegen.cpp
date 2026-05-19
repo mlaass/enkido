@@ -1012,9 +1012,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"get",     &CodeGenerator::handle_get_call},
                 {"set",     &CodeGenerator::handle_set_call},
                 {"chord",   &CodeGenerator::handle_chord_call},
-                // PRD prd-patterns-as-scalar-values: typed-prefix call forms.
-                {"value",   &CodeGenerator::handle_value_call},
-                {"note",    &CodeGenerator::handle_note_call},
                 {"scalar",  &CodeGenerator::handle_scalar_call},
                 {"map",     &CodeGenerator::handle_map_call},
                 {"sum",     &CodeGenerator::handle_sum_call},

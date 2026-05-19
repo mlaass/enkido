@@ -101,63 +101,63 @@ Expected: Filtered noise bursts (hi-hat-like)
 ### B1: single sample
 ```akkado
 bpm = 120
-pat("bd") |> out(@)
+s"bd" |> out(@)
 ```
 Expected: Bass drum once per bar
 
 ### B2: two samples alternating
 ```akkado
 bpm = 120
-pat("bd sd") |> out(@)
+s"bd sd" |> out(@)
 ```
 Expected: bd on beat 1-2, sd on beat 3-4 (2 sounds per bar)
 
 ### B3: four-on-floor kick
 ```akkado
 bpm = 120
-pat("bd bd bd bd") |> out(@)
+s"bd bd bd bd" |> out(@)
 ```
 Expected: Kick on every beat
 
 ### B4: pattern with rests
 ```akkado
 bpm = 120
-pat("bd ~ sd ~") |> out(@)
+s"bd ~ sd ~" |> out(@)
 ```
 Expected: bd, silence, sd, silence
 
 ### B5: basic drum pattern
 ```akkado
 bpm = 120
-pat("bd hh sd hh") |> out(@)
+s"bd hh sd hh" |> out(@)
 ```
 Expected: bd, hihat, sd, hihat
 
 ### B6: more complex pattern
 ```akkado
 bpm = 120
-pat("bd hh hh hh sd hh hh hh") |> out(@)
+s"bd hh hh hh sd hh hh hh" |> out(@)
 ```
 Expected: 8-step pattern with kick on 1, snare on 5
 
 ### B7: pattern with grouping
 ```akkado
 bpm = 120
-pat("[bd bd] sd") |> out(@)
+s"[bd bd] sd" |> out(@)
 ```
 Expected: Two quick kicks in first half, snare in second half
 
 ### B8: speed modifier
 ```akkado
 bpm = 120
-pat("bd*4") |> out(@)
+s"bd*4" |> out(@)
 ```
 Expected: Four kicks (speed up pattern)
 
 ### B9: slow modifier
 ```akkado
 bpm = 120
-pat("bd/2") |> out(@)
+s"bd/2" |> out(@)
 ```
 Expected: Kick every 2 bars
 
@@ -168,46 +168,46 @@ Expected: Kick every 2 bars
 ### C1: single pitch
 ```akkado
 bpm = 120
-pat("c4") |> out(@)
+n"c4" |> out(@)
 ```
 Expected: Outputs frequency ~261Hz (unclear what sound source)
 
 ### C2: four pitches
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5") |> out(@)
+n"c4 e4 g4 c5" |> out(@)
 ```
 Expected: Sequence of 4 frequencies
 
 ---
 
-## Part D: pitch patterns with closure
+## Part D: pitch patterns with poly callback
 
-### D1: closure with 1 param (trigger only)
+### D1: callback with trigger only
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5", (t) ->
-    osc("saw", 440) * ar(t, 0.01, 0.2)
+n"c4 e4 g4 c5" |> poly(1, fn (e) ->
+    osc("saw", 440) * ar(e.trig, 0.01, 0.2)
 ) |> out(@)
 ```
 Expected: Saw at fixed 440Hz, triggered 4 times per bar
 
-### D2: closure with 3 params
+### D2: callback using event fields
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.2)
+n"c4 e4 g4 c5" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.2)
 ) |> out(@)
 ```
 Expected: Saw using pitch from pattern (c4, e4, g4, c5)
 
-### D3: pattern + filter in closure
+### D3: pattern + filter in callback
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5", (t, v, p) ->
-    osc("saw", p)
+n"c4 e4 g4 c5" |> poly(1, fn (e) ->
+    osc("saw", e.freq)
         |> lp(@, 1500)
-        * ar(t, 0.01, 0.2)
+        * ar(e.trig, 0.01, 0.2)
 ) |> out(@)
 ```
 Expected: Filtered saw, 4 notes
@@ -215,31 +215,31 @@ Expected: Filtered saw, 4 notes
 ### D4: pattern with rests
 ```akkado
 bpm = 120
-pat("c4 ~ e4 ~", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.2)
+n"c4 ~ e4 ~" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.2)
 ) |> out(@)
 ```
 Expected: c4, silence, e4, silence (rests produce freq 0)
 
-### D5: ADSR in closure
+### D5: ADSR in callback
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5", (t, v, p) ->
-    osc("saw", p) * adsr(t, 0.01, 0.1, 0.5, 0.3)
+n"c4 e4 g4 c5" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * adsr(e.trig, 0.01, 0.1, 0.5, 0.3)
 ) |> out(@)
 ```
 Expected: Notes with ADSR shape
 
-### D6: closure piped to filter
+### D6: callback piped to filter
 ```akkado
 bpm = 120
-pat("c3 e3 g3 c4", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.3)
+n"c3 e3 g3 c4" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.3)
 )
     |> lp(@, 800)
     |> out(@)
 ```
-Expected: Closure output piped through lowpass filter
+Expected: Pattern output piped through lowpass filter
 
 ---
 
@@ -248,8 +248,8 @@ Expected: Closure output piped through lowpass filter
 ### E1: grouping (subdivision)
 ```akkado
 bpm = 120
-pat("[c4 e4] g4", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.1)
+n"[c4 e4] g4" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.1)
 ) |> out(@)
 ```
 Expected: c4+e4 in first half (faster), g4 in second half
@@ -257,8 +257,8 @@ Expected: c4+e4 in first half (faster), g4 in second half
 ### E2: speed modifier on group
 ```akkado
 bpm = 120
-pat("[c4 e4 g4]*2", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.1)
+n"[c4 e4 g4]*2" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.1)
 ) |> out(@)
 ```
 Expected: Pattern plays twice as fast (6 notes per bar)
@@ -266,8 +266,8 @@ Expected: Pattern plays twice as fast (6 notes per bar)
 ### E3: slow modifier
 ```akkado
 bpm = 120
-pat("c4 e4 g4 c5/2", (t, v, p) ->
-    osc("saw", p) * ar(t, 0.01, 0.2)
+n"c4 e4 g4 c5/2" |> poly(1, fn (e) ->
+    osc("saw", e.freq) * ar(e.trig, 0.01, 0.2)
 ) |> out(@)
 ```
 Expected: Pattern spread over 2 bars
@@ -313,8 +313,8 @@ Expected: Layered drum kit
 ### F4: pattern-based synth lead
 ```akkado
 bpm = 120
-pat("c4 d4 e4 g4 e4 d4 c4 ~", (t, v, p) ->
-    osc("tri", p) * adsr(t, 0.01, 0.05, 0.3, 0.2)
+n"c4 d4 e4 g4 e4 d4 c4 ~" |> poly(1, fn (e) ->
+    osc("tri", e.freq) * adsr(e.trig, 0.01, 0.05, 0.3, 0.2)
 )
     |> lp(@, 2000)
     |> out(@)
@@ -324,8 +324,8 @@ Expected: Melodic sequence with triangle wave
 ### F5: pattern with power shaping
 ```akkado
 bpm = 120
-pat("[~ ~ bd ~]*2", (t, v, p) ->
-    osc("tri", 110) * adsr(t, 0.001, 0.05, 0.15, 0.5) ^ 2.2
+s"[~ ~ bd ~]*2" |> poly(1, fn (e) ->
+    osc("tri", 110) * adsr(e.trig, 0.001, 0.05, 0.15, 0.5) ^ 2.2
 )
     |> bp(@, 2000)
     |> out(@)
@@ -335,8 +335,8 @@ Expected: Pattern triggers synthesized drum with shaped envelope
 ### F6: complex pattern (corrected)
 ```akkado
 bpm = 120
-snare = pat("[~ ~ bd ~ ~ bd bd ~ ~ ~ bd ~ ~ ~ bd ~]*0.5", (t, v, p) ->
-    osc("tri", 110) * adsr(t, 0.0004, 0.05, 0.15, 0.5) ^ 2.2
+snare = s"[~ ~ bd ~ ~ bd bd ~ ~ ~ bd ~ ~ ~ bd ~]*0.5" |> poly(1, fn (e) ->
+    osc("tri", 110) * adsr(e.trig, 0.0004, 0.05, 0.15, 0.5) ^ 2.2
 ) |> bp(@, 2000)
 snare |> out(@)
 ```
@@ -814,6 +814,6 @@ B1: Partial - No sound but compiles
 ## Known issues from code review
 
 1. **`1` is not a valid pattern token** - Use `bd`, `sd`, `c4`, etc.
-2. **Single-letter params work** - `(t)`, `(t, v, p)` both valid
+2. **The poly callback receives an event record** - `fn (e) -> …` with `e.trig`, `e.vel`, `e.freq` fields
 3. **Named args use `:`** - e.g., `attack:0.01` not `attack=0.01`
-4. **Direct `sample()` needs numeric ID** - Use `pat("bd")` for sample playback by name
+4. **Direct `sample()` needs numeric ID** - Use `s"bd"` for sample playback by name

@@ -524,7 +524,7 @@ osc("saw", 110) |> stereo() |> freeverb(@, 0.9, 0.5) |> out(@)
 // Expect: full stereo reverb tail, clearly wider than mono version
 
 // E2E 2: Auto-lifted stereo delay chain
-drums = pat("bd sn cp hh") |> sample(@)
+drums = s"bd sn cp hh" |> sample(@)
 drums |> stereo() |> delay(@, 0.3, 0.5, 1.0, 0.5) |> out(@)
 // Expect: stereo delays with independent per-channel decay, not mono-duplicated
 

@@ -30,9 +30,9 @@ public:
     /// Construct a mini-lexer for a pattern string
     /// @param pattern The pattern string content (without quotes)
     /// @param base_location Location of the pattern string in source for error reporting
-    /// @param mode Parse mode (Auto/Note/Sample/Chord/Value/Curve) — see MiniParseMode
+    /// @param mode Parse mode (Note/Sample/Chord/Value/Curve) — see MiniParseMode
     explicit MiniLexer(std::string_view pattern, SourceLocation base_location = {},
-                       MiniParseMode mode = MiniParseMode::Auto);
+                       MiniParseMode mode = MiniParseMode::Note);
 
     /// Backward-compat constructor (replaces sample_only/curve_mode bools).
     explicit MiniLexer(std::string_view pattern, SourceLocation base_location,
@@ -98,7 +98,7 @@ private:
     std::string_view pattern_;
     SourceLocation base_location_;
     std::vector<Diagnostic> diagnostics_;
-    MiniParseMode mode_ = MiniParseMode::Auto;
+    MiniParseMode mode_ = MiniParseMode::Note;
     bool sample_only_ = false;   // When true, skip pitch detection (Sample/Chord mode)
     bool curve_mode_ = false;    // When true, lex curve notation characters
     bool value_mode_ = false;    // When true, atoms must be numeric literals (v"…")
@@ -110,6 +110,11 @@ private:
     // captured by lex_value_atom / lex_note_atom. Cleared at the top of lex_token().
     bool last_was_modifier_ = false;
 
+    // Depth of open `(` in the token stream. Euclidean (`atom(N, K[, R])`) is
+    // the only mini-notation use of `(`; while inside, numeric atoms must lex
+    // as plain Number tokens regardless of value/note mode.
+    int paren_depth_ = 0;
+
     // Current position
     std::uint32_t start_ = 0;    // Start of current token
     std::uint32_t current_ = 0;  // Current position
@@ -119,11 +124,11 @@ private:
 /// Convenience function to lex a mini-notation pattern
 /// @param pattern The pattern string content
 /// @param base_location Location for error reporting
-/// @param mode Parse mode (Auto/Note/Sample/Chord/Value/Curve)
+/// @param mode Parse mode (Note/Sample/Chord/Value/Curve)
 /// @return Pair of tokens and diagnostics
 std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
 lex_mini(std::string_view pattern, SourceLocation base_location = {},
-         MiniParseMode mode = MiniParseMode::Auto);
+         MiniParseMode mode = MiniParseMode::Note);
 
 /// Backward-compat overload that maps the old bool flags to a MiniParseMode.
 std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>

@@ -31,7 +31,7 @@ Built-in, not user-extendable. Eight types:
 |------|---------------|----------|
 | **Signal** | Single audio-rate buffer | `osc("sin", 440)`, `@ * 0.5` |
 | **Number** | Compile-time constant (float) | `440`, `0.5`, `2 * pi` |
-| **Pattern** | Record of {freq, vel, trig, gate, type} + SequenceState ref + cycle_length | `pat("c4 e4 g4")`, `seq("x _ x _")` |
+| **Pattern** | Record of {freq, vel, trig, gate, type} + SequenceState ref + cycle_length | `n"c4 e4 g4"`, `seq("x _ x _")` |
 | **Record** | Named fields → TypedValue | `{freq: 440, vel: 0.8}` |
 | **Array** | Ordered typed values | `[1, 2, 3]`, chord expansion `C4'` |
 | **String** | Compile-time string literal | `"sin"`, `"kick.wav"` |
@@ -158,10 +158,10 @@ With TypedValue, **no change to hole substitution logic is needed.** The AST rew
 
 Example flow:
 ```
-pat("c4 e4") |> transport(@, trigger(2))
+n"c4 e4" |> transport(@, trigger(2))
 ```
-1. Analyzer rewrites to: `transport(pat("c4 e4"), trigger(2))`
-2. Codegen visits `pat("c4 e4")` → returns `TypedValue{Pattern, ...}`
+1. Analyzer rewrites to: `transport(n"c4 e4", trigger(2))`
+2. Codegen visits `n"c4 e4"` → returns `TypedValue{Pattern, ...}`
 3. Codegen visits `transport(...)` → sees arg 0 is Pattern → compiles inner sequence, wires clock override
 
 ## Impact on Field Access
@@ -226,7 +226,7 @@ for (int i = 0; i < num_args; i++) {
 | String | String only |
 | Function | Function only |
 
-Pattern → Signal coercion is deliberately **not** supported. Passing a Pattern where a Signal is expected is a type error. Users must access a specific field: `pat("c4").freq` or `e.freq` via `as` binding. This prevents silent "which field did you mean?" ambiguity.
+Pattern → Signal coercion is deliberately **not** supported. Passing a Pattern where a Signal is expected is a type error. Users must access a specific field: `n"c4".freq` or `e.freq` via `as` binding. This prevents silent "which field did you mean?" ambiguity.
 
 ## Migration Strategy
 
@@ -259,14 +259,14 @@ Three phases. The original Phase 1 (introduce `visit_typed()` wrapper alongside 
 
 ### `as` bindings
 
-`pat("c4") as e` stores a full TypedValue in the symbol table, not just a buffer index.
+`n"c4" as e` stores a full TypedValue in the symbol table, not just a buffer index.
 
 - `handle_pipe_binding()` stores `TypedValue` for the bound symbol
 - `e.freq` resolves by looking up `e` → `TypedValue{Pattern}` → `pattern->fields[0]`
 
 ### Closure parameters
 
-`pat("c4") |> ((f) -> osc("sin", f.freq))` — the analyzer rewrites pipe-to-closure by substituting `@` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
+`n"c4" |> ((f) -> osc("sin", f.freq))` — the analyzer rewrites pipe-to-closure by substituting `@` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
 
 - `handle_closure()` receives the incoming TypedValue to type the parameter
 - `f.freq` resolves via the propagated Pattern type, not via map probing
@@ -321,7 +321,7 @@ match mode {
 // Error: arm 1 is Signal, arm 2 is Pattern
 match mode {
     "osc" -> osc("sin", 440),
-    "pat" -> pat("c4 e4"),       // type error
+    "pat" -> n"c4 e4",       // type error
 }
 ```
 

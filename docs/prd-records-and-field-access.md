@@ -1,4 +1,4 @@
-> **Status: DONE** — All §3 fields work uniformly across every pattern producer (bare `pat()` and every transform: `fast`/`slow`/`rev`/`velocity`/`bank`/`variant`/`transpose`/`early`/`late`/`palindrome`/`tune`/`zoom`/`segment`/`iter`/`ply`/etc.). `voice` removed from spec under the polyphony pivot — polyphonic dispatch is opt-in via `poly()`/`sampler()` wrappers. `sample` aliases to the numeric `sample_id` (Signal buffers are numeric only). Bare-`%` auto-detection (§3.6) deferred to a follow-up PRD. Last audit: `docs/audits/prd-records-and-field-access_audit_2026-05-13.md`.
+> **Status: DONE** — All §3 fields work uniformly across every pattern producer (bare typed pattern literals and every transform: `fast`/`slow`/`rev`/`velocity`/`bank`/`variant`/`transpose`/`early`/`late`/`palindrome`/`tune`/`zoom`/`segment`/`iter`/`ply`/etc.). `voice` removed from spec under the polyphony pivot — polyphonic dispatch is opt-in via `poly()`/`sampler()` wrappers. `sample` aliases to the numeric `sample_id` (Signal buffers are numeric only). Bare-`%` auto-detection (§3.6) deferred to a follow-up PRD. Last audit: `docs/audits/prd-records-and-field-access_audit_2026-05-13.md`.
 
 # PRD: Records and Field Access in Akkado
 
@@ -20,7 +20,7 @@ Currently, pattern events in Akkado produce multiple data streams (trigger, velo
 seq("c4 e4 g4", (t, v, f) -> osc("sin", f) * v * ar(t, 0.01, 0.1))
 
 // Desired: Direct field access through pipe
-pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel * ar(%.trig, 0.01, 0.1)
+n"c4 e4 g4" |> osc("sin", %.freq) * %.vel * ar(%.trig, 0.01, 0.1)
 ```
 
 More broadly, Akkado lacks a general mechanism for structured data with named fields, limiting:
@@ -102,9 +102,9 @@ hole = "%" [ "." identifier ] ;
 
 **Examples:**
 ```akkado
-pat("c4") |> osc("sin", %.freq)          // Access frequency field
-pat("c4") |> %.vel * ar(%.trig, 0.01)    // Multiple field access
-pat("c4") |> %                            // Bare hole (backwards compatible)
+n"c4" |> osc("sin", %.freq)          // Access frequency field
+n"c4" |> %.vel * ar(%.trig, 0.01)    // Multiple field access
+n"c4" |> %                            // Bare hole (backwards compatible)
 ```
 
 **Limitation:** `%.field` only works in the immediate RHS of a pipe where LHS is a record-producing expression. For multi-stage pipes, use `as` binding.
@@ -119,14 +119,14 @@ The `as` keyword binds the LHS value to a name, making it accessible in all subs
 
 ```akkado
 // Bind pattern to 'e', access fields in multiple stages
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> % * e.vel |> lp(%, 1000 * e.vel)
+n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> lp(%, 1000 * e.vel)
 
 // Works with ANY record-returning expression, not just patterns
 fn synth_voice(freq) -> {sig: osc("saw", freq), env: ar(1, 0.01, 0.3)}
 synth_voice(440) as v |> lp(v.sig, 1000) * v.env |> out(%, %)
 
 // Can chain multiple bindings
-pat("c4") as e |> osc("sin", e.freq) as dry |> reverb(%) |> dry * 0.3 + % * 0.7
+n"c4" as e |> osc("sin", e.freq) as dry |> reverb(%) |> dry * 0.3 + % * 0.7
 
 // Works with ANY expression type - useful for reusing intermediate values
 saw(440) as s |> lp(s, 1000) + lp(s, 2000)  // s used twice without recomputation
@@ -167,7 +167,7 @@ Both are parsed in the same `method_expr` rule.
 
 ## 3. Pattern Event Record
 
-Pattern functions (`pat()`, `seq()`, `note()`) produce a built-in record type with these fields:
+Pattern producers (`n"…"`, `v"…"`, `s"…"`, `c"…"`, `seq()`) produce a built-in record type with these fields:
 
 ### 3.1 Core Fields
 
@@ -175,7 +175,7 @@ Pattern functions (`pat()`, `seq()`, `note()`) produce a built-in record type wi
 |-------|---------|------|-------------|
 | `trig` | `trigger`, `t` | Signal (0/1) | Trigger pulse at event onset |
 | `vel` | `velocity`, `v` | Signal (0-1) | Event velocity/amplitude |
-| `freq` | `frequency`, `f`, `pitch`, `p` | Signal (Hz) | Frequency for pitch events |
+| `freq` | `frequency`, `f`, `pitch`, `n` | Signal (Hz) | Frequency for pitch events |
 | `note` | `midi`, `n` | Signal (0-127) | Raw MIDI note number |
 | `sample` | `s` | Signal (ID) | Sample identifier for sample events |
 
@@ -194,7 +194,7 @@ Pattern functions (`pat()`, `seq()`, `note()`) produce a built-in record type wi
 
 ```akkado
 // Single note "a4" → 1 event
-pat("a4") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
+n"a4" as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 
 // Chord "Cmaj" → 3 simultaneous events, auto-summed
 chord("C") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
@@ -220,7 +220,7 @@ chord("C") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 > The `voice` field was removed from this PRD on 2026-05-13. The polyphony model pivoted to opt-in per-voice routing via the `poly()`/`sampler()` wrappers; standalone `%.voice` no longer fits the scalar event model. See [§3.4](#34-polyphony-and-voice-control) and the 2026-05-13 audit.
 >
 > Canonical aliases (single source of truth: `pattern_field_aliases()` in `akkado/src/typed_value.cpp:30–49`):
-> - `freq`: `frequency`, `pitch`, `f`, `p`
+> - `freq`: `frequency`, `pitch`, `f`, `n`
 > - `vel`: `velocity`, `v`
 > - `trig`: `trigger`, `t`
 > - `gate`: `g`
@@ -238,7 +238,7 @@ chord("C") as e |> osc("sin", e.freq) * e.vel |> out(%, %)
 **Pitched sample playback:**
 ```akkado
 // Sample "bd" pitched to C4 - freq/note used for pitch-shifting
-pat("bd'c4 bd'e4 bd'g4") as e |>
+s"bd'c4 bd'e4 bd'g4" as e |>
     sample_play(e.sample_id, e.note) * e.vel
 ```
 
@@ -248,10 +248,10 @@ pat("bd'c4 bd'e4 bd'g4") as e |>
 
 ```akkado
 // Mono pattern — every %.<field> is scalar across the pipe.
-pat("c4 e4 g4") |> osc("sin", %.freq) * %.vel |> out(%, %)
+n"c4 e4 g4" |> osc("sin", %.freq) * %.vel |> out(%, %)
 
 // Chord pattern wrapped in poly() — explicit per-voice fan-out.
-poly(pat("Cmaj7")) |> osc("sin", %.freq) |> out(%, %)
+poly(n"Cmaj7") |> osc("sin", %.freq) |> out(%, %)
 //      └─ poly() handles voice allocation; each voice has its own %.freq.
 
 // Scalar coercion of a polyphonic pattern errors E160 by design.
@@ -266,20 +266,20 @@ Sample patterns work identically to pitch patterns:
 
 ```akkado
 // Simple sample pattern
-pat("bd sd bd hh") as e |> sample_play(e.sample_id) * e.vel |> out(%, %)
+s"bd sd bd hh" as e |> sample_play(e.sample_id) * e.vel |> out(%, %)
 
 // Sample with variant (bd:2)
-pat("bd:0 bd:1 bd:2") as e |> sample_play(e.sample_id) * e.vel
+s"bd:0 bd:1 bd:2" as e |> sample_play(e.sample_id) * e.vel
 
 // Mixed pattern handling via .type
-pat("bd c4 sd e4") as e |> match(e.type) {
+s"bd c4 sd e4" as e |> match(e.type) {
     "sample": sample_play(e.sample_id),
     "pitch": osc("sin", e.freq),
     _: dc(0)
 } * e.vel |> out(%, %)
 
 // Pitched sample playback (sample + pitch)
-pat("bd'c2 bd'e2 bd'g2") as e |>
+s"bd'c2 bd'e2 bd'g2" as e |>
     sample_play(e.sample_id, pitch: e.note) * e.vel
 ```
 
@@ -340,7 +340,7 @@ When `%.field` appears in a pipe where LHS is a pattern:
 
 ```akkado
 // Source
-pat("c4 e4") |> osc("sin", %.freq) * %.vel
+n"c4 e4" |> osc("sin", %.freq) * %.vel
 
 // Transformed to (conceptually)
 seq("c4 e4", (__t, __v, __f) -> osc("sin", __f) * __v)
@@ -472,7 +472,7 @@ Emit site: `akkado/src/analyzer.cpp:1663`.
 ### 6.3 Unknown Pattern Field
 
 ```akkado
-pat("c4") |> %.foo  // E136 — Unknown field 'foo' on pattern. Available: freq, vel, trig, gate, type, note, dur, chance, time, phase, sample_id
+n"c4" |> %.foo  // E136 — Unknown field 'foo' on pattern. Available: freq, vel, trig, gate, type, note, dur, chance, time, phase, sample_id
 ```
 
 Emit site: `akkado/src/codegen.cpp:2598` and `:2631`. The `Available:` list is generated by `available_fields()` (`akkado/src/typed_value.cpp:80`), which walks the populated slots of the current `PatternPayload` plus any `custom_fields` registered by `bend()`/`aftertouch()`/record-suffix keys.
@@ -517,16 +517,16 @@ map(points, p -> p.x + p.y)  // Valid: each element is a record
 ### 6.9 Mixing Bare % and %.field
 
 ```akkado
-pat("c4") |> % + %.vel  // % resolves to the primary buffer (freq for pitch patterns)
+n"c4" |> % + %.vel  // % resolves to the primary buffer (freq for pitch patterns)
 ```
 
 ### 6.10 Chained Pipes with Pattern Fields
 
 ```akkado
-pat("c4") |> lp(osc("sin", %.freq), 1000) |> % * %.vel
+n"c4" |> lp(osc("sin", %.freq), 1000) |> % * %.vel
 //                                           ^^^^^ E136 — %.vel on non-pattern (the lp() output)
 // Use `as` binding to forward fields across stages:
-pat("c4") as e |> lp(osc("sin", e.freq), 1000) |> % * e.vel
+n"c4" as e |> lp(osc("sin", e.freq), 1000) |> % * e.vel
 ```
 
 ---
@@ -539,10 +539,10 @@ pat("c4") as e |> lp(osc("sin", e.freq), 1000) |> % * e.vel
 
 ```akkado
 // Single stage: %.field works
-pat("c4") |> osc("sin", %.freq) * %.vel
+n"c4" |> osc("sin", %.freq) * %.vel
 
 // Multi-stage: use 'as' binding
-pat("c4") as e |> osc("sin", e.freq) |> % * e.vel
+n"c4" as e |> osc("sin", e.freq) |> % * e.vel
 ```
 
 ### D2: Chord Field Access — pivoted 2026-05-13 ✓
@@ -630,7 +630,7 @@ Should chord data be accessible as nested fields?
 ### 8.1 Existing Code
 
 All existing code continues to work unchanged:
-- `pat("c4") |> osc("sin", %)` - bare `%` defaults to `%.freq`
+- `n"c4" |> osc("sin", %)` - bare `%` defaults to `%.freq`
 - `seq("c4", (t, v, p) -> ...)` - explicit closure still works
 - `{}` - currently unused, no conflict
 

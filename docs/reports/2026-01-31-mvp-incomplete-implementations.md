@@ -34,7 +34,7 @@ melody |> transpose(@, -12) |> soundfont(%, "gm", 33) |> out(@)
 //        ^^^^^^^^^ E130: transpose() failed to compile pattern argument
 ```
 
-Fixed by adding an `Identifier` case to `compile_pattern_for_transform()` that recurses on `Symbol::pattern.pattern_node` (populated by the analyzer when it sees `name = MiniLiteral` / `name = pat()` / etc.). All transforms that route through `compile_pattern_for_transform` (`slow`, `fast`, `rev`, `transpose`, `velocity`, `bank`, `variant`, `tune`, `early`, `late`, `palindrome`, `compress`, `ply`, `linger`, `zoom`, `segment`, `swing`, `swingBy`, `iter`, `iterBack`, `anchor`, `mode`, `voicing`, `bend`, `aftertouch`, `dur`) now accept identifier-bound patterns. Regression test: `test_codegen.cpp` "Pattern transforms accept identifier-bound patterns".
+Fixed by adding an `Identifier` case to `compile_pattern_for_transform()` that recurses on `Symbol::pattern.pattern_node` (populated by the analyzer when it sees `name = MiniLiteral` / etc.). All transforms that route through `compile_pattern_for_transform` (`slow`, `fast`, `rev`, `transpose`, `velocity`, `bank`, `variant`, `tune`, `early`, `late`, `palindrome`, `compress`, `ply`, `linger`, `zoom`, `segment`, `swing`, `swingBy`, `iter`, `iterBack`, `anchor`, `mode`, `voicing`, `bend`, `aftertouch`, `dur`) now accept identifier-bound patterns. Regression test: `test_codegen.cpp` "Pattern transforms accept identifier-bound patterns".
 
 ---
 
@@ -67,8 +67,8 @@ outer.x.b     // 22
 ```akkado
 // All of these now compile to the same bytecode as their functional form:
 osc("saw", 440).lp(800).abs() |> out(%, %)          // == abs(lp(osc(...), 800))
-pat("c4 e4 g4").slow(2)                              // == slow(pat("c4 e4 g4"), 2)
-pat("c4 e4").fast(2).slow(4)                         // == slow(fast(pat("c4 e4"), 2), 4)
+n"c4 e4 g4".slow(2)                              // == slow(n"c4 e4 g4", 2)
+n"c4 e4".fast(2).slow(4)                         // == slow(fast(n"c4 e4", 2), 4)
 osc("saw", 440) |> %.lp(800) |> out(%, %)            // dot-call on hole
 osc("saw", 440) as q |> q.lp(800) |> out(%, %)       // dot-call on as-binding
 ```
@@ -106,13 +106,13 @@ Both are intentional — you can't take `.field` of a scalar.
 
 ### 3.1 Chord Expansion (ChordLit)
 
-**Status:** OBSOLETE — `C4'` standalone syntax deprecated in favor of chords inside `pat()`/`chord()`
+**Status:** OBSOLETE — `C4'` standalone syntax deprecated in favor of chords inside `c"…"`/`chord()`
 **File:** `akkado/src/codegen.cpp:167-180`
 
 ```akkado
 // C4' standalone syntax only emits root note — this is expected
 // Use chords inside patterns instead:
-pat("C4'") |> sine(%.freq) |> sum(%) |> out(%, %)  // Works correctly (multi-voice)
+n"C4'" |> sine(%.freq) |> sum(%) |> out(%, %)  // Works correctly (multi-voice)
 chord("Am") |> ...                                    // Also works
 ```
 

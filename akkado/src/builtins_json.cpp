@@ -135,7 +135,7 @@ std::string serialize_builtins_json() {
         json << "\"" << escape_json(alias) << "\":\"" << escape_json(canonical) << "\"";
     }
 
-    json << "},\"keywords\":[\"fn\",\"pat\",\"seq\",\"timeline\",\"note\",\"true\",\"false\",\"match\",\"post\"]}";
+    json << "},\"keywords\":[\"fn\",\"seq\",\"timeline\",\"true\",\"false\",\"match\",\"post\"]}";
 
     return json.str();
 }

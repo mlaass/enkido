@@ -126,8 +126,8 @@ Stretches the pattern to span more time:
 Modifiers must be inside the pattern string, not outside:
 
 ```akkado
-pat("[bd sn]/2")  // CORRECT: slows pattern by 2
-pat("bd sn")/2    // WRONG: divides signal amplitude by 2
+s"[bd sn]/2"  // CORRECT: slows pattern by 2
+s"bd sn"/2    // WRONG: divides signal amplitude by 2
 ```
 
 ## Multi-Cycle Evaluation

@@ -58,7 +58,7 @@ None. Implementation stayed within the PRD's "compile-time resolution, runtime u
 ### Suggestions
 1. Update `MiniLexer::is_accidental()` to recognise the full modifier set per PRD Section 4.4 step 1, or add a comment clarifying that `lex_pitch` is now the source of truth.
 2. Either implement the remaining aliases (`d`, `\`) and numeric shorthand (`^n`/`vn`), or amend the PRD to mark them explicitly as "Future" — currently Section 4.2 / 3.3 lists them without deferral, which overstates shipped scope.
-3. Add an integration test that compiles `tune("24edo", pat("a4 a^4"))` and asserts the two emitted event frequencies are `~440.0` Hz and `~453.08` Hz (50-cent step).
+3. Add an integration test that compiles `tune("24edo", n"a4 a^4")` and asserts the two emitted event frequencies are `~440.0` Hz and `~453.08` Hz (50-cent step).
 4. If JI / BP are wanted in MVP, extend `TuningContext` with an optional ratio-array path and teach `parse_tuning` to return a JI/BP context; otherwise drop them from Section 6.1's shipping list.
 
 ## PRD Status

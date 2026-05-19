@@ -945,7 +945,7 @@ TEST_CASE("Codegen: Match expressions - range patterns", "[codegen][match][range
 
 TEST_CASE("Codegen: Patterns", "[codegen][patterns]") {
     SECTION("pitch pattern produces SEQPAT_QUERY and SEQPAT_STEP") {
-        auto result = akkado::compile("pat(\"[c4 e4 g4]\")");
+        auto result = akkado::compile("n\"[c4 e4 g4]\"");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         // Patterns now use lazy query system (SEQPAT_QUERY + SEQPAT_STEP)
@@ -1274,7 +1274,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         // Pattern: a <b c> d
         // a takes 1/3, <b c> takes 1/3, d takes 1/3
         // Inside the alternate, b and c each have full span (1.0) of their SUB_SEQ slot
-        auto result = akkado::compile("pat(\"[c4 <e4 g4> a4]\")");
+        auto result = akkado::compile("n\"[c4 <e4 g4> a4]\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1328,7 +1328,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
     SECTION("verify query output durations") {
         // Compile the pattern
-        auto result = akkado::compile("pat(\"[c4 <e4 g4> a4]\")");
+        auto result = akkado::compile("n\"[c4 <e4 g4> a4]\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1394,7 +1394,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
     SECTION("long pattern - 16 events (exceeds old MAX_EVENTS_PER_SEQ=8)") {
         // This pattern has 16 events, which exceeds the old limit of 8
-        auto result = akkado::compile("pat(\"[c4 g4 ~ ~ c5 e4 ~ g3 c4 g4 ~ ~ c5 e4 ~ a3]\")");
+        auto result = akkado::compile("n\"[c4 g4 ~ ~ c5 e4 ~ g3 c4 g4 ~ ~ c5 e4 ~ a3]\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1420,7 +1420,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
     SECTION("long pattern with groups - many nested events") {
         // This creates 10 main events plus nested events
-        auto result = akkado::compile("pat(\"[c4 d4] [e4 f4] [g4 a4] [b4 c5] [d5 e5]\")");
+        auto result = akkado::compile("n\"[c4 d4] [e4 f4] [g4 a4] [b4 c5] [d5 e5]\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1445,7 +1445,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
     SECTION("alternation with groups - groups wrapped in sub-sequences") {
         // <[c4 e4] [g4 b4]> should alternate between the two groups as units
         // not cycle through individual notes c4, e4, g4, b4
-        auto result = akkado::compile("pat(\"<[c4 e4] [g4 b4]>\")");
+        auto result = akkado::compile("n\"<[c4 e4] [g4 b4]>\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1483,7 +1483,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
     SECTION("choice with groups - groups wrapped in sub-sequences") {
         // [c4 e4] | [g4 b4] should pick between the two groups as units
-        auto result = akkado::compile("pat(\"[c4 e4] | [g4 b4]\")");
+        auto result = akkado::compile("n\"[c4 e4] | [g4 b4]\"");
         REQUIRE(result.success);
 
         // Find SequenceProgram state init
@@ -1520,7 +1520,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         // <hh hh [hh hh hh]>*2 should have an ALTERNATE sequence with 3 events:
         // 2 DATA (plain hh atoms) + 1 SUB_SEQ (for the [hh hh hh] group)
         // NOT 5 DATA events (flattened group)
-        auto result = akkado::compile("pat(\"<hh hh [hh hh hh]>*2\")");
+        auto result = akkado::compile("s\"<hh hh [hh hh hh]>*2\"");
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
@@ -1981,17 +1981,17 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         CHECK(find_instruction(insts, cedar::Opcode::OUTPUT) != nullptr);
     }
 
-    SECTION("pattern method via dot-call: pat().slow()") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4]").slow(2))");
-        auto direct = akkado::compile(R"(slow(pat("[c4 e4 g4]"), 2))");
+    SECTION("pattern method via dot-call: n'…'.slow()") {
+        auto dot = akkado::compile(R"(n"[c4 e4 g4]".slow(2))");
+        auto direct = akkado::compile(R"(slow(n"[c4 e4 g4]", 2))");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
         CHECK(dot.bytecode == direct.bytecode);
     }
 
     SECTION("chained pattern methods via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4]").fast(2).slow(4))");
-        auto direct = akkado::compile(R"(slow(fast(pat("[c4 e4]"), 2), 4))");
+        auto dot = akkado::compile(R"(n"[c4 e4]".fast(2).slow(4))");
+        auto direct = akkado::compile(R"(slow(fast(n"[c4 e4]", 2), 4))");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
         CHECK(dot.bytecode == direct.bytecode);
@@ -2066,13 +2066,13 @@ TEST_CASE("Pattern function: slow()", "[codegen][patterns]") {
     }
 
     SECTION("slow requires positive number as second argument") {
-        auto result = akkado::compile(R"(slow(pat("c4"), -1))");
+        auto result = akkado::compile(R"(slow(n"c4", -1))");
         REQUIRE_FALSE(result.success);
     }
 
     SECTION("slow with valid pattern compiles") {
         // Note: slow() currently passes through - full implementation pending
-        auto result = akkado::compile(R"(slow(pat("[c4 e4 g4]"), 2))");
+        auto result = akkado::compile(R"(slow(n"[c4 e4 g4]", 2))");
         CHECK(result.success);
     }
 }
@@ -2084,7 +2084,7 @@ TEST_CASE("Pattern function: fast()", "[codegen][patterns]") {
     }
 
     SECTION("fast with valid pattern compiles") {
-        auto result = akkado::compile(R"(fast(pat("[c4 e4]"), 2))");
+        auto result = akkado::compile(R"(fast(n"[c4 e4]", 2))");
         CHECK(result.success);
     }
 }
@@ -2096,7 +2096,7 @@ TEST_CASE("Pattern function: rev()", "[codegen][patterns]") {
     }
 
     SECTION("rev with valid pattern compiles") {
-        auto result = akkado::compile(R"(rev(pat("[c4 e4 g4]")))");
+        auto result = akkado::compile(R"(rev(n"[c4 e4 g4]"))");
         CHECK(result.success);
     }
 }
@@ -2108,7 +2108,7 @@ TEST_CASE("Pattern function: transpose()", "[codegen][patterns]") {
     }
 
     SECTION("transpose with valid pattern compiles") {
-        auto result = akkado::compile(R"(transpose(pat("[c4 e4 g4]"), 7))");
+        auto result = akkado::compile(R"(transpose(n"[c4 e4 g4]", 7))");
         CHECK(result.success);
     }
 }
@@ -2120,12 +2120,12 @@ TEST_CASE("Pattern function: velocity()", "[codegen][patterns]") {
     }
 
     SECTION("velocity requires value between 0 and 1") {
-        auto result = akkado::compile(R"(velocity(pat("c4"), 1.5))");
+        auto result = akkado::compile(R"(velocity(n"c4", 1.5))");
         REQUIRE_FALSE(result.success);
     }
 
     SECTION("velocity with valid pattern and value compiles") {
-        auto result = akkado::compile(R"(velocity(pat("[c4 e4]"), 0.7))");
+        auto result = akkado::compile(R"(velocity(n"[c4 e4]", 0.7))");
         CHECK(result.success);
     }
 
@@ -2133,7 +2133,7 @@ TEST_CASE("Pattern function: velocity()", "[codegen][patterns]") {
         // Regression guard: velocity() recompiles the inner pattern and
         // re-emits SEQPAT_QUERY/STEP itself; without explicit sampler wiring
         // it would return raw sample-IDs as DC instead of audio.
-        auto result = akkado::compile(R"(velocity(pat("[bd sd hh]"), 0.7))");
+        auto result = akkado::compile(R"(velocity(s"[bd sd hh]", 0.7))");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         CHECK(find_instruction(insts, cedar::Opcode::SEQPAT_QUERY) != nullptr);
@@ -2148,42 +2148,42 @@ TEST_CASE("Pattern function: velocity()", "[codegen][patterns]") {
 
 TEST_CASE("Pattern transform chaining compiles", "[codegen][patterns]") {
     SECTION("transpose(slow(...)) compiles - two-level nesting") {
-        auto result = akkado::compile(R"(transpose(slow(pat("[c4 e4]"), 2), 12))");
+        auto result = akkado::compile(R"(transpose(slow(n"[c4 e4]", 2), 12))");
         CHECK(result.success);
     }
 
     SECTION("rev(transpose(slow(...))) compiles - three-level nesting") {
-        auto result = akkado::compile(R"(rev(transpose(slow(pat("[c4 e4]"), 2), 12)))");
+        auto result = akkado::compile(R"(rev(transpose(slow(n"[c4 e4]", 2), 12)))");
         CHECK(result.success);
     }
 
     SECTION("fast(transpose(...)) compiles") {
-        auto result = akkado::compile(R"(fast(transpose(pat("[c4 e4]"), 7), 2))");
+        auto result = akkado::compile(R"(fast(transpose(n"[c4 e4]", 7), 2))");
         CHECK(result.success);
     }
 
     SECTION("slow(rev(...)) compiles") {
-        auto result = akkado::compile(R"(slow(rev(pat("[c4 e4 g4]")), 3))");
+        auto result = akkado::compile(R"(slow(rev(n"[c4 e4 g4]"), 3))");
         CHECK(result.success);
     }
 
     SECTION("transpose(fast(...)) compiles") {
-        auto result = akkado::compile(R"(transpose(fast(pat("[c4 e4]"), 2), 5))");
+        auto result = akkado::compile(R"(transpose(fast(n"[c4 e4]", 2), 5))");
         CHECK(result.success);
     }
 
     SECTION("rev(slow(...)) compiles") {
-        auto result = akkado::compile(R"(rev(slow(pat("[c4 e4 g4]"), 2)))");
+        auto result = akkado::compile(R"(rev(slow(n"[c4 e4 g4]", 2)))");
         CHECK(result.success);
     }
 }
 
 TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][patterns]") {
-    SECTION("slow(pat(...), 2) doubles cycle length, event times unchanged") {
-        // pat("[c4 e4]") base: cycle_length = 4 beats (Strudel canonical, regardless of element count)
+    SECTION("slow(n'…', 2) doubles cycle length, event times unchanged") {
+        // n"[c4 e4]" base: cycle_length = 4 beats (Strudel canonical, regardless of element count)
         // slow(2) -> cycle_length = 8 beats, event times stay normalized
         // Runtime formula (e.time * cycle_length) handles the scaling
-        auto result = akkado::compile(R"(slow(pat("[c4 e4]"), 2))");
+        auto result = akkado::compile(R"(slow(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2195,11 +2195,11 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
     }
 
-    SECTION("slow(fast(pat(...), 2), 2) is identity") {
-        // pat("[c4 e4]") base: cycle_length=4, times at 0, 0.5
+    SECTION("slow(fast(n'…', 2), 2) is identity") {
+        // n"[c4 e4]" base: cycle_length=4, times at 0, 0.5
         // fast(2): cycle_length=2, times unchanged
         // slow(2): cycle_length=4, times unchanged -> identity
-        auto result = akkado::compile(R"(slow(fast(pat("[c4 e4]"), 2), 2))");
+        auto result = akkado::compile(R"(slow(fast(n"[c4 e4]", 2), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2211,11 +2211,11 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
     }
 
-    SECTION("transpose(slow(pat(...), 2), 12) applies both transforms") {
-        // pat("[c4 e4]") base: cycle_length=4 beats
+    SECTION("transpose(slow(n'…', 2), 12) applies both transforms") {
+        // n"[c4 e4]" base: cycle_length=4 beats
         // slow(2): cycle_length=8
         // transpose(12): frequencies doubled (octave up)
-        auto result = akkado::compile(R"(transpose(slow(pat("[c4 e4]"), 2), 12))");
+        auto result = akkado::compile(R"(transpose(slow(n"[c4 e4]", 2), 12))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2231,11 +2231,11 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.sequence_events[0][0].values[0] == Catch::Approx(c4_freq * 2.0f).margin(1.0f));
     }
 
-    SECTION("fast(fast(pat(...), 2), 3) compounds speed") {
-        // pat("[c4 e4]") base: cycle_length=4 beats
+    SECTION("fast(fast(n'…', 2), 3) compounds speed") {
+        // n"[c4 e4]" base: cycle_length=4 beats
         // fast(2): cycle_length=2
         // fast(3): cycle_length=2/3
-        auto result = akkado::compile(R"(fast(fast(pat("[c4 e4]"), 2), 3))");
+        auto result = akkado::compile(R"(fast(fast(n"[c4 e4]", 2), 3))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2243,10 +2243,10 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.cycle_length == Catch::Approx(1.0f / 6.0f));
     }
 
-    SECTION("fast(pat(...), 2) halves cycle length, event times unchanged") {
-        // pat("[c4 e4]") base: cycle_length = 4 beats (Strudel canonical)
+    SECTION("fast(n'…', 2) halves cycle length, event times unchanged") {
+        // n"[c4 e4]" base: cycle_length = 4 beats (Strudel canonical)
         // fast(2) -> cycle_length = 2, event times stay normalized
-        auto result = akkado::compile(R"(fast(pat("[c4 e4]"), 2))");
+        auto result = akkado::compile(R"(fast(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2258,10 +2258,10 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
     }
 
-    SECTION("rev(pat(...)) reverses event positions within [0,1)") {
-        // pat("[c4 e4]") -> events at 0.0 (dur 0.5) and 0.5 (dur 0.5)
+    SECTION("rev(n'…') reverses event positions within [0,1)") {
+        // n"[c4 e4]" -> events at 0.0 (dur 0.5) and 0.5 (dur 0.5)
         // rev -> e4 at 0.0, c4 at 0.5
-        auto result = akkado::compile(R"(rev(pat("[c4 e4]")))");
+        auto result = akkado::compile(R"(rev(n"[c4 e4]"))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2280,11 +2280,11 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(has_05);
     }
 
-    SECTION("rev(slow(pat(...), 2)) reverses within normalized range") {
-        // pat("[c4 e4]") base: cycle_length=4, events at 0.0, 0.5
+    SECTION("rev(slow(n'…', 2)) reverses within normalized range") {
+        // n"[c4 e4]" base: cycle_length=4, events at 0.0, 0.5
         // slow(2): cycle_length=8, events still at 0.0, 0.5
         // rev: events reversed to 0.0, 0.5 (swapped values), cycle_length=8
-        auto result = akkado::compile(R"(rev(slow(pat("[c4 e4]"), 2)))");
+        auto result = akkado::compile(R"(rev(slow(n"[c4 e4]", 2)))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
@@ -2306,7 +2306,7 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
 
 TEST_CASE("Mini-notation record suffix: vel sets velocity",
           "[codegen][patterns][phase2][record_suffix]") {
-    auto result = akkado::compile(R"(pat("[c4{vel:0.7} e4{vel:0.5}]"))");
+    auto result = akkado::compile(R"(n"[c4{vel:0.7} e4{vel:0.5}]")");
     REQUIRE(result.success);
     const auto& si = result.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
@@ -2318,8 +2318,8 @@ TEST_CASE("Mini-notation record suffix: positional :vel and {vel} resolve compat
           "[codegen][patterns][phase2][record_suffix]") {
     // Both forms should produce identical velocities (the record-suffix `vel`
     // overrides the :0.x shorthand when both are present per §9.4 last-wins).
-    auto pos = akkado::compile(R"(pat("c4:0.5"))");
-    auto rec = akkado::compile(R"(pat("c4{vel:0.5}"))");
+    auto pos = akkado::compile(R"(n"c4:0.5")");
+    auto rec = akkado::compile(R"(n"c4{vel:0.5}")");
     REQUIRE(pos.success);
     REQUIRE(rec.success);
     CHECK(pos.state_inits[0].sequence_events[0][0].velocity ==
@@ -2330,7 +2330,7 @@ TEST_CASE("Mini-notation record suffix: backwards compat with polymeter `{a b}%n
           "[codegen][patterns][phase2][record_suffix]") {
     // {a b}%3 (polymeter) must still parse: there is no preceding note, so
     // the record-suffix lexer never activates.
-    auto result = akkado::compile(R"(pat("[{c4 e4 g4}%3]"))");
+    auto result = akkado::compile(R"(n"[{c4 e4 g4}%3]")");
     CHECK(result.success);
 }
 
@@ -2338,7 +2338,7 @@ TEST_CASE("Mini-notation record suffix: whitespace before `{` keeps polymeter",
           "[codegen][patterns][phase2][record_suffix]") {
     // `c4 {a b}%3` — record-suffix requires `{` to immediately follow the
     // note. With whitespace, the brace starts a polymeter group instead.
-    auto result = akkado::compile(R"(pat("[c4 {c4 e4}%3]"))");
+    auto result = akkado::compile(R"(n"[c4 {c4 e4}%3]")");
     CHECK(result.success);
 }
 
@@ -2346,7 +2346,7 @@ TEST_CASE("Mini-notation record suffix: multiple keys",
           "[codegen][patterns][phase2][record_suffix]") {
     // vel and dur are recognized; bend/cutoff stay on atom_data.properties
     // (deferred runtime exposure). Compile succeeds; velocity reflects vel.
-    auto result = akkado::compile(R"(pat("[c4{vel:0.8, bend:0.3, cutoff:0.4}]"))");
+    auto result = akkado::compile(R"(n"[c4{vel:0.8, bend:0.3, cutoff:0.4}]")");
     REQUIRE(result.success);
     const auto& si = result.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 1);
@@ -2359,7 +2359,7 @@ TEST_CASE("Mini-notation record suffix: dur sets event.duration",
     // time_span by the dur value when emitting the cedar event. For a
     // single-atom pat, time_span == 1.0 (one full cycle), so dur:0.5
     // yields event.duration == 0.5.
-    auto single = akkado::compile(R"(pat("c4{dur:0.5}"))");
+    auto single = akkado::compile(R"(n"c4{dur:0.5}")");
     REQUIRE(single.success);
     REQUIRE_FALSE(single.state_inits.empty());
     REQUIRE(single.state_inits[0].sequence_events[0].size() == 1);
@@ -2368,7 +2368,7 @@ TEST_CASE("Mini-notation record suffix: dur sets event.duration",
 
     // For a 2-atom pat, each atom's time_span == 0.5; dur:0.5 yields
     // event.duration == 0.25.
-    auto two = akkado::compile(R"(pat("[c4{dur:0.5} e4{dur:1.0}]"))");
+    auto two = akkado::compile(R"(n"[c4{dur:0.5} e4{dur:1.0}]")");
     REQUIRE(two.success);
     const auto& events = two.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
@@ -2380,13 +2380,13 @@ TEST_CASE("Mini-notation record suffix: dur sets event.duration",
     CHECK(pairs[1].second == Catch::Approx(0.5f).margin(0.001f));    // e4 dur 1.0 * 0.5
 }
 
-TEST_CASE("Mini-notation record suffix: works on sample atoms in pat()",
+TEST_CASE("Mini-notation record suffix: works on sample atoms in n'…'",
           "[codegen][patterns][phase2][record_suffix][sample]") {
     // Before fix: lex_sample_only() returned without calling try_lex_record_suffix(),
     // so `bd{vel:0.5}` was a parse error in any sample-mode context.
     // Per-voice velocity: sample atoms route per-atom velocity through
     // velocities[0] (event.velocity is pinned to 1.0 so the post-MUL is a no-op).
-    auto result = akkado::compile(R"(pat("[bd{vel:0.5} sd{vel:0.7}]"))");
+    auto result = akkado::compile(R"(s"[bd{vel:0.5} sd{vel:0.7}]")");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
@@ -2402,7 +2402,7 @@ TEST_CASE("Mini-notation record suffix: works on samples inside [...] groups",
     // The user's actual reported failure: `[hh,bd{vel:0.5}]` errored with
     // "Expected ']' after group" / "Expected '}' after polymeter" because the
     // `{` was tokenized as polymeter-open instead of a record-suffix.
-    auto result = akkado::compile(R"(pat("[hh,bd{vel:0.5}] hh"))");
+    auto result = akkado::compile(R"(s"[hh,bd{vel:0.5}] hh")");
     REQUIRE(result.success);
 }
 
@@ -2415,7 +2415,7 @@ TEST_CASE("Sample velocity: {vel:V} inside polyrhythm reaches merged event",
     // Before this fix the merged event carried min(1.0, 0.5) = 0.5 which
     // attenuated the *whole stack* including hh — see the [cp, bd{vel:0.05}]
     // bug report.
-    auto result = akkado::compile(R"(pat("[[hh,bd{vel:0.5}] hh]"))");
+    auto result = akkado::compile(R"(s"[[hh,bd{vel:0.5}] hh]")");
     REQUIRE(result.success);
     REQUIRE(!result.state_inits.empty());
     const auto& events = result.state_inits[0].sequence_events[0];
@@ -2674,7 +2674,7 @@ TEST_CASE("Phase 2.1: custom-property slot population from record suffix",
           "[codegen][patterns][phase21][custom_property]") {
     // `cutoff` is unrecognized — gets allocated slot 0; values land on
     // event.prop_vals[0]. PRD §11.1 / SequenceCompiler::custom_property_slots().
-    auto result = akkado::compile(R"(pat("[c4{cutoff:0.3} e4{cutoff:0.7}]"))");
+    auto result = akkado::compile(R"(n"[c4{cutoff:0.3} e4{cutoff:0.7}]")");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
@@ -2690,7 +2690,7 @@ TEST_CASE("Phase 2.1: SEQPAT_PROP emitted for custom property",
           "[codegen][patterns][phase21][custom_property]") {
     // The §11.1 example must compile and emit SEQPAT_PROP for `cutoff`.
     auto result = akkado::compile(R"(
-        pat("[c4{cutoff:0.3} e4{cutoff:0.7}]") as e
+        n"[c4{cutoff:0.3} e4{cutoff:0.7}]" as e
           |> osc("saw", e.freq)
           |> lp(%, 200 + e.cutoff * 4000)
           |> out(%, %)
@@ -2708,7 +2708,7 @@ TEST_CASE("Phase 2.1: SEQPAT_PROP emitted for custom property",
 TEST_CASE("Phase 2.1: e.unknownkey lists custom fields in error",
           "[codegen][patterns][phase21][custom_property]") {
     auto result = akkado::compile(R"(
-        pat("c4{cutoff:0.5}") as e |> osc("sin", e.unknownkey) |> out(%, %)
+        n"c4{cutoff:0.5}" as e |> osc("sin", e.unknownkey) |> out(%, %)
     )");
     REQUIRE_FALSE(result.success);
     bool found = false;
@@ -2729,7 +2729,7 @@ TEST_CASE("Phase 2.1: pattern with > 4 custom properties keeps first 4",
     // experiment freely; if buffer plumbing for >4 keys is ever needed it's
     // a separate enhancement.
     auto result = akkado::compile(
-        R"(pat("[c4{a:1, b:2, c:3, d:4, e:5}]") as p |> osc("sin", p.a) |> out(%, %))");
+        R"(n"[c4{a:1, b:2, c:3, d:4, e:5}]" as p |> osc("sin", p.a) |> out(%, %))");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
     // Four custom keys take slots 0..3; the 5th is dropped. Expect exactly
@@ -2744,7 +2744,7 @@ TEST_CASE("Phase 2.1: pattern with > 4 custom properties keeps first 4",
 
 TEST_CASE("Phase 2.1: standalone bend() writes to event.prop_vals[0]",
           "[codegen][patterns][phase21][bend]") {
-    auto result = akkado::compile(R"(bend(pat("[c4 e4 g4]"), 0.5))");
+    auto result = akkado::compile(R"(bend(n"[c4 e4 g4]", 0.5))");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 3);
@@ -2758,7 +2758,7 @@ TEST_CASE("Phase 2.1: bend() result reachable via e.bend pipe-binding",
     // Standalone bend() registers slot keyed by "bend"; e.bend resolves via
     // pattern_field() fallthrough to payload->custom_fields["bend"].
     auto result = akkado::compile(R"(
-        bend(pat("[c4 e4]"), 0.3) as e |> osc("sin", e.freq + e.bend) |> out(%, %)
+        bend(n"[c4 e4]", 0.3) as e |> osc("sin", e.freq + e.bend) |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -2770,7 +2770,7 @@ TEST_CASE("Phase 2.1: aftertouch() writes to its own slot independent of bend",
           "[codegen][patterns][phase21][aftertouch]") {
     // Both transforms applied — bend takes slot 0, aftertouch takes slot 1
     // (deterministic insertion order). Each event carries both values.
-    auto result = akkado::compile(R"(aftertouch(bend(pat("[c4 e4]"), 0.4), 0.7))");
+    auto result = akkado::compile(R"(aftertouch(bend(n"[c4 e4]", 0.4), 0.7))");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
@@ -2784,7 +2784,7 @@ TEST_CASE("Phase 2.1: inline {bend:x} reused by standalone bend(pat, y) — valu
           "[codegen][patterns][phase21][bend]") {
     // The inline `{bend:0.2}` registers the bend slot with 0.2; the outer
     // bend() transform uses the same slot and overwrites to 0.7.
-    auto result = akkado::compile(R"(bend(pat("c4{bend:0.2}"), 0.7))");
+    auto result = akkado::compile(R"(bend(n"c4{bend:0.2}", 0.7))");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 1);
@@ -2793,7 +2793,7 @@ TEST_CASE("Phase 2.1: inline {bend:x} reused by standalone bend(pat, y) — valu
 
 TEST_CASE("Phase 2.1: dur() multiplies event.duration",
           "[codegen][patterns][phase21][dur]") {
-    auto result = akkado::compile(R"(dur(pat("[c4 e4]"), 0.5))");
+    auto result = akkado::compile(R"(dur(n"[c4 e4]", 0.5))");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
@@ -2806,7 +2806,7 @@ TEST_CASE("Phase 2.1: dur() multiplies event.duration",
 
 TEST_CASE("Phase 2.1: dur() rejects zero/negative factor",
           "[codegen][patterns][phase21][dur]") {
-    auto neg = akkado::compile(R"(dur(pat("c4"), -1))");
+    auto neg = akkado::compile(R"(dur(n"c4", -1))");
     bool found_neg = false;
     for (const auto& d : neg.diagnostics) {
         if (d.code == "E131") { found_neg = true; break; }
@@ -2818,7 +2818,7 @@ TEST_CASE("Phase 2.1: nested bend() inside slow() preserves prop_vals",
           "[codegen][patterns][phase21][bend][nested]") {
     // The inner bend() runs in compile_pattern_for_transform's recursion;
     // outer slow() should not clobber prop_vals.
-    auto result = akkado::compile(R"(slow(bend(pat("[c4 e4]"), 0.3), 2))");
+    auto result = akkado::compile(R"(slow(bend(n"[c4 e4]", 0.3), 2))");
     REQUIRE(result.success);
     const auto& events = result.state_inits[0].sequence_events[0];
     REQUIRE_FALSE(events.empty());
@@ -2831,9 +2831,9 @@ TEST_CASE("Phase 2.1: nested bend() inside slow() preserves prop_vals",
 // Phase 2 PRD D0: velocity-shorthand propagation fix
 // =============================================================================
 
-TEST_CASE("velocity-shorthand pat(\"c4:0.8\") propagates to event.velocity",
+TEST_CASE("velocity-shorthand n\"c4:0.8\" propagates to event.velocity",
           "[codegen][patterns][phase2]") {
-    auto result = akkado::compile(R"(pat("[c4:0.5 e4:0.8]"))");
+    auto result = akkado::compile(R"(n"[c4:0.5 e4:0.8]")");
     REQUIRE(result.success);
     REQUIRE_FALSE(result.state_inits.empty());
     const auto& si = result.state_inits[0];
@@ -2850,7 +2850,7 @@ TEST_CASE("velocity-shorthand combines with nested velocity() transform",
     // Top-level velocity() emits a runtime MUL on the velocity buffer (so the
     // compile-time event.velocity reflects only the inner factors). Verify the
     // recursive multiplication path works with per-atom :0.x velocities.
-    auto result = akkado::compile(R"(velocity(velocity(pat("[c4:0.5 e4:0.8]"), 0.5), 1.0))");
+    auto result = akkado::compile(R"(velocity(velocity(n"[c4:0.5 e4:0.8]", 0.5), 1.0))");
     REQUIRE(result.success);
     const auto& si = result.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
@@ -2871,11 +2871,11 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
         REQUIRE_FALSE(result.success);
     }
     SECTION("early requires a number as second argument") {
-        auto result = akkado::compile(R"(early(pat("[c4 e4]")))");
+        auto result = akkado::compile(R"(early(n"[c4 e4]"))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("early(pat, 0.25) shifts event times by -0.25 (mod 1)") {
-        auto result = akkado::compile(R"(early(pat("[c4 e4 g4 b4]"), 0.25))");
+        auto result = akkado::compile(R"(early(n"[c4 e4 g4 b4]", 0.25))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -2891,8 +2891,8 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
         CHECK(times[3] == Catch::Approx(0.75f).margin(0.001f));
     }
     SECTION("early with negative amount equivalent to late") {
-        auto early_result = akkado::compile(R"(early(pat("[c4 e4 g4 b4]"), -0.25))");
-        auto late_result = akkado::compile(R"(late(pat("[c4 e4 g4 b4]"), 0.25))");
+        auto early_result = akkado::compile(R"(early(n"[c4 e4 g4 b4]", -0.25))");
+        auto late_result = akkado::compile(R"(late(n"[c4 e4 g4 b4]", 0.25))");
         REQUIRE(early_result.success);
         REQUIRE(late_result.success);
         // Events should rotate identically (sorted times match)
@@ -2907,8 +2907,8 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
         }
     }
     SECTION("early via dot-call matches functional form") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4 b4]").early(0.5))");
-        auto direct = akkado::compile(R"(early(pat("[c4 e4 g4 b4]"), 0.5))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".early(0.5))");
+        auto direct = akkado::compile(R"(early(n"[c4 e4 g4 b4]", 0.5))");
         CHECK(dot.success);
         CHECK(direct.success);
     }
@@ -2916,7 +2916,7 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
 
 TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
     SECTION("late(pat, 0.25) shifts event times by +0.25 (mod 1)") {
-        auto result = akkado::compile(R"(late(pat("[c4 e4 g4 b4]"), 0.25))");
+        auto result = akkado::compile(R"(late(n"[c4 e4 g4 b4]", 0.25))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -2930,7 +2930,7 @@ TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
         CHECK(times[3] == Catch::Approx(0.75f).margin(0.001f));
     }
     SECTION("late with amount > 1 wraps") {
-        auto result = akkado::compile(R"(late(pat("[c4 e4 g4 b4]"), 1.25))");
+        auto result = akkado::compile(R"(late(n"[c4 e4 g4 b4]", 1.25))");
         REQUIRE(result.success);
         // Same as late(pat, 0.25)
         const auto& si = result.state_inits[0];
@@ -2951,8 +2951,8 @@ TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
 TEST_CASE("Single-child <X> compiles identically to [X]",
           "[codegen][patterns][regression]") {
     SECTION("<X> with a single atom equals bare X") {
-        auto bare = akkado::compile(R"(pat("[c4 e4 g4 b4]"))");
-        auto wrapped = akkado::compile(R"(pat("[c4 e4 <g4> b4]"))");
+        auto bare = akkado::compile(R"(n"[c4 e4 g4 b4]")");
+        auto wrapped = akkado::compile(R"(n"[c4 e4 <g4> b4]")");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
         REQUIRE_FALSE(bare.state_inits.empty());
@@ -2971,8 +2971,8 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
     SECTION("<[X Y]> with a single compound child equals [X Y]") {
         // The user's reported bug: these patterns differ audibly even
         // though they should be identical.
-        auto bare = akkado::compile(R"(pat("[c4 e4 [g4 b4] d4]"))");
-        auto wrapped = akkado::compile(R"(pat("[c4 e4 <[g4 b4]> d4]"))");
+        auto bare = akkado::compile(R"(n"[c4 e4 [g4 b4] d4]")");
+        auto wrapped = akkado::compile(R"(n"[c4 e4 <[g4 b4]> d4]")");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
         REQUIRE_FALSE(bare.state_inits.empty());
@@ -2991,7 +2991,7 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
     SECTION("<a!3> still creates the wrapper (post-!N expansion is >1)") {
         // Per design: only literal single-child `<X>` is inlined. The
         // `!N` repeat expansion case keeps the wrapper.
-        auto wrapped = akkado::compile(R"(pat("[c4 <e4!3> g4]"))");
+        auto wrapped = akkado::compile(R"(n"[c4 <e4!3> g4]")");
         REQUIRE(wrapped.success);
         REQUIRE_FALSE(wrapped.state_inits.empty());
         const auto& seqs = wrapped.state_inits[0].sequence_events;
@@ -3006,8 +3006,8 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
 TEST_CASE("late()/early() only shift root sequence events",
           "[codegen][patterns][regression]") {
     SECTION("late(<[X Y]>, n) equals late([X Y], n)") {
-        auto bare = akkado::compile(R"(late(pat("[c4 e4 [g4 b4] d4]"), 0.125))");
-        auto wrapped = akkado::compile(R"(late(pat("[c4 e4 <[g4 b4]> d4]"), 0.125))");
+        auto bare = akkado::compile(R"(late(n"[c4 e4 [g4 b4] d4]", 0.125))");
+        auto wrapped = akkado::compile(R"(late(n"[c4 e4 <[g4 b4]> d4]", 0.125))");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
         const auto& a = bare.state_inits[0].sequence_events;
@@ -3021,8 +3021,8 @@ TEST_CASE("late()/early() only shift root sequence events",
     }
 
     SECTION("late(<a b>, 0.25) leaves ALTERNATE sub-seq events untouched") {
-        auto base = akkado::compile(R"(pat("[c4 <e4 g4> b4]"))");
-        auto shifted = akkado::compile(R"(late(pat("[c4 <e4 g4> b4]"), 0.25))");
+        auto base = akkado::compile(R"(n"[c4 <e4 g4> b4]")");
+        auto shifted = akkado::compile(R"(late(n"[c4 <e4 g4> b4]", 0.25))");
         REQUIRE(base.success);
         REQUIRE(shifted.success);
         const auto& base_seqs = base.state_inits[0].sequence_events;
@@ -3043,8 +3043,8 @@ TEST_CASE("late()/early() only shift root sequence events",
     }
 
     SECTION("early(<a b>, 0.25) leaves ALTERNATE sub-seq events untouched") {
-        auto base = akkado::compile(R"(pat("[c4 <e4 g4> b4]"))");
-        auto shifted = akkado::compile(R"(early(pat("[c4 <e4 g4> b4]"), 0.25))");
+        auto base = akkado::compile(R"(n"[c4 <e4 g4> b4]")");
+        auto shifted = akkado::compile(R"(early(n"[c4 <e4 g4> b4]", 0.25))");
         REQUIRE(base.success);
         REQUIRE(shifted.success);
         const auto& base_seqs = base.state_inits[0].sequence_events;
@@ -3069,7 +3069,7 @@ TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
         REQUIRE_FALSE(result.success);
     }
     SECTION("palindrome doubles cycle_length and event count") {
-        auto result = akkado::compile(R"(palindrome(pat("[c4 e4]")))");
+        auto result = akkado::compile(R"(palindrome(n"[c4 e4]"))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -3084,8 +3084,8 @@ TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
         }
     }
     SECTION("palindrome via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4]").palindrome())");
-        auto direct = akkado::compile(R"(palindrome(pat("[c4 e4 g4]")))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4]".palindrome())");
+        auto direct = akkado::compile(R"(palindrome(n"[c4 e4 g4]"))");
         CHECK(dot.success);
         CHECK(direct.success);
     }
@@ -3097,11 +3097,11 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         REQUIRE_FALSE(result.success);
     }
     SECTION("compress requires two numeric arguments") {
-        auto result = akkado::compile(R"(compress(pat("[c4 e4]")))");
+        auto result = akkado::compile(R"(compress(n"[c4 e4]"))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("compress rejects reversed range") {
-        auto result = akkado::compile(R"(compress(pat("[c4 e4]"), 0.5, 0.25))");
+        auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.5, 0.25))");
         REQUIRE_FALSE(result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -3110,11 +3110,11 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         CHECK(found);
     }
     SECTION("compress rejects degenerate range (start == end)") {
-        auto result = akkado::compile(R"(compress(pat("[c4 e4]"), 0.5, 0.5))");
+        auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.5, 0.5))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("compress(pat, 0.25, 0.75) maps events into [0.25, 0.75)") {
-        auto result = akkado::compile(R"(compress(pat("[c4 e4]"), 0.25, 0.75))");
+        auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.25, 0.75))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -3131,7 +3131,7 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         }
     }
     SECTION("compress(pat, 0, 1) is identity") {
-        auto result = akkado::compile(R"(compress(pat("[c4 e4]"), 0.0, 1.0))");
+        auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.0, 1.0))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         std::vector<float> times;
@@ -3141,8 +3141,8 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
     }
     SECTION("compress via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4]").compress(0.0, 0.5))");
-        auto direct = akkado::compile(R"(compress(pat("[c4 e4 g4]"), 0.0, 0.5))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4]".compress(0.0, 0.5))");
+        auto direct = akkado::compile(R"(compress(n"[c4 e4 g4]", 0.0, 0.5))");
         CHECK(dot.success);
         CHECK(direct.success);
     }
@@ -3154,19 +3154,19 @@ TEST_CASE("Pattern transform: ply()", "[codegen][patterns][phase2]") {
         REQUIRE_FALSE(result.success);
     }
     SECTION("ply rejects n < 1") {
-        auto result = akkado::compile(R"(ply(pat("[c4 e4]"), 0))");
+        auto result = akkado::compile(R"(ply(n"[c4 e4]", 0))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("ply(pat, 3) triples event count") {
-        auto result = akkado::compile(R"(ply(pat("[c4 e4]"), 3))");
+        auto result = akkado::compile(R"(ply(n"[c4 e4]", 3))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        // pat("[c4 e4]") produces 2 events, ply(3) -> 6
+        // n"[c4 e4]" produces 2 events, ply(3) -> 6
         REQUIRE(si.sequence_events[0].size() == 6);
     }
     SECTION("ply(pat, 2) produces correct sub-times") {
-        auto result = akkado::compile(R"(ply(pat("[c4 e4]"), 2))");
+        auto result = akkado::compile(R"(ply(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         // Original: events at 0.0 (dur 0.5), 0.5 (dur 0.5)
@@ -3184,29 +3184,29 @@ TEST_CASE("Pattern transform: ply()", "[codegen][patterns][phase2]") {
         }
     }
     SECTION("ply via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4]").ply(3))");
+        auto dot = akkado::compile(R"(n"[c4 e4]".ply(3))");
         CHECK(dot.success);
     }
 }
 
 TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
     SECTION("linger rejects non-positive frac") {
-        auto result = akkado::compile(R"(linger(pat("[c4 e4]"), 0))");
+        auto result = akkado::compile(R"(linger(n"[c4 e4]", 0))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("linger(pat, 1.0) is a no-op") {
-        auto result = akkado::compile(R"(linger(pat("[c4 e4]"), 1.0))");
+        auto result = akkado::compile(R"(linger(n"[c4 e4]", 1.0))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 2);
     }
     SECTION("linger(pat, 0.5) keeps first half, halves cycle_length") {
-        // pat("[c4 e4 g4 b4]"): events at 0.0, 0.25, 0.5, 0.75; canonical cycle=4 beats.
+        // n"[c4 e4 g4 b4]": events at 0.0, 0.25, 0.5, 0.75; canonical cycle=4 beats.
         // Keep events with time < 0.5: {c4@0.0, e4@0.25}
         // Scale by 1/0.5=2: c4@0.0, e4@0.5; durations also scaled.
         // cycle_length *= 0.5 -> 2.
-        auto result = akkado::compile(R"(linger(pat("[c4 e4 g4 b4]"), 0.5))");
+        auto result = akkado::compile(R"(linger(n"[c4 e4 g4 b4]", 0.5))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(0.5f));
@@ -3218,25 +3218,25 @@ TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
         CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
     }
     SECTION("linger via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4 b4]").linger(0.5))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".linger(0.5))");
         CHECK(dot.success);
     }
 }
 
 TEST_CASE("Pattern transform: zoom()", "[codegen][patterns][phase2]") {
     SECTION("zoom rejects reversed range") {
-        auto result = akkado::compile(R"(zoom(pat("[c4 e4]"), 0.5, 0.25))");
+        auto result = akkado::compile(R"(zoom(n"[c4 e4]", 0.5, 0.25))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("zoom rejects degenerate range") {
-        auto result = akkado::compile(R"(zoom(pat("[c4 e4]"), 0.5, 0.5))");
+        auto result = akkado::compile(R"(zoom(n"[c4 e4]", 0.5, 0.5))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("zoom(pat, 0.25, 0.75) keeps middle 50% remapped to [0,1)") {
-        // pat("[c4 e4 g4 b4]"): events at 0.0, 0.25, 0.5, 0.75 (dur 0.25 each).
+        // n"[c4 e4 g4 b4]": events at 0.0, 0.25, 0.5, 0.75 (dur 0.25 each).
         // Window [0.25, 0.75): events e4(0.25-0.5), g4(0.5-0.75) overlap fully.
         // Remap: e4 -> t=0.0 dur 0.5, g4 -> t=0.5 dur 0.5.
-        auto result = akkado::compile(R"(zoom(pat("[c4 e4 g4 b4]"), 0.25, 0.75))");
+        auto result = akkado::compile(R"(zoom(n"[c4 e4 g4 b4]", 0.25, 0.75))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 2);
@@ -3247,18 +3247,18 @@ TEST_CASE("Pattern transform: zoom()", "[codegen][patterns][phase2]") {
         CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
     }
     SECTION("zoom via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4 b4]").zoom(0.0, 0.5))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".zoom(0.0, 0.5))");
         CHECK(dot.success);
     }
 }
 
 TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
     SECTION("segment rejects n < 1") {
-        auto result = akkado::compile(R"(segment(pat("[c4 e4]"), 0))");
+        auto result = akkado::compile(R"(segment(n"[c4 e4]", 0))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("segment(pat, 8) emits 8 events with duration 1/8") {
-        auto result = akkado::compile(R"(segment(pat("[c4 e4]"), 8))");
+        auto result = akkado::compile(R"(segment(n"[c4 e4]", 8))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 8);
@@ -3273,7 +3273,7 @@ TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
         }
     }
     SECTION("segment(pat, 1) emits single full-cycle event") {
-        auto result = akkado::compile(R"(segment(pat("[c4 e4]"), 1))");
+        auto result = akkado::compile(R"(segment(n"[c4 e4]", 1))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 1);
@@ -3281,7 +3281,7 @@ TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
         CHECK(si.sequence_events[0][0].duration == Catch::Approx(1.0f).margin(0.001f));
     }
     SECTION("segment via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4]").segment(8))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4]".segment(8))");
         CHECK(dot.success);
     }
 }
@@ -3292,15 +3292,15 @@ TEST_CASE("Pattern transform: swing()/swingBy()", "[codegen][patterns][phase2]")
         REQUIRE_FALSE(result.success);
     }
     SECTION("swing with default n=4 compiles") {
-        auto result = akkado::compile(R"(swing(pat("[bd hh sd hh]")))");
+        auto result = akkado::compile(R"(swing(s"[bd hh sd hh]"))");
         CHECK(result.success);
     }
     SECTION("swing(pat, 8) compiles") {
-        auto result = akkado::compile(R"(swing(pat("[bd hh sd hh]"), 8))");
+        auto result = akkado::compile(R"(swing(s"[bd hh sd hh]", 8))");
         CHECK(result.success);
     }
     SECTION("swingBy requires pattern and amount") {
-        auto result = akkado::compile(R"(swingBy(pat("[bd hh]")))");
+        auto result = akkado::compile(R"(swingBy(s"[bd hh]"))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("swingBy(pat, 0.5, 4) shifts off-beat events") {
@@ -3308,14 +3308,14 @@ TEST_CASE("Pattern transform: swing()/swingBy()", "[codegen][patterns][phase2]")
         // Slice width = 0.25; events at slice offset 0 -> no shift; slice
         // offset 0 (start) -> no shift since frac < 0.5.
         // For 4 events at slice starts, none shift. Use 8 elements to test:
-        // pat("[a b c d e f g h]"), times 0, 0.125, 0.25, ..., 0.875.
+        // n"[a b c d e f g h]", times 0, 0.125, 0.25, ..., 0.875.
         // Slices of width 0.25 starting at 0, 0.25, 0.5, 0.75.
         // Event at 0.0   -> slice 0, frac 0 -> no shift.
         // Event at 0.125 -> slice 0, frac 0.5 -> shift += 0.5 * 0.125 = 0.0625
         // Event at 0.25  -> slice 1, frac 0 -> no shift.
         // Event at 0.375 -> slice 1, frac 0.5 -> shift.
         // ...
-        auto result = akkado::compile(R"(swingBy(pat("[a b c d e f g h]"), 0.5, 4))");
+        auto result = akkado::compile(R"(swingBy(n"[a b c d e f g h]", 0.5, 4))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 8);
@@ -3334,7 +3334,7 @@ TEST_CASE("Pattern transform: swing()/swingBy()", "[codegen][patterns][phase2]")
         CHECK(times[7] == Catch::Approx(0.9375f).margin(0.001f));
     }
     SECTION("swing with amount=0 is identity") {
-        auto result = akkado::compile(R"(swingBy(pat("[a b c d]"), 0.0, 4))");
+        auto result = akkado::compile(R"(swingBy(n"[a b c d]", 0.0, 4))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         std::vector<float> times;
@@ -3346,11 +3346,11 @@ TEST_CASE("Pattern transform: swing()/swingBy()", "[codegen][patterns][phase2]")
         CHECK(times[3] == Catch::Approx(0.75f).margin(0.001f));
     }
     SECTION("swing dot-call") {
-        auto dot = akkado::compile(R"(pat("[a b c d e f g h]").swing())");
+        auto dot = akkado::compile(R"(n"[a b c d e f g h]".swing())");
         CHECK(dot.success);
     }
     SECTION("swingBy dot-call") {
-        auto dot = akkado::compile(R"(pat("[a b c d]").swingBy(0.4, 4))");
+        auto dot = akkado::compile(R"(n"[a b c d]".swingBy(0.4, 4))");
         CHECK(dot.success);
     }
 }
@@ -3361,11 +3361,11 @@ TEST_CASE("Pattern transform: iter()/iterBack()", "[codegen][patterns][phase2]")
         REQUIRE_FALSE(result.success);
     }
     SECTION("iter rejects n < 1") {
-        auto result = akkado::compile(R"(iter(pat("[c4 e4 g4 b4]"), 0))");
+        auto result = akkado::compile(R"(iter(n"[c4 e4 g4 b4]", 0))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("iter sets iter_n=4 and iter_dir=+1 on StateInitData") {
-        auto result = akkado::compile(R"(iter(pat("[c4 e4 g4 b4]"), 4))");
+        auto result = akkado::compile(R"(iter(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -3375,22 +3375,22 @@ TEST_CASE("Pattern transform: iter()/iterBack()", "[codegen][patterns][phase2]")
         REQUIRE(si.sequence_events[0].size() == 4);
     }
     SECTION("iterBack sets iter_n=4 and iter_dir=-1") {
-        auto result = akkado::compile(R"(iterBack(pat("[c4 e4 g4 b4]"), 4))");
+        auto result = akkado::compile(R"(iterBack(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         CHECK(si.iter_n == 4);
         CHECK(si.iter_dir == -1);
     }
     SECTION("iter n must be in [1, 255]") {
-        auto result = akkado::compile(R"(iter(pat("[c4 e4]"), 256))");
+        auto result = akkado::compile(R"(iter(n"[c4 e4]", 256))");
         REQUIRE_FALSE(result.success);
     }
     SECTION("iter via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4 b4]").iter(4))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".iter(4))");
         CHECK(dot.success);
     }
     SECTION("iterBack via dot-call") {
-        auto dot = akkado::compile(R"(pat("[c4 e4 g4 b4]").iterBack(4))");
+        auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".iterBack(4))");
         CHECK(dot.success);
     }
 }
@@ -3799,22 +3799,22 @@ TEST_CASE("Voicing: progression voice-leads with bounded movement", "[codegen][v
 
 TEST_CASE("Phase 2 transforms compose with existing transforms", "[codegen][patterns][phase2]") {
     SECTION("slow(palindrome(...)) compiles") {
-        auto result = akkado::compile(R"(slow(palindrome(pat("[c4 e4]")), 2))");
+        auto result = akkado::compile(R"(slow(palindrome(n"[c4 e4]"), 2))");
         CHECK(result.success);
     }
     SECTION("palindrome(slow(...)) doubles slow cycle_length again") {
-        auto result = akkado::compile(R"(palindrome(slow(pat("[c4 e4]"), 2)))");
+        auto result = akkado::compile(R"(palindrome(slow(n"[c4 e4]", 2)))");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
         // pat: cycle=4 (canonical); slow(2): cycle=8; palindrome: cycle=16
         CHECK(si.cycle_length == Catch::Approx(4.0f));
     }
     SECTION("compress + early chain") {
-        auto result = akkado::compile(R"(early(compress(pat("[c4 e4 g4 b4]"), 0.0, 0.5), 0.1))");
+        auto result = akkado::compile(R"(early(compress(n"[c4 e4 g4 b4]", 0.0, 0.5), 0.1))");
         CHECK(result.success);
     }
-    SECTION("dot-call chain: pat().palindrome().compress(...)") {
-        auto result = akkado::compile(R"(pat("[c4 e4]").palindrome().compress(0.0, 0.5))");
+    SECTION("dot-call chain: n'…'.palindrome().compress(...)") {
+        auto result = akkado::compile(R"(n"[c4 e4]".palindrome().compress(0.0, 0.5))");
         CHECK(result.success);
     }
 }
@@ -3825,15 +3825,15 @@ TEST_CASE("Phase 2 transforms compose with existing transforms", "[codegen][patt
 
 TEST_CASE("Pattern transform: velocity in chain", "[codegen][patterns]") {
     SECTION("slow(velocity(...)) compiles") {
-        auto result = akkado::compile(R"(slow(velocity(pat("[c4 e4]"), 0.5), 2))");
+        auto result = akkado::compile(R"(slow(velocity(n"[c4 e4]", 0.5), 2))");
         CHECK(result.success);
     }
     SECTION("velocity(slow(...)) compiles") {
-        auto result = akkado::compile(R"(velocity(slow(pat("[c4 e4]"), 2), 0.5))");
+        auto result = akkado::compile(R"(velocity(slow(n"[c4 e4]", 2), 0.5))");
         CHECK(result.success);
     }
     SECTION("velocity in chain modifies event velocity") {
-        auto result = akkado::compile(R"(slow(velocity(pat("[c4 e4]"), 0.5), 2))");
+        auto result = akkado::compile(R"(slow(velocity(n"[c4 e4]", 0.5), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
@@ -3848,11 +3848,11 @@ TEST_CASE("Pattern transform: velocity in chain", "[codegen][patterns]") {
 
 TEST_CASE("Pattern transform: bank/variant in chain", "[codegen][patterns]") {
     SECTION("slow(bank(...)) compiles") {
-        auto result = akkado::compile(R"(slow(bank(pat("[bd sd]"), "TR808"), 2))");
+        auto result = akkado::compile(R"(slow(bank(s"[bd sd]", "TR808"), 2))");
         CHECK(result.success);
     }
     SECTION("slow(variant(...)) compiles") {
-        auto result = akkado::compile(R"(slow(variant(pat("[bd sd]"), 2), 2))");
+        auto result = akkado::compile(R"(slow(variant(s"[bd sd]", 2), 2))");
         CHECK(result.success);
     }
 }
@@ -3905,9 +3905,9 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
         REQUIRE(result.success);
     }
 
-    SECTION("transpose with pat() identifier compiles (functional form)") {
+    SECTION("transpose with n'…' identifier compiles (functional form)") {
         auto result = akkado::compile(R"(
-            m = pat("[c4 e4 g4]")
+            m = n"[c4 e4 g4]"
             transpose(m, 7)
         )");
         REQUIRE(result.success);
@@ -3923,7 +3923,7 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
 
     SECTION("nested transforms over an identifier compile") {
         auto result = akkado::compile(R"(
-            m = pat("[c4 e4]")
+            m = n"[c4 e4]"
             transpose(slow(m, 2), 12)
         )");
         REQUIRE(result.success);
@@ -3934,7 +3934,7 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
         // Equivalent to the chained-correctness test at L2081 but with the
         // pattern bound to a name first.
         auto result = akkado::compile(R"(
-            m = pat("[c4 e4]")
+            m = n"[c4 e4]"
             transpose(m, 12)
         )");
         REQUIRE(result.success);
@@ -3982,7 +3982,7 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
             "swingBy(m, 0.5, 4)",
         };
         for (const char* t : transforms) {
-            std::string src = std::string("m = pat(\"[c4 e4 g4]\")\n") + t;
+            std::string src = std::string("m = n\"[c4 e4 g4]\"\n") + t;
             INFO("source: " << src);
             auto result = akkado::compile(src);
             CHECK(result.success);
@@ -4062,7 +4062,7 @@ TEST_CASE("Codegen: Hole in unexpected context errors", "[codegen][errors]") {
 
 TEST_CASE("Codegen: Error E130-E136 - Field access errors", "[codegen][errors]") {
     SECTION("field access on unknown field in pattern") {
-        auto result = akkado::compile(R"(pat("c4") |> %.nonexistent)");
+        auto result = akkado::compile(R"(n"c4" |> %.nonexistent)");
         REQUIRE_FALSE(result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -4075,7 +4075,7 @@ TEST_CASE("Codegen: Error E130-E136 - Field access errors", "[codegen][errors]")
         // `.t` used to be a short alias of `.trig` but was removed because
         // it collided with `.time`/`.t0`. Both `.trig` and `.trigger`
         // continue to work; only the single-letter form is gone.
-        auto result = akkado::compile(R"(pat("c4") |> %.t)");
+        auto result = akkado::compile(R"(n"c4" |> %.t)");
         REQUIRE_FALSE(result.success);
         bool found_e136 = false;
         for (const auto& d : result.diagnostics) {
@@ -4085,8 +4085,8 @@ TEST_CASE("Codegen: Error E130-E136 - Field access errors", "[codegen][errors]")
     }
 
     SECTION(".trig and .trigger both still resolve") {
-        auto a = akkado::compile(R"(pat("c4") |> %.trig |> out(%, %))");
-        auto b = akkado::compile(R"(pat("c4") |> %.trigger |> out(%, %))");
+        auto a = akkado::compile(R"(n"c4" |> %.trig |> out(%, %))");
+        auto b = akkado::compile(R"(n"c4" |> %.trigger |> out(%, %))");
         CHECK(a.success);
         CHECK(b.success);
     }
@@ -4563,7 +4563,7 @@ TEST_CASE("Codegen: Statement-level destructure assignment",
 
     SECTION("destructure pattern source binds fixed pattern fields") {
         auto result = akkado::compile(R"(
-            p = pat("[c4 e4]")
+            p = n"[c4 e4]"
             {freq} = p
             out(freq, freq)
         )");
@@ -4801,27 +4801,27 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
 TEST_CASE("Codegen: Pattern transformations", "[codegen]") {
     // Pattern transformations require literal patterns as first argument
     SECTION("slow transformation") {
-        auto result = akkado::compile("slow(pat(\"[c4 e4 g4]\"), 2)");
+        auto result = akkado::compile("slow(n\"[c4 e4 g4]\", 2)");
         CHECK(result.success);
     }
 
     SECTION("fast transformation") {
-        auto result = akkado::compile("fast(pat(\"[c4 e4]\"), 2)");
+        auto result = akkado::compile("fast(n\"[c4 e4]\", 2)");
         CHECK(result.success);
     }
 
     SECTION("rev transformation") {
-        auto result = akkado::compile("rev(pat(\"[c4 e4 g4]\"))");
+        auto result = akkado::compile("rev(n\"[c4 e4 g4]\")");
         CHECK(result.success);
     }
 
     SECTION("transpose transformation") {
-        auto result = akkado::compile("transpose(pat(\"[c4 e4 g4]\"), 12)");
+        auto result = akkado::compile("transpose(n\"[c4 e4 g4]\", 12)");
         CHECK(result.success);
     }
 
     SECTION("velocity transformation") {
-        auto result = akkado::compile("velocity(pat(\"[c4 e4 g4]\"), 0.5)");
+        auto result = akkado::compile("velocity(n\"[c4 e4 g4]\", 0.5)");
         CHECK(result.success);
     }
 
@@ -4838,42 +4838,42 @@ TEST_CASE("Codegen: Pattern transformations", "[codegen]") {
             return true;
         };
 
-        auto slow_result = akkado::compile("slow(pat(\"[c4 e4 g4]\"), 2)");
+        auto slow_result = akkado::compile("slow(n\"[c4 e4 g4]\", 2)");
         CHECK(slow_result.success);
         CHECK(check_no_w130(slow_result));
 
-        auto fast_result = akkado::compile("fast(pat(\"[c4 e4]\"), 2)");
+        auto fast_result = akkado::compile("fast(n\"[c4 e4]\", 2)");
         CHECK(fast_result.success);
         CHECK(check_no_w130(fast_result));
 
-        auto rev_result = akkado::compile("rev(pat(\"[c4 e4 g4]\"))");
+        auto rev_result = akkado::compile("rev(n\"[c4 e4 g4]\")");
         CHECK(rev_result.success);
         CHECK(check_no_w130(rev_result));
 
-        auto transpose_result = akkado::compile("transpose(pat(\"[c4 e4 g4]\"), 12)");
+        auto transpose_result = akkado::compile("transpose(n\"[c4 e4 g4]\", 12)");
         CHECK(transpose_result.success);
         CHECK(check_no_w130(transpose_result));
 
-        auto velocity_result = akkado::compile("velocity(pat(\"[c4 e4 g4]\"), 0.5)");
+        auto velocity_result = akkado::compile("velocity(n\"[c4 e4 g4]\", 0.5)");
         CHECK(velocity_result.success);
         CHECK(check_no_w130(velocity_result));
     }
 
-    SECTION("transformations with pat() syntax") {
+    SECTION("transformations with n'…' syntax") {
         // Test that all transformations work with pat() syntax
-        auto slow_result = akkado::compile("slow(pat(\"[c4 e4 g4]\"), 2)");
+        auto slow_result = akkado::compile("slow(n\"[c4 e4 g4]\", 2)");
         CHECK(slow_result.success);
 
-        auto fast_result = akkado::compile("fast(pat(\"[c4 e4]\"), 2)");
+        auto fast_result = akkado::compile("fast(n\"[c4 e4]\", 2)");
         CHECK(fast_result.success);
 
-        auto rev_result = akkado::compile("rev(pat(\"[c4 e4 g4]\"))");
+        auto rev_result = akkado::compile("rev(n\"[c4 e4 g4]\")");
         CHECK(rev_result.success);
 
-        auto transpose_result = akkado::compile("transpose(pat(\"[c4 e4 g4]\"), 12)");
+        auto transpose_result = akkado::compile("transpose(n\"[c4 e4 g4]\", 12)");
         CHECK(transpose_result.success);
 
-        auto velocity_result = akkado::compile("velocity(pat(\"[c4 e4 g4]\"), 0.5)");
+        auto velocity_result = akkado::compile("velocity(n\"[c4 e4 g4]\", 0.5)");
         CHECK(velocity_result.success);
     }
 }
@@ -4950,7 +4950,7 @@ TEST_CASE("Codegen: Pipe expressions", "[codegen]") {
     }
 
     SECTION("pipe with field access") {
-        auto result = akkado::compile("pat(\"[c4 e4 g4]\") |> osc(\"sin\", %.freq)");
+        auto result = akkado::compile("n\"[c4 e4 g4]\" |> osc(\"sin\", %.freq)");
         CHECK(result.success);
     }
 
@@ -4960,12 +4960,12 @@ TEST_CASE("Codegen: Pipe expressions", "[codegen]") {
     }
 
     SECTION("chained pipes") {
-        auto result = akkado::compile("pat(\"c4\") |> osc(\"sin\", %.freq) |> out(%, %)");
+        auto result = akkado::compile("n\"c4\" |> osc(\"sin\", %.freq) |> out(%, %)");
         CHECK(result.success);
     }
 
     SECTION("sample pattern to output") {
-        auto result = akkado::compile("pat(\"[bd ~ bd ~]\") |> out(%)");
+        auto result = akkado::compile("s\"[bd ~ bd ~]\" |> out(%)");
         CHECK(result.success);
     }
 }
@@ -4977,7 +4977,7 @@ TEST_CASE("Codegen: Pipe expressions", "[codegen]") {
 TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     auto compile_field = [](const std::string& field) {
         return akkado::compile(
-            "pat(\"[c4 e4 g4]\") |> osc(\"sin\", %." + field + ") |> out(%, %)"
+            "n\"[c4 e4 g4]\" |> osc(\"sin\", %." + field + ") |> out(%, %)"
         );
     };
 
@@ -4990,7 +4990,7 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 
     SECTION("freq aliases compile") {
-        for (const char* f : {"freq", "frequency", "pitch", "f", "p"}) {
+        for (const char* f : {"freq", "frequency", "pitch", "f", "n"}) {
             CAPTURE(f);
             auto r = compile_field(f);
             CHECK(r.success);
@@ -5038,7 +5038,7 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 
     SECTION("E136 lists the new canonical names") {
-        auto r = akkado::compile(R"(pat("c4") |> osc("sin", %.bogus))");
+        auto r = akkado::compile(R"(n"c4" |> osc("sin", %.bogus))");
         REQUIRE_FALSE(r.success);
         bool saw_e136 = false;
         for (const auto& d : r.diagnostics) {
@@ -5055,7 +5055,7 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 
     SECTION("SEQPAT_FIELD and SEQPAT_PHASE opcodes are emitted") {
-        auto r = akkado::compile(R"(pat("c4") |> osc("sin", %.freq))");
+        auto r = akkado::compile(R"(n"c4" |> osc("sin", %.freq))");
         REQUIRE(r.success);
         auto insts = get_instructions(r);
         // SEQPAT_FIELD appears five times (DUR, CHANCE, TIME, NOTE, SAMPLE_ID).
@@ -5065,14 +5065,14 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
 
     SECTION("`as` binding propagates extended fields") {
         auto r = akkado::compile(
-            "pat(\"[c4 e4 g4]\") as e |> "
+            "n\"[c4 e4 g4]\" as e |> "
             "osc(\"sin\", e.freq) * (0.1 + e.phase * 0.9) |> out(%, %)"
         );
         CHECK(r.success);
     }
 
     SECTION("sample pattern with %.sample_id") {
-        auto r = akkado::compile("pat(\"[bd sd bd sd]\") |> %.sample_id |> out(%, %)");
+        auto r = akkado::compile("s\"[bd sd bd sd]\" |> %.sample_id |> out(%, %)");
         CHECK(r.success);
     }
 }
@@ -5096,7 +5096,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
         for (const char* f : kCanonicalFields) {
             CAPTURE(f);
             auto r = akkado::compile(
-                std::string("fast(pat(\"[c4 e4 g4]\"), 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+                std::string("fast(n\"[c4 e4 g4]\", 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
             );
             CHECK(r.success);
         }
@@ -5106,7 +5106,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
         for (const char* f : kCanonicalFields) {
             CAPTURE(f);
             auto r = akkado::compile(
-                std::string("slow(pat(\"[c4 e4 g4]\"), 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+                std::string("slow(n\"[c4 e4 g4]\", 2) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
             );
             CHECK(r.success);
         }
@@ -5116,7 +5116,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
         for (const char* f : kCanonicalFields) {
             CAPTURE(f);
             auto r = akkado::compile(
-                std::string("rev(pat(\"[c4 e4 g4]\")) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+                std::string("rev(n\"[c4 e4 g4]\") |> osc(\"sin\", %.") + f + ") |> out(%, %)"
             );
             CHECK(r.success);
         }
@@ -5128,7 +5128,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
         for (const char* f : kCanonicalFields) {
             CAPTURE(f);
             auto r = akkado::compile(
-                std::string("velocity(pat(\"[c4 e4 g4]\"), 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+                std::string("velocity(n\"[c4 e4 g4]\", 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
             );
             CHECK(r.success);
         }
@@ -5159,7 +5159,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
     SECTION("SEQPAT opcodes emitted on transformed pattern") {
         // The transform path (emit_pattern_with_state) must now emit the same
         // 5 SEQPAT_FIELD instructions + 1 SEQPAT_PHASE as the bare-pat path.
-        auto r = akkado::compile(R"(fast(pat("[c4 e4 g4]"), 2) |> osc("sin", %.note) |> out(%, %))");
+        auto r = akkado::compile(R"(fast(n"[c4 e4 g4]", 2) |> osc("sin", %.note) |> out(%, %))");
         REQUIRE(r.success);
         auto insts = get_instructions(r);
         CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_FIELD) == 5);
@@ -5169,7 +5169,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
     }
 
     SECTION("E136 lists canonical names from transformed pattern context") {
-        auto r = akkado::compile(R"(fast(pat("c4"), 2) |> osc("sin", %.bogus) |> out(%, %))");
+        auto r = akkado::compile(R"(fast(n"c4", 2) |> osc("sin", %.bogus) |> out(%, %))");
         REQUIRE_FALSE(r.success);
         bool saw_e136 = false;
         for (const auto& d : r.diagnostics) {
@@ -5190,7 +5190,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
         for (const char* f : {"note", "dur", "phase", "sample_id", "gate"}) {
             CAPTURE(f);
             auto r = akkado::compile(
-                std::string("velocity(fast(pat(\"[c4 e4 g4]\"), 2), 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
+                std::string("velocity(fast(n\"[c4 e4 g4]\", 2), 0.5) |> osc(\"sin\", %.") + f + ") |> out(%, %)"
             );
             CHECK(r.success);
         }
@@ -5307,8 +5307,8 @@ TEST_CASE("Codegen: Extended pattern fields on typed prefixes", "[codegen][recor
         }
     }
 
-    SECTION("n\"…\" bytecode matches pat() for SEQPAT opcode counts") {
-        // After the fix, n"60 64 67" and pat("[60 64 67]") should emit the
+    SECTION("n\"…\" bytecode matches n'…' for SEQPAT opcode counts") {
+        // After the fix, n"60 64 67" and n"[60 64 67]" should emit the
         // same SEQPAT-family instruction counts: 1×STEP + 1×GATE + 1×TYPE +
         // 5×FIELD + 1×PHASE + 1×QUERY for a monophonic non-sample pattern.
         auto r = akkado::compile(R"(n"60 64 67" |> osc("sin", %.note) |> out(%, %))");
@@ -5363,7 +5363,7 @@ TEST_CASE("Codegen: >> and @ aliases", "[codegen]") {
     }
 
     SECTION("@ field access compiles") {
-        auto result = akkado::compile("pat(\"[c4 e4 g4]\") >> osc(\"sin\", @.freq)");
+        auto result = akkado::compile("n\"[c4 e4 g4]\" >> osc(\"sin\", @.freq)");
         CHECK(result.success);
     }
 
@@ -5380,7 +5380,7 @@ TEST_CASE("Codegen: >> and @ aliases", "[codegen]") {
 
 TEST_CASE("Codegen: Sample pattern event inspection", "[codegen][samples][debug]") {
     SECTION("sample pattern compiles with SAMPLE_PLAY and correct events") {
-        auto result = akkado::compile(R"(pat("[hh hh hh [hh hh] hh hh hh [hh oh]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[hh hh hh [hh hh] hh hh hh [hh oh]]" |> out(%))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -5454,7 +5454,7 @@ TEST_CASE("Codegen: Sample pattern event inspection", "[codegen][samples][debug]
         registry.register_sample("oh", 99);
 
         auto result = akkado::compile(
-            R"(pat("[hh hh hh [hh hh] hh hh hh [hh oh]]") |> out(%))",
+            R"(s"[hh hh hh [hh hh] hh hh hh [hh oh]]" |> out(%))",
             "<input>", &registry);
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
@@ -5485,7 +5485,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     registry.register_sample("hh", 3);
 
     SECTION("[bd, hh] → single event with num_values=2") {
-        auto result = akkado::compile(R"(pat("[bd, hh]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
@@ -5509,7 +5509,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, hh, sd] → three voices") {
-        auto result = akkado::compile(R"(pat("[bd, hh, sd]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, hh, sd]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5521,7 +5521,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, bd] → two voices, same id (voice-doubling allowed)") {
-        auto result = akkado::compile(R"(pat("[bd, bd]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, bd]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5532,7 +5532,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, ~] → rest becomes silent voice (values[1] = 0)") {
-        auto result = akkado::compile(R"(pat("[bd, ~]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, ~]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
@@ -5550,7 +5550,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         // Each half-cycle is [[bd, hh] hh [sd, hh] hh] = 4 beats,
         // together 8 top-level beats. Beats 1 and 3 are polyrhythm stacks.
         auto result = akkado::compile(
-            R"(pat("[[[bd, hh] hh [sd, hh] hh]  [[bd, hh] [bd, hh] [sd, hh] hh]]") |> out(%, %))",
+            R"(s"[[[bd, hh] hh [sd, hh] hh]  [[bd, hh] [bd, hh] [sd, hh] hh]]" |> out(%, %))",
             "<input>", &registry);
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
@@ -5585,7 +5585,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         // simultaneous voices in a single event at t=0. This is the simple
         // recursive semantics — every comma adds a parallel branch, no matter
         // how deeply nested.
-        auto result = akkado::compile(R"(pat("[[bd, sd], hh]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[[bd, sd], hh]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5604,7 +5604,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         // only hh (slot 0 = 0 means "no new trigger on bd this step"). The
         // bd voice plays out its sample naturally — SAMPLE_PLAY doesn't need
         // a sustain marker.
-        auto result = akkado::compile(R"(pat("[bd, [hh hh hh hh]]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, [hh hh hh hh]]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
@@ -5652,7 +5652,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         akkado::SampleRegistry reg2;
         reg2.register_sample("bd", 1);
         reg2.register_sample("cp", 4);
-        auto result = akkado::compile(R"(pat("[bd, [bd, cp]]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, [bd, cp]]" |> out(%, %))",
                                        "<input>", &reg2);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5674,7 +5674,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("bd", 1);
         reg2.register_sample("cp", 4);
         reg2.register_sample("hh", 3);
-        auto result = akkado::compile(R"(pat("[[bd cp], [hh hh hh hh]]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[[bd cp], [hh hh hh hh]]" |> out(%, %))",
                                        "<input>", &reg2);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5708,7 +5708,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("hh", 3);
         reg2.register_sample("sn", 2);
         reg2.register_sample("cp", 4);
-        auto result = akkado::compile(R"(pat("[bd [hh, sn] cp]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd [hh, sn] cp]" |> out(%, %))",
                                        "<input>", &reg2);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5740,7 +5740,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("hh", 3);
         reg2.register_sample("cp", 4);
         reg2.register_sample("oh", 5);
-        auto result = akkado::compile(R"(pat("[bd, sn, hh, cp, oh]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, sn, hh, cp, oh]" |> out(%, %))",
                                        "<input>", &reg2);
         REQUIRE(result.success);
         const auto& events = result.state_inits[0].sequence_events[0];
@@ -5754,7 +5754,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("single SAMPLE_PLAY instruction; in3/in4 link to SEQPAT state") {
-        auto result = akkado::compile(R"(pat("[bd, hh]") |> out(%, %))",
+        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))",
                                        "<input>", &registry);
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -5786,14 +5786,14 @@ TEST_CASE("MAX_VALUES_PER_EVENT cap enforced", "[event-cap]") {
     SECTION("17-voice polyrhythm truncates to 16") {
         akkado::SampleRegistry reg;
         // Register 17 distinct samples and build a 17-branch polyrhythm.
-        std::string pattern = "pat(\"[";
+        std::string pattern = "s\"[";
         for (int i = 1; i <= 17; ++i) {
             std::string name = "s" + std::to_string(i);
             reg.register_sample(name, static_cast<std::uint16_t>(i));
             if (i > 1) pattern += ", ";
             pattern += name;
         }
-        pattern += "]\") |> out(%, %)";
+        pattern += "]\" |> out(%, %)";
 
         auto result = akkado::compile(pattern, "<input>", &reg);
         REQUIRE(result.success);
@@ -5891,7 +5891,7 @@ TEST_CASE("Mini-notation chord lexer no longer truncates extended qualities",
 
 TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("[] within [] — 2 levels: bd [sd [hh hh]]") {
-        auto result = akkado::compile(R"(pat("[bd [sd [hh hh]]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[bd [sd [hh hh]]]" |> out(%))");
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
 
@@ -5914,7 +5914,7 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     }
 
     SECTION("[] within [] — 3 levels: bd [sd [hh [cp cp]]]") {
-        auto result = akkado::compile(R"(pat("[bd [sd [hh [cp cp]]]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[bd [sd [hh [cp cp]]]]" |> out(%))");
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
 
@@ -5934,7 +5934,7 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     }
 
     SECTION("[] within [] — 4 levels: bd [sd [hh [cp [oh oh]]]]") {
-        auto result = akkado::compile(R"(pat("[bd [sd [hh [cp [oh oh]]]]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[bd [sd [hh [cp [oh oh]]]]]" |> out(%))");
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
 
@@ -5956,7 +5956,7 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     }
 
     SECTION("symmetric nesting: [bd sd] [hh [cp oh]]") {
-        auto result = akkado::compile(R"(pat("[[bd sd] [hh [cp oh]]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[[bd sd] [hh [cp oh]]]" |> out(%))");
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
 
@@ -5978,7 +5978,7 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     }
 
     SECTION("4 levels all []: [[bd sd] [[hh hh] [cp oh]]]") {
-        auto result = akkado::compile(R"(pat("[[bd sd] [[hh hh] [cp oh]]]") |> out(%))");
+        auto result = akkado::compile(R"(s"[[bd sd] [[hh hh] [cp oh]]]" |> out(%))");
         REQUIRE(result.success);
         REQUIRE(!result.state_inits.empty());
 
@@ -6068,7 +6068,7 @@ TEST_CASE("Codegen: Chord function", "[codegen]") {
     }
 
     SECTION("chord pattern without poly is error") {
-        auto result = akkado::compile(R"(pat("C4'") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(n"C4'" |> osc("sin", %.freq) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -6092,32 +6092,32 @@ TEST_CASE("Codegen: Oscillators", "[codegen]") {
 
 TEST_CASE("Codegen: Mini-notation patterns", "[codegen]") {
     SECTION("simple pattern") {
-        auto result = akkado::compile("pat(\"[c4 e4 g4]\")");
+        auto result = akkado::compile("n\"[c4 e4 g4]\"");
         CHECK(result.success);
     }
 
     SECTION("pattern with rests") {
-        auto result = akkado::compile("pat(\"[c4 ~ e4 ~]\")");
+        auto result = akkado::compile("n\"[c4 ~ e4 ~]\"");
         CHECK(result.success);
     }
 
     SECTION("pattern with groups") {
-        auto result = akkado::compile("pat(\"[c4 e4] g4\")");
+        auto result = akkado::compile("n\"[c4 e4] g4\"");
         CHECK(result.success);
     }
 
     SECTION("pattern with euclidean") {
-        auto result = akkado::compile("pat(\"c4(3,8)\")");
+        auto result = akkado::compile("n\"c4(3,8)\"");
         CHECK(result.success);
     }
 
     SECTION("pattern with speed modifier") {
-        auto result = akkado::compile("pat(\"[c4*2 e4]\")");
+        auto result = akkado::compile("n\"[c4*2 e4]\"");
         CHECK(result.success);
     }
 
     SECTION("drum pattern") {
-        auto result = akkado::compile("pat(\"[kick snare kick snare]\")");
+        auto result = akkado::compile("s\"[kick snare kick snare]\"");
         CHECK(result.success);
     }
 }
@@ -6800,7 +6800,7 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
     SECTION("mono(fn) still dispatches to voice manager") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("[c4 e4 g4]") |> mono(%, lead) |> out(%, %)
+            n"[c4 e4 g4]" |> mono(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -6884,7 +6884,7 @@ TEST_CASE("Pattern function: bank()", "[codegen][patterns][bank]") {
     }
 
     SECTION("bank requires string as second argument") {
-        auto result = akkado::compile(R"(bank(pat("[bd sd]"), 808))");
+        auto result = akkado::compile(R"(bank(s"[bd sd]", 808))");
         CHECK(!result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -6894,7 +6894,7 @@ TEST_CASE("Pattern function: bank()", "[codegen][patterns][bank]") {
     }
 
     SECTION("bank with valid pattern compiles") {
-        auto result = akkado::compile(R"(bank(pat("[bd sd hh]"), "TR808"))");
+        auto result = akkado::compile(R"(bank(s"[bd sd hh]", "TR808"))");
         REQUIRE(result.success);
 
         // Should have SEQPAT_QUERY, SEQPAT_STEP, and SAMPLE_PLAY instructions.
@@ -6908,7 +6908,7 @@ TEST_CASE("Pattern function: bank()", "[codegen][patterns][bank]") {
     }
 
     SECTION("bank populates required_samples_extended with bank info") {
-        auto result = akkado::compile(R"(bank(pat("[bd sd]"), "TR909"))");
+        auto result = akkado::compile(R"(bank(s"[bd sd]", "TR909"))");
         REQUIRE(result.success);
 
         // Check that required_samples_extended has entries with bank info
@@ -6923,8 +6923,8 @@ TEST_CASE("Pattern function: bank()", "[codegen][patterns][bank]") {
     }
 
     SECTION("bank via method call syntax") {
-        // pat("bd").bank("TR808") should desugar to bank(pat("bd"), "TR808")
-        auto result = akkado::compile(R"(pat("[bd sd]").bank("TR808"))");
+        // s"bd".bank("TR808") should desugar to bank(s"bd", "TR808")
+        auto result = akkado::compile(R"(s"[bd sd]".bank("TR808"))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -6947,12 +6947,12 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
 
     SECTION("variant accepts string literal as variant pattern") {
         // String literals are now valid pattern expressions (parsed as mini-notation)
-        auto result = akkado::compile(R"(variant(pat("bd"), "1 2 3"))");
+        auto result = akkado::compile(R"(variant(s"bd", "1 2 3"))");
         CHECK(result.success);
     }
 
     SECTION("variant with fixed index compiles") {
-        auto result = akkado::compile(R"(variant(pat("[bd bd bd]"), 2))");
+        auto result = akkado::compile(R"(variant(s"[bd bd bd]", 2))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -6963,7 +6963,7 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
     }
 
     SECTION("variant populates required_samples_extended with variant info") {
-        auto result = akkado::compile(R"(variant(pat("bd"), 3))");
+        auto result = akkado::compile(R"(variant(s"bd", 3))");
         REQUIRE(result.success);
 
         // Check that required_samples_extended has entries with variant info
@@ -6978,8 +6978,8 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
     }
 
     SECTION("variant via method call syntax") {
-        // pat("bd").variant(2) should desugar to variant(pat("bd"), 2)
-        auto result = akkado::compile(R"(pat("[bd bd]").variant(2))");
+        // s"bd".variant(2) should desugar to variant(s"bd", 2)
+        auto result = akkado::compile(R"(s"[bd bd]".variant(2))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -6989,10 +6989,10 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
     }
 
     SECTION("variant with pattern index (cycling)") {
-        // variant(pat("[bd bd bd]"), pat("<c0 d0 e0>")) cycles variants per event
+        // variant(s"[bd bd bd]", n"<c0 d0 e0>") cycles variants per event
         // Note: Using note names since bare numbers in pat() are interpreted as samples
         // The variant values are taken from the frequency values in the variant pattern
-        auto result = akkado::compile(R"(variant(pat("[bd bd bd]"), pat("<c0 d0 e0>")))");
+        auto result = akkado::compile(R"(variant(s"[bd bd bd]", n"<c0 d0 e0>"))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -7000,7 +7000,7 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
     }
 
     SECTION("variant with negative index fails") {
-        auto result = akkado::compile(R"(variant(pat("bd"), -1))");
+        auto result = akkado::compile(R"(variant(s"bd", -1))");
         CHECK(!result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -7013,7 +7013,7 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
 TEST_CASE("Pattern function: bank and variant chaining", "[codegen][patterns][bank][variant]") {
     SECTION("bank and variant can be chained via pipe") {
         auto result = akkado::compile(R"(
-            pat("[bd sd hh]")
+            s"[bd sd hh]"
             |> bank(%, "TR808")
             |> variant(%, 1)
         )");
@@ -7029,7 +7029,7 @@ TEST_CASE("Pattern function: bank and variant chaining", "[codegen][patterns][ba
         // travels with the Pattern through compile_pattern_for_transform and
         // is preserved on the final sample_refs (see "Pattern transforms are
         // transparent to sample requirements" TEST_CASE).
-        auto result = akkado::compile(R"(pat("[bd sd]").bank("TR909").variant(2))");
+        auto result = akkado::compile(R"(s"[bd sd]".bank("TR909").variant(2))");
         REQUIRE(result.success);
 
         bool found_both = false;
@@ -7043,7 +7043,7 @@ TEST_CASE("Pattern function: bank and variant chaining", "[codegen][patterns][ba
     }
 
     SECTION("bank alone populates bank field") {
-        auto result = akkado::compile(R"(pat("[bd sd hh]").bank("TR808"))");
+        auto result = akkado::compile(R"(s"[bd sd hh]".bank("TR808"))");
         REQUIRE(result.success);
 
         // Verify bank was set
@@ -7089,7 +7089,7 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
         // The original failing case: .fast(2) wrapping .bank() must not drop
         // the bank entry from required_samples_extended.
         auto result = akkado::compile(
-            R"(pat("[bd sd]").bank("TR909").fast(2))");
+            R"(s"[bd sd]".bank("TR909").fast(2))");
         REQUIRE(result.success);
         CHECK(bank_for(result, "bd") == "TR909");
         CHECK(bank_for(result, "sd") == "TR909");
@@ -7097,7 +7097,7 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
 
     SECTION("bank() info survives a deep transform stack") {
         auto result = akkado::compile(
-            R"(pat("[bd sd]").bank("X").fast(2).slow(3).rev())");
+            R"(s"[bd sd]".bank("X").fast(2).slow(3).rev())");
         REQUIRE(result.success);
         CHECK(bank_for(result, "bd") == "X");
         CHECK(bank_for(result, "sd") == "X");
@@ -7109,12 +7109,12 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
         // chain B's missing extended entry caused the JS loader to fall
         // back to legacy single-name resolution for chain A as well.
         auto without_fast_b = akkado::compile(R"(
-            pat("[bd sd]").bank("A").fast(2)
-            pat("hh").bank("B")
+            s"[bd sd]".bank("A").fast(2)
+            s"hh".bank("B")
         )");
         auto with_fast_b = akkado::compile(R"(
-            pat("[bd sd]").bank("A").fast(2)
-            pat("hh").bank("B").fast(2)
+            s"[bd sd]".bank("A").fast(2)
+            s"hh".bank("B").fast(2)
         )");
         REQUIRE(without_fast_b.success);
         REQUIRE(with_fast_b.success);
@@ -7128,8 +7128,8 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
     }
 
     SECTION("bank() info survives velocity() and transpose()") {
-        auto v = akkado::compile(R"(pat("bd").bank("V").velocity(0.5))");
-        auto t = akkado::compile(R"(pat("bd").bank("T").transpose(2))");
+        auto v = akkado::compile(R"(s"bd".bank("V").velocity(0.5))");
+        auto t = akkado::compile(R"(s"bd".bank("T").transpose(2))");
         REQUIRE(v.success);
         REQUIRE(t.success);
         CHECK(bank_for(v, "bd") == "V");
@@ -7141,7 +7141,7 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
         // field. Even after stacking transforms, the final Pattern's
         // sample_refs should reflect the cumulative bank/variant.
         auto result = akkado::compile(
-            R"(pat("[bd sd]").bank("Z").variant(1).fast(2))");
+            R"(s"[bd sd]".bank("Z").variant(1).fast(2))");
         REQUIRE(result.success);
         // The required_samples_extended ledger reflects the same data
         // (it's a deduped union of every Pattern's published sample_refs).
@@ -7155,29 +7155,29 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
 }
 
 // =============================================================================
-// Pattern String Prefix (p"...")
+// Pattern String Prefix (n"...")
 // =============================================================================
 
 TEST_CASE("Codegen: Pattern string prefix", "[codegen][pattern-prefix]") {
-    SECTION("p\"...\" produces same bytecode as pat(\"...\")") {
-        auto prefix_result = akkado::compile(R"(p"c4 e4 g4")");
-        auto call_result = akkado::compile(R"(pat("[c4 e4 g4]"))");
+    SECTION("n\"...\" produces same bytecode as n\"...\"") {
+        auto prefix_result = akkado::compile(R"(n"c4 e4 g4")");
+        auto call_result = akkado::compile(R"(n"[c4 e4 g4]")");
 
         REQUIRE(prefix_result.success);
         REQUIRE(call_result.success);
         CHECK(prefix_result.bytecode == call_result.bytecode);
     }
 
-    SECTION("p\"...\" works in pipeline") {
-        auto result = akkado::compile(R"(p"c4 e4 g4" |> osc("sin", %.freq))");
+    SECTION("n\"...\" works in pipeline") {
+        auto result = akkado::compile(R"(n"c4 e4 g4" |> osc("sin", %.freq))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
         CHECK(find_instruction(insts, cedar::Opcode::OSC_SIN) != nullptr);
     }
 
-    SECTION("pat() with parens still works") {
-        auto result = akkado::compile(R"(pat("[c4 e4 g4]"))");
+    SECTION("bracketed note pattern compiles") {
+        auto result = akkado::compile(R"(n"[c4 e4 g4]")");
         REQUIRE(result.success);
     }
 }
@@ -7188,7 +7188,7 @@ TEST_CASE("Codegen: Pattern string prefix", "[codegen][pattern-prefix]") {
 
 TEST_CASE("Codegen: velocity suffix in pattern events", "[codegen][pattern][velocity]") {
     SECTION("pat with velocity suffix stores velocity in events") {
-        auto result = akkado::compile(R"(pat("[c4:0.8 e4:0.5]"))");
+        auto result = akkado::compile(R"(n"[c4:0.8 e4:0.5]")");
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
@@ -7208,7 +7208,7 @@ TEST_CASE("Codegen: velocity suffix in pattern events", "[codegen][pattern][velo
     }
 
     SECTION("pat without velocity suffix defaults to 1.0") {
-        auto result = akkado::compile(R"(pat("[c4 e4]"))");
+        auto result = akkado::compile(R"(n"[c4 e4]")");
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
@@ -7239,7 +7239,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
     SECTION("POLY_BEGIN carries the STEREO_OUTPUT flag") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("c4") |> poly(%, lead, 4) |> out(%)
+            n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7254,7 +7254,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
         // two COPYs into the adjacent voice-out pair (L and L+1).
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("c4") |> poly(%, lead, 4) |> out(%)
+            n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7282,7 +7282,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
     SECTION("poly output is stereo — out(%) receives an adjacent L/R pair") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("c4") |> poly(%, lead, 4) |> out(%)
+            n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7297,7 +7297,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
     SECTION("stereo voice body (pan) keeps both channels through poly") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq) |> pan(%, 0.5)
-            pat("c4") |> poly(%, lead, 4) |> out(%)
+            n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7318,7 +7318,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // two OUTPUTs.)
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("c4") |> poly(%, lead, 4) |> out(%)
+            n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7394,7 +7394,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("poly with piped pattern input") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("[c4 e4 g4]") |> poly(%, lead, 8) |> out(%, %)
+            n"[c4 e4 g4]" |> poly(%, lead, 8) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7416,7 +7416,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("poly with inline closure") {
         auto result = akkado::compile(R"(
-            pat("c4") |> poly(%, (f, g, v) -> osc("sin", f) * v, 4) |> out(%, %)
+            n"c4" |> poly(%, (f, g, v) -> osc("sin", f) * v, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7427,14 +7427,14 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("error: instrument function must have 3 params") {
         auto result = akkado::compile(R"(
             fn bad(x) -> osc("sin", x)
-            pat("c4") |> poly(%, bad, 4) |> out(%, %)
+            n"c4" |> poly(%, bad, 4) |> out(%, %)
         )");
         CHECK(!result.success);
     }
 
     SECTION("error: instrument must be a function") {
         auto result = akkado::compile(R"(
-            pat("c4") |> poly(%, 440, 4) |> out(%, %)
+            n"c4" |> poly(%, 440, 4) |> out(%, %)
         )");
         CHECK(!result.success);
     }
@@ -7442,7 +7442,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("poly with default voice count (no voices arg)") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("[c4 e4 g4]") |> poly(%, lead) |> out(%, %)
+            n"[c4 e4 g4]" |> poly(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
         // Voices should default to 64
@@ -7476,7 +7476,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("mono with piped pattern") {
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
-            pat("[c4 e4 g4]") |> mono(%, lead) |> out(%, %)
+            n"[c4 e4 g4]" |> mono(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7494,7 +7494,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // are present at near-equal magnitude when rendered.
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.3
-            pat("[c4, e4]") |> poly(%, lead, 4) |> out(%, %)
+            n"[c4, e4]" |> poly(%, lead, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -7538,7 +7538,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // peaks for c4/e4/g4/b4 all present in the rendered audio.
         auto result = akkado::compile(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.25
-            pat("[c4, [e4 g4 b4]]") |> poly(%, lead, 4) |> out(%, %)
+            n"[c4, [e4 g4 b4]]" |> poly(%, lead, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -8089,7 +8089,7 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
 
     SECTION("boolean false") {
         auto result = akkado::compile(R"(
-            pat("[c4 e4]") |> pianoroll(%, "pr", {showGrid: false})
+            n"[c4 e4]" |> pianoroll(%, "pr", {showGrid: false})
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8108,7 +8108,7 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
         // pianoroll's schema declares all three types — width (Number),
         // showGrid (Bool), scale (Enum/string) — so all three round-trip.
         auto result = akkado::compile(R"(
-            pat("[c4 e4]") |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
+            n"[c4 e4]" |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8198,7 +8198,7 @@ TEST_CASE("Codegen: extract_options round-trips Number/Bool/String types",
     // helper serializes today: Number (width), Bool (showGrid), and Enum
     // (scale, written as a string literal).
     auto result = akkado::compile(R"(
-        pat("[c4 e4]") |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
+        n"[c4 e4]" |> pianoroll(%, "pr", {width: 200, showGrid: false, scale: "pentatonic"})
     )");
     REQUIRE(result.success);
     bool found = false;
@@ -9925,7 +9925,7 @@ TEST_CASE("Codegen: unison stdlib function", "[codegen][unison]") {
         auto result = akkado::compile(R"(
             fn voice(f, g, v, e) -> saw(f)
             fn fat(f, g, v) -> unison(f, g, v, voice, voices: 4)
-            pat("[c4 e4]") |> poly(%, fat, 2) |> out(%)
+            n"[c4 e4]" |> poly(%, fat, 2) |> out(%)
         )");
         for (const auto& d : result.diagnostics) {
             INFO("diag " << d.code << ": " << d.message);
@@ -10288,7 +10288,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
     SECTION("release as 4th positional literal") {
         auto result = akkado::compile(preamble +
-            "pat(\"[c4 e4]\") |> poly(%, synth, 8, 0.5) |> out(%)");
+            "n\"[c4 e4]\" |> poly(%, synth, 8, 0.5) |> out(%)");
         REQUIRE(result.success);
 
         bool found = false;
@@ -10305,7 +10305,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
     SECTION("release as named arg") {
         auto result = akkado::compile(preamble +
-            "pat(\"c4\") |> poly(%, synth, 4, release: 0.25) |> out(%)");
+            "n\"c4\" |> poly(%, synth, 4, release: 0.25) |> out(%)");
         REQUIRE(result.success);
 
         bool found = false;
@@ -10320,7 +10320,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
     SECTION("release defaults to 0 when omitted") {
         auto result = akkado::compile(preamble +
-            "pat(\"c4\") |> poly(%, synth) |> out(%)");
+            "n\"c4\" |> poly(%, synth) |> out(%)");
         REQUIRE(result.success);
 
         bool found = false;
@@ -10342,14 +10342,14 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
         };
         auto result = akkado::compile(preamble +
             "x = osc(\"sin\", 1)\n"
-            "pat(\"c4\") |> poly(%, synth, 8, x) |> out(%)");
+            "n\"c4\" |> poly(%, synth, 8, x) |> out(%)");
         CHECK(has_diag(result, "E406"));
         CHECK(!result.success);
     }
 
     SECTION("negative release clamps to 0") {
         auto result = akkado::compile(preamble +
-            "pat(\"c4\") |> poly(%, synth, 4, -1.0) |> out(%)");
+            "n\"c4\" |> poly(%, synth, 4, -1.0) |> out(%)");
         REQUIRE(result.success);
 
         for (const auto& init : result.state_inits) {
@@ -10440,12 +10440,12 @@ TEST_CASE("midi() |> soundfont() takes the MIDI-upstream path",
     CHECK(found_sf_init);
 }
 
-TEST_CASE("pat() |> soundfont() still takes the legacy buffer path",
+TEST_CASE("n'…' |> soundfont() still takes the legacy buffer path",
           "[midi][midi-soundfont]") {
     // Regression: pattern upstream keeps the per-chord-voice SOUNDFONT_VOICE
     // emission with wired gate/freq/vel/preset buffers.
     auto result = akkado::compile(
-        "pat(\"[c4 e4]\") |> soundfont(%, \"piano.sf2\", 0) |> out(%)");
+        "n\"[c4 e4]\" |> soundfont(%, \"piano.sf2\", 0) |> out(%)");
     REQUIRE(result.success);
 
     int sf_count = 0;
@@ -10504,7 +10504,7 @@ TEST_CASE("legato() accepts release: option (positional 3-arg form)",
     // comment on the legato builtin in builtins.hpp for the dual-form
     // dispatch caveat.
     auto result = akkado::compile(preamble +
-        "pat(\"c4\") |> legato(%, synth, 0.3) |> out(%)");
+        "n\"c4\" |> legato(%, synth, 0.3) |> out(%)");
     REQUIRE(result.success);
 
     bool found = false;

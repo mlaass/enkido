@@ -35,7 +35,7 @@ Closures are commonly used with patterns and higher-order functions:
 
 ```akk
 // Pattern triggers closure for each note
-pat("c4 e4 g4")
+n"c4 e4 g4"
     |> ((freq) -> osc("sin", freq) * ar(trigger(4)))
     |> out(@)
 ```
@@ -50,7 +50,7 @@ voice = (freq) ->
     osc("saw", freq) |> lp(@, 1000) * ar(trigger(4))
 
 // Use with a pattern
-pat("c3 e3 g3 c4") |> voice |> out(@)
+n"c3 e3 g3 c4" |> voice |> out(@)
 ```
 
 ## Multiple parameters

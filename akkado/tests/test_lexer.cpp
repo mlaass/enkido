@@ -730,30 +730,33 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         CHECK(tokens[1].type == TokenType::False);
     }
 
-    SECTION("pattern keyword") {
+    SECTION("pat is an identifier (post-removal)") {
         auto [tokens, diags] = lex("pat");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
-        CHECK(tokens[0].type == TokenType::Pat);
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[0].as_string() == "pat");
     }
 
-    SECTION("pattern string prefix p\"...\"") {
+    SECTION("p\"...\" splits as identifier + string (post-removal)") {
         auto [tokens, diags] = lex(R"(p"c4 e4")");
         REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 3); // Pat, String, Eof
+        REQUIRE(tokens.size() == 3); // Identifier, String, Eof
 
-        CHECK(tokens[0].type == TokenType::Pat);
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[0].as_string() == "p");
         CHECK(tokens[1].type == TokenType::String);
         CHECK(tokens[1].as_string() == "c4 e4");
     }
 
-    SECTION("pattern string prefix p`...`") {
+    SECTION("p`...` splits as identifier + string (post-removal)") {
         auto [tokens, diags] = lex("p`c4 e4`");
         REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 3); // Pat, String, Eof
+        REQUIRE(tokens.size() == 3); // Identifier, String, Eof
 
-        CHECK(tokens[0].type == TokenType::Pat);
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[0].as_string() == "p");
         CHECK(tokens[1].type == TokenType::String);
         CHECK(tokens[1].as_string() == "c4 e4");
     }
@@ -971,11 +974,13 @@ TEST_CASE("Lexer complex expressions", "[lexer]") {
         CHECK(tokens[8].type == TokenType::Identifier);
     }
 
-    SECTION("pattern with closure") {
-        auto [tokens, diags] = lex("pat('c4 e4 g4', (t, v, p) -> saw(p))");
+    SECTION("pat-as-identifier in call form") {
+        // pat() is no longer a builtin; lexes as plain identifier + parens.
+        auto [tokens, diags] = lex("pat('c4 e4 g4')");
         REQUIRE(diags.empty());
 
-        CHECK(tokens[0].type == TokenType::Pat);
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[0].as_string() == "pat");
         CHECK(tokens[1].type == TokenType::LParen);
         CHECK(tokens[2].type == TokenType::String);
         CHECK(tokens[2].as_string() == "c4 e4 g4");
@@ -1029,7 +1034,6 @@ TEST_CASE("token_type_name returns correct strings", "[lexer]") {
     CHECK(token_type_name(TokenType::Match) == "Match");
     CHECK(token_type_name(TokenType::Fn) == "Fn");
     CHECK(token_type_name(TokenType::As) == "As");
-    CHECK(token_type_name(TokenType::Pat) == "Pat");
     CHECK(token_type_name(TokenType::Plus) == "Plus");
     CHECK(token_type_name(TokenType::Minus) == "Minus");
     CHECK(token_type_name(TokenType::Star) == "Star");

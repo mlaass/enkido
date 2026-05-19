@@ -66,7 +66,7 @@ This limits pattern-based audio programming where decisions need to happen at au
 ### 1. Gate-based signal selection
 ```akkado
 // Switch between oscillators based on gate
-gate = pat("1 0 1 0")
+gate = n"1 0 1 0"
 select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@, @)
 ```
 
@@ -81,8 +81,8 @@ select(loud, dist(sig, 4), sig) |> out(@, @)
 ### 3. Rhythmic logic
 ```akkado
 // Combine two rhythmic patterns with OR
-gate1 = pat("1 0 0 0")
-gate2 = pat("0 0 1 0")
+gate1 = n"1 0 0 0"
+gate2 = n"0 0 1 0"
 combined = gate1 || gate2  // "1 0 1 0"
 ```
 
@@ -323,7 +323,7 @@ TEST_CASE("Signal-rate conditionals", "[conditionals]") {
     check_signal("osc(\"sin\", 1) > 0", /* verify square wave */);
 
     // Select between oscillators
-    check_compiles("select(pat(\"1 0\"), osc(\"saw\", 440), osc(\"sqr\", 220))");
+    check_compiles("select(v\"1 0\", osc(\"saw\", 440), osc(\"sqr\", 220))");
 }
 ```
 

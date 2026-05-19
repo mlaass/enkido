@@ -114,7 +114,7 @@ out(0, 0)
 }
 
 TEST_CASE("shape_index: pattern fixed fields with aliases", "[shape-index]") {
-    const char* src = R"(beat = pat("c4 e4 g4")
+    const char* src = R"(beat = n"c4 e4 g4"
 out(0, 0)
 )";
     std::string json = shape_index_json(src);
@@ -125,7 +125,7 @@ out(0, 0)
     REQUIRE(binding_block_contains(json, "beat",
         "\"name\":\"freq\",\"type\":\"signal\",\"fixed\":true}"));
 
-    // Aliases include freq's "pitch" / "f" / "p" / "frequency" with aliasOf.
+    // Aliases include freq's "pitch" / "f" / "n" / "frequency" with aliasOf.
     REQUIRE(binding_block_contains(json, "beat",
         "\"name\":\"pitch\",\"type\":\"signal\",\"fixed\":true,\"aliasOf\":\"freq\""));
     REQUIRE(binding_block_contains(json, "beat",
@@ -135,7 +135,7 @@ out(0, 0)
 }
 
 TEST_CASE("shape_index: pattern custom fields surface", "[shape-index]") {
-    const char* src = R"(beat = pat("c4 e4").set("cutoff", 0.5).set("res", 0.7)
+    const char* src = R"(beat = n"c4 e4".set("cutoff", 0.5).set("res", 0.7)
 out(0, 0)
 )";
     std::string json = shape_index_json(src);
@@ -152,7 +152,7 @@ TEST_CASE("shape_index: custom field colliding with fixed name suppressed",
     // `.set("freq", …)` must NOT add a custom entry — the fixed canonical
     // wins per typed_value.cpp::pattern_field() lookup order. Editor must
     // not see two `freq` entries.
-    const char* src = R"(beat = pat("c4 e4").set("freq", 1.0)
+    const char* src = R"(beat = n"c4 e4".set("freq", 1.0)
 out(0, 0)
 )";
     std::string json = shape_index_json(src);
@@ -172,7 +172,7 @@ TEST_CASE("shape_index: empty source produces empty bindings", "[shape-index]") 
 }
 
 TEST_CASE("shape_index: cursor sentinel disables patternHole", "[shape-index]") {
-    const char* src = R"(beat = pat("c4 e4")
+    const char* src = R"(beat = n"c4 e4"
 beat |> out(%, %)
 )";
     std::string json = shape_index_json(src, SHAPE_INDEX_NO_CURSOR);
@@ -193,7 +193,7 @@ TEST_CASE("shape_index: cursor inside pipe surfaces patternHole shape",
     // Place the cursor between the `(` and `)` of the second `osc(` call
     // — that is inside the Pipe's RHS argument list, with the LHS being
     // the `beat` identifier (a pattern).
-    std::string src = "beat = pat(\"c4 e4 g4\")\nbeat |> osc(\"sin\", %)\n";
+    std::string src = "beat = n\"c4 e4 g4\"\nbeat |> osc(\"sin\", %)\n";
     auto cursor = src.find("%");
     REQUIRE(cursor != std::string::npos);
     std::string json = shape_index_json(src, static_cast<std::uint32_t>(cursor));

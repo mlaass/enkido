@@ -11,7 +11,7 @@ subfeatures:
   - name: Poly
     anchor: poly
     tagline: Polyphonic voice allocation.
-    snippet: 'pat("c4 e4 g4 b4") |> poly(@, (f, g, v) -> osc("sin", f) * v, 8)'
+    snippet: 'n"c4 e4 g4 b4" |> poly(@, (f, g, v) -> osc("sin", f) * v, 8)'
   - name: Mono
     anchor: mono
     tagline: Monophonic last-note priority.
@@ -54,14 +54,14 @@ chord("C Em Am G") |> poly(@, stab) |> out(@)
 
 ```akk
 // Lower voice count if you want predictable stealing
-pat("c4 e4 g4 b4")
+n"c4 e4 g4 b4"
     |> poly(@, (f, g, v) -> osc("sin", f) * v, 8)
     |> out(@)
 ```
 
 ```akk
 // Stereo instrument: each voice returns L/R, poly sums per-channel.
-pat("c4 e4 g4")
+n"c4 e4 g4"
     |> poly(@, (f, g, v) -> stereo(saw(f), saw(f * 1.01)) * v, 4)
     |> out(@)
 ```
@@ -108,7 +108,7 @@ Same option is available on [`mono`](#mono) and [`legato`](#legato).
 
 ```akk
 // Mono lead with retrigger on every note
-pat("c4 e4 g4 c5")
+n"c4 e4 g4 c5"
     |> mono((f, g, v) -> saw(f) * adsr(g, 0.01, 0.1, 0.6, 0.3))
     |> out(@)
 ```
@@ -127,7 +127,7 @@ Like `mono()`, but the gate stays high while notes overlap, so envelopes don't r
 
 ```akk
 // Smooth bassline, gate stays high across notes
-pat("c2 e2 g2 c3")
+n"c2 e2 g2 c3"
     |> legato((f, g, v) -> saw(f) * adsr(g, 0.01, 0.2, 0.8, 0.4))
     |> out(@)
 ```

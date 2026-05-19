@@ -566,25 +566,25 @@ TEST_CASE("all chord types produce E410 without poly", "[chord][seqpat]") {
     }
 }
 
-TEST_CASE("pat() with chord symbols produces E410", "[chord][seqpat][pat]") {
+TEST_CASE("n'…' with chord symbols produces E410", "[chord][seqpat][pat]") {
     SECTION("C (uppercase chord) without poly is error") {
-        auto result = akkado::compile("pat(\"C\")");
+        auto result = akkado::compile("n\"C\"");
         CHECK_FALSE(result.success);
     }
 
     SECTION("Am7 without poly is error") {
-        auto result = akkado::compile("pat(\"Am7\")");
+        auto result = akkado::compile("n\"Am7\"");
         CHECK_FALSE(result.success);
     }
 
     SECTION("mixed chords and notes without poly is error") {
         // c4 = single note, C = chord → max_voices > 1
-        auto result = akkado::compile("pat(\"c4 C e4\")");
+        auto result = akkado::compile("n\"c4 C e4\"");
         CHECK_FALSE(result.success);
     }
 
-    SECTION("chord progression in pat() without poly is error") {
-        auto result = akkado::compile("pat(\"C F G C\")");
+    SECTION("chord progression in n'…' without poly is error") {
+        auto result = akkado::compile("n\"C F G C\"");
         CHECK_FALSE(result.success);
     }
 }
@@ -602,9 +602,9 @@ TEST_CASE("chord integration with audio graph requires poly()", "[chord][seqpat]
         CHECK_FALSE(result.success);
     }
 
-    SECTION("pat() chord with processing without poly is error") {
+    SECTION("n'…' chord with processing without poly is error") {
         auto result = akkado::compile(
-            R"(pat("C Am") |> map(%, (f) -> osc("tri", f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
+            R"(n"C Am" |> map(%, (f) -> osc("tri", f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -626,7 +626,7 @@ TEST_CASE("chord sequence compilation produces E410", "[chord][seqpat]") {
 
 TEST_CASE("monophonic vs polyphonic pattern detection", "[chord][seqpat]") {
     SECTION("monophonic single notes compile successfully") {
-        auto result = akkado::compile("pat(\"c4 e4 g4\")");
+        auto result = akkado::compile("n\"c4 e4 g4\"");
         REQUIRE(result.success);
 
         auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
@@ -640,12 +640,12 @@ TEST_CASE("monophonic vs polyphonic pattern detection", "[chord][seqpat]") {
     }
 
     SECTION("polyphonic chord without poly produces error") {
-        auto result = akkado::compile("pat(\"C\")");
+        auto result = akkado::compile("n\"C\"");
         CHECK_FALSE(result.success);
     }
 
     SECTION("sample patterns compile successfully") {
-        auto result = akkado::compile("pat(\"bd sd hh\")");
+        auto result = akkado::compile("s\"bd sd hh\"");
         REQUIRE(result.success);
 
         auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
@@ -693,7 +693,7 @@ TEST_CASE("multi-buffer through variable assignment", "[polyphony][variable]") {
 TEST_CASE("chord field access without poly produces error", "[polyphony][pipe_binding]") {
     SECTION("pat with chord via pipe binding without poly is error") {
         auto result = akkado::compile(R"(
-            pat("C") as e |> osc("sin", e.freq) |> out(%, %)
+            n"C" as e |> osc("sin", e.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
@@ -709,7 +709,7 @@ TEST_CASE("chord field access without poly produces error", "[polyphony][pipe_bi
 TEST_CASE("pattern field access — monophonic still works", "[polyphony][pattern_var]") {
     SECTION("pattern variable with monophonic pattern accesses .freq") {
         auto result = akkado::compile(R"(
-            e = pat("c4 e4 g4")
+            e = n"c4 e4 g4"
             osc("sin", e.freq) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -726,7 +726,7 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
 
     SECTION("pattern variable with chord without poly is error") {
         auto result = akkado::compile(R"(
-            e = pat("C")
+            e = n"C"
             osc("sin", e.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
@@ -734,9 +734,9 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
 }
 
 TEST_CASE("monophonic pattern field access via pipe", "[polyphony][field_access]") {
-    SECTION("monophonic pat() with .freq via % works") {
+    SECTION("monophonic n'…' with .freq via % works") {
         auto result = akkado::compile(R"(
-            pat("c4 e4 g4") |> osc("sin", %.freq) |> out(%, %)
+            n"c4 e4 g4" |> osc("sin", %.freq) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -754,7 +754,7 @@ TEST_CASE("monophonic pattern field access via pipe", "[polyphony][field_access]
 TEST_CASE("polyphonic field access without poly produces error", "[polyphony][field_access]") {
     SECTION("pat with chord .freq without poly is error") {
         auto result = akkado::compile(R"(
-            pat("Am") |> osc("sin", %.freq) |> out(%, %)
+            n"Am" |> osc("sin", %.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
@@ -768,14 +768,14 @@ TEST_CASE("polyphonic field access without poly produces error", "[polyphony][fi
 
     SECTION("polyphonic .vel without poly is error") {
         auto result = akkado::compile(R"(
-            pat("Am") |> osc("sin", %.freq) * %.vel |> out(%, %)
+            n"Am" |> osc("sin", %.freq) * %.vel |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("polyphonic .trig without poly is error") {
         auto result = akkado::compile(R"(
-            pat("Am") |> osc("sin", %.freq) * adsr(%.trig, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
+            n"Am" |> osc("sin", %.freq) * adsr(%.trig, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }

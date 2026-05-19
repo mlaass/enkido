@@ -149,9 +149,8 @@ bool is_pattern_producer(const Ast& ast, NodeIndex node) {
         const Node& callee = ast.arena[n.first_child];
         if (callee.type == NodeType::Identifier) {
             const std::string& name = callee.as_identifier();
-            return name == "pat" || name == "seq" || name == "timeline" ||
-                   name == "note" || name == "value" || name == "sample" ||
-                   name == "chord";
+            return name == "seq" || name == "timeline" ||
+                   name == "sample" || name == "chord";
         }
     }
     return false;

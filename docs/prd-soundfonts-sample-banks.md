@@ -48,19 +48,19 @@ Implement a two-tier sample system:
 
 ```akkado
 // Use default bank (built-in 808 kit)
-pat("bd sd hh*8") |> out(@, @)
+s"bd sd hh*8" |> out(@, @)
 
 // Switch to a named bank
-pat("bd sd hh*8").bank("TR909") |> out(@, @)
+s"bd sd hh*8".bank("TR909") |> out(@, @)
 
 // Bank can be patterned
-pat("bd sd").bank("<TR808 TR909>") |> out(@, @)
+s"bd sd".bank("<TR808 TR909>") |> out(@, @)
 
 // Sample variants with colon syntax
-pat("bd:0 bd:1 bd:2 bd:3") |> out(@, @)
+s"bd:0 bd:1 bd:2 bd:3" |> out(@, @)
 
 // Or with variant() modifier
-pat("bd").variant("<0 1 2 3>") |> out(@, @)
+s"bd".variant("<0 1 2 3>") |> out(@, @)
 ```
 
 ### 2.2 SoundFont Instruments
@@ -70,16 +70,16 @@ pat("bd").variant("<0 1 2 3>") |> out(@, @)
 piano = soundfont("gm.sf2", 0)  // Bank 0, preset 0 (Acoustic Grand Piano)
 
 // Play with pattern (note patterns auto-trigger)
-pat("c4 e4 g4 c5") |> piano |> out(@, @)
+n"c4 e4 g4 c5" |> piano |> out(@, @)
 
 // Or with explicit note control
-note(pat("c4 e4 g4")) |> piano |> out(@, @)
+note(n"c4 e4 g4") |> piano |> out(@, @)
 
 // Select preset by name (if available)
 strings = soundfont("orchestral.sf2", "Violin Section")
 
 // Velocity sensitivity
-pat("c4 e4 g4").vel("<0.3 0.6 1.0>") |> piano |> out(@, @)
+n"c4 e4 g4".vel("<0.3 0.6 1.0>") |> piano |> out(@, @)
 ```
 
 ### 2.3 Web UI: Sample Browser
@@ -189,7 +189,7 @@ interface BankManifest {
 #### 3.2.3 Sample Resolution Flow
 
 ```
-Pattern: pat("bd:2").bank("TR808")
+Pattern: s"bd:2".bank("TR808")
            │
            ▼
 Parser extracts: sample="bd", variant=2, bank="TR808"
@@ -502,7 +502,7 @@ User clicks "Add Bank" → URL input
         Compile Akkado code
                 │
                 ▼
-      Parser finds: pat("bd").bank("TR808")
+      Parser finds: s"bd".bank("TR808")
                 │
                 ▼
      CompileResult.required_samples = [
@@ -523,7 +523,7 @@ User clicks "Add Bank" → URL input
 ### 4.2 SoundFont Note Playback
 
 ```
-pat("c4 e4 g4") |> soundfont("piano.sf2", 0)
+n"c4 e4 g4" |> soundfont("piano.sf2", 0)
                 │
                 ▼
       Each note generates trigger + pitch
@@ -739,7 +739,7 @@ The following questions have been resolved with decisions documented in [File Lo
 ## 10. Success Metrics
 
 - [ ] Banks load from URL/file/GitHub without errors
-- [ ] `pat("bd").bank("TR808")` plays correct sample
+- [ ] `s"bd".bank("TR808")` plays correct sample
 - [ ] Sample variants accessible via `:N` and `variant()`
 - [ ] SF2 files parse and list presets correctly
 - [ ] SoundFont playback has correct pitch across keyboard

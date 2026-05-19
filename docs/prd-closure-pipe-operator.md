@@ -12,10 +12,10 @@ Many Akkado builtins take a function/closure as their last argument — `poly()`
 
 ```akkado
 // Current: must write full closure signature and param names
-pat("C4' Am7' G4'") |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
+n"C4' Am7' G4'" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
 
 // Proposed: ->> provides the closure body, compiler fills params
-pat("C4'") |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
+n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
 ```
 
 The operator saves repetitions of boilerplate parameter names, makes the instrument body the visual focus, and works uniformly across all higher-order builtins.
@@ -59,7 +59,7 @@ In every case, the caller must supply an explicit closure:
 
 ```akkado
 // poly — 3-param closure
-pat("C4' Am7'") |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
+n"C4' Am7'" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
 
 // tap_delay — 1-param closure
 tap_delay(in, 0.5, 0.3, (x) -> x * 0.5)
@@ -111,12 +111,12 @@ The pipe operator rewrites `a |> f(@)` to `f(a)` (hole substitution) during sema
 
 ```akkado
 // Current:
-pat("C4' Am7' G4' F4'")
+n"C4' Am7' G4' F4'"
   |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel)
   |> out(@, @)
 
 // With ->>:
-pat("C4' Am7' G4' F4'")
+n"C4' Am7' G4' F4'"
   |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel
   |> out(@, @)
 ```
@@ -130,12 +130,12 @@ The compiler knows `poly()` expects `(freq, gate, vel)` from its builtin definit
 
 ```akkado
 // mono with piped pattern (2-arg form)
-pat("c4 e4 g4")
+n"c4 e4 g4"
   |> mono(@) ->> saw(@.freq) * ar(@.gate)
   |> out(@, @)
 
 // legato with piped pattern
-pat("c4 e4 g4")
+n"c4 e4 g4"
   |> legato(@) ->> saw(@.freq) * ar(@.gate)
   |> out(@, @)
 ```
@@ -151,14 +151,14 @@ When the closure body itself contains pipe chains, wrap it in `(...)` to disambi
 
 ```akkado
 // Current:
-pat("C4'")
+n"C4'"
   |> poly(@, (freq, gate, vel) ->
        saw(freq) |> lp(freq, 2000 * adsr(gate)) * vel
      )
   |> out(@, @)
 
 // With ->> (parens):
-pat("C4'")
+n"C4'"
   |> poly(@) ->> (saw(@.freq) |> lp(@, 2000 * adsr(@.gate)) * @.vel)
   |> out(@, @)
 ```
@@ -170,7 +170,7 @@ Here `@.freq` (before `|>`) resolves to the closure param `freq`, while `@` in `
 Braces `{...}` are an alternative grouping for multi-line or visually distinct closure bodies:
 
 ```akkado
-pat("C4'")
+n"C4'"
   |> poly(@) ->> {
        saw(@.freq)
        |> lp(@, 2000 * adsr(@.gate))
@@ -223,7 +223,7 @@ Closure params are accessed exclusively via record-style `@.field` syntax. The a
 The `as` binding works naturally inside the closure body, just as it does in any expression:
 
 ```akkado
-pat("C4'")
+n"C4'"
   |> poly(@) ->>
        saw(@.freq) as snd
        |> lp(snd, 2000 * adsr(@.gate))
@@ -237,11 +237,11 @@ Because `->>` binds tighter than `|>`, the outer pipeline operates on the result
 
 ```akkado
 // Precedence:
-// (poly(pat("C4'")) ->> body) |> out(@, @)
-pat("C4'") |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
+// (poly(n"C4'") ->> body) |> out(@, @)
+n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
 
 // This parses (post-Phase-1.5 signature: poly(input, voices=64, instrument)) as:
-// let __result = poly(pat("C4'"), instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)
+// let __result = poly(n"C4'", instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)
 // out(__result, __result)
 // Note: `instrument` is inserted as a NAMED arg so prior named/positional args route correctly.
 ```
@@ -636,10 +636,10 @@ outer(@.a) ->> inner(@.b) ->> body  // Invalid: closure body cannot contain anot
 ### 9.2 `->>` with Named Arguments
 
 ```akkado
-poly(input: pat("C4'")) ->> saw(@.freq) * ar(@.gate) * @.vel
+poly(input: n"C4'") ->> saw(@.freq) * ar(@.gate) * @.vel
 ```
 
-**Expected:** Works correctly. The desugaring inserts the closure as a **named argument** keyed on the builtin's closure-slot name (`instrument` for `poly`). The result is `poly(input: pat("C4'"), instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)`. The remaining unfilled positional slot (`voices`) keeps its default. This works regardless of which prior args were named or positional.
+**Expected:** Works correctly. The desugaring inserts the closure as a **named argument** keyed on the builtin's closure-slot name (`instrument` for `poly`). The result is `poly(input: n"C4'", instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)`. The remaining unfilled positional slot (`voices`) keeps its default. This works regardless of which prior args were named or positional.
 
 ### 9.3 `->>` with Optional Arguments
 
@@ -662,7 +662,7 @@ tap_delay(sig, 0.5, 0.3, dry: 0.2, wet: 0.8) ->> @ * 0.5
 ### 9.4 Bare `@` with Multi-Param Closure
 
 ```akkado
-poly(pat("C4'")) ->> @  // Bare @ with multi-param closure
+poly(n"C4'") ->> @  // Bare @ with multi-param closure
 ```
 
 **Expected:** Warning W150. Bare `@` resolves to the first closure param (`freq` for poly). The compiled output is equivalent to writing `@.freq`. Users who intended a different param or who want to be explicit should use `@.<name>` syntax. This is a warning, not an error — the code compiles and runs correctly.
@@ -781,11 +781,11 @@ CHECK(has_warning(r, "W150"));
 
 ```cpp
 // Full poly compilation with ->>
-auto r = compile("pat(\"C4'\") |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)");
+auto r = compile("c\"C4'\" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)");
 CHECK(r.success);
 
 // Compare bytecode with explicit closure version (post-Phase-1.5 ordering: closure last)
-auto r_explicit = compile("pat(\"C4'\") |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)");
+auto r_explicit = compile("c\"C4'\" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)");
 CHECK(r.bytecode == r_explicit.bytecode);
 
 // tap_delay with ->> (closure now last after dry/wet)
@@ -801,7 +801,7 @@ auto r3 = compile("map([1, 2, 3]) ->> @.x * 2");
 CHECK(r3.success);
 
 // Named-arg interaction: closure inserts as named arg
-auto r4 = compile("poly(input: pat(\"C4'\")) ->> saw(@.freq) * ar(@.gate) * @.vel");
+auto r4 = compile("poly(input: c\"C4'\") ->> saw(@.freq) * ar(@.gate) * @.vel");
 CHECK(r4.success);
 ```
 

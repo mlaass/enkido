@@ -150,7 +150,7 @@ Mono on mono stays mono. Stereo on stereo stays stereo (L op L, R op R). There's
 
 ## Patterns and Signals
 
-Patterns (`pat()`, `n"…"`, `v"…"`, `c"…"`, `s"…"`) carry a primary value buffer that doubles as a Signal. When you pass a pattern to a slot that expects a Signal — `osc("sin", n"c4 e4 g4")`, `lp(sig, v"<200 800>", 0.7)` — the compiler implicitly extracts that buffer.
+Patterns (`n"…"`, `v"…"`, `c"…"`, `s"…"`) carry a primary value buffer that doubles as a Signal. When you pass a pattern to a slot that expects a Signal — `osc("sin", n"c4 e4 g4")`, `lp(sig, v"<200 800>", 0.7)` — the compiler implicitly extracts that buffer.
 
 The **Pattern → Signal coerce** rule:
 

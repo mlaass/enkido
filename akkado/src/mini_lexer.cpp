@@ -12,7 +12,7 @@ namespace akkado {
 static MiniParseMode mode_from_bools(bool sample_only, bool curve_mode) {
     if (curve_mode) return MiniParseMode::Curve;
     if (sample_only) return MiniParseMode::Sample;
-    return MiniParseMode::Auto;
+    return MiniParseMode::Note;
 }
 
 MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location, MiniParseMode mode)
@@ -250,7 +250,8 @@ MiniToken MiniLexer::lex_token() {
 
     // Snapshot then clear: any code path below that emits a modifier token
     // sets `last_was_modifier_` back to true before returning.
-    const bool prev_was_modifier = last_was_modifier_;
+    // Force numeric lexing while inside euclidean `( … )` argument list.
+    const bool prev_was_modifier = last_was_modifier_ || paren_depth_ > 0;
     last_was_modifier_ = false;
 
     char c = peek();
@@ -392,8 +393,10 @@ MiniToken MiniLexer::lex_token() {
         case ']': return make_token(MiniTokenType::RBracket);
         case '<': return make_token(MiniTokenType::LAngle);
         case '>': return make_token(MiniTokenType::RAngle);
-        case '(': return make_token(MiniTokenType::LParen);
-        case ')': return make_token(MiniTokenType::RParen);
+        case '(': ++paren_depth_; return make_token(MiniTokenType::LParen);
+        case ')':
+            if (paren_depth_ > 0) --paren_depth_;
+            return make_token(MiniTokenType::RParen);
         case '{': return make_token(MiniTokenType::LBrace);
         case '}': return make_token(MiniTokenType::RBrace);
         case ',': return make_token(MiniTokenType::Comma);
@@ -407,7 +410,10 @@ MiniToken MiniLexer::lex_token() {
         case '@': last_was_modifier_ = true; return make_token(MiniTokenType::At);
         case '!': last_was_modifier_ = true; return make_token(MiniTokenType::Bang);
         case '?': last_was_modifier_ = true; return make_token(MiniTokenType::Question);
-        case '%': return make_token(MiniTokenType::Percent);
+        // `%` is the polymeter step-count modifier (`{a b}%N`): N is always
+        // a plain Number, so route the next token through lex_number() even
+        // inside `n"…"` / `v"…"`.
+        case '%': last_was_modifier_ = true; return make_token(MiniTokenType::Percent);
 
         // Choice
         case '|': return make_token(MiniTokenType::Pipe);

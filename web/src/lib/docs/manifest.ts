@@ -1544,7 +1544,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "pattern",
 		"title": "Pattern Literals"
 	},
-	"p\"…\"": {
+	"t\"…\"": {
 		"slug": "literals",
 		"category": "pattern",
 		"title": "Pattern Literals"
@@ -3661,6 +3661,6 @@ export const previews: Record<string, string> = {
 	"reverbs": "Reverbs simulate acoustic spaces by generating many delayed, filtered reflections. Each algorithm has its own character.",
 	"fm-synthesis": "Frequency modulation (FM) synthesizes complex timbres by modulating the frequency of one oscillator (the carrier) with the output of another (the...",
 	"visualizations": "Inline visualizations render directly in the editor. Each visualization is a pass-through node in the signal chain: audio flows through unchanged.",
-	"midi": "exposes runtime MIDI events the same way  exposes baked pattern events. Drop it into the same pipe stages —  for polyphony, or  for monophonic...",
+	"midi": "exposes runtime MIDI events the same way typed pattern literals (///) expose baked pattern events. Drop it into the same pipe stages —  for...",
 	"DOCUMENTATION_GUIDE": "This guide outlines standards and practices for writing NKIDO documentation."
 };

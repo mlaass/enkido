@@ -13,13 +13,13 @@ This PRD makes patterns usable **anywhere a scalar `Signal` is accepted**. Two c
    - `n"c4 e4 g4"` / `n"60 64 67"` — **note** pattern. Note names and bare MIDI ints both map to Hz via mtof.
    - `s"bd sd hh"` — **sample** pattern.
    - `c"Am C G"` — **chord** pattern.
-   The legacy `pat()` / `p"…"` form stays as the auto-detect alias (additive, no breakage).
+   The legacy `pat` builtin / `n"…"` form stays as the auto-detect alias (additive, no breakage).
 
 2. **Type-system-level implicit `Pattern → Signal` coercion**: when an expression of type `Pattern` is passed where a `Signal` is expected, the analyzer inserts an implicit `scalar()` cast that unwraps the pattern's primary value buffer. Multi-voice (chord) and sample patterns are rejected at the coerce site with a clear error — the user must pick a field or voice explicitly. An explicit `scalar(p)` builtin is also exposed as sugar for `p.freq` (works on `n`/`m`/`c` patterns).
 
 ### Key Design Decisions
 
-- **Four typed prefixes (`v` / `n` / `s` / `c`); `p` stays as auto-detect.** No hard removal — pre-1.0 still, but additive change.
+- **Four typed prefixes (`v` / `n` / `s` / `c`); `n` stays as auto-detect.** No hard removal — pre-1.0 still, but additive change.
 - **`v"…"` keeps `ValueType::Pattern`.** It does not become a different type. `.vel` / `.trig` / `.gate` access still works at the binding site. Coercion only fires at use sites that expect `Signal`.
 - **Coerce site lives in the analyzer/visit pass**, not in each builtin handler. When an AST node produces `Pattern` and its consumer expects `Signal`, the visitor wraps the node in an implicit `scalar()` cast before codegen runs. This is the same shape the planned compiler-type-system pass will use for stereo lifting and signal lifting.
 - **`scalar(p) ≡ p.freq`** for `n`/`m`/`c` patterns; error on `s` patterns. No voice/field selector — for any other field, write `p.vel` / `p.gate` directly.
@@ -37,10 +37,10 @@ This PRD makes patterns usable **anywhere a scalar `Signal` is accepted**. Two c
 Patterns are second-class:
 
 - `osc("sin", n"c4 e4 g4")` works (osc-freq is hand-wired to accept patterns).
-- `osc("sin", p"c4 e4 g4")` works (auto-detect gives a note pattern).
+- `osc("sin", n"c4 e4 g4")` works (auto-detect gives a note pattern).
 - `bend(notes, "<0 0.5 -0.5>")` **does not work**. `bend`'s second arg is a scalar slot, and a string literal is not a pattern in scalar context.
-- `bend(notes, p"<0 0.5 -0.5>")` **does not work**. `p"…"` produces a `Pattern`, but `bend`'s codegen has no path that consumes `Pattern` as a scalar value.
-- `lp(sig, p"<200 800 2000>", 0.7)` **does not work** for the same reason — the cutoff slot expects `Signal`.
+- `bend(notes, n"<0 0.5 -0.5>")` **does not work**. `n"…"` produces a `Pattern`, but `bend`'s codegen has no path that consumes `Pattern` as a scalar value.
+- `lp(sig, n"<200 800 2000>", 0.7)` **does not work** for the same reason — the cutoff slot expects `Signal`.
 
 The user-facing consequence: every pattern consumer must be hand-wired in codegen. This blocks:
 
@@ -50,11 +50,11 @@ The user-facing consequence: every pattern consumer must be hand-wired in codege
 
 ### 2.2 Mini-notation parse-mode ambiguity
 
-`p"…"` is an auto-detector. It guesses note vs sample vs chord by atom shape. For scalar values the auto-detector is ambiguous — `"<0 0.5 -0.5>"` could mean MIDI 0 / 0.5 / -0.5 (mtof-applied), or could mean raw scalars 0, 0.5, -0.5. There is no way for the user to express their intent.
+`n"…"` is an auto-detector. It guesses note vs sample vs chord by atom shape. For scalar values the auto-detector is ambiguous — `"<0 0.5 -0.5>"` could mean MIDI 0 / 0.5 / -0.5 (mtof-applied), or could mean raw scalars 0, 0.5, -0.5. There is no way for the user to express their intent.
 
 | Today's behavior | What user wants for `bend()` |
 |------------------|------------------------------|
-| `p"<0 0.5>"` → atoms parsed as MIDI ints → mtof → ~8.18 Hz, ~13 Hz | Atoms parsed as raw numbers → 0.0, 0.5 |
+| `n"<0 0.5>"` → atoms parsed as MIDI ints → mtof → ~8.18 Hz, ~13 Hz | Atoms parsed as raw numbers → 0.0, 0.5 |
 | No way to say "this string is numeric values, not pitches" | Need a syntactic signal at the literal site |
 
 ### 2.3 Phase 2.1 standalone `bend`/`aftertouch`/`dur` transforms (§11.2)
@@ -73,14 +73,14 @@ These shipped as part of f8dca4d but only by accepting per-event constants or by
 4. Implement `scalar(p)` as an explicit builtin that returns `p.freq` for `n`/`m`/`c` patterns; error on `s` patterns.
 5. Reject multi-voice / sample patterns in scalar coerce sites with diagnostic E160, naming the disallowed shape and pointing to the explicit field-access path (`.freq`, `poly`, etc.).
 6. Subsume Phase 2.1 §11.1 (custom-property accessor `as e |> e.cutoff`) and §11.2 (standalone `bend`/`aftertouch`/`dur` transforms accepting pattern args) — both consume the new coerce path.
-7. Keep `pat()` / `p"…"` working as the auto-detect alias. No migration of existing user code is required, but emit a soft compiler warning W170 when `p"…"` parses unambiguously as a single mode (suggesting the typed prefix). Tutorials and reference docs migrate to the typed-prefix style throughout.
+7. Keep the legacy `pat` builtin / `n"…"` working as the auto-detect alias. No migration of existing user code is required, but emit a soft compiler warning W170 when `n"…"` parses unambiguously as a single mode (suggesting the typed prefix). Tutorials and reference docs migrate to the typed-prefix style throughout.
 8. Per-mode unit tests for the four prefixes; integration tests for the `bend(notes, v"<0 0.5 -0.5>")` user story; coerce-error tests for chord/sample patterns in scalar slots.
 9. **Documentation and tutorial coverage** (full scope, see §10.6):
    - New: `web/static/docs/reference/pattern/literals.md` (and parent dir `pattern/`).
    - New: `web/static/docs/tutorials/06-pattern-modulation.md` covering typed prefixes, the Pattern→Signal coerce mental model, the `bend(notes, v"…")` flagship, and the `e.cutoff` custom-property pattern.
    - Update: `web/static/docs/reference/mini-notation/basics.md` — typed-prefix table.
    - Update: `web/static/docs/concepts/signals.md` — Pattern↔Signal section explaining coerce, idempotent `scalar()`, and the operator type rules from §5.3.1.
-   - Update: `web/static/docs/tutorials/04-rhythm.md` — short cross-reference to the new modulation tutorial; migrate any `pat()` examples to typed prefixes.
+   - Update: `web/static/docs/tutorials/04-rhythm.md` — short cross-reference to the new modulation tutorial; migrate any legacy pattern examples to typed prefixes.
    - Update: `docs/Akkado A Rhythmic & DSP Language Specification.md` — typed prefixes + coerce rules.
    - Update: `docs/mini-notation-reference.md` — typed-prefix table; numeric atom mode.
    - Regenerate F1 lookup index via `bun run build:docs`.
@@ -88,7 +88,7 @@ These shipped as part of f8dca4d but only by accepting per-event constants or by
 ### Non-Goals
 
 - **User-defined-function param-kind annotations.** `fn f(freq: pitch)` is out of scope; tracked under `prd-compiler-type-system.md`. User fns get default `Signal` coerce for any `Pattern` arg passed.
-- **Removing `pat()` / `p"…"` auto-detect.** It stays additive. The W170 soft warning suggests the typed prefix when the parse is unambiguous, but `p"…"` is never an error and never breaks. A future PRD may deprecate it once telemetry shows the typed prefixes have replaced it.
+- **Removing the legacy `pat` builtin / `n"…"` auto-detect.** It stays additive. The W170 soft warning suggests the typed prefix when the parse is unambiguous, but `n"…"` is never an error and never breaks. A future PRD may deprecate it once telemetry shows the typed prefixes have replaced it.
 - **Per-builtin slot-kind metadata for pitch vs numeric.** Slot kind is `Signal` everywhere; `n"…"` literals still apply mtof to integer atoms because they always do — that's encoded in the lexer's parse mode, not in slot metadata.
 - **Stereo lifting through patterns.** Patterns remain mono. `Pattern → Stereo Signal` is not auto-handled; users wrap with `stereo()` explicitly.
 - **Full runtime pattern mutation** (Approach A from the review). This PRD only adds *consumption* of patterns as values — not runtime mutation of pattern event content. That stays as future work in `review-patterns-as-first-class-data.md`.
@@ -107,7 +107,7 @@ These shipped as part of f8dca4d but only by accepting per-event constants or by
 | `n"…"` | `note(str)` | Note names (`c4`, `eb5`) AND bare MIDI ints (`60`, `127`); both → mtof → Hz | `freq` ← Hz, `vel` ← per-atom velocity, `trig` / `gate` populated | Yes — freq buffer is the scalar |
 | `s"…"` | `sample(str)` | Sample names: `bd`, `sd`, `kick:2`, `loop@bank` | `freq` ← type_id (rarely used), `vel` populated | **No** — error E160 if used in scalar slot |
 | `c"…"` | `chord(str)` | Chord symbols: `Am`, `C7`, `F#m7b5_3` | Multi-voice `freq` (1–N voices) | **No** — error E160 if used in scalar slot |
-| `p"…"` | `pat(str)` | Auto-detect (legacy) | Depends on detected mode | Inherits from detected mode — yes if detected as note or value |
+| `n"…"` | `pat` builtin (legacy) | Auto-detect (legacy) | Depends on detected mode | Inherits from detected mode — yes if detected as note or value |
 
 ### 4.2 The user's bend() example — now works
 
@@ -204,7 +204,7 @@ The transform recognizes that its second arg may be a `Pattern` and routes throu
 
 ### 5.1 Lexer — new prefix tokens
 
-`akkado/src/lexer.cpp:425` already handles `p"…"` and `t"…"`. Extend the same path with three new prefix characters: `v`, `n`, `s`, `c`.
+`akkado/src/lexer.cpp:425` already handles `n"…"` and `t"…"`. Extend the same path with three new prefix characters: `v`, `n`, `s`, `c`.
 
 ```cpp
 // At lex_identifier(), after the existing p/t checks:
@@ -228,8 +228,8 @@ if (current_ == start_ + 1) {
 **Disambiguation with single-letter identifiers.** `s` / `n` / `c` / `v` are all currently legal identifier names. Today, `s` followed by a quote is ambiguous-looking. Resolution:
 
 - Lexer only treats `<letter>"` / `<letter>\`` as a string-prefix when the letter token is exactly one character at this position AND the next character is a quote. Otherwise it lexes as a regular identifier.
-- Existing `p"…"` already follows this rule (`current_ == start_ + 1`). New prefixes use the same gate.
-- Identifier shadowing: if a user writes `s = 0.5` and then `s"bd"`, the lexer still produces `SamplePat` followed by a string body — never falls through to identifier `s`. Document this in the language reference; the conflict is rare and analogous to existing `p"…"` behavior.
+- Existing `n"…"` already follows this rule (`current_ == start_ + 1`). New prefixes use the same gate.
+- Identifier shadowing: if a user writes `s = 0.5` and then `s"bd"`, the lexer still produces `SamplePat` followed by a string body — never falls through to identifier `s`. Document this in the language reference; the conflict is rare and analogous to existing `n"…"` behavior.
 
 ### 5.2 Mini-notation parser — numeric mode
 
@@ -237,7 +237,7 @@ if (current_ == start_ + 1) {
 
 ```cpp
 enum class MiniParseMode : std::uint8_t {
-    Auto,    // p"…" — current behavior, detect per atom
+    Auto,    // n"…" — current behavior, detect per atom
     Note,    // n"…" — note names + bare MIDI ints both → mtof
     Sample,  // s"…" — atom = sample name (replaces `sample_only = true`)
     Chord,   // c"…" — atom = chord symbol
@@ -337,8 +337,8 @@ The operator visit branch resolves types using these rules (applies to `+`, `-`,
 ```cpp
 struct PatternPayload {
     // … existing fields …
-    bool is_sample_pattern = false;   // set by sample() / s"" / pat() detect
-    std::uint8_t max_voices = 1;      // set by chord() / c"" / pat() detect
+    bool is_sample_pattern = false;   // set by sample() / s"" / legacy pat detect
+    std::uint8_t max_voices = 1;      // set by chord() / c"" / legacy pat detect
 };
 ```
 
@@ -354,18 +354,18 @@ struct PatternPayload {
            "Numeric pattern literal (raw scalars, no mtof)"}}
 ```
 
-Codegen for `value(str)` mirrors `pat(str)` (`codegen_patterns.cpp` `handle_pat_call`), but threads `MiniParseMode::Value` to the parser and asserts `MiniAtomData.value` is populated.
+Codegen for `value(str)` mirrors the legacy `pat` handler (`codegen_patterns.cpp` `handle_pat_call`), but threads `MiniParseMode::Value` to the parser and asserts `MiniAtomData.value` is populated.
 
-The `v"…"` literal token desugars at parse time to `value("…")` exactly the way `p"…"` desugars to `pat("…")`.
+The `v"…"` literal token desugars at parse time to `v"…"` exactly the way `n"…"` desugars to `n"…"`.
 
 ### 5.5 `note()` / `sample()` / `chord()` builtins
 
 These already exist (`note()` and `chord()`) or have closely-related forms (`sample()` is partially the auto-detect path). Changes:
 
-- `note(str)` — explicit Note mode parse. Distinct from `pat(str)` only in that it forces the parse mode (no sample-name fallback).
-- `sample(str)` — explicit Sample mode parse. Today, sample patterns come out of the `pat()` auto-detect path; expose a direct entrypoint for `s"…"`.
+- `note(str)` — explicit Note mode parse. Distinct from the legacy `pat` builtin only in that it forces the parse mode (no sample-name fallback).
+- `sample(str)` — explicit Sample mode parse. Today, sample patterns come out of the legacy auto-detect path; expose a direct entrypoint for `s"…"`.
 - `chord(str)` — already exists; now also reachable via `c"…"` literal.
-- The existing `pat()` builtin sets `MiniParseMode::Auto` and is unchanged.
+- The existing legacy `pat` builtin sets `MiniParseMode::Auto` and is unchanged.
 
 ### 5.6 `scalar()` builtin
 
@@ -445,7 +445,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `pat()` / `p"…"` auto-detect | **Stays** | Unchanged; remains the legacy entrypoint. |
+| `pat` builtin / `n"…"` auto-detect | **Stays** | Unchanged; remains the legacy entrypoint. |
 | `chord()` / `c"…"` | **Modified** | `c"…"` literal added to lexer; builtin unchanged behaviorally. |
 | `sample()` / `s"…"` | **Modified** | `s"…"` literal added; `sample()` builtin exposed as the explicit form (replaces partial auto-detect for sample patterns). |
 | `note()` / `n"…"` | **Modified** | `n"…"` literal added; `note()` builtin exposed as the explicit Note-mode form. |
@@ -467,11 +467,11 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 | `docs/mini-notation-reference.md` | **Modified** | Document the four prefixes; numeric atom mode. |
 | `docs/Akkado A Rhythmic & DSP Language Specification.md` | **Modified** | Typed prefixes + coerce rules + operator type table from §5.3.1. |
 | `web/static/docs/reference/pattern/` | **New directory** | Holds the new pattern reference page. |
-| `web/static/docs/reference/pattern/literals.md` | **New** | Typed prefixes (`v`/`n`/`s`/`c`/`p`); side-by-side examples; coerce mental model. |
+| `web/static/docs/reference/pattern/literals.md` | **New** | Typed prefixes (`v`/`n`/`s`/`c`/`n`); side-by-side examples; coerce mental model. |
 | `web/static/docs/reference/mini-notation/basics.md` | **Modified** | Typed-prefix overview table; pointer to `literals.md`. |
 | `web/static/docs/concepts/signals.md` | **Modified** | New section "Patterns and Signals" — coerce rules, operator type rules, idempotent `scalar()`. |
 | `web/static/docs/tutorials/06-pattern-modulation.md` | **New** | Tutorial chapter: typed prefixes, Pattern→Signal mental model, `bend(notes, v"…")` flagship, custom-property accessor (`e.cutoff`), the `lp(@, e.cutoff * 4000)` workflow. |
-| `web/static/docs/tutorials/04-rhythm.md` | **Modified** | Cross-reference to chapter 06; migrate any `pat()` examples to typed prefixes. |
+| `web/static/docs/tutorials/04-rhythm.md` | **Modified** | Cross-reference to chapter 06; migrate any legacy pattern examples to typed prefixes. |
 | F1 help index | **Regenerated** | `bun run build:docs` regenerates lookup-index for new prefixes/builtins. |
 
 ---
@@ -481,7 +481,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 | File | Change |
 |------|--------|
 | `akkado/include/akkado/token.hpp` | Add `TokenType::ValuePat`, `NotePat`, `SamplePat`, `ChordPat`. |
-| `akkado/src/lexer.cpp` (~line 425) | Add `v` / `n` / `s` / `c` single-char prefix recognition (mirror `p` / `t`). |
+| `akkado/src/lexer.cpp` (~line 425) | Add `v` / `n` / `s` / `c` single-char prefix recognition (mirror `n` / `t`). |
 | `akkado/src/parser.cpp` | Recognize new token types and desugar to `value()` / `note()` / `sample()` / `chord()` calls. |
 | `akkado/include/akkado/mini_token.hpp` | Add `MiniParseMode` enum. |
 | `akkado/src/mini_lexer.cpp` | Accept a `MiniParseMode` parameter; per-mode atom rules. Add numeric-literal lex path for `Value` mode (signed, decimals, scientific). |
@@ -494,7 +494,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 | `akkado/include/akkado/codegen.hpp` | Declare `handle_value_call`, `handle_scalar_call`, `coerce_arg_for_signal`, `implicit_scalar_cast`. |
 | `akkado/src/codegen.cpp` | Register `value` and `scalar` dispatch entries. Implement `coerce_arg_for_signal` and route every `args_are_signal == true` builtin's arg evaluation through it. Apply the same coerce in binary-op visit branches. |
 | `akkado/src/codegen_patterns.cpp` | Implement `handle_value_call` (mirrors `handle_pat_call` with `MiniParseMode::Value`). Populate `PatternPayload.is_sample_pattern` / `max_voices` on every payload construction (8 sites). Implement `handle_scalar_call`. Update `handle_bend_call`, `handle_aftertouch_call`, `handle_dur_call` to accept `Signal` second args via the coerce path. |
-| `akkado/include/akkado/diagnostics.hpp` | Add error codes E160 (pattern→scalar reject), E161 (scalar() reject), E162 (sample mode wrong-atom), E163 (value mode non-numeric atom), E164 (record suffix on value-mode atom), E165 (Pattern × Stereo). Add warning W170 (`p"…"` parses unambiguously as one mode; suggest typed prefix). |
+| `akkado/include/akkado/diagnostics.hpp` | Add error codes E160 (pattern→scalar reject), E161 (scalar() reject), E162 (sample mode wrong-atom), E163 (value mode non-numeric atom), E164 (record suffix on value-mode atom), E165 (Pattern × Stereo). Add warning W170 (`n"…"` parses unambiguously as one mode; suggest typed prefix). |
 | `akkado/src/codegen_functions.cpp` | When a user-defined function call has `Pattern` args, route through `coerce_arg_for_signal` (default Signal coercion per Round 4 decision). |
 | `akkado/tests/test_pattern_prefixes.cpp` (new) | Per-prefix lex / parse tests + auto-coerce integration tests. |
 | `akkado/tests/test_pattern_scalar.cpp` (new) | `v"…"` numeric atoms; `scalar()` cast on `n`/`s`/`c` patterns; auto-coerce success and reject paths. |
@@ -506,7 +506,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 | `web/static/docs/reference/mini-notation/basics.md` | Typed-prefix overview table; pointer to `literals.md`. |
 | `web/static/docs/concepts/signals.md` | New "Patterns and Signals" section — coerce rules + operator type rules + idempotent `scalar()`. |
 | `web/static/docs/tutorials/06-pattern-modulation.md` (new) | Tutorial: typed prefixes, Pattern→Signal mental model, `bend(notes, v"…")` flagship, `e.cutoff` custom property. |
-| `web/static/docs/tutorials/04-rhythm.md` | Cross-reference 06; migrate any `pat()` examples to typed prefixes. |
+| `web/static/docs/tutorials/04-rhythm.md` | Cross-reference 06; migrate any legacy pattern examples to typed prefixes. |
 | `docs/mini-notation-reference.md` | Add the four-prefix table; document numeric-atom mode. |
 | `docs/Akkado A Rhythmic & DSP Language Specification.md` | Typed prefixes + coerce rules + operator type table. |
 | `web/scripts/build-opcodes.ts` (no change) | No new opcodes. |
@@ -642,7 +642,7 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 2. Write `web/static/docs/tutorials/06-pattern-modulation.md` (new file) with the six required sections from §10.6.
 3. Update `web/static/docs/reference/mini-notation/basics.md` with the typed-prefix table and a pointer to `literals.md`.
 4. Update `web/static/docs/concepts/signals.md` with the new "Patterns and Signals" section.
-5. Update `web/static/docs/tutorials/04-rhythm.md` with a cross-reference; migrate any `pat()` examples.
+5. Update `web/static/docs/tutorials/04-rhythm.md` with a cross-reference; migrate any legacy pattern examples.
 6. Update `docs/mini-notation-reference.md` and `docs/Akkado A Rhythmic & DSP Language Specification.md`.
 7. Run `bun run build:docs` to regenerate the F1 lookup index.
 
@@ -667,7 +667,7 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 
 ### 9.1 Lexer
 
-- **Identifier collision with prefix.** `s` / `n` / `c` / `v` are valid identifier names. The lexer treats `<letter>"` / `<letter>\`` as a string-prefix only when the letter token is exactly one character at the prefix position. Existing `p"…"` rule already covers this. Document explicitly.
+- **Identifier collision with prefix.** `s` / `n` / `c` / `v` are valid identifier names. The lexer treats `<letter>"` / `<letter>\`` as a string-prefix only when the letter token is exactly one character at the prefix position. Existing `n"…"` rule already covers this. Document explicitly.
 - **Long identifiers starting with the prefix letter.** `value`, `note`, `sample`, `chord` are still legal identifiers / function names — lexer does not consume them as prefixes (they're more than one char, so the `current_ == start_ + 1` gate fails).
 - **Empty body.** `v""` parses to an empty `value()` call → empty pattern → `freq` buffer carries 0.0 throughout. No error.
 - **Mixed-mode mistake.** `v"c4 e4"` errors E163 ("atom 'c4' is not a numeric literal in value-mode pattern"). Error message names the offending atom and points to the `n"…"` form for note semantics.
@@ -690,7 +690,7 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 - **Operator on Pattern + Number.** `let y = v"<0 0.5>" + 12` — RHS is `Number`, result is `Pattern` (per §5.3.1). `y.vel`, `y.trig`, etc. still accessible.
 - **Operator on Pattern + Signal.** `let z = v"<0 0.5>" + sig` — RHS is `Signal`, result is `Signal`. Pattern coerces; `z` is `ValueType::Signal`. Field access on `z` errors.
 - **Pattern + Stereo Signal.** `v"<0 0.5>" * stereoSig` — **error E165**. User must wrap: `stereo(scalar(v"<0 0.5>")) * stereoSig`.
-- **Pattern fed to a `pat()`-style transform.** `slow(v"<0 0.5>", 2)` — slow's first arg is `Pattern` (not Signal); no coerce. Result remains a `Pattern`.
+- **Pattern fed to a pattern transform.** `slow(v"<0 0.5>", 2)` — slow's first arg is `Pattern` (not Signal); no coerce. Result remains a `Pattern`.
 - **Chord pattern in pipe-binding.** `c"Am" as e |> osc("sin", e.freq)` does **not** auto-expand. `e.freq` on a multi-voice pattern returns the voice-0 buffer only (mono Signal); the other voices are dropped silently — likely surprising. Users who want all voices must pipe through `poly()` explicitly: `c"Am" |> poly(@ as e |> osc("sin", e.freq))`. Document this in the literals reference page; a future PRD will add `e.freq[i]` voice indexing or implicit poly-expansion in pipe-binding context.
 - **Sample pattern in non-Signal slot.** `s"bd sd" |> sampler(@, ...)` — `sampler` is pattern-aware (`args_are_signal = false`). No coerce. Works as today.
 - **Empty value pattern.** `v""` produces a pattern with `freq` buffer initialized to 0.0. `osc("sin", v"")` produces a 0 Hz oscillator (silent). No error.
@@ -699,8 +699,8 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 
 - **Sample pattern.** `scalar(s"bd")` — E161 with message pointing to `.type` field access if the user wants the type_id buffer.
 - **Polyphonic chord pattern.** `scalar(c"Am")` — E161 with message pointing to `poly()` or `.freq[i]` voice-indexed access (the latter is future work).
-- **`p"…"` auto-detected as note.** `scalar(p"c4 e4")` — works (auto-detect set max_voices=1, is_sample_pattern=false).
-- **`p"…"` auto-detected as sample.** `scalar(p"bd sd")` — E161.
+- **`n"…"` auto-detected as note.** `scalar(n"c4 e4")` — works (auto-detect set max_voices=1, is_sample_pattern=false).
+- **`n"…"` auto-detected as sample.** `scalar(n"bd sd")` — E161.
 - **Already-Signal arg.** `scalar(my_signal)` — returns the Signal unchanged (idempotent no-op). `scalar(scalar(p))` is therefore safe in pipelines that may have already cast. The codegen handler short-circuits when the arg is already a `Signal`.
 - **Dot-call form.** `n"c4 e4".scalar()` — desugars to `scalar(n"c4 e4")` per existing dot-call mechanism.
 
@@ -719,7 +719,7 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 
 ### 9.7 Compatibility
 
-- **Existing user code.** `pat()` / `p"…"` works exactly as before. No migration required.
+- **Existing user code.** The legacy `pat` builtin / `n"…"` works exactly as before. No migration required.
 - **Existing tests.** All Phase 2 / Phase 2.1 tests continue to pass. Audit confirms no test relies on `Pattern → Signal` failing — currently failing on this transition is rare because most patterns are consumed via `.freq` access or pattern-aware builtins.
 - **Documentation.** `docs/mini-notation-reference.md` adds a new "Typed Prefixes" section. `web/static/docs/reference/pattern/` gains a `literals.md` page indexed by `bun run build:docs`.
 
@@ -791,7 +791,7 @@ These are blocking acceptance criteria — the PRD is not closed until each land
 
 **New pages (must exist, indexed by F1):**
 
-- `web/static/docs/reference/pattern/literals.md` — covers all five prefixes (`v`/`n`/`s`/`c`/`p`), the auto-coerce mental model, and the `scalar()` cast. Includes side-by-side examples that distinguish `n"…"` (mtof'd) from `v"…"` (raw). Frontmatter `keywords` includes `pattern, literal, prefix, value, note, sample, chord, scalar, coerce`.
+- `web/static/docs/reference/pattern/literals.md` — covers all five prefixes (`v`/`n`/`s`/`c`/`n`), the auto-coerce mental model, and the `scalar()` cast. Includes side-by-side examples that distinguish `n"…"` (mtof'd) from `v"…"` (raw). Frontmatter `keywords` includes `pattern, literal, prefix, value, note, sample, chord, scalar, coerce`.
 - `web/static/docs/tutorials/06-pattern-modulation.md` — narrative tutorial. Required sections:
   1. *Patterns are values* — introduce the typed prefixes with simple `osc("sin", n"c4 e4 g4")` examples.
   2. *Numeric patterns with `v"…"`* — `osc("sin", v"<220 440>")`, `lp(sig, v"<200 800>", 0.7)`.
@@ -802,15 +802,15 @@ These are blocking acceptance criteria — the PRD is not closed until each land
 
 **Updated pages (must reflect new behavior):**
 
-- `web/static/docs/reference/mini-notation/basics.md` — add the typed-prefix table from §4.1; link to `literals.md`. Migrate any `pat()` examples to typed prefixes.
+- `web/static/docs/reference/mini-notation/basics.md` — add the typed-prefix table from §4.1; link to `literals.md`. Migrate any legacy pattern examples to typed prefixes.
 - `web/static/docs/concepts/signals.md` — new "Patterns and Signals" section. Must cover: the coerce rule (Pattern fed to a Signal slot becomes a Signal), the operator type table from §5.3.1, idempotent `scalar()`, and the chord/sample reject path with `poly()` / `sampler()` workaround.
-- `web/static/docs/tutorials/04-rhythm.md` — short cross-reference at the end pointing to chapter 06; migrate any `pat()` examples.
+- `web/static/docs/tutorials/04-rhythm.md` — short cross-reference at the end pointing to chapter 06; migrate any legacy pattern examples.
 - `docs/mini-notation-reference.md` — add the four-prefix table; document numeric-atom mode and per-mode atom rules.
 - `docs/Akkado A Rhythmic & DSP Language Specification.md` — typed prefixes and coerce rules become part of the formal spec.
 
 **Verification:**
 
-- `bun run build:docs` runs clean and regenerates `web/src/lib/docs/lookup-index.ts`. The new prefixes (`v`, `n`, `s`, `c`, `p`), the new builtins (`value`, `scalar`), and the new error codes (E160–E165, W170) all surface in F1 search.
+- `bun run build:docs` runs clean and regenerates `web/src/lib/docs/lookup-index.ts`. The new prefixes (`v`, `n`, `s`, `c`, `n`), the new builtins (`value`, `scalar`), and the new error codes (E160–E165, W170) all surface in F1 search.
 - Manual: pressing F1 with the cursor on `v"…"` opens `literals.md` at the value-prefix anchor.
 - Manual: pressing F1 with the cursor on `scalar(` opens the scalar-builtin doc.
 - The smoke program from Phase F appears as a runnable code block in the new tutorial.
@@ -830,8 +830,8 @@ These are blocking acceptance criteria — the PRD is not closed until each land
 - **Future: `m"…"` for midi-int-only patterns.**
   Punted in Round 4 — `n"…"` handles both note names and bare ints. If users hit ambiguities (e.g. they want `60` to literally mean 60 Hz, not MIDI 60), the `v"…"` form gives them that. If the ambiguity becomes a pain point, revisit a dedicated `m"…"` prefix.
 
-- **`p"…"` deprecation timeline.**
-  This PRD keeps `p"…"` indefinitely but emits soft warning W170 when the parse is unambiguous. Tutorials and reference docs migrate to typed prefixes throughout. A future PRD may flag `p"…"` for removal once telemetry / community feedback shows the typed prefixes have replaced it.
+- **`n"…"` deprecation timeline.**
+  This PRD keeps `n"…"` indefinitely but emits soft warning W170 when the parse is unambiguous. Tutorials and reference docs migrate to typed prefixes throughout. A future PRD may flag `n"…"` for removal once telemetry / community feedback shows the typed prefixes have replaced it.
 
 - **Generator atoms inside mini-notation.**
   Top-level builtins like `run`, `binary`, `binaryN`, `tri`, etc., are NOT recognized as atoms inside mini-notation strings. They produce patterns at the top level only. A follow-up PRD could extend the mini-parser to recognize generator-call atoms, enabling `v"run(8) <0 0.5>"` and similar. Out of scope here — keep `value(run(8))` as the workaround.

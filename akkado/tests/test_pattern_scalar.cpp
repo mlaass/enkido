@@ -316,8 +316,8 @@ TEST_CASE("Typed prefix MiniLiteral carries mode tag", "[parser][prefixes]") {
         REQUIRE(result.success);
     }
 
-    SECTION("n\"…\" works in the freq slot identical to p\"…\"") {
-        auto a = compile(R"(osc("sin", p"c4 e4 g4") |> out(%, %))");
+    SECTION("n\"…\" works in the freq slot identical to n\"…\"") {
+        auto a = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
         auto b = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
         REQUIRE(a.success);
         REQUIRE(b.success);
