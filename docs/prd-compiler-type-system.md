@@ -1,4 +1,28 @@
-> **Status: PHASE 1 COMPLETE** — TypedValue struct, ValueType enum, and visit() returning TypedValue are implemented (`akkado/include/akkado/typed_value.hpp`). All ad-hoc maps replaced by `node_types_`. Phase 2 (type annotations on builtins) and Phase 3 (leveraging types for new features) remain.
+> **Status: PARTIAL** — Phase 1 complete; Phases 2 and 3 partially landed.
+>
+> - **Phase 1 — complete.** `TypedValue` struct, `ValueType` enum, and `visit()`
+>   returning `TypedValue` are implemented (`akkado/include/akkado/typed_value.hpp`).
+>   All ad-hoc maps (`node_buffers_`, `multi_buffers_`, `record_fields_`,
+>   `polyphonic_fields_`, `array_lengths_`, `pattern_state_ids_`) are subsumed by
+>   `node_types_`. Only `stereo_outputs_` remains, as the PRD intended.
+> - **Phase 2 — core mechanism done, coverage incomplete.** `ParamValueType`
+>   enum, `type_compatible()`, `param_types` on `BuiltinInfo`, and the
+>   type-checking loop in `visit_call()` emitting `E160` diagnostics with source
+>   locations (codegen.cpp:1361-1372) all exist and run. **Gap:** only ~9 of 187
+>   builtin entries carry `param_types` annotations — the rest default to `Any`
+>   (unchecked). A coarse `args_are_signal` blanket check and the E160
+>   polyphonic-pattern reject cover some of the slack.
+> - **Phase 3 — partially landed.** `Symbol` carries `TypedValue` (so `as`
+>   bindings propagate types), closures propagate types
+>   (`codegen_functions.cpp`), and `EventSource` typing wires `midi()` →
+>   `poly()`.
+>
+> **Recommendation:** the architecture has shipped — what remains is bounded,
+> mechanical coverage work. Close both gaps in a single consolidated **Phase 4
+> (Coverage)** rather than leaving Phases 2 and 3 open-ended: (a) annotate the
+> remaining ~178 builtins with `param_types`, (b) finish Phase 3 type-driven
+> features (`transport()` arg-0 Pattern check, overload resolution, match-arm
+> type agreement). See "Phase 4: Close the coverage gaps" below.
 
 # PRD: Akkado Compiler Type System
 
@@ -254,6 +278,24 @@ Three phases. The original Phase 1 (introduce `visit_typed()` wrapper alongside 
 - `as` bindings and closure params carry TypedValue (see Type Propagation section)
 - Builtin overload resolution based on argument types
 - Better error messages everywhere
+
+### Phase 4: Close the coverage gaps (recommended consolidation)
+
+Phases 2 and 3 each shipped their core mechanism but stopped short of full
+coverage. Rather than leaving two PRD phases open-ended, fold the remaining work
+into one bounded pass:
+
+- **Annotate the remaining builtins.** Only ~9 of 187 `BuiltinInfo` entries set
+  `param_types`; the rest fall through as `Any` and are never checked. Sweep the
+  builtin table and annotate every entry. This is mechanical — each builtin's
+  parameter types are already documented in `param_names` and the description.
+- **Finish the Phase 3 type-driven features** that have not landed:
+  - `transport()` arg-0 Pattern check
+  - builtin overload resolution based on argument types
+  - match-arm `ValueType` agreement (see "Match Expression Types")
+- **Acceptance:** every builtin in the table has a non-`Any` `param_types` entry
+  for each declared parameter, and a type-mismatch test exists for at least one
+  representative builtin per `ParamValueType`. Existing tests must still pass.
 
 ## Type Propagation through Bindings
 

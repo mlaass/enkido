@@ -1,4 +1,12 @@
-> **Status: PARTIAL** — Phases 1–6 substantially complete. Phase 7 (polish) ongoing.
+> **Status: SHIPPED (with known gaps)** — Phases 1, 2, 4, 6 complete. Phase 3
+> shipped with an intentional architecture change: visualizations are *explicit*
+> builtins (`oscilloscope`, `waveform`, `spectrum`, `pianoroll`, `waterfall`)
+> rather than the PRD's *automatic* per-DSP-node inline widgets — and filter and
+> envelope widgets were never built. Phase 5 is complete except the XY pad
+> (never built) and a rotary knob (only a slider exists). Phase 7 is largely
+> done — PWA/service worker and share URLs both shipped. See per-phase
+> checkboxes below for item-level status. Remaining gaps: XY pad, filter
+> widget, envelope widget, rotary knob, categorized example gallery.
 
 # NKIDO Web IDE - Product Requirements Document
 
@@ -430,56 +438,64 @@ nkido/
 
 **Note**: Akkado compiler (semantic analysis + codegen) is being developed in parallel and will be ready for web IDE integration.
 
-### Phase 1: Foundation
-- [ ] Set up SvelteKit project in `web/` (`npm create svelte@latest`)
-- [ ] Configure WASM build for browser (Emscripten bindings)
-- [ ] Basic AudioWorklet with Cedar VM
-- [ ] Minimal CodeMirror editor (no Akkado syntax yet)
-- [ ] Play/Pause/BPM transport controls
-- [ ] Test with mock bytecode program initially
+**Legend**: `[x]` done · `[~]` partial · `[ ]` not done. Notes flag where the
+implementation diverged from the original spec.
 
-### Phase 2: Compiler Integration
-- [ ] WASM bindings for `akkado::compile()` (compiler ready by this phase)
-- [ ] Error display in editor (underlines, messages)
-- [ ] Hot-swap on Ctrl+Enter
-- [ ] Source mapping for error locations
+### Phase 1: Foundation — complete
+- [x] Set up SvelteKit project in `web/` (adapter-static; `svelte.config.js`)
+- [x] Configure WASM build for browser (`web/wasm/`, `bun run build:wasm`)
+- [x] Basic AudioWorklet with Cedar VM (`static/worklet/cedar-processor.js`)
+- [x] Minimal CodeMirror editor (`Editor/Editor.svelte`)
+- [x] Play/Pause/BPM transport controls (`Transport/Transport.svelte`)
+- [x] Test with mock bytecode program initially
 
-### Phase 3: Inline Visualizations
-- [ ] **CodeMirror widget system**: Block decorations for inline canvases
-- [ ] **Semantic ID → Widget mapping**: Route VM state to correct widget
-- [ ] **Oscillator widgets** (waveform display, ~200x20px canvas)
-- [ ] **Filter widgets** (frequency response curve)
-- [ ] **Envelope widgets** (ADSR shape visualization)
-- [ ] **Pattern widgets** (timeline with beat markers, highlight active events)
-- [ ] **Output widget** (stereo level meters/waveform)
-- [ ] **Global viz toggle** (show/hide all inline widgets)
+### Phase 2: Compiler Integration — complete
+- [x] WASM bindings for `akkado::compile()` (`audio/wasm-loader.ts`)
+- [x] Error display in editor (underlines, messages — `Editor/editor-linter.ts`)
+- [x] Hot-swap on Ctrl+Enter (`Editor.svelte` `evaluateKeymap`)
+- [x] Source mapping for error locations (`pattern-highlight.svelte.ts`)
 
-### Phase 4: Editor Polish
-- [ ] Akkado language mode (full syntax highlighting)
-- [ ] Mini-notation syntax highlighting inside strings
-- [ ] Autocomplete for built-in functions with signatures
-- [ ] Bracket matching and auto-indent
+### Phase 3: Inline Visualizations — shipped with architecture change
+> **Divergence**: The PRD envisioned *automatic* widgets that attach to every
+> DSP node. What shipped is an *explicit* model — the user writes viz builtins
+> (`oscilloscope`, `waveform`, `spectrum`, `pianoroll`, `waterfall`) which are
+> rendered via `src/lib/visualizations/registry.ts`. Pattern viz is the only
+> node type that auto-attaches. Filter and envelope widgets were never built.
+- [x] **CodeMirror widget system**: Block decorations (`editor/visualization-widgets.ts`)
+- [x] **Semantic ID → Widget mapping** (`VizDecl.stateId` routing + `registry.ts`)
+- [~] **Oscillator widgets** — exists as explicit `oscilloscope` builtin, not auto-attached per `osc()`
+- [ ] **Filter widgets** (frequency response curve) — not built
+- [ ] **Envelope widgets** (ADSR shape visualization) — not built
+- [x] **Pattern widgets** (`visualizations/pianoroll.ts` + `pattern-highlight.svelte.ts`)
+- [~] **Output widget** — covered by explicit `waveform`/`spectrum` builtins, no dedicated stereo-meter `out()` widget
+- [x] **Global viz toggle** (`audio.svelte.ts` `visualizationsEnabled`)
 
-### Phase 5: Control Panel
-- [ ] Fader and knob components (Canvas-based)
-- [ ] Control binding to Akkado variables
-- [ ] XY pad for dual-parameter control
-- [ ] Settings persistence (localStorage)
-- [ ] Panel position configuration (left/right)
+### Phase 4: Editor Polish — complete
+- [x] Akkado language mode (`editor/akkado-language.ts`)
+- [x] Mini-notation syntax highlighting inside strings (`editor/akkado-shape-index.ts`)
+- [x] Autocomplete for built-in functions with signatures (`editor/akkado-completions.ts`)
+- [x] Bracket matching and auto-indent (CM `@codemirror/language` + `indentWithTab`)
 
-### Phase 6: Documentation
-- [ ] Markdown renderer with NKIDO widgets
-- [ ] Auto-generate function reference from opcodes
-- [ ] Example gallery with categories
-- [ ] Standalone docs route (`/docs`)
-- [ ] Search functionality
+### Phase 5: Control Panel — mostly complete
+- [~] Fader and knob components — only `Params/ParamSlider.svelte` (a slider); no rotary knob or canvas fader
+- [x] Control binding to Akkado variables (`Params/` binds `param`/`toggle`/`button`/`dropdown`)
+- [ ] XY pad for dual-parameter control — not built
+- [x] Settings persistence (localStorage — `stores/settings.svelte.ts`)
+- [x] Panel position configuration (left/right — `Panel/SidePanel.svelte`)
 
-### Phase 7: Polish & Launch
-- [ ] PWA support (offline caching with service worker)
-- [ ] Share URLs (base64 encoded programs)
-- [ ] Comprehensive keyboard shortcuts
-- [ ] Mobile/tablet responsive design
-- [ ] Performance profiling and optimization
+### Phase 6: Documentation — complete
+- [x] Markdown renderer with NKIDO widgets (`marked` + `docs/components/DocCodeWidget.svelte`)
+- [x] Auto-generate function reference from opcodes (`scripts/generate-builtins-json.ts`)
+- [~] Example gallery — landing patches in `static/patches/index.json`; no categorized gallery page
+- [x] Standalone docs route (`routes/docs/+page.svelte` + `[category]/[slug]`)
+- [x] Search functionality (`docs/components/DocSearch.svelte` + `build-docs-index.ts`)
+
+### Phase 7: Polish & Launch — largely done
+- [x] PWA support (offline caching — `src/service-worker.ts`, `static/manifest.json`)
+- [x] Share URLs (`ide/share/inline-url.ts` lz-string encoding, `/p` route, `ShareDialog.svelte`)
+- [~] Comprehensive keyboard shortcuts — CM + transport shortcuts exist; no central/discoverable shortcut layer
+- [~] Mobile/tablet responsive design — media queries in key components; coverage not exhaustively verified
+- [ ] Performance profiling and optimization — no profiling artifacts on record
 
 ---
 

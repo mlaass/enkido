@@ -1,4 +1,16 @@
-> **Status: NOT STARTED** — OSS-side groundwork for shareable patches. Lands in the public `nkido` repo before the closed-source SaaS PRD can layer accounts, billing, and assets on top.
+> **Status: CODE-COMPLETE, BACKEND UNVERIFIED** — All phases (0–4) are
+> implemented and committed (2026-05-16/17): Phase 0+1 inline URL sharing +
+> multi-draft persistence (`e63a1aa`), Phase 2 Worker backend + viewer route +
+> ShareDialog (`3cfa57a`, `6ec0f41`, `915b091`, `b66b4ad`), Phase 3 reporting +
+> runbook (`76342ee`), Phase 4 self-hosting README polish (`7e07192`).
+> **Phases 0–1 are genuinely shipped** (zero backend — inline URLs + local
+> drafts work today). **The Phase 2+ Cloudflare Worker / D1 backend has only
+> been exercised against local Miniflare + vitest — it has never been deployed
+> to or integration-tested against a live Cloudflare D1 instance.** The
+> production D1 binding in `web/share-api/wrangler.toml` is still commented out
+> (`database_id = "REPLACE_ME"`), as is the rate-limit binding. **TODO before
+> declaring SHIPPED:** create the prod D1 database, deploy the Worker, and
+> verify share/fetch/fork/report end-to-end against the live backend.
 
 # PRD: Persistent Shareable Patches
 

@@ -36,6 +36,10 @@ interface WaterfallState {
 	maxDb: number;
 	dpr: number;
 	cacheKey: string;
+	// Geometry inputs needed to recompute dimensions on container resize
+	angle: number;
+	binCount: number;
+	resizeObserver: ResizeObserver | null;
 }
 
 const stateMap = new WeakMap<HTMLElement, WaterfallState>();
@@ -47,6 +51,65 @@ const offscreenCache = new Map<string, HTMLCanvasElement>();
 const DEFAULT_WIDTH = 300;
 const DEFAULT_HEIGHT = 150;
 const LABEL_HEIGHT = 18;
+
+/**
+ * Compute the rotation-aware canvas and offscreen dimensions for a given
+ * visible size. The offscreen's time axis must be long enough to cover the
+ * visible area once rotated by `angle`; its freq axis is always `binCount`.
+ */
+function computeGeometry(
+	width: number,
+	canvasHeight: number,
+	angle: number,
+	binCount: number,
+	dpr: number
+) {
+	const rad = angle * Math.PI / 180;
+	const absCos = Math.abs(Math.cos(rad));
+	const absSin = Math.abs(Math.sin(rad));
+	const timeAxisPx = Math.ceil((width * absCos + canvasHeight * absSin) * dpr);
+	const freqAxisPx = Math.ceil((width * absSin + canvasHeight * absCos) * dpr);
+	return {
+		canvasW: Math.round(width * dpr),
+		canvasH: Math.round(canvasHeight * dpr),
+		timeAxisPx,
+		freqAxisPx,
+		offWidth: timeAxisPx,
+		offHeight: binCount
+	};
+}
+
+/**
+ * Resize a live waterfall to a new visible size, rebuilding the visible canvas
+ * and the offscreen buffer. Existing spectral history is resampled via
+ * drawImage so the display stays continuous across container resizes.
+ */
+function resizeWaterfall(state: WaterfallState, newWidth: number, newCanvasHeight: number): void {
+	const geo = computeGeometry(newWidth, newCanvasHeight, state.angle, state.binCount, state.dpr);
+
+	// Resize the visible canvas
+	state.canvas.width = geo.canvasW;
+	state.canvas.height = geo.canvasH;
+	state.canvas.style.width = `${newWidth}px`;
+	state.canvas.style.height = `${newCanvasHeight}px`;
+	state.ctx.fillStyle = '#000';
+	state.ctx.fillRect(0, 0, geo.canvasW, geo.canvasH);
+
+	// Rebuild the offscreen at the new time-axis width, resampling history.
+	const newOff = document.createElement('canvas');
+	newOff.width = geo.offWidth;
+	newOff.height = geo.offHeight;
+	const newOffCtx = newOff.getContext('2d')!;
+	newOffCtx.drawImage(state.offCanvas, 0, 0, geo.offWidth, geo.offHeight);
+
+	state.offCanvas = newOff;
+	state.offCtx = newOffCtx;
+	state.offImageData = newOffCtx.getImageData(0, 0, geo.offWidth, geo.offHeight);
+	state.offWidth = geo.offWidth;
+	state.offHeight = geo.offHeight;
+	state.drawWidth = geo.timeAxisPx;
+	state.drawHeight = geo.freqAxisPx;
+}
 
 const waterfallRenderer: VisualizationRenderer = {
 	create(viz: VizDecl): HTMLElement {
@@ -87,17 +150,12 @@ const waterfallRenderer: VisualizationRenderer = {
 		ctx.fillStyle = '#000';
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-		// Compute the time/freq axis lengths needed to cover the visible area after rotation
-		const rad = angle * Math.PI / 180;
-		const absCos = Math.abs(Math.cos(rad));
-		const absSin = Math.abs(Math.sin(rad));
-		const timeAxisPx = Math.ceil((width * absCos + canvasHeight * absSin) * dpr);
-		const freqAxisPx = Math.ceil((width * absSin + canvasHeight * absCos) * dpr);
-
-		// Offscreen: time axis at display resolution, freq axis at full FFT bin count
+		// Compute the time/freq axis lengths needed to cover the visible area
+		// after rotation. Offscreen: time axis at display resolution, freq axis
+		// at full FFT bin count.
 		const binCount = fftSize / 2 + 1;
-		const offWidth = timeAxisPx;
-		const offHeight = binCount;
+		const { timeAxisPx, freqAxisPx, offWidth, offHeight } =
+			computeGeometry(width, canvasHeight, angle, binCount, dpr);
 
 		const offCanvas = document.createElement('canvas');
 		offCanvas.width = offWidth;
@@ -118,6 +176,25 @@ const waterfallRenderer: VisualizationRenderer = {
 		const gradientLUT = GRADIENT_PRESETS[gradientName] ?? GRADIENT_PRESETS[DEFAULT_GRADIENT];
 		const rotation = -angle * Math.PI / 180;
 
+		// Attach a ResizeObserver for relative ("100%") sizing so the canvas
+		// and offscreen buffer track the container's actual size.
+		let resizeObserver: ResizeObserver | null = null;
+		if (isRelativeWidth || isRelativeHeight) {
+			resizeObserver = new ResizeObserver(entries => {
+				const st = stateMap.get(container);
+				if (!st) return;
+				for (const entry of entries) {
+					const rect = entry.contentRect;
+					const newWidth = isRelativeWidth ? rect.width : width;
+					const newHeight = isRelativeHeight ? rect.height : height;
+					const newCanvasHeight = newHeight - LABEL_HEIGHT;
+					if (newWidth <= 0 || newCanvasHeight <= 0) return;
+					resizeWaterfall(st, newWidth, newCanvasHeight);
+				}
+			});
+			resizeObserver.observe(container);
+		}
+
 		stateMap.set(container, {
 			canvas,
 			ctx,
@@ -137,7 +214,10 @@ const waterfallRenderer: VisualizationRenderer = {
 			minDb,
 			maxDb,
 			dpr,
-			cacheKey
+			cacheKey,
+			angle,
+			binCount,
+			resizeObserver
 		});
 
 		return container;
@@ -225,6 +305,7 @@ const waterfallRenderer: VisualizationRenderer = {
 	destroy(element: HTMLElement): void {
 		const state = stateMap.get(element);
 		if (state) {
+			state.resizeObserver?.disconnect();
 			offscreenCache.set(state.cacheKey, state.offCanvas);
 			stateMap.delete(element);
 		}

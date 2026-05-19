@@ -1,4 +1,4 @@
-> **Status: REVISION 2 IMPLEMENTED** — Multi-revision viz system overhaul. Revision 1: Spectral Waterfall + FFT/IFFT opcodes. Revision 2: Extended viz parameters for all types.
+> **Status: REVISION 2 IMPLEMENTED; REVISION 3 NOT STARTED** — Multi-revision viz system overhaul. Revision 1: Spectral Waterfall + FFT/IFFT opcodes. Revision 2: Extended viz parameters for all types. Revision 3: Detachable floating windows (outline only).
 
 # PRD: Visualization System Revision
 
@@ -455,7 +455,7 @@ CompileResult                                    ▼
 - [ ] Create `web/src/lib/visualizations/gradients.ts` with 5 preset LUTs
 - [ ] Create `web/src/lib/visualizations/waterfall.ts` with ImageData scroll rendering
 - [ ] Implement angle-to-direction mapping and scroll accumulation
-- [ ] Implement relative sizing with ResizeObserver
+- [x] Implement relative sizing with ResizeObserver
 - [ ] Register in `web/src/lib/visualizations/index.ts`
 
 ### Phase 6: Spectrum Migration
@@ -626,7 +626,7 @@ The `VisualizationContainerWidget` needs to coordinate with `FloatingVizManager`
 - [ ] Scroll speed is configurable and visually matches px/s specification
 - [ ] 5 gradient presets render correctly
 - [ ] FFT resolution is configurable (256, 512, 1024, 2048) with visible quality difference
-- [ ] Relative sizing ("100%") works and responds to container resize
+- [x] Relative sizing ("100%") works and responds to container resize
 - [ ] FFT_PROBE opcode executes with zero audio-thread allocations
 - [ ] kissfft compiles into WASM without issues
 - [ ] `spectrum()` uses WASM FFT (no more JS DFT)
