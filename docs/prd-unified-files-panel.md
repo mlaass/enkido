@@ -1,9 +1,17 @@
 # Unified Files Panel PRD — One Browser for Samples, SoundFonts, MIDI
 
-> **Status: Phase A in flight (2026-05-16).** Phase B (upload persistence)
-> deferred. Supersedes the browser-surface decisions in
-> [`prd-midi-input.md`](prd-midi-input.md) §7.6 — the §7.6 drop-zone
-> consolidation shipped, but the browsing experience it implied did not.
+> **Status: SHIPPED (2026-05-16).** Phase A (unified Files panel) landed
+> in `d61cbd9`, Phase B (upload persistence via `upload-manifest.ts` +
+> restore-on-init loop) in `ce9e7fd`, and a polish pass (lucide icons,
+> copy buttons, MIDI channel info) in `f6ff194`. **One follow-up
+> deferred:** the `cedar_remove_sample` / `cedar_remove_soundfont`
+> worklet exports — `forgetSample` / `forgetSoundFont` are UI- and
+> manifest-only today, so a removed sample/SoundFont stays in the WASM
+> heap until the next reload. URL-loaded assets intentionally do not
+> persist (out of Phase B scope). Supersedes the browser-surface
+> decisions in [`prd-midi-input.md`](prd-midi-input.md) §7.6 — the §7.6
+> drop-zone consolidation shipped, but the browsing experience it
+> implied did not.
 
 ## Executive Summary
 
