@@ -1137,7 +1137,7 @@ TEST_CASE("ExtendedParams: chorus accepts named lfo_phase literal",
     CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
 }
 
-TEST_CASE("ExtendedParams: flanger default lfo_phase",
+TEST_CASE("ExtendedParams: flanger default feedback/lfo_phase/dry/wet",
           "[types][stereo-native][extended-params]") {
     auto result = akkado::compile(R"(
         saw(220) |> flanger(%, 1.0, 0.5) |> out(%)
@@ -1145,11 +1145,29 @@ TEST_CASE("ExtendedParams: flanger default lfo_phase",
     REQUIRE(result.success);
     const auto* ext = find_ext_params_init(result);
     REQUIRE(ext != nullptr);
-    // Post-unified-drywet: flanger extended slots are [lfo_phase, dry, wet]
-    CHECK(ext->ext_count == 3);
-    CHECK(ext->ext_constants[0] == Catch::Approx(0.25f));
-    CHECK(ext->ext_constants[1] == Catch::Approx(1.0f));  // dry (Cat A)
-    CHECK(ext->ext_constants[2] == Catch::Approx(0.5f));  // wet (Cat A)
+    // Post-migration: flanger extended slots are [feedback, lfo_phase, dry, wet]
+    CHECK(ext->ext_count == 4);
+    CHECK(ext->ext_constants[0] == Catch::Approx(-0.99f));  // feedback (rate=0 decode)
+    CHECK(ext->ext_constants[1] == Catch::Approx(0.25f));   // lfo_phase
+    CHECK(ext->ext_constants[2] == Catch::Approx(1.0f));    // dry (Cat A)
+    CHECK(ext->ext_constants[3] == Catch::Approx(0.5f));    // wet (Cat A)
+}
+
+TEST_CASE("ExtendedParams: flanger accepts named feedback, drops rate-field packing",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> flanger(%, 1.0, 0.5, feedback: 0.6) |> out(%)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 4);
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);  // feedback provided
+    CHECK(ext->ext_buffer_indices[1] == 0xFFFFu);  // lfo_phase default
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_FLANGER);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
 }
 
 TEST_CASE("ExtendedParams: phaser emits 5-slot StateInit with defaults",
@@ -1226,6 +1244,200 @@ TEST_CASE("ExtendedParams: skipping intermediate ext params keeps named arg alig
     // ext[3]=dry, ext[4]=wet remain as constants (not specified by user).
     CHECK(ext->ext_buffer_indices[3] == 0xFFFFu);
     CHECK(ext->ext_buffer_indices[4] == 0xFFFFu);
+}
+
+// --- prd-extended-params-migration: dynamics (comp, limiter, gate) ----------
+
+TEST_CASE("ExtendedParams: comp emits 2-slot StateInit with attack/release defaults",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> comp(@, -12, 4) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 2);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.1f));   // attack ms
+    CHECK(ext->ext_constants[1] == Catch::Approx(10.0f));  // release ms
+    CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[1] == 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: comp accepts named attack/release literals",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> comp(@, -12, 4, attack: 5, release: 200) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 2);
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);
+    CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: comp drops rate-field bit-packing entirely",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> comp(@, -12, 4, attack: 5) |> out(@)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_COMP);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
+}
+
+TEST_CASE("ExtendedParams: limiter emits 1-slot StateInit with lookahead=0 default",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> limiter(@, -0.1, 100) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.0f));  // lookahead off
+    CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: limiter drops rate-field toggle entirely",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> limiter(@, -0.1, 100, lookahead: 1) |> out(@)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_LIMITER);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
+}
+
+TEST_CASE("ExtendedParams: gate emits 5-slot StateInit (attack/hold/release/dry/wet)",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> gate(@, -40, -40) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 5);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.1f));   // attack ms
+    CHECK(ext->ext_constants[1] == Catch::Approx(0.0f));   // hold ms
+    CHECK(ext->ext_constants[2] == Catch::Approx(10.0f));  // release ms
+    CHECK(ext->ext_constants[3] == Catch::Approx(0.0f));   // dry (Cat B)
+    CHECK(ext->ext_constants[4] == Catch::Approx(1.0f));   // wet (Cat B)
+}
+
+TEST_CASE("ExtendedParams: gate keeps dry/wet aligned when attack/release named",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> gate(@, -40, -40, attack: 2, release: 100) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 5);
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);  // attack provided
+    CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);  // release provided
+    CHECK(ext->ext_buffer_indices[3] == 0xFFFFu);  // dry default
+    CHECK(ext->ext_buffer_indices[4] == 0xFFFFu);  // wet default
+}
+
+TEST_CASE("ExtendedParams: gate drops rate-field bit-packing entirely",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> gate(@, -40, -40, hold: 50) |> out(@)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_GATE);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
+}
+
+// --- prd-extended-params-migration: reverbs (dattorro) ----------------------
+
+TEST_CASE("ExtendedParams: dattorro emits 5-slot StateInit (damping/mod_depth/lfo_rate/dry/wet)",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> dattorro(@, 0.7, 20) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 5);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.0f));   // damping
+    CHECK(ext->ext_constants[1] == Catch::Approx(0.0f));   // mod_depth
+    CHECK(ext->ext_constants[2] == Catch::Approx(0.5f));   // lfo_rate Hz
+    CHECK(ext->ext_constants[3] == Catch::Approx(1.0f));   // dry (Cat A)
+    CHECK(ext->ext_constants[4] == Catch::Approx(0.5f));   // wet (Cat A)
+}
+
+TEST_CASE("ExtendedParams: dattorro accepts named damping/mod_depth/lfo_rate",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> dattorro(@, 0.7, 20, damping: 0.4, mod_depth: 0.3, lfo_rate: 0.8) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 5);
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);  // damping provided
+    CHECK(ext->ext_buffer_indices[1] != 0xFFFFu);  // mod_depth provided
+    CHECK(ext->ext_buffer_indices[2] != 0xFFFFu);  // lfo_rate provided
+    CHECK(ext->ext_buffer_indices[3] == 0xFFFFu);  // dry default
+    CHECK(ext->ext_buffer_indices[4] == 0xFFFFu);  // wet default
+}
+
+TEST_CASE("ExtendedParams: dattorro drops rate-field bit-packing entirely",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> dattorro(@, 0.7, 20, damping: 0.5) |> out(@)
+    )");
+    REQUIRE(result.success);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::REVERB_DATTORRO);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
+}
+
+// NOTE: seqpat_transport's cycle_length migration (inputs[3]/[4] halving →
+// ExtendedParams<1>) has no Akkado [extended-params] test because transport()
+// is not registered as a builtin — it is unreachable from source today (the
+// codegen handler and VM dispatch shipped in 5cb4eda but the analyzer-facing
+// builtin entry was never added). The codegen + opcode-body changes stay
+// consistent so the path is correct once transport() is wired up.
+
+// --- prd-extended-params-migration: modulation (comb) -----------------------
+
+TEST_CASE("ExtendedParams: comb emits 1-slot StateInit with damping=0 default",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> comb(@, 5, 0.9) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_constants[0] == Catch::Approx(0.0f));  // damping
+    CHECK(ext->ext_buffer_indices[0] == 0xFFFFu);
+}
+
+TEST_CASE("ExtendedParams: comb accepts named damping, drops rate-field packing",
+          "[types][stereo-native][extended-params]") {
+    auto result = akkado::compile(R"(
+        saw(220) |> comb(@, 5, 0.9, damping: 0.4) |> out(@)
+    )");
+    REQUIRE(result.success);
+    const auto* ext = find_ext_params_init(result);
+    REQUIRE(ext != nullptr);
+    CHECK(ext->ext_count == 1);
+    CHECK(ext->ext_buffer_indices[0] != 0xFFFFu);  // damping provided
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_COMB);
+    REQUIRE(op != nullptr);
+    CHECK(op->rate == 0u);
 }
 
 TEST_CASE("Types: mixed mono/stereo arithmetic", "[types][stereo][arithmetic]") {

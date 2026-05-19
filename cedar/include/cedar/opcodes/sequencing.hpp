@@ -306,8 +306,7 @@ inline void op_timeline(ExecutionContext& ctx, const Instruction& inst) {
 // inputs[0]: trigger signal (rising edge advances position)
 // inputs[1]: step size (default 1.0; negative = reverse)
 // inputs[2]: reset trigger (rising edge resets to 0; 0xFFFF = unused)
-// inputs[3]: low 16 bits of bit_cast<uint32_t>(cycle_length)
-// inputs[4]: high 16 bits of bit_cast<uint32_t>(cycle_length)
+// ext params (ExtendedParams<1>): ext[0]=cycle_length (beats)
 [[gnu::always_inline]]
 inline void op_seqpat_transport(ExecutionContext& ctx, const Instruction& inst) {
     float* out = ctx.buffers->get(inst.out_buffer);
@@ -319,10 +318,12 @@ inline void op_seqpat_transport(ExecutionContext& ctx, const Instruction& inst) 
 
     auto& state = ctx.states->get_or_create<TransportState>(inst.state_id);
 
-    // Reconstruct cycle_length from two uint16_t halves
-    std::uint32_t cl_bits = static_cast<std::uint32_t>(inst.inputs[3])
-                          | (static_cast<std::uint32_t>(inst.inputs[4]) << 16);
-    float cycle_length = std::bit_cast<float>(cl_bits);
+    // cycle_length via ExtendedParams<1> (prd-extended-params-migration §4.9).
+    // It used to be bit-cast into the inputs[3]/[4] slot pair. A missing
+    // StateInit (pre-migration bytecode) keeps the TransportState default
+    // (1.0 = cycle == beat).
+    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    float cycle_length = ext ? ext->params[0].constant : state.cycle_length;
     state.cycle_length = cycle_length;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {

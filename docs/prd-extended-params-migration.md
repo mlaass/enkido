@@ -1,6 +1,16 @@
-> **Status: NOT STARTED** — Follow-up to the ExtendedParams mechanism (shipped 2026-05-13). Migrates the remaining `inst.rate` bit-pack offenders and the `inputs[3]/[4]` halving trick to the canonical mechanism; surfaces parameters that the C++ implementations already support but the Akkado builtins hide.
+> **Status: MOSTLY SHIPPED (2026-05-20)** — Follow-up to the ExtendedParams mechanism (shipped 2026-05-13). Migrated the remaining `inst.rate` bit-pack offenders and the `inputs[3]/[4]` halving trick to the canonical mechanism; surfaced parameters the C++ implementations already supported but the Akkado builtins hid.
 >
-> **Note (2026-05-19):** §4.5 (freeverb `dry`/`wet`) was incidentally accomplished by the unified dry/wet convention PRD (commits `8052c18`, `80db1dd`) — freeverb now exposes `dry`/`wet` via `ExtendedParams<2>` and the stale rate-field comment is gone. Defaults differ from this PRD's plan: shipped as `dry=1.0, wet=0.5` (Category A convention) rather than the originally-planned `dry=0.0, wet=1.0`. All other phases (comp/limiter/gate attack/release/hold, dattorro damping/mod_depth/lfo_rate, flanger feedback, comb damping, delay_sync mix + builtin, seqpat_transport cycle_length) remain untouched.
+> **Shipped (2026-05-20):**
+> - **Phase 1 — Dynamics:** `comp` (`attack`/`release` → `ExtendedParams<2>`), `limiter` (`lookahead` → `ExtendedParams<1>`; default `0.0`/off — see §4.2 note), `gate` (`attack`/`hold`/`release` → `ExtendedParams<5>` alongside `dry`/`wet`).
+> - **Phase 2 — Reverbs:** `dattorro` (`damping`/`mod_depth`/`lfo_rate` → `ExtendedParams<5>` alongside `dry`/`wet`). `freeverb` `dry`/`wet` was already done by the unified dry/wet PRD (commits `8052c18`, `80db1dd`) with `dry=1.0, wet=0.5` (Category A) instead of the originally-planned `0.0/1.0`.
+> - **Phase 3 — Modulation:** `flanger` (`feedback` → `ExtendedParams<5>`, slot order `[feedback, lfo_phase, dry, wet]`), `comb` (`damping` → `ExtendedParams<1>`).
+> - **Phase 4 — Sequencing + guard:** `seqpat_transport` `cycle_length` moved off the `inputs[3]/[4]` halving to `ExtendedParams<1>`. New `cedar/tests/test_audit_inst_rate.cpp` regression guard.
+> - Tests: 21 new Akkado `[extended-params]` cases, the audit guard, and per-opcode Python audio-equivalence + tunability experiments (`comp`, `limiter`, `gate`, `dattorro`, `flanger`, `comb`). Builtin docs updated.
+>
+> **Deviations from plan:**
+> - **§4.2 limiter `lookahead` default is `0.0` (off)**, not the `1.0` the PRD originally specified — preserves pre-migration behavior (fresh-compiled patches always ran `inst.rate=0` → lookahead off). The lookahead time is now genuinely tunable within the fixed ~1ms buffer.
+> - **§4.8 `delay_sync` NOT done.** `op_delay_sync` turned out to be orphaned dead code — there is no `DELAY_SYNC` `Opcode` value and the function is never dispatched. Per the maintainer, beat-synced delay should be a *userspace stdlib function* (compute `delay_ms` from beats/BPM, call the `delay_ms` builtin), not a C++ opcode. Tracked as separate follow-up work; the dead `op_delay_sync` function is left in place with a NOTE comment.
+> - **§4.9 `seqpat_transport`:** the opcode-body + codegen migration is done and consistent, but `transport()` is itself unreachable from Akkado source — its codegen handler + VM dispatch shipped in `5cb4eda` (Feb 2026) but no analyzer-facing builtin entry was ever added. No Akkado compile-level test exists for it as a result; the audit guard covers the opcode body.
 
 # ExtendedParams Migration — Remaining Opcodes PRD
 

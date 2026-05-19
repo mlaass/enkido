@@ -98,11 +98,14 @@ Related: [flanger](#flanger), [phaser](#phaser)
 | depth | number | 0.7     | Modulation depth (0-1) |
 | min_delay | number | 0.1 | Minimum sweep delay (ms) |
 | max_delay | number | 10.0 | Maximum sweep delay (ms) |
+| feedback  | number | -0.99 | Delay-line feedback (-0.99 to 0.99) — sharpens resonance |
 | lfo_phase | number | 0.25 | R-channel LFO offset, in **turns** (0.0–1.0). 0 = mono-equivalent; 0.25 = 90° (default); 0.5 = anti-phase. |
 | dry   | number | 1.0     | Dry signal level (Category A) |
 | wet   | number | 0.5     | Wet (processed) signal level (Category A) |
 
 Similar to chorus but with shorter delay times and feedback, creating the characteristic "jet plane" sweep effect. Flanger is stereo-native: mono input widens via the `lfo_phase` offset on the right channel.
+
+`feedback` is a named argument: higher magnitudes (toward ±0.99) sharpen and intensify the comb resonances for a more pronounced effect.
 
 The `min_delay` and `max_delay` parameters define the sweep range. Shorter delays create more metallic tones, longer delays sound more like chorus.
 
@@ -124,6 +127,11 @@ osc("tri", 440) |> flanger(@, 3, 0.3) |> out(@)
 ```akk
 // Tight metallic flanger
 osc("saw", 110) |> flanger(@, 0.5, 0.8, 0.05, 2.0) |> out(@)
+```
+
+```akk
+// Resonant flanger with strong feedback
+osc("saw", 110) |> flanger(@, 0.3, 0.8, feedback: 0.85) |> out(@)
 ```
 
 Related: [chorus](#chorus), [phaser](#phaser), [comb](#comb)
@@ -203,8 +211,11 @@ Related: [flanger](#flanger), [chorus](#chorus)
 | fb    | number | -       | Feedback amount (0-1) |
 | dry   | number | 1.0     | Dry signal level (Category A) |
 | wet   | number | 0.5     | Wet (processed) signal level (Category A) |
+| damping | number | 0.0   | Tail high-frequency damping (0-1) |
 
 A comb filter creates a series of peaks and notches at harmonics of the delay frequency. The fundamental frequency is approximately 1/time Hz.
+
+`damping` is a named argument — a one-pole lowpass in the feedback path that rolls off high frequencies in the resonant tail for a darker, less metallic color.
 
 ```akk
 // Tuned resonator at ~220 Hz
@@ -220,6 +231,13 @@ osc("saw", 110) |> comb(@, 0.01, 0.7) |> out(@)
 // Karplus-Strong style pluck
 osc("noise") * ar(trigger(4), 0.001, 0.01)
     |> comb(@, 1/440, 0.99)
+    |> out(@)
+```
+
+```akk
+// Damped comb — darker, less metallic tail
+osc("noise") * ar(trigger(4), 0.001, 0.01)
+    |> comb(@, 1/440, 0.97, damping: 0.6)
     |> out(@)
 ```
 

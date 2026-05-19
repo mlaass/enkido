@@ -591,18 +591,20 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   .stereo_native = true,
                   .extended_param_names = {"dry", "wet"},
                   .extended_defaults = {1.0f, 0.5f}}},
-    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing)
-    // dry/wet via ExtendedParams (Category A: dry=1.0, wet=0.5)
+    // dattorro: input_diffusion (input smoothing), decay_diffusion (tail smoothing).
+    // damping/mod_depth were bit-packed in inst.rate and lfo_rate was hardcoded
+    // before prd-extended-params-migration; now ExtendedParams<5> alongside
+    // dry/wet (Category A: dry=1.0, wet=0.5).
     {"dattorro", {.opcode = cedar::Opcode::REVERB_DATTORRO,
                   .input_count = 1, .optional_count = 4, .requires_state = true,
                   .param_names = {"in", "decay", "predelay", "in_diff", "dec_diff", ""},
                   .defaults = {0.7f, 20.0f, 0.75f, 0.625f, NAN},
                   .description = "Dattorro plate reverb algorithm",
-                  .extended_param_count = 2,
+                  .extended_param_count = 5,
                   .output_channels = ChannelCount::Stereo,
                   .stereo_native = true,
-                  .extended_param_names = {"dry", "wet"},
-                  .extended_defaults = {1.0f, 0.5f}}},
+                  .extended_param_names = {"damping", "mod_depth", "lfo_rate", "dry", "wet"},
+                  .extended_defaults = {0.0f, 0.0f, 0.5f, 1.0f, 0.5f}}},
     // fdn has free input slots; dry/wet via slots 3-4 (Category A: dry=1.0, wet=0.5)
     {"fdn",      {cedar::Opcode::REVERB_FDN, 1, 4, true,
                   {"in", "decay", "damp", "dry", "wet", ""},
@@ -628,18 +630,19 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   .stereo_native = true,
                   .extended_param_names = {"lfo_phase", "dry", "wet"},
                   .extended_defaults = {0.25f, 1.0f, 0.5f}}},
-    // flanger: min_delay (ms), max_delay (ms), lfo_phase (turns)
-    // dry/wet appended to ExtendedParams (Category A: dry=1.0, wet=0.5).
+    // flanger: min_delay (ms), max_delay (ms). feedback was bit-packed in
+    // inst.rate before prd-extended-params-migration; now ExtendedParams<5>
+    // alongside lfo_phase + dry/wet (Category A: dry=1.0, wet=0.5).
     {"flanger",  {.opcode = cedar::Opcode::EFFECT_FLANGER,
                   .input_count = 1, .optional_count = 4, .requires_state = true,
                   .param_names = {"in", "rate", "depth", "min_delay", "max_delay", ""},
                   .defaults = {1.0f, 0.7f, 0.1f, 10.0f, NAN},
                   .description = "Stereo-native flanger. lfo_phase tunes the R-LFO offset.",
-                  .extended_param_count = 3,
+                  .extended_param_count = 4,
                   .output_channels = ChannelCount::Stereo,
                   .stereo_native = true,
-                  .extended_param_names = {"lfo_phase", "dry", "wet"},
-                  .extended_defaults = {0.25f, 1.0f, 0.5f}}},
+                  .extended_param_names = {"feedback", "lfo_phase", "dry", "wet"},
+                  .extended_defaults = {-0.99f, 0.25f, 1.0f, 0.5f}}},
     // phaser: min_freq, max_freq, plus 5 extended params (feedback, stages,
     // lfo_phase, dry, wet). Feedback/stages used to be packed into inst.rate;
     // they are now full first-class extended params (PRD prd-extended-params §6b).
@@ -655,12 +658,19 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   .stereo_native = true,
                   .extended_param_names = {"feedback", "stages", "lfo_phase", "dry", "wet"},
                   .extended_defaults = {0.5f, 4.0f, 0.25f, 1.0f, 0.5f}}},
-    // comb: free input slots; dry/wet via slots 3-4 (Category A: dry=1.0, wet=0.5).
-    {"comb",     {cedar::Opcode::EFFECT_COMB, 3, 2, true,
-                  {"in", "time", "fb", "dry", "wet", ""},
-                  {1.0f, 0.5f, NAN, NAN, NAN},
-                  "Comb filter (resonant delay)",
-                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
+    // comb: dry/wet via input slots 3-4 (Category A: dry=1.0, wet=0.5).
+    // damping was packed in inst.rate before prd-extended-params-migration;
+    // now ExtendedParams<1>.
+    {"comb",     {.opcode = cedar::Opcode::EFFECT_COMB,
+                  .input_count = 3, .optional_count = 2, .requires_state = true,
+                  .param_names = {"in", "time", "fb", "dry", "wet", ""},
+                  .defaults = {1.0f, 0.5f, NAN, NAN, NAN},
+                  .description = "Comb filter (resonant delay). damping rolls off the tail.",
+                  .extended_param_count = 1,
+                  .output_channels = ChannelCount::Stereo,
+                  .stereo_native = true,
+                  .extended_param_names = {"damping"},
+                  .extended_defaults = {0.0f}}},
 
     // Distortion — all stereo-native (prd-stereo-native-opcodes Phase 4b).
     // Per-channel state arrays inside one state struct; runtime params (drive,
@@ -746,28 +756,44 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // Per-channel envelope/gain state; coefficient cache shared.
     // Dynamics: Category B (transform). dry/wet defaults dry=0.0, wet=1.0
     // (back-compat). Set dry>0 for parallel/NY compression.
-    {"comp",     {cedar::Opcode::DYNAMICS_COMP, 1, 4, true,
-                  {"in", "thresh", "ratio", "dry", "wet", ""},
-                  {-12.0f, 4.0f, 0.0f, 1.0f, NAN},
-                  "Dynamic range compressor",
-                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
-    {"limiter",  {cedar::Opcode::DYNAMICS_LIMITER, 1, 4, true,
-                  {"in", "ceiling", "release", "dry", "wet", ""},
-                  {-0.1f, 0.1f, 0.0f, 1.0f, NAN},
-                  "Peak limiter with lookahead",
-                  0, {}, {}, ChannelCount::Stereo, /*stereo_native=*/true}},
-    // gate: hysteresis (dB open/close diff), close_time (ms fade-out)
-    // dry/wet via ExtendedParams (input slots full).
+    // comp: attack/release (ms) via ExtendedParams<2> — were bit-packed in
+    // inst.rate before prd-extended-params-migration. dry/wet stay in slots 3-4.
+    {"comp",     {.opcode = cedar::Opcode::DYNAMICS_COMP,
+                  .input_count = 1, .optional_count = 4, .requires_state = true,
+                  .param_names = {"in", "thresh", "ratio", "dry", "wet", ""},
+                  .defaults = {-12.0f, 4.0f, 0.0f, 1.0f, NAN},
+                  .description = "Dynamic range compressor. attack/release in ms.",
+                  .extended_param_count = 2,
+                  .output_channels = ChannelCount::Stereo,
+                  .stereo_native = true,
+                  .extended_param_names = {"attack", "release"},
+                  .extended_defaults = {0.1f, 10.0f}}},
+    // limiter: lookahead (ms, 0 = off) via ExtendedParams<1> — replaced the
+    // inst.rate boolean toggle. dry/wet stay in slots 3-4.
+    {"limiter",  {.opcode = cedar::Opcode::DYNAMICS_LIMITER,
+                  .input_count = 1, .optional_count = 4, .requires_state = true,
+                  .param_names = {"in", "ceiling", "release", "dry", "wet", ""},
+                  .defaults = {-0.1f, 0.1f, 0.0f, 1.0f, NAN},
+                  .description = "Peak limiter. lookahead in ms (0 = off).",
+                  .extended_param_count = 1,
+                  .output_channels = ChannelCount::Stereo,
+                  .stereo_native = true,
+                  .extended_param_names = {"lookahead"},
+                  .extended_defaults = {0.0f}}},
+    // gate: hysteresis (dB open/close diff), close_time (ms fade-out).
+    // attack/hold/release (ms) were bit-packed in inst.rate before
+    // prd-extended-params-migration; now ExtendedParams<5> alongside dry/wet
+    // (input slots full).
     {"gate",     {.opcode = cedar::Opcode::DYNAMICS_GATE,
                   .input_count = 1, .optional_count = 4, .requires_state = true,
                   .param_names = {"in", "thresh", "range", "hyst", "close_time", ""},
                   .defaults = {-40.0f, -40.0f, 6.0f, 5.0f, NAN},
-                  .description = "Noise gate with hysteresis",
-                  .extended_param_count = 2,
+                  .description = "Noise gate with hysteresis. attack/hold/release in ms.",
+                  .extended_param_count = 5,
                   .output_channels = ChannelCount::Stereo,
                   .stereo_native = true,
-                  .extended_param_names = {"dry", "wet"},
-                  .extended_defaults = {0.0f, 1.0f}}},
+                  .extended_param_names = {"attack", "hold", "release", "dry", "wet"},
+                  .extended_defaults = {0.1f, 0.0f, 10.0f, 0.0f, 1.0f}}},
 
     // Arithmetic (2 inputs, stateless) - from binary operator desugaring
     {"add",     {cedar::Opcode::ADD, 2, 0, false,

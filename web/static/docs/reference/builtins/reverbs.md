@@ -89,10 +89,15 @@ Related: [dattorro](#dattorro), [fdn](#fdn)
 | dec_diff | number | 0.625 | Decay diffusion (smooths reverb tail) |
 | dry   | number | 1.0     | Dry signal level (Category A) |
 | wet   | number | 0.5     | Wet (processed) signal level (Category A) |
+| damping   | number | 0.0  | Tail high-frequency damping (0-1) |
+| mod_depth | number | 0.0  | Tank modulation depth (0-1) |
+| lfo_rate  | number | 0.5  | Modulation LFO rate in Hz |
 
 Aliases: `plate`
 
 The Dattorro plate reverb produces long, shimmering tails well-suited to vocals and synth pads. The predelay separates the dry signal from the reverb onset. The diffusion parameters control how quickly transients are smeared.
+
+`damping`, `mod_depth`, and `lfo_rate` are named arguments. `damping` rolls off high frequencies in the tail for a darker reverb; `mod_depth` (with `lfo_rate`) modulates the tank delays for a richer, chorused tail.
 
 ```akk
 // Lush plate reverb
@@ -108,6 +113,13 @@ osc("tri", 440) * ar(trigger(4)) |> dattorro(@, 0.5, 10) |> out(@)
 // High diffusion for pad-like washes
 osc("saw", 220) * ar(trigger(2))
     |> dattorro(@, 0.9, 50, 0.9, 0.8)
+    |> out(@)
+```
+
+```akk
+// Dark, modulated tail
+osc("saw", 220) * ar(trigger(2))
+    |> dattorro(@, 0.9, 40, damping: 0.6, mod_depth: 0.4, lfo_rate: 0.8)
     |> out(@)
 ```
 

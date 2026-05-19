@@ -39,14 +39,23 @@ All effects in this file expose `dry` and `wet` as their last two parameters (Ca
 | ratio  | number | 4.0     | Compression ratio |
 | dry   | number | 0.0     | Dry signal level (Category B) |
 | wet   | number | 1.0     | Wet (processed) signal level (Category B) |
+| attack  | number | 0.1   | Attack time in milliseconds |
+| release | number | 10.0  | Release time in milliseconds |
 
 Aliases: `compress`, `compressor`
 
 Reduces the level of signals that exceed the threshold. Higher ratios create more aggressive compression. A ratio of 4:1 means 4dB of input above threshold becomes 1dB of output.
 
+`attack` and `release` set the envelope-follower time constants — pass them as named arguments. Shorter attack clamps transients harder; longer release sustains gain reduction between hits.
+
 ```akk
 // Basic compression
 osc("saw", 110) * ar(trigger(2)) |> comp(@, -12, 4) |> out(@)
+```
+
+```akk
+// Slow, transparent leveling
+osc("saw", 110) * ar(trigger(2)) |> comp(@, -12, 4, attack: 30, release: 250) |> out(@)
 ```
 
 ```akk
@@ -74,14 +83,22 @@ Related: [limiter](#limiter), [gate](#gate)
 | release | number | 0.1     | Release time in seconds |
 | dry   | number | 0.0     | Dry signal level (Category B) |
 | wet   | number | 1.0     | Wet (processed) signal level (Category B) |
+| lookahead | number | 0.0  | Lookahead time in ms (`0` = off; capped at ~1ms) |
 
 Aliases: `limit`
 
 A limiter is an extreme compressor (infinite ratio) that prevents the signal from ever exceeding the ceiling. Use to prevent digital clipping.
 
+`lookahead` defaults to `0` (off). A positive value delays the signal so the limiter can react to a peak before it arrives, trading a small latency for cleaner transient control.
+
 ```akk
 // Master limiter
 osc("saw", 110) * 2 |> limiter(@, -0.1, 0.1) |> out(@)
+```
+
+```akk
+// Limiter with lookahead for cleaner peak control
+osc("saw", 110) * 2 |> limiter(@, -0.1, 0.1, lookahead: 1) |> out(@)
 ```
 
 ```akk
@@ -101,16 +118,20 @@ Related: [comp](#comp)
 |--------|--------|---------|-------------|
 | in     | signal | -       | Input signal |
 | thresh | number | -40.0   | Threshold in dB |
+| range  | number | -40.0   | Attenuation applied when the gate is closed, in dB |
 | hyst   | number | 6.0     | Hysteresis in dB (open/close difference) |
 | close_time | number | 5.0 | Fade-out time (ms) |
 | dry   | number | 0.0     | Dry signal level (Category B) |
 | wet   | number | 1.0     | Wet (processed) signal level (Category B) |
+| attack  | number | 0.1   | Attack time in milliseconds |
+| hold    | number | 0.0   | Hold time in milliseconds (gate stays open after signal drops) |
+| release | number | 10.0  | Release time in milliseconds |
 
 Aliases: `noisegate`
 
 Cuts the signal when it falls below the threshold, useful for removing noise during quiet passages. Hysteresis prevents chattering at the threshold by requiring the signal to drop further below the threshold before the gate closes.
 
-The `close_time` parameter controls how quickly the gate fades out when closing, preventing abrupt cuts.
+The `close_time` parameter controls how quickly the gate fades out when closing, preventing abrupt cuts. `attack`, `hold`, and `release` (named arguments, all in milliseconds) shape the open/close envelope — a longer `hold` keeps the gate open through short dips below threshold.
 
 ```akk
 // Basic noise gate
@@ -129,6 +150,11 @@ osc("noise") * ar(trigger(8), 0.001, 0.05)
 ```akk
 // Slow fade-out gate
 osc("saw", 110) * ar(trigger(2)) |> gate(@, -30, 6, 20) |> out(@)
+```
+
+```akk
+// Long hold keeps the gate open through short gaps
+osc("noise") * ar(trigger(4)) |> gate(@, -30, -40, hold: 120, release: 80) |> out(@)
 ```
 
 Related: [comp](#comp)

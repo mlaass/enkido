@@ -44,6 +44,7 @@ add_executable(cedar_tests
     test_drywet.cpp
     test_seqpat_gate.cpp
     test_soundfont_registry.cpp
+    test_audit_inst_rate.cpp
 )
 
 # Add concurrency tests if enabled
@@ -64,6 +65,7 @@ target_link_libraries(cedar_tests
 # current working directory at runtime.
 target_compile_definitions(cedar_tests PRIVATE
     CEDAR_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    CEDAR_OPCODES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../include/cedar/opcodes"
 )
 
 catch_discover_tests(cedar_tests)

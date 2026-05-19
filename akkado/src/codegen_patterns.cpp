@@ -4101,22 +4101,28 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Pack cycle_length into two uint16_t halves
-    std::uint32_t cl_bits = std::bit_cast<std::uint32_t>(cycle_length);
-    std::uint16_t cl_lo = static_cast<std::uint16_t>(cl_bits & 0xFFFF);
-    std::uint16_t cl_hi = static_cast<std::uint16_t>((cl_bits >> 16) & 0xFFFF);
-
-    // Emit SEQPAT_TRANSPORT
+    // Emit SEQPAT_TRANSPORT. cycle_length used to be bit-cast into the
+    // inputs[3]/[4] slot pair; prd-extended-params-migration §4.9 moves it
+    // to an ExtendedParams<1> companion state, freeing both signal slots.
     cedar::Instruction transport_inst{};
     transport_inst.opcode = cedar::Opcode::SEQPAT_TRANSPORT;
     transport_inst.out_buffer = beat_pos_buf;
     transport_inst.inputs[0] = trig_buf;
     transport_inst.inputs[1] = step_buf;
     transport_inst.inputs[2] = reset_buf;
-    transport_inst.inputs[3] = cl_lo;
-    transport_inst.inputs[4] = cl_hi;
+    transport_inst.inputs[3] = BufferAllocator::BUFFER_UNUSED;
+    transport_inst.inputs[4] = BufferAllocator::BUFFER_UNUSED;
     transport_inst.state_id = transport_state_id;
     emit(transport_inst);
+
+    // cycle_length → ExtendedParams<1> slot 0 (constant).
+    StateInitData transport_ext{};
+    transport_ext.state_id = cedar::ext_params_state_id(transport_state_id);
+    transport_ext.type = StateInitData::Type::ExtendedParams;
+    transport_ext.ext_count = 1;
+    transport_ext.ext_buffer_indices.fill(0xFFFFu);
+    transport_ext.ext_constants[0] = cycle_length;
+    state_inits_.push_back(transport_ext);
 
     // Emit SEQPAT_QUERY with clock override
     cedar::Instruction query_inst{};

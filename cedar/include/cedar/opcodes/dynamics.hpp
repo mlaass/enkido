@@ -17,7 +17,8 @@ namespace cedar {
 // in0: input signal
 // in1: threshold (dB, -60 to 0)
 // in2: ratio (1.0 to 20.0, where 20 = ~inf:1)
-// rate: attack (high 4 bits, 0-15 -> 0.1-100ms), release (low 4 bits, 0-15 -> 10-1000ms)
+// in3/in4: dry / wet
+// ext params (ExtendedParams<2>): ext[0]=attack (ms), ext[1]=release (ms)
 //
 // Classic feedforward compressor with RMS envelope detection.
 // Reduces dynamic range by attenuating signals above threshold.
@@ -40,9 +41,21 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
     const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<CompressorState>(inst.state_id);
 
-    // Decode attack/release times from rate field (4 bits each, shared)
-    float attack_ms = 0.1f + static_cast<float>((inst.rate >> 4) & 0x0F) * (100.0f - 0.1f) / 15.0f;
-    float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (1000.0f - 10.0f) / 15.0f;
+    // attack/release (ms) via ExtendedParams<2> (prd-extended-params-migration
+    // §4.1). Resolved block-rate: buffer-backed automation updates at block
+    // boundaries, which is ample for envelope time constants. Fallback values
+    // reproduce the pre-migration inst.rate=0 decode for legacy bytecode.
+    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    float attack_ms = 0.1f;
+    float release_ms = 10.0f;
+    if (ext) {
+        const auto& a = ext->params[0];
+        attack_ms = a.is_constant() ? a.constant : ctx.buffers->get(a.buffer_idx)[0];
+        const auto& r = ext->params[1];
+        release_ms = r.is_constant() ? r.constant : ctx.buffers->get(r.buffer_idx)[0];
+    }
+    attack_ms = std::clamp(attack_ms, 0.1f, 100.0f);
+    release_ms = std::clamp(release_ms, 10.0f, 1000.0f);
 
     if (attack_ms != state.last_attack || release_ms != state.last_release) {
         state.last_attack = attack_ms;
@@ -90,7 +103,8 @@ inline void op_dynamics_comp(ExecutionContext& ctx, const Instruction& inst) {
 // in0: input signal
 // in1: ceiling (dB, -12 to 0)
 // in2: release (ms, 10-500)
-// rate: lookahead (0 = off, non-zero = 1ms lookahead)
+// in3/in4: dry / wet
+// ext params (ExtendedParams<1>): ext[0]=lookahead (ms, 0 = off)
 //
 // True peak limiter that prevents signal from exceeding ceiling.
 // Optional lookahead allows smoother limiting with no overshoot.
@@ -113,7 +127,23 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
     const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<LimiterState>(inst.state_id);
 
-    bool use_lookahead = inst.rate != 0;
+    // lookahead (ms) via ExtendedParams<1> (prd-extended-params-migration §4.2).
+    // 0 = off (default — reproduces the pre-migration inst.rate=0 behavior); a
+    // positive value sets the analysis delay, capped by the fixed lookahead
+    // buffer (~1ms at 48kHz). Resolved block-rate.
+    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    float lookahead_ms = 0.0f;
+    if (ext) {
+        const auto& la = ext->params[0];
+        lookahead_ms = la.is_constant() ? la.constant : ctx.buffers->get(la.buffer_idx)[0];
+    }
+    const bool use_lookahead = lookahead_ms > 0.0f;
+    std::size_t lookahead_samples = 0;
+    if (use_lookahead) {
+        float n = lookahead_ms * 0.001f * ctx.sample_rate;
+        lookahead_samples = static_cast<std::size_t>(
+            std::clamp(n, 1.0f, static_cast<float>(LimiterState::LOOKAHEAD_SAMPLES - 1)));
+    }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float rel_ms = std::clamp(release_ms[i], 10.0f, 500.0f);
@@ -130,7 +160,9 @@ inline void op_dynamics_limiter(ExecutionContext& ctx, const Instruction& inst) 
 
             float analyze_sample;
             if (use_lookahead) {
-                std::size_t read_pos = (state.write_pos[ch] + 1) % LimiterState::LOOKAHEAD_SAMPLES;
+                std::size_t read_pos = (state.write_pos[ch]
+                    + LimiterState::LOOKAHEAD_SAMPLES - lookahead_samples)
+                    % LimiterState::LOOKAHEAD_SAMPLES;
                 analyze_sample = state.lookahead_buffer[ch][read_pos];
                 x = analyze_sample;
             } else {
@@ -171,7 +203,8 @@ constexpr float GATE_CLOSE_TIME_DEFAULT = 5.0f;    // ms
 // in2: range (dB, 0 to -80, how much to attenuate when closed)
 // in3: hysteresis - open/close difference in dB (default 6)
 // in4: close_time - fade-out time in ms (default 5)
-// rate: attack (bits 6-7), hold (bits 4-5), release (bits 0-3)
+// ext params (ExtendedParams<5>): ext[0]=attack, ext[1]=hold, ext[2]=release
+//   (all ms), ext[3]=dry, ext[4]=wet
 //
 // Attenuates signal when it falls below threshold.
 // Hysteresis prevents chatter at the threshold.
@@ -193,20 +226,31 @@ inline void op_dynamics_gate(ExecutionContext& ctx, const Instruction& inst) {
     const float* close_time_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<GateState>(inst.state_id);
 
-    // ExtendedParams<2>: ext[0] = dry (default 0.0), ext[1] = wet (default 1.0)
-    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
+    // ExtendedParams<5> (prd-extended-params-migration §4.3):
+    //   ext[0]=attack, ext[1]=hold, ext[2]=release (all ms), ext[3]=dry, ext[4]=wet.
+    // attack/hold/release resolved block-rate; dry/wet per-sample below.
+    // Fallbacks reproduce the pre-migration inst.rate=0 decode / dry-wet defaults.
+    const auto* ext = ctx.states->get_if<ExtendedParams<5>>(ext_params_state_id(inst.state_id));
+    float attack_ms = 0.1f;
+    float hold_ms = 0.0f;
+    float release_ms = 10.0f;
     const float* dry_buf = nullptr; float dry_const = 0.0f;
     const float* wet_buf = nullptr; float wet_const = 1.0f;
     if (ext) {
-        const auto& ed = ext->params[0];
+        const auto& a = ext->params[0];
+        attack_ms = a.is_constant() ? a.constant : ctx.buffers->get(a.buffer_idx)[0];
+        const auto& h = ext->params[1];
+        hold_ms = h.is_constant() ? h.constant : ctx.buffers->get(h.buffer_idx)[0];
+        const auto& r = ext->params[2];
+        release_ms = r.is_constant() ? r.constant : ctx.buffers->get(r.buffer_idx)[0];
+        const auto& ed = ext->params[3];
         if (ed.is_constant()) dry_const = ed.constant; else dry_buf = ctx.buffers->get(ed.buffer_idx);
-        const auto& ew = ext->params[1];
+        const auto& ew = ext->params[4];
         if (ew.is_constant()) wet_const = ew.constant; else wet_buf = ctx.buffers->get(ew.buffer_idx);
     }
-
-    float attack_ms = 0.1f + static_cast<float>((inst.rate >> 6) & 0x3) * (10.0f - 0.1f) / 3.0f;
-    float hold_ms = static_cast<float>((inst.rate >> 4) & 0x3) * 200.0f / 3.0f;
-    float release_ms = 10.0f + static_cast<float>(inst.rate & 0x0F) * (500.0f - 10.0f) / 15.0f;
+    attack_ms = std::clamp(attack_ms, 0.1f, 10.0f);
+    hold_ms = std::clamp(hold_ms, 0.0f, 200.0f);
+    release_ms = std::clamp(release_ms, 10.0f, 500.0f);
 
     if (attack_ms != state.last_attack || release_ms != state.last_release) {
         state.last_attack = attack_ms;

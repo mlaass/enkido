@@ -152,7 +152,8 @@ constexpr float DATTORRO_LFO_RATE_DEFAULT = 0.5f;
 // in2: pre-delay (ms, 0-100)
 // in3: input_diffusion - input smoothing (default 0.75)
 // in4: decay_diffusion - tail smoothing (default 0.625)
-// rate: damping (low 4 bits 0-15 -> 0.0-1.0), modulation depth (high 4 bits 0-15 -> 0.0-1.0)
+// ext params (ExtendedParams<5>): ext[0]=damping, ext[1]=mod_depth,
+//   ext[2]=lfo_rate (Hz), ext[3]=dry, ext[4]=wet
 //
 // High-quality plate reverb algorithm with modulation for richness.
 // Uses input diffusion network + figure-8 tank topology.
@@ -177,22 +178,35 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
     const float* decay_diffusion_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<DattorroState>(inst.state_id);
 
-    float damping = static_cast<float>(inst.rate & 0x0F) / 15.0f;
-    float mod_depth = static_cast<float>((inst.rate >> 4) & 0x0F) / 15.0f;
-
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
 
-    // ExtendedParams<2>: ext[0] = dry (default 1.0), ext[1] = wet (default 0.5)
-    const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
-    const float* dry_buf = nullptr; float dry_const = 1.0f;
-    const float* wet_buf = nullptr; float wet_const = 0.5f;
-    if (ext) {
-        const auto& d = ext->params[0];
-        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
-        const auto& w = ext->params[1];
-        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
-    }
+    // ExtendedParams<5> (prd-extended-params-migration §4.4):
+    //   ext[0]=damping, ext[1]=mod_depth, ext[2]=lfo_rate (Hz),
+    //   ext[3]=dry, ext[4]=wet.
+    // damping/mod_depth were bit-packed in inst.rate; lfo_rate was hardcoded.
+    // Fallbacks reproduce the pre-migration inst.rate=0 decode (damping=0,
+    // mod_depth=0) and the DATTORRO_LFO_RATE_DEFAULT constant.
+    const auto* ext = ctx.states->get_if<ExtendedParams<5>>(ext_params_state_id(inst.state_id));
+    auto resolve_slot = [&](std::size_t idx, float default_val,
+                            const float*& out_buf, float& out_const) {
+        out_buf = nullptr;
+        out_const = default_val;
+        if (!ext) return;
+        const auto& slot = ext->params[idx];
+        if (slot.is_constant()) out_const = slot.constant;
+        else                    out_buf   = ctx.buffers->get(slot.buffer_idx);
+    };
+    const float* damping_buf   = nullptr; float damping_const   = 0.0f;
+    const float* mod_depth_buf = nullptr; float mod_depth_const = 0.0f;
+    const float* lfo_rate_buf  = nullptr; float lfo_rate_const  = DATTORRO_LFO_RATE_DEFAULT;
+    const float* dry_buf       = nullptr; float dry_const       = 1.0f;
+    const float* wet_buf       = nullptr; float wet_const       = 0.5f;
+    resolve_slot(0, 0.0f, damping_buf, damping_const);
+    resolve_slot(1, 0.0f, mod_depth_buf, mod_depth_const);
+    resolve_slot(2, DATTORRO_LFO_RATE_DEFAULT, lfo_rate_buf, lfo_rate_const);
+    resolve_slot(3, 1.0f, dry_buf, dry_const);
+    resolve_slot(4, 0.5f, wet_buf, wet_const);
 
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
@@ -207,7 +221,11 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
         // Runtime tunable parameters (use defaults if zero/negative)
         float input_diffusion = input_diffusion_in[i] > 0.0f ? input_diffusion_in[i] : DATTORRO_INPUT_DIFFUSION_DEFAULT;
         float decay_diffusion = decay_diffusion_in[i] > 0.0f ? decay_diffusion_in[i] : DATTORRO_DECAY_DIFFUSION_DEFAULT;
-        float lfo_rate = DATTORRO_LFO_RATE_DEFAULT;  // Fixed at default
+        float damping = std::clamp(damping_buf ? damping_buf[i] : damping_const, 0.0f, 1.0f);
+        float mod_depth = std::clamp(mod_depth_buf ? mod_depth_buf[i] : mod_depth_const, 0.0f, 1.0f);
+        // lfo_rate clamped to a positive minimum to avoid a zero phase
+        // increment (prd-extended-params-migration §8 edge case).
+        float lfo_rate = std::max(lfo_rate_buf ? lfo_rate_buf[i] : lfo_rate_const, 0.01f);
 
         // Pre-delay (per-channel duplicated path)
         float predelay_samples = pre_ms * 0.001f * ctx.sample_rate;

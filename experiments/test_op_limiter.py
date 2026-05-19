@@ -11,7 +11,7 @@ import json
 import os
 import cedar_core as cedar
 from cedar_testing import CedarTestHost, output_dir
-from utils import NumpyEncoder, db_to_linear, linear_to_db
+from utils import NumpyEncoder, db_to_linear, linear_to_db, save_wav
 from visualize import save_figure
 
 OUT = output_dir("op_limiter")
@@ -21,6 +21,36 @@ def gen_test_tone(freq, duration, sr, amplitude=1.0):
     """Generate a test sine tone."""
     t = np.arange(int(duration * sr)) / sr
     return (np.sin(2 * np.pi * freq * t) * amplitude).astype(np.float32)
+
+
+def _build_limiter(host, ceiling_db, release_ms, lookahead_ms=0.0,
+                   init_ext=True, state_name="limiter"):
+    """Configure host with a DYNAMICS_LIMITER instruction.
+
+    lookahead moved from the inst.rate boolean toggle to ExtendedParams<1>
+    (prd-extended-params-migration §4.2). lookahead_ms=0 disables it. When
+    init_ext is False the ExtendedParams state is left uninitialized to
+    exercise the opcode's nullptr fallback (lookahead off).
+    buf_in=0, buf_out=1.
+    """
+    buf_ceiling = host.set_param("ceiling", ceiling_db)
+    buf_release = host.set_param("release", release_ms)
+    state_id = cedar.hash(state_name) & 0xFFFF
+    inst = cedar.Instruction.make_ternary(
+        cedar.Opcode.DYNAMICS_LIMITER, 1, 0, buf_ceiling, buf_release, state_id
+    )
+    inst.rate = 0  # rate field no longer carries the lookahead toggle
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+    host.vm.load_program(host.program)
+    if init_ext:
+        host.vm.init_extended_params(
+            cedar.ext_params_state_id(state_id),
+            np.array([lookahead_ms], dtype=np.float32),
+            np.array([0xFFFF], dtype=np.uint16),
+            1,
+        )
+    return state_id
 
 
 # =============================================================================
@@ -194,6 +224,89 @@ def test_limiter_ceiling():
 
 
 # =============================================================================
+# ExtendedParams migration tests (prd-extended-params-migration §4.2)
+# =============================================================================
+
+def test_default_fallback_equivalence():
+    """
+    Verify the nullptr-fallback (no ExtendedParams init) is identical to an
+    explicit lookahead=0 init.
+
+    Pre-migration, limiter always ran at inst.rate=0 → lookahead off (no
+    Akkado path ever set the rate field). The post-migration opcode must
+    reproduce that exactly when ExtendedParams is absent.
+
+    Acceptance: peak sample error < -60 dBFS between the two renders.
+    """
+    print("\nTest: limiter default-fallback equivalence")
+    print("=" * 60)
+
+    sr = 48000
+    rng = np.random.default_rng(0xF00D)
+    sig = rng.standard_normal(int(0.5 * sr)).astype(np.float32) * 0.7
+
+    host_fb = CedarTestHost(sr)
+    _build_limiter(host_fb, -3, 100, init_ext=False, state_name="lim_fb")
+    out_fb = host_fb.process_loaded(sig)
+
+    host_def = CedarTestHost(sr)
+    _build_limiter(host_def, -3, 100, lookahead_ms=0.0, state_name="lim_def")
+    out_def = host_def.process_loaded(sig)
+
+    peak_err = float(np.max(np.abs(out_fb - out_def)))
+    peak_err_db = linear_to_db(peak_err + 1e-12)
+    print(f"  Peak error fallback vs lookahead=0 init: {peak_err_db:.1f} dBFS")
+
+    passed = peak_err_db < -60.0
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: nullptr fallback "
+          f"{'matches' if passed else 'DIVERGES FROM'} explicit lookahead=0")
+    return passed
+
+
+def test_lookahead_tunable():
+    """
+    Verify lookahead is now tunable via ExtendedParams.
+
+    With lookahead enabled the limiter analyzes (and outputs) a delayed copy
+    of the signal — so the lookahead render is time-shifted relative to the
+    no-lookahead render. The shift equals the configured lookahead time,
+    capped at ~1ms (47 samples at 48kHz) by the fixed lookahead buffer.
+
+    Acceptance: cross-correlation lag between lookahead=0 and lookahead=1ms
+    renders is within ±5 samples of the expected 47-sample delay.
+    """
+    print("\nTest: limiter lookahead tunability")
+    print("=" * 60)
+
+    sr = 48000
+    rng = np.random.default_rng(0x11AA)
+    sig = rng.standard_normal(int(0.5 * sr)).astype(np.float32) * 0.6
+
+    host_off = CedarTestHost(sr)
+    _build_limiter(host_off, -3, 100, lookahead_ms=0.0, state_name="lim_off")
+    out_off = host_off.process_loaded(sig)
+
+    host_on = CedarTestHost(sr)
+    _build_limiter(host_on, -3, 100, lookahead_ms=1.0, state_name="lim_on")
+    out_on = host_on.process_loaded(sig)
+
+    save_wav(os.path.join(OUT, "lookahead_off.wav"), out_off, sr)
+    save_wav(os.path.join(OUT, "lookahead_on.wav"), out_on, sr)
+    print("  Saved lookahead_off.wav / lookahead_on.wav")
+
+    # Cross-correlation lag: positive = out_on lags out_off.
+    xcorr = np.correlate(out_on, out_off, mode="full")
+    lag = int(np.argmax(np.abs(xcorr))) - (len(out_off) - 1)
+    expected = 47  # 1ms clamps to LOOKAHEAD_SAMPLES-1
+    print(f"  Measured lookahead delay: {lag} samples (expected ~{expected})")
+
+    passed = abs(lag - expected) <= 5
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: lookahead param "
+          f"{'is tunable' if passed else 'has NO measurable effect'}")
+    return passed
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -203,6 +316,8 @@ if __name__ == "__main__":
     print()
 
     test_limiter_ceiling()
+    test_default_fallback_equivalence()
+    test_lookahead_tunable()
 
     print()
     print("=" * 60)

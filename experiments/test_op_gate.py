@@ -11,7 +11,7 @@ import json
 import os
 import cedar_core as cedar
 from cedar_testing import CedarTestHost, output_dir
-from utils import NumpyEncoder, db_to_linear, linear_to_db
+from utils import NumpyEncoder, db_to_linear, linear_to_db, save_wav
 from visualize import save_figure
 
 OUT = output_dir("op_gate")
@@ -21,6 +21,42 @@ def gen_test_tone(freq, duration, sr, amplitude=1.0):
     """Generate a test sine tone."""
     t = np.arange(int(duration * sr)) / sr
     return (np.sin(2 * np.pi * freq * t) * amplitude).astype(np.float32)
+
+
+def _build_gate(host, threshold_db, range_db, hysteresis_db=6.0, close_time_ms=5.0,
+                attack_ms=0.1, hold_ms=0.0, release_ms=10.0,
+                init_ext=True, state_name="gate"):
+    """Configure host with a DYNAMICS_GATE instruction.
+
+    attack/hold/release moved from inst.rate bit-packing to ExtendedParams<5>
+    ([attack, hold, release, dry, wet]) in prd-extended-params-migration §4.3.
+    The gate opcode reads inputs[3]=hysteresis and inputs[4]=close_time
+    unconditionally, so all 5 input slots must be wired (make_quinary). When
+    init_ext is False the ExtendedParams state is left uninitialized to
+    exercise the opcode's nullptr fallback (attack=0.1ms, hold=0, release=10ms).
+    buf_in=0, buf_out=1.
+    """
+    buf_thresh = host.set_param("g_threshold", threshold_db)
+    buf_range = host.set_param("g_range", range_db)
+    buf_hyst = host.set_param("g_hyst", hysteresis_db)
+    buf_close = host.set_param("g_close", close_time_ms)
+    state_id = cedar.hash(state_name) & 0xFFFF
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.DYNAMICS_GATE, 1, 0, buf_thresh, buf_range, buf_hyst, buf_close,
+        state_id
+    )
+    inst.rate = 0  # rate field no longer carries attack/hold/release
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+    host.vm.load_program(host.program)
+    if init_ext:
+        host.vm.init_extended_params(
+            cedar.ext_params_state_id(state_id),
+            np.array([attack_ms, hold_ms, release_ms, 0.0, 1.0], dtype=np.float32),
+            np.array([0xFFFF] * 5, dtype=np.uint16),
+            5,
+        )
+    return state_id
 
 
 # =============================================================================
@@ -83,31 +119,11 @@ def test_gate_threshold():
 
     host = CedarTestHost(sr)
 
-    # Set gate parameters
-    buf_thresh = host.set_param("threshold", threshold_db)
-    buf_range = host.set_param("range", range_db)
-    buf_in = 0
-    buf_out = 1
-
-    # Pack timing into rate parameter
-    # rate = (attack << 6) | (hold << 4) | release (simplified encoding)
-    attack_idx = min(3, attack_ms // 5)
-    hold_idx = min(3, hold_ms // 50)
-    release_idx = min(15, release_ms // 25)
-    rate = (attack_idx << 6) | (hold_idx << 4) | release_idx
-
     # DYNAMICS_GATE: out = gate(in, threshold, range)
-    inst = cedar.Instruction.make_ternary(
-        cedar.Opcode.DYNAMICS_GATE, buf_out, buf_in, buf_thresh, buf_range,
-        cedar.hash("gate") & 0xFFFF
-    )
-    inst.rate = rate
-    host.load_instruction(inst)
-    host.load_instruction(
-        cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out)
-    )
+    _build_gate(host, threshold_db, range_db,
+                attack_ms=attack_ms, hold_ms=hold_ms, release_ms=release_ms)
 
-    output = host.process(test_signal)
+    output = host.process_loaded(test_signal)
 
     # Analyze each burst region
     print("\n  Burst Analysis:")
@@ -215,21 +231,11 @@ def test_gate_threshold():
     hover_signal = hover_signal * (1 + noise * 0.5)
 
     host2 = CedarTestHost(sr)
-    buf_thresh2 = host2.set_param("threshold", threshold_db)
-    buf_range2 = host2.set_param("range", range_db)
-    buf_out2 = 1
+    _build_gate(host2, threshold_db, range_db,
+                attack_ms=attack_ms, hold_ms=hold_ms, release_ms=release_ms,
+                state_name="gate2")
 
-    inst2 = cedar.Instruction.make_ternary(
-        cedar.Opcode.DYNAMICS_GATE, buf_out2, 0, buf_thresh2, buf_range2,
-        cedar.hash("gate2") & 0xFFFF
-    )
-    inst2.rate = rate
-    host2.load_instruction(inst2)
-    host2.load_instruction(
-        cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out2)
-    )
-
-    hover_output = host2.process(hover_signal)
+    hover_output = host2.process_loaded(hover_signal)
 
     # Count zero crossings of gate state (excessive = chatter)
     window2 = int(0.005 * sr)
@@ -306,29 +312,11 @@ def test_gate_attenuation_speed():
 
     host = CedarTestHost(sr)
 
-    # Set gate parameters
-    buf_thresh = host.set_param("threshold", threshold_db)
-    buf_range = host.set_param("range", range_db)
-    buf_in = 0
-    buf_out = 1
+    _build_gate(host, threshold_db, range_db,
+                attack_ms=attack_ms, hold_ms=hold_ms, release_ms=release_ms,
+                state_name="gate_speed")
 
-    # Pack timing into rate parameter (no hold)
-    attack_idx = 0
-    hold_idx = 0
-    release_idx = min(15, release_ms // 25)  # Maps to ~500ms
-    rate = (attack_idx << 6) | (hold_idx << 4) | release_idx
-
-    inst = cedar.Instruction.make_ternary(
-        cedar.Opcode.DYNAMICS_GATE, buf_out, buf_in, buf_thresh, buf_range,
-        cedar.hash("gate_speed") & 0xFFFF
-    )
-    inst.rate = rate
-    host.load_instruction(inst)
-    host.load_instruction(
-        cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out)
-    )
-
-    output = host.process(test_signal)
+    output = host.process_loaded(test_signal)
 
     # Analyze attenuation at various times after the signal drops
     # Note: The envelope follower has ~50ms time constant (release/10), so it takes
@@ -459,6 +447,106 @@ def test_gate_attenuation_speed():
 
 
 # =============================================================================
+# ExtendedParams migration tests (prd-extended-params-migration §4.3)
+# =============================================================================
+
+def test_default_fallback_equivalence():
+    """
+    Verify the nullptr-fallback (no ExtendedParams init) is identical to an
+    explicit-default init (attack=0.1ms, hold=0ms, release=10ms, dry=0, wet=1).
+
+    Pre-migration, gate always ran at inst.rate=0 → that exact decode (no
+    Akkado path ever set the rate field). The post-migration opcode must
+    reproduce it when ExtendedParams is absent.
+
+    Acceptance: peak sample error < -60 dBFS between the two renders.
+    """
+    print("\nTest: gate default-fallback equivalence")
+    print("=" * 60)
+
+    sr = 48000
+    t = np.arange(int(0.5 * sr)) / sr
+    sig = (np.sin(2 * np.pi * 1000 * t) * db_to_linear(-25)).astype(np.float32)
+    sig[:len(sig) // 2] *= db_to_linear(-30)  # quiet then loud → exercises gate
+
+    host_fb = CedarTestHost(sr)
+    _build_gate(host_fb, -40, -60, init_ext=False, state_name="gate_fb")
+    out_fb = host_fb.process_loaded(sig)
+
+    host_def = CedarTestHost(sr)
+    _build_gate(host_def, -40, -60, attack_ms=0.1, hold_ms=0.0, release_ms=10.0,
+                state_name="gate_def")
+    out_def = host_def.process_loaded(sig)
+
+    peak_err = float(np.max(np.abs(out_fb - out_def)))
+    peak_err_db = linear_to_db(peak_err + 1e-12)
+    print(f"  Peak error fallback vs default-init: {peak_err_db:.1f} dBFS")
+
+    passed = peak_err_db < -60.0
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: nullptr fallback "
+          f"{'matches' if passed else 'DIVERGES FROM'} explicit defaults")
+    return passed
+
+
+def test_hold_tunable():
+    """
+    Verify gate `hold` is now tunable via ExtendedParams.
+
+    `hold` sets how long the gate stays open after the signal drops below
+    threshold before it starts closing. A loud burst followed by silence:
+    with hold=0 the gate closes almost immediately; with hold=200ms it keeps
+    passing (near-unity gain) well into the silent region.
+
+    Acceptance: 50ms into the silent region, the hold=200ms render has a
+    higher gate gain than the hold=0ms render by ≥ 6 dB.
+    """
+    print("\nTest: gate hold tunability")
+    print("=" * 60)
+
+    sr = 48000
+    dur = 0.6
+    sig = np.zeros(int(dur * sr), dtype=np.float32)
+    burst = int(0.3 * sr)
+    t_loud = np.arange(burst) / sr
+    sig[:burst] = np.sin(2 * np.pi * 1000 * t_loud) * db_to_linear(-6)
+    # after `burst`: silence — gate should close (subject to hold time)
+
+    def render(hold_ms, name):
+        host = CedarTestHost(sr)
+        # release long so the *hold* time, not release, governs the window.
+        _build_gate(host, -40, -60, attack_ms=0.1, hold_ms=hold_ms,
+                    release_ms=10.0, state_name=name)
+        return host.process_loaded(sig)
+
+    # Drive a faint probe tone in the "silent" region so gate gain is audible.
+    probe = np.zeros_like(sig)
+    t_probe = np.arange(len(sig) - burst) / sr
+    probe[burst:] = np.sin(2 * np.pi * 1000 * t_probe) * db_to_linear(-46)
+    sig = sig + probe
+
+    out_hold0 = render(0.0, "gate_h0")
+    out_hold200 = render(200.0, "gate_h200")
+
+    save_wav(os.path.join(OUT, "hold_0ms.wav"), out_hold0, sr)
+    save_wav(os.path.join(OUT, "hold_200ms.wav"), out_hold200, sr)
+    print("  Saved hold_0ms.wav / hold_200ms.wav")
+
+    # Window: 50ms into the silent region.
+    win = slice(burst + int(0.04 * sr), burst + int(0.06 * sr))
+    rms0 = np.sqrt(np.mean(out_hold0[win] ** 2))
+    rms200 = np.sqrt(np.mean(out_hold200[win] ** 2))
+    diff_db = linear_to_db(rms200 + 1e-12) - linear_to_db(rms0 + 1e-12)
+    print(f"  hold=0ms post-burst RMS: {linear_to_db(rms0):.1f} dB, "
+          f"hold=200ms: {linear_to_db(rms200):.1f} dB")
+    print(f"  Difference: {diff_db:.2f} dB (longer hold keeps gate open)")
+
+    passed = diff_db >= 6.0
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: hold param "
+          f"{'is tunable' if passed else 'has NO measurable effect'}")
+    return passed
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -469,6 +557,8 @@ if __name__ == "__main__":
 
     test_gate_threshold()
     test_gate_attenuation_speed()
+    test_default_fallback_equivalence()
+    test_hold_tunable()
 
     print()
     print("=" * 60)

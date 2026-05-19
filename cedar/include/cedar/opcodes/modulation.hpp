@@ -17,7 +17,8 @@ namespace cedar {
 // in0: input signal
 // in1: delay time (ms, 0.1-100)
 // in2: feedback (-0.99 to 0.99)
-// rate: damping (0-255 -> 0.0-1.0)
+// in3/in4: dry / wet
+// ext params (ExtendedParams<1>): ext[0]=damping (0.0-1.0)
 //
 // Fundamental building block for many effects. Creates resonances at
 // multiples of the fundamental frequency (1000/delay_ms Hz).
@@ -40,7 +41,15 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
     const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<CombFilterState>(inst.state_id);
 
-    float damp = static_cast<float>(inst.rate) / 255.0f;
+    // damping via ExtendedParams<1> (prd-extended-params-migration §4.7).
+    // Fallback 0.0 reproduces the pre-migration inst.rate=0 decode.
+    const auto* ext = ctx.states->get_if<ExtendedParams<1>>(ext_params_state_id(inst.state_id));
+    const float* damp_buf = nullptr; float damp_const = 0.0f;
+    if (ext) {
+        const auto& slot = ext->params[0];
+        if (slot.is_constant()) damp_const = slot.constant;
+        else                    damp_buf   = ctx.buffers->get(slot.buffer_idx);
+    }
 
     state.ensure_buffer(ctx.arena);
     if (!state.buffer[0] || !state.buffer[1]) {
@@ -55,6 +64,7 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
         float delay_samples = std::clamp(delay_ms[i], 0.1f, 100.0f) * 0.001f * ctx.sample_rate;
         delay_samples = std::min(delay_samples, static_cast<float>(CombFilterState::MAX_COMB_SAMPLES - 1));
         float fb = std::clamp(feedback[i], -0.99f, 0.99f);
+        float damp = std::clamp(damp_buf ? damp_buf[i] : damp_const, 0.0f, 1.0f);
         float dry = drywet::coeff(dry_level, i, 1.0f);
         float wet = drywet::coeff(wet_level, i, 0.5f);
 
@@ -93,7 +103,8 @@ constexpr float STEREO_LFO_OFFSET_DEFAULT_TURNS = 0.25f;
 // in2: depth (0.0-1.0)
 // in3: min_delay - minimum sweep point in ms (default 0.1)
 // in4: max_delay - maximum sweep point in ms (default 10.0)
-// rate: feedback (high 4 bits 0-15 -> -0.99 to 0.99)
+// ext params (ExtendedParams<5>): ext[0]=feedback (-0.99..0.99),
+//   ext[1]=lfo_phase (turns), ext[2]=dry, ext[3]=wet
 //
 // Short modulated delay (0.1-10ms) with feedback. Stereo-native: per-channel
 // delay lines + write_pos. Shared master LFO phase; R lane reads LFO at base +
@@ -115,27 +126,28 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
     const float* max_delay_in = ctx.buffers->get(inst.inputs[4]);
     auto& state = ctx.states->get_or_create<FlangerState>(inst.state_id);
 
-    // Decode feedback from high 4 bits (legacy phaser-style packing kept
-    // until flanger feedback is migrated to ExtendedParams in a follow-up).
-    float feedback = (static_cast<float>((inst.rate >> 4) & 0x0F) / 7.5f) - 1.0f;
-    feedback = std::clamp(feedback, -0.99f, 0.99f);
-
-    // Extended params: ext[0] = lfo_phase (turns, default 0.25),
-    //                  ext[1] = dry (default 1.0), ext[2] = wet (default 0.5).
-    const auto* ext = ctx.states->get_if<ExtendedParams<3>>(ext_params_state_id(inst.state_id));
-    const float* lfo_phase_buf = nullptr;
-    float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
-    const float* dry_buf = nullptr; float dry_const = 1.0f;
-    const float* wet_buf = nullptr; float wet_const = 0.5f;
-    if (ext) {
-        const auto& slot = ext->params[0];
-        if (slot.is_constant()) lfo_phase_const = slot.constant;
-        else                    lfo_phase_buf   = ctx.buffers->get(slot.buffer_idx);
-        const auto& d = ext->params[1];
-        if (d.is_constant()) dry_const = d.constant; else dry_buf = ctx.buffers->get(d.buffer_idx);
-        const auto& w = ext->params[2];
-        if (w.is_constant()) wet_const = w.constant; else wet_buf = ctx.buffers->get(w.buffer_idx);
-    }
+    // Extended params (prd-extended-params-migration §4.6): ext[0]=feedback
+    // (was bit-packed in inst.rate), ext[1]=lfo_phase (turns, default 0.25),
+    // ext[2]=dry (default 1.0), ext[3]=wet (default 0.5). The feedback
+    // fallback (-0.99) reproduces the pre-migration inst.rate=0 decode.
+    const auto* ext = ctx.states->get_if<ExtendedParams<5>>(ext_params_state_id(inst.state_id));
+    auto resolve_slot = [&](std::size_t idx, float default_val,
+                            const float*& out_buf, float& out_const) {
+        out_buf = nullptr;
+        out_const = default_val;
+        if (!ext) return;
+        const auto& slot = ext->params[idx];
+        if (slot.is_constant()) out_const = slot.constant;
+        else                    out_buf   = ctx.buffers->get(slot.buffer_idx);
+    };
+    const float* feedback_buf  = nullptr; float feedback_const  = -0.99f;
+    const float* lfo_phase_buf = nullptr; float lfo_phase_const = STEREO_LFO_OFFSET_DEFAULT_TURNS;
+    const float* dry_buf       = nullptr; float dry_const       = 1.0f;
+    const float* wet_buf       = nullptr; float wet_const       = 0.5f;
+    resolve_slot(0, -0.99f, feedback_buf, feedback_const);
+    resolve_slot(1, STEREO_LFO_OFFSET_DEFAULT_TURNS, lfo_phase_buf, lfo_phase_const);
+    resolve_slot(2, 1.0f, dry_buf, dry_const);
+    resolve_slot(3, 0.5f, wet_buf, wet_const);
 
     // Ensure both per-channel buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
@@ -158,6 +170,8 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
         if (state.lfo_phase >= 1.0f) state.lfo_phase -= 1.0f;
 
         float d = std::clamp(depth[i], 0.0f, 1.0f);
+        float feedback = std::clamp(
+            feedback_buf ? feedback_buf[i] : feedback_const, -0.99f, 0.99f);
 
         // L lane: LFO at master phase. Bit-identical to legacy mono path
         // when input is mono.

@@ -111,6 +111,9 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
 // in2: feedback amount (0.0-1.0)
 // reserved field low byte: wet/dry mix (0-255 -> 0.0-1.0)
 //
+// NOTE: orphaned — no DELAY_SYNC opcode value, never dispatched. Beat-synced
+// delay belongs in userspace (compute delay_ms from beats/bpm, call delay_ms).
+//
 // Delay time is calculated from BPM: delay_ms = (delay_beats / bpm) * 60000
 // Stereo-native — uses per-channel DelayState buffers/write_pos (same as op_delay).
 [[gnu::always_inline]]

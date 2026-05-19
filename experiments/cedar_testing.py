@@ -84,6 +84,30 @@ class CedarTestHost:
 
         return np.concatenate(output_left)[:n_samples]
 
+    def process_loaded(self, input_signal: np.ndarray) -> np.ndarray:
+        """
+        Run the program WITHOUT re-loading it into the VM.
+
+        Use this after manually calling `vm.load_program()` followed by
+        `vm.init_extended_params()` — `process()` would re-load the program
+        and wipe the ExtendedParams state init. Returns the left channel.
+        """
+        n_samples = len(input_signal)
+        n_blocks = (n_samples + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+        padded_len = n_blocks * cedar.BLOCK_SIZE
+
+        input_padded = np.zeros(padded_len, dtype=np.float32)
+        input_padded[:n_samples] = input_signal
+
+        output_left = []
+        for i in range(n_blocks):
+            start = i * cedar.BLOCK_SIZE
+            self.vm.set_buffer(0, input_padded[start:start + cedar.BLOCK_SIZE])
+            l, r = self.vm.process()
+            output_left.append(l)
+
+        return np.concatenate(output_left)[:n_samples]
+
     def process_stereo(self, input_left: np.ndarray, input_right: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Run the program on stereo input signals.

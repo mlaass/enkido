@@ -11,7 +11,7 @@ import json
 import os
 import cedar_core as cedar
 from cedar_testing import CedarTestHost, output_dir
-from utils import NumpyEncoder, db_to_linear, linear_to_db
+from utils import NumpyEncoder, db_to_linear, linear_to_db, save_wav
 from visualize import save_figure
 
 OUT = output_dir("op_comp")
@@ -44,6 +44,36 @@ def measure_rms_blocks(signal, sr, block_ms=50):
         rms = np.sqrt(np.mean(block ** 2))
         rms_values.append(rms)
     return np.array(rms_values)
+
+
+def _build_comp(host, threshold_db, ratio, attack_ms=0.1, release_ms=10.0,
+                init_ext=True, state_name="comp"):
+    """Configure host with a DYNAMICS_COMP instruction.
+
+    attack/release moved from inst.rate bit-packing to ExtendedParams<2>
+    (prd-extended-params-migration §4.1). When init_ext is False the
+    ExtendedParams state is left uninitialized to exercise the opcode's
+    nullptr fallback (attack=0.1ms, release=10ms).
+    buf_in=0, buf_out=1.
+    """
+    buf_thresh = host.set_param("threshold", threshold_db)
+    buf_ratio = host.set_param("ratio", ratio)
+    state_id = cedar.hash(state_name) & 0xFFFF
+    inst = cedar.Instruction.make_ternary(
+        cedar.Opcode.DYNAMICS_COMP, 1, 0, buf_thresh, buf_ratio, state_id
+    )
+    inst.rate = 0  # rate field no longer carries attack/release
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 1))
+    host.vm.load_program(host.program)
+    if init_ext:
+        host.vm.init_extended_params(
+            cedar.ext_params_state_id(state_id),
+            np.array([attack_ms, release_ms], dtype=np.float32),
+            np.array([0xFFFF, 0xFFFF], dtype=np.uint16),
+            2,
+        )
+    return state_id
 
 
 # =============================================================================
@@ -88,30 +118,10 @@ def test_compressor_ratio():
         amplitude = db_to_linear(level_db)
         test_signal = gen_test_tone(freq, 0.5, sr, amplitude)
 
-        # Set compressor parameters
-        buf_thresh = host.set_param("threshold", threshold_db)
-        buf_ratio = host.set_param("ratio", ratio)
-        buf_in = 0
-        buf_out = 1
-
-        # Pack attack/release into rate parameter
-        # rate = (attack_idx << 4) | release_idx
-        # Convert ms to 0-15 index (assumes specific mapping in DSP)
-        attack_idx = min(15, int(attack_ms / 10))
-        release_idx = min(15, int(release_ms / 50))
-        rate = (attack_idx << 4) | release_idx
-
         # DYNAMICS_COMP: out = comp(in, threshold, ratio)
-        inst = cedar.Instruction.make_ternary(
-            cedar.Opcode.DYNAMICS_COMP, buf_out, buf_in, buf_thresh, buf_ratio, cedar.hash("comp") & 0xFFFF
-        )
-        inst.rate = rate
-        host.load_instruction(inst)
-        host.load_instruction(
-            cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out)
-        )
+        _build_comp(host, threshold_db, ratio, attack_ms, release_ms)
 
-        output = host.process(test_signal)
+        output = host.process_loaded(test_signal)
 
         # Measure RMS of steady-state portion (skip attack)
         steady_start = int(0.2 * sr)  # Skip first 200ms
@@ -184,20 +194,9 @@ def test_compressor_ratio():
     timing_signal[transition_sample:] = np.sin(2 * np.pi * freq * t_high) * high_amp
 
     host2 = CedarTestHost(sr)
-    buf_thresh2 = host2.set_param("threshold", threshold_db)
-    buf_ratio2 = host2.set_param("ratio", ratio)
-    buf_out2 = 1
+    _build_comp(host2, threshold_db, ratio, attack_ms, release_ms, state_name="comp2")
 
-    inst2 = cedar.Instruction.make_ternary(
-        cedar.Opcode.DYNAMICS_COMP, buf_out2, 0, buf_thresh2, buf_ratio2, cedar.hash("comp2") & 0xFFFF
-    )
-    inst2.rate = rate
-    host2.load_instruction(inst2)
-    host2.load_instruction(
-        cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, buf_out2)
-    )
-
-    timing_output = host2.process(timing_signal)
+    timing_output = host2.process_loaded(timing_signal)
 
     # Measure envelope of output
     env_in = np.abs(timing_signal)
@@ -272,6 +271,104 @@ def test_compressor_ratio():
 
 
 # =============================================================================
+# ExtendedParams migration tests (prd-extended-params-migration §4.1)
+# =============================================================================
+
+def test_default_fallback_equivalence():
+    """
+    Verify the nullptr-fallback (no ExtendedParams init) is identical to an
+    explicit-default init (attack=0.1ms, release=10ms).
+
+    Pre-migration, comp always ran at inst.rate=0 → attack=0.1ms, release=10ms
+    (no Akkado path ever set the rate field). The post-migration opcode must
+    reproduce that exactly when ExtendedParams is absent.
+
+    Acceptance: peak sample error < -60 dBFS between the two renders.
+    """
+    print("Test 2: comp default-fallback equivalence")
+    print("=" * 60)
+
+    sr = 48000
+    transient = np.zeros(int(0.5 * sr), dtype=np.float32)
+    t = np.arange(len(transient)) / sr
+    transient[:] = np.sin(2 * np.pi * 800 * t) * db_to_linear(-3)
+
+    host_fallback = CedarTestHost(sr)
+    _build_comp(host_fallback, -20, 4.0, init_ext=False, state_name="comp_fb")
+    out_fallback = host_fallback.process_loaded(transient)
+
+    host_default = CedarTestHost(sr)
+    _build_comp(host_default, -20, 4.0, attack_ms=0.1, release_ms=10.0,
+                state_name="comp_def")
+    out_default = host_default.process_loaded(transient)
+
+    peak_err = float(np.max(np.abs(out_fallback - out_default)))
+    peak_err_db = linear_to_db(peak_err + 1e-12)
+
+    wav_path = os.path.join(OUT, "default_equivalence.wav")
+    save_wav(wav_path, out_default, sr)
+    print(f"  Saved {wav_path} - reference default-param render")
+    print(f"  Peak error fallback vs default-init: {peak_err_db:.1f} dBFS")
+
+    passed = peak_err_db < -60.0
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: nullptr fallback "
+          f"{'matches' if passed else 'DIVERGES FROM'} explicit defaults")
+    return passed
+
+
+def test_attack_release_tunable():
+    """
+    Verify attack/release are now tunable via ExtendedParams.
+
+    Drives a sudden -40dB→-3dB level jump (well above a -20dB threshold).
+    A fast attack (0.1ms) clamps the transient overshoot sooner than a slow
+    attack (100ms), so the slow-attack render must let through a measurably
+    larger peak right after the jump.
+
+    Acceptance: slow-attack post-transition peak > fast-attack peak by ≥ 1 dB.
+    """
+    print("Test 3: comp attack/release tunability")
+    print("=" * 60)
+
+    sr = 48000
+    freq = 1000
+    dur = 1.0
+    sig = np.zeros(int(dur * sr), dtype=np.float32)
+    trans = int(0.3 * sr)
+    t_lo = np.arange(trans) / sr
+    t_hi = np.arange(len(sig) - trans) / sr
+    sig[:trans] = np.sin(2 * np.pi * freq * t_lo) * db_to_linear(-40)
+    sig[trans:] = np.sin(2 * np.pi * freq * t_hi) * db_to_linear(-3)
+
+    def render(attack_ms, name):
+        host = CedarTestHost(sr)
+        _build_comp(host, -20, 8.0, attack_ms=attack_ms, release_ms=100.0,
+                    state_name=name)
+        return host.process_loaded(sig)
+
+    out_fast = render(0.1, "comp_fast")
+    out_slow = render(100.0, "comp_slow")
+
+    # Post-transition window: first 20ms after the level jump.
+    win = slice(trans, trans + int(0.02 * sr))
+    peak_fast = float(np.max(np.abs(out_fast[win])))
+    peak_slow = float(np.max(np.abs(out_slow[win])))
+    diff_db = linear_to_db(peak_slow + 1e-12) - linear_to_db(peak_fast + 1e-12)
+
+    save_wav(os.path.join(OUT, "attack_fast.wav"), out_fast, sr)
+    save_wav(os.path.join(OUT, "attack_slow.wav"), out_slow, sr)
+    print(f"  Saved attack_fast.wav / attack_slow.wav - listen for transient clamp")
+    print(f"  Fast-attack peak: {linear_to_db(peak_fast):.1f} dB, "
+          f"slow-attack peak: {linear_to_db(peak_slow):.1f} dB")
+    print(f"  Difference: {diff_db:.2f} dB (slow lets through more transient)")
+
+    passed = diff_db >= 1.0
+    print(f"  {'✓ PASS' if passed else '✗ FAIL'}: attack param "
+          f"{'is tunable' if passed else 'has NO measurable effect'}")
+    return passed
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -281,6 +378,10 @@ if __name__ == "__main__":
     print()
 
     test_compressor_ratio()
+    print()
+    test_default_fallback_equivalence()
+    print()
+    test_attack_release_tunable()
 
     print()
     print("=" * 60)

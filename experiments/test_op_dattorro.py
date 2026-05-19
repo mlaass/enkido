@@ -295,7 +295,192 @@ def test_stereo_input_cross_coupling():
         print(f"  ✗ FAIL: R channel near silent — rms_l={rms_l:.5f}, rms_r={rms_r:.5f}")
 
 
+# =============================================================================
+# ExtendedParams migration tests (prd-extended-params-migration §4.4)
+# =============================================================================
+
+def _build_dattorro(host, decay=0.9, predelay=20.0, damping=0.0, mod_depth=0.0,
+                     lfo_rate=0.5, init_ext=True, state_name="verb"):
+    """Configure host with a stereo-native REVERB_DATTORRO instruction.
+
+    damping/mod_depth moved from inst.rate bit-packing, and lfo_rate from a
+    hardcoded constant, to ExtendedParams<5> ([damping, mod_depth, lfo_rate,
+    dry, wet]) in prd-extended-params-migration §4.4. When init_ext is False
+    the ExtendedParams state is left uninitialized to exercise the opcode's
+    nullptr fallback (damping=0, mod_depth=0, lfo_rate=0.5).
+    buf_in=0, output L=1 / R=2.
+    """
+    buf_decay = host.set_param("d_decay", decay)
+    buf_predelay = host.set_param("d_predelay", predelay)
+    buf_indiff = host.set_param("d_indiff", 0.75)
+    buf_decdiff = host.set_param("d_decdiff", 0.625)
+    state_id = cedar.hash(state_name) & 0xFFFF
+    inst = cedar.Instruction.make_quinary(
+        cedar.Opcode.REVERB_DATTORRO, 1, 0, buf_decay, buf_predelay,
+        buf_indiff, buf_decdiff, state_id
+    )
+    inst.rate = 0  # rate field no longer carries damping/mod_depth
+    inst.flags = cedar.STEREO_OUTPUT_FLAG
+    host.load_instruction(inst)
+    host.load_instruction(cedar.Instruction.make_binary(cedar.Opcode.OUTPUT, 0, 1, 2))
+    host.vm.load_program(host.program)
+    if init_ext:
+        host.vm.init_extended_params(
+            cedar.ext_params_state_id(state_id),
+            np.array([damping, mod_depth, lfo_rate, 1.0, 0.5], dtype=np.float32),
+            np.array([0xFFFF] * 5, dtype=np.uint16),
+            5,
+        )
+    return state_id
+
+
+def _render_stereo_loaded(host, signal):
+    """Drive the block loop (no re-load) and collect both L and R."""
+    n = len(signal)
+    n_blocks = (n + cedar.BLOCK_SIZE - 1) // cedar.BLOCK_SIZE
+    padded = np.zeros(n_blocks * cedar.BLOCK_SIZE, dtype=np.float32)
+    padded[:n] = signal
+    l_chunks, r_chunks = [], []
+    for k in range(n_blocks):
+        s = k * cedar.BLOCK_SIZE
+        host.vm.set_buffer(0, padded[s:s + cedar.BLOCK_SIZE])
+        l, r = host.vm.process()
+        l_chunks.append(l)
+        r_chunks.append(r)
+    return (np.concatenate(l_chunks)[:n], np.concatenate(r_chunks)[:n])
+
+
+def _hf_energy_db(signal, sr, cutoff=4000.0):
+    """Total spectral energy above `cutoff` Hz, in dB."""
+    spec = np.abs(np.fft.rfft(signal))
+    freqs = np.fft.rfftfreq(len(signal), 1.0 / sr)
+    hf = spec[freqs >= cutoff]
+    return 10.0 * np.log10(np.sum(hf ** 2) + 1e-12)
+
+
+def test_default_fallback_equivalence():
+    """
+    Verify the nullptr-fallback (no ExtendedParams init) is identical to an
+    explicit-default init (damping=0, mod_depth=0, lfo_rate=0.5, dry=1, wet=0.5).
+
+    Pre-migration, dattorro always ran at inst.rate=0 → damping=0, mod_depth=0
+    and lfo_rate hardcoded at 0.5. The post-migration opcode must reproduce
+    that exactly when ExtendedParams is absent.
+
+    Acceptance: peak sample error < -60 dBFS between the two renders (L+R).
+    """
+    print("Test: dattorro default-fallback equivalence")
+    sr = 48000
+    impulse = gen_impulse(2.0, sr)
+
+    host_fb = CedarTestHost(sr)
+    _build_dattorro(host_fb, decay=0.9, init_ext=False, state_name="verb_fb")
+    l_fb, r_fb = _render_stereo_loaded(host_fb, impulse)
+
+    host_def = CedarTestHost(sr)
+    _build_dattorro(host_def, decay=0.9, damping=0.0, mod_depth=0.0,
+                    lfo_rate=0.5, state_name="verb_def")
+    l_def, r_def = _render_stereo_loaded(host_def, impulse)
+
+    peak_err = max(float(np.max(np.abs(l_fb - l_def))),
+                   float(np.max(np.abs(r_fb - r_def))))
+    peak_err_db = 20.0 * np.log10(peak_err + 1e-12)
+    print(f"  Peak error fallback vs default-init: {peak_err_db:.1f} dBFS")
+
+    if peak_err_db < -60.0:
+        print("  ✓ PASS: nullptr fallback matches explicit defaults")
+        return True
+    print("  ✗ FAIL: nullptr fallback DIVERGES from explicit defaults")
+    return False
+
+
+def test_damping_tunable():
+    """
+    Verify dattorro `damping` is now tunable via ExtendedParams.
+
+    Damping is a one-pole lowpass in the tank feedback path: higher damping
+    rolls off high frequencies in the reverb tail. A bright noise burst
+    through the reverb should have measurably less high-frequency energy in
+    the tail at high damping than at low damping.
+
+    Acceptance: HF energy (>4kHz) of the tail drops by ≥ 6 dB from
+    damping=0.1 to damping=0.85.
+    """
+    print("Test: dattorro damping tunability")
+    sr = 48000
+    burst = gen_noise_pulse(3.0, sr, pulse_ms=50)
+
+    host_lo = CedarTestHost(sr)
+    _build_dattorro(host_lo, decay=0.9, damping=0.1, state_name="verb_dlo")
+    l_lo, r_lo = _render_stereo_loaded(host_lo, burst)
+
+    host_hi = CedarTestHost(sr)
+    _build_dattorro(host_hi, decay=0.9, damping=0.85, state_name="verb_dhi")
+    l_hi, r_hi = _render_stereo_loaded(host_hi, burst)
+
+    save_wav(os.path.join(OUT, "damping_low.wav"),
+             np.stack([l_lo, r_lo], axis=1), sr)
+    save_wav(os.path.join(OUT, "damping_high.wav"),
+             np.stack([l_hi, r_hi], axis=1), sr)
+    print("  Saved damping_low.wav / damping_high.wav - listen for tail brightness")
+
+    # Measure HF energy of the tail (skip the first 100ms = direct burst).
+    tail = slice(int(0.1 * sr), None)
+    hf_lo = _hf_energy_db(l_lo[tail] + r_lo[tail], sr)
+    hf_hi = _hf_energy_db(l_hi[tail] + r_hi[tail], sr)
+    drop_db = hf_lo - hf_hi
+    print(f"  HF energy: damping=0.1 → {hf_lo:.1f} dB, damping=0.85 → {hf_hi:.1f} dB")
+    print(f"  HF rolloff from damping: {drop_db:.2f} dB")
+
+    if drop_db >= 6.0:
+        print("  ✓ PASS: damping param is tunable")
+        return True
+    print("  ✗ FAIL: damping param has NO measurable effect")
+    return False
+
+
+def test_modulation_tunable():
+    """
+    Verify dattorro `mod_depth` (and `lfo_rate`) are now tunable via
+    ExtendedParams.
+
+    Modulation continuously varies the tank delay lengths. With mod_depth=0
+    the tail is static; with mod_depth>0 it is chorused/smeared, so the two
+    renders of the same input diverge.
+
+    Acceptance: RMS difference between mod_depth=0 and mod_depth=0.6 tails is
+    > -40 dBFS (i.e. clearly non-identical).
+    """
+    print("Test: dattorro modulation tunability")
+    sr = 48000
+    burst = gen_noise_pulse(3.0, sr, pulse_ms=50)
+
+    host_off = CedarTestHost(sr)
+    _build_dattorro(host_off, decay=0.92, mod_depth=0.0, state_name="verb_moff")
+    l_off, r_off = _render_stereo_loaded(host_off, burst)
+
+    host_on = CedarTestHost(sr)
+    _build_dattorro(host_on, decay=0.92, mod_depth=0.6, lfo_rate=1.2,
+                    state_name="verb_mon")
+    l_on, r_on = _render_stereo_loaded(host_on, burst)
+
+    tail = slice(int(0.1 * sr), None)
+    diff = np.concatenate([l_off[tail] - l_on[tail], r_off[tail] - r_on[tail]])
+    diff_rms = np.sqrt(np.mean(diff ** 2))
+    diff_db = 20.0 * np.log10(diff_rms + 1e-12)
+    print(f"  RMS difference (mod off vs on): {diff_db:.1f} dBFS")
+
+    if diff_db > -40.0:
+        print("  ✓ PASS: mod_depth/lfo_rate are tunable")
+        return True
+    print("  ✗ FAIL: mod_depth has NO measurable effect")
+    return False
+
+
 if __name__ == "__main__":
     test_reverb_decay()
     test_tail_length()
     test_stereo_input_cross_coupling()
+    test_default_fallback_equivalence()
+    test_damping_tunable()
+    test_modulation_tunable()
