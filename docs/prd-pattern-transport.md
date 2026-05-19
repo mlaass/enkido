@@ -1,4 +1,11 @@
-> **Status: DONE** — SEQPAT_TRANSPORT opcode, clock overrides, transport() builtin.
+> **Status: PARTIALLY SHIPPED (2026-05-20)** — SEQPAT_TRANSPORT opcode, clock
+> overrides, and the `transport()` codegen handler all shipped in `5cb4eda`
+> (Feb 2026). **But `transport()` is unreachable from Akkado source**: no
+> analyzer-facing builtin entry was ever registered in `builtins.hpp`, so the
+> compiler never recognises `transport(...)` as a call. The opcode body +
+> codegen are done and correct (verified by the ExtendedParams audit guard,
+> see [prd-extended-params-migration.md](prd-extended-params-migration.md)
+> §4.9), but the feature has no user-facing surface. See **Follow-Up** below.
 
 # PRD: Pattern Transport
 
@@ -270,6 +277,30 @@ TransportState is preserved across hot-swaps via semantic ID matching, like all 
 | `cedar/include/cedar/vm/instruction.hpp` | SEQPAT_TRANSPORT in Opcode enum |
 | `akkado/include/akkado/builtins.hpp` | transport() builtin definition |
 | `akkado/src/codegen_patterns.cpp` | transport() codegen — emit SEQPAT_TRANSPORT, patch clock slots |
+
+## Follow-Up — Register the `transport()` builtin (REQUIRED to ship)
+
+The opcode (`SEQPAT_TRANSPORT`), the VM dispatch, and the `transport()` codegen
+handler all exist and are correct. The feature is **not actually usable** because
+the builtin entry described in §4 of this PRD ("Compiler: transport() Builtin")
+was never added to `akkado/include/akkado/builtins.hpp`. Without it the analyzer
+treats `transport(...)` as an unknown identifier and codegen is never reached.
+
+To close this PRD:
+
+1. **Register the builtin** in `akkado/include/akkado/builtins.hpp` — the
+   `{"transport", {cedar::Opcode::SEQPAT_TRANSPORT, ...}}` entry from §4.
+2. **Confirm the codegen path is wired** — verify the §4 codegen in
+   `akkado/src/codegen_patterns.cpp` actually fires once the builtin resolves
+   (it may have been written against the pre-`5cb4eda` codegen layout).
+3. **Add an Akkado compile-level test** — every example in the Syntax section
+   must compile. The current ExtendedParams audit guard only exercises the
+   opcode body, not the source-to-bytecode path.
+4. **Editor autocomplete** — once registered the builtin appears automatically
+   via `akkado_get_builtins_json()`; spot-check it surfaces.
+
+Until this lands, `transport()` should be treated as **not shipped** from a
+user's perspective.
 
 ## Non-Goals
 
