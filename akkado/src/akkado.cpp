@@ -201,6 +201,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
         be.length = static_cast<std::uint16_t>(desc.body.size());
         be.frame_slot_count = desc.frame_slot_count;
         be.output_count = desc.output_count;
+        be.param_base = desc.param_base;     // L2 BLOCK_CALL blocks; 0 for FOREACH
+        be.body_output = desc.body_output;
         result.block_table.push_back(be);
     }
 

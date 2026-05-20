@@ -28,18 +28,27 @@ struct ProgramSignature {
     }
 };
 
-// Subprogram table entry (PRD prd-runtime-functions-control-flow L3).
-// A FOREACH_EVENT block body lives inside the same `instructions` array, in
-// the region after the main program; this entry locates it. `offset` is an
-// absolute index into ProgramSlot::instructions.
+// Subprogram table entry (PRD prd-runtime-functions-control-flow L2/L3).
+// A block body lives inside the same `instructions` array, in the region
+// after the main program; this entry locates it. `offset` is an absolute
+// index into ProgramSlot::instructions.
+//
+// `param_base`/`body_output` are used only by L2 BLOCK_CALL blocks (shared
+// user-`fn` bodies): the body reads its parameters from the fixed convention
+// buffer bank [param_base, param_base + frame_slot_count) and writes its
+// result into [body_output, body_output + output_count). They are 0 for
+// FOREACH_EVENT blocks, which bind convention slots through the FOREACH_EVENT
+// instruction's own inputs[] instead.
 struct BlockEntry {
     std::uint16_t offset = 0;            // index of body's first instruction
     std::uint16_t length = 0;            // body instruction count
     std::uint16_t frame_slot_count = 0;  // # convention input slots the body reads
     std::uint8_t  output_count = 1;      // 1=mono, 2=stereo
     std::uint8_t  reserved = 0;
+    std::uint16_t param_base = 0;        // L2: first buffer of the param bank
+    std::uint16_t body_output = 0;       // L2: first buffer of the body output
 };
-static_assert(sizeof(BlockEntry) == 8, "BlockEntry must be 8 bytes");
+static_assert(sizeof(BlockEntry) == 12, "BlockEntry must be 12 bytes");
 
 // A single program buffer slot for triple buffering
 struct alignas(64) ProgramSlot {  // Cache-line aligned

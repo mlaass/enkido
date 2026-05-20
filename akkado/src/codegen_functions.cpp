@@ -102,7 +102,7 @@ TypedValue CodeGenerator::handle_user_function_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    std::uint16_t buf = emit_push_const(buffers_, instructions_, val);
+                    std::uint16_t buf = emit_push_const(buffers_, emit_stream(), val);
                     if (buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::void_val();
@@ -114,7 +114,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     const auto& arr = std::get<std::vector<double>>(*result);
                     std::vector<std::uint16_t> result_buffers;
                     for (double v : arr) {
-                        std::uint16_t buf = emit_push_const(buffers_, instructions_,
+                        std::uint16_t buf = emit_push_const(buffers_, emit_stream(),
                                                              static_cast<float>(v));
                         if (buf == BufferAllocator::BUFFER_UNUSED) {
                             error("E101", "Buffer pool exhausted", n.location);
@@ -169,6 +169,52 @@ TypedValue CodeGenerator::handle_user_function_call(
             args.push_back(arg_value);
             arg = ast_->arena[arg].next_sibling;
         }
+    }
+
+    // PRD prd-runtime-functions-control-flow L2: shared-block lowering. An
+    // eligible non-`#inline` fn is compiled once into a subprogram and
+    // dispatched via BLOCK_CALL at each call site, instead of being inlined
+    // everywhere. Falls through to the inline path below when the fn is not
+    // shareable or this call site cannot use the shared block.
+    if (!has_spread && !options_.inline_all_fns &&
+        args.size() == func.params.size() &&
+        fn_shareable_by_signature(func)) {
+        // Evaluate the call-site arguments first: a shared block can only be
+        // dispatched when every argument resolves to a plain signal/number
+        // buffer (no Array / Record / FunctionRef / string literal / `_`
+        // placeholder).
+        std::vector<std::uint16_t> arg_bufs;
+        bool callable = true;
+        for (NodeIndex a : args) {
+            const Node& an = ast_->arena[a];
+            if (an.type == NodeType::Identifier &&
+                std::holds_alternative<Node::IdentifierData>(an.data) &&
+                an.as_identifier() == "_") {
+                callable = false;  // `_` -> inline path fills the default
+                break;
+            }
+            if (resolve_function_arg(a)) { callable = false; break; }
+            TypedValue tv = visit(a);
+            if ((tv.type != ValueType::Signal &&
+                 tv.type != ValueType::Number) ||
+                tv.buffer == BufferAllocator::BUFFER_UNUSED) {
+                callable = false;
+                break;
+            }
+            arg_bufs.push_back(tv.buffer);
+        }
+        // Compile the shared block only once a call site can actually
+        // dispatch it. Otherwise a fn whose every call site passes a
+        // non-signal arg (e.g. `osc("sin")`) would leave a dead, never-
+        // called block bloating the bytecode — the opposite of L2's goal.
+        if (callable) {
+            const SharedBlock* block = get_or_compile_shared_block(func);
+            if (block) {
+                return emit_block_call(node, n, func, *block, arg_bufs);
+            }
+        }
+        // Args are already visited and cached in node_types_; the inline
+        // path's re-visit() below cache-hits, so no double emission.
     }
 
     // Save param_literals, param_string_defaults, param_multi_buffer_sources, and param_function_refs for this scope
@@ -322,7 +368,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                 }
                 if (result && std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, instructions_, val);
+                    param_buf = emit_push_const(buffers_, emit_stream(), val);
                 } else {
                     error("E105",
                           "Cannot evaluate default expression at compile time for parameter '" +
@@ -438,7 +484,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     }
                     if (result && std::holds_alternative<double>(*result)) {
                         float val = static_cast<float>(std::get<double>(*result));
-                        param_buf = emit_push_const(buffers_, instructions_, val);
+                        param_buf = emit_push_const(buffers_, emit_stream(), val);
                         if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                             error("E101", "Buffer pool exhausted", n.location);
                             param_literals_ = std::move(saved_param_literals);
@@ -553,7 +599,7 @@ TypedValue CodeGenerator::handle_user_function_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, instructions_, val);
+                    param_buf = emit_push_const(buffers_, emit_stream(), val);
                     if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         param_literals_ = std::move(saved_param_literals);
@@ -732,6 +778,285 @@ TypedValue CodeGenerator::handle_user_function_call(
     return cache_and_return(node, result_tv);
 }
 
+// ============================================================================
+// PRD prd-runtime-functions-control-flow L2 — shared-block `fn` lowering
+// ============================================================================
+
+// Pre-pass: count every Call node by callee name so get_or_compile_shared_block
+// can skip fns that are only called once (sharing them saves nothing).
+void CodeGenerator::count_fn_calls(NodeIndex node) {
+    if (node == NULL_NODE) return;
+    const Node& n = ast_->arena[node];
+    if (n.type == NodeType::Call &&
+        std::holds_alternative<Node::IdentifierData>(n.data)) {
+        fn_call_counts_[n.as_identifier()]++;
+    }
+    NodeIndex child = n.first_child;
+    while (child != NULL_NODE) {
+        count_fn_calls(child);
+        child = ast_->arena[child].next_sibling;
+    }
+}
+
+bool CodeGenerator::fn_shareable_by_signature(
+    const UserFunctionInfo& func) const {
+    if (func.is_inline || func.is_const || func.returns_closure ||
+        func.has_rest_param || func.body_node == NULL_NODE) {
+        return false;
+    }
+    if (func.params.empty() || func.params.size() > 5) {
+        return false;
+    }
+    for (const auto& p : func.params) {
+        // Shared bodies bind every parameter to a runtime buffer; rest /
+        // destructure params and per-call defaults cannot be expressed.
+        if (p.is_rest || p.is_destructure ||
+            p.default_value.has_value() || p.default_string.has_value() ||
+            p.default_node != NULL_NODE) {
+            return false;
+        }
+    }
+    if (auto cc = fn_call_counts_.find(func.name);
+        cc == fn_call_counts_.end() || cc->second < 2) {
+        return false;  // single-call fns gain nothing from sharing
+    }
+    return true;
+}
+
+const CodeGenerator::SharedBlock*
+CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
+    if (auto it = shared_blocks_.find(func.name); it != shared_blocks_.end()) {
+        return it->second ? &*it->second : nullptr;
+    }
+
+    auto not_shareable = [&]() -> const SharedBlock* {
+        shared_blocks_[func.name] = std::nullopt;
+        return nullptr;
+    };
+
+    // --- Cheap per-fn gate (signature only, no compile) --------------------
+    if (!fn_shareable_by_signature(func)) {
+        return not_shareable();
+    }
+
+    // Tentatively mark not-shareable so a (analyzer-rejected, but defensive)
+    // recursive reference resolves to the inline path instead of re-entering.
+    shared_blocks_[func.name] = std::nullopt;
+
+    // --- Speculative shared-body compile (rolled back if it fails) ---------
+    const std::size_t subprog_mark = subprograms_.size();
+    const std::size_t diag_mark = diagnostics_.size();
+    const std::uint16_t buf_mark = buffers_.count();
+    auto saved_call_counters = call_counters_;
+    const SourceLocation saved_loc = current_source_loc_;
+    const std::uint8_t pc = static_cast<std::uint8_t>(func.params.size());
+
+    // Allocate the convention param bank — pc contiguous buffers.
+    std::uint16_t param_base = buffers_.allocate();
+    bool contiguous = (param_base != BufferAllocator::BUFFER_UNUSED);
+    std::uint16_t prev = param_base;
+    for (std::uint8_t i = 1; i < pc && contiguous; ++i) {
+        std::uint16_t b = buffers_.allocate();
+        if (b == BufferAllocator::BUFFER_UNUSED || b != prev + 1) {
+            contiguous = false;
+        }
+        prev = b;
+    }
+    if (!contiguous) {
+        buffers_.reset_to(buf_mark);
+        return not_shareable();
+    }
+
+    // Compile the body once under a stable, call-site-independent path so its
+    // state IDs hash consistently; per-call-site isolation is layered on at
+    // dispatch time via the BLOCK_CALL state_id XOR (see emit_block_call).
+    auto saved_path = std::move(path_stack_);
+    path_stack_.clear();
+    push_path("block:" + func.name);
+    auto saved_node_types = std::move(node_types_);
+    node_types_.clear();
+
+    const std::uint32_t block_id = begin_subprogram();
+
+    symbols_->push_scope();
+    for (std::uint8_t i = 0; i < pc; ++i) {
+        symbols_->define_variable(func.params[i].name,
+                                  static_cast<std::uint16_t>(param_base + i));
+    }
+
+    ++user_function_depth_;
+    TypedValue body_tv = visit(func.body_node);
+    --user_function_depth_;
+
+    // Resolve the body output buffer(s).
+    std::uint16_t body_result = body_tv.buffer;
+    std::uint16_t body_result_r = body_tv.right_buffer;
+    bool body_is_stereo = body_tv.is_stereo() ||
+        (body_result != BufferAllocator::BUFFER_UNUSED &&
+         is_stereo_buffer(body_result));
+    if (body_is_stereo && body_result_r == 0xFFFF &&
+        body_result != BufferAllocator::BUFFER_UNUSED) {
+        StereoBuffers sb = get_stereo_buffers_by_buffer(body_result);
+        body_result = sb.left;
+        body_result_r = sb.right;
+    }
+
+    std::uint16_t body_output;
+    std::uint8_t output_count;
+    bool bad = false;
+    if (body_result == BufferAllocator::BUFFER_UNUSED) {
+        // Void body (side-effecting sink, e.g. ends with out(@)).
+        body_output = BufferAllocator::BUFFER_UNUSED;
+        output_count = 1;
+        body_is_stereo = false;
+    } else if (body_is_stereo) {
+        // Stereo: COPY the body result into a fresh adjacent output pair so
+        // the executor can read body_output / body_output+1.
+        std::uint16_t ol = buffers_.allocate();
+        std::uint16_t orr = buffers_.allocate();
+        if (ol == BufferAllocator::BUFFER_UNUSED ||
+            orr == BufferAllocator::BUFFER_UNUSED || orr != ol + 1) {
+            bad = true;
+            body_output = BufferAllocator::BUFFER_UNUSED;
+            output_count = 2;
+        } else {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, ol,
+                                                body_result));
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, orr,
+                                                body_result_r));
+            body_output = ol;
+            output_count = 2;
+        }
+    } else {
+        // Mono: the body's own result buffer is the output — no copy needed.
+        body_output = body_result;
+        output_count = 1;
+    }
+
+    symbols_->pop_scope();
+    end_subprogram(block_id, pc, output_count);
+
+    // Validate the compiled body before committing.
+    SubprogramDesc& desc = subprograms_[block_id];
+    if (!bad) {
+        for (std::size_t i = diag_mark; i < diagnostics_.size(); ++i) {
+            if (diagnostics_[i].severity == Severity::Error) { bad = true; break; }
+        }
+    }
+    if (!bad && (desc.body.empty() || desc.body.size() > 255 ||
+                 block_id >= cedar::MAX_SUBPROGRAMS)) {
+        bad = true;
+    }
+    if (!bad) {
+        // A shared body runs through the flat execute() body loop, which
+        // does NOT handle dispatch-loop opcodes. A body containing one must
+        // stay inlined (in the main stream, where the dispatch loop runs).
+        for (const auto& bi : desc.body) {
+            if (bi.opcode == cedar::Opcode::BLOCK_CALL ||
+                bi.opcode == cedar::Opcode::RET ||
+                bi.opcode == cedar::Opcode::FOREACH_EVENT ||
+                bi.opcode == cedar::Opcode::POLY_BEGIN ||
+                bi.opcode == cedar::Opcode::POLY_END ||
+                bi.opcode == cedar::Opcode::SKIP_IF_ZERO ||
+                bi.opcode == cedar::Opcode::SKIP_IF_NONZERO ||
+                bi.opcode == cedar::Opcode::LOOP_STATIC) {
+                bad = true;
+                break;
+            }
+        }
+    }
+
+    if (bad) {
+        // Roll the speculative compile back; the fn falls back to inlining.
+        subprograms_.resize(subprog_mark);
+        diagnostics_.resize(diag_mark);
+        buffers_.reset_to(buf_mark);
+        call_counters_ = std::move(saved_call_counters);
+        node_types_ = std::move(saved_node_types);
+        path_stack_ = std::move(saved_path);
+        current_source_loc_ = saved_loc;
+        return not_shareable();
+    }
+
+    // Commit. Keep the body's call-counter bumps (baked into the block);
+    // discard the speculative node_types_ entries (body nodes are never
+    // re-visited — each further call site just emits a BLOCK_CALL).
+    desc.param_base = param_base;
+    desc.body_output = body_output;
+    node_types_ = std::move(saved_node_types);
+    path_stack_ = std::move(saved_path);
+    current_source_loc_ = saved_loc;
+
+    SharedBlock blk;
+    blk.block_id = block_id;
+    blk.param_base = param_base;
+    blk.body_output = body_output;
+    blk.param_count = pc;
+    blk.output_count = output_count;
+    blk.is_stereo = body_is_stereo;
+    shared_blocks_[func.name] = blk;
+    return &*shared_blocks_[func.name];
+}
+
+TypedValue CodeGenerator::emit_block_call(
+    NodeIndex node, const Node& n, const UserFunctionInfo& func,
+    const SharedBlock& block, const std::vector<std::uint16_t>& arg_bufs) {
+
+    // Per-call-site state isolation seed: a stable path component hashed into
+    // the BLOCK_CALL state_id. The VM XORs the shared body's state IDs by a
+    // mix of this value, so each call site gets its own DSP state slots —
+    // recoverable across hot-swap as long as source identity is preserved.
+    std::uint32_t count = call_counters_["block:" + func.name]++;
+    push_path("block:" + func.name + "@callsite_" + std::to_string(count));
+    std::uint32_t state_id = compute_state_id();
+    pop_path();
+
+    // Allocate this call site's own result buffer(s).
+    std::uint16_t out_l = BufferAllocator::BUFFER_UNUSED;
+    std::uint16_t out_r = BufferAllocator::BUFFER_UNUSED;
+    if (block.body_output != BufferAllocator::BUFFER_UNUSED) {
+        out_l = buffers_.allocate();
+        if (out_l == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
+        }
+        if (block.is_stereo) {
+            out_r = buffers_.allocate();
+            if (out_r == BufferAllocator::BUFFER_UNUSED ||
+                out_r != out_l + 1) {
+                error("E166", "Internal error: BLOCK_CALL stereo result "
+                      "buffers not adjacent", n.location);
+                return TypedValue::void_val();
+            }
+        }
+    }
+
+    cedar::Instruction bc{};
+    bc.opcode = cedar::Opcode::BLOCK_CALL;
+    bc.rate = static_cast<std::uint8_t>(block.block_id);
+    bc.out_buffer = out_l;
+    bc.inputs[0] = bc.inputs[1] = bc.inputs[2] = bc.inputs[3] =
+        bc.inputs[4] = 0xFFFF;
+    for (std::size_t i = 0; i < arg_bufs.size() && i < 5; ++i) {
+        bc.inputs[i] = arg_bufs[i];
+    }
+    bc.flags = 0;
+    if (block.is_stereo) {
+        bc.flags = cedar::InstructionFlag::STEREO_OUTPUT;
+    }
+    bc.state_id = state_id;
+    emit(bc);
+
+    if (out_l == BufferAllocator::BUFFER_UNUSED) {
+        return cache_and_return(node, TypedValue::void_val());
+    }
+    if (block.is_stereo) {
+        register_stereo(node, out_l, out_r);
+        return cache_and_return(node, TypedValue::stereo_signal(out_l, out_r));
+    }
+    return cache_and_return(node, TypedValue::signal(out_l));
+}
+
 // FunctionValue (lambda variable) call handler - inlines closure bodies at call sites
 TypedValue CodeGenerator::handle_function_value_call(
     NodeIndex node, const Node& n, const FunctionRef& func) {
@@ -859,7 +1184,7 @@ TypedValue CodeGenerator::handle_function_value_call(
                 }
                 if (result && std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, instructions_, val);
+                    param_buf = emit_push_const(buffers_, emit_stream(), val);
                 } else {
                     error("E105",
                           "Cannot evaluate default expression at compile time for parameter '" +
@@ -959,7 +1284,7 @@ TypedValue CodeGenerator::handle_function_value_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, instructions_, val);
+                    param_buf = emit_push_const(buffers_, emit_stream(), val);
                     if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         param_literals_ = std::move(saved_param_literals);

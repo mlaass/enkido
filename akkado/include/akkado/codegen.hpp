@@ -34,6 +34,11 @@ struct CompilerOptions {
     // poly() emits the legacy POLY_BEGIN/inline-body/POLY_END form instead of
     // a FOREACH_EVENT subprogram block. Default false (new path).
     bool legacy_poly = false;
+    // PRD prd-runtime-functions-control-flow L2 rollback knob: when true,
+    // every user `fn` is inlined at each call site (the pre-L2 behavior)
+    // instead of being lowered to a shared BLOCK_CALL subprogram block.
+    // Default false (new shared-block path).
+    bool inline_all_fns = false;
 };
 
 // ============================================================================
@@ -294,6 +299,13 @@ struct SubprogramDesc {
     std::uint32_t offset = 0;            // absolute index into CodeGenResult::instructions
     std::uint16_t frame_slot_count = 0;  // # convention input slots the body reads
     std::uint8_t  output_count = 1;      // 1=mono, 2=stereo
+    // L2 BLOCK_CALL shared-`fn` blocks only: the body reads its parameters
+    // from [param_base, param_base + frame_slot_count) and writes its result
+    // into [body_output, body_output + output_count). Both stay 0 for
+    // FOREACH_EVENT blocks (which bind convention slots via the opcode's
+    // inputs[] instead).
+    std::uint16_t param_base = 0;
+    std::uint16_t body_output = 0;
     std::vector<cedar::Instruction> body;          // the block's instructions
     std::vector<SourceLocation> body_source_locs;  // parallel to body
 };
@@ -344,6 +356,12 @@ public:
     /// Get current allocation count
     [[nodiscard]] std::uint16_t count() const { return next_; }
 
+    /// Roll the cursor back to a previous count() mark, reclaiming every
+    /// buffer allocated since. Used to discard a speculative shared-`fn`
+    /// block compile (PRD L2). Safe only when nothing outside the rolled-back
+    /// region still references a buffer index >= mark.
+    void reset_to(std::uint16_t mark) { if (mark <= next_) next_ = mark; }
+
     /// Check if any buffers available
     [[nodiscard]] bool has_available() const { return next_ < MAX_ALLOCATABLE; }
 
@@ -383,6 +401,14 @@ private:
 
     /// Emit a single instruction
     void emit(const cedar::Instruction& inst);
+
+    /// The instruction vector that emission should currently append to: the
+    /// open subprogram body while one is being compiled, otherwise the main
+    /// stream. Free-function emit helpers (emit_push_const, emit_binary_op,
+    /// emit_zero, finalize_result) route through this so their instructions
+    /// land in the same place emit() would put them — critical for shared-fn
+    /// and FOREACH_EVENT bodies, which would otherwise leak into main.
+    [[nodiscard]] std::vector<cedar::Instruction>& emit_stream();
 
     /// Generate semantic ID from path
     [[nodiscard]] std::uint32_t compute_state_id() const;
@@ -502,9 +528,40 @@ private:
     /// Returns nullopt on hard error.
     std::optional<std::vector<ExpandedArg>> expand_call_arguments(NodeIndex call_node);
 
-    /// Handle user-defined function calls - inline expansion
+    /// Handle user-defined function calls - inline expansion, or (PRD L2) a
+    /// shared BLOCK_CALL dispatch when the fn is eligible.
     TypedValue handle_user_function_call(NodeIndex node, const Node& n,
                                          const UserFunctionInfo& func);
+
+    /// A user `fn` lowered to a shared subprogram block (PRD L2). The body is
+    /// compiled once; every eligible call site emits a BLOCK_CALL into it.
+    struct SharedBlock {
+        std::uint32_t block_id = 0;
+        std::uint16_t param_base = 0;    // first buffer of the convention param bank
+        std::uint16_t body_output = 0;   // first buffer of the body output
+        std::uint8_t  param_count = 0;
+        std::uint8_t  output_count = 1;  // 1=mono, 2=stereo
+        bool is_stereo = false;
+    };
+
+    /// Cheap signature-only test: could `func` ever be a shared BLOCK_CALL
+    /// block? Rejects #inline/const/closure/rest fns, bad param counts, any
+    /// parameter with a default, and fns called fewer than twice. No compile,
+    /// no side effects — used to gate before evaluating call-site arguments.
+    [[nodiscard]] bool fn_shareable_by_signature(const UserFunctionInfo& func) const;
+
+    /// Decide (once, lazily) whether `func` can be a shared BLOCK_CALL block,
+    /// compiling its body speculatively if so. Returns the compiled block or
+    /// nullptr when the fn must stay inlined. Result is cached per fn name.
+    const SharedBlock* get_or_compile_shared_block(const UserFunctionInfo& func);
+
+    /// Emit a BLOCK_CALL to `block` for this call site. `arg_bufs` are the
+    /// caller's evaluated argument buffers (one per parameter). Returns the
+    /// call's result TypedValue.
+    TypedValue emit_block_call(NodeIndex node, const Node& n,
+                               const UserFunctionInfo& func,
+                               const SharedBlock& block,
+                               const std::vector<std::uint16_t>& arg_bufs);
 
     /// Handle FunctionValue calls - inline expansion of lambda assigned to variable
     TypedValue handle_function_value_call(NodeIndex node, const Node& n,
@@ -890,6 +947,16 @@ private:
     // offsets. A stack (not a single pointer) so nested FOREACH bodies work.
     std::vector<SubprogramDesc> subprograms_;
     std::vector<std::uint32_t> subprogram_stack_;
+
+    // PRD L2: per-fn-name decision cache for shared BLOCK_CALL lowering.
+    // A present entry means "decided": the optional holds the compiled block,
+    // or is empty when the fn must stay inlined. `fn_call_counts_` is filled
+    // by a pre-pass over the AST and gates the "shared only when called >= 2
+    // times" heuristic.
+    std::unordered_map<std::string, std::optional<SharedBlock>> shared_blocks_;
+    std::unordered_map<std::string, int> fn_call_counts_;
+    /// Pre-pass: count every Call node by callee name (drives fn_call_counts_).
+    void count_fn_calls(NodeIndex node);
 
     /// Begin a new FOREACH_EVENT subprogram body; returns its block_id and
     /// redirects emit() into it until end_subprogram() is called.

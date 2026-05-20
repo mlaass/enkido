@@ -559,6 +559,16 @@ private:
                                std::span<const Instruction> program,
                                std::size_t ip);
 
+    // Execute a BLOCK_CALL opcode (PRD prd-runtime-functions-control-flow L2).
+    // Dispatches a shared user-`fn` body from slot->blocks[]: copies the
+    // caller's argument buffers into the body's fixed convention param bank,
+    // runs the body once under per-call-site state-ID isolation, then copies
+    // the body output back into the caller's result buffer. The body lives in
+    // the subprogram table, not inline — the dispatch loop advances by 1.
+    void execute_block_call(const ProgramSlot* slot,
+                            std::span<const Instruction> program,
+                            std::size_t ip);
+
     // Per-block cycle-position timing, computed once per block from the
     // upstream cycle length. Shared by run_voice_pool (voice gate-on/off
     // scheduling) and run_foreach_per_iteration (per-event onset/offset

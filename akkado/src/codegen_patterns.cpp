@@ -1277,7 +1277,7 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     compiler.set_pattern_base_offset(pattern.location.offset);
     if (!compiler.compile(pattern_node)) {
         // Empty pattern - emit zero
-        std::uint16_t out = emit_zero(buffers_, instructions_);
+        std::uint16_t out = emit_zero(buffers_, emit_stream());
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -1617,7 +1617,7 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     if (!compiler.compile(mini_pattern)) {
         // Empty pattern - emit zero
-        std::uint16_t out = emit_zero(buffers_, instructions_);
+        std::uint16_t out = emit_zero(buffers_, emit_stream());
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", loc);
         }
@@ -2805,7 +2805,7 @@ TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n)
     auto breakpoints = events_to_breakpoints(stream.events);
     if (breakpoints.empty()) {
         // Empty curve - emit zero
-        std::uint16_t out = emit_zero(buffers_, instructions_);
+        std::uint16_t out = emit_zero(buffers_, emit_stream());
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -2908,7 +2908,7 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
     // Convert events to breakpoints
     auto breakpoints = events_to_breakpoints(stream.events);
     if (breakpoints.empty()) {
-        std::uint16_t out = emit_zero(buffers_, instructions_);
+        std::uint16_t out = emit_zero(buffers_, emit_stream());
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -3010,7 +3010,7 @@ TypedValue CodeGenerator::handle_slow_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -3071,7 +3071,7 @@ TypedValue CodeGenerator::handle_fast_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -3131,7 +3131,7 @@ TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -3204,7 +3204,7 @@ TypedValue CodeGenerator::handle_transpose_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -3523,7 +3523,7 @@ TypedValue CodeGenerator::handle_property_transform_call(
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -3632,7 +3632,7 @@ TypedValue CodeGenerator::handle_dur_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4264,7 +4264,7 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4337,7 +4337,7 @@ TypedValue CodeGenerator::handle_early_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4402,7 +4402,7 @@ TypedValue CodeGenerator::handle_late_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4469,7 +4469,7 @@ TypedValue CodeGenerator::handle_palindrome_call(NodeIndex node, const Node& n) 
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4533,7 +4533,7 @@ TypedValue CodeGenerator::handle_ply_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4602,7 +4602,7 @@ TypedValue CodeGenerator::handle_linger_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4673,7 +4673,7 @@ TypedValue CodeGenerator::handle_zoom_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4753,7 +4753,7 @@ TypedValue CodeGenerator::handle_segment_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4807,7 +4807,7 @@ TypedValue CodeGenerator::handle_iter_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4868,7 +4868,7 @@ TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -4966,7 +4966,7 @@ TypedValue CodeGenerator::handle_run_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, n.location, n.location,
         emit_instruction_helper);
@@ -4999,7 +4999,7 @@ TypedValue CodeGenerator::handle_binary_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, n.location, n.location,
         emit_instruction_helper);
@@ -5040,7 +5040,7 @@ TypedValue CodeGenerator::handle_binary_n_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, n.location, n.location,
         emit_instruction_helper);
@@ -5098,7 +5098,7 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5152,7 +5152,7 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5205,7 +5205,7 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5340,7 +5340,7 @@ TypedValue CodeGenerator::handle_swing_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5396,7 +5396,7 @@ TypedValue CodeGenerator::handle_swing_by_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5459,7 +5459,7 @@ TypedValue CodeGenerator::handle_compress_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, instructions_, state_inits_, required_samples_,
+        *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
@@ -5622,7 +5622,7 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     } else {
         // Legacy buffer-driven path: emit a constant preset buffer and one
         // SOUNDFONT_VOICE per chord voice, each with its own state_id.
-        std::uint16_t preset_buf = codegen::emit_push_const(buffers_, instructions_,
+        std::uint16_t preset_buf = codegen::emit_push_const(buffers_, emit_stream(),
                                                              static_cast<float>(preset_index));
         if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
@@ -5683,7 +5683,7 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     if (n_voices > 1) {
         const float scale = 1.0f / std::sqrt(static_cast<float>(n_voices));
         std::uint16_t scale_buf = codegen::emit_push_const(
-            buffers_, instructions_, scale);
+            buffers_, emit_stream(), scale);
         if (scale_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             pop_path();
@@ -5790,7 +5790,7 @@ TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
 
     // Preset index as a constant input buffer (read at inputs[3]).
     std::uint16_t preset_buf = codegen::emit_push_const(
-        buffers_, instructions_, static_cast<float>(preset_index));
+        buffers_, emit_stream(), static_cast<float>(preset_index));
     if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         pop_path();

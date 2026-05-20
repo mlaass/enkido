@@ -119,6 +119,16 @@ std::string format_instruction(const cedar::Instruction& inst, std::size_t index
             oss << " mode=" << static_cast<int>(inst.rate);
             break;
 
+        case cedar::Opcode::BLOCK_CALL:
+            // rate carries the subprogram-table block id (PRD L2 shared fn).
+            oss << " block=" << static_cast<int>(inst.rate);
+            for (int i = 0; i < 5; ++i) {
+                if (inst.inputs[i] != cedar::BUFFER_UNUSED) {
+                    oss << " in" << i << "=buf[" << inst.inputs[i] << "]";
+                }
+            }
+            break;
+
         default:
             // Generic input display
             for (int i = 0; i < 4; ++i) {

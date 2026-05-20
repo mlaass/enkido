@@ -402,15 +402,17 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
                 }
             }
             ip += body_len + 1;
-        } else if (inst.opcode == Opcode::BLOCK_CALL ||
-                   inst.opcode == Opcode::RET) {
-            // L2: BLOCK_CALL/RET are compile-time-expansion markers. Akkado
-            // codegen inlines every fn body before bytecode is finalized, so
-            // a well-formed program never contains these. Reaching one means
-            // the expansion pass did not run — skip it rather than execute()
-            // an unimplemented opcode (assert in debug builds).
-            assert(false && "BLOCK_CALL/RET reached the audio thread — "
-                             "fn-body expansion pass did not run");
+        } else if (inst.opcode == Opcode::BLOCK_CALL) {
+            // L2: dispatch a shared user-`fn` body from the subprogram table.
+            // The body is not inline — advance by exactly one.
+            execute_block_call(slot, program, ip);
+            ++ip;
+        } else if (inst.opcode == Opcode::RET) {
+            // RET terminates a subprogram body and is consumed by the body
+            // runner (which bounds itself to BlockEntry::length) — it must
+            // never appear in the main stream. Reaching one here means
+            // codegen emitted a stray RET.
+            assert(false && "RET reached the main dispatch loop");
             ++ip;
         } else {
             execute(program[ip]);
@@ -469,6 +471,60 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
     }
     // No state — uninitialized FOREACH_EVENT (init_foreach_state did not run).
     // Skip silently; the dispatch loop still advances by one.
+}
+
+// BLOCK_CALL — table-based shared-`fn` dispatch (PRD L2). The body lives in
+// the ProgramSlot subprogram table; the dispatch loop advances by one after
+// this returns. Modeled on one iteration of run_foreach_per_iteration:
+//   inst.rate       = block_id (subprogram table index)
+//   inst.inputs[k]  = caller's argument buffer for parameter k
+//   inst.out_buffer = caller's result buffer
+//   inst.state_id   = per-call-site disambiguator (drives state isolation)
+void VM::execute_block_call(const ProgramSlot* slot,
+                            std::span<const Instruction> program,
+                            std::size_t ip) {
+    const auto& inst = program[ip];
+    const std::uint32_t block_id = inst.rate;
+    const auto body = slot->block_body(block_id);
+    if (body.empty()) {
+        // Out-of-range / corrupt block — skip silently (dispatch advances by 1).
+        return;
+    }
+    const BlockEntry& entry = slot->blocks[block_id];
+
+    // Copy each caller argument buffer into the body's fixed convention param
+    // bank, so the once-compiled shared body reads its parameters from stable
+    // indices regardless of which call site invoked it.
+    const std::uint16_t slots = std::min<std::uint16_t>(entry.frame_slot_count, 5);
+    for (std::uint16_t k = 0; k < slots; ++k) {
+        const std::uint16_t src = inst.inputs[k];
+        if (src == BUFFER_UNUSED) continue;
+        const float* sb = buffer_pool_.get(src);
+        float* db = buffer_pool_.get(entry.param_base + k);
+        std::copy_n(sb, BLOCK_SIZE, db);
+    }
+
+    // Per-call-site state isolation. Compose with the entering XOR mask (rather
+    // than assuming 0) so a BLOCK_CALL nested inside another isolated body —
+    // a poly voice, a FOREACH iteration — still gets a distinct, restorable
+    // projection. At top level the entering mask is 0, so this is bit-exact
+    // with a plain set/reset.
+    const std::uint32_t prev_xor = state_pool_.state_id_xor();
+    state_pool_.set_state_id_xor(prev_xor ^ (inst.state_id * 0x9E3779B9u + 1));
+    for (std::size_t bi = 0; bi < body.size(); ++bi) {
+        execute(body[bi]);
+    }
+    state_pool_.set_state_id_xor(prev_xor);
+
+    // Copy the body output into the caller's result buffer.
+    if (inst.out_buffer != BUFFER_UNUSED) {
+        const float* ob = buffer_pool_.get(entry.body_output);
+        std::copy_n(ob, BLOCK_SIZE, buffer_pool_.get(inst.out_buffer));
+        if (entry.output_count == 2) {
+            const float* ob_r = buffer_pool_.get(entry.body_output + 1);
+            std::copy_n(ob_r, BLOCK_SIZE, buffer_pool_.get(inst.out_buffer + 1));
+        }
+    }
 }
 
 // Compute per-block cycle-position timing from the upstream cycle length.

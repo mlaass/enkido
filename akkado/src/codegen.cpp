@@ -83,6 +83,8 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     source_locations_.clear();
     subprograms_.clear();
     subprogram_stack_.clear();
+    shared_blocks_.clear();
+    fn_call_counts_.clear();
     diagnostics_.clear();
     state_inits_.clear();
     pre_resolved_values_.clear();
@@ -121,6 +123,10 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
         invalid.success = false;
         return invalid;
     }
+
+    // PRD L2: pre-pass — count call sites per callee name so the shared
+    // BLOCK_CALL lowering can skip fns called fewer than twice.
+    count_fn_calls(ast.root);
 
     // Visit root (Program node)
     visit(ast.root);
@@ -302,7 +308,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Emit PUSH_CONST for MIDI note, then MTOF to convert to frequency
             float midi_value = static_cast<float>(n.as_pitch());
             std::uint16_t freq_buf = codegen::emit_midi_to_freq(
-                buffers_, instructions_, midi_value);
+                buffers_, emit_stream(), midi_value);
             if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
@@ -316,7 +322,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             const auto& chord = n.as_chord();
             float midi_value = static_cast<float>(chord.root_midi);
             std::uint16_t freq_buf = codegen::emit_midi_to_freq(
-                buffers_, instructions_, midi_value);
+                buffers_, emit_stream(), midi_value);
             if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
@@ -868,7 +874,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Emit PUSH_CONST instruction(s) for runtime access
             if (std::holds_alternative<double>(*const_val)) {
                 float val = static_cast<float>(std::get<double>(*const_val));
-                std::uint16_t buf = codegen::emit_push_const(buffers_, instructions_, val);
+                std::uint16_t buf = codegen::emit_push_const(buffers_, emit_stream(), val);
                 if (buf == BufferAllocator::BUFFER_UNUSED) {
                     error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
@@ -890,7 +896,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 const auto& arr = std::get<std::vector<double>>(*const_val);
                 std::vector<TypedValue> result_elements;
                 for (double v : arr) {
-                    std::uint16_t buf = codegen::emit_push_const(buffers_, instructions_,
+                    std::uint16_t buf = codegen::emit_push_const(buffers_, emit_stream(),
                                                                   static_cast<float>(v));
                     if (buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
@@ -2200,6 +2206,15 @@ void CodeGenerator::emit(const cedar::Instruction& inst) {
     }
     instructions_.push_back(inst);
     source_locations_.push_back(current_source_loc_);
+}
+
+std::vector<cedar::Instruction>& CodeGenerator::emit_stream() {
+    // Route free-function emit helpers to the same place emit() writes: the
+    // open subprogram body, or the main stream when none is open.
+    if (!subprogram_stack_.empty()) {
+        return subprograms_[subprogram_stack_.back()].body;
+    }
+    return instructions_;
 }
 
 std::uint32_t CodeGenerator::begin_subprogram() {

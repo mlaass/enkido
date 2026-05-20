@@ -30,8 +30,8 @@ std::vector<Instruction> make_stream() {
 
 }  // namespace
 
-TEST_CASE("BlockEntry is 8 bytes", "[subprogram][L3]") {
-    REQUIRE(sizeof(BlockEntry) == 8);
+TEST_CASE("BlockEntry is 12 bytes", "[subprogram][L3]") {
+    REQUIRE(sizeof(BlockEntry) == 12);
 }
 
 TEST_CASE("ProgramSlot block-aware load records the table", "[subprogram][L3]") {
@@ -116,4 +116,66 @@ TEST_CASE("VM staged block table loads via load_program_with_blocks_immediate",
     std::array<float, BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
     SUCCEED("main loop bounded to main_count; body region not fallen into");
+}
+
+// --- L2 BLOCK_CALL dispatch ------------------------------------------------
+
+TEST_CASE("BLOCK_CALL copies params, runs the body, copies the result",
+          "[subprogram][L2][block_call]") {
+    // Stream layout: [ main: BLOCK_CALL | body: ADD ].
+    // The body adds its two convention-slot params and writes the body output.
+    std::vector<Instruction> stream;
+    // opcode, rate(=block_id), out_buffer, inputs(=caller args), flags, state_id
+    stream.push_back(Instruction{Opcode::BLOCK_CALL, 0, 0,
+                                 {1, 2, 0xFFFF, 0xFFFF, 0xFFFF},
+                                 0, 0xABCDEF01u});
+    stream.push_back(Instruction::make_binary(Opcode::ADD, /*out=*/20,
+                                              /*in0=*/10, /*in1=*/11));
+
+    std::array<BlockEntry, 1> table{};
+    table[0].offset = 1;
+    table[0].length = 1;
+    table[0].frame_slot_count = 2;
+    table[0].output_count = 1;
+    table[0].param_base = 10;
+    table[0].body_output = 20;
+
+    VM vm;
+    REQUIRE(vm.load_program_with_blocks_immediate(
+        std::span<const Instruction>(stream),
+        std::span<const BlockEntry>(table), /*main_count=*/1));
+
+    // Seed the caller argument buffers.
+    std::fill_n(vm.buffers().get(1), BLOCK_SIZE, 3.0f);
+    std::fill_n(vm.buffers().get(2), BLOCK_SIZE, 4.0f);
+
+    std::array<float, BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+
+    const float* result = vm.buffers().get(0);
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK(result[i] == 7.0f);  // 3 + 4, params copied into the bank
+    }
+}
+
+TEST_CASE("BLOCK_CALL with an out-of-range block id is a silent no-op",
+          "[subprogram][L2][block_call]") {
+    std::vector<Instruction> stream;
+    // rate=5 → no such block id
+    stream.push_back(Instruction{Opcode::BLOCK_CALL, 5, 0,
+                                 {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
+                                 0, 0});
+
+    std::array<BlockEntry, 1> table{};
+    table[0].offset = 0;
+    table[0].length = 0;
+
+    VM vm;
+    REQUIRE(vm.load_program_with_blocks_immediate(
+        std::span<const Instruction>(stream),
+        std::span<const BlockEntry>(table), /*main_count=*/1));
+
+    std::array<float, BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+    SUCCEED("out-of-range BLOCK_CALL did not crash");
 }

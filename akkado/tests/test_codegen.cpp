@@ -588,10 +588,15 @@ TEST_CASE("Codegen: User functions", "[codegen][functions]") {
     }
 
     SECTION("nested function calls") {
+        // L2 shared-block lowering: a non-#inline fn called from >=2 sites is
+        // compiled once into a subprogram; each call site emits a BLOCK_CALL
+        // instead of re-inlining the body. `inc` is called twice here, so the
+        // body's single ADD is emitted once, not inlined per call.
         auto result = akkado::compile("fn inc(x) -> x + 1\ninc(inc(1))");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 2);
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::BLOCK_CALL) == 2);
     }
 }
 

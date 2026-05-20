@@ -1,13 +1,15 @@
 // Tests for fn annotations and recursion rejection — PRD
 // prd-runtime-functions-control-flow L2.
 //
-// L2 in this build covers the surface-language half of "callable blocks":
+// L2 covers "callable blocks":
 //   - the `#inline` annotation (lexer `#` token + statement-position parsing),
-//   - rejection of recursive `fn` definitions (E240 / E244).
-// The subprogram-table / BLOCK_CALL machinery is deferred to L3, where
-// FOREACH_EVENT dispatch gives it a concrete consumer. Under the chosen
-// compile-time-expansion model, `#inline fn` and a default `fn` emit
-// byte-identical bytecode — that invariant is asserted directly below.
+//   - rejection of recursive `fn` definitions (E240 / E244),
+//   - shared-block lowering: an eligible non-`#inline` fn called from >=2
+//     sites compiles to ONE subprogram dispatched via BLOCK_CALL, instead of
+//     being inlined at every call site.
+// `#inline` always forces inlining; a single-call non-`#inline` fn also
+// inlines (sharing a one-call body saves nothing), so the two emit
+// byte-identical bytecode — asserted directly below.
 
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/akkado.hpp"
@@ -54,8 +56,8 @@ TEST_CASE("#inline const fn compiles", "[fn_annotations][inline]") {
 
 TEST_CASE("#inline fn and plain fn emit byte-identical bytecode",
           "[fn_annotations][inline]") {
-    // The compile-time-expansion model: #inline selects the codegen path but
-    // produces the same instructions as the default shared-block path.
+    // `dbl` is called once, so the default fn is NOT shared-block lowered
+    // (a one-call body saves nothing) — it inlines, exactly like #inline.
     auto plain  = akkado::compile("fn dbl(x) -> x * 2\nsaw(dbl(220)) |> out(@)");
     auto inlined = akkado::compile("#inline fn dbl(x) -> x * 2\nsaw(dbl(220)) |> out(@)");
     REQUIRE(plain.success);
@@ -133,13 +135,17 @@ TEST_CASE("non-recursive fn-calls-fn compiles cleanly",
     CHECK_FALSE(has_diag(r, "E244"));
 }
 
-TEST_CASE("a fn called from N sites inlines N times",
-          "[fn_annotations][recursion]") {
-    // Default `fn` still inlines per call site (compile-time expansion).
+TEST_CASE("a fn called from N sites compiles to one shared block",
+          "[fn_annotations][block_call]") {
+    // L2 shared-block lowering: a non-#inline fn called from >=2 sites is
+    // compiled once into a subprogram; each call site emits a BLOCK_CALL
+    // instead of re-inlining the body. `half` is called 3x -> exactly one
+    // MUL (the shared body) and 3 BLOCK_CALLs.
     auto r = akkado::compile(
         "fn half(x) -> x * 0.5\n"
         "saw(half(220)) + saw(half(330)) + saw(half(440)) |> out(@)");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
-    CHECK(count_op(insts, cedar::Opcode::MUL) == 3);
+    CHECK(count_op(insts, cedar::Opcode::MUL) == 1);
+    CHECK(count_op(insts, cedar::Opcode::BLOCK_CALL) == 3);
 }

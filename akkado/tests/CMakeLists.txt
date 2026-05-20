@@ -25,6 +25,7 @@ add_executable(akkado_tests
     test_codegen_cycle_timing.cpp
     test_control_flow.cpp
     test_fn_annotations.cpp
+    test_block_call.cpp
     test_higher_order.cpp
     test_types.cpp
     test_const_eval.cpp
