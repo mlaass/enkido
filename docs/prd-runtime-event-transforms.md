@@ -1,4 +1,13 @@
-> **Status: FIRST DRAFT — NOT READY FOR IMPLEMENTATION.** This PRD is a captured first-draft design from a brainstorming session. It has **two** hard external dependencies and several open questions that must be resolved before the design is locked. See §§0–0.5 (Dependencies) and §11 (Open Questions) before treating any decision as final. Do not begin implementation until both dependency PRDs land AND the open questions are resolved.
+> **Status: READY FOR IMPLEMENTATION** (promoted 2026-05-21). The one hard
+> external dependency — runtime closure / first-class fn infrastructure
+> (§0, [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md))
+> — shipped its L1→L3 phases plus §4.2 `BLOCK_BIND` (commits `41bb96c`,
+> `9776ded`, `16b166c`, `ad6aed6`, `5b7746b`, `21f73ef`, `9690a6a`, `7a31d9d`).
+> All §11 open questions are resolved; decisions are recorded inline in §11.
+> `prd-cycle-length-cleanup.md` (§0.5) is **not** a hard prerequisite and may
+> land in either order. `prd-pattern-event-arrays.md` (§0.6) is a soft
+> dependency that gates chord-wide closures only — it must land before this
+> PRD's **Phase 2**, not Phase 1. Implementation may begin at Phase 1 (§9).
 
 # PRD: Runtime Event-Stream Transforms (Pattern-Modifier Rework)
 
@@ -8,7 +17,7 @@ Today, every Akkado pattern modifier (`transpose`, `tune`, `fast`, `slow`, `earl
 
 This PRD specifies a **rework into runtime event-stream transforms**: every modifier becomes a Cedar opcode that operates on `OutputEvents` — the existing runtime boundary already shared by `SequenceState` and `MidiQueueState`. The substrate is **six new Cedar opcodes** (`EVENT_MAP`, `EVENT_FILTER`, `EVENT_FANOUT`, `EVENT_REORDER`, `EVENT_RATE_SCALE`, `EVENT_QUANTIZE`). On top sits **one closure-taking builtin** (`event_map(events, (e) -> {...})`); most property modifiers (`transpose`, `velocity`, `dur`, `bend`, etc.) are rewritten as 1-line `akkado/stdlib/event_transforms.ak` definitions on top of `event_map`. Structural ops (`rev`, `ply`, `palindrome`, voicing) and the rate-scaling ops (`fast`, `slow`) lower directly to the appropriate primitive opcode.
 
-**Key design decisions (first draft — subject to PRD review):**
+**Key design decisions (locked — see §11 for resolved open questions):**
 
 - **Replace, don't coexist.** Compile-time modifier handlers are deleted, not deprecated. Constants and signals lower to the same runtime path. (Migration story per §8.)
 - **Six-opcode substrate** split by *event-stream shape* (per-event rewrite / predicate filter / fanout / reorder / rate-scale / quantize) — not one mega-opcode and not one per modifier.
@@ -17,24 +26,22 @@ This PRD specifies a **rework into runtime event-stream transforms**: every modi
 - **`fast`/`slow` become continuous rate scalers.** Signal-rate multiplier on the phase feeding upstream `SEQPAT_QUERY`, sample-accurate.
 - **Scope includes** core modifiers + scale quantize (snap to scale/key) + voicing/chord expansion/inversion + filter/predicate ops (`degrade`, `mask`).
 - **Phased delivery in 5 phases** (see §9), each independently testable.
-- **Assumes cycles-pure clock model has landed.** Hard prereq per §0.5 — every `e.time` reference, the `fast`/`slow` phase rescaler, and the `EventStreamPayload` cleanup are written in cycles-pure terms.
+- **Assumes the cycles-pure clock model has landed** (it has — the "1 cycle = 1 beat" headline shipped with the 2026-05-19 parser revert, commit `9d99490`). Every `e.time` reference and the `fast`/`slow` phase rescaler are written in cycles-pure terms. This is **not** a hard dependency on `prd-cycle-length-cleanup.md`; per §0.5 the `cycle_length` field is live and stays.
 
 ---
 
-## 0. Hard Dependency: Runtime Closure Infrastructure (separate PRD)
+## 0. Hard Dependency: Runtime Closure Infrastructure — SHIPPED
 
-Cedar today has **no runtime function dispatch** — no CALL/RET opcodes, no first-class function values, no closure objects in the state pool. Akkado closures (`(e) -> ...`) only exist as compile-time AST nodes; they get inlined at every call site via `handle_user_function_call` (`akkado/src/codegen_functions.cpp:69-733`).
+When this PRD was drafted, Cedar had **no runtime function dispatch** — no CALL/RET opcodes, no first-class function values, no closure objects in the state pool. Akkado closures (`(e) -> ...`) existed only as compile-time AST nodes, inlined at every call site via `handle_user_function_call` (`akkado/src/codegen_functions.cpp`).
 
-The clean `event_map(events, (e) -> ...)` design depends on **first-class runtime closures** existing in Cedar. [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md) owns this work and must land first — its §13 explicitly identifies itself as this PRD's closure-infrastructure dependency and maps `Closure` → `BlockRef`, `INVOKE_CLOSURE` → `BLOCK_CALL` / `FOREACH_EVENT`. That PRD is currently in `DRAFT` status; it must be promoted to implementation-ready (its open questions are implementation-time, not design-blocking) and its L1→L3 phases shipped before this PRD's Phase 2. It needs to deliver, at minimum:
+**That gap is now closed.** [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md) shipped its L1→L3 phases plus §4.2 `BLOCK_BIND`. The runtime surface the `event_map(events, (e) -> ...)` design depends on now exists:
 
-- A `Closure` runtime value (captures + bytecode pointer, stored in `DSPState` or a new closure pool).
-- An opcode (provisional name `INVOKE_CLOSURE`) the VM dispatches per call.
-- Akkado codegen support: closure values flow through `TypedValue` as a new variant, callable by builtins.
-- Decisions on: control flow inside the VM (currently absent), capture lifetime, allocation strategy.
+- **`FOREACH_EVENT`** — the per-event dispatch opcode. Iterates an upstream event stream and invokes a subprogram block per event, with the lambda parameter delivered as a **full event record** (`n.freq` / `n.vel` / `n.dur` / `n.note` / `n.chance` / `n.time` map to convention slots; `n.gate` / `n.trig` are synthesized per iteration; `E408` for fields the event model cannot supply). This is the dispatch primitive the `EVENT_*` opcodes in §3.1 build on.
+- **`BLOCK_CALL` / `BLOCK_BIND`** — runtime subprogram dispatch: a user `fn` body compiles once into `ProgramSlot::blocks[]` and dispatches at runtime. `BLOCK_CALL` carries args in `inputs[0..4]`; `BLOCK_BIND` extends the convention to 6..32 params. This is what lets `event_map(events, (e) -> ...)` lower to a real runtime closure instead of per-site inlining.
+- **Subprogram table** — `ProgramSlot::blocks[]` + the block-aware load handshake + `set_state_id_xor` per-call-site isolation. Closure bodies are runtime-resident and hot-swap-stable via a `block:<fn>@callsite_<N>` path hash.
+- **VM allocators** VOICE_POOL / PER_ITERATION / SHARED, and the higher-order DSL surface (`each()`, `each_voice()`, `reduce()`).
 
-**This PRD assumes that infrastructure exists.** Without it, we would fall back to a codegen-inlining approach (specialised `TransformKind` enum + per-RHS-pattern matching + a small per-event mini-VM bytecode for arbitrary expressions). That fallback is workable but is documented here only as an escape hatch — not the recommended design.
-
-> **PRD reviewers**: §0 is load-bearing. If the closure PRD is descoped or significantly changes shape, every section below (especially §3, §4, §5, §9) needs revisiting.
+**Mapping to this PRD's design.** Where earlier drafts said "Closure" and "INVOKE_CLOSURE", the shipped names are `BlockRef` and `FOREACH_EVENT` / `BLOCK_CALL`. §3.1's "closure handle stored in `StateInitData`" is a `block_id` into the subprogram table. The escape-hatch codegen-inlining fallback (specialised `TransformKind` enum + per-event mini-VM) described in earlier drafts is **no longer needed and is dropped**. See §11 OQ-8 for the full coupling-surface list.
 
 ---
 
@@ -72,9 +79,8 @@ The two PRDs can land in either order; the only soft coupling is the shared
 - §11 OQ-7's interaction between `fast`/`slow` and `cycle_length` does **not** evaporate — `fast`/`slow` *are* the `cycle_length` mutation. OQ-7 remains a live design question and must be answered, not deferred.
 - Any other section that assumed `e.time` arithmetic could ignore `cycle_length` must be re-checked: `slow`-wrapped patterns produce `cycle_length != 1.0`.
 
-> **PRD reviewers**: §3.4 and §11 OQ-7 below still contain pre-correction
-> wording that assumes `cycle_length` is dropped. They must be reworked before
-> this PRD is implemented.
+> **Corrected 2026-05-21.** §3.1, §3.4, §7 and §11 OQ-7 below have been
+> reworked to keep `cycle_length` live. No pre-correction wording remains.
 
 ---
 
@@ -182,9 +188,9 @@ Common conventions:
 - **State**: each instance owns a `SequenceState` (reuses the existing struct — no new `DSPState` variant). `OutputEvents` is the wire format.
 - **Upstream `state_id`**: packed across `inputs[2]+inputs[3]` (32 bits in two 16-bit slots). Leaves `inputs[0..1]` for the two most-common signal parameters; 3+-param transforms use `ExtendedParams<N>` per `docs/extended-params-mechanism.md`.
 - **Closure handle**: stored in `StateInitData` as a runtime closure reference (delivered by the closure PRD per §0).
-- **Signal sampling at event onset**: when a closure body reads an external buffer (`e.note + lfo`), the opcode indexes the buffer at the event's scheduled onset sample within the current block (provided directly by the runtime scheduler — no `samples-per-beat` arithmetic; per §0.5 cycles-pure, `cycle_length` is gone). Latched per event; no mid-event re-sampling.
+- **Signal sampling at event onset**: when a closure body reads an external buffer (`e.note + lfo`), the opcode indexes the buffer at the event's scheduled onset sample within the current block. The scheduler provides that per-event sample offset directly — no `samples-per-beat` arithmetic (the cycles-pure headline shipped 2026-05-19). `cycle_length` remains live but is not consulted on this path. Latched per event; no mid-event re-sampling.
 - **Downstream**: PatternPayload/EventStream pointers are rewired to the final transform's state_id; `as e |> osc(@, e.freq)` keeps working because SEQPAT_STEP still reads OutputEvents and refills per-field buffers.
-- **Per-block memory budget**: each opcode allocates an `OutputEvents` buffer sized to `upstream_cap × fanout_factor`. See §11 OQ-4 for chain-length caps.
+- **Per-block memory budget**: each opcode lazily sizes its `OutputEvents` buffer to `upstream_cap × fanout_factor`. No hard chain-length cap (§11 OQ-4).
 
 ### 3.2 Closure-taking builtin
 
@@ -226,14 +232,19 @@ fn late(events, t)        = event_map(events, (e) -> {time: (e.time + t) mod 1.0
 fn tune(events, cents)    = event_map(events, (e) -> {micro: e.micro + cents})
 ```
 
-Per §0.5, `e.time` is **cycle phase** `[0, 1)` within the current cycle (matching Strudel's `co`), so `early(p, 0.25)` shifts by a quarter-cycle. For closures that need cross-cycle reasoning, `e.cycle` exposes the absolute cycle count as a float (e.g., `3.25` = quarter-way through cycle 3) — see §11 OQ-9 for final field naming. `swing` / `swingBy` need an explicit grid-subdivision argument under cycles-pure (the old implicit "8th-note grid" assumed 4 beats per cycle) — see §11 OQ-10.
+`e.time` is **cycle phase** `[0, 1)` within the current cycle (matching Strudel's `co`), so `early(p, 0.25)` shifts by a quarter-cycle. For closures that need cross-cycle reasoning, `e.cycle` exposes the absolute cycle count as a float (e.g., `3.25` = quarter-way through cycle 3). Field naming is locked per §11 OQ-9: `e.time` = phase, `e.cycle` = absolute count. `swing` / `swingBy` take an explicit grid-subdivision argument (`grid:`, default `8`) under cycles-pure — the old implicit "8th-note grid" assumed 4 beats per cycle and no longer holds; per §11 OQ-10:
+
+```akkado
+fn swing(events, amount, grid = 8) =
+  event_map(events, (e) -> {time: e.time + swing_offset(e.time * grid, amount)})
+```
 
 Structural transforms (`rev`, `ply`, `palindrome`, etc.) stay builtins because they don't fit the per-event-record-rewrite shape — they lower directly to `EVENT_FANOUT` / `EVENT_REORDER`. `fast`/`slow` stay builtins for the same reason — they lower to `EVENT_RATE_SCALE`. `bank`/`variant` keep their compile-time sample-resolution path (sample-ref propagation is unchanged) but stamp `type_id` at runtime through `EVENT_MAP` with a small `BANK_SET` helper. See §11 OQ-3.
 
 ### 3.4 TypedValue evolution (two phases)
 
 - **Phase A (compatible)**: add `upstream_state_id` and `transform_chain` fields to `PatternPayload` (`akkado/include/akkado/typed_value.hpp:50-120`). Existing `as e |> osc(@, e.freq)` keeps working — `SEQPAT_FIELD` just points at the final transform's `state_id`.
-- **Phase B (cleanup)**: collapse `EventSourcePayload` into a unified `EventStreamPayload`, deprecate `ValueType::EventSource`. Pattern and MIDI become the same type. Per §0.5, the unified payload does **not** carry `cycle_length` (removed by the cycles-pure refactor).
+- **Phase B (cleanup)**: collapse `EventSourcePayload` into a unified `EventStreamPayload`, deprecate `ValueType::EventSource`. Pattern and MIDI become the same type. Per §0.5, the unified payload **carries `cycle_length`** — the field is live (the `slow`/`fast`/`palindrome`/`linger` transforms compute it and the runtime scales event times by it), so both `PatternPayload` and the future `EventStreamPayload` keep it.
 
 ---
 
@@ -325,7 +336,7 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 | `E171` | …                                              | Closure body touches a state cell (`state` / `get` / `set`)                            |
 | `E172` | …                                              | Reserved (was: nested `event_map`); nested is allowed, code reserved for future        |
 | `E173` | …                                              | Closure body calls `out()` or any sink                                                 |
-| `E180` | event-transform chain                           | Chain length exceeds the configured cap (see §11 OQ-4)                                 |
+| `E180` | event-transform chain                           | **Reserved, not emitted.** §11 OQ-4 resolved to no hard chain-length cap; code held for a future budget guard. |
 | `E181` | `EVENT_FANOUT`                                  | Output event count exceeds allocated capacity                                          |
 | `E182` | `EVENT_QUANTIZE`                                | Unknown scale or key name                                                              |
 
@@ -333,7 +344,7 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 
 ## 7. Critical Files
 
-> Several files below overlap with the §0.5 cycles-pure refactor's scope (`sequence.hpp`, `dsp_state.hpp`, `state_pool.hpp`, `SEQPAT_TRANSPORT`, `typed_value.hpp`). Per §0.5, cycles-pure lands first; this PRD assumes `cycle_length` plumbing and `spb` math are already gone.
+> The cycles-pure headline (`spb`/`* 4` math) already shipped with the 2026-05-19 revert, so the files below are written in cycles-pure terms. `cycle_length` plumbing is **live and stays** (per §0.5) — none of the work below removes it. The remaining `prd-cycle-length-cleanup.md` work (MIDI `streaming` flag, clock-phase collapse) is orthogonal and may land in either order.
 
 **Cedar (engine):**
 - `cedar/include/cedar/vm/instruction.hpp` — new `Opcode` enum entries.
@@ -370,9 +381,7 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 - `iter` / `iterBack` already used runtime state for per-cycle rotation; behaviour should be preserved exactly.
 - `bank` / `variant`: sample-ref propagation is preserved (still compile-time); runtime `type_id` stamping must produce identical sample routing.
 
-**Migration approach** (see §11 OQ-5 for final decision):
-- **Option A**: hard cutover, one PR per phase. Documentation tells users any behavioral regressions are bugs to file.
-- **Option B**: ship a `--legacy-modifiers` flag (default off) for one release that re-enables old compile-time paths in parallel, then remove in the following release.
+**Migration approach** — **hard cutover** (§11 OQ-5, resolved). One PR per phase; old compile-time modifier handlers are deleted, not deprecated. No `--legacy-modifiers` flag. Documentation tells users that any behavioral regression from the old compile-time path is a bug to file.
 
 ---
 
@@ -380,8 +389,8 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 
 | Phase | Deliverable                                                                                                                                                                                | Tests                                                                                       |
 |-------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| **0a** | **External PRD**: `cycle_length` plumbing cleanup lands (§0.5)                                                                                                                            | Owned by `prd-cycle-length-cleanup.md`                                                      |
-| **0b** | **External PRD**: runtime closure / first-class fn infrastructure in Cedar lands (§0)                                                                                                     | Owned by `prd-runtime-functions-control-flow.md`                                            |
+| **0a** | ~~External PRD: `cycle_length` plumbing cleanup~~ — **not a hard prerequisite** (§0.5); may land in any order, no longer gates Phase 1                                                     | Owned by `prd-cycle-length-cleanup.md`                                                      |
+| **0b** | **External PRD: runtime closure / first-class fn infrastructure — ✅ SHIPPED** (L1→L3 + §4.2 `BLOCK_BIND`)                                                                                  | Shipped by `prd-runtime-functions-control-flow.md`                                          |
 | **1** | Substrate: `EVENT_MAP` + `EVENT_FILTER` opcodes; manually-wired `transpose` and `velocity` in C++ codegen (no closures yet, constants only)                                                | `cedar/tests/test_event_map.cpp`, `experiments/test_op_event_map.py` (≥300 s)               |
 | **2** | `event_map` / `event_filter` builtins taking closures; migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers                                  | `akkado/tests/test_event_map.cpp` for closure plumbing                                      |
 | **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input; `early`/`late`/`swing` via `event_map`                                                                                       | Rate-scaled WAV experiments                                                                 |
@@ -405,58 +414,62 @@ End-to-end checks once Phase 5 lands:
 
 ---
 
-## 11. Open Questions
+## 11. Resolved Design Decisions
 
-Resolution required before locking the PRD.
+All open questions were resolved 2026-05-21. The decisions below are final and locked; implementation follows them directly.
 
-**OQ-1. Chord events vs. field arithmetic.** *(gated by §0.6 — Pattern Event Arrays)*
-Should `(e) -> {note: e.note + 7}` transpose only the primary voice or every voice in `values[]`?
-Proposed default: primary voice only. Chord-wide transforms reuse the dynamic-array model from `prd-pattern-event-arrays.md` — `(e) -> {notes: map(e.notes, (v) -> v + 7)}`, where `e.notes` is that PRD's `notes(e)` accessor (UFCS sugar) returning a `DynArray`, and `map`-over-`DynArray` is that PRD's Q3. **Use `e.notes` consistently — do not introduce a separate `e.values` spelling for the same chord data.** If Pattern Event Arrays is descoped, OQ-1 collapses to "primary-voice-only, no chord-wide form."
+**OQ-1. Chord events vs. field arithmetic. → RESOLVED: primary-voice-only in Phase 1–2; chord-wide form kept specced, gated on Pattern Event Arrays before Phase 2.**
+`(e) -> {note: e.note + 7}` transposes only the **primary voice**. Chord-wide transforms use the dynamic-array form `(e) -> {notes: map(e.notes, (v) -> v + 7)}`, where `e.notes` is the `notes(e)` accessor (UFCS sugar) from `prd-pattern-event-arrays.md` returning a `DynArray`. **Use `e.notes` consistently — no separate `e.values` spelling.** Pattern Event Arrays is NOT STARTED today; it is a soft dependency (§0.6) that must land before this PRD's **Phase 2**. Phase 1 (constant-only, primary-voice) does not need it. If Pattern Event Arrays slips past Phase 2, the chord-wide form ships in a follow-up — it does not block the rest of this PRD.
 
-**OQ-2. Closure return-value passthrough merge spec.**
-If the closure returns a record missing some fields, do unspecified fields pass through unchanged?
-Proposed: yes. Spec the exact merge (shallow overlay).
+**OQ-2. Closure return-value passthrough merge. → RESOLVED: shallow overlay; unspecified fields pass through unchanged.**
+The closure's returned record is a shallow overlay: each field present in the returned record overrides the matching event field; every field absent passes through from the upstream event unchanged. No deep merge, no field deletion. A closure returning `{}` is an identity transform.
 
-**OQ-3. `bank` / `variant` runtime path.**
-Sample assets must be loaded at compile time, so `RequiredSamples` propagation must remain compile-time. But the event's `type_id` could be runtime-stamped (enabling `events.bank(other_bank_signal)`).
-Worth the complexity, or keep these compile-time-only and call it out?
+**OQ-3. `bank` / `variant` runtime path. → RESOLVED: hybrid.**
+`RequiredSamples` propagation stays compile-time (sample assets must load before audio starts). The event's `type_id` is **runtime-stamped** via `EVENT_MAP` plus a small `BANK_SET` helper, enabling `events.bank(other_bank_signal)`. The compile-time sample-ref propagation path is unchanged; only the per-event `type_id` field becomes runtime-writable. The §5 migration-table row for `bank`/`variant` already reflects this hybrid.
 
-**OQ-4. Per-block OutputEvents memory budget.**
-Worst-case 30-chain × 4096-event cap ≈ 24 MB; fits 128 MB arena.
-Cap chain length at 16 (`E180`)? Allow override via a project setting? Always lazily size to upstream-cap × fanout-factor?
+**OQ-4. Per-block OutputEvents memory budget. → RESOLVED: lazy sizing, no hard cap.**
+Each `EVENT_*` opcode lazily sizes its `OutputEvents` buffer to `upstream_cap × fanout_factor`. There is **no hard chain-length limit**. Worst-case 30-chain × 4096-event ≈ 24 MB fits the 128 MB arena comfortably. `E181` (`EVENT_FANOUT` per-op capacity overflow) still guards the per-opcode bound; `E180` is reserved-but-unused (see §6) in case a global budget guard is wanted later.
 
-**OQ-5. Migration period.**
-Hard cutover (Option A in §8), or `--legacy-modifiers` flag for one release (Option B)?
+**OQ-5. Migration period. → RESOLVED: hard cutover.**
+Option A. One PR per phase; the old compile-time modifier handlers are **deleted**, not deprecated. No `--legacy-modifiers` flag. Documentation tells users that any behavioral regression from the old compile-time path is a bug to file. §8's Option B is dropped.
 
-**OQ-6. `event_map` codegen lowering when a field's RHS is a closed-form known to fit a specialised TransformKind.**
-Even with runtime closures available, certain RHS patterns (`e.X + const`, `e.X * buf`) could lower to a specialised faster path that doesn't invoke the closure dispatcher per event. Worth pursuing as an optimisation? Or keep dispatch uniform for simplicity?
+**OQ-6. Specialised codegen lowering for closed-form RHS. → RESOLVED: uniform dispatch only.**
+Every `event_map` closure lowers to the same `EVENT_MAP` + `FOREACH_EVENT` dispatch path, including closed-form bodies like `e.X + const`. No specialised `TransformKind` fast path. A per-event fast path that skips the dispatcher is filed as a **future, non-blocking optimization PRD** — it is not in scope here and must not gate any phase.
 
-**OQ-7. `fast` / `slow` and downstream `co`.**
-Per §0.5, `cycle_length` is removed by the cycles-pure refactor — `EVENT_RATE_SCALE` simply rescales the cycle-phase signal feeding upstream `SEQPAT_QUERY`. The remaining question: what should `co` (cycle offset) report downstream of `fast(p, 2)` — the *consumer's* cycle phase (unchanged) or the *inner pattern's* accelerated phase? Strudel's semantics: outer `co` is unchanged; the inner pattern produces 2× as many cycles' worth of events per outer cycle. Confirm and lock.
+**OQ-7. `fast` / `slow` and downstream `co`. → RESOLVED: Strudel semantics, locked.**
+`EVENT_RATE_SCALE` rescales the cycle-phase signal feeding the upstream `SEQPAT_QUERY`. `cycle_length` is **live** — `fast`/`slow` are precisely the transforms that compute it (per §0.5), and `EVENT_RATE_SCALE` is its runtime expression. Downstream `co` (cycle offset) reports the **consumer's** cycle phase, unchanged by `fast(p, 2)`; the inner pattern simply produces 2× as many cycles' worth of events per outer cycle. This matches Strudel and is locked.
 
-**OQ-8. Closure-PRD coupling points.**
-List every API surface this PRD assumes the closure PRD will provide. Cross-reference both PRDs explicitly in their respective "Dependencies" sections.
+**OQ-8. Closure-PRD coupling surface. → RESOLVED: enumerated below (dependency shipped).**
+This PRD consumes the following surfaces from the now-shipped `prd-runtime-functions-control-flow.md`:
+- `FOREACH_EVENT` opcode — per-event subprogram dispatch; the dispatch primitive under every `EVENT_*` opcode.
+- `BLOCK_CALL` / `BLOCK_BIND` opcodes + the `ProgramSlot::blocks[]` subprogram table — closure bodies compiled once, dispatched at runtime; `block_id` is the "closure handle" in §3.1's `StateInitData`.
+- The block-aware program-load handshake + `set_state_id_xor` per-call-site state isolation + `block:<fn>@callsite_<N>` hot-swap path hashing.
+- The event-record lambda parameter convention (`n.freq`/`n.vel`/`n.dur`/`n.note`/`n.chance`/`n.time` → convention slots; `n.gate`/`n.trig` synthesized; `E408` for unsupplyable fields).
+- VM allocators VOICE_POOL / PER_ITERATION / SHARED and the `each()` / `reduce()` higher-order surface (used by chord/voicing fanout in Phase 5).
+All are SHIPPED. `prd-runtime-functions-control-flow.md` §13 already cross-references this PRD as its consumer.
 
-**OQ-9. `e.time` vs `e.cycle` field naming.**
-Per §0.5 cycles-pure, event records expose two time-like fields: phase within the current cycle (`[0, 1)`, used by `early` / `late` / `swing` stdlib) and the absolute cycle count (float, e.g. `3.25`, useful for cross-cycle reasoning inside closures). Proposed naming: `e.time` = phase, `e.cycle` = absolute count. Alternatives: `e.phase` + `e.time`, or `e.t` + `e.cycle`. Lock the names before stdlib ships.
+**OQ-9. `e.time` vs `e.cycle` field naming. → RESOLVED: `e.time` = phase, `e.cycle` = absolute.**
+`e.time` is cycle phase `[0, 1)` within the current cycle (matches Strudel's `co`, matches the existing `e.time` field meaning so no rename). `e.cycle` is the absolute cycle count as a float (e.g. `3.25`). The `e.phase`/`e.t` alternatives are rejected. Locked before stdlib ships.
 
-**OQ-10. `swing` / `swingBy` grid spec under cycles-pure.**
-The old `swing` assumed an 8th-note grid (4 beats / cycle → 8 grid positions). Under cycles-pure there is no "beat" — `swing` must take an explicit subdivision count or grid fraction.
-Options:
-- `swing(p, amount)` with implicit grid derived from the upstream pattern's natural top-level step count.
-- `swing(p, amount, grid: 8)` explicit subdivision argument with default 8 (preserves observable behaviour for typical 8-step patterns).
-- `swing(p, amount, grid_fraction: 1/8)` cycle-fraction form.
+**OQ-10. `swing` / `swingBy` grid spec. → RESOLVED: explicit `grid:` arg, default 8.**
+`swing(p, amount, grid = 8)` / `swingBy(p, amount, grid = 8)` take an explicit subdivision count, defaulting to `8` (preserves observable behaviour for typical 8-step patterns). The implicit-from-pattern and `grid_fraction` forms are rejected — explicit and predictable beats magic. Stdlib definition in §3.3.
 
-**OQ-11. Cycles-pure-PRD coupling points.**
-List every API surface this PRD assumes the cycles-pure PRD will provide (`spc` accessor, scheduler's per-event sample timestamp, `EventStreamPayload` without `cycle_length`, `e.time` = phase, `e.cycle` = absolute count). Cross-reference both PRDs explicitly in their respective "Dependencies" sections.
+**OQ-11. Cycles-pure-PRD coupling surface. → RESOLVED: enumerated below.**
+The cycles-pure headline ("1 cycle = 1 beat", `samples_per_cycle()` without `* 4`) already shipped with the 2026-05-19 revert (commit `9d99490`). This PRD assumes:
+- `spc` (samples-per-cycle) accessor and the scheduler's per-event onset-sample timestamp — used by §3.1 signal sampling at event onset.
+- `e.time` = cycle phase `[0, 1)`, `e.cycle` = absolute cycle count (§3.3, OQ-9).
+- `EventStreamPayload` / `EventSourcePayload` **carry `cycle_length`** — the field is live (corrected per §0.5; the earlier "dropped" premise was false).
+None of this depends on `prd-cycle-length-cleanup.md`; that PRD's remaining work (MIDI `streaming` flag, clock-phase collapse) is orthogonal.
 
 ---
 
 ## 12. Next Step
 
-1. **Land `prd-cycle-length-cleanup.md`** (§0.5) — small, mechanical, READY-status; no design work outstanding.
-2. **Land `prd-runtime-functions-control-flow.md`** (§0) — promote out of DRAFT, then ship its L1→L3 phases. This is the larger, riskier prerequisite and the real long pole. Can proceed in parallel with the cleanup PRD; both must merge before Phase 1.
-3. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision. OQ-1 in particular is gated on `prd-pattern-event-arrays.md` landing (see §0.6) — it should land before this PRD's Phase 2.
-4. **Implement Phase 1** of §9. Each subsequent phase is reviewed and merged independently.
+Both design-blocking prerequisites are cleared:
 
-**Do not begin implementation while this PRD is in `FIRST DRAFT` status.**
+1. ✅ **`prd-runtime-functions-control-flow.md`** (§0) — L1→L3 + §4.2 `BLOCK_BIND` SHIPPED.
+2. ✅ **§11 open questions** — all 11 resolved (2026-05-21); decisions locked inline in §11.
+3. **`prd-pattern-event-arrays.md`** (§0.6) — NOT STARTED; soft dependency, must land before **Phase 2** (chord-wide closures). Phase 1 is unblocked without it.
+4. **`prd-cycle-length-cleanup.md`** (§0.5) — not a hard prerequisite; may land in any order.
+
+**Implementation may begin now at Phase 1** of §9 (`EVENT_MAP` + `EVENT_FILTER` opcodes, constant-arg `transpose` / `velocity`). Each subsequent phase is reviewed and merged independently.
