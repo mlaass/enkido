@@ -175,6 +175,12 @@ private:
     // >0 while resolve_and_validate is inside a loop() body, where surviving
     // `@` holes are the running accumulator rather than an E003 error.
     int loop_body_depth_ = 0;
+
+    // PRD prd-runtime-functions-control-flow L3: closure-node → name of its
+    // event-record parameter, for lambdas passed to each_voice/each/reduce.
+    // The Closure handler defines that parameter as a Parameter (record-
+    // capable) so `n.freq`-style field access passes the E061 check.
+    std::unordered_map<NodeIndex, std::string> foreach_record_param_;
 };
 
 } // namespace akkado

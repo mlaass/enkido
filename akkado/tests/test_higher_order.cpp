@@ -9,6 +9,7 @@
 #include <cedar/dsp/constants.hpp>
 
 #include <array>
+#include <cmath>
 #include <span>
 #include <vector>
 
@@ -172,4 +173,113 @@ TEST_CASE("each_voice() rejects a non-event-stream operand with E242",
         "each_voice(osc(\"sin\", 440), (v) -> osc(\"sin\", v)) |> out(@)");
     CHECK_FALSE(r.success);
     CHECK(has_diag(r, "E242"));
+}
+
+// =============================================================================
+// Event-record lambda parameters (PRD L3 — n.freq / n.vel / n.gate / ...)
+// =============================================================================
+
+TEST_CASE("each_voice() lambda parameter exposes event-record fields",
+          "[L3][each_voice][record]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> each_voice(@, (n) -> osc(\"sin\", n.freq) * 0.3) "
+        "|> out(@)");
+    REQUIRE(r.success);
+    CHECK(render_peak(r, 200) > 0.01f);
+}
+
+TEST_CASE("each_voice() synthesizes n.trig to drive a per-event envelope",
+          "[L3][each_voice][record]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> each_voice(@, "
+        "(n) -> osc(\"sin\", n.freq) * ar(n.trig, 0.01, 0.2)) |> out(@)");
+    REQUIRE(r.success);
+    CHECK(render_peak(r, 200) > 0.01f);
+}
+
+TEST_CASE("each_voice() rejects a field absent from the event record (E408)",
+          "[L3][each_voice][error]") {
+    auto r = akkado::compile(
+        "n\"c4\" |> each_voice(@, (n) -> osc(\"sin\", n.phase))");
+    CHECK_FALSE(r.success);
+    CHECK(has_diag(r, "E408"));
+}
+
+// =============================================================================
+// each — side-effecting per-event sink (PER_ITERATION, no mix)
+// =============================================================================
+
+TEST_CASE("each() emits FOREACH_EVENT with the PER_ITERATION allocator",
+          "[L3][each]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> each(@, (n) -> osc(\"sin\", n.freq) * 0.3 |> out(@))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+    REQUIRE(r.block_table.size() == 1);
+
+    bool found = false;
+    for (const auto& s : r.state_inits) {
+        if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
+            CHECK(s.foreach_allocator_kind == 1);  // PER_ITERATION
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("each() body out() calls accumulate audio", "[L3][each]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> each(@, (n) -> osc(\"sin\", n.freq) * 0.3 |> out(@))");
+    REQUIRE(r.success);
+    CHECK(render_peak(r, 200) > 0.01f);
+}
+
+// =============================================================================
+// reduce — event-stream accumulator (SHARED), unified with array reduce()
+// =============================================================================
+
+TEST_CASE("reduce() over a pattern emits FOREACH_EVENT with the SHARED allocator",
+          "[L3][reduce]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> reduce(@, (acc, n) -> acc + n.freq, 0.0) |> out(@)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+
+    bool found = false;
+    for (const auto& s : r.state_inits) {
+        if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
+            CHECK(s.foreach_allocator_kind == 2);  // SHARED
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("reduce() over a pattern renders a finite accumulator signal",
+          "[L3][reduce]") {
+    auto r = akkado::compile(
+        "n\"c4 e4 g4\" |> reduce(@, (acc, n) -> acc + n.freq, 0.0) |> out(@)");
+    REQUIRE(r.success);
+    float peak = render_peak(r, 200);
+    CHECK(std::isfinite(peak));
+}
+
+TEST_CASE("reduce() over an array still unrolls at compile time (no FOREACH_EVENT)",
+          "[L3][reduce]") {
+    auto r = akkado::compile(
+        "osc(\"sin\", reduce([110.0, 110.0, 110.0], (a, b) -> a + b, 0.0)) "
+        "|> out(@)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 0);
+}
+
+TEST_CASE("reduce() over a pattern rejects a 1-parameter lambda (E409)",
+          "[L3][reduce][error]") {
+    auto r = akkado::compile(
+        "n\"c4\" |> reduce(@, (acc) -> acc, 0.0) |> out(@)");
+    CHECK_FALSE(r.success);
+    CHECK(has_diag(r, "E409"));
 }

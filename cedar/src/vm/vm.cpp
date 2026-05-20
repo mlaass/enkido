@@ -471,6 +471,63 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
     // Skip silently; the dispatch loop still advances by one.
 }
 
+// Compute per-block cycle-position timing from the upstream cycle length.
+// Extracted from run_voice_pool so the FOREACH_EVENT PER_ITERATION runner can
+// reuse the exact same onset/offset math for synthesized gate/trig.
+VM::BlockCycleTiming VM::compute_block_timing(float cycle_length) const {
+    // Cycle-position snap tolerance, in beats. IEEE-754 division of large
+    // sample counters by spb produces tiny non-zero fmod residues at exact
+    // cycle boundaries; those residues are far below 1-sample resolution but
+    // break strict comparisons against zero-time events. Snap within an
+    // epsilon well below sample resolution but well above fp noise.
+    constexpr double CYCLE_BOUNDARY_EPSILON = 1e-9;
+    BlockCycleTiming t{};
+#ifdef CEDAR_FLOAT_ONLY
+    // Float-only beat timing (precision degrades after ~6 min at 48kHz)
+    const float spb = (60.0f / ctx_.bpm) * ctx_.sample_rate;
+    const float beat_start =
+        static_cast<float>(ctx_.global_sample_counter) / spb;
+    float cycle_pos_raw = std::fmod(beat_start, cycle_length);
+    if (cycle_pos_raw < static_cast<float>(CYCLE_BOUNDARY_EPSILON)) {
+        cycle_pos_raw = 0.0f;
+    }
+    t.cycle_pos = cycle_pos_raw;
+    t.current_cycle =
+        static_cast<std::uint32_t>(std::floor(beat_start / cycle_length));
+    float block_end_pos_raw = t.cycle_pos + static_cast<float>(BLOCK_SIZE) / spb;
+    if (std::abs(block_end_pos_raw - cycle_length)
+            < static_cast<float>(CYCLE_BOUNDARY_EPSILON)) {
+        block_end_pos_raw = cycle_length;
+    }
+    t.block_end_pos = block_end_pos_raw;
+    t.spb = spb;
+#else
+    // Use double precision for beat timing to avoid float32 precision loss
+    // after ~6 minutes (global_sample_counter > 2^24)
+    const double spb_d = (60.0 / static_cast<double>(ctx_.bpm))
+                       * static_cast<double>(ctx_.sample_rate);
+    const double beat_start_d =
+        static_cast<double>(ctx_.global_sample_counter) / spb_d;
+    double cycle_pos_d_raw =
+        std::fmod(beat_start_d, static_cast<double>(cycle_length));
+    if (cycle_pos_d_raw < CYCLE_BOUNDARY_EPSILON) cycle_pos_d_raw = 0.0;
+    const double cycle_pos_d = cycle_pos_d_raw;
+    t.current_cycle =
+        static_cast<std::uint32_t>(std::floor(beat_start_d / cycle_length));
+    const double block_beats_d = static_cast<double>(BLOCK_SIZE) / spb_d;
+    double block_end_pos_d_raw = cycle_pos_d + block_beats_d;
+    if (std::abs(block_end_pos_d_raw - static_cast<double>(cycle_length))
+            < CYCLE_BOUNDARY_EPSILON) {
+        block_end_pos_d_raw = static_cast<double>(cycle_length);
+    }
+    // Narrow to float for comparisons against float-precision event times
+    t.spb = static_cast<float>(spb_d);
+    t.cycle_pos = static_cast<float>(cycle_pos_d);
+    t.block_end_pos = static_cast<float>(block_end_pos_d_raw);
+#endif
+    return t;
+}
+
 void VM::run_voice_pool(PolyAllocState& poly_state,
                         std::uint16_t mix_buf,
                         std::uint16_t voice_freq_buf,
@@ -509,54 +566,11 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
     if (events_src.events && events_src.events->num_events > 0) {
         OutputEvents& seq_output = *events_src.events;
         const float cycle_length = events_src.cycle_length;
-        // Cycle-position snap tolerance, in beats. IEEE-754 division of large
-        // sample counters by spb produces tiny non-zero fmod residues at exact
-        // cycle boundaries (e.g., 5.7e-14 at block 99000 / cycle 121 with
-        // BPM 110). Those residues are far below 1-sample resolution
-        // (1 sample ≈ 3.8e-5 beats at 110 BPM / 48 kHz) but break strict
-        // `evt_start >= cycle_pos` comparisons against zero-time events.
-        // Snap cycle_pos to 0 (and block_end to cycle_length) within an
-        // epsilon well below sample resolution but well above fp noise.
-        constexpr double CYCLE_BOUNDARY_EPSILON = 1e-9;
-#ifdef CEDAR_FLOAT_ONLY
-        // Float-only beat timing (precision degrades after ~6 min at 48kHz)
-        const float spb = (60.0f / ctx_.bpm) * ctx_.sample_rate;
-        const float beat_start = static_cast<float>(ctx_.global_sample_counter) / spb;
-        float cycle_pos_raw = std::fmod(beat_start, cycle_length);
-        if (cycle_pos_raw < static_cast<float>(CYCLE_BOUNDARY_EPSILON)) cycle_pos_raw = 0.0f;
-        const float cycle_pos = cycle_pos_raw;
-        const std::uint32_t current_cycle =
-            static_cast<std::uint32_t>(std::floor(beat_start / cycle_length));
-        float block_end_pos_raw = cycle_pos + static_cast<float>(BLOCK_SIZE) / spb;
-        if (std::abs(block_end_pos_raw - cycle_length) < static_cast<float>(CYCLE_BOUNDARY_EPSILON)) {
-            block_end_pos_raw = cycle_length;
-        }
-        const float block_end_pos = block_end_pos_raw;
-#else
-        // Use double precision for beat timing to avoid float32 precision loss
-        // after ~6 minutes (global_sample_counter > 2^24)
-        const double spb_d = (60.0 / static_cast<double>(ctx_.bpm))
-                           * static_cast<double>(ctx_.sample_rate);
-        const double beat_start_d =
-            static_cast<double>(ctx_.global_sample_counter) / spb_d;
-        double cycle_pos_d_raw =
-            std::fmod(beat_start_d, static_cast<double>(cycle_length));
-        if (cycle_pos_d_raw < CYCLE_BOUNDARY_EPSILON) cycle_pos_d_raw = 0.0;
-        const double cycle_pos_d = cycle_pos_d_raw;
-        const std::uint32_t current_cycle =
-            static_cast<std::uint32_t>(std::floor(beat_start_d / cycle_length));
-        const double block_beats_d = static_cast<double>(BLOCK_SIZE) / spb_d;
-        double block_end_pos_d_raw = cycle_pos_d + block_beats_d;
-        if (std::abs(block_end_pos_d_raw - static_cast<double>(cycle_length))
-                < CYCLE_BOUNDARY_EPSILON) {
-            block_end_pos_d_raw = static_cast<double>(cycle_length);
-        }
-        const double block_end_pos_d = block_end_pos_d_raw;
-        // Narrow to float for comparisons against float-precision event times
-        const float spb = static_cast<float>(spb_d);
-        const float cycle_pos = static_cast<float>(cycle_pos_d);
-        const float block_end_pos = static_cast<float>(block_end_pos_d);
-#endif
+        const BlockCycleTiming timing = compute_block_timing(cycle_length);
+        const float spb = timing.spb;
+        const float cycle_pos = timing.cycle_pos;
+        const float block_end_pos = timing.block_end_pos;
+        const std::uint32_t current_cycle = timing.current_cycle;
 
         // Reset pending gate transitions for all voices
         if (poly_state.voices) {
@@ -738,21 +752,63 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
     state_pool_.set_state_id_xor(0);
 }
 
+// Fill the 7-buffer event-record bank for one FOREACH_EVENT iteration.
+// Layout (contiguous from bank_buf): vel, dur, note, chance, time, gate, trig.
+void VM::fill_event_record_bank(std::uint16_t bank_buf,
+                                const OutputEvents::OutputEvent& evt,
+                                const BlockCycleTiming& timing) {
+    std::fill_n(buffer_pool_.get(bank_buf + 0), BLOCK_SIZE, evt.velocity);
+    std::fill_n(buffer_pool_.get(bank_buf + 1), BLOCK_SIZE, evt.duration);
+    std::fill_n(buffer_pool_.get(bank_buf + 2), BLOCK_SIZE, evt.midi_note);
+    std::fill_n(buffer_pool_.get(bank_buf + 3), BLOCK_SIZE, evt.chance);
+    std::fill_n(buffer_pool_.get(bank_buf + 4), BLOCK_SIZE, evt.time);
+
+    // Synthesize gate (held high across the event window) and trig (1-sample
+    // pulse at onset) from the event's cycle-relative time/duration. The
+    // event time is cycle-relative (range [0, cycle_length)); rel_* are sample
+    // offsets from this block's start. Cross-cycle-boundary wrap is not
+    // modelled here — the gate edge appears in the block the onset lands in.
+    float* gate_b = buffer_pool_.get(bank_buf + 5);
+    float* trig_b = buffer_pool_.get(bank_buf + 6);
+    const float rel_start = (evt.time - timing.cycle_pos) * timing.spb;
+    const float rel_end =
+        (evt.time + evt.duration - timing.cycle_pos) * timing.spb;
+    const int on_sample  = static_cast<int>(std::floor(rel_start));
+    const int off_sample = static_cast<int>(std::floor(rel_end));
+    const int block = static_cast<int>(BLOCK_SIZE);
+    const int on_clamped  = std::clamp(on_sample, 0, block);
+    const int off_clamped = std::clamp(off_sample, 0, block);
+    for (int i = 0; i < block; ++i) {
+        gate_b[i] = (i >= on_clamped && i < off_clamped) ? 1.0f : 0.0f;
+    }
+    std::fill_n(trig_b, BLOCK_SIZE, 0.0f);
+    if (on_sample >= 0 && on_sample < block) {
+        trig_b[on_sample] = 1.0f;
+    }
+}
+
 // PER_ITERATION — every upstream event maps to one iteration in this block.
-// No gate lifecycle: an event present in the block fires its body exactly
-// once. Per-iteration DSP state is isolated via state_id XOR, exactly as
-// run_voice_pool isolates voices.
+// Per-iteration DSP state is isolated via state_id XOR, exactly as
+// run_voice_pool isolates voices. Slot layout: inputs[0]=freq (primary),
+// inputs[1]=record bank base (or UNUSED), inputs[4]=voice_out L. When
+// out_buffer is UNUSED the body is a side-effecting sink (`each()`): the
+// body's own out() calls accumulate into the global bus, no mixing here.
 void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
                                    const Instruction& inst,
                                    std::span<const Instruction> body) {
-    const std::uint16_t field_buf  = inst.inputs[0];  // per-event field value
-    const std::uint16_t out_buf    = inst.out_buffer; // mix bus L
-    const std::uint16_t out_buf_r  = out_buf + 1;
+    const std::uint16_t freq_buf = inst.inputs[0];
+    const std::uint16_t bank_buf = inst.inputs[1];
+    const std::uint16_t out_buf  = inst.out_buffer;
+    const bool mixed = (out_buf != BUFFER_UNUSED);
 
-    float* mix   = buffer_pool_.get(out_buf);
-    float* mix_r = buffer_pool_.get(out_buf_r);
-    std::fill_n(mix, BLOCK_SIZE, 0.0f);
-    std::fill_n(mix_r, BLOCK_SIZE, 0.0f);
+    float* mix   = nullptr;
+    float* mix_r = nullptr;
+    if (mixed) {
+        mix   = buffer_pool_.get(out_buf);
+        mix_r = buffer_pool_.get(out_buf + 1);
+        std::fill_n(mix, BLOCK_SIZE, 0.0f);
+        std::fill_n(mix_r, BLOCK_SIZE, 0.0f);
+    }
 
     auto events_src = (iter_state.seq_state_id != 0)
         ? state_pool_.resolve_output_events(iter_state.seq_state_id)
@@ -764,28 +820,23 @@ void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
     OutputEvents& seq_output = *events_src.events;
     const std::uint32_t iter_cap =
         std::min<std::uint32_t>(seq_output.num_events, iter_state.max_iterations);
+    const BlockCycleTiming timing =
+        compute_block_timing(events_src.cycle_length);
 
     // Voice-out buffer the body writes its signal into (slot 4, like POLY).
-    const std::uint16_t voice_out_buf =
-        (inst.inputs[4] != BUFFER_UNUSED) ? inst.inputs[4] : field_buf;
+    const std::uint16_t voice_out_buf = inst.inputs[4];
     const std::uint16_t voice_out_buf_r = voice_out_buf + 1;
 
     for (std::uint32_t e = 0; e < iter_cap; ++e) {
         const auto& evt = seq_output.events[e];
 
-        // Bind the per-iteration field convention slot. The body reads its
-        // event record fields from the field buffer (primary value) and the
-        // freq/vel/etc. slots populated below.
-        if (field_buf != BUFFER_UNUSED) {
-            float* fb = buffer_pool_.get(field_buf);
-            std::fill_n(fb, BLOCK_SIZE, evt.num_values > 0 ? evt.values[0]
-                                                           : evt.midi_note);
+        // Bind the primary (freq) convention slot + the optional record bank.
+        if (freq_buf != BUFFER_UNUSED) {
+            std::fill_n(buffer_pool_.get(freq_buf), BLOCK_SIZE,
+                        evt.num_values > 0 ? evt.values[0] : evt.midi_note);
         }
-        if (inst.inputs[1] != BUFFER_UNUSED) {
-            std::fill_n(buffer_pool_.get(inst.inputs[1]), BLOCK_SIZE, evt.velocity);
-        }
-        if (inst.inputs[2] != BUFFER_UNUSED) {
-            std::fill_n(buffer_pool_.get(inst.inputs[2]), BLOCK_SIZE, evt.duration);
+        if (bank_buf != BUFFER_UNUSED) {
+            fill_event_record_bank(bank_buf, evt, timing);
         }
 
         // Per-iteration state isolation — same XOR scheme as run_voice_pool.
@@ -794,11 +845,13 @@ void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
             execute(body[bi]);
         }
 
-        const float* vo   = buffer_pool_.get(voice_out_buf);
-        const float* vo_r = buffer_pool_.get(voice_out_buf_r);
-        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            mix[i]   += vo[i];
-            mix_r[i] += vo_r[i];
+        if (mixed && voice_out_buf != BUFFER_UNUSED) {
+            const float* vo   = buffer_pool_.get(voice_out_buf);
+            const float* vo_r = buffer_pool_.get(voice_out_buf_r);
+            for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+                mix[i]   += vo[i];
+                mix_r[i] += vo_r[i];
+            }
         }
     }
 
@@ -807,11 +860,23 @@ void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
 
 // SHARED — all iterations share one accumulator slot (fold). No per-iteration
 // XOR; the body runs once per event with the accumulator threaded through.
+// Slot layout: inputs[0]=accumulator, inputs[1]=seed signal (or UNUSED),
+// inputs[2]=freq (primary), inputs[3]=record bank base (or UNUSED). The
+// accumulator is re-seeded from the seed signal every block, so fold is a
+// per-block reduction starting from the seed's current value.
 void VM::run_foreach_shared(ForeachSharedState& shared_state,
                             const Instruction& inst,
                             std::span<const Instruction> body) {
-    const std::uint16_t acc_buf = inst.inputs[0];  // accumulator convention slot
-    const std::uint16_t out_buf = inst.out_buffer;
+    const std::uint16_t acc_buf  = inst.inputs[0];
+    const std::uint16_t seed_buf = inst.inputs[1];
+    const std::uint16_t freq_buf = inst.inputs[2];
+    const std::uint16_t bank_buf = inst.inputs[3];
+    const std::uint16_t out_buf  = inst.out_buffer;
+
+    // Re-seed the accumulator each block from the seed signal's current value.
+    float acc = (seed_buf != BUFFER_UNUSED)
+        ? buffer_pool_.get(seed_buf)[0]
+        : shared_state.accumulator;
 
     auto events_src = (shared_state.seq_state_id != 0)
         ? state_pool_.resolve_output_events(shared_state.seq_state_id)
@@ -819,28 +884,32 @@ void VM::run_foreach_shared(ForeachSharedState& shared_state,
 
     if (events_src.events) {
         OutputEvents& seq_output = *events_src.events;
+        const BlockCycleTiming timing =
+            compute_block_timing(events_src.cycle_length);
         for (std::uint32_t e = 0; e < seq_output.num_events; ++e) {
             const auto& evt = seq_output.events[e];
             // Thread the accumulator into the body's accumulator slot, run
             // the body once, read the updated accumulator back out.
             if (acc_buf != BUFFER_UNUSED) {
-                std::fill_n(buffer_pool_.get(acc_buf), BLOCK_SIZE,
-                            shared_state.accumulator);
+                std::fill_n(buffer_pool_.get(acc_buf), BLOCK_SIZE, acc);
             }
-            if (inst.inputs[1] != BUFFER_UNUSED) {
-                std::fill_n(buffer_pool_.get(inst.inputs[1]), BLOCK_SIZE,
+            if (freq_buf != BUFFER_UNUSED) {
+                std::fill_n(buffer_pool_.get(freq_buf), BLOCK_SIZE,
                             evt.num_values > 0 ? evt.values[0] : evt.midi_note);
+            }
+            if (bank_buf != BUFFER_UNUSED) {
+                fill_event_record_bank(bank_buf, evt, timing);
             }
             for (std::size_t bi = 0; bi < body.size(); ++bi) {
                 execute(body[bi]);
             }
-            const float* result = buffer_pool_.get(out_buf);
-            shared_state.accumulator = result[0];
+            acc = buffer_pool_.get(out_buf)[0];
         }
     }
 
+    shared_state.accumulator = acc;
     // Publish the running accumulator to the output buffer.
-    std::fill_n(buffer_pool_.get(out_buf), BLOCK_SIZE, shared_state.accumulator);
+    std::fill_n(buffer_pool_.get(out_buf), BLOCK_SIZE, acc);
 }
 
 void VM::execute(const Instruction& inst) {

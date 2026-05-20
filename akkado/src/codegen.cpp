@@ -1168,6 +1168,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"when",   &CodeGenerator::handle_when_call},
                 // Higher-order DSL (PRD prd-runtime-functions-control-flow L3)
                 {"each_voice", &CodeGenerator::handle_each_voice_call},
+                {"each",       &CodeGenerator::handle_each_call},
             };
 
             auto handler_it = special_handlers.find(func_name);

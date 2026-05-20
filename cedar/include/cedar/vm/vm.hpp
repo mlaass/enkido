@@ -559,6 +559,27 @@ private:
                                std::span<const Instruction> program,
                                std::size_t ip);
 
+    // Per-block cycle-position timing, computed once per block from the
+    // upstream cycle length. Shared by run_voice_pool (voice gate-on/off
+    // scheduling) and run_foreach_per_iteration (per-event onset/offset
+    // sample computation for synthesized gate/trig).
+    struct BlockCycleTiming {
+        float spb = 0.0f;            // samples per beat
+        float cycle_pos = 0.0f;      // cycle position at block start (beats)
+        float block_end_pos = 0.0f;  // cycle position at block end (beats)
+        std::uint32_t current_cycle = 0;
+    };
+    BlockCycleTiming compute_block_timing(float cycle_length) const;
+
+    // Fill a 7-buffer event-record bank (PRD L3 event-record lambda params)
+    // for one FOREACH_EVENT iteration. Layout, contiguous from bank_buf:
+    //   +0 vel  +1 dur  +2 note  +3 chance  +4 time  +5 gate  +6 trig
+    // gate/trig are synthesized per-sample from the event's cycle-relative
+    // time/duration via `timing`; the rest are block constants.
+    void fill_event_record_bank(std::uint16_t bank_buf,
+                                const OutputEvents::OutputEvent& evt,
+                                const BlockCycleTiming& timing);
+
     // Shared voice-pool engine: event scan, voice alloc/release, per-voice
     // body execution with XOR isolation, release-countdown mix. Used by both
     // execute_poly_block (inline body) and execute_foreach_event (table body).

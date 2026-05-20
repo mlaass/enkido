@@ -1,8 +1,8 @@
-> **Status: L1 SHIPPED · L2 PARTIAL · L3 PARTIAL** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20. PRs split L1 → L2 → L3 as three independent rollouts.
+> **Status: L1 SHIPPED · L2 PARTIAL · L3 SHIPPED** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20. PRs split L1 → L2 → L3 as three independent rollouts.
 >
 > - **L1 (Phase 1) — SHIPPED.** `when()` (commit `41bb96c`) and `loop(N){body}` (commit `9776ded`): `SKIP_IF_ZERO`/`SKIP_IF_NONZERO`/`LOOP_STATIC` opcodes + Akkado surface.
 > - **L2 (Phase 2) — PARTIAL.** Shipped: the `#inline` annotation (lexer `#` token + statement-position parsing), recursion rejection (E240/E244/E246/E249), and the `BLOCK_CALL`/`RET` opcode reservations (compile-time-expansion markers; the VM hard-errors if one is reached). **Deferred to L3:** the `Subprogram` side-table and the `expand_block_calls()` machinery — under the chosen compile-time-expansion model the table has no L2 consumer and is not the runtime-resident shape L3's `FOREACH_EVENT` needs, so it is co-designed with L3.
-> - **L3 (Phase 3) — PARTIAL.** Shipped: the `FOREACH_EVENT` opcode + the runtime-resident **Subprogram table** (`ProgramSlot::blocks[]` + the block-aware load handshake), the **bit-exact POLY migration** (`poly()`/`mono()`/`legato()` now emit `FOREACH_EVENT(VOICE_POOL)` + a subprogram block; all existing POLY tests pass byte-identical; the legacy `POLY_BEGIN`/`POLY_END` path is retained behind the `legacy_poly` compiler option), the PER_ITERATION + SHARED VM allocators, and the `each_voice()` higher-order operator (PER_ITERATION). **Deferred:** `each()`/`fold()` surface (the SHARED allocator ships as ready substrate with no surface yet — same posture as L2's reserved `BLOCK_CALL`); full event-record lambda parameters (`n.freq` — v1 binds the lambda parameter to the per-event frequency signal); the serialized `CEDR` bytecode wire format (no active runtime consumer — see §8).
+> - **L3 (Phase 3) — SHIPPED.** The `FOREACH_EVENT` opcode + the runtime-resident **Subprogram table** (`ProgramSlot::blocks[]` + the block-aware load handshake); the **bit-exact POLY migration** (`poly()`/`mono()`/`legato()` now emit `FOREACH_EVENT(VOICE_POOL)` + a subprogram block; all existing POLY tests pass byte-identical; the legacy `POLY_BEGIN`/`POLY_END` path is retained behind the `legacy_poly` compiler option); all three VM allocators (VOICE_POOL / PER_ITERATION / SHARED); and the full higher-order DSL surface — `each_voice()` and `each()` (PER_ITERATION) plus the event-stream accumulator (SHARED). **Naming + scope deviations from the original §7.5 spec:** the accumulator operator ships as **`reduce()`**, not `fold()` — `fold` was already the wavefolder distortion builtin; `reduce()` was already the compile-time array-reduce builtin, so it is now **polymorphic** (array operand → compile-time unroll; pattern operand → `FOREACH_EVENT(SHARED)`), with arg order `reduce(coll, fn, init)`. The per-event lambda parameter **is** a full event record — `n.freq`/`n.vel`/`n.dur`/`n.note`/`n.chance`/`n.time` map to convention slots, and `n.gate`/`n.trig` are synthesized per-iteration from event timing (`E408` for fields the event model cannot supply). `reduce()` accepts a runtime-signal seed and is re-seeded per block. **Deferred:** the serialized `CEDR` bytecode wire format (no active runtime consumer — see §8).
 >
 > Source: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
 
@@ -519,16 +519,18 @@ freqs.each(f => osc("sin", f) * 0.25) |> out(@)
 ```akkado
 // each_voice: per-event UGen instantiation; mixed output of all per-event signals
 n"c4 e4 g4" as notes
-notes.each_voice(n => osc("sin", n.freq) * 0.5) |> out(@)
+notes.each_voice((n) -> osc("sin", n.freq) * 0.5) |> out(@)
 
 // each: side-effecting, no return aggregation (each iteration calls out() itself)
-notes.each(n => osc("sin", n.freq) |> out(@))
+notes.each((n) -> osc("sin", n.freq) |> out(@))
 
-// fold: shared accumulator
-notes.fold(0.0, (acc, n) => acc + n.freq)
+// reduce: shared accumulator (arg order reduce(coll, fn, init))
+notes.reduce((acc, n) -> acc + n.freq, 0.0)
 ```
 
 Lambda parameter names map to convention slots; record field access (`n.freq`) maps to the per-iteration field-slot indices.
+
+> **Shipped naming (2026-05-20).** The accumulator operator shipped as **`reduce`**, not `fold` (taken by the wavefolder distortion). `reduce` was itself the existing compile-time array-reduce builtin, so it is now polymorphic on operand type and keeps that builtin's `reduce(coll, fn, init)` arg order — `fn` before `init`, not the `(input, seed, lambda)` order sketched above. Akkado lambdas use `->`, not `=>`.
 
 > **Naming note.** `each_voice` is the per-event signal-mixer. `map`, in this codebase, belongs to the companion `prd-runtime-event-transforms.md` and means per-event *field rewrite* (closure returns a record). See §13 for the rationale. Picking distinct names avoids two PRDs claiming the same `.map(...)` surface.
 
@@ -735,13 +737,15 @@ Three independent PRs. Each one is shippable on its own.
 > `SHARED`), and the `each_voice()` higher-order operator. The legacy
 > `POLY_BEGIN`/`POLY_END` path is retained behind the `legacy_poly`
 > `CompilerOptions` flag (the rollback knob — replaces the PRD's `--legacy-poly`
-> CLI flag; no CLI surface was wired). **Deferred:** `each()`/`fold()` surface
-> (the `SHARED` allocator + `ForeachSharedState` ship as ready substrate with
-> no Akkado surface yet); `BlockRef` as a formal value type (the higher-order
-> handlers reuse the existing `FunctionRef`/closure path); full event-record
-> lambda parameters — v1 binds the `each_voice` lambda parameter to the
-> per-event frequency *signal*, so the PRD's `(n) -> osc("sin", n.freq)` is
-> written `(v) -> osc("sin", v)` in v1.
+> CLI flag; no CLI surface was wired). **Follow-up (2026-05-20, completing L3):**
+> the `each()` and `reduce()` surfaces shipped — `each()` is the PER_ITERATION
+> sink, `reduce()` (named so to avoid the `fold` wavefolder collision) is the
+> SHARED accumulator, made polymorphic with the pre-existing array-reduce
+> builtin. Event-record lambda parameters shipped: the per-event parameter is a
+> full record (`n.freq`/`n.vel`/`n.gate`/`n.trig`/…) — `gate`/`trig` synthesized
+> per-iteration from event timing. `BlockRef` as a formal value type is **not**
+> built — the higher-order handlers reuse the existing `FunctionRef`/closure
+> path, which proved sufficient.
 
 **Scope:**
 - New opcode: `FOREACH_EVENT` with three allocator kinds (`VOICE_POOL`, `PER_ITERATION`, `SHARED`).

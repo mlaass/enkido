@@ -767,11 +767,19 @@ private:
     /// instructions execute. Defined in codegen_control_flow.cpp.
     TypedValue handle_when_call(NodeIndex node, const Node& n);
 
-    /// Handle each_voice(input, lambda) — higher-order per-event instrument
-    /// (PRD prd-runtime-functions-control-flow L3 §4.3.3). Emits a
-    /// FOREACH_EVENT(PER_ITERATION) + subprogram block body. Defined in
+    /// Higher-order DSL handlers (PRD prd-runtime-functions-control-flow L3
+    /// §4.3.3/§7.5). `each_voice` mixes per-event signals (PER_ITERATION),
+    /// `each` is a side-effecting sink (PER_ITERATION, no mix). The event-
+    /// stream accumulator is `reduce()` over a pattern operand — handled by
+    /// the polymorphic handle_reduce_call (codegen_arrays.cpp), which routes
+    /// pattern operands here via emit_foreach. Defined in
     /// codegen_higher_order.cpp.
     TypedValue handle_each_voice_call(NodeIndex node, const Node& n);
+    TypedValue handle_each_call(NodeIndex node, const Node& n);
+
+    /// Shared FOREACH_EVENT codegen core for the higher-order handlers.
+    /// `kind`: 0=each_voice, 1=each, 2=reduce (event-stream accumulator).
+    TypedValue emit_foreach(NodeIndex node, const Node& n, int kind);
 
     // ============================================================================
     // Stereo handlers

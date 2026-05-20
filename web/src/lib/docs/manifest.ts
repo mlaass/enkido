@@ -300,7 +300,7 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		},
 		{
 			"slug": "higher-order-dsl",
-			"title": "Higher-Order DSL — each_voice"
+			"title": "Higher-Order DSL — each_voice, each, reduce"
 		}
 	]
 };
@@ -494,17 +494,28 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 	"each_voice": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
+	},
+	"each": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice, each, reduce"
+	},
+	"reduce": {
+		"slug": "arrays",
+		"category": "language",
+		"title": "reduce",
+		"anchor": "reduce"
 	},
 	"higher-order": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"foreach": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"poly": {
 		"slug": "polyphony",
@@ -515,17 +526,17 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 	"event": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"lambda": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"per-event": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"instrument": {
 		"slug": "soundfonts",
@@ -536,7 +547,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 	"foreach_event": {
 		"slug": "higher-order-dsl",
 		"category": "concepts",
-		"title": "Higher-Order DSL — each_voice"
+		"title": "Higher-Order DSL — each_voice, each, reduce"
+	},
+	"accumulator": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice, each, reduce"
 	},
 	"fn": {
 		"slug": "functions-and-inline",
@@ -2025,12 +2041,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "map",
 		"anchor": "map"
 	},
-	"reduce": {
-		"slug": "arrays",
-		"category": "language",
-		"title": "reduce",
-		"anchor": "reduce"
-	},
 	"zipwith": {
 		"slug": "arrays",
 		"category": "language",
@@ -3327,11 +3337,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "counter",
 		"anchor": "counter"
 	},
-	"accumulator": {
-		"slug": "state",
-		"category": "builtins",
-		"title": "State Cells"
-	},
 	"store": {
 		"slug": "state",
 		"category": "builtins",
@@ -3744,7 +3749,7 @@ export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
-	"higher-order-dsl": "runs an instrument lambda once per pattern event and mixes every iteration's output. It is the higher-order generalization of : where  takes a...",
+	"higher-order-dsl": "Three operators run a lambda once per pattern event. They are the higher-order generalization of : where  takes a fixed 3-argument instrument...",
 	"functions-and-inline": "A user  groups a reusable chunk of signal graph behind a name:",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",

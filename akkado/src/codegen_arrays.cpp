@@ -513,8 +513,19 @@ TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
 TypedValue CodeGenerator::handle_reduce_call(NodeIndex node, const Node& n) {
     auto args = extract_call_args(ast_->arena, n.first_child, 3);
     if (!args.valid) {
-        error("E142", "reduce() requires 3 arguments: reduce(array, fn, init)", n.location);
+        error("E142", "reduce() requires 3 arguments: reduce(coll, fn, init)", n.location);
         return TypedValue::void_val();
+    }
+
+    // Polymorphic on operand (PRD prd-runtime-functions-control-flow L3 §7.5):
+    // a pattern / MIDI event stream reduces at runtime via
+    // FOREACH_EVENT(SHARED); an array reduces by compile-time unrolling below.
+    {
+        TypedValue operand = visit(args.nodes[0]);
+        if (operand.pattern ||
+            (operand.type == ValueType::EventSource && operand.event_source)) {
+            return emit_foreach(node, n, 2);
+        }
     }
 
     auto func_ref = resolve_function_arg(args.nodes[1]);

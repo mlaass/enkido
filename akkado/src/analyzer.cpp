@@ -1820,6 +1820,39 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 validate_arguments(func_name, sym->builtin, arg_count, n.location);
             }
         }
+
+        // PRD L3: each_voice/each/reduce take a lambda whose last parameter is
+        // the per-event record. Register that parameter so the Closure handler
+        // defines it record-capable (n.freq / n.gate / ... pass the E061
+        // non-record check).
+        if (func_name == "each_voice" || func_name == "each" ||
+            func_name == "reduce") {
+            for (NodeIndex arg = output_arena_[node].first_child;
+                 arg != NULL_NODE; arg = output_arena_[arg].next_sibling) {
+                NodeIndex inner = arg;
+                if (output_arena_[inner].type == NodeType::Argument) {
+                    inner = output_arena_[inner].first_child;
+                }
+                if (inner == NULL_NODE ||
+                    output_arena_[inner].type != NodeType::Closure) {
+                    continue;
+                }
+                std::string last_param;
+                for (NodeIndex c = output_arena_[inner].first_child;
+                     c != NULL_NODE; c = output_arena_[c].next_sibling) {
+                    const Node& cn = output_arena_[c];
+                    if (cn.type != NodeType::Identifier) break;  // body node
+                    if (std::holds_alternative<Node::ClosureParamData>(cn.data)) {
+                        last_param = cn.as_closure_param().name;
+                    } else if (std::holds_alternative<Node::IdentifierData>(cn.data)) {
+                        last_param = cn.as_identifier();
+                    }
+                }
+                if (!last_param.empty()) {
+                    foreach_record_param_[inner] = last_param;
+                }
+            }
+        }
     }
 
     if (n.type == NodeType::MatchExpr) {
@@ -2218,8 +2251,17 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                     break;
                 }
                 params.insert(param_name);
-                // Define parameter in current scope
-                symbols_.define_variable(param_name, 0xFFFF);
+                // Define parameter in current scope. each_voice/each/reduce
+                // lambdas get their event-record parameter defined as a
+                // Parameter so `n.freq`-style field access skips E061
+                // (PRD prd-runtime-functions-control-flow L3).
+                auto rec_it = foreach_record_param_.find(node);
+                if (rec_it != foreach_record_param_.end() &&
+                    rec_it->second == param_name) {
+                    symbols_.define_parameter(param_name, 0xFFFF);
+                } else {
+                    symbols_.define_variable(param_name, 0xFFFF);
+                }
             } else {
                 // This is the body
                 body = child;
