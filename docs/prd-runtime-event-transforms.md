@@ -23,7 +23,7 @@ This PRD specifies a **rework into runtime event-stream transforms**: every modi
 
 ## 0. Hard Dependency: Runtime Closure Infrastructure (separate PRD)
 
-Cedar today has **no runtime function dispatch** — no CALL/RET opcodes, no first-class function values, no closure objects in the state pool. Akkado closures (`(e) -> ...`) only exist as compile-time AST nodes; they get inlined at every call site via `handle_user_function_call` (`akkado/src/codegen_functions.cpp:69-300`).
+Cedar today has **no runtime function dispatch** — no CALL/RET opcodes, no first-class function values, no closure objects in the state pool. Akkado closures (`(e) -> ...`) only exist as compile-time AST nodes; they get inlined at every call site via `handle_user_function_call` (`akkado/src/codegen_functions.cpp:69-733`).
 
 The clean `event_map(events, (e) -> ...)` design depends on **first-class runtime closures** existing in Cedar. [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md) owns this work and must land first — its §13 explicitly identifies itself as this PRD's closure-infrastructure dependency and maps `Closure` → `BlockRef`, `INVOKE_CLOSURE` → `BLOCK_CALL` / `FOREACH_EVENT`. That PRD is currently in `DRAFT` status; it must be promoted to implementation-ready (its open questions are implementation-time, not design-blocking) and its L1→L3 phases shipped before this PRD's Phase 2. It needs to deliver, at minimum:
 
@@ -332,7 +332,7 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 - `akkado/include/akkado/builtins.hpp:1291-1383` — replace handler bindings for all listed modifiers.
 - `akkado/src/codegen_patterns.cpp` — delete handlers for the modifiers in §5; some become small shims emitting `EVENT_*` opcodes; most disappear in favour of stdlib akkado.
 - `akkado/include/akkado/typed_value.hpp:50-120` — `PatternPayload` extensions (Phase A); unify to `EventStreamPayload` (Phase B).
-- `akkado/src/codegen_functions.cpp:69-300` — interplay with closure handling (depends on §0 work).
+- `akkado/src/codegen_functions.cpp:69-733` — interplay with closure handling (depends on §0 work).
 - `akkado/stdlib/event_transforms.ak` — **NEW** file: stdlib redefinitions of property modifiers.
 
 **Web / docs:**

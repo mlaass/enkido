@@ -1,4 +1,4 @@
-> **Status: DRAFT** — Brainstorm-converged design (2026-05-17). Not yet implementation-ready; PRs should split L1 → L2 → L3 as three independent rollouts. Source for this draft: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
+> **Status: NOT STARTED** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20 (factual claims validated against the codebase; error codes, line numbers, and the bytecode-model section fixed). Design is converged and the open questions are implementation-time, not design-blocking — implementation simply has not begun. PRs should split L1 → L2 → L3 as three independent rollouts. Source: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
 
 # Cedar Runtime Functions, Callable Blocks & Control Flow PRD
 
@@ -38,17 +38,17 @@ The brainstorm exploration confirmed:
 | Sample-level signal mux | `SELECT(cond, a, b)` (both branches always execute) | `cedar/include/cedar/opcodes/logic.hpp:20` |
 | Comparators + logic | `CMP_GT/LT/GTE/LTE/EQ/NEQ`, `LOGIC_AND/OR/NOT` | `cedar/include/cedar/vm/instruction.hpp` (opcodes 141–149) |
 | Compile-time mode dispatch | `inst.rate` baked once (LFO shape, EDGE_OP mode, CLOCK mode, INTERP_TIME mode, ARRAY_INDEX wrap/clamp) | `cedar/include/cedar/opcodes/{edge_op,state_op,sequencing,utility,arrays}.hpp` |
-| Special-case "subroutine" | `POLY_BEGIN { body } POLY_END` — VM has `execute_poly_block()` that re-runs the inlined body once per active voice | `cedar/src/vm/vm.cpp:280-507`, `akkado/src/codegen_functions.cpp:1992-2285` |
+| Special-case "subroutine" | `POLY_BEGIN { body } POLY_END` — VM has `execute_poly_block()` that re-runs the inlined body once per active voice | `cedar/src/vm/vm.cpp:323-595`, `akkado/src/codegen_functions.cpp:1992-2285` |
 | User-defined functions | Parsed by Akkado, **fully inlined** at every call site (see [prd-advanced-functions.md](prd-advanced-functions.md) — explicitly preserves "no runtime function objects, no new VM opcodes") | `akkado/src/codegen.cpp`, `akkado/src/codegen_functions.cpp` |
 | Conditional logic | Sample-rate signal selection only — the [conditionals PRD](prd-conditionals-logic.md) is **DONE** (opcodes 140–149 shipped: `SELECT`, `CMP_*`, `LOGIC_*`; infix syntax + `select()` builtin) | This PRD adds **block-rate conditional bypass** (`when()`), which is *not* the same as the "compile-time if/else statements" that PRD listed in Future Work — it's orthogonal. See §7.3 for the relationship |
 | State pool | Fixed 512-slot open-addressing table, FNV-1a hashed semantic IDs, pre-allocated based on compiled graph | `cedar/include/cedar/dsp/constants.hpp` (`MAX_STATES = 512`), `cedar/include/cedar/vm/state_pool.hpp` |
-| VM dispatch loop | Flat `while (ip < program.size())` for-loop; the only branch is `POLY_BEGIN` → `execute_poly_block()` returns next ip | `cedar/src/vm/vm.cpp:259-278` |
+| VM dispatch loop | Flat `while (ip < program.size())` for-loop; the only branch is `POLY_BEGIN` → `execute_poly_block()` returns next ip | `cedar/src/vm/vm.cpp:313-322` |
 
 ### 1.2 Concrete Limitations
 
 | User wants… | Today's workaround | Cost |
 |---|---|---|
-| A reusable `fn` called from N sites | Per-site re-inlining | Bytecode and i-cache pressure grow linearly with N; state slot count multiplies; large patches blow past `MAX_STATES = 256` |
+| A reusable `fn` called from N sites | Per-site re-inlining | Bytecode and i-cache pressure grow linearly with N; state slot count multiplies; large patches blow past `MAX_STATES = 512` |
 | Bypass an effect chain when a toggle is off | `SELECT(toggle, sig * 0, sig \|> reverb(@))` | The reverb runs every block regardless; CPU not saved |
 | Tree-like / nested allpass / fractal feedback | Manually unroll, copy-paste body | Unreadable; state slot count explodes; depth must be statically chosen by hand |
 | `notes.each_voice(n => osc("sin", n.freq))` over a runtime event stream | Manually expand into a fixed-size POLY block | API doesn't compose with arbitrary higher-order operators |
@@ -73,7 +73,7 @@ The brainstorm exploration confirmed:
 
 ### Non-Goals
 
-- **True recursion.** Rejected at compile time in v1 with `E2XX: recursive fn '<name>' not supported — see follow-up PRD`. Compile-time-unrolled recursion (`#max_depth(N)`) is a deliberate follow-up.
+- **True recursion.** Rejected at compile time in v1 with `E240: recursive fn '<name>' not supported — see follow-up PRD`. Compile-time-unrolled recursion (`#max_depth(N)`) is a deliberate follow-up.
 - **Frame-relative addressing.** Defer until a use case can't be served by swap-time expansion or convention slots. (Sketched in §5.3 as the "if we ever need it" option.)
 - **First-class fn values escaping the compile unit.** Block-refs in v1 are restricted: capture-only-by-buffer-index-and-constant, consumed by stdlib higher-order operators, do not survive across hot-swap as values.
 - **Backward JMP / arbitrary control flow.** Forward skips only. No cycles in the instruction stream.
@@ -85,8 +85,8 @@ The brainstorm exploration confirmed:
 
 | Subsystem | Stays the same | Changes |
 |---|---|---|
-| VM dispatch loop (`vm.cpp:259-278`) | Flat `while (ip < program.size())` for-loop | Adds skip-handling for `SKIP_IF_*` and `LOOP_STATIC`; adds `BLOCK_CALL` (pre-expansion only; post-swap the audio path sees zero) and `FOREACH_EVENT` dispatch into subprogram table |
-| `execute_poly_block()` (`vm.cpp:280-507`) | Algorithm (voice allocation, per-voice body re-execution, voice mixing) | Renamed to `execute_foreach_event()` with `VOICE_POOL` allocator branch; `PER_ITERATION` and `SHARED` branches added |
+| VM dispatch loop (`vm.cpp:313-322`) | Flat `while (ip < program.size())` for-loop | Adds skip-handling for `SKIP_IF_*` and `LOOP_STATIC`; adds `BLOCK_CALL` (pre-expansion only; post-swap the audio path sees zero) and `FOREACH_EVENT` dispatch into subprogram table |
+| `execute_poly_block()` (`vm.cpp:323-595`) | Algorithm (voice allocation, per-voice body re-execution, voice mixing) | Renamed to `execute_foreach_event()` with `VOICE_POOL` allocator branch; `PER_ITERATION` and `SHARED` branches added |
 | State pool (`state_pool.hpp`) | Fixed-size open-addressing table, FNV-1a hashed semantic IDs, pre-allocated at swap-prepare | No structural change; `MAX_STATES` re-audited (currently 512) |
 | Path-hash scheme (`codegen.hpp:354-355`, `codegen.cpp`) | `push_path()`/`pop_path()` mechanism, FNV-1a hash, `funcname#N` per-call counter | Adds `block:<name>@callsite_<N>` component for `BLOCK_CALL` sites; adds `foreach:<name>@callsite_<N>/iter_<voice_slot>` for `FOREACH_EVENT` iterations |
 | Triple-buffer hot-swap + micro-crossfade ([cedar-vm-hot-swap-implementation.md](cedar-vm-hot-swap-implementation.md)) | Atomic pointer swap at block boundaries, semantic-ID rebinding, 5–10ms crossfade | Unchanged — block bodies hash into the same path scheme |
@@ -106,7 +106,7 @@ The brainstorm exploration confirmed:
 
 The unifying insight: **`POLY_BEGIN` is already a de-facto subroutine call.**
 
-Today's encoding (`cedar/src/vm/vm.cpp:259-278`):
+Today's encoding (`cedar/src/vm/vm.cpp:313-322`):
 
 ```
 [POLY_BEGIN rate=body_len, state_id=X]   ← header marker; body_len = compile-time-known
@@ -118,7 +118,7 @@ Today's encoding (`cedar/src/vm/vm.cpp:259-278`):
 [next op]                                 ← VM resumes here after voice loop completes
 ```
 
-`execute_poly_block(program, ip)` (`vm.cpp:280-507`) is structurally:
+`execute_poly_block(program, ip)` (`vm.cpp:323-595`) is structurally:
 
 ```
 1. read event source (SequenceState or MidiQueueState) via state_id_X
@@ -204,10 +204,25 @@ The non-trivial cases need committed semantics, not just docs caveats:
 
 **Bytecode model additions:**
 
+> **Codebase note.** There is no `struct Bytecode` today. The runtime program
+> form is `ProgramSlot` (`cedar/include/cedar/vm/program_slot.hpp`) — a
+> cache-line-aligned struct holding a **fixed** `std::array<Instruction,
+> MAX_PROGRAM_SIZE>` plus a `std::array<std::uint32_t, MAX_STATES>` of state
+> IDs, loaded via `ProgramSlot::load(std::span<const Instruction>)` from a flat
+> instruction span. There is no header, no magic bytes, and no side-table in
+> the current format. The struct below is therefore a **proposed new wire-format
+> type**, not an extension of something existing — the `// existing` notes mean
+> "conceptually present today as the flat instruction stream / state-init list",
+> not "a field on an existing `Bytecode` struct". How a variable-length
+> `Subprogram` side-table coexists with the fixed-array `ProgramSlot` runtime
+> model is an open design question — see §11.
+
 ```cpp
+// PROPOSED — new type. Today's equivalent is the flat instruction span
+// consumed by ProgramSlot::load() (program_slot.hpp).
 struct Bytecode {
-    std::vector<Instruction> main;        // existing
-    std::vector<StateInit>   state_inits; // existing
+    std::vector<Instruction> main;        // today: the flat instruction span
+    std::vector<StateInit>   state_inits; // today: the state-init list
     // NEW:
     std::vector<Subprogram>  blocks;      // side-table of callable blocks
 };
@@ -311,6 +326,22 @@ VM execution (audio path, but allocator state pre-sized at swap time):
 4. Mix all iteration outputs into the FOREACH_EVENT's output buffer.
 ```
 
+**Overflow behavior when live events exceed `max_iterations`** — committed
+semantics, matching today's POLY allocator (`PolyAllocState::allocate_voice`,
+`cedar/include/cedar/opcodes/dsp_state.hpp:541` — "Find first inactive voice …
+No voice stealing — return nullptr if all busy"):
+
+| Allocator | When the pool/arena is full | Rationale |
+|---|---|---|
+| `VOICE_POOL` | **Drop the new gate-on event** — no voice stealing in v1. The note simply does not sound. Bit-exact with POLY today. | Voice stealing is a deliberate v1 non-goal; it would change POLY behavior, violating the bit-exactness gate. A stealing policy can be a follow-up. |
+| `PER_ITERATION` | **Drop events beyond the `max_iterations` cap** for that block; process the first `max_iterations`. | Arena is pre-sized at swap time; runtime growth is a non-goal (§12). |
+| `SHARED` | N/A — single slot, no overflow possible. | — |
+
+Dropped events are silent (no error, no diagnostic). `max_iterations` is sized
+generously at swap-prepare time from the upstream pattern/voice cap; overflow
+is an edge case, not an expected path. A future PRD may add a voice-stealing
+policy for `VOICE_POOL`.
+
 **Addressing strategy: convention slots** (the POLY exception to L2's swap-time expansion). The block body reads its inputs from fixed param-buffer indices — exactly as POLY does today with its 5-slot scheme. No swap-time expansion; true dispatch into the subprogram table.
 
 **Why convention slots here?**
@@ -332,7 +363,7 @@ poly(input_events, instrument, max_voices=8)
 //        + Subprogram entry for `instrument` body
 ```
 
-`POLY_BEGIN` and `POLY_END` opcodes are removed (or kept as no-op aliases for one release cycle for old saved bytecode — TBD in §10 rollout). The `execute_poly_block()` function in `vm.cpp:280-507` is refactored into `execute_foreach_event()` with the `VOICE_POOL` allocator branch reproducing its exact behavior.
+`POLY_BEGIN` and `POLY_END` opcodes are removed (or kept as no-op aliases for one release cycle for old saved bytecode — TBD in §10 rollout). The `execute_poly_block()` function in `vm.cpp:323-595` is refactored into `execute_foreach_event()` with the `VOICE_POOL` allocator branch reproducing its exact behavior.
 
 **Bit-exactness criterion:** every existing test in `akkado/tests/` that touches POLY must pass unchanged. This is enforced as gate-1 of L3 merge.
 
@@ -517,7 +548,7 @@ A `#` token followed by an identifier at statement position parses as an *annota
 sig |> loop(4) { @ |> allpass(@, 800, 0.7) } |> out(@)
 ```
 
-The count argument must be a **compile-time constant**: an integer literal, or a `let`-bound name whose initializer constant-folds to an integer. For v1, "constant-folds" means: integer literal, arithmetic on integer literals, or another `loop`-eligible name. A small compile-time evaluator (already implicit in mini-notation pre-processing) is extended to handle these cases. Non-foldable RHS produces `E211` (see §7.6).
+The count argument must be a **compile-time constant**: an integer literal, or a `let`-bound name whose initializer constant-folds to an integer. For v1, "constant-folds" means: integer literal, arithmetic on integer literals, or another `loop`-eligible name. A small compile-time evaluator (already implicit in mini-notation pre-processing) is extended to handle these cases. Non-foldable RHS produces `E251` (see §7.7).
 
 **`when(cond, true_branch, false_branch)` builtin:**
 
@@ -525,26 +556,38 @@ The count argument must be a **compile-time constant**: an integer literal, or a
 
 ### 7.7 Compile-Time Errors
 
-Codes are picked in the E200-block to avoid collision with `prd-runtime-event-transforms.md` (E170-E182).
+Codes use the **E240–E251** block. This range is confirmed free against both
+shipped akkado codes (which run through E232 — `E200`–`E205` and `E230`–`E232`
+are **already in use**, so the originally-drafted E200-block collided) and the
+`E170`–`E182` block reserved by `prd-runtime-event-transforms.md`.
 
 | Code | Trigger | Message |
 |---|---|---|
-| `E200` | Recursive `fn` definition (`fn foo() -> foo()`) | "recursive fn '<name>' not supported in v1 — see follow-up PRD" |
-| `E201` | Block-ref captured into a record field or returned from a fn (escapes compile unit) | "block-ref values cannot escape the compile unit in v1" |
-| `E202` | `each_voice`/`each`/`fold` applied to a non-event-stream operand | "each_voice/each/fold operand must be a pattern, MIDI input, or array literal" |
-| `E203` | `loop()` (lowering to `LOOP_STATIC`) with non-constant count | "loop count must be a compile-time constant (integer literal or const-folded name)" |
-| `E204` | `#inline` on a recursive fn | (same as E200) |
-| `E205` | `BLOCK_CALL` body exceeds expansion size limit (configurable; default 1024 instructions per expanded body) | "expanded fn body exceeds N instructions — add #inline or split" |
-| `E206` | `#inline` annotation applied to anything that isn't a `fn` declaration | "#inline must precede a `fn` declaration" |
-| `E207` | `when()` branches have mismatched output arity (one returns 1 channel, the other returns 2) | "when() branches must have matching output channel count" |
-| `E208` | `BLOCK_BIND` slot index ≥ `frame.param_count` for the target block | "slot index N is beyond the target block's parameter count" |
-| `E209` | Unknown annotation (e.g., `#unknown_name`) | "unknown annotation '#<name>' — see docs for supported annotations" |
-| `E210` | `#max_depth(N)` on a non-recursive fn (placeholder for the recursion follow-up; rejected in v1) | "#max_depth annotation reserved for future recursion support" |
-| `E211` | `loop()` count is a non-foldable expression (e.g., references a runtime signal) | "loop count must constant-fold to an integer" |
+| `E240` | Recursive `fn` definition (`fn foo() -> foo()`) | "recursive fn '<name>' not supported in v1 — see follow-up PRD" |
+| `E241` | Block-ref captured into a record field or returned from a fn (escapes compile unit) | "block-ref values cannot escape the compile unit in v1" |
+| `E242` | `each_voice`/`each`/`fold` applied to a non-event-stream operand | "each_voice/each/fold operand must be a pattern, MIDI input, or array literal" |
+| `E243` | `loop()` (lowering to `LOOP_STATIC`) with non-constant count | "loop count must be a compile-time constant (integer literal or const-folded name)" |
+| `E244` | `#inline` on a recursive fn | (same as E240) |
+| `E245` | `BLOCK_CALL` body exceeds expansion size limit (configurable; default 1024 instructions per expanded body) | "expanded fn body exceeds N instructions — add #inline or split" |
+| `E246` | `#inline` annotation applied to anything that isn't a `fn` declaration | "#inline must precede a `fn` declaration" |
+| `E247` | `when()` branches have mismatched output arity (one returns 1 channel, the other returns 2) | "when() branches must have matching output channel count" |
+| `E248` | `BLOCK_BIND` slot index ≥ `frame.param_count` for the target block | "slot index N is beyond the target block's parameter count" |
+| `E249` | Unknown annotation (e.g., `#unknown_name`) | "unknown annotation '#<name>' — see docs for supported annotations" |
+| `E250` | `#max_depth(N)` on a non-recursive fn (placeholder for the recursion follow-up; rejected in v1) | "#max_depth annotation reserved for future recursion support" |
+| `E251` | `loop()` count is a non-foldable expression (e.g., references a runtime signal) | "loop count must constant-fold to an integer" |
 
 ---
 
 ## 8. Bytecode Layout (Wire Format)
+
+> **Codebase note.** There is **no serialized bytecode wire format today** — no
+> `CEDR` magic, no header, no versioned container. Programs reach the VM as a
+> flat `std::span<const Instruction>` loaded into `ProgramSlot::load()`
+> (`program_slot.hpp`). The layout below is therefore an **entirely new
+> artifact** introduced by this PRD, not an extension of an existing format.
+> The whole `Header` + `Subprograms` container is net-new; treat this section
+> as a greenfield format design. Whoever implements it must also decide how
+> the runtime side consumes it (see §11 open question on `Subprogram` storage).
 
 ```
 Header
@@ -613,7 +656,9 @@ Three independent PRs. Each one is shippable on its own.
 - Compile error for recursive `fn` definitions.
 
 **Files touched:**
-- `cedar/include/cedar/vm/instruction.hpp`, `cedar/include/cedar/vm/bytecode.hpp` — opcode + bytecode format
+- `cedar/include/cedar/vm/instruction.hpp` — opcode enum additions
+- `cedar/include/cedar/vm/bytecode.hpp` — **NEW** file: the serialized wire-format container of §8 (no `Bytecode` type or wire format exists today; see §4.2 / §8 codebase notes)
+- `cedar/include/cedar/vm/program_slot.hpp` — runtime `ProgramSlot`; needs a decision on how the `Subprogram` side-table is held at audio time (see §11)
 - `cedar/src/vm/swap_prepare.cpp` — NEW (or wherever bytecode handoff lives — needs investigation)
 - `akkado/src/codegen.cpp`, `akkado/src/codegen_functions.cpp` — fn-as-shared-block emission
 - `akkado/include/akkado/codegen.hpp` — extended path scheme
@@ -713,6 +758,7 @@ All of `cedar_tests`, `akkado_tests`, and `experiments/run_all.sh` must pass unc
 8. **CLI/web debug surface for subprogram tables.** Phase 2 needs `bytecode_dump.cpp` and the web UI to render both subprogram tables and expanded/unexpanded views. UX details TBD in Phase 2 design.
 9. **Where does `swap_prepare.cpp` live?** Investigate existing swap-prepare codepath during Phase 2 implementation; place new expansion pass next to it. May not need a new file.
 10. **L3 `map` over a literal array — codegen path.** Literal arrays today (`[220, 330, 440]`) — does the existing codegen produce an `ArrayState`, or does it need extension to support `FOREACH_EVENT(ARRAY)` source? Investigate in Phase 3.
+11. **Runtime storage of the `Subprogram` side-table.** The runtime program form, `ProgramSlot` (`program_slot.hpp`), is a cache-line-aligned struct holding a *fixed* `std::array<Instruction, MAX_PROGRAM_SIZE>` with no slot for a side-table. L2's swap-time expansion sidesteps this — `BLOCK_CALL` sites are inlined away, so the `blocks` table is not needed at audio time. But L3's `FOREACH_EVENT` dispatches into `bytecode.blocks[block_id]` *at audio time* and genuinely needs the bodies resident. Phase 3 must decide: a second fixed array on `ProgramSlot` for block-body instructions? A separately-loaded region? Does `MAX_PROGRAM_SIZE` absorb block bodies, or get a companion `MAX_BLOCK_PROGRAM_SIZE`? Resolve before Phase 3 design; it also drives how the §8 wire format is deserialized into the runtime structure.
 
 ---
 
@@ -766,7 +812,7 @@ The event-transforms PRD also needs to (a) drop its §0 from "hard external depe
 | [cedar-vm-hot-swap-implementation.md](cedar-vm-hot-swap-implementation.md) | Hot-swap mechanism that block state-IDs participate in |
 | [cedar-architecture.md](cedar-architecture.md) | Existing VM dispatch loop, state pool, DAG model |
 | [dsp-experiment-methodology.md](dsp-experiment-methodology.md) | 300-second long-render requirement |
-| `cedar/src/vm/vm.cpp:259-507` | Main dispatch loop + `execute_poly_block()` to be refactored |
+| `cedar/src/vm/vm.cpp:313-595` | Main dispatch loop + `execute_poly_block()` to be refactored |
 | `cedar/include/cedar/dsp/constants.hpp` | `MAX_STATES = 512` — bump candidate to 1024 if audit warrants |
 | `akkado/src/codegen_functions.cpp:1992-2285` | Current POLY codegen — port target |
 | `akkado/include/akkado/codegen.hpp:351` | Path-hash mechanism extended for blocks |
