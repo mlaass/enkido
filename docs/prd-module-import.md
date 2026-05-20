@@ -1,19 +1,77 @@
 # PRD: Module/Import System
 
-> **Status: Proposed** — Phase 1a in the [Language Evolution Vision](vision-language-evolution.md).
+> **Status: READY FOR IMPLEMENTATION** — Phase 1a in the
+> [Language Evolution Vision](vision-language-evolution.md). **Phase A
+> (direct injection) and Phase B (namespace imports) have SHIPPED**
+> (commits `c739f4f`, `d9b3d54`). The remaining work — Phase C (URI
+> resolver unification), Phase D (web virtual filesystem + multi-tab
+> editor), and the stdlib migration — is specified below and ready to
+> implement.
+
+## Status & Shipped Work
+
+The `import` statement is **live today**. Both forms compile and run:
+
+```akkado
+import "filters"           // direct injection
+import "effects" as fx     // namespaced
+```
+
+| Capability | State | Evidence |
+|------------|-------|----------|
+| `import` keyword + token | SHIPPED | `lexer.cpp:19`, `token.hpp:31` |
+| `ImportDecl` AST node | SHIPPED | `ast.hpp:85`, `ImportDeclData` at `ast.hpp:333` |
+| `FileResolver` / `FilesystemResolver` / `VirtualResolver` | SHIPPED | `file_resolver.{hpp,cpp}` |
+| Import scanner (recursive resolve, topo sort, cycle detection) | SHIPPED | `import_scanner.{hpp,cpp}` |
+| `SourceMap` (N-region diagnostic remapping) | SHIPPED | `source_map.{hpp,cpp}` |
+| `compile()` takes `const FileResolver*` | SHIPPED | `akkado.hpp:94` |
+| Namespace imports (`SymbolKind::Module`) | SHIPPED | `symbol_table.hpp:65`, analyzer |
+| Error codes `E500`–`E505` | SHIPPED | wired in `akkado.cpp` |
+| Tests | SHIPPED | `test_import.cpp`, `test_import_scanner.cpp`, `test_file_resolver.cpp`, `test_source_map.cpp` — 215 assertions, 36 cases, all passing |
+
+**Remaining (this PRD):**
+
+- **Phase C** — Unify import resolution onto `cedar::UriResolver` so
+  imports reuse the same scheme-handler machinery as samples, MIDI, and
+  soundfonts.
+- **Phase D** — Web virtual filesystem and multi-tab editor.
+- **Stdlib migration** — move `stdlib.hpp` content into auto-imported
+  `.ak` modules.
+
+The "Syntax", "File Resolution", and "Semantics" sections below describe
+the shipped language feature and remain the normative reference. The
+"Shipped: Phase A & B (as built)" section condenses the original
+implementation plan to a record of what exists. Implementers should
+focus on "Remaining Work" onward.
+
+---
 
 ## Overview
 
-Akkado's entire standard library is a 40-line `constexpr std::string_view` in `stdlib.hpp`, prepended to every user program before lexing. Diagnostic locations are adjusted with a two-region offset calculation (`adjust_diagnostics()` in `akkado.cpp`). This works but doesn't scale — there's no way to split the stdlib across files, and users can't organize multi-file projects.
+Before this work, Akkado's entire standard library was a single
+`constexpr std::string_view` (`STDLIB_SOURCE` in `stdlib.hpp`, ~115
+lines of `.ak` source) prepended to every user program before lexing,
+with diagnostic locations corrected by a two-region offset calculation.
+That pattern did not scale — there was no way to split the stdlib across
+files, and users could not organize multi-file projects.
 
-This PRD specifies a module/import system that generalizes the stdlib-prepend pattern into multi-file compilation. It is **compiler-only** — no Cedar VM changes required.
+This PRD specifies a module/import system that generalizes the
+stdlib-prepend pattern into multi-file compilation. It is
+**compiler-only** — no Cedar VM changes required.
 
 ### Motivation
 
-1. **Stdlib migration**: The ~40 aliases in `BUILTIN_ALIASES`, the `osc()` dispatcher, `multiband3fx()`, and future `const fn` generators (`linspace`, `harmonics`, tuning tables) should live in `.ak` files, not hardcoded C++ strings.
-2. **Multi-file user projects**: Users need to split large patches across files — e.g., `synths.ak`, `effects.ak`, `main.ak`.
-3. **Web virtual filesystem**: The web app needs an in-memory module system for multi-tab editing and bundled stdlib files.
-4. **Progressive migration**: The existing `stdlib.hpp` continues working during transition. Modules are adopted incrementally.
+1. **Stdlib migration**: `STDLIB_SOURCE` today holds `osc()`,
+   `multiband3fx()`, `beat()`, `unison()`, and `glide()`; the ~30
+   forwarding entries in `BUILTIN_ALIASES`; and future `const fn`
+   generators (`linspace`, `harmonics`, tuning tables) live as hardcoded
+   C++ special-cases. These should live in `.ak` files, not C++.
+2. **Multi-file user projects**: Users need to split large patches
+   across files — e.g., `synths.ak`, `effects.ak`, `main.ak`.
+3. **Web virtual filesystem**: The web app needs an in-memory module
+   system for multi-tab editing and bundled stdlib files.
+4. **Progressive migration**: The existing `stdlib.hpp` continues
+   working during transition. Modules are adopted incrementally.
 
 ### Non-Goals
 
@@ -36,7 +94,7 @@ import "filters" as f      // namespaced — access via f.lp(), f.hp()
 ### Rules
 
 - Imports must appear at the **top of file**, before any other statements
-- String argument is the module path (resolved by the FileResolver)
+- String argument is the module path (resolved by the resolver)
 - All top-level definitions in a module are implicitly exported — no `export` keyword
 - The `as` form binds a namespace identifier for qualified access
 
@@ -74,7 +132,7 @@ Resolution order for `import "path"`:
 1. **Relative prefix** (`./` or `../`) — resolve relative to the importing file's directory
 2. **Bare name** — search stdlib directory first, then resolve relative to importing file
 3. **Extension** — `.ak` auto-appended if the path has no extension
-4. **Deduplication** — if a module has already been resolved (by canonical path), skip it silently
+4. **Deduplication** — if a module has already been resolved (by canonical identity), skip it silently
 
 ### Examples
 
@@ -85,9 +143,9 @@ Resolution order for `import "path"`:
 | `import "../shared/fx"` | `/project/src/main.ak` | `/project/shared/fx.ak` |
 | `import "std/tuning"` | any | stdlib `std/tuning.ak` |
 
-### FileResolver Abstraction
+### Resolver Interface (as shipped)
 
-New file: `akkado/include/akkado/file_resolver.hpp`
+`akkado/include/akkado/file_resolver.hpp` defines:
 
 ```cpp
 class FileResolver {
@@ -95,31 +153,21 @@ public:
     virtual ~FileResolver() = default;
 
     /// Resolve an import path to a canonical path.
-    /// Returns nullopt if the module cannot be found.
-    /// @param import_path  The path string from the import statement
-    /// @param from_file    The canonical path of the importing file
     virtual std::optional<std::string> resolve(
         std::string_view import_path,
         std::string_view from_file) const = 0;
 
-    /// Read the contents of a resolved module.
-    /// @param canonical_path  Path returned by resolve()
+    /// Read the contents of a resolved (canonical) module path.
     virtual std::optional<std::string> read(
         std::string_view canonical_path) const = 0;
 };
 ```
 
-Two implementations:
-
-**`FilesystemResolver`** (CLI):
-- Constructor takes a list of search paths (stdlib dir + user-specified)
-- `resolve()` checks relative paths first, then search paths
-- `read()` reads from the filesystem via `std::ifstream`
-
-**`VirtualResolver`** (web):
-- Backed by `std::unordered_map<std::string, std::string>` (path -> source)
-- Modules registered via `register_module(path, source)` / `unregister_module(path)`
-- Stdlib `.ak` files pre-loaded at initialization
+Two implementations ship today: `FilesystemResolver` (CLI, `std::ifstream`
+over a search-path list) and `VirtualResolver` (in-memory
+`std::unordered_map<path, source>`, used by tests and intended for
+web/WASM). **Phase C retargets this onto `cedar::UriResolver`** — see
+"Remaining Work" below.
 
 ---
 
@@ -127,7 +175,9 @@ Two implementations:
 
 ### Direct Injection (`import "path"`)
 
-All top-level definitions from the imported module enter the importing file's global scope. This is the natural generalization of the current stdlib prepend — concatenation order determines shadowing.
+All top-level definitions from the imported module enter the importing
+file's global scope. This is the natural generalization of the current
+stdlib prepend — concatenation order determines shadowing.
 
 - If two modules define the same name, the later import wins (last-wins shadowing)
 - Local definitions shadow imported names
@@ -135,7 +185,8 @@ All top-level definitions from the imported module enter the importing file's gl
 
 ### Namespaced Import (`import "path" as alias`)
 
-Definitions from the imported module are only accessible via `alias.name`. They do not pollute the global scope.
+Definitions from the imported module are only accessible via
+`alias.name`. They do not pollute the global scope.
 
 ```akkado
 import "effects" as fx
@@ -149,7 +200,8 @@ osc("saw", 440) |> chorus(@, 0.5, 0.3)  // ERROR: undefined 'chorus'
 
 ### Circular Imports
 
-Detected during resolution. The import scanner builds a dependency graph and runs topological sort — a cycle produces a compile error:
+Detected during resolution. The import scanner builds a dependency graph
+and runs topological sort — a cycle produces a compile error:
 
 ```
 E500: Circular import detected: main.ak → utils.ak → helpers.ak → main.ak
@@ -159,308 +211,270 @@ E500: Circular import detected: main.ak → utils.ak → helpers.ak → main.ak
 
 If `A` imports `B` (direct injection) and `B` imports `C` (direct injection):
 - All three modules end up in the combined source (topologically sorted: `C`, then `B`, then `A`)
-- `C`'s names ARE visible in `A` — this is a natural consequence of the concatenation model
+- `C`'s names ARE visible in `A` — a natural consequence of the concatenation model
 - This matches the current stdlib behavior: stdlib definitions are visible everywhere
 
-This is the simplest model and the right default for a live-coding DSL — users shouldn't need to re-import transitive dependencies. If isolation is needed, use namespaced imports (Phase B): `B`'s namespace in `A` contains only `B`'s own top-level definitions, not `C`'s.
+This is the simplest model and the right default for a live-coding DSL —
+users shouldn't need to re-import transitive dependencies. If isolation
+is needed, use namespaced imports: `B`'s namespace in `A` contains only
+`B`'s own top-level definitions, not `C`'s.
 
 ### Import Order
 
-The import scanner resolves all imports recursively, then topologically sorts modules so that dependencies are concatenated before dependents. Within a single file's import list, order determines shadowing priority (later imports shadow earlier ones).
+The import scanner resolves all imports recursively, then topologically
+sorts modules so dependencies are concatenated before dependents. Within
+a single file's import list, order determines shadowing priority (later
+imports shadow earlier ones).
 
 ---
 
-## Implementation
+## Shipped: Phase A & B (as built)
 
-Three phases, each independently shippable.
+This section records the implemented design. The files exist and the
+tests pass; it is documented here for context, not as work to do.
 
-### Phase A: File Resolver + Direct Injection
+### Phase A — File Resolver + Direct Injection (commit `c739f4f`)
 
-Core work. Generalizes the stdlib-prepend pattern to N source files.
-
-#### New Files
-
-| File | Purpose |
-|------|---------|
-| `akkado/include/akkado/file_resolver.hpp` | `FileResolver` interface, `FilesystemResolver`, `VirtualResolver` |
-| `akkado/src/file_resolver.cpp` | Implementations |
-| `akkado/include/akkado/source_map.hpp` | N-region source mapping (replaces `adjust_diagnostics()`) |
-| `akkado/src/source_map.cpp` | Implementation |
-| `akkado/include/akkado/import_scanner.hpp` | Pre-parse import directives, recursive resolution, topological sort, cycle detection |
-| `akkado/src/import_scanner.cpp` | Implementation |
-
-#### Modified Files
-
-| File | Change |
-|------|--------|
-| `akkado/include/akkado/token.hpp` | Add `Import` token type (`As` already exists for pipe bindings, reused for `import ... as`) |
-| `akkado/src/lexer.cpp` | Add `"import"` to keyword map |
-| `akkado/include/akkado/ast.hpp` | Add `ImportDecl` node type + `ImportDeclData` |
-| `akkado/src/parser.cpp` | Parse import statements (before other statements) |
-| `akkado/include/akkado/akkado.hpp` | Add `FileResolver*` parameter to `compile()` |
-| `akkado/src/akkado.cpp` | Import resolution pre-pass; replace `adjust_diagnostics()` with SourceMap; concatenate stdlib + sorted modules + user source |
-| `tools/akkado-cli/main.cpp` | Create `FilesystemResolver`, pass to `compile()` |
-| `tools/nkido-cli/main.cpp` | Same |
-
-#### SourceMap Design
-
-The current `adjust_diagnostics()` handles two regions: stdlib and user code. The new `SourceMap` generalizes this to N regions:
-
-```cpp
-class SourceMap {
-public:
-    struct Region {
-        std::string filename;       // e.g., "filters.ak", "<stdlib>", "<web>"
-        std::size_t byte_offset;    // Start offset in combined source
-        std::size_t byte_length;    // Length of this region
-        std::size_t line_offset;    // Number of lines before this region
-    };
-
-    /// Add a region to the source map
-    void add_region(std::string filename, std::size_t byte_offset,
-                    std::size_t byte_length, std::size_t line_count);
-
-    /// Adjust a diagnostic's location from combined-source coordinates
-    /// back to the originating file's local coordinates.
-    /// Adjusts the diagnostic's primary location, all Related locations,
-    /// and the Fix location if present — matching the current
-    /// adjust_diagnostics() behavior.
-    void adjust(Diagnostic& diag) const;
-
-    /// Adjust all diagnostics in a vector
-    void adjust_all(std::vector<Diagnostic>& diagnostics) const;
-
-    /// Find which region contains a given byte offset
-    const Region* find_region(std::size_t byte_offset) const;
-};
-```
-
-Each region tracks where a module's source begins in the concatenated string and how many lines precede it. `adjust()` finds the containing region and subtracts the region's byte/line offsets — the same math as the current `adjust_diagnostics()`, but generalized.
-
-#### Import Scanner Design
-
-The import scanner runs **before** lexing. It does a lightweight pre-parse of the source to extract import directives, then recursively resolves them:
-
-```cpp
-struct ImportDirective {
-    std::string path;                   // The import path string
-    std::string alias;                  // Empty for direct injection
-    SourceLocation location;            // For error reporting
-};
-
-struct ResolvedModule {
-    std::string canonical_path;         // Unique identifier for deduplication
-    std::string source;                 // File contents
-    std::vector<ImportDirective> imports; // This module's own imports
-};
-
-struct ImportResult {
-    /// Modules in topological order (dependencies first)
-    std::vector<ResolvedModule> modules;
-    std::vector<Diagnostic> diagnostics;
-    bool success = true;
-};
-
-/// Scan source for import directives and recursively resolve them.
-/// Returns modules in dependency order (topologically sorted).
-ImportResult resolve_imports(
-    std::string_view source,
-    std::string_view filename,
-    const FileResolver& resolver);
-```
-
-The scanner:
-1. Scans the source for lines matching `import "..."` or `import "..." as ident` using lightweight line-based matching that skips `//` comment lines and only matches `import` as the first token on a non-comment line
-2. For each import, calls `resolver.resolve()` to get the canonical path and source
-3. Replaces import lines in each module's source with blank lines (preserving byte offsets and line counts for SourceMap accuracy) before the source is concatenated
-4. Recursively scans imported modules for their own imports
-5. Builds a dependency graph and runs topological sort (DFS post-order)
-6. Detects cycles and reports errors with the full cycle path
-
-The scanner uses lightweight line-based matching (not the full lexer) — it only needs to find `import` as the first token on a non-comment line followed by a string literal. This avoids bootstrapping issues with the lexer needing to know about imports.
-
-**Scanner vs. Parser roles**: The scanner (`import_scanner.hpp`) runs before lexing and handles all file resolution, cycle detection, topological sorting, and import line stripping. The `Import` token and `ImportDecl` AST node in the parser exist for **validation and future extensibility** (e.g., `import { a, b } from "path"`). In Phase A, the parser recognizes import syntax to produce clear errors like "import after code" (E501), but the scanner has already resolved and stripped the import lines. The parser emits `ImportDecl` nodes that codegen treats as no-ops.
-
-#### Compile Flow Change
-
-Current flow (`akkado.cpp:56-169`):
-
-```
-1. Prepend stdlib to user source
-2. Lex → Parse → Analyze → Codegen
-3. adjust_diagnostics() with stdlib offset
-```
-
-New flow:
+The compile pipeline (`akkado.cpp`) runs an import pre-pass before
+lexing:
 
 ```
 1. resolve_imports(source, filename, resolver)
       → topologically sorted modules + diagnostics
 2. Build combined source: stdlib + modules (dep order) + user source
 3. Build SourceMap with byte/line ranges per region
-4. Lex → Parse → Analyze → Codegen (unchanged)
-5. source_map.adjust_all(diagnostics)
-6. source_map.adjust source_locations and state_inits
+4. Lex → Parse → Analyze → Codegen (unchanged — they see one string)
+5. source_map.adjust_all(diagnostics) for each stage
+6. source_map.adjust_source_locations() / adjust_state_inits() /
+   adjust_viz_decls()
 ```
 
-The parser, analyzer, and codegen are untouched — they still see a single concatenated source string. The SourceMap replaces the manual `adjust_diagnostics()` calls.
+- **`import_scanner.{hpp,cpp}`** — lightweight line-based pre-parse for
+  `import` directives (skips `//` comments, matches `import` only as the
+  first token), recursive resolution via the `FileResolver`, dependency
+  graph, DFS post-order topological sort, cycle detection. Import lines
+  are replaced with blank lines to preserve byte/line offsets.
+- **`source_map.{hpp,cpp}`** — `SourceMap` generalizes the old
+  two-region `adjust_diagnostics()` to N regions. Each `Region` tracks
+  `{filename, byte_offset, byte_length, line_offset}`; `adjust()` maps a
+  diagnostic from combined-source coordinates back to its origin file,
+  including related locations and fixes. The analyzer and codegen both
+  receive the `SourceMap` (`analyzer.analyze(..., &source_map, ...)`,
+  `codegen.generate(..., &source_map)`).
+- **`Import` token / `ImportDecl` AST node** — the parser recognizes
+  import syntax to emit clear errors (`E501` "import after code"); the
+  scanner has already resolved and stripped import lines, so codegen
+  treats `ImportDecl` as a no-op. The nodes exist for validation and
+  future extensibility (e.g. selective imports).
+- **`compile()` API** — gained `const FileResolver* resolver = nullptr`.
+  When `nullptr`, an `import` produces `E505`. `compile_file()` builds a
+  default `FilesystemResolver` rooted at the file's parent directory.
 
-#### API Change
+### Phase B — Namespace Imports (commit `d9b3d54`)
 
-```cpp
-// Before
-CompileResult compile(std::string_view source,
-                     std::string_view filename = "<input>",
-                     SampleRegistry* sample_registry = nullptr);
+- `SymbolKind::Module` added to the symbol table. Symbols from a
+  namespaced module are marked hidden (skipped by normal lookup) and
+  carry their origin module; a `Module` symbol binds the alias.
+- Qualified access (`f.lp()`): when the LHS of a field access / method
+  call resolves to a `Module` symbol, the analyzer performs a
+  module-qualified lookup instead of dot-call desugaring. An unknown
+  member produces `E504`.
 
-// After
-CompileResult compile(std::string_view source,
-                     std::string_view filename = "<input>",
-                     SampleRegistry* sample_registry = nullptr,
-                     const FileResolver* resolver = nullptr);
-```
+### Hot-Swap Semantic ID Stability (shipped)
 
-When `resolver` is `nullptr`, imports are not supported (error if encountered). The existing `stdlib.hpp` prepend still works regardless — it's orthogonal to the import system.
+The `CodeGenerator` tracks `path_stack_` (`codegen.hpp:834`) to generate
+stable semantic IDs via FNV-1a hashing of the joined path. Stdlib
+modules use a stable `<stdlib>` prefix on `path_stack_`; user modules
+push their canonical path. Reordering imports does not change state IDs,
+because the module origin is part of the path rather than the
+concatenation position. The `SourceMap` lets codegen identify which
+region a top-level statement belongs to.
 
 ---
 
-### Phase B: Namespace Imports (`as` alias)
+## Remaining Work
 
-Depends on Phase A.
+Two phases plus the stdlib migration. Each is independently shippable.
 
-#### Symbol Table Changes
+### Phase C: URI Resolver Unification
 
-Add `SymbolKind::Module` and module-awareness fields:
+**Goal**: imports resolve through the same machinery as samples, MIDI,
+and soundfonts. Today those assets flow through `cedar::UriResolver` — a
+process-global, scheme-keyed dispatcher (`cedar/include/cedar/io/uri_resolver.hpp`)
+with handlers for `file`, `http`, `github`, and `bundled`. Import
+resolution should reuse it rather than maintain a parallel
+`FilesystemResolver` / `VirtualResolver` pair.
 
-```cpp
-enum class SymbolKind : std::uint8_t {
-    Variable,
-    Builtin,
-    Parameter,
-    UserFunction,
-    Pattern,
-    Array,
-    FunctionValue,
-    Record,
-    Module,          // NEW: namespace import
-};
+#### Why unify
 
-struct Symbol {
-    // ... existing fields ...
-    bool hidden = false;                // NEW: true for namespaced-import definitions
-    std::string origin_module;          // NEW: module path this symbol came from
-};
-```
+- One asset-loading code path for the whole project (the
+  [unified-resolver plan](vision-language-evolution.md) goal).
+- Imports gain scheme support for free: `import "github://user/repo/fx"`,
+  `import "bundled://std/filters"`.
+- The web app already mirrors `UriResolver` in TypeScript
+  (`web/src/lib/io/uri-resolver.ts`) — imports reuse it instead of a
+  bespoke registration path.
 
-#### Module Symbol
+#### Design
 
-A `Module` symbol stores the module's canonical path. It doesn't hold definitions directly — they're in the symbol table with `hidden = true` and `origin_module` set.
+`akkado::FileResolver` keeps its two-method shape (`resolve()` does
+path → canonical-URI logic: relative prefixes, `.ak` extension, stdlib
+search; `read()` fetches bytes). But:
 
-```cpp
-struct ModuleInfo {
-    std::string canonical_path;
-    std::string alias;
-};
-```
+- `read()` delegates to `cedar::UriResolver::instance().load(uri)`
+  instead of `std::ifstream` / an in-memory map.
+- The **canonical URI string** is the identity used for deduplication
+  and cycle detection in the import scanner (replacing the canonical
+  filesystem path). Two imports that resolve to the same URI are the
+  same module.
+- `FilesystemResolver` and `VirtualResolver` collapse into a single
+  `UriFileResolver` that holds only path-canonicalization config (search
+  paths, stdlib root) and forwards all byte-fetching to `UriResolver`.
+- Bare/relative import paths canonicalize to `file://` URIs on native;
+  stdlib modules canonicalize to `bundled://` URIs (see Stdlib Migration).
 
-#### Resolution Rules
+#### Compile-time availability — pre-bundle model
 
-For namespaced imports (`import "filters" as f`):
-1. During concatenation, the module's source is still included (definitions must be compiled)
-2. During analysis, after the definition-collection pass, mark all symbols originating from this module as `hidden = true` and set `origin_module`
-3. Register a `Module` symbol named `f` pointing to the module
-4. Hidden symbols are skipped during normal lookup
+Imports differ from samples: a sample is loaded *after* compilation (the
+compiler emits `required_uris`, the host resolves them, bytes are fed
+back). Import **source text is needed during compilation**, and
+resolving one import reveals more recursively. A post-compile
+required-asset loop cannot supply them.
 
-For qualified access (`f.lp()`):
-- The analyzer already handles `FieldAccess` and `MethodCall` nodes
-- When the LHS of a field access / method call resolves to `SymbolKind::Module`, perform a **module-qualified lookup** instead of dot-call desugaring
-- Module-qualified lookup: find a symbol with `origin_module == module.canonical_path` and the given name
+**Resolution**: the host pre-bundles. Before calling `compile()` /
+`akkado_compile()`, the host registers every `.ak` module the program
+could need (stdlib + the user's open files) with the resolver so that
+`UriResolver::load()` resolves them synchronously during compilation.
+The `bundled` scheme is synchronous and available on native and WASM —
+`cedar::BundledHandler::register_asset(name, bytes)` — making it the
+vehicle for both stdlib and web modules.
 
-#### Modified Files
+> Async schemes (`http`, `github`) cannot be resolved synchronously
+> inside WASM compilation. A program importing `github://...` on the web
+> requires the host to pre-fetch that module (via the TS resolver) and
+> register it as a `bundled` asset before compiling. Native CLI builds
+> may resolve `github`/`http` imports directly, since `UriResolver::load()`
+> is synchronous there.
+
+#### Modified Files (Phase C)
 
 | File | Change |
 |------|--------|
-| `akkado/include/akkado/symbol_table.hpp` | `SymbolKind::Module`, `hidden`, `origin_module` fields |
-| `akkado/src/symbol_table.cpp` | Skip hidden symbols in `lookup()` unless module-qualified |
-| `akkado/src/analyzer.cpp` | Module-qualified resolution in `collect_definitions()`, `rewrite_pipes()`, `desugar_method_call()` |
-| `akkado/src/analyzer.cpp` | During analysis: after `collect_definitions()` but before reference resolution, use SourceMap to identify symbols from namespaced modules and mark them hidden |
+| `akkado/include/akkado/file_resolver.hpp` | Replace `FilesystemResolver`/`VirtualResolver` with `UriFileResolver` delegating to `cedar::UriResolver` |
+| `akkado/src/file_resolver.cpp` | URI canonicalization; `read()` → `UriResolver::load()` |
+| `akkado/src/import_scanner.cpp` | Use canonical URI string as dedup/cycle key |
+| `akkado/src/akkado.cpp` | `compile_file()` builds a `UriFileResolver`; ensure `file`/`bundled` handlers registered |
+| `tools/akkado-cli/main.cpp`, `tools/nkido-cli/main.cpp` | Register stdlib `bundled` assets at startup (shared with sample/soundfont URI setup) |
+| `akkado/tests/test_file_resolver.cpp` | Update for `UriFileResolver` |
 
-#### Interaction with Dot-Call
+### Phase D: Web Virtual Filesystem & Multi-Tab Editor
 
-The analyzer's `desugar_method_call()` currently rewrites `x.f(a)` to `f(x, a)`. With module namespaces:
-
-1. If `x` resolves to a `Module` symbol → do NOT desugar as dot-call; instead rewrite `x.f(a)` to a direct call to the module-qualified `f` with args `(a)`
-2. If `x` resolves to anything else → desugar as before (dot-call)
-
-This is checked by looking up `x` in the symbol table before deciding the rewrite strategy.
-
----
-
-### Phase C: Web Virtual Filesystem
-
-Separate from compiler work — UI + WASM glue.
+Depends on Phase C. UI + WASM glue.
 
 #### WASM API
 
-New C exports in `nkido_wasm.cpp`:
+The web host pre-bundles modules via the `bundled` handler before
+compiling. New C exports in `nkido_wasm.cpp`:
 
 ```cpp
 WASM_EXPORT void akkado_register_module(const char* path, uint32_t path_len,
-                                         const char* source, uint32_t source_len);
+                                        const char* source, uint32_t source_len);
 WASM_EXPORT void akkado_unregister_module(const char* path, uint32_t path_len);
 WASM_EXPORT void akkado_clear_modules();
 ```
 
-A global `VirtualResolver` instance is maintained in `nkido_wasm.cpp`. `akkado_compile()` passes it to `compile()`.
+These forward to the WASM-side `cedar::BundledHandler` (the same handler
+used for bundled samples), registering each module under a
+`bundled://`-resolvable name. `akkado_compile()` runs after all modules
+are registered; the `UriFileResolver` resolves `import` statements
+synchronously against the bundled table.
+
+#### Stdlib Bundling & Manifest
+
+Stdlib `.ak` files live in `web/static/stdlib/`. The web app must know
+which files exist without hardcoding the list:
+
+- A build script (`web/scripts/`) globs `web/static/stdlib/**/*.ak` and
+  emits a manifest (`web/static/stdlib/manifest.json` — an array of
+  relative paths), run as part of `bun run build` alongside
+  `build:docs` / `build:opcodes`.
+- At web-app initialization, the host fetches `manifest.json`, then
+  fetches and `akkado_register_module()`s each listed file before the
+  first compile.
+
+This gives the web app the same stdlib modules as the CLI.
 
 #### Web Integration
 
 | Component | Change |
 |-----------|--------|
-| `web/wasm/nkido_wasm.cpp` | Global `VirtualResolver`, register/unregister/clear exports |
+| `web/wasm/nkido_wasm.cpp` | `register/unregister/clear` module exports forwarding to `BundledHandler` |
 | `web/src/lib/stores/editor.svelte.ts` | Multi-file state, active file tracking |
 | `web/src/lib/components/Editor/` | Multi-tab editor UI (tab bar, file create/rename/delete) |
-| `web/src/lib/workers/cedar-processor.js` | Pass module map to WASM before compilation |
-| `web/static/stdlib/` | Bundled `.ak` stdlib files, loaded at init |
-
-#### Stdlib Bundling
-
-Stdlib `.ak` files are placed in `web/static/stdlib/`. At web app initialization, they're fetched and registered with the `VirtualResolver` via `akkado_register_module()`. This means the web app can use the same stdlib files as the CLI.
-
----
-
-## Hot-Swap Semantic ID Stability
-
-The CodeGenerator tracks a `path_stack_` (`codegen.hpp:448`) to generate stable semantic IDs via FNV-1a hashing of the joined path (e.g., `main/osc1/delay` → `fnv1a("main/osc1/delay")`). These IDs are used by the `StatePool` to preserve DSP state across hot-swaps.
-
-When processing definitions from imported modules, the module's origin must be pushed onto `path_stack_` so that state IDs include the module context. This ensures that:
-
-1. A `delay()` in `filters.ak` gets a different state ID than a `delay()` in `synths.ak`
-2. Reordering imports doesn't change state IDs (the module origin is part of the path, not the concatenation position)
-
-**Implementation**: Pass the `SourceMap` to the `CodeGenerator`. Before visiting a top-level statement, check which region it falls in. If the region's filename differs from the current path context, push/pop the module origin on `path_stack_`.
-
-**Stdlib path stability**: Stdlib modules (those resolved from the stdlib search path) use a stable `<stdlib>` prefix on `path_stack_`, not their actual filesystem path. User modules push their canonical filename. This preserves backward compatibility: current stdlib definitions produce the same semantic IDs as before migration, since the existing stdlib contributes nothing to the path stack and `<stdlib>` matches the filename already used in diagnostics.
+| `web/src/lib/workers/cedar-processor.js` | Register all modules with WASM before each compile |
+| `web/scripts/` | Stdlib manifest generation script |
+| `web/static/stdlib/` | Bundled `.ak` stdlib files |
 
 ---
 
 ## Stdlib Migration Plan
 
-Progressive migration — `stdlib.hpp` continues working during the entire transition.
+Progressive migration — `stdlib.hpp` continues working during the entire
+transition. Depends on Phase C (stdlib modules resolve via the `bundled`
+scheme).
 
-### Stage 1: Core Functions
+### Auto-Import
+
+Today `STDLIB_SOURCE` is prepended unconditionally — `osc()` works with
+zero imports. To preserve this (Design Principle #4), **migrated stdlib
+modules are auto-imported**: the compiler implicitly performs a
+direct-injection import of every stdlib module into the global scope
+before the user's first statement. Users never write `import "osc"`.
+
+- The set of auto-imported stdlib modules is a fixed list known to the
+  compiler (or derived from the stdlib manifest).
+- Auto-imported modules participate in the same scanner / SourceMap /
+  topological-sort pipeline as explicit imports — they are simply
+  injected as implicit `import` directives ahead of the user source.
+- User definitions still shadow stdlib names (last-wins concatenation,
+  unchanged).
+
+### Stdlib Search Path
+
+The CLI must locate the stdlib `.ak` files. `compile_file()` currently
+builds a resolver rooted only at the source file's parent directory —
+the stdlib root must be added explicitly. Resolution order for the
+stdlib root:
+
+1. `AKKADO_STDLIB_DIR` environment variable, if set.
+2. A path relative to the executable (e.g. `<bindir>/../share/akkado/stdlib`).
+3. A compile-time default (`AKKADO_STDLIB_DIR` CMake define) for
+   developer builds (`<repo>/stdlib`).
+
+The CLI registers the discovered stdlib files as `bundled://std/*`
+assets at startup (or adds the directory as a `file` search path). The
+web app registers them from `web/static/stdlib/` via the manifest
+(Phase D). Either way the compiler resolves stdlib imports through the
+`bundled` scheme, so CLI and web share identical stdlib source.
+
+### Migration Stages
+
+#### Stage 1: Core Functions
 
 ```
-stdlib/osc.ak        — osc() dispatcher (currently in stdlib.hpp)
-stdlib/effects.ak    — multiband3fx() (currently in stdlib.hpp)
+stdlib/osc.ak        — osc() dispatcher
+stdlib/effects.ak    — multiband3fx()
+stdlib/voices.ak     — unison(), glide()
+stdlib/clock.ak      — beat()
 ```
 
-These two functions are the entire current `stdlib.hpp` content. Once migrated, `STDLIB_SOURCE` becomes empty.
+These cover the entire current `STDLIB_SOURCE`. Once migrated,
+`STDLIB_SOURCE` becomes empty.
 
-### Stage 2: Aliases
+#### Stage 2: Aliases
 
 ```
-stdlib/aliases.ak    — ~40 forwarding functions from BUILTIN_ALIASES
+stdlib/aliases.ak    — ~30 forwarding functions from BUILTIN_ALIASES
 ```
 
 ```akkado
@@ -473,9 +487,10 @@ fn distort(sig, drive = 2.0) -> saturate(sig, drive)
 // ... etc
 ```
 
-This removes the `BUILTIN_ALIASES` map from the compiler, making aliases user-visible and documented.
+This removes the `BUILTIN_ALIASES` map from the compiler, making aliases
+user-visible and documented.
 
-### Stage 3: Const Fn Generators
+#### Stage 3: Const Fn Generators
 
 ```
 stdlib/math.ak       — mtof, ftom, dbtoa, atodb
@@ -483,123 +498,78 @@ stdlib/tuning.ak     — edo_scale, just_intonation, pythagorean
 stdlib/wavetable.ak  — linspace, harmonics, normalize, wavetable
 ```
 
-These move the hardcoded `codegen_arrays.cpp` special-cases to stdlib `const fn` definitions.
+These move the hardcoded `codegen_arrays.cpp` special-cases
+(`handle_linspace_call`, `handle_harmonics_call`, etc.) to stdlib
+`const fn` definitions.
 
-### Stage 4: Remove Hardcoded stdlib
+#### Stage 4: Remove Hardcoded stdlib
 
 Once all stages are migrated and tested:
-- `stdlib.hpp` reduced to an empty string or removed entirely
+- `STDLIB_SOURCE` reduced to an empty string or removed entirely
 - `BUILTIN_ALIASES` map removed from `builtins.hpp`
-- Codegen special-cases for `linspace`/`harmonics`/`random` removed
+- Codegen special-cases for `linspace`/`harmonics` removed
 
 ---
 
 ## Test Cases
 
-### Phase A: Direct Injection
+### Phase A & B (shipped — see `test_import*.cpp`)
+
+The shipped suite covers direct injection, transitive imports,
+shadowing, circular-dependency errors (`E500`), import-after-code
+(`E501`), deduplication, relative imports, namespace access, hidden
+names, and module-qualified errors (`E504`). 215 assertions, all
+passing.
+
+### Phase C: URI Resolver Unification
 
 ```akkado
-// Basic import
-// -- utils.ak --
-fn double(x) -> x * 2
+// Stdlib via bundled scheme
+osc("saw", 440) |> out(@, @)        // osc() resolved from bundled://std/osc.ak
 
-// -- main.ak --
-import "utils"
-osc("sin", double(220)) |> out(@, @)    // double() available
+// Explicit bundled import
+import "bundled://std/filters"
 
-// Transitive imports (all resolved modules are visible)
-// -- a.ak --
-fn a_fn(x) -> x + 1
-
-// -- b.ak --
-import "a"
-fn b_fn(x) -> a_fn(x) * 2
-
-// -- main.ak --
-import "b"
-b_fn(10)                                 // OK
-a_fn(10)                                 // Also OK: a.ak is transitively included
-
-// Shadowing
-// -- utils.ak --
-fn gain(sig, amt) -> sig * amt
-
-// -- main.ak --
-import "utils"
-fn gain(sig, amt) -> sig * amt * 0.5     // shadows imported gain
-gain(noise(), 0.8)                       // uses local definition
-
-// Circular dependency error
-// -- a.ak --
-import "b"
-
-// -- b.ak --
-import "a"
-// ERROR: E500: Circular import detected: a.ak -> b.ak -> a.ak
-
-// Import after code error
-osc("sin", 440) |> out(@, @)
-import "utils"
-// ERROR: E501: Import statements must appear before other code
-
-// Deduplication
-// -- a.ak --
-import "utils"
-
-// -- b.ak --
-import "utils"
-
-// -- main.ak --
-import "a"
-import "b"
-// utils.ak is included only once in the combined source
-
-// Relative imports
-import "./local-utils"                   // resolves to ./local-utils.ak
-import "../shared/helpers"               // resolves to ../shared/helpers.ak
+// github import (native CLI; pre-bundled on web)
+import "github://user/repo/fx" as fx
 ```
 
-### Phase B: Namespace Imports
+- `UriFileResolver` resolves a bare import to a `file://` URI and a
+  stdlib name to a `bundled://` URI.
+- Two imports resolving to the same canonical URI are deduplicated.
+- An `import` of an unregistered `bundled` name produces `E502`.
+- A `UriResolver::load()` failure on a resolved URI produces `E503`.
 
-```akkado
-// Namespace access
-import "filters" as f
-osc("saw", 440) |> f.lp(@, 800) |> out(@, @)
+### Phase D: Web Virtual Filesystem
 
-// Hidden names
-import "filters" as f
-lp(osc("saw", 440), 800)                // ERROR: undefined 'lp'
-
-// Module-qualified errors
-import "filters" as f
-f.nonexistent(440)                       // ERROR: module 'filters' has no definition 'nonexistent'
-
-// Mixed direct + namespaced
-import "synths"
-import "effects" as fx
-osc("saw", 440) |> fx.chorus(@, 0.5) |> out(@, @)
-```
-
-### Phase C: Web Virtual Filesystem
-
-- WASM: `akkado_register_module("utils", source)` followed by compile with `import "utils"` succeeds
-- WASM: `akkado_clear_modules()` followed by compile with `import "utils"` produces error
-- Web: multi-tab editor saves/loads modules, compilation includes all registered modules
+- WASM: `akkado_register_module("utils", source)` then compile with
+  `import "utils"` succeeds.
+- WASM: `akkado_clear_modules()` then compile with `import "utils"`
+  produces `E502`.
+- Web: the stdlib manifest loads all `web/static/stdlib/*.ak`; `osc()`
+  works with no explicit import (auto-import).
+- Web: multi-tab editor saves/loads modules; compilation registers all
+  open files before compiling.
 
 ---
 
 ## Error Codes
 
-Error codes E200-E4xx are already used by const evaluation, tap_delay, and poly. Import errors use the E500 range.
+Import errors use the E500 range (E200–E4xx are taken by const
+evaluation, tap_delay, and poly). All codes below are **shipped and
+wired** in `akkado.cpp`.
 
 | Code | Message | Phase |
 |------|---------|-------|
-| `E500` | `Circular import detected: {cycle path}` | A |
-| `E501` | `Import statements must appear before other code` | A |
-| `E502` | `Module not found: '{path}'` | A |
-| `E503` | `Failed to read module: '{path}'` | A |
-| `E504` | `Module '{alias}' has no definition '{name}'` | B |
-| `E505` | `Import requires a file resolver (not available in this context)` | A |
+| `E500` | `Circular import detected: {cycle path}` | A (shipped) |
+| `E501` | `Import statements must appear before other code` | A (shipped) |
+| `E502` | `Module not found: '{path}'` | A (shipped) |
+| `E503` | `Failed to read module: '{path}'` | A (shipped) |
+| `E504` | `Module '{alias}' has no definition '{name}'` | B (shipped) |
+| `E505` | `Import requires a file resolver (not available in this context)` | A (shipped) |
+
+Phase C reuses `E502`/`E503` for URI resolution failures; no new codes
+are required.
 
 ---
 
@@ -613,15 +583,28 @@ Error codes E200-E4xx are already used by const evaluation, tap_delay, and poly.
 | Package registry / versioning | Akkado is a live-coding DSL |
 | Dynamic import / per-module hot-reload | Module resolution is compile-time only |
 | Conditional imports | No use case identified |
+| Async (`http`/`github`) imports resolved inside WASM | WASM compilation is synchronous; web hosts pre-bundle instead |
 
 ---
 
 ## Design Principles
 
-This PRD follows the principles from the [Language Evolution Vision](vision-language-evolution.md):
+This PRD follows the principles from the
+[Language Evolution Vision](vision-language-evolution.md):
 
-1. **The VM stays minimal** — module resolution is compiler-only. Same opcodes, same instruction format, same bytecode. A program with imports produces identical bytecode to the equivalent single-file program.
-2. **Zero-allocation runtime** — imports are resolved at compile time. No runtime module loading, no dynamic linking.
-3. **Live-coding ergonomics** — direct injection is the default, matching the current "everything in scope" behavior. Namespaces are opt-in for when organization matters.
-4. **Backward compatibility** — existing programs compile identically. The stdlib prepend continues working. Imports are additive syntax.
-5. **Progressive migration** — the stdlib can be migrated one file at a time. Each migration step is independently testable and reversible.
+1. **The VM stays minimal** — module resolution is compiler-only. Same
+   opcodes, same instruction format, same bytecode. A program with
+   imports produces identical bytecode to the equivalent single-file
+   program.
+2. **Zero-allocation runtime** — imports are resolved at compile time.
+   No runtime module loading, no dynamic linking.
+3. **One asset path** — imports resolve through `cedar::UriResolver`,
+   the same dispatcher used for samples, MIDI, and soundfonts (Phase C).
+4. **Live-coding ergonomics** — direct injection is the default, and
+   stdlib modules are auto-imported, matching the current "everything in
+   scope" behavior. Namespaces are opt-in for when organization matters.
+5. **Backward compatibility** — existing programs compile identically.
+   The stdlib prepend continues working until Stage 4. Imports are
+   additive syntax.
+6. **Progressive migration** — the stdlib migrates one file at a time.
+   Each step is independently testable and reversible.

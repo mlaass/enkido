@@ -603,7 +603,7 @@ Every proposed construct is additive. Existing Akkado programs continue to compi
 
 ```
 Phase 1 (compiler-only, no VM changes):
-  1a. Module/import system ─── enables stdlib migration
+  🟡 1a. Module/import system ─ import statement shipped; URI unification + stdlib migration pending
   ✅ 1b. Dot-call syntax ──────── parser rewrite, low risk
   ✅ 1c. const fn ─────────────── compile-time evaluation
 
@@ -622,4 +622,8 @@ Phase 4 (polish):
   ✅ 4c. Record spreading ─────── compile-time field merge
 ```
 
-Phases 1 (except module/import), 3, and 4 are complete. Remaining work: module/import system (1a) and Phase 2 (user-defined state + raw delay lines).
+Phases 1, 3, and 4 are complete except for the module/import system's
+later stages: the `import` statement (direct injection + namespaces)
+has shipped, but URI-resolver unification, the web virtual filesystem,
+and the stdlib migration remain — see [`prd-module-import.md`](prd-module-import.md).
+Other remaining work: Phase 2 (user-defined state + raw delay lines).
