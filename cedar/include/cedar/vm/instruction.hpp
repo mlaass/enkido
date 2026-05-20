@@ -79,6 +79,7 @@ enum class Opcode : std::uint8_t {
     SAMPLE_PLAY = 63,       // One-shot sample playback
     SAMPLE_PLAY_LOOP = 64,  // Looping sample playback
     SOUNDFONT_VOICE = 65,   // Polyphonic SoundFont playback
+    SF_VOICE = 66,          // Single-voice SoundFont player (no voice management; for poly())
 
     // Delays & Reverbs (70-79)
     DELAY = 70,

@@ -5,6 +5,7 @@
 #include "cedar/vm/vm.hpp"
 
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,5 +84,15 @@ std::optional<std::string> find_default_bank_uri(std::ostream& diag);
 /// URI (so `soundfont(@, "https://...", N)` and `soundfont(@, "piano.sf2", N)`
 /// keep working).
 std::optional<std::string> resolve_soundfont_alias(const std::string& alias);
+
+/// Resolve a SoundFont alias, consulting runtime `--soundfont-alias` entries
+/// first. The runtime alias chain is followed depth-limited (cycle guard);
+/// once it terminates, a built-in alias name resolves to its bundled file and
+/// any other value is returned as a URI (bare paths become `file://`). Returns
+/// `std::nullopt` when `alias` is neither a runtime nor a built-in alias, so
+/// callers fall through to treating it as a literal URI/path.
+std::optional<std::string> resolve_soundfont_alias(
+    const std::string& alias,
+    const std::map<std::string, std::string>& runtime_aliases);
 
 }  // namespace nkido

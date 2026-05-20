@@ -439,6 +439,33 @@ std::optional<std::string> resolve_soundfont_alias(const std::string& alias) {
     return std::nullopt;
 }
 
+std::optional<std::string> resolve_soundfont_alias(
+    const std::string& alias,
+    const std::map<std::string, std::string>& runtime_aliases) {
+    // Follow the runtime alias chain (depth-limited cycle guard).
+    std::string cur = alias;
+    for (int depth = 0; depth < 8; ++depth) {
+        auto it = runtime_aliases.find(cur);
+        if (it == runtime_aliases.end()) break;
+        cur = it->second;
+    }
+
+    // A built-in alias name resolves to its bundled file.
+    if (auto bundled = resolve_soundfont_alias(cur)) {
+        return bundled;
+    }
+
+    // If at least one runtime alias was followed, `cur` is a user-supplied
+    // path/URI — hand it back so the URI resolver loads it directly.
+    if (cur != alias) {
+        if (cur.find("://") != std::string::npos) return cur;
+        return path_to_uri(cur);
+    }
+
+    // Neither a runtime nor a built-in alias — caller treats it literally.
+    return std::nullopt;
+}
+
 std::optional<std::string> find_default_bank_uri(std::ostream& diag) {
     namespace fs = std::filesystem;
 

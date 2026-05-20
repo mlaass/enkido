@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -146,8 +147,18 @@ bool prepare_program_assets(cedar::VM& vm,
     // patch string) prevents a later --soundfont with the same name from
     // bumping the slot.
     if (!opts.no_default_soundfont) {
+        // Parse runtime --soundfont-alias 'name=path' specs into a lookup map.
+        std::map<std::string, std::string> rt_soundfont_aliases;
+        for (const auto& spec : opts.soundfont_alias_specs) {
+            auto eq = spec.find('=');
+            if (eq != std::string::npos) {
+                rt_soundfont_aliases.emplace(spec.substr(0, eq),
+                                             spec.substr(eq + 1));
+            }
+        }
         for (const auto& req : cr.required_soundfonts) {
-            std::string uri = resolve_soundfont_alias(req.filename)
+            std::string uri = resolve_soundfont_alias(req.filename,
+                                                      rt_soundfont_aliases)
                                   .value_or(req.filename);
             const int sf_id = load_soundfont_uri(vm, uri, req.filename);
             if (sf_id < 0) {

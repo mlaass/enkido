@@ -487,6 +487,15 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
                    .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset). Accepts midi() upstream for live polyphonic SF2 playback.",
                    .consumes_polyphonic_pattern = true}},
+    // Single-voice SoundFont player. Custom codegen (handle_sf_voice_call)
+    // resolves `file` (literal path or $soundfont_alias) and `preset` at
+    // compile time, then emits one SF_VOICE driven by the freq/gate/vel
+    // signals — so it slots into poly() like any other instrument.
+    {"sf_voice", {.opcode = cedar::Opcode::SF_VOICE, .input_count = 5, .optional_count = 0, .requires_state = true,
+                  .param_names = {"file", "preset", "freq", "gate", "vel", ""},
+                  .defaults = {NAN, NAN, NAN, NAN, NAN},
+                  .description = "Single-voice SoundFont player: sf_voice(file, preset, freq, gate, vel). Stereo output; designed as an instrument for poly().",
+                  .output_channels = ChannelCount::Stereo, .stereo_native = true}},
     // PRD prd-midi-input §4.7: runtime MIDI event source. The `options` record
     // selects the source (default device / named device / .mid file) and tunes
     // the live filter. Special-cased in codegen as handle_midi_call.

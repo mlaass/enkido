@@ -241,6 +241,232 @@ inline void process_sf_voice_one_sample(SFVoice& voice,
     }
 }
 
+// Trigger sub-voices for a single SF_VOICE note-on. Mirrors
+// trigger_sf_voices_for_note but writes into a fixed SFVoiceState::subzones[]
+// array instead of a 32-voice pool — one SF_VOICE plays exactly one note, so
+// every matched zone becomes a sub-voice slot (capped at MAX_ZONES_PER_NOTE).
+// Fresh sub-voices fade in over FADE_SAMPLES so a retrigger that overwrites a
+// still-sounding tail doesn't click.
+inline void trigger_sf_voice_subzones(SFVoiceState& state,
+                                      const SoundFontBank& bank,
+                                      const SoundFontPreset& preset,
+                                      std::uint8_t note,
+                                      std::uint8_t vel,
+                                      float velocity_f,
+                                      float midi_note_f,
+                                      float sample_rate) {
+    if (!state.subzones || vel == 0) {
+        state.active_zone_count = 0;
+        return;
+    }
+
+    const SoundFontZone* zones[SFVoiceState::MAX_ZONES_PER_NOTE];
+    std::size_t zone_count = bank.find_zones(preset, note, vel, zones,
+                                             SFVoiceState::MAX_ZONES_PER_NOTE);
+
+    std::uint8_t count = 0;
+    for (std::size_t z = 0; z < zone_count; ++z) {
+        const SoundFontZone& zone = *zones[z];
+        if (zone.sample_id == 0) continue;
+
+        SFVoice& voice = state.subzones[count];
+        voice = SFVoice{};  // fully reset (drops any prior release tail)
+
+        voice.active = true;
+        voice.releasing = false;
+        voice.note = note;
+        voice.position = 0.0f;
+        voice.fade_counter = 0;  // fade in — masks retrigger discontinuity
+
+        float pitch_cents = (midi_note_f - static_cast<float>(zone.root_key)
+                             + static_cast<float>(zone.transpose)) * 100.0f
+                            + static_cast<float>(zone.tune);
+        float pitch_ratio = std::pow(2.0f, pitch_cents / 1200.0f);
+        voice.speed = pitch_ratio * (zone.sample_rate / sample_rate);
+
+        voice.sample_id = zone.sample_id;
+        voice.loop_start = zone.loop_start;
+        voice.loop_end = zone.loop_end;
+        voice.sample_end = zone.sample_end;
+        voice.loop_mode = static_cast<std::uint8_t>(zone.loop_mode);
+
+        voice.attenuation_linear = std::pow(10.0f, -zone.attenuation / 20.0f);
+        voice.pan = zone.pan;
+        voice.velocity_gain = velocity_f;
+
+        voice.env_delay = zone.amp_env.delay;
+        voice.env_attack = std::max(0.001f, zone.amp_env.attack);
+        voice.env_hold = zone.amp_env.hold;
+        voice.env_decay = std::max(0.001f, zone.amp_env.decay);
+        voice.env_sustain = zone.amp_env.sustain;
+        voice.env_release = std::max(0.001f, zone.amp_env.release);
+
+        voice.env_stage = (voice.env_delay > 0.0f)
+            ? SFVoice::EnvStage::Delay
+            : SFVoice::EnvStage::Attack;
+        voice.env_level = 0.0f;
+        voice.env_time = 0.0f;
+
+        float fc = zone.filter_fc;
+        if (zone.mod_env_to_filter_fc != 0) {
+            float key_offset = midi_note_f - 60.0f;
+            fc *= std::pow(2.0f, key_offset *
+                static_cast<float>(zone.mod_env_to_filter_fc) / (1200.0f * 12.0f));
+        }
+        fc = std::clamp(fc, 20.0f, sample_rate * 0.49f);
+        voice.filter_fc = fc;
+        voice.filter_q = zone.filter_q;
+        voice.filter_z1 = 0.0f;
+        voice.filter_z2 = 0.0f;
+        voice.filter_active = (fc < 19000.0f);
+
+        if (voice.filter_active) {
+            float q_db = std::max(1.0f, zone.filter_q);
+            float q_linear = std::max(0.5f, std::pow(10.0f, q_db / 20.0f));
+            float g = std::tan(PI * fc / sample_rate);
+            float k = 1.0f / q_linear;
+            voice.filter_a1 = 1.0f / (1.0f + g * (g + k));
+            voice.filter_a2 = g * voice.filter_a1;
+            voice.filter_a3 = g * voice.filter_a2;
+        }
+
+        if (++count >= SFVoiceState::MAX_ZONES_PER_NOTE) break;
+    }
+    state.active_zone_count = count;
+}
+
+// Per-sample sub-voice mix for SF_VOICE. Same envelope / sample / filter
+// pipeline as process_sf_voice_one_sample, but the final output is split
+// into a stereo pair. Phase 1 ships pan-only stereo: the sample is read as a
+// mono mix (matching the legacy opcode's fidelity), then balanced across L/R
+// by the zone pan. True SF2 stereo-pair sample linkage is a later phase.
+inline void process_sf_voice_one_sample_stereo(SFVoice& voice,
+                                               SampleBank* sample_bank,
+                                               float inv_sr,
+                                               float& out_l,
+                                               float& out_r) {
+    if (!voice.active) return;
+
+    float env = voice.env_level;
+    switch (voice.env_stage) {
+        case SFVoice::EnvStage::Idle:
+            env = 0.0f;
+            break;
+        case SFVoice::EnvStage::Delay:
+            env = 0.0f;
+            voice.env_time += inv_sr;
+            if (voice.env_time >= voice.env_delay) {
+                voice.env_stage = SFVoice::EnvStage::Attack;
+                voice.env_time = 0.0f;
+            }
+            break;
+        case SFVoice::EnvStage::Attack:
+            voice.env_time += inv_sr;
+            env = voice.env_time / voice.env_attack;
+            if (env >= 1.0f) {
+                env = 1.0f;
+                voice.env_stage = SFVoice::EnvStage::Hold;
+                voice.env_time = 0.0f;
+            }
+            break;
+        case SFVoice::EnvStage::Hold:
+            env = 1.0f;
+            voice.env_time += inv_sr;
+            if (voice.env_time >= voice.env_hold) {
+                voice.env_stage = SFVoice::EnvStage::Decay;
+                voice.env_time = 0.0f;
+            }
+            break;
+        case SFVoice::EnvStage::Decay: {
+            voice.env_time += inv_sr;
+            float decay_progress = voice.env_time / voice.env_decay;
+            if (decay_progress >= 1.0f) {
+                env = voice.env_sustain;
+                voice.env_stage = SFVoice::EnvStage::Sustain;
+            } else {
+                float t = 1.0f - std::exp(-5.0f * decay_progress);
+                env = 1.0f + (voice.env_sustain - 1.0f) * t;
+            }
+            break;
+        }
+        case SFVoice::EnvStage::Sustain:
+            env = voice.env_sustain;
+            break;
+        case SFVoice::EnvStage::Release: {
+            voice.env_time += inv_sr;
+            float release_progress = voice.env_time / voice.env_release;
+            if (release_progress >= 1.0f) {
+                env = 0.0f;
+                voice.active = false;
+            } else {
+                env = voice.env_release_start_level * std::exp(-5.0f * release_progress);
+            }
+            break;
+        }
+    }
+    voice.env_level = env;
+
+    if (env < 1e-6f && voice.env_stage == SFVoice::EnvStage::Release) {
+        voice.active = false;
+        return;
+    }
+
+    const SampleData* sample = sample_bank->get_sample(voice.sample_id);
+    if (!sample || sample->frames == 0) {
+        voice.active = false;
+        return;
+    }
+
+    float sample_value = 0.0f;
+    float pos = voice.position;
+    if (pos >= 0.0f && pos < static_cast<float>(voice.sample_end)) {
+        for (std::uint32_t ch = 0; ch < sample->channels; ++ch) {
+            sample_value += sample->get_interpolated(pos, ch);
+        }
+        sample_value /= static_cast<float>(sample->channels);
+    }
+
+    if (voice.filter_active) {
+        float v3 = sample_value - voice.filter_z2;
+        float v1 = voice.filter_a1 * voice.filter_z1 + voice.filter_a2 * v3;
+        float v2 = voice.filter_z2 + voice.filter_a2 * voice.filter_z1 +
+                   voice.filter_a3 * v3;
+        voice.filter_z1 = 2.0f * v1 - voice.filter_z1;
+        voice.filter_z2 = 2.0f * v2 - voice.filter_z2;
+        sample_value = v2;
+    }
+
+    float gain = env * voice.attenuation_linear * voice.velocity_gain;
+    if (voice.fade_counter < SFVoice::FADE_SAMPLES) {
+        gain *= static_cast<float>(voice.fade_counter) /
+                static_cast<float>(SFVoice::FADE_SAMPLES);
+        voice.fade_counter++;
+    }
+
+    // Balance-law pan: pan in [-0.5, +0.5]; center keeps unity on both
+    // channels so a mono soundfont sample is unchanged when panned center.
+    float mono = sample_value * gain;
+    float lgain = std::clamp(1.0f - 2.0f * voice.pan, 0.0f, 1.0f);
+    float rgain = std::clamp(1.0f + 2.0f * voice.pan, 0.0f, 1.0f);
+    out_l += mono * lgain;
+    out_r += mono * rgain;
+
+    voice.position += voice.speed;
+
+    if (voice.loop_mode == 1 || (voice.loop_mode == 3 && !voice.releasing)) {
+        if (voice.loop_end > voice.loop_start) {
+            float loop_len = static_cast<float>(voice.loop_end - voice.loop_start);
+            while (voice.position >= static_cast<float>(voice.loop_end)) {
+                voice.position -= loop_len;
+            }
+        }
+    }
+
+    if (voice.position >= static_cast<float>(voice.sample_end)) {
+        voice.active = false;
+    }
+}
+
 }  // namespace sf_detail
 
 // ============================================================================
@@ -663,6 +889,112 @@ inline void op_soundfont_voice(ExecutionContext& ctx, const Instruction& inst,
         }
 
         out[i] = output;
+    }
+}
+
+// ============================================================================
+// SF_VOICE: Single-voice SoundFont player (no voice management)
+// ============================================================================
+// in0: gate signal (>0 = note on, 0→positive edge = trigger, positive→0 = release)
+// in1: frequency in Hz (converted to MIDI note internally)
+// in2: velocity (0-1)
+// in3: preset index (constant buffer)
+// rate: soundfont slot ID (0-255)
+// out: stereo pair — out_buffer (L), out_buffer+1 (R)
+//
+// One SF_VOICE plays exactly one note. Every zone matched for that note
+// (velocity layers, key splits) fires as a sub-voice and mixes internally.
+// There is no voice pool and no stealing — poly() owns voice allocation, so
+// this slots into poly() like any other (freq, gate, vel) instrument.
+[[gnu::always_inline]]
+inline void op_sf_voice(ExecutionContext& ctx, const Instruction& inst,
+                        SampleBank* sample_bank, SoundFontRegistry* sf_registry) {
+    float* out_l = ctx.buffers->get(inst.out_buffer);
+    float* out_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+
+    auto silence = [&]() {
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            out_l[i] = 0.0f;
+            out_r[i] = 0.0f;
+        }
+    };
+
+    auto& state = ctx.states->get_or_create<SFVoiceState>(inst.state_id);
+    state.ensure_subzones(ctx.arena);
+
+    if (!state.subzones || !sf_registry || !sample_bank) {
+        silence();
+        return;
+    }
+
+    const SoundFontBank* bank = sf_registry->get(static_cast<int>(inst.rate));
+    if (!bank) {
+        silence();
+        return;
+    }
+
+    const float* gate = ctx.buffers->get(inst.inputs[0]);
+    const float* freq_buf = ctx.buffers->get(inst.inputs[1]);
+    const float* vel_buf = ctx.buffers->get(inst.inputs[2]);
+    const float* preset_buf = ctx.buffers->get(inst.inputs[3]);
+
+    int preset_idx = static_cast<int>(preset_buf[0]);
+    const SoundFontPreset* preset = bank->get_preset_by_index(
+        static_cast<std::size_t>(std::max(0, preset_idx)));
+    if (!preset) {
+        // Preset index out of range — emit silence (PRD §8.2).
+        silence();
+        return;
+    }
+
+    const float inv_sr = 1.0f / ctx.sample_rate;
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        float current_gate = gate[i];
+        float freq = freq_buf[i];
+        float velocity = std::clamp(vel_buf[i], 0.0f, 1.0f);
+
+        float midi_note = (freq > 1.0f)
+            ? 69.0f + 12.0f * std::log2(freq / 440.0f)
+            : 0.0f;
+        std::uint8_t note = static_cast<std::uint8_t>(
+            std::clamp(std::roundf(midi_note), 0.0f, 127.0f));
+        std::uint8_t vel = static_cast<std::uint8_t>(velocity * 127.0f);
+
+        bool gate_on = (current_gate > 0.0f && state.prev_gate <= 0.0f);
+        bool gate_off = (current_gate <= 0.0f && state.prev_gate > 0.0f);
+        state.prev_gate = current_gate;
+        state.prev_note = (current_gate > 0.0f)
+            ? note : static_cast<std::uint8_t>(255);
+
+        // Note on: (re)trigger all sub-voices for this note.
+        if (gate_on && vel > 0) {
+            sf_detail::trigger_sf_voice_subzones(
+                state, *bank, *preset, note, vel,
+                velocity, midi_note, ctx.sample_rate);
+        }
+
+        // Note off: release every active sub-voice (one SF_VOICE = one note).
+        if (gate_off) {
+            for (std::uint8_t z = 0; z < state.active_zone_count; ++z) {
+                SFVoice& v = state.subzones[z];
+                if (v.active && !v.releasing) {
+                    v.releasing = true;
+                    v.env_stage = SFVoice::EnvStage::Release;
+                    v.env_time = 0.0f;
+                    v.env_release_start_level = v.env_level;
+                }
+            }
+        }
+
+        float l = 0.0f;
+        float r = 0.0f;
+        for (std::uint8_t z = 0; z < state.active_zone_count; ++z) {
+            sf_detail::process_sf_voice_one_sample_stereo(
+                state.subzones[z], sample_bank, inv_sr, l, r);
+        }
+        out_l[i] = l;
+        out_r[i] = r;
     }
 }
 

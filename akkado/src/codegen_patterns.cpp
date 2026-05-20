@@ -5705,6 +5705,139 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::signal(mixed));
 }
 
+// sf_voice(file, preset, freq, gate, vel) — single-voice SoundFont player.
+//
+// Unlike soundfont() (which owns its own 32-voice pool and consumes a
+// pattern), sf_voice is an ordinary instrument expression: it takes three
+// signal arguments and produces a stereo signal. Used as the instrument body
+// of poly(), it gives soundfont playback the same voice-management path as
+// every other instrument.
+//
+//   n"c4 e4 g4" |> poly(@, (f,g,v) -> sf_voice("piano.sf2", 0, f, g, v)) |> out(@, @)
+//
+// `file` is a string literal — either a path or an alias registered via the
+// $soundfont_alias directive. `preset` is a number literal (SF2 preset
+// index). freq/gate/vel are arbitrary signal expressions.
+TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
+    // Arg 0: file (string literal — path or $soundfont_alias name)
+    auto filename = get_string_arg(*ast_, n, 0);
+    if (!filename.has_value()) {
+        error("E520", "sf_voice() requires a filename string as first argument "
+              "(a path or a $soundfont_alias name)", n.location);
+        return TypedValue::error_val();
+    }
+
+    // Arg 1: preset index (number literal)
+    auto preset_opt = get_number_arg(*ast_, n, 1);
+    if (!preset_opt.has_value()) {
+        error("E521", "sf_voice() requires a preset number as second argument",
+              n.location);
+        return TypedValue::error_val();
+    }
+    int preset_index = static_cast<int>(*preset_opt);
+
+    // Args 2/3/4: freq, gate, vel signal expressions.
+    NodeIndex freq_arg = get_pattern_arg(*ast_, n, 2);
+    NodeIndex gate_arg = get_pattern_arg(*ast_, n, 3);
+    NodeIndex vel_arg  = get_pattern_arg(*ast_, n, 4);
+    if (freq_arg == NULL_NODE || gate_arg == NULL_NODE || vel_arg == NULL_NODE) {
+        error("E522", "sf_voice() requires freq, gate and vel signal arguments "
+              "(sf_voice(file, preset, freq, gate, vel))", n.location);
+        return TypedValue::error_val();
+    }
+
+    TypedValue freq_tv = visit(freq_arg);
+    TypedValue gate_tv = visit(gate_arg);
+    TypedValue vel_tv  = visit(vel_arg);
+    if (freq_tv.buffer == BufferAllocator::BUFFER_UNUSED ||
+        gate_tv.buffer == BufferAllocator::BUFFER_UNUSED ||
+        vel_tv.buffer  == BufferAllocator::BUFFER_UNUSED) {
+        error("E522", "sf_voice() freq/gate/vel arguments must be signals",
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    // Resolve $soundfont_alias entries at compile time (directive precedence,
+    // PRD §3.5). Depth-limited so a cyclic alias chain can't hang codegen;
+    // unresolved names pass through to the host, which applies runtime
+    // --soundfont-alias config and the built-in alias table.
+    std::string resolved_file = *filename;
+    for (int depth = 0; depth < 8; ++depth) {
+        auto it = soundfont_aliases_.find(resolved_file);
+        if (it == soundfont_aliases_.end()) break;
+        resolved_file = it->second;
+    }
+
+    // Find or assign SF2 slot index (deduplicate by resolved filename). The
+    // runtime registry loads required_soundfonts_ in source order, so slot N
+    // here matches registry slot N (see program_loader.cpp).
+    std::uint8_t sf_slot = 0;
+    bool found_slot = false;
+    for (std::size_t i = 0; i < required_soundfonts_.size(); i++) {
+        if (required_soundfonts_[i].filename == resolved_file) {
+            sf_slot = static_cast<std::uint8_t>(i);
+            found_slot = true;
+            break;
+        }
+    }
+    if (!found_slot) {
+        sf_slot = static_cast<std::uint8_t>(required_soundfonts_.size());
+        required_soundfonts_.push_back(RequiredSoundFont{resolved_file, preset_index});
+    }
+
+    std::uint32_t sf_count = call_counters_["sf_voice"]++;
+    push_path("sf_voice#" + std::to_string(sf_count));
+
+    // Preset index as a constant input buffer (read at inputs[3]).
+    std::uint16_t preset_buf = codegen::emit_push_const(
+        buffers_, instructions_, static_cast<float>(preset_index));
+    if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        pop_path();
+        return TypedValue::error_val();
+    }
+    source_locations_.push_back(current_source_loc_);
+
+    // Allocate the adjacent stereo output pair (L = out_left, R = out_left+1).
+    std::uint16_t out_left = buffers_.allocate();
+    if (out_left == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        pop_path();
+        return TypedValue::error_val();
+    }
+    std::uint16_t out_right = buffers_.allocate();
+    if (out_right == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        pop_path();
+        return TypedValue::error_val();
+    }
+    if (out_right != out_left + 1) {
+        error("E166", "Internal error: stereo buffer allocation not adjacent",
+              n.location);
+        pop_path();
+        return TypedValue::error_val();
+    }
+
+    cedar::Instruction sf_inst{};
+    sf_inst.opcode = cedar::Opcode::SF_VOICE;
+    sf_inst.out_buffer = out_left;
+    sf_inst.inputs[0] = gate_tv.buffer;
+    sf_inst.inputs[1] = freq_tv.buffer;
+    sf_inst.inputs[2] = vel_tv.buffer;
+    sf_inst.inputs[3] = preset_buf;
+    sf_inst.inputs[4] = 0xFFFF;
+    sf_inst.rate = sf_slot;
+    sf_inst.state_id = compute_state_id();
+    sf_inst.flags = static_cast<std::uint16_t>(
+        cedar::InstructionFlag::STEREO_OUTPUT);
+    emit(sf_inst);
+
+    pop_path();
+
+    register_stereo(node, out_left, out_right);
+    return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
+}
+
 // PRD prd-midi-input §4.7 + §7.5: midi() builtin. Emits one MIDI_QUERY with
 // four output buffers (gate/freq/vel/trig) baked monophonically from the
 // runtime event stream, and records a RequiredMidiSource that the host

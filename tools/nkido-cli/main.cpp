@@ -53,6 +53,7 @@ void print_usage(const char* program) {
               << "                     Schemes: file://, http(s)://, github:user/repo, bundled://...\n"
               << "                     Bare paths are treated as file://.\n"
               << "  --soundfont <uri>  SoundFont (SF2) URI. May repeat.\n"
+              << "  --soundfont-alias <name=path>  Bind a SoundFont alias for sf_voice()/soundfont(). May repeat.\n"
               << "  --sample <uri>     Single-sample URI ('name=uri' or just URI). May repeat.\n"
               << "  --no-default-bank  Suppress the built-in default 808 kit.\n"
               << "  --no-default-soundfont  Suppress auto-loading of patch-declared SoundFonts (gm/gm_medium/gm_large).\n"
@@ -174,6 +175,17 @@ std::optional<nkido::Options> parse_args(int argc, char* argv[]) {
                 return std::nullopt;
             }
             opts.soundfont_uris.push_back(argv[i]);
+        } else if (arg == "--soundfont-alias") {
+            if (++i >= argc) {
+                std::cerr << "error: --soundfont-alias requires 'name=path'\n";
+                return std::nullopt;
+            }
+            std::string spec = argv[i];
+            if (spec.find('=') == std::string::npos) {
+                std::cerr << "error: --soundfont-alias format is 'name=path'\n";
+                return std::nullopt;
+            }
+            opts.soundfont_alias_specs.push_back(std::move(spec));
         } else if (arg == "--sample") {
             if (++i >= argc) {
                 std::cerr << "error: --sample requires a URI (or 'name=uri')\n";

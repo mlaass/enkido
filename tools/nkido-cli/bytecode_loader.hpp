@@ -66,6 +66,10 @@ struct Options {
     std::vector<std::string> bank_uris;           // Sample-bank manifests (strudel.json)
     std::vector<std::string> soundfont_uris;      // SoundFont (SF2/SF3) URIs
     std::vector<std::string> sample_uris;         // Single-sample URIs ("name=uri" or just "uri")
+    // Runtime SoundFont aliases ("name=path"). Resolve sf_voice()/soundfont()
+    // file names not bound by a $soundfont_alias directive. Directive entries
+    // take precedence (PRD §3.5: directive → runtime config → built-in table).
+    std::vector<std::string> soundfont_alias_specs;
 
     // Built-in default sample kit (matches the web UI's DEFAULT_DRUM_KIT). When
     // false, prepare_program_assets() appends the discoverable bpb_808_clean

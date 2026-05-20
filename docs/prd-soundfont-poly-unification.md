@@ -1,4 +1,9 @@
-**Status: NOT STARTED** — Execution PRD that consolidates planned future work from [`prd-polyphony-system.md`](prd-polyphony-system.md) §7 ("Future: SF_PLAY", "Configurable Voice Release"), [`prd-poly-callback-event-record.md`](prd-poly-callback-event-record.md), and [`prd-midi-input.md`](prd-midi-input.md) §7.1 into one unified soundfont/poly refactor. Ships a single-voice `SF_VOICE` opcode, per-event MIDI `channel`/`program` fields, envelope-done voice stealing, and a userspace stdlib sugar that lets the old `soundfont(input, file, preset)` API keep working with zero codegen special-casing.
+**Status: IN PROGRESS — Phase 1 SHIPPED** (SF_VOICE opcode + `sf_voice` builtin
++ `$soundfont_alias` directive + `--soundfont-alias` CLI flag, all additive;
+`SOUNDFONT_VOICE` untouched). Phases 2–5 not started; Phase 3 deferred pending
+[`prd-poly-callback-event-record.md`](prd-poly-callback-event-record.md).
+
+Execution PRD that consolidates planned future work from [`prd-polyphony-system.md`](prd-polyphony-system.md) §7 ("Future: SF_PLAY", "Configurable Voice Release"), [`prd-poly-callback-event-record.md`](prd-poly-callback-event-record.md), and [`prd-midi-input.md`](prd-midi-input.md) §7.1 into one unified soundfont/poly refactor. Ships a single-voice `SF_VOICE` opcode, per-event MIDI `channel`/`program` fields, envelope-done voice stealing, and a userspace stdlib sugar that lets the old `soundfont(input, file, preset)` API keep working with zero codegen special-casing.
 
 # Soundfont / Poly Unification PRD — collapse soundfont's parallel voice allocator into `poly`
 
@@ -93,14 +98,14 @@ n"c4 e4 g4 b4"
     |> out(@, @)
 ```
 
-### 3.2 Using shipped `_` partial application
+### 3.2 Partial-application shorthand — NOT available
 
-```akkado
-// Equivalent shorthand using `prd-advanced-functions.md`-shipped `_` placeholder
-n"C4' Am7' G4'"
-    |> poly(@, sf_voice("piano.sf2", 0, _, _, _), 32)
-    |> out(@, @)
-```
+> **Correction (Phase 1, 2026-05-20):** the `_` placeholder is **not** partial
+> application. In akkado `_` only substitutes a builtin's *default value* at
+> that argument slot (`akkado/src/codegen.cpp`), so `sf_voice("piano.sf2", 0,
+> _, _, _)` does **not** produce a `(freq, gate, vel) -> signal` callable for
+> `poly`. Use the explicit lambda form of §3.1. The stdlib `fn soundfont`
+> sugar (§3.3 / §4.6) must likewise be written with an explicit lambda.
 
 ### 3.3 Old `soundfont(input, file, preset)` API still works (userspace stdlib sugar)
 
@@ -108,9 +113,10 @@ n"C4' Am7' G4'"
 // Unchanged from today's user-facing API
 n"C4' Am7'" |> soundfont(@, "gm", 0) |> out(@, @)
 
-// Lowering happens in the akkado stdlib:
+// Lowering happens in the akkado stdlib (Phase 4) — explicit lambda, since
+// `_` is not partial application (see §3.2):
 fn soundfont(input, file, preset) =
-    input |> poly(@, sf_voice(file, preset, _, _, _), 64)
+    input |> poly(@, (f, g, v) -> sf_voice(file, preset, f, g, v), 64)
 ```
 
 ### 3.4 GM MIDI file routing (Phase 3 — depends on `prd-poly-callback-event-record.md`)
@@ -379,18 +385,30 @@ fn gm_route(channel, program) =
 
 ## 7. Implementation Phases
 
-### Phase 1 — `SF_VOICE` opcode + builtin + alias table
-**Goal**: `n"c4 e4 g4" |> poly(@, sf_voice("piano.sf2", 0, _, _, _)) |> out(@, @)` plays correctly.
+### Phase 1 — `SF_VOICE` opcode + builtin + alias table — ✅ SHIPPED (2026-05-20)
+**Goal**: `n"c4 e4 g4" |> poly(@, (f,g,v) -> sf_voice("piano.sf2", 0, f, g, v)) |> out(@, @)` plays correctly.
 
-- Add `SF_VOICE` opcode (`instruction.hpp`, `vm.cpp`).
-- Implement `op_sf_voice` by factoring the per-voice loop out of `op_soundfont_voice` (`soundfont.hpp:246-667`).
-- New `SFVoiceState` (single voice + up to MAX_ZONES_PER_NOTE sub-zones); registered in `DSPState` variant.
-- Register `sf_voice` builtin (`builtins.hpp`).
-- `SoundFontRegistry` alias map + lookup; CLI `--soundfont-alias` flag; `$soundfont_alias` directive.
-- Stereo output (2 buffers L/R); SF2 pan + stereo-pair metadata respected.
-- `bun run build:opcodes` to regenerate metadata.
+Shipped, purely additive (`SOUNDFONT_VOICE` and the old `soundfont()` path untouched):
 
-**Tests** (this phase): single-voice WAV, stereo correctness, alias resolution.
+- ✅ `SF_VOICE = 66` opcode (`instruction.hpp`, `vm.cpp` dispatch).
+- ✅ `op_sf_voice` + `trigger_sf_voice_subzones` + `process_sf_voice_one_sample_stereo`
+  in `soundfont.hpp`, factored from the per-voice loop of `op_soundfont_voice`.
+- ✅ `SFVoiceState` (single voice + up to 8 sub-zones, **arena-allocated** to keep
+  the `DSPState` variant small — mirrors `SoundFontVoiceState`); registered in the variant.
+- ✅ `sf_voice` builtin (`builtins.hpp`) + custom codegen handler `handle_sf_voice_call`
+  (`codegen_patterns.cpp`) — resolves `file`/`preset` literals at compile time, emits
+  one stereo `SF_VOICE`. Errors `E520`–`E522`.
+- ✅ `$soundfont_alias` directive (resolved at **codegen time** — no `CompileResult`
+  field needed) + CLI `--soundfont-alias name=path` flag with cycle-guarded resolution.
+- ✅ Stereo output (adjacent L/R buffer pair, `STEREO_OUTPUT` flag). **Phase 1 ships
+  pan-only stereo** (mono mix balanced by `zone.pan`); true SF2 stereo-pair sample
+  linkage is deferred to a later phase (see §8.9 / Open Question follow-up).
+- ✅ `bun run build:opcodes` regenerated metadata (`SF_VOICE` marked stateful).
+
+**Tests** (this phase): ✅ `[sf-voice]` codegen tests in `test_codegen.cpp` (poly-instrument
+compile, stereo flag + wired inputs, `$soundfont_alias` resolution, `E520`/`E521` error
+paths, standalone use); ✅ `experiments/test_op_sf_voice.py` (stereo correctness, note-onset
+retrigger check, 300 s long-run stability).
 
 ### Phase 2 — Per-event `channel` + `program` fields
 **Goal**: MIDI sources (live + file) populate `@.channel` and `@.program` on every emitted event.
@@ -578,7 +596,12 @@ uv run python test_gm_route.py
 
 ## 10. Open Questions
 
-1. **`bank * 128 + program` encoding for preset index** — does `SoundFontRegistry::get_preset_by_index` accept a single 14-bit composite, or does it want separate `bank`, `program` args? Affects `sf_voice` signature (5 params vs 6) and `gm_route` return shape. Decide during Phase 1 spike.
+1. ~~**`bank * 128 + program` encoding for preset index**~~ — **RESOLVED (Phase 1).**
+   `SoundFontRegistry::get_preset_by_index` takes a single opaque preset *index*
+   (position in the SF2's preset list), not a bank/program composite. `sf_voice`
+   keeps the 5-param signature `sf_voice(file, preset, freq, gate, vel)`; the
+   preset is emitted as a constant input buffer (`inputs[3]`). `gm_route`
+   (Phase 3) will map channel/program to a preset index via the registry.
 2. **Pattern record-suffix `{channel:N, program:M}` field routing** — do these land directly in `evt.channel`/`evt.program`, or go through `prop_vals[]` like other custom fields and get aliased at codegen? Affects how many "fixed" vs "custom" fields the event record advertises. Decide during Phase 2.
 3. **Envelope-done buffer dimensionality** — per-sample stream (lets poly steal mid-block) or per-block scalar (cheaper)? Per-block is simpler and matches typical envelope smoothness; commit to per-block unless Phase 2.5 testing shows audible glitches at block boundaries.
 4. **Per-zone vs whole-voice envelope-done** — when an SF_VOICE has multiple sub-zones with different release times, do we report "done" when *all* zones are done (safe but holds the slot longer) or when the *loudest* zone is done (tighter but might cut a quiet residual zone)? Commit to "all zones done" (safe) unless testing shows the slot is held too long.

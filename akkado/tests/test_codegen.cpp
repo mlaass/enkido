@@ -9691,6 +9691,84 @@ TEST_CASE("chord pattern pipes directly into soundfont", "[chord-soundfont]") {
     }
 }
 
+// SF_VOICE — single-voice SoundFont player usable as a poly() instrument.
+// PRD prd-soundfont-poly-unification.md Phase 1.
+TEST_CASE("sf_voice compiles as a poly instrument", "[sf-voice]") {
+    SECTION("n\"...\" |> poly(@, (f,g,v) -> sf_voice(...)) compiles") {
+        auto result = akkado::compile(
+            R"(n"c4 e4 g4" |> poly(@, (f,g,v) -> sf_voice("piano.sf2", 0, f, g, v)) |> out(@, @))");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+        }
+        REQUIRE(result.success);
+    }
+
+    SECTION("emits exactly one stereo SF_VOICE inside the poly body") {
+        auto result = akkado::compile(
+            R"(n"c4 e4 g4" |> poly(@, (f,g,v) -> sf_voice("piano.sf2", 0, f, g, v)) |> out(@, @))");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t sf_count =
+            count_instructions(insts, cedar::Opcode::SF_VOICE);
+        CHECK(sf_count == 1);
+        for (const auto& i : insts) {
+            if (i.opcode == cedar::Opcode::SF_VOICE) {
+                // Stereo-native: STEREO_OUTPUT flag set, all signal inputs wired.
+                CHECK((i.flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
+                CHECK(i.inputs[0] != 0xFFFF);  // gate
+                CHECK(i.inputs[1] != 0xFFFF);  // freq
+                CHECK(i.inputs[2] != 0xFFFF);  // vel
+                CHECK(i.inputs[3] != 0xFFFF);  // preset constant
+                CHECK(i.rate == 0);            // first (only) SF2 slot
+            }
+        }
+        // One RequiredSoundFont entry recorded for the host to load.
+        REQUIRE(result.required_soundfonts.size() == 1);
+        CHECK(result.required_soundfonts[0].filename == "piano.sf2");
+    }
+
+    SECTION("sf_voice usable standalone (outside poly)") {
+        auto result = akkado::compile(
+            R"(sf_voice("piano.sf2", 0, sine(440), 1, 1) |> out(@, @))");
+        for (const auto& d : result.diagnostics) {
+            INFO("diag " << d.code << ": " << d.message);
+        }
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::SF_VOICE) == 1);
+    }
+
+    SECTION("$soundfont_alias resolves at codegen time") {
+        auto result = akkado::compile(
+            "$soundfont_alias(\"mysf\", \"piano.sf2\")\n"
+            R"(sf_voice("mysf", 0, sine(440), 1, 1) |> out(@, @))");
+        REQUIRE(result.success);
+        // The alias must have been resolved to its path in RequiredSoundFont.
+        REQUIRE(result.required_soundfonts.size() == 1);
+        CHECK(result.required_soundfonts[0].filename == "piano.sf2");
+    }
+
+    SECTION("non-string file argument is rejected (E520)") {
+        auto result = akkado::compile(
+            R"(sf_voice(0, 0, sine(440), 1, 1) |> out(@, @))");
+        bool has_e520 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E520") has_e520 = true;
+        }
+        CHECK(has_e520);
+    }
+
+    SECTION("non-number preset argument is rejected (E521)") {
+        auto result = akkado::compile(
+            R"(sf_voice("piano.sf2", "bad", sine(440), 1, 1) |> out(@, @))");
+        bool has_e521 = false;
+        for (const auto& d : result.diagnostics) {
+            if (d.code == "E521") has_e521 = true;
+        }
+        CHECK(has_e521);
+    }
+}
+
 TEST_CASE("voicing on chord pattern preserves multi-voice soundfont path",
           "[chord-soundfont][voicing]") {
     // The bug the user reported: c"…" .voicing(…) |> soundfont fed only voice

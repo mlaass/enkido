@@ -954,6 +954,10 @@ void VM::execute(const Instruction& inst) {
         case Opcode::SOUNDFONT_VOICE:
             op_soundfont_voice(ctx_, inst, &sample_bank_, &soundfont_registry_);
             break;
+
+        case Opcode::SF_VOICE:
+            op_sf_voice(ctx_, inst, &sample_bank_, &soundfont_registry_);
+            break;
 #endif
 
         // === Delays ===

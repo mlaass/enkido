@@ -18,6 +18,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace akkado {
@@ -673,6 +674,12 @@ private:
     /// Special-cased: extracts filename/preset at compile time, emits SOUNDFONT_VOICE
     TypedValue handle_soundfont_call(NodeIndex node, const Node& n);
 
+    /// Handle sf_voice(file, preset, freq, gate, vel) — single-voice SoundFont
+    /// player. Resolves `file` (literal path or $soundfont_alias) and `preset`
+    /// at compile time, visits the freq/gate/vel signal args, and emits one
+    /// stereo SF_VOICE. Designed to be used as an instrument inside poly().
+    TypedValue handle_sf_voice_call(NodeIndex node, const Node& n);
+
     /// Handle midi(options?) - runtime MIDI event source (PRD prd-midi-input §4.7).
     /// Special-cased: emits one MIDI_QUERY, records a RequiredMidiSource for the
     /// host to call vm.init_midi_queue_state(state_id, ...) with after load.
@@ -846,6 +853,11 @@ private:
     std::vector<ScalarSampleMapping> scalar_sample_mappings_;
     // Track required SoundFont files
     std::vector<RequiredSoundFont> required_soundfonts_;
+    // SoundFont aliases registered via the $soundfont_alias("name","path")
+    // directive. Resolved at codegen time when sf_voice() / soundfont() name
+    // a registered alias; runtime --soundfont-alias flags are a separate host
+    // fallback. Directive entries take precedence (PRD §3.5).
+    std::unordered_map<std::string, std::string> soundfont_aliases_;
     // Track per-call midi() configs (PRD prd-midi-input §4.7).
     std::vector<RequiredMidiSource> required_midi_sources_;
     // Track per-call midi_cc() routes (PRD prd-midi-input §4.8).

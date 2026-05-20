@@ -706,6 +706,36 @@ struct SoundFontVoiceState {
         }
     }
 };
+
+// Single-voice SoundFont player state (SF_VOICE opcode). One SF_VOICE plays
+// exactly one note: all zones matched for that note (velocity layers, key
+// splits) fire as sub-voices and mix internally. There is NO voice pool and
+// no stealing — poly() owns voice management, so this slots into poly() like
+// any other (freq, gate, vel) instrument. Mirrors SoundFontVoiceState's
+// arena-allocation pattern to keep the DSPState variant small.
+struct SFVoiceState {
+    static constexpr std::uint16_t MAX_ZONES_PER_NOTE = 8;
+
+    SFVoice* subzones = nullptr;        // Arena-allocated array of MAX_ZONES_PER_NOTE
+    std::uint8_t active_zone_count = 0; // How many subzones[] were matched at note-on
+    float prev_gate = 0.0f;            // For gate edge detection
+    std::uint8_t prev_note = 255;      // For note-change fallback (255 = none)
+
+    // Ensure sub-voice slots are allocated from the arena (lazy, once).
+    void ensure_subzones(AudioArena* arena) {
+        if (subzones) return;
+        if (!arena) return;
+        constexpr std::size_t voice_floats =
+            (sizeof(SFVoice) * MAX_ZONES_PER_NOTE + sizeof(float) - 1) / sizeof(float);
+        float* raw = arena->allocate(voice_floats);
+        if (raw) {
+            subzones = reinterpret_cast<SFVoice*>(raw);
+            for (std::uint16_t i = 0; i < MAX_ZONES_PER_NOTE; ++i) {
+                new (&subzones[i]) SFVoice{};
+            }
+        }
+    }
+};
 #endif // CEDAR_NO_SOUNDFONT
 
 // ============================================================================
@@ -1448,6 +1478,7 @@ using DSPState = std::variant<
     SamplerState,
 #ifndef CEDAR_NO_SOUNDFONT
     SoundFontVoiceState,
+    SFVoiceState,
 #endif
     // Dynamics states
     CompressorState,

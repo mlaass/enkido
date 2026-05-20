@@ -89,6 +89,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_samples_extended_.clear();
     scalar_sample_mappings_.clear();
     required_soundfonts_.clear();
+    soundfont_aliases_.clear();
     required_midi_sources_.clear();
     required_midi_cc_routes_.clear();
     required_wavetables_.clear();
@@ -1111,6 +1112,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"compose", &CodeGenerator::handle_compose_call},
                 // SoundFont playback
                 {"soundfont", &CodeGenerator::handle_soundfont_call},
+                {"sf_voice", &CodeGenerator::handle_sf_voice_call},
                 // Runtime MIDI event source (PRD prd-midi-input §4.7)
                 {"midi", &CodeGenerator::handle_midi_call},
                 // MIDI CC / PB / AT → param() route (PRD prd-midi-input §4.8)
@@ -2929,6 +2931,33 @@ TypedValue CodeGenerator::handle_directive(NodeIndex node, const Node& n) {
         }
 
         options_.default_polyphony = static_cast<std::uint8_t>(value);
+    } else if (dir_name == "soundfont_alias") {
+        // $soundfont_alias("name", "path") - bind a SoundFont alias resolved
+        // at codegen time by sf_voice() / soundfont(). Must appear before the
+        // calls that use it (like $polyphony).
+        auto string_child = [&](NodeIndex arg) -> std::optional<std::string> {
+            if (arg == NULL_NODE) return std::nullopt;
+            NodeIndex value = arg;
+            if (ast_->arena[value].type == NodeType::Argument) {
+                value = ast_->arena[value].first_child;
+            }
+            if (value == NULL_NODE) return std::nullopt;
+            const Node& vn = ast_->arena[value];
+            if (vn.type != NodeType::StringLit) return std::nullopt;
+            return vn.as_string();
+        };
+
+        NodeIndex name_arg = n.first_child;
+        NodeIndex path_arg = (name_arg != NULL_NODE)
+            ? ast_->arena[name_arg].next_sibling : NULL_NODE;
+        auto alias_name = string_child(name_arg);
+        auto alias_path = string_child(path_arg);
+        if (!alias_name.has_value() || !alias_path.has_value()) {
+            error("E153", "$soundfont_alias requires two string arguments: "
+                  "$soundfont_alias(\"name\", \"path\")", n.location);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        soundfont_aliases_[*alias_name] = *alias_path;
     } else {
         warn("W150", "Unknown directive '$" + dir_name + "'", n.location);
     }
