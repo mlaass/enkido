@@ -210,6 +210,13 @@ enum class Opcode : std::uint8_t {
     // Inputs: in0=freq, in1=phaseOffset, in2=tablePos. State: SmoochState.
     OSC_WAVETABLE = 200,
 
+    // Forward Control Flow (210-219) — PRD prd-runtime-functions-control-flow L1.
+    // Pure control-flow opcodes: handled directly in the VM dispatch loop, NOT
+    // through the execute() opcode switch (same as POLY_BEGIN). Forward-only —
+    // they advance ip, never rewind it.
+    SKIP_IF_ZERO = 210,      // if inputs[0][0] == 0.0f, ip += rate + 1; else ip += 1
+    SKIP_IF_NONZERO = 211,   // if inputs[0][0] != 0.0f, ip += rate + 1; else ip += 1
+
     INVALID = 255
 };
 

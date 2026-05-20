@@ -151,6 +151,8 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::FFT_PROBE: return "FFT_PROBE";
         case Opcode::IFFT: return "IFFT";
         case Opcode::OSC_WAVETABLE: return "OSC_WAVETABLE";
+        case Opcode::SKIP_IF_ZERO: return "SKIP_IF_ZERO";
+        case Opcode::SKIP_IF_NONZERO: return "SKIP_IF_NONZERO";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }

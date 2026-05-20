@@ -1134,6 +1134,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"poly",   &CodeGenerator::handle_poly_call},
                 {"mono",   &CodeGenerator::handle_mono_call},
                 {"legato", &CodeGenerator::handle_poly_call},
+                // Forward control flow (PRD prd-runtime-functions-control-flow L1)
+                {"when",   &CodeGenerator::handle_when_call},
             };
 
             auto handler_it = special_handlers.find(func_name);

@@ -931,6 +931,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Select between signals: (cond > 0) ? a : b"}},
 
+    // Conditionals - Block-rate bypass. opcode = NOP: handle_when_call in
+    // codegen_control_flow.cpp lowers this to SKIP_IF_* opcodes before the
+    // generic emission path runs. Entry exists for arity-checking + autocomplete.
+    {"when",    {cedar::Opcode::NOP, 3, 0, false,
+                 {"cond", "true_branch", "false_branch", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Block-rate conditional bypass: runs only the taken branch"}},
+
     // Conditionals - Comparisons (return 0.0 or 1.0)
     {"gt",      {cedar::Opcode::CMP_GT, 2, 0, false,
                  {"a", "b", "", "", "", ""},

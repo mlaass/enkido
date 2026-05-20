@@ -26,4 +26,5 @@
 #include "dynamics.hpp"
 #include "reverbs.hpp"
 #include "logic.hpp"
+#include "control_flow.hpp"
 #include "stereo.hpp"

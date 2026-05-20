@@ -721,6 +721,11 @@ private:
     /// Emits POLY_BEGIN, inlines instrument body, emits POLY_END
     TypedValue handle_poly_call(NodeIndex node, const Node& n);
 
+    /// Handle when(cond, true_branch, false_branch) — block-rate conditional
+    /// bypass. Lowers to SKIP_IF_ZERO opcodes so only the taken branch's
+    /// instructions execute. Defined in codegen_control_flow.cpp.
+    TypedValue handle_when_call(NodeIndex node, const Node& n);
+
     // ============================================================================
     // Stereo handlers
     // ============================================================================

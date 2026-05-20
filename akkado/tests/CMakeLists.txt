@@ -23,6 +23,7 @@ add_executable(akkado_tests
     test_shape_index.cpp
     test_codegen.cpp
     test_codegen_cycle_timing.cpp
+    test_control_flow.cpp
     test_types.cpp
     test_const_eval.cpp
     test_diagnostics.cpp

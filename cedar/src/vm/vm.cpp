@@ -311,8 +311,15 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
     auto program = slot->program();
     std::size_t ip = 0;
     while (ip < program.size()) {
-        if (program[ip].opcode == Opcode::POLY_BEGIN) {
+        const Instruction& inst = program[ip];
+        if (inst.opcode == Opcode::POLY_BEGIN) {
             ip = execute_poly_block(program, ip);
+        } else if (inst.opcode == Opcode::SKIP_IF_ZERO ||
+                   inst.opcode == Opcode::SKIP_IF_NONZERO) {
+            // Forward control flow: sample the predicate once per block at
+            // sample [0] and skip ahead. Handled here, not via execute().
+            const float* predicate = ctx_.buffers->get(inst.inputs[0]);
+            ip = skip_if_next_ip(inst, predicate[0], ip);
         } else {
             execute(program[ip]);
             ++ip;
