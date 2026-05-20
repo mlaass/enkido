@@ -25,7 +25,7 @@ This PRD specifies a **rework into runtime event-stream transforms**: every modi
 
 Cedar today has **no runtime function dispatch** — no CALL/RET opcodes, no first-class function values, no closure objects in the state pool. Akkado closures (`(e) -> ...`) only exist as compile-time AST nodes; they get inlined at every call site via `handle_user_function_call` (`akkado/src/codegen_functions.cpp:69-300`).
 
-The clean `event_map(events, (e) -> ...)` design depends on **first-class runtime closures** existing in Cedar. **A separate PRD owns this work** and must land first. That PRD needs to deliver, at minimum:
+The clean `event_map(events, (e) -> ...)` design depends on **first-class runtime closures** existing in Cedar. [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md) owns this work and must land first — its §13 explicitly identifies itself as this PRD's closure-infrastructure dependency and maps `Closure` → `BlockRef`, `INVOKE_CLOSURE` → `BLOCK_CALL` / `FOREACH_EVENT`. That PRD is currently in `DRAFT` status; it must be promoted to implementation-ready (its open questions are implementation-time, not design-blocking) and its L1→L3 phases shipped before this PRD's Phase 2. It needs to deliver, at minimum:
 
 - A `Closure` runtime value (captures + bytecode pointer, stored in `DSPState` or a new closure pool).
 - An opcode (provisional name `INVOKE_CLOSURE`) the VM dispatches per call.
@@ -38,9 +38,11 @@ The clean `event_map(events, (e) -> ...)` design depends on **first-class runtim
 
 ---
 
-## 0.5. Hard Dependency: Cycles-Pure Clock Model (separate PRD)
+## 0.5. Hard Dependency: `cycle_length` Plumbing Cleanup (separate PRD)
 
-A second PRD — **"Cycles-pure clock model — drop beats from Cedar"** — must land **before this PRD's Phase 1**. The cycles-pure refactor removes `cycle_length` from `SequenceState` / `PatternPayload`, drops the "1 cycle = 4 beats" convention, makes the cycle the only musician-facing time unit (BPM → CPS), and normalises every event to cycle phase `[0, 1)`. The captured design lives in the project-memory entry `project_strudel_cycles_pure_model_followup.md`.
+[`prd-cycle-length-cleanup.md`](prd-cycle-length-cleanup.md) must land **before this PRD's Phase 1**. It removes the now-dead `cycle_length` field from `SequenceState` / `PatternPayload` / `EventSourcePayload`, replaces the `MidiQueueState` `1e6f` sentinel with a `streaming: bool` flag, and collapses `beat_phase` / `bar_phase` into a single `cycle_offset`. It is a pure refactor with no behaviour change.
+
+> **Note (2026-05-20):** the original dependency named here was `prd-cycles-pure-clock-model.md`. That PRD has been split. Its headline — "1 cycle = 1 beat", `samples_per_cycle()` dropping `* 4` — already shipped with the 2026-05-19 parser revert (commit `9d99490`). The remaining work was split into (1) `prd-cycle-length-cleanup.md`, the dead-plumbing removal — **this is the actual hard prereq** — and (2) `prd-beats-per-cycle.md`, an optional user-facing time-signature knob. **This PRD does NOT depend on `prd-beats-per-cycle.md`** — it needs only the cleanup. Every `e.time` reference below is already cycle phase `[0, 1)` post-revert; this PRD only needs the unified `EventStreamPayload` to be free of the dead `cycle_length` field.
 
 **Why it's a hard prereq (not a follow-up)**:
 
@@ -365,8 +367,8 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 
 | Phase | Deliverable                                                                                                                                                                                | Tests                                                                                       |
 |-------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------|
-| **0a** | **External PRD**: cycles-pure clock model lands (§0.5)                                                                                                                                    | Owned by the cycles-pure PRD                                                                |
-| **0b** | **External PRD**: runtime closure / first-class fn infrastructure in Cedar lands (§0)                                                                                                     | Owned by the closure PRD                                                                    |
+| **0a** | **External PRD**: `cycle_length` plumbing cleanup lands (§0.5)                                                                                                                            | Owned by `prd-cycle-length-cleanup.md`                                                      |
+| **0b** | **External PRD**: runtime closure / first-class fn infrastructure in Cedar lands (§0)                                                                                                     | Owned by `prd-runtime-functions-control-flow.md`                                            |
 | **1** | Substrate: `EVENT_MAP` + `EVENT_FILTER` opcodes; manually-wired `transpose` and `velocity` in C++ codegen (no closures yet, constants only)                                                | `cedar/tests/test_event_map.cpp`, `experiments/test_op_event_map.py` (≥300 s)               |
 | **2** | `event_map` / `event_filter` builtins taking closures; migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers                                  | `akkado/tests/test_event_map.cpp` for closure plumbing                                      |
 | **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input; `early`/`late`/`swing` via `event_map`                                                                                       | Rate-scaled WAV experiments                                                                 |
@@ -439,8 +441,8 @@ List every API surface this PRD assumes the cycles-pure PRD will provide (`spc` 
 
 ## 12. Next Step
 
-1. **Land the cycles-pure PRD** (§0.5) — design, review, implement.
-2. **Land the runtime-closure PRD** (§0) — design, review, implement. Can proceed in parallel with cycles-pure; both must merge before Phase 1.
+1. **Land `prd-cycle-length-cleanup.md`** (§0.5) — small, mechanical, READY-status; no design work outstanding.
+2. **Land `prd-runtime-functions-control-flow.md`** (§0) — promote out of DRAFT, then ship its L1→L3 phases. This is the larger, riskier prerequisite and the real long pole. Can proceed in parallel with the cleanup PRD; both must merge before Phase 1.
 3. **Resolve §11 open questions** in this PRD draft. Promote to "READY FOR IMPLEMENTATION" status only after every OQ has a concrete decision. OQ-1 in particular is gated on `prd-pattern-event-arrays.md` landing (see §0.6) — it should land before this PRD's Phase 2.
 4. **Implement Phase 1** of §9. Each subsequent phase is reviewed and merged independently.
 
