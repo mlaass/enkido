@@ -1360,6 +1360,57 @@ TEST_CASE("Parser function definitions", "[parser]") {
     }
 }
 
+TEST_CASE("Parser fn arrow body does not swallow the next line",
+          "[parser][fn]") {
+    // The grammar is newline-insensitive and has no statement terminator.
+    // A `(` only extends an identifier into a call when it is on the SAME
+    // source line. Without that guard, a `fn ... -> body` whose body ends in
+    // a bare identifier absorbs a following `(...)` statement as call args,
+    // collapsing the whole program into the function body (and tripping a
+    // false E240 recursion downstream).
+    SECTION("bare-identifier body, next line opens with `(`") {
+        auto ast = parse_ok(R"(
+            fn vox(f, g) -> f * g
+            (vox(1, 2) + vox(3, 4)) * 0.5 |> out(@)
+        )");
+        NodeIndex root = ast.root;
+        CHECK(ast.arena.child_count(root) == 2);
+
+        NodeIndex fn = ast.arena[root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+        CHECK(ast.arena[fn].as_function_def().name == "vox");
+
+        // The fn body is the FunctionDef's last child: `f * g` — the parser
+        // desugars `*` to a `mul` Call. The bug made it a Pipe reaching into
+        // the program's output statement; assert it stays a self-contained
+        // `mul`.
+        NodeIndex body = ast.arena[fn].first_child;
+        while (ast.arena[body].next_sibling != NULL_NODE) {
+            body = ast.arena[body].next_sibling;
+        }
+        REQUIRE(ast.arena[body].type == NodeType::Call);
+        CHECK(ast.arena[body].as_identifier() == "mul");
+
+        // The second top-level statement is the independent pipe.
+        NodeIndex stmt2 = ast.arena[fn].next_sibling;
+        CHECK(ast.arena[stmt2].type == NodeType::Pipe);
+    }
+
+    SECTION("a `(` on the same line as the name is still a call") {
+        auto ast = parse_ok("fn f(x) -> g(x)\nf(1) |> out(@)");
+        NodeIndex root = ast.root;
+        CHECK(ast.arena.child_count(root) == 2);
+        NodeIndex fn = ast.arena[root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+        // Body `g(x)` is a Call — the same-line `(` still binds.
+        NodeIndex body = ast.arena[fn].first_child;
+        while (ast.arena[body].next_sibling != NULL_NODE) {
+            body = ast.arena[body].next_sibling;
+        }
+        CHECK(ast.arena[body].type == NodeType::Call);
+    }
+}
+
 TEST_CASE("Parser string default parameters", "[parser][fn]") {
     SECTION("function with string default") {
         auto ast = parse_ok(R"(fn osc(type = "sin", freq = 440) -> freq)");

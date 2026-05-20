@@ -387,6 +387,27 @@ TEST_CASE("BLOCK_BIND: each BLOCK_BIND run precedes its BLOCK_CALL",
     CHECK(calls_with_run == 2);
 }
 
+TEST_CASE("BLOCK_BIND: arrow-body fn followed by a parenthesized call stmt",
+          "[block_call][L2][block_bind]") {
+    // Regression: a `fn ... -> body` whose body ends in a bare identifier,
+    // followed by a statement that opens with `(`, must not merge — the
+    // newline-insensitive grammar would otherwise absorb the call statement
+    // into the fn body and report a false E240 recursion. Exercised here at
+    // >5 params (the BLOCK_BIND path) since multi-arg fn bodies routinely
+    // end in a bare parameter identifier.
+    auto r = akkado::compile(
+        "fn mix7(a, b, c, d, e, g, h) -> a + b + c + d + e + g + h\n"
+        "(saw(mix7(30,40,50,60,70,80,90)) "
+        "+ saw(mix7(90,80,70,60,50,40,30))) * 0.5 |> out(@)");
+    REQUIRE(r.success);
+    for (const auto& d : r.diagnostics) {
+        CHECK(d.code != "E240");  // no false recursion
+    }
+    CHECK(r.block_table.size() == 1);
+    CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 2);
+    CHECK(count_op(r, cedar::Opcode::BLOCK_BIND) == 4);
+}
+
 TEST_CASE("BLOCK_BIND: 7-param stateful fn isolates state per call site",
           "[block_call][L2][block_bind]") {
     // A >5-param body carrying a stateful opcode (lp) must keep independent

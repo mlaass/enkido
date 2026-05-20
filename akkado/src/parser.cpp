@@ -901,15 +901,25 @@ NodeIndex Parser::parse_loop_expr(const Token& loop_token) {
 NodeIndex Parser::parse_identifier_or_call() {
     Token name_tok = advance();
 
+    // A `(` only extends this identifier into a call when it sits on the same
+    // source line. The grammar is newline-insensitive and has no statement
+    // terminator, so without this guard a bare trailing identifier swallows
+    // the next line: `fn f(x) -> a * b` followed by `(g(1) + g(2)) |> out(@)`
+    // would parse as `f`'s body = `b((g(1)+g(2)) |> out(@))`, merging the
+    // whole program into the function body (and tripping false E240
+    // recursion). A `(` on a later line begins a new parenthesized statement.
+    const bool lparen_same_line =
+        check(TokenType::LParen) &&
+        current().location.line == name_tok.location.line;
+
     // Contextual keyword: loop(N) { body }. Only the `( ... ) {` shape is the
     // loop form — a bare `loop(x)` stays an ordinary identifier/call.
-    if (name_tok.lexeme == "loop" && check(TokenType::LParen) &&
-        loop_form_ahead()) {
+    if (name_tok.lexeme == "loop" && lparen_same_line && loop_form_ahead()) {
         return parse_loop_expr(name_tok);
     }
 
     // Check for function call
-    if (check(TokenType::LParen)) {
+    if (lparen_same_line) {
         return parse_call(name_tok);
     }
 
