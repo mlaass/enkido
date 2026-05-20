@@ -38,30 +38,43 @@ The clean `event_map(events, (e) -> ...)` design depends on **first-class runtim
 
 ---
 
-## 0.5. Hard Dependency: `cycle_length` Plumbing Cleanup (separate PRD)
+## 0.5. Related Cleanup: Clock-Phase & MIDI-Streaming (separate PRD)
 
-[`prd-cycle-length-cleanup.md`](prd-cycle-length-cleanup.md) must land **before this PRD's Phase 1**. It removes the now-dead `cycle_length` field from `SequenceState` / `PatternPayload` / `EventSourcePayload`, replaces the `MidiQueueState` `1e6f` sentinel with a `streaming: bool` flag, and collapses `beat_phase` / `bar_phase` into a single `cycle_offset`. It is a pure refactor with no behaviour change.
+> **Revised 2026-05-20 — this section was rewritten after a false premise was
+> found.** It previously named [`prd-cycle-length-cleanup.md`](prd-cycle-length-cleanup.md)
+> a **hard prerequisite** on the assumption that it removes the "now-dead"
+> `cycle_length` field, leaving `EventStreamPayload` free of it. That premise
+> is wrong: `cycle_length` is **live** — the `slow`/`fast`/`palindrome`/`linger`
+> pattern transforms compute it (`akkado/src/codegen_patterns.cpp`), tests
+> verify the computed values, and the runtime scales event times by it. The
+> field **stays**. `prd-cycle-length-cleanup.md` has been rescoped to the
+> genuinely-dead plumbing only (MIDI `1e6f` sentinel → `streaming: bool`;
+> `beat_phase`/`bar_phase` → one `cycle_offset`; a comment/terminology pass).
 
-> **Note (2026-05-20):** the original dependency named here was `prd-cycles-pure-clock-model.md`. That PRD has been split. Its headline — "1 cycle = 1 beat", `samples_per_cycle()` dropping `* 4` — already shipped with the 2026-05-19 parser revert (commit `9d99490`). The remaining work was split into (1) `prd-cycle-length-cleanup.md`, the dead-plumbing removal — **this is the actual hard prereq** — and (2) `prd-beats-per-cycle.md`, an optional user-facing time-signature knob. **This PRD does NOT depend on `prd-beats-per-cycle.md`** — it needs only the cleanup. Every `e.time` reference below is already cycle phase `[0, 1)` post-revert; this PRD only needs the unified `EventStreamPayload` to be free of the dead `cycle_length` field.
+[`prd-cycle-length-cleanup.md`](prd-cycle-length-cleanup.md) is **not a hard
+prerequisite** of this PRD. Its rescoped work — the MIDI `streaming` flag and
+the clock-phase collapse — is largely orthogonal to runtime event transforms.
+The two PRDs can land in either order; the only soft coupling is the shared
+`EventStreamPayload`/`EventSourcePayload` surface, which **carries
+`cycle_length`** in both designs.
 
-**Why it's a hard prereq (not a follow-up)**:
+> **Note (2026-05-20):** the original dependency named here was `prd-cycles-pure-clock-model.md`. That PRD has been split. Its headline — "1 cycle = 1 beat", `samples_per_cycle()` dropping `* 4` — already shipped with the 2026-05-19 parser revert (commit `9d99490`). The remaining work was split into (1) `prd-cycle-length-cleanup.md`, the clock-phase / MIDI-streaming cleanup, and (2) `prd-beats-per-cycle.md`, an optional user-facing time-signature knob. **This PRD does NOT depend on `prd-beats-per-cycle.md`.** Every `e.time` reference below is already cycle phase `[0, 1)` post-revert.
 
-- §3.1's signal-sampling formula in the original draft referenced `spb` (samples per beat). Post-refactor that's `spc` (samples per cycle), and the event-onset sample is derived directly from the scheduler — no `cycle_length` arithmetic.
-- §3.3's stdlib `early` / `late` are already cycle-phase by design (`mod 1.0`) — they are *forward-compatible* with cycles-pure but would need a "this is cycles, not beats" disclaimer if shipped before the refactor.
-- §3.3's `swing` / `swingBy` definitionally assumed a beat-grid; cycles-pure forces an explicit grid-subdivision argument (see §11 OQ-10).
-- §3.4's Phase B `EventStreamPayload` cleanup must drop `cycle_length`, not carry the dead field forward.
-- §11 OQ-7's interaction between `fast`/`slow` and `cycle_length` largely *evaporates* post-refactor — there is no `cycle_length` to mutate, only the cycle-phase rate feeding `SEQPAT_QUERY`.
+**Time-semantics points still valid post-revert** (independent of the cleanup PRD):
 
-**Touch-points in this PRD that depend on cycles-pure semantics**:
+- §3.1's signal-sampling formula in the original draft referenced `spb` (samples per beat). Post-revert that's `spc` (samples per cycle), and the event-onset sample is derived directly from the scheduler.
+- §3.3's stdlib `early` / `late` are already cycle-phase by design (`mod 1.0`).
+- §3.3's `swing` / `swingBy` definitionally assumed a beat-grid; under cycle = beat they need an explicit grid-subdivision argument (see §11 OQ-10).
 
-- §3.1 — event-onset sampling derived from scheduler in sample units.
-- §3.3 — `e.time` is cycle phase; `swing` defers to OQ-10.
-- §3.4 — Phase B drops `cycle_length`.
-- §7 — file list overlaps with the cycles-pure refactor's scope.
-- §11 OQ-7 — rewritten in cycles-pure terms.
-- §11 OQ-9, OQ-10 — new questions specific to cycle-pure event semantics.
+**Corrections forced by the false-premise discovery — sections needing rework**:
 
-> **PRD reviewers**: §0.5 is load-bearing in the same way §0 is. If the cycles-pure PRD is descoped or significantly changes shape, every time-related reference below needs revisiting.
+- §3.4's Phase B `EventStreamPayload` cleanup must **keep** `cycle_length`, not drop it. The field is live; the unified payload carries it.
+- §11 OQ-7's interaction between `fast`/`slow` and `cycle_length` does **not** evaporate — `fast`/`slow` *are* the `cycle_length` mutation. OQ-7 remains a live design question and must be answered, not deferred.
+- Any other section that assumed `e.time` arithmetic could ignore `cycle_length` must be re-checked: `slow`-wrapped patterns produce `cycle_length != 1.0`.
+
+> **PRD reviewers**: §3.4 and §11 OQ-7 below still contain pre-correction
+> wording that assumes `cycle_length` is dropped. They must be reworked before
+> this PRD is implemented.
 
 ---
 
