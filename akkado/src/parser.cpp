@@ -822,8 +822,57 @@ NodeIndex Parser::parse_array() {
     return node;
 }
 
+bool Parser::loop_form_ahead() const {
+    // The current token is the '('. Walk to its matching ')' and check
+    // whether a '{' follows — that distinguishes `loop(N) { body }` from an
+    // ordinary call to a user function that happens to be named `loop`.
+    int depth = 0;
+    for (std::size_t i = current_idx_; i < tokens_.size(); ++i) {
+        TokenType t = tokens_[i].type;
+        if (t == TokenType::LParen) {
+            ++depth;
+        } else if (t == TokenType::RParen) {
+            --depth;
+            if (depth == 0) {
+                return i + 1 < tokens_.size() &&
+                       tokens_[i + 1].type == TokenType::LBrace;
+            }
+        } else if (t == TokenType::Eof) {
+            break;
+        }
+    }
+    return false;
+}
+
+NodeIndex Parser::parse_loop_expr(const Token& loop_token) {
+    // `loop` already consumed; current token is '('.
+    NodeIndex node = make_node(NodeType::LoopExpr, loop_token);
+
+    consume(TokenType::LParen, "Expected '(' after 'loop'");
+    NodeIndex count = parse_expression();
+    if (count != NULL_NODE) {
+        arena_.add_child(node, count);
+    }
+    consume(TokenType::RParen, "Expected ')' after loop count");
+
+    // Body is a brace-delimited block expression; its value is the final
+    // expression so it composes with `|>`.
+    NodeIndex body = parse_block();
+    if (body != NULL_NODE) {
+        arena_.add_child(node, body);
+    }
+    return node;
+}
+
 NodeIndex Parser::parse_identifier_or_call() {
     Token name_tok = advance();
+
+    // Contextual keyword: loop(N) { body }. Only the `( ... ) {` shape is the
+    // loop form — a bare `loop(x)` stays an ordinary identifier/call.
+    if (name_tok.lexeme == "loop" && check(TokenType::LParen) &&
+        loop_form_ahead()) {
+        return parse_loop_expr(name_tok);
+    }
 
     // Check for function call
     if (check(TokenType::LParen)) {

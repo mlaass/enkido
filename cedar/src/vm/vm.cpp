@@ -320,6 +320,17 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
             // sample [0] and skip ahead. Handled here, not via execute().
             const float* predicate = ctx_.buffers->get(inst.inputs[0]);
             ip = skip_if_next_ip(inst, predicate[0], ip);
+        } else if (inst.opcode == Opcode::LOOP_STATIC) {
+            // Static loop: re-run the next body_len instructions `count` times.
+            // body_len=rate, count=out_buffer. State is shared across passes.
+            const std::size_t body_len = inst.rate;
+            const std::uint16_t iterations = inst.out_buffer;
+            for (std::uint16_t it = 0; it < iterations; ++it) {
+                for (std::size_t bi = 0; bi < body_len; ++bi) {
+                    execute(program[ip + 1 + bi]);
+                }
+            }
+            ip += body_len + 1;
         } else {
             execute(program[ip]);
             ++ip;

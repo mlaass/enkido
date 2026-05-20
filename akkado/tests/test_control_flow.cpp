@@ -162,3 +162,85 @@ TEST_CASE("when(): piped input flows into both branches via @",
     REQUIRE(r.success);
     CHECK(run_one_block_left(r) == Catch::Approx(1.0f));
 }
+
+// =============================================================================
+// loop() — bounded static iteration
+// =============================================================================
+
+TEST_CASE("loop(): lowers to a LOOP_STATIC header", "[control_flow][codegen]") {
+    auto r = akkado::compile("0.1 |> loop(4) { @ + 0.1 } |> out(@)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+
+    REQUIRE(count_op(insts, cedar::Opcode::LOOP_STATIC) == 1);
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::LOOP_STATIC) {
+            // out_buffer carries the iteration count; rate is the body length
+            // (PUSH_CONST 0.1, ADD, COPY-thread = 3 instructions).
+            CHECK(i.out_buffer == 4);
+            CHECK(i.rate == 3);
+        }
+    }
+}
+
+TEST_CASE("loop(): threads the accumulator through N iterations",
+          "[control_flow][runtime]") {
+    SECTION("additive") {
+        // 0.1, then +0.1 four times -> 0.5
+        auto r = akkado::compile("0.1 |> loop(4) { @ + 0.1 } |> out(@)");
+        REQUIRE(r.success);
+        CHECK(run_one_block_left(r) == Catch::Approx(0.5f));
+    }
+    SECTION("multiplicative") {
+        // 1.0, then *0.5 three times -> 0.125
+        auto r = akkado::compile("1.0 |> loop(3) { @ * 0.5 } |> out(@)");
+        REQUIRE(r.success);
+        CHECK(run_one_block_left(r) == Catch::Approx(0.125f));
+    }
+}
+
+TEST_CASE("loop(): zero count leaves the seed unchanged",
+          "[control_flow][runtime]") {
+    auto r = akkado::compile("0.42 |> loop(0) { @ + 1 } |> out(@)");
+    REQUIRE(r.success);
+    CHECK(run_one_block_left(r) == Catch::Approx(0.42f));
+}
+
+TEST_CASE("loop(): composes in a pipe chain", "[control_flow][runtime]") {
+    // 0 -> +1 three times = 3 -> *10 twice = 300
+    auto r = akkado::compile(
+        "0.0 |> loop(3) { @ + 1 } |> loop(2) { @ * 10 } |> out(@)");
+    REQUIRE(r.success);
+    CHECK(run_one_block_left(r) == Catch::Approx(300.0f));
+}
+
+TEST_CASE("loop(): const-folded count expression", "[control_flow][runtime]") {
+    // The count must constant-fold; 2 + 2 folds to 4.
+    auto r = akkado::compile("0.1 |> loop(2 + 2) { @ + 0.1 } |> out(@)");
+    REQUIRE(r.success);
+    CHECK(run_one_block_left(r) == Catch::Approx(0.5f));
+}
+
+TEST_CASE("loop(): non-constant count is E243",
+          "[control_flow][codegen][error]") {
+    // A count that depends on a runtime signal cannot constant-fold.
+    auto r = akkado::compile("0.1 |> loop(saw(2)) { @ + 0.1 } |> out(@)");
+    CHECK_FALSE(r.success);
+    CHECK(has_diag(r, "E243"));
+}
+
+TEST_CASE("loop(): fractional count is E243",
+          "[control_flow][codegen][error]") {
+    auto r = akkado::compile("0.1 |> loop(2.5) { @ + 0.1 } |> out(@)");
+    CHECK_FALSE(r.success);
+    CHECK(has_diag(r, "E243"));
+}
+
+TEST_CASE("loop(): bare identifier `loop` is not the loop form",
+          "[control_flow][parser]") {
+    // `loop` followed by `(...)` without a trailing `{` is an ordinary call,
+    // so this resolves to an unknown-function error, not a parse of a loop.
+    auto r = akkado::compile("out(loop(4))");
+    CHECK_FALSE(r.success);
+    CHECK_FALSE(has_diag(r, "E243"));  // never reached the loop lowering
+}

@@ -121,6 +121,10 @@ private:
 
     // Function call helpers
     NodeIndex parse_call(const Token& name_token);
+    NodeIndex parse_loop_expr(const Token& loop_token);
+    /// True when the token stream at the current '(' is `( ... ) {` — i.e. the
+    /// `loop` contextual keyword's block form rather than an ordinary call.
+    [[nodiscard]] bool loop_form_ahead() const;
     NodeIndex parse_argument();
     std::vector<NodeIndex> parse_argument_list();
 

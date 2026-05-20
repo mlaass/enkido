@@ -87,6 +87,12 @@ private:
     // Helper: Unified substitution of holes, binding names, and identifier nodes
     NodeIndex substitute_nodes(NodeIndex node, const SubstituteOpts& opts);
 
+    // Helper: clone a LoopExpr (input arena) attaching `seed_out` (output
+    // arena) as its seed child. The loop body is cloned WITHOUT hole
+    // substitution — its `@` holes are the running accumulator, resolved at
+    // codegen, not the enclosing pipe's value.
+    NodeIndex clone_loop_seeded(NodeIndex loop_in, NodeIndex seed_out);
+
     // Helper: Check if a subtree contains a hole
     bool contains_hole(NodeIndex node) const;
 
@@ -158,6 +164,10 @@ private:
 
     // For pipe rewriting: track mapping from old indices to new indices
     std::unordered_map<NodeIndex, NodeIndex> node_map_;
+
+    // >0 while resolve_and_validate is inside a loop() body, where surviving
+    // `@` holes are the running accumulator rather than an E003 error.
+    int loop_body_depth_ = 0;
 };
 
 } // namespace akkado

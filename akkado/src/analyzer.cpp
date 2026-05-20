@@ -886,6 +886,15 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) 
         // RHS is still in binding-RHS context.
         NodeIndex new_lhs = rewrite_pipes(actual_lhs, closure_allowed);
 
+        // loop() as a pipe RHS: the LHS seeds the loop's accumulator. The
+        // loop body's `@` holes are the running accumulator and must NOT be
+        // substituted with the LHS — clone_loop_seeded preserves them.
+        if ((*input_ast_).arena[rhs_idx].type == NodeType::LoopExpr) {
+            NodeIndex seeded = clone_loop_seeded(rhs_idx, new_lhs);
+            node_map_[node] = seeded;
+            return seeded;
+        }
+
         // Now substitute all holes in RHS with the LHS value
         // This performs: a |> f(%) -> f(a)
         // Also substitute binding name references with the LHS value
@@ -919,6 +928,33 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) 
     // non-pipe wrapper (e.g. Argument, BinaryOp) inside a binding RHS still
     // permits closure rewriting of any pipes within.
     return clone_subtree(node, closure_allowed);
+}
+
+NodeIndex SemanticAnalyzer::clone_loop_seeded(NodeIndex loop_in, NodeIndex seed_out) {
+    const Node& ln = (*input_ast_).arena[loop_in];
+    NodeIndex count_in = ln.first_child;
+    NodeIndex body_in = (count_in != NULL_NODE)
+        ? (*input_ast_).arena[count_in].next_sibling : NULL_NODE;
+
+    NodeIndex out = output_arena_.alloc(NodeType::LoopExpr, ln.location);
+    node_map_[loop_in] = out;
+
+    // count: ordinary clone (a compile-time constant; no holes expected).
+    // body: clone WITHOUT hole substitution — its `@` is the accumulator.
+    NodeIndex count_out = clone_subtree(count_in);
+    NodeIndex body_out = clone_subtree(body_in);
+
+    // Children: [count, body, seed].
+    output_arena_[out].first_child = count_out;
+    if (count_out != NULL_NODE) {
+        output_arena_[count_out].next_sibling = body_out;
+    } else {
+        output_arena_[out].first_child = body_out;
+    }
+    if (body_out != NULL_NODE) {
+        output_arena_[body_out].next_sibling = seed_out;
+    }
+    return out;
 }
 
 NodeIndex SemanticAnalyzer::clone_node(NodeIndex src_idx) {
@@ -1262,10 +1298,24 @@ NodeIndex SemanticAnalyzer::substitute_nodes(NodeIndex node, const SubstituteOpt
         rhs_opts.clone_on_hole = opts.clone_on_hole;
         rhs_opts.destructure_fields = opts.destructure_fields;
 
-        NodeIndex new_rhs = substitute_nodes(src_rhs, rhs_opts);
+        // loop() as a pipe RHS nested in a substituted subtree: seed it,
+        // don't substitute the body's accumulator holes.
+        NodeIndex new_rhs;
+        if (src_rhs != NULL_NODE &&
+            (*input_ast_).arena[src_rhs].type == NodeType::LoopExpr) {
+            new_rhs = clone_loop_seeded(src_rhs, new_lhs);
+        } else {
+            new_rhs = substitute_nodes(src_rhs, rhs_opts);
+        }
 
         node_map_[node] = new_rhs;
         return new_rhs;
+    }
+
+    // 4b. LoopExpr encountered NOT as a pipe RHS — clone it without
+    // substituting the body's `@` holes (they are the loop accumulator).
+    if (n.type == NodeType::LoopExpr) {
+        return clone_subtree(node);
     }
 
     // 5. Clone node, recurse children
@@ -1491,8 +1541,30 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
     const Node& n = output_arena_[node];
 
     if (n.type == NodeType::Hole) {
-        // Holes should have been substituted - if we see one, it's an error
-        error("E003", "Hole '@' used outside of pipe expression", n.location);
+        // Inside a loop() body the hole is the running accumulator and is
+        // resolved at codegen — not an error there. Everywhere else, a
+        // surviving hole means it was used outside a pipe expression.
+        if (loop_body_depth_ == 0) {
+            error("E003", "Hole '@' used outside of pipe expression", n.location);
+        }
+    }
+
+    // LoopExpr: validate count/seed normally; recurse the body with the
+    // loop-body depth raised so its accumulator holes are not flagged E003.
+    if (n.type == NodeType::LoopExpr) {
+        NodeIndex count = n.first_child;
+        NodeIndex body = (count != NULL_NODE)
+            ? output_arena_[count].next_sibling : NULL_NODE;
+        NodeIndex seed = (body != NULL_NODE)
+            ? output_arena_[body].next_sibling : NULL_NODE;
+        if (count != NULL_NODE) resolve_and_validate(count);
+        if (seed != NULL_NODE) resolve_and_validate(seed);
+        if (body != NULL_NODE) {
+            ++loop_body_depth_;
+            resolve_and_validate(body);
+            --loop_body_depth_;
+        }
+        return;
     }
 
     if (n.type == NodeType::Call) {

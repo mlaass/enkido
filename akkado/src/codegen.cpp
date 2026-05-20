@@ -2077,7 +2077,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
         }
 
         case NodeType::Hole: {
-            // Holes should have been substituted by the analyzer
+            // Inside a loop() body the hole is the running accumulator,
+            // resolved to the loop's running buffer (see handle_loop). The
+            // analyzer deliberately leaves these holes un-substituted.
+            if (!loop_hole_stack_.empty()) {
+                return cache_and_return(node, loop_hole_stack_.back());
+            }
+            // Elsewhere holes should have been substituted by the analyzer.
             error("E110", "Hole '@' in unexpected context", n.location);
             return TypedValue::error_val();
         }
@@ -2111,6 +2117,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
         case NodeType::MatchExpr:
             return handle_match_expr(node, n);
+
+        case NodeType::LoopExpr:
+            return handle_loop(node, n);
 
         case NodeType::MatchArm:
             // MatchArm nodes are handled by MatchExpr, not visited directly

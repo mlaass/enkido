@@ -480,6 +480,11 @@ private:
     /// Handle MatchExpr nodes - compile-time match resolution
     TypedValue handle_match_expr(NodeIndex node, const Node& n);
 
+    /// Handle LoopExpr nodes — loop(count) { body } bounded static iteration.
+    /// Emits LOOP_STATIC + body; the body's `@` holes resolve to the running
+    /// accumulator buffer via loop_hole_stack_. Defined in codegen_control_flow.cpp.
+    TypedValue handle_loop(NodeIndex node, const Node& n);
+
     /// Handle pattern variable reference
     /// Emits pattern code for the stored pattern.
     TypedValue handle_pattern_reference(const std::string& name, NodeIndex pattern_node,
@@ -841,6 +846,10 @@ private:
 
     // Track call counts per stateful function for unique state_ids
     std::unordered_map<std::string, std::uint32_t> call_counters_;
+
+    // Active loop() accumulator buffers. The top is the running buffer for
+    // the loop body currently being codegen'd; NodeType::Hole resolves to it.
+    std::vector<TypedValue> loop_hole_stack_;
 
     // PRD prd-midi-input §10 Q4: depth counter incremented while visiting a
     // user-function / closure body. handle_midi_call rejects with E412 when

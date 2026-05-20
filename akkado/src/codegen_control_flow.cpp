@@ -6,6 +6,9 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/arrays.hpp"
+#include "akkado/const_eval.hpp"
+#include <cmath>
+#include <variant>
 
 namespace akkado {
 
@@ -198,6 +201,177 @@ TypedValue CodeGenerator::handle_when_call(NodeIndex node, const Node& n) {
         return cache_and_return(node, TypedValue::stereo_signal(res_l, res_r));
     }
     return cache_and_return(node, TypedValue::signal(res_l));
+}
+
+// Handle loop(count) { body } — bounded static iteration.
+//
+// The body is threaded: iteration k+1's `@` is iteration k's output, and
+// iteration 1's `@` is the loop's seed (the piped-in signal). Lowering:
+//
+//   <init R from seed>                  -- COPY seed -> R  (once, outside loop)
+//   [LOOP_STATIC rate=body_len, out=N]   -- header
+//     <body instrs, reading R via @>
+//     [COPY body_result -> R]            -- thread the accumulator
+//   ; result is R
+//
+// The VM re-runs [body + COPY] N times. State is shared across iterations
+// (the body's stateful opcodes keep one state_id) — see PRD §4.1.
+TypedValue CodeGenerator::handle_loop(NodeIndex node, const Node& n) {
+    // Children: [count, body, seed?]. seed is appended by the analyzer when
+    // the loop is a pipe RHS.
+    NodeIndex count_node = n.first_child;
+    NodeIndex body_node = (count_node != NULL_NODE)
+        ? ast_->arena[count_node].next_sibling : NULL_NODE;
+    NodeIndex seed_node = (body_node != NULL_NODE)
+        ? ast_->arena[body_node].next_sibling : NULL_NODE;
+
+    if (count_node == NULL_NODE || body_node == NULL_NODE) {
+        error("E243", "loop() requires a count and a body", n.location);
+        return TypedValue::void_val();
+    }
+
+    // --- Constant-fold the iteration count --------------------------------
+    ConstEvaluator evaluator(*ast_, *symbols_);
+    auto count_val = evaluator.evaluate(count_node);
+    for (const auto& diag : evaluator.diagnostics()) {
+        diagnostics_.push_back(diag);
+    }
+    if (!count_val || !std::holds_alternative<double>(*count_val)) {
+        error("E243", "loop() count must be a compile-time constant integer",
+              n.location);
+        return TypedValue::void_val();
+    }
+    double cd = std::get<double>(*count_val);
+    if (cd < 0.0 || cd > 65535.0 || cd != std::floor(cd)) {
+        error("E243", "loop() count must be a non-negative integer (0-65535)",
+              n.location);
+        return TypedValue::void_val();
+    }
+    auto iterations = static_cast<std::uint16_t>(cd);
+
+    // --- Seed: visit the piped-in input, if any ---------------------------
+    bool is_stereo = false;
+    std::uint16_t seed_l = BufferAllocator::BUFFER_UNUSED;
+    std::uint16_t seed_r = 0xFFFF;
+    if (seed_node != NULL_NODE) {
+        TypedValue seed_tv = visit(seed_node);
+        if (seed_tv.buffer == BufferAllocator::BUFFER_UNUSED) {
+            error("E243", "loop() input does not produce a signal", n.location);
+            return TypedValue::void_val();
+        }
+        seed_l = seed_tv.buffer;
+        seed_r = seed_tv.right_buffer;
+        is_stereo = seed_tv.is_stereo() || is_stereo_buffer(seed_l);
+        if (is_stereo && seed_r == 0xFFFF) {
+            StereoBuffers sb = get_stereo_buffers_by_buffer(seed_l);
+            seed_l = sb.left;
+            seed_r = sb.right;
+        }
+    }
+
+    // --- Allocate the running accumulator buffer R ------------------------
+    std::uint16_t run_l = buffers_.allocate();
+    std::uint16_t run_r = 0xFFFF;
+    if (run_l == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+    if (is_stereo) {
+        run_r = buffers_.allocate();
+        if (run_r == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
+        }
+        if (run_r != run_l + 1) {
+            error("E166", "Internal error: loop() stereo buffer allocation not adjacent",
+                  n.location);
+            return TypedValue::void_val();
+        }
+    }
+
+    // Initialise R: copy the seed in, or zero it when the loop is unpiped.
+    if (seed_node != NULL_NODE) {
+        emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, run_l, seed_l));
+        if (is_stereo) {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, run_r, seed_r));
+        }
+    } else {
+        cedar::Instruction zero{};
+        zero.opcode = cedar::Opcode::PUSH_CONST;
+        zero.out_buffer = run_l;
+        codegen::set_unused_inputs(zero);
+        codegen::encode_const_value(zero, 0.0f);
+        emit(zero);
+    }
+
+    // --- LOOP_STATIC header (rate patched after body emission) ------------
+    std::size_t loop_idx = instructions_.size();
+    {
+        cedar::Instruction loop{};
+        loop.opcode = cedar::Opcode::LOOP_STATIC;
+        loop.out_buffer = iterations;  // iteration count (not a buffer index)
+        loop.inputs[0] = 0xFFFF;
+        loop.inputs[1] = 0xFFFF;
+        loop.inputs[2] = 0xFFFF;
+        loop.inputs[3] = 0xFFFF;
+        loop.inputs[4] = 0xFFFF;
+        loop.rate = 0;  // body_len, patched below
+        loop.state_id = 0;
+        emit(loop);
+    }
+
+    // --- Body: visited once; `@` resolves to the running buffer R ---------
+    std::uint32_t count = call_counters_["loop"]++;
+    push_path("loop#" + std::to_string(count));
+
+    loop_hole_stack_.push_back(is_stereo
+        ? TypedValue::stereo_signal(run_l, run_r)
+        : TypedValue::signal(run_l));
+
+    std::size_t body_start = instructions_.size();
+    TypedValue body_tv = visit(body_node);
+    loop_hole_stack_.pop_back();
+    pop_path();
+
+    if (body_tv.buffer == BufferAllocator::BUFFER_UNUSED) {
+        error("E243", "loop() body must produce a signal", n.location);
+        return TypedValue::void_val();
+    }
+
+    std::uint16_t body_l = body_tv.buffer;
+    std::uint16_t body_r = body_tv.right_buffer;
+    bool body_is_stereo = body_tv.is_stereo() || is_stereo_buffer(body_l);
+    if (body_is_stereo && body_r == 0xFFFF) {
+        StereoBuffers sb = get_stereo_buffers_by_buffer(body_l);
+        body_l = sb.left;
+        body_r = sb.right;
+    }
+    if (body_is_stereo != is_stereo) {
+        error("E252", "loop() body must produce the same channel count as its "
+                      "input (wrap the input in stereo() for a stereo body)",
+              n.location);
+        return TypedValue::void_val();
+    }
+
+    // Thread the body result back into R for the next iteration.
+    emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, run_l, body_l));
+    if (is_stereo) {
+        emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, run_r, body_r));
+    }
+
+    // Patch LOOP_STATIC body length.
+    std::size_t body_len = instructions_.size() - body_start;
+    if (body_len > 255) {
+        error("E253", "loop() body too large (max 255 instructions)", n.location);
+        return TypedValue::void_val();
+    }
+    instructions_[loop_idx].rate = static_cast<std::uint8_t>(body_len);
+
+    if (is_stereo) {
+        register_stereo(node, run_l, run_r);
+        return cache_and_return(node, TypedValue::stereo_signal(run_l, run_r));
+    }
+    return cache_and_return(node, TypedValue::signal(run_l));
 }
 
 }  // namespace akkado

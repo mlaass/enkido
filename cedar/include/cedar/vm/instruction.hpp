@@ -216,6 +216,8 @@ enum class Opcode : std::uint8_t {
     // they advance ip, never rewind it.
     SKIP_IF_ZERO = 210,      // if inputs[0][0] == 0.0f, ip += rate + 1; else ip += 1
     SKIP_IF_NONZERO = 211,   // if inputs[0][0] != 0.0f, ip += rate + 1; else ip += 1
+    LOOP_STATIC = 212,       // header: rate=body_len, out_buffer=iteration count;
+                             // re-runs the next body_len instructions `count` times
 
     INVALID = 255
 };

@@ -74,6 +74,10 @@ enum class NodeType : std::uint8_t {
     // Expressions (advanced)
     MatchExpr,      // match(expr) { arm, arm, ... }
     MatchArm,       // pattern: body
+    LoopExpr,       // loop(count) { body } - bounded static iteration.
+                    // Children: [count, body, seed?]. seed is appended by the
+                    // analyzer when the loop is a pipe RHS. Body keeps its `@`
+                    // holes (the running accumulator), resolved at codegen.
 
     // Records
     RecordLit,      // {field: value, ...} - record literal
@@ -131,6 +135,7 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::DestructureParam: return "DestructureParam";
         case NodeType::MatchExpr:   return "MatchExpr";
         case NodeType::MatchArm:    return "MatchArm";
+        case NodeType::LoopExpr:    return "LoopExpr";
         case NodeType::RecordLit:   return "RecordLit";
         case NodeType::FieldAccess: return "FieldAccess";
         case NodeType::FieldAssignment: return "FieldAssignment";
