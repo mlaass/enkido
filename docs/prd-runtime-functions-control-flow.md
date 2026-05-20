@@ -1,8 +1,8 @@
-> **Status: L1 SHIPPED · L2 PARTIAL · L3 NOT STARTED** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20. PRs split L1 → L2 → L3 as three independent rollouts.
+> **Status: L1 SHIPPED · L2 PARTIAL · L3 PARTIAL** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20. PRs split L1 → L2 → L3 as three independent rollouts.
 >
 > - **L1 (Phase 1) — SHIPPED.** `when()` (commit `41bb96c`) and `loop(N){body}` (commit `9776ded`): `SKIP_IF_ZERO`/`SKIP_IF_NONZERO`/`LOOP_STATIC` opcodes + Akkado surface.
 > - **L2 (Phase 2) — PARTIAL.** Shipped: the `#inline` annotation (lexer `#` token + statement-position parsing), recursion rejection (E240/E244/E246/E249), and the `BLOCK_CALL`/`RET` opcode reservations (compile-time-expansion markers; the VM hard-errors if one is reached). **Deferred to L3:** the `Subprogram` side-table and the `expand_block_calls()` machinery — under the chosen compile-time-expansion model the table has no L2 consumer and is not the runtime-resident shape L3's `FOREACH_EVENT` needs, so it is co-designed with L3.
-> - **L3 (Phase 3) — NOT STARTED.**
+> - **L3 (Phase 3) — PARTIAL.** Shipped: the `FOREACH_EVENT` opcode + the runtime-resident **Subprogram table** (`ProgramSlot::blocks[]` + the block-aware load handshake), the **bit-exact POLY migration** (`poly()`/`mono()`/`legato()` now emit `FOREACH_EVENT(VOICE_POOL)` + a subprogram block; all existing POLY tests pass byte-identical; the legacy `POLY_BEGIN`/`POLY_END` path is retained behind the `legacy_poly` compiler option), the PER_ITERATION + SHARED VM allocators, and the `each_voice()` higher-order operator (PER_ITERATION). **Deferred:** `each()`/`fold()` surface (the SHARED allocator ships as ready substrate with no surface yet — same posture as L2's reserved `BLOCK_CALL`); full event-record lambda parameters (`n.freq` — v1 binds the lambda parameter to the per-event frequency signal); the serialized `CEDR` bytecode wire format (no active runtime consumer — see §8).
 >
 > Source: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
 
@@ -443,7 +443,7 @@ Today (`akkado/include/akkado/codegen.hpp:351`, `akkado/src/codegen.cpp`): seman
 This PRD extends the path scheme with:
 
 - For `BLOCK_CALL` (L2 swap-time expansion): inside the expanded body, the path stack pushes `"block:<fn_name>@callsite_<N>"` where `<N>` is the call-site index in source order. State IDs in the expanded body hash this extended path.
-- For `FOREACH_EVENT` (L3): the iteration's path component is `"foreach:<block_name>@callsite_<N>/iter_<voice_slot_idx>"`. Voice/iteration slots are stable across hot-swap as long as `max_voices` doesn't shrink.
+- For `FOREACH_EVENT` (L3): **as implemented**, the block body is emitted once, so its instruction `state_id`s carry the per-call-site path hash (`push_path("poly#N")` / `"each_voice#N"`) — there is no compile-time `/iter_<slot>` path push. The per-iteration `/iter_<voice_slot>` fan-out is realized **at runtime** by `StatePool::set_state_id_xor(slot * 0x9E3779B9 + 1)` around each iteration's body run — the same XOR projection POLY has always used. Voice/iteration slots stay stable across hot-swap as long as `max_voices` / `max_iterations` doesn't shrink.
 
 ### 6.2 MAX_STATES Sizing
 
@@ -586,6 +586,31 @@ are **already in use**, so the originally-drafted E200-block collided) and the
 
 ## 8. Bytecode Layout (Wire Format)
 
+> **Resolution (2026-05-20, L3 implementation).** The serialized `CEDR` wire
+> format below was **NOT built** — no active runtime path consumes serialized
+> bytecode (the CLI's `--emit-bytecode` is a raw header-less `Instruction[]`
+> dump for debugging only; WASM and the audio engine always compile in-process
+> and hand the VM a fresh `Instruction[]`). Building a versioned container
+> would have been a multi-week sub-project with no consumer.
+>
+> What L3 **did** build is the *runtime-resident* subprogram table: the
+> compiler appends every `FOREACH_EVENT` block body after the main program in
+> one instruction stream and emits a `cedar::BlockEntry[]` table
+> (`{offset, length, frame_slot_count, output_count}`). `ProgramSlot` carries
+> a fixed `blocks[]` array (`MAX_SUBPROGRAMS`) plus `main_count`; the host
+> stages the table via `VM::set_block_table()` (or the
+> `load_program_with_blocks*` convenience) immediately before loading. The
+> main dispatch loop runs `[0, main_count)`; `FOREACH_EVENT` resolves its body
+> via `ProgramSlot::block_body(block_id)`. `compute_signature()` folds the
+> block table so hot-swap change detection still works.
+>
+> The raw `--emit-bytecode` debug dump now **errors** when the program
+> contains a `FOREACH_EVENT` (a flat dump cannot carry the block table —
+> recompile from source instead). A serialized container remains a future
+> follow-up if/when saved bytecode must round-trip subprograms.
+>
+> The original greenfield design is retained below for the historical record.
+
 > **Codebase note.** There is **no serialized bytecode wire format today** — no
 > `CEDR` magic, no header, no versioned container. Programs reach the VM as a
 > flat `std::span<const Instruction>` loaded into `ProgramSlot::load()`
@@ -699,6 +724,24 @@ Three independent PRs. Each one is shippable on its own.
 **Rollback plan:** Higher-risk than L1 because codegen for *all* `fn` definitions changes. Mitigation: ship behind a compiler flag `--inline-fns` (default off after acceptance passes); the flag forces per-site inlining (existing path) for an entire compile unit. Revert path: flip default, revert bytecode-format version bump, drop `BLOCK_CALL`/`BLOCK_BIND`/`RET` from the opcode enum, drop `Subprograms` table from the wire format. Saved-bytecode risk: any program saved with the new format would fail to load post-revert; users must recompile from source. Acceptable since saved bytecode is not the primary distribution channel.
 
 ### Phase 3 — L3: FOREACH_EVENT, POLY Migration, Higher-Order DSL (PR3)
+
+> **Implementation note (2026-05-20).** Shipped: the `FOREACH_EVENT` opcode,
+> the runtime-resident subprogram table (`ProgramSlot::blocks[]` +
+> `VM::set_block_table()` load handshake — NOT the §8 serialized container,
+> which has no consumer), the bit-exact POLY migration (`poly`/`mono`/`legato`
+> → `FOREACH_EVENT(VOICE_POOL)`; `execute_poly_block` refactored so the
+> `run_voice_pool` engine is shared verbatim between the legacy inline path and
+> the table path), all three VM allocators (`VOICE_POOL`/`PER_ITERATION`/
+> `SHARED`), and the `each_voice()` higher-order operator. The legacy
+> `POLY_BEGIN`/`POLY_END` path is retained behind the `legacy_poly`
+> `CompilerOptions` flag (the rollback knob — replaces the PRD's `--legacy-poly`
+> CLI flag; no CLI surface was wired). **Deferred:** `each()`/`fold()` surface
+> (the `SHARED` allocator + `ForeachSharedState` ship as ready substrate with
+> no Akkado surface yet); `BlockRef` as a formal value type (the higher-order
+> handlers reuse the existing `FunctionRef`/closure path); full event-record
+> lambda parameters — v1 binds the `each_voice` lambda parameter to the
+> per-event frequency *signal*, so the PRD's `(n) -> osc("sin", n.freq)` is
+> written `(v) -> osc("sin", v)` in v1.
 
 **Scope:**
 - New opcode: `FOREACH_EVENT` with three allocator kinds (`VOICE_POOL`, `PER_ITERATION`, `SHARED`).

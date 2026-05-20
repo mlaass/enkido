@@ -6804,7 +6804,7 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
     }
 }
 
@@ -7244,7 +7244,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
         REQUIRE(result.success);
         auto insts = get_instructions(result);
 
-        auto* poly = find_instruction(insts, cedar::Opcode::POLY_BEGIN);
+        auto* poly = find_instruction(insts, cedar::Opcode::FOREACH_EVENT);
         REQUIRE(poly != nullptr);
         CHECK((poly->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
@@ -7261,15 +7261,19 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
 
         std::size_t poly_idx = insts.size();
         for (std::size_t i = 0; i < insts.size(); ++i) {
-            if (insts[i].opcode == cedar::Opcode::POLY_BEGIN) { poly_idx = i; break; }
+            if (insts[i].opcode == cedar::Opcode::FOREACH_EVENT) { poly_idx = i; break; }
         }
         REQUIRE(poly_idx < insts.size());
         const auto& poly = insts[poly_idx];
         std::uint16_t voice_out_l = poly.inputs[4];
         std::uint16_t voice_out_r = static_cast<std::uint16_t>(voice_out_l + 1);
 
+        // PRD L3: the instrument body lives in the subprogram table region.
+        REQUIRE(result.block_table.size() == 1);
+        const std::size_t body_off = result.block_table[0].offset;
+        const std::size_t body_len = result.block_table[0].length;
         bool copy_to_l = false, copy_to_r = false;
-        for (std::size_t i = poly_idx + 1; i < poly_idx + 1 + poly.rate; ++i) {
+        for (std::size_t i = body_off; i < body_off + body_len; ++i) {
             if (insts[i].opcode == cedar::Opcode::COPY) {
                 if (insts[i].out_buffer == voice_out_l) copy_to_l = true;
                 if (insts[i].out_buffer == voice_out_r) copy_to_r = true;
@@ -7302,7 +7306,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
         REQUIRE(result.success);
         auto insts = get_instructions(result);
 
-        auto* poly = find_instruction(insts, cedar::Opcode::POLY_BEGIN);
+        auto* poly = find_instruction(insts, cedar::Opcode::FOREACH_EVENT);
         auto* output = find_instruction(insts, cedar::Opcode::OUTPUT);
         REQUIRE(poly != nullptr);
         REQUIRE(output != nullptr);
@@ -7323,15 +7327,17 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         REQUIRE(result.success);
         auto insts = get_instructions(result);
 
-        // Should contain POLY_BEGIN, body, POLY_END, OUTPUT
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 1);
+        // PRD L3: poly() emits one FOREACH_EVENT (no inline body, no POLY_END);
+        // the instrument body lives in the subprogram table.
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
         CHECK(count_instructions(insts, cedar::Opcode::OUTPUT) == 1);
 
-        // Find POLY_BEGIN and verify rate = body_length > 0
-        auto* poly = find_instruction(insts, cedar::Opcode::POLY_BEGIN);
+        // Find FOREACH_EVENT; the body length lives in the block table.
+        auto* poly = find_instruction(insts, cedar::Opcode::FOREACH_EVENT);
         REQUIRE(poly != nullptr);
-        CHECK(poly->rate > 0);  // body_length >= 1
+        REQUIRE(result.block_table.size() == 1);
+        CHECK(result.block_table[0].length > 0);  // body_length >= 1
 
         // Verify state_id is set
         CHECK(poly->state_id != 0);
@@ -7339,7 +7345,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Verify state_init has PolyAlloc type with correct config
         bool found_poly_init = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_max_voices == 4);
                 CHECK(init.poly_mode == 0);  // poly mode
                 CHECK(init.state_id == poly->state_id);
@@ -7356,13 +7362,13 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
 
         // Verify state_init has mode=1 and max_voices=1
         bool found_poly_init = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_mode == 1);
                 CHECK(init.poly_max_voices == 1);
                 found_poly_init = true;
@@ -7378,11 +7384,11 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
 
         bool found_poly_init = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_mode == 2);
                 CHECK(init.poly_max_voices == 1);
                 found_poly_init = true;
@@ -7402,12 +7408,12 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Pattern emits SEQPAT_QUERY
         CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_QUERY) == 1);
         // POLY block present
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
 
         // Check that poly state_init has a linked seq_state_id
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_seq_state_id != 0);
                 CHECK(init.poly_max_voices == 8);
             }
@@ -7420,8 +7426,8 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
     }
 
     SECTION("error: instrument function must have 3 params") {
@@ -7448,7 +7454,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Voices should default to 64
         bool found_default = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_max_voices == 64);
                 found_default = true;
             }
@@ -7480,7 +7486,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::POLY_BEGIN) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
         CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_QUERY) == 1);
     }
 
@@ -7523,7 +7529,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Confirm poly_seq_state_id wires the SequenceState to POLY_BEGIN.
         bool found_poly = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_seq_state_id != 0);
                 CHECK(init.poly_seq_state_id == seq_init->state_id);
                 found_poly = true;
@@ -8776,13 +8782,17 @@ void apply_state_inits(cedar::VM& vm, const akkado::CompileResult& result,
                 init.is_sample_pattern,
                 init.total_events
             );
-        } else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
-            vm.init_poly_state(
+        } else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+            vm.init_foreach_state(
                 init.state_id,
-                init.poly_seq_state_id,
+                init.foreach_allocator_kind,
+                init.foreach_block_id,
+                init.foreach_event_src_state_id,
+                init.foreach_max_iterations,
                 init.poly_max_voices,
                 init.poly_mode,
-                init.poly_steal_strategy
+                init.poly_steal_strategy,
+                init.poly_release_seconds
             );
         }
     }
@@ -8811,6 +8821,8 @@ TEST_CASE("Runtime: chord(...) |> poly fires every chord note completely",
     cedar::VM vm;
     vm.set_sample_rate(48000.0f);
     vm.set_bpm(120.0f);
+    // PRD L3: poly() compiles to FOREACH_EVENT — stage the subprogram table.
+    vm.set_block_table(result.block_table, result.main_instruction_count);
     REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(insts)));
 
     std::vector<std::vector<cedar::Sequence>> seq_storage;
@@ -8819,7 +8831,7 @@ TEST_CASE("Runtime: chord(...) |> poly fires every chord note completely",
     // Find the PolyAllocState ID
     std::uint32_t poly_state_id = 0;
     for (const auto& init : result.state_inits) {
-        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+        if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             poly_state_id = init.state_id;
             break;
         }
@@ -10035,7 +10047,7 @@ std::size_t find_midi_query_idx(const std::vector<cedar::Instruction>& insts) {
 // Find the index of the first POLY_BEGIN.
 std::size_t find_poly_begin_idx(const std::vector<cedar::Instruction>& insts) {
     for (std::size_t i = 0; i < insts.size(); ++i) {
-        if (insts[i].opcode == cedar::Opcode::POLY_BEGIN) return i;
+        if (insts[i].opcode == cedar::Opcode::FOREACH_EVENT) return i;
     }
     return SIZE_MAX;
 }
@@ -10044,7 +10056,7 @@ std::size_t find_poly_begin_idx(const std::vector<cedar::Instruction>& insts) {
 const akkado::StateInitData* find_poly_alloc_init(
     const akkado::CompileResult& result, std::uint32_t state_id) {
     for (const auto& s : result.state_inits) {
-        if (s.type == akkado::StateInitData::Type::PolyAlloc &&
+        if (s.type == akkado::StateInitData::Type::ForeachAlloc &&
             s.state_id == state_id) {
             return &s;
         }
@@ -10371,7 +10383,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
         bool found = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.5f));
                 CHECK(init.poly_max_voices == 8);
@@ -10388,7 +10400,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
         bool found = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.25f));
             }
@@ -10403,7 +10415,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
 
         bool found = false;
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
             }
@@ -10431,7 +10443,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
         REQUIRE(result.success);
 
         for (const auto& init : result.state_inits) {
-            if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
             }
         }
@@ -10564,7 +10576,7 @@ TEST_CASE("midi() still feeds poly() via state_id (regression)",
     REQUIRE(midi_state_id != 0);
 
     for (const auto& init : result.state_inits) {
-        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+        if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             found_poly_init = true;
             CHECK(init.poly_seq_state_id == midi_state_id);
         }
@@ -10587,7 +10599,7 @@ TEST_CASE("legato() accepts release: option (positional 3-arg form)",
 
     bool found = false;
     for (const auto& init : result.state_inits) {
-        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+        if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             found = true;
             CHECK(init.poly_release_seconds == Catch::Approx(0.3f));
             CHECK(init.poly_mode == 2);  // legato

@@ -229,6 +229,14 @@ enum class Opcode : std::uint8_t {
     BLOCK_CALL = 213,        // marker: call site of a shared fn body
     RET = 214,               // marker: terminates a subprogram body
 
+    // Event iteration (215) — PRD prd-runtime-functions-control-flow L3.
+    // Dispatch-loop opcode (like POLY_BEGIN): invokes a subprogram body once
+    // per event/voice. The body lives in the ProgramSlot subprogram table,
+    // NOT inline after this opcode. block_id + allocator config travel in the
+    // matching StateInitData (ForeachAlloc), keyed by state_id. Generalizes
+    // POLY_BEGIN/POLY_END; see cedar/opcodes/foreach_event.hpp.
+    FOREACH_EVENT = 215,
+
     INVALID = 255
 };
 

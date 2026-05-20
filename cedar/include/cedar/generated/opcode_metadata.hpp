@@ -156,6 +156,7 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::LOOP_STATIC: return "LOOP_STATIC";
         case Opcode::BLOCK_CALL: return "BLOCK_CALL";
         case Opcode::RET: return "RET";
+        case Opcode::FOREACH_EVENT: return "FOREACH_EVENT";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }

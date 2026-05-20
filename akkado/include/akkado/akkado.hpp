@@ -9,6 +9,7 @@
 #include <span>
 #include "diagnostics.hpp"
 #include "codegen.hpp"  // For StateInitData
+#include <cedar/vm/program_slot.hpp>  // For cedar::BlockEntry (FOREACH_EVENT table)
 #include "symbol_table.hpp"  // For CompileResult::symbols (Phase 2 records-system-unification)
 #include "ast.hpp"           // For CompileResult::ast (shared_ptr<Ast>)
 
@@ -45,7 +46,14 @@ struct Version {
 /// Compilation result
 struct CompileResult {
     bool success = false;
+    // bytecode holds the full [ main program | FOREACH_EVENT block bodies ]
+    // instruction stream. main_instruction_count is the main/body boundary;
+    // block_table locates each block body (PRD prd-runtime-functions-control-flow L3).
+    // For programs with no FOREACH_EVENT blocks, block_table is empty and
+    // main_instruction_count equals the total instruction count.
     std::vector<std::uint8_t> bytecode;
+    std::uint32_t main_instruction_count = 0;
+    std::vector<cedar::BlockEntry> block_table;
     std::vector<SourceLocation> source_locations;  // Parallel to bytecode instructions, tracks origin
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data for patterns

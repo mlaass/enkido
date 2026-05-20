@@ -2140,20 +2140,34 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     push_path("poly#" + std::to_string(count));
     std::uint32_t poly_state_id = compute_state_id();
 
-    // Emit POLY_BEGIN instruction
-    std::size_t poly_begin_idx = instructions_.size();
-    cedar::Instruction poly_begin{};
-    poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
-    poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-    poly_begin.inputs[0] = voice_freq_buf;
-    poly_begin.inputs[1] = voice_gate_buf;
-    poly_begin.inputs[2] = voice_vel_buf;
-    poly_begin.inputs[3] = voice_trig_buf;
-    poly_begin.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
-    poly_begin.flags = cedar::InstructionFlag::STEREO_OUTPUT;
-    poly_begin.rate = 0;  // Patched after body emission
-    poly_begin.state_id = poly_state_id;
-    emit(poly_begin);
+    // PRD prd-runtime-functions-control-flow L3: poly() compiles the instrument
+    // body into a FOREACH_EVENT subprogram block (VOICE_POOL allocator). The
+    // legacy POLY_BEGIN/inline-body/POLY_END form is kept behind the
+    // `legacy_poly` compiler option as a rollback knob; both paths share the
+    // body-emission code below — emit() routes instructions to the open
+    // subprogram body (new path) or the main stream (legacy path).
+    const bool legacy_poly = options_.legacy_poly;
+    std::size_t poly_begin_idx = 0;
+    std::uint32_t poly_block_id = 0;
+
+    if (legacy_poly) {
+        poly_begin_idx = instructions_.size();
+        cedar::Instruction poly_begin{};
+        poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
+        poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
+        poly_begin.inputs[0] = voice_freq_buf;
+        poly_begin.inputs[1] = voice_gate_buf;
+        poly_begin.inputs[2] = voice_vel_buf;
+        poly_begin.inputs[3] = voice_trig_buf;
+        poly_begin.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
+        poly_begin.flags = cedar::InstructionFlag::STEREO_OUTPUT;
+        poly_begin.rate = 0;  // Patched after body emission
+        poly_begin.state_id = poly_state_id;
+        emit(poly_begin);
+    } else {
+        // Opens the subprogram body — emit() now lands in subprograms_[block].
+        poly_block_id = begin_subprogram();
+    }
 
     // Inline function body
     // Push scope and bind params to voice buffers
@@ -2171,7 +2185,8 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     auto saved_node_types = std::move(node_types_);
     node_types_.clear();
 
-    // Record body start instruction index
+    // Record body start instruction index (legacy path only — the new path
+    // measures body length from the subprogram descriptor).
     std::size_t body_start = instructions_.size();
 
     // Visit body — capture the full TypedValue so a stereo body (e.g. a voice
@@ -2232,7 +2247,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             cedar::Opcode::COPY, voice_out_buf_r, body_result));
     }
 
-    // Record body end
+    // Record body end (legacy path)
     std::size_t body_end = instructions_.size();
 
     // Restore node_types_
@@ -2245,39 +2260,70 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // Pop scope
     symbols_->pop_scope();
 
-    // Patch POLY_BEGIN.rate = body_length
-    std::size_t body_length = body_end - body_start;
+    // Body length: from the instruction stream (legacy) or the subprogram
+    // descriptor (new path).
+    std::size_t body_length =
+        legacy_poly ? (body_end - body_start)
+                    : subprograms_[poly_block_id].body.size();
     if (body_length > 255) {
         error("E405", "Poly instrument body too large (max 255 instructions)", n.location);
+        if (!legacy_poly) end_subprogram(poly_block_id, 5, 2);
         pop_path();
         return TypedValue::void_val();
     }
-    instructions_[poly_begin_idx].rate = static_cast<std::uint8_t>(body_length);
 
-    // Emit POLY_END
-    cedar::Instruction poly_end{};
-    poly_end.opcode = cedar::Opcode::POLY_END;
-    poly_end.out_buffer = 0xFFFF;
-    poly_end.inputs[0] = 0xFFFF;
-    poly_end.inputs[1] = 0xFFFF;
-    poly_end.inputs[2] = 0xFFFF;
-    poly_end.inputs[3] = 0xFFFF;
-    poly_end.inputs[4] = 0xFFFF;
-    poly_end.state_id = 0;
-    emit(poly_end);
+    if (legacy_poly) {
+        // Patch POLY_BEGIN.rate = body_length, then emit POLY_END.
+        instructions_[poly_begin_idx].rate = static_cast<std::uint8_t>(body_length);
+        cedar::Instruction poly_end{};
+        poly_end.opcode = cedar::Opcode::POLY_END;
+        poly_end.out_buffer = 0xFFFF;
+        poly_end.inputs[0] = 0xFFFF;
+        poly_end.inputs[1] = 0xFFFF;
+        poly_end.inputs[2] = 0xFFFF;
+        poly_end.inputs[3] = 0xFFFF;
+        poly_end.inputs[4] = 0xFFFF;
+        poly_end.state_id = 0;
+        emit(poly_end);
+    } else {
+        // Close the subprogram body, then emit one FOREACH_EVENT into the
+        // main stream referencing it. The body is NOT inline.
+        end_subprogram(poly_block_id, /*frame_slot_count=*/5, /*output_count=*/2);
+        cedar::Instruction fe{};
+        fe.opcode = cedar::Opcode::FOREACH_EVENT;
+        fe.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
+        fe.inputs[0] = voice_freq_buf;
+        fe.inputs[1] = voice_gate_buf;
+        fe.inputs[2] = voice_vel_buf;
+        fe.inputs[3] = voice_trig_buf;
+        fe.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
+        fe.flags = cedar::InstructionFlag::STEREO_OUTPUT;
+        fe.rate = 0;  // body is in the subprogram table, not inline
+        fe.state_id = poly_state_id;
+        emit(fe);
+    }
 
     // Pop semantic path
     pop_path();
 
-    // Add StateInitData for PolyAlloc
+    // State-init: PolyAlloc (legacy) or ForeachAlloc/VOICE_POOL (new path).
     StateInitData poly_init;
     poly_init.state_id = poly_state_id;
-    poly_init.type = StateInitData::Type::PolyAlloc;
     poly_init.poly_seq_state_id = seq_state_id;
     poly_init.poly_max_voices = max_voices;
     poly_init.poly_mode = mode;
     poly_init.poly_steal_strategy = 0;  // oldest
     poly_init.poly_release_seconds = release_seconds;
+    if (legacy_poly) {
+        poly_init.type = StateInitData::Type::PolyAlloc;
+    } else {
+        poly_init.type = StateInitData::Type::ForeachAlloc;
+        poly_init.foreach_allocator_kind = 0;  // VOICE_POOL
+        poly_init.foreach_block_id = poly_block_id;
+        poly_init.foreach_event_src_state_id = seq_state_id;
+        poly_init.foreach_field_slot_count = 5;
+        poly_init.foreach_output_count = 2;
+    }
     state_inits_.push_back(std::move(poly_init));
 
     register_stereo(node, mix_buf, mix_buf_r);

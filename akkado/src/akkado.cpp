@@ -185,10 +185,24 @@ CompileResult compile(std::string_view source, std::string_view filename,
         return result;
     }
 
-    // Convert instructions to byte array
+    // Convert instructions to byte array (full [ main | block bodies ] stream).
     result.bytecode.resize(gen.instructions.size() * sizeof(cedar::Instruction));
     std::memcpy(result.bytecode.data(), gen.instructions.data(),
                 result.bytecode.size());
+
+    // FOREACH_EVENT subprogram table (PRD L3): record the main/body boundary
+    // and build the cedar::BlockEntry table the host hands to the VM.
+    result.main_instruction_count = gen.main_instruction_count;
+    result.block_table.clear();
+    result.block_table.reserve(gen.subprograms.size());
+    for (const auto& desc : gen.subprograms) {
+        cedar::BlockEntry be{};
+        be.offset = static_cast<std::uint16_t>(desc.offset);
+        be.length = static_cast<std::uint16_t>(desc.body.size());
+        be.frame_slot_count = desc.frame_slot_count;
+        be.output_count = desc.output_count;
+        result.block_table.push_back(be);
+    }
 
     // Copy source locations, adjusting offsets via source map
     result.source_locations = std::move(gen.source_locations);

@@ -30,6 +30,10 @@ namespace akkado {
 /// Compiler options that can be configured via directives
 struct CompilerOptions {
     std::uint8_t default_polyphony = 4;  // Default voice count for polyphonic patterns
+    // PRD prd-runtime-functions-control-flow L3 rollback knob: when true,
+    // poly() emits the legacy POLY_BEGIN/inline-body/POLY_END form instead of
+    // a FOREACH_EVENT subprogram block. Default false (new path).
+    bool legacy_poly = false;
 };
 
 // ============================================================================
@@ -130,6 +134,9 @@ struct StateInitData {
         ExtendedParams,   // Initialize ExtendedParams<N> with constants/buffer refs
         SoundfontEvents,  // PRD prd-midi-input §7.1: SoundFontVoiceState in
                           // event-driven mode (upstream is midi()/EventSource)
+        ForeachAlloc,     // PRD L3: FOREACH_EVENT instance config (allocator
+                          // kind + block_id + event source). VOICE_POOL reuses
+                          // the poly_* fields below for voice configuration.
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -183,6 +190,18 @@ struct StateInitData {
     // init_sequence_program_state() when iter_n > 0.
     std::uint8_t iter_n = 0;
     std::int8_t iter_dir = 0;
+
+    // For ForeachAlloc (PRD L3): FOREACH_EVENT instance configuration.
+    // allocator_kind: 0=VOICE_POOL, 1=PER_ITERATION, 2=SHARED. block_id is the
+    // index into the program's subprogram table; event_src_state_id links the
+    // upstream Sequence/MidiQueue. VOICE_POOL additionally uses the poly_*
+    // fields above for voice allocation config.
+    std::uint32_t foreach_block_id = 0;
+    std::uint32_t foreach_event_src_state_id = 0;
+    std::uint16_t foreach_max_iterations = 64;
+    std::uint8_t  foreach_allocator_kind = 0;
+    std::uint8_t  foreach_field_slot_count = 0;  // FrameDescriptor: # input slots
+    std::uint8_t  foreach_output_count = 1;      // 1=mono, 2=stereo
 
     // For ExtendedParams: per-slot constant value + buffer index. A slot
     // with buffer_idx == 0xFFFF reads the constant; otherwise the runtime
@@ -266,9 +285,26 @@ struct UriRequest {
     UriKind     kind = UriKind::SampleBank;
 };
 
+/// One FOREACH_EVENT subprogram block body (PRD prd-runtime-functions-control-flow L3).
+/// Codegen accumulates the block body here, then `generate()` appends it after
+/// the main program and resolves `offset`. The host hands `{offset, length,
+/// frame_slot_count, output_count}` to the VM as a cedar::BlockEntry table.
+struct SubprogramDesc {
+    std::uint32_t block_id = 0;          // == index in CodeGenResult::subprograms
+    std::uint32_t offset = 0;            // absolute index into CodeGenResult::instructions
+    std::uint16_t frame_slot_count = 0;  // # convention input slots the body reads
+    std::uint8_t  output_count = 1;      // 1=mono, 2=stereo
+    std::vector<cedar::Instruction> body;          // the block's instructions
+    std::vector<SourceLocation> body_source_locs;  // parallel to body
+};
+
 /// Result of code generation
 struct CodeGenResult {
+    // instructions holds [ main program | block body 0 | block body 1 | ... ];
+    // main_instruction_count is the main/body boundary.
     std::vector<cedar::Instruction> instructions;
+    std::uint32_t main_instruction_count = 0;
+    std::vector<SubprogramDesc> subprograms;       // FOREACH_EVENT block bodies (PRD L3)
     std::vector<SourceLocation> source_locations;  // Parallel to instructions, tracks origin
     std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data
@@ -731,6 +767,12 @@ private:
     /// instructions execute. Defined in codegen_control_flow.cpp.
     TypedValue handle_when_call(NodeIndex node, const Node& n);
 
+    /// Handle each_voice(input, lambda) — higher-order per-event instrument
+    /// (PRD prd-runtime-functions-control-flow L3 §4.3.3). Emits a
+    /// FOREACH_EVENT(PER_ITERATION) + subprogram block body. Defined in
+    /// codegen_higher_order.cpp.
+    TypedValue handle_each_voice_call(NodeIndex node, const Node& n);
+
     // ============================================================================
     // Stereo handlers
     // ============================================================================
@@ -832,6 +874,22 @@ private:
     BufferAllocator buffers_;
     std::vector<cedar::Instruction> instructions_;
     std::vector<SourceLocation> source_locations_;  // Parallel to instructions_
+
+    // PRD prd-runtime-functions-control-flow L3: FOREACH_EVENT subprogram
+    // bodies. While `subprogram_stack_` is non-empty, emit() appends into the
+    // top descriptor's body instead of the main `instructions_` stream.
+    // generate() concatenates every body after the main program and resolves
+    // offsets. A stack (not a single pointer) so nested FOREACH bodies work.
+    std::vector<SubprogramDesc> subprograms_;
+    std::vector<std::uint32_t> subprogram_stack_;
+
+    /// Begin a new FOREACH_EVENT subprogram body; returns its block_id and
+    /// redirects emit() into it until end_subprogram() is called.
+    std::uint32_t begin_subprogram();
+    /// Stop redirecting emit() to `block_id`'s body; record its frame descriptor.
+    void end_subprogram(std::uint32_t block_id,
+                        std::uint16_t frame_slot_count,
+                        std::uint8_t output_count);
     std::vector<Diagnostic> diagnostics_;
     std::vector<StateInitData> state_inits_;  // State initialization data
     std::vector<ParamDecl> param_decls_;      // Declared parameters

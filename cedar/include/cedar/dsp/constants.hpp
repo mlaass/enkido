@@ -50,6 +50,23 @@ inline constexpr std::size_t MAX_ENV_PARAMS = CEDAR_MAX_ENV_PARAMS;
 inline constexpr std::size_t MAX_ENV_PARAMS = 256;
 #endif
 
+// Subprogram table (PRD prd-runtime-functions-control-flow L3). FOREACH_EVENT
+// block bodies live in the subprogram table on each ProgramSlot. MAX_SUBPROGRAMS
+// bounds the number of distinct FOREACH/POLY blocks in one program; body
+// instructions share the MAX_PROGRAM_SIZE budget (no separate arena).
+#ifdef CEDAR_MAX_SUBPROGRAMS
+inline constexpr std::size_t MAX_SUBPROGRAMS = CEDAR_MAX_SUBPROGRAMS;
+#else
+inline constexpr std::size_t MAX_SUBPROGRAMS = 64;
+#endif
+
+// Per-block body instruction-count cap (matches the legacy POLY body cap).
+#ifdef CEDAR_MAX_BLOCK_BODY
+inline constexpr std::size_t MAX_BLOCK_BODY = CEDAR_MAX_BLOCK_BODY;
+#else
+inline constexpr std::size_t MAX_BLOCK_BODY = 255;
+#endif
+
 // Special buffer indices
 inline constexpr std::uint16_t BUFFER_UNUSED = 0xFFFF;
 

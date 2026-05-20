@@ -85,6 +85,21 @@ public:
         return submit_ready(slot);
     }
 
+    // Load program with a subprogram table (PRD prd-runtime-functions-control-flow L3).
+    bool load_program(std::span<const Instruction> bytecode,
+                      std::span<const BlockEntry> block_table,
+                      std::uint32_t main_inst_count) noexcept {
+        ProgramSlot* slot = acquire_write_slot();
+        if (!slot) return false;
+
+        if (!slot->load(bytecode, block_table, main_inst_count)) {
+            slot->state.store(ProgramSlot::State::Empty, std::memory_order_release);
+            return false;
+        }
+
+        return submit_ready(slot);
+    }
+
     // =========================================================================
     // Audio Thread API (called from audio thread only)
     // =========================================================================

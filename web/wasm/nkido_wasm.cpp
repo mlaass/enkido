@@ -138,6 +138,15 @@ WASM_EXPORT int cedar_load_program(const uint8_t* bytecode, uint32_t byte_count)
     size_t inst_count = byte_count / INST_SIZE;
     auto instructions = reinterpret_cast<const cedar::Instruction*>(bytecode);
 
+    // PRD prd-runtime-functions-control-flow L3: if the most recent compile
+    // produced FOREACH_EVENT subprogram blocks, stage their table for this
+    // load. The bytecode passed here is g_compile_result.bytecode, so the
+    // table matches. Programs with no blocks leave the table empty.
+    if (!g_compile_result.block_table.empty()) {
+        g_vm->set_block_table(g_compile_result.block_table,
+                              g_compile_result.main_instruction_count);
+    }
+
     auto result = g_vm->load_program(std::span{instructions, inst_count});
 
     return static_cast<int>(result);
@@ -1175,6 +1184,21 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             g_vm->init_poly_state(
                 init.state_id,
                 init.poly_seq_state_id,
+                init.poly_max_voices,
+                init.poly_mode,
+                init.poly_steal_strategy,
+                init.poly_release_seconds
+            );
+            count++;
+        }
+        else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+            // PRD L3: FOREACH_EVENT instance config (poly/each_voice/fold).
+            g_vm->init_foreach_state(
+                init.state_id,
+                init.foreach_allocator_kind,
+                init.foreach_block_id,
+                init.foreach_event_src_state_id,
+                init.foreach_max_iterations,
                 init.poly_max_voices,
                 init.poly_mode,
                 init.poly_steal_strategy,

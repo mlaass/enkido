@@ -81,6 +81,8 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     buffers_ = BufferAllocator{};
     instructions_.clear();
     source_locations_.clear();
+    subprograms_.clear();
+    subprogram_stack_.clear();
     diagnostics_.clear();
     state_inits_.clear();
     pre_resolved_values_.clear();
@@ -114,7 +116,10 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
 
     if (!ast.valid()) {
         error("E100", "Invalid AST", {});
-        return {{}, {}, std::move(diagnostics_), {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, false};
+        CodeGenResult invalid;
+        invalid.diagnostics = std::move(diagnostics_);
+        invalid.success = false;
+        return invalid;
     }
 
     // Visit root (Program node)
@@ -135,14 +140,39 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     // Convert required_samples set to vector
     std::vector<std::string> required_samples_vec(required_samples_.begin(), required_samples_.end());
 
-    return {std::move(instructions_), std::move(source_locations_), std::move(diagnostics_),
-            std::move(state_inits_), std::move(required_samples_vec), std::move(required_samples_extended_),
-            std::move(scalar_sample_mappings_),
-            std::move(required_soundfonts_), std::move(required_midi_sources_),
-            std::move(required_midi_cc_routes_),
-            std::move(required_input_sources_),
-            std::move(param_decls_), std::move(viz_decls_), std::move(builtin_var_overrides_),
-            std::move(required_wavetables_), std::move(required_uris_), success};
+    CodeGenResult result;
+    // PRD L3: the main program ends here; FOREACH_EVENT subprogram bodies are
+    // appended after it and each block's absolute offset is resolved.
+    result.main_instruction_count =
+        static_cast<std::uint32_t>(instructions_.size());
+    for (auto& desc : subprograms_) {
+        desc.offset = static_cast<std::uint32_t>(instructions_.size());
+        instructions_.insert(instructions_.end(),
+                             desc.body.begin(), desc.body.end());
+        source_locations_.insert(source_locations_.end(),
+                                 desc.body_source_locs.begin(),
+                                 desc.body_source_locs.end());
+    }
+
+    result.instructions = std::move(instructions_);
+    result.subprograms = std::move(subprograms_);
+    result.source_locations = std::move(source_locations_);
+    result.diagnostics = std::move(diagnostics_);
+    result.state_inits = std::move(state_inits_);
+    result.required_samples = std::move(required_samples_vec);
+    result.required_samples_extended = std::move(required_samples_extended_);
+    result.scalar_sample_mappings = std::move(scalar_sample_mappings_);
+    result.required_soundfonts = std::move(required_soundfonts_);
+    result.required_midi_sources = std::move(required_midi_sources_);
+    result.required_midi_cc_routes = std::move(required_midi_cc_routes_);
+    result.required_input_sources = std::move(required_input_sources_);
+    result.param_decls = std::move(param_decls_);
+    result.viz_decls = std::move(viz_decls_);
+    result.builtin_var_overrides = std::move(builtin_var_overrides_);
+    result.required_wavetables = std::move(required_wavetables_);
+    result.required_uris = std::move(required_uris_);
+    result.success = success;
+    return result;
 }
 
 void CodeGenerator::publish_sample_refs(const std::vector<RequiredSample>& refs) {
@@ -1136,6 +1166,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"legato", &CodeGenerator::handle_poly_call},
                 // Forward control flow (PRD prd-runtime-functions-control-flow L1)
                 {"when",   &CodeGenerator::handle_when_call},
+                // Higher-order DSL (PRD prd-runtime-functions-control-flow L3)
+                {"each_voice", &CodeGenerator::handle_each_voice_call},
             };
 
             auto handler_it = special_handlers.find(func_name);
@@ -2157,8 +2189,38 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 // handle_chord_call is in codegen_patterns.cpp
 
 void CodeGenerator::emit(const cedar::Instruction& inst) {
+    // PRD L3: while a FOREACH_EVENT subprogram body is open, instructions land
+    // in the body descriptor instead of the main stream.
+    if (!subprogram_stack_.empty()) {
+        SubprogramDesc& desc = subprograms_[subprogram_stack_.back()];
+        desc.body.push_back(inst);
+        desc.body_source_locs.push_back(current_source_loc_);
+        return;
+    }
     instructions_.push_back(inst);
     source_locations_.push_back(current_source_loc_);
+}
+
+std::uint32_t CodeGenerator::begin_subprogram() {
+    const std::uint32_t block_id =
+        static_cast<std::uint32_t>(subprograms_.size());
+    SubprogramDesc desc;
+    desc.block_id = block_id;
+    subprograms_.push_back(std::move(desc));
+    subprogram_stack_.push_back(block_id);
+    return block_id;
+}
+
+void CodeGenerator::end_subprogram(std::uint32_t block_id,
+                                   std::uint16_t frame_slot_count,
+                                   std::uint8_t output_count) {
+    if (block_id < subprograms_.size()) {
+        subprograms_[block_id].frame_slot_count = frame_slot_count;
+        subprograms_[block_id].output_count = output_count;
+    }
+    if (!subprogram_stack_.empty() && subprogram_stack_.back() == block_id) {
+        subprogram_stack_.pop_back();
+    }
 }
 
 std::uint32_t CodeGenerator::compute_state_id() const {

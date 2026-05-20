@@ -28,12 +28,35 @@ VM::~VM() = default;
 // Program Loading
 // ============================================================================
 
+void VM::set_block_table(std::span<const BlockEntry> block_table,
+                         std::uint32_t main_inst_count) {
+    pending_block_count_ = static_cast<std::uint32_t>(
+        std::min<std::size_t>(block_table.size(), MAX_SUBPROGRAMS));
+    std::copy_n(block_table.begin(), pending_block_count_,
+                pending_blocks_.begin());
+    pending_main_count_ = main_inst_count;
+    has_pending_blocks_ = true;
+}
+
 VM::LoadResult VM::load_program(std::span<const Instruction> bytecode) {
     if (bytecode.size() > MAX_PROGRAM_SIZE) {
+        has_pending_blocks_ = false;
         return LoadResult::TooLarge;
     }
 
-    if (!swap_controller_.load_program(bytecode)) {
+    bool ok;
+    if (has_pending_blocks_) {
+        ok = swap_controller_.load_program(
+            bytecode,
+            std::span<const BlockEntry>(pending_blocks_.data(),
+                                        pending_block_count_),
+            pending_main_count_);
+        has_pending_blocks_ = false;
+    } else {
+        ok = swap_controller_.load_program(bytecode);
+    }
+
+    if (!ok) {
         return LoadResult::SlotBusy;
     }
 
@@ -46,9 +69,20 @@ bool VM::load_program_immediate(std::span<const Instruction> bytecode) {
 
     // Load directly into current slot
     ProgramSlot* slot = swap_controller_.acquire_write_slot();
-    if (!slot) return false;
+    if (!slot) { has_pending_blocks_ = false; return false; }
 
-    if (!slot->load(bytecode)) {
+    bool ok;
+    if (has_pending_blocks_) {
+        ok = slot->load(bytecode,
+                        std::span<const BlockEntry>(pending_blocks_.data(),
+                                                    pending_block_count_),
+                        pending_main_count_);
+        has_pending_blocks_ = false;
+    } else {
+        ok = slot->load(bytecode);
+    }
+    if (!ok) {
+        slot->state.store(ProgramSlot::State::Empty, std::memory_order_release);
         return false;
     }
 
@@ -57,6 +91,28 @@ bool VM::load_program_immediate(std::span<const Instruction> bytecode) {
     swap_controller_.execute_swap();
 
     return true;
+}
+
+VM::LoadResult VM::load_program_with_blocks(
+    std::span<const Instruction> bytecode,
+    std::span<const BlockEntry> block_table,
+    std::uint32_t main_inst_count) {
+    if (block_table.size() > MAX_SUBPROGRAMS) {
+        return LoadResult::InvalidProgram;
+    }
+    set_block_table(block_table, main_inst_count);
+    return load_program(bytecode);
+}
+
+bool VM::load_program_with_blocks_immediate(
+    std::span<const Instruction> bytecode,
+    std::span<const BlockEntry> block_table,
+    std::uint32_t main_inst_count) {
+    if (block_table.size() > MAX_SUBPROGRAMS) {
+        return false;
+    }
+    set_block_table(block_table, main_inst_count);
+    return load_program_immediate(bytecode);
 }
 
 // ============================================================================
@@ -308,13 +364,27 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
     // Mark beginning of frame for state GC tracking
     state_pool_.begin_frame();
 
-    // Execute all instructions (index-based for POLY block jumping)
+    // Execute all instructions (index-based for POLY block jumping).
+    // The program span covers [ main | subprogram bodies ]; the main dispatch
+    // loop runs only the main region — block bodies are reached via
+    // FOREACH_EVENT dispatch, never fallen into.
     auto program = slot->program();
+    // With no subprogram table the whole span is main program (back-compat,
+    // including ProgramSlots constructed without load()). With a table, the
+    // main loop stops at the main/body boundary.
+    const std::size_t main_end = (slot->block_count == 0)
+                                     ? program.size()
+                                     : static_cast<std::size_t>(slot->main_count);
     std::size_t ip = 0;
-    while (ip < program.size()) {
+    while (ip < main_end) {
         const Instruction& inst = program[ip];
         if (inst.opcode == Opcode::POLY_BEGIN) {
             ip = execute_poly_block(program, ip);
+        } else if (inst.opcode == Opcode::FOREACH_EVENT) {
+            // L3 dispatch-loop opcode: run the subprogram body from the
+            // table. The body is not inline — advance by exactly one.
+            execute_foreach_event(slot, program, ip);
+            ++ip;
         } else if (inst.opcode == Opcode::SKIP_IF_ZERO ||
                    inst.opcode == Opcode::SKIP_IF_NONZERO) {
             // Forward control flow: sample the predicate once per block at
@@ -351,22 +421,70 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
 
 std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::size_t ip) {
     const auto& poly_inst = program[ip];
-    std::uint8_t body_length = poly_inst.rate;
-    std::uint16_t mix_buf = poly_inst.out_buffer;
-    std::uint16_t voice_freq_buf = poly_inst.inputs[0];
-    std::uint16_t voice_gate_buf = poly_inst.inputs[1];
-    std::uint16_t voice_vel_buf = poly_inst.inputs[2];
-    std::uint16_t voice_trig_buf = poly_inst.inputs[3];
-    std::uint16_t voice_out_buf = poly_inst.inputs[4];
+    const std::uint8_t body_length = poly_inst.rate;
 
-    // poly is stereo-native: voice_out and mix are adjacent L/R pairs. POLY_BEGIN
-    // has no free input slots, so the R buffers are derived via the +1 adjacency
-    // convention (codegen guarantees the pairs are adjacent).
+    // Legacy POLY_BEGIN: body is inline at program[ip+1 .. ip+body_length].
+    auto& poly_state = state_pool_.get_or_create<PolyAllocState>(poly_inst.state_id);
+    run_voice_pool(poly_state,
+                   poly_inst.out_buffer,
+                   poly_inst.inputs[0], poly_inst.inputs[1], poly_inst.inputs[2],
+                   poly_inst.inputs[3], poly_inst.inputs[4],
+                   program.subspan(ip + 1, body_length));
+
+    // Advance past POLY_BEGIN + body + POLY_END
+    return ip + 1 + body_length + 1;
+}
+
+// FOREACH_EVENT — table-based subprogram dispatch (PRD L3). The body lives in
+// the ProgramSlot subprogram table, not inline; the dispatch loop advances by
+// exactly one after this returns.
+void VM::execute_foreach_event(const ProgramSlot* slot,
+                               std::span<const Instruction> program,
+                               std::size_t ip) {
+    const auto& inst = program[ip];
+
+    // Resolve the per-instance state. init_foreach_state created exactly one
+    // of these three types for this state_id, so the first non-null wins and
+    // selects the allocator kind.
+    if (auto* poly_state = state_pool_.get_if<PolyAllocState>(inst.state_id)) {
+        // VOICE_POOL — bit-exact with legacy POLY: identical run_voice_pool,
+        // identical convention slots; only the body location differs.
+        const auto body = slot->block_body(poly_state->block_id);
+        run_voice_pool(*poly_state,
+                       inst.out_buffer,
+                       inst.inputs[0], inst.inputs[1], inst.inputs[2],
+                       inst.inputs[3], inst.inputs[4],
+                       body);
+        return;
+    }
+    if (auto* iter_state = state_pool_.get_if<ForeachIterState>(inst.state_id)) {
+        const auto body = slot->block_body(iter_state->block_id);
+        run_foreach_per_iteration(*iter_state, inst, body);
+        return;
+    }
+    if (auto* shared_state = state_pool_.get_if<ForeachSharedState>(inst.state_id)) {
+        const auto body = slot->block_body(shared_state->block_id);
+        run_foreach_shared(*shared_state, inst, body);
+        return;
+    }
+    // No state — uninitialized FOREACH_EVENT (init_foreach_state did not run).
+    // Skip silently; the dispatch loop still advances by one.
+}
+
+void VM::run_voice_pool(PolyAllocState& poly_state,
+                        std::uint16_t mix_buf,
+                        std::uint16_t voice_freq_buf,
+                        std::uint16_t voice_gate_buf,
+                        std::uint16_t voice_vel_buf,
+                        std::uint16_t voice_trig_buf,
+                        std::uint16_t voice_out_buf,
+                        std::span<const Instruction> body) {
+    // poly is stereo-native: voice_out and mix are adjacent L/R pairs. The
+    // opcode has no free input slots, so the R buffers are derived via the +1
+    // adjacency convention (codegen guarantees the pairs are adjacent).
     std::uint16_t mix_buf_r = mix_buf + 1;
     std::uint16_t voice_out_buf_r = voice_out_buf + 1;
 
-    // Get PolyAllocState
-    auto& poly_state = state_pool_.get_or_create<PolyAllocState>(poly_inst.state_id);
     poly_state.ensure_voices(ctx_.arena);
 
     // Clear both mix channels to zero
@@ -586,8 +704,8 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
             static_cast<std::uint32_t>(v) * 0x9E3779B9u + 1);
 
         // Execute body instructions
-        for (std::size_t bi = 0; bi < body_length; ++bi) {
-            execute(program[ip + 1 + bi]);
+        for (std::size_t bi = 0; bi < body.size(); ++bi) {
+            execute(body[bi]);
         }
 
         // Accumulate voice output into the stereo mix, gated by the (mono)
@@ -618,9 +736,111 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
 
     // Reset XOR
     state_pool_.set_state_id_xor(0);
+}
 
-    // Advance past POLY_BEGIN + body + POLY_END
-    return ip + 1 + body_length + 1;
+// PER_ITERATION — every upstream event maps to one iteration in this block.
+// No gate lifecycle: an event present in the block fires its body exactly
+// once. Per-iteration DSP state is isolated via state_id XOR, exactly as
+// run_voice_pool isolates voices.
+void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
+                                   const Instruction& inst,
+                                   std::span<const Instruction> body) {
+    const std::uint16_t field_buf  = inst.inputs[0];  // per-event field value
+    const std::uint16_t out_buf    = inst.out_buffer; // mix bus L
+    const std::uint16_t out_buf_r  = out_buf + 1;
+
+    float* mix   = buffer_pool_.get(out_buf);
+    float* mix_r = buffer_pool_.get(out_buf_r);
+    std::fill_n(mix, BLOCK_SIZE, 0.0f);
+    std::fill_n(mix_r, BLOCK_SIZE, 0.0f);
+
+    auto events_src = (iter_state.seq_state_id != 0)
+        ? state_pool_.resolve_output_events(iter_state.seq_state_id)
+        : StatePool::ResolvedEvents{};
+    if (!events_src.events || events_src.events->num_events == 0) {
+        return;
+    }
+
+    OutputEvents& seq_output = *events_src.events;
+    const std::uint32_t iter_cap =
+        std::min<std::uint32_t>(seq_output.num_events, iter_state.max_iterations);
+
+    // Voice-out buffer the body writes its signal into (slot 4, like POLY).
+    const std::uint16_t voice_out_buf =
+        (inst.inputs[4] != BUFFER_UNUSED) ? inst.inputs[4] : field_buf;
+    const std::uint16_t voice_out_buf_r = voice_out_buf + 1;
+
+    for (std::uint32_t e = 0; e < iter_cap; ++e) {
+        const auto& evt = seq_output.events[e];
+
+        // Bind the per-iteration field convention slot. The body reads its
+        // event record fields from the field buffer (primary value) and the
+        // freq/vel/etc. slots populated below.
+        if (field_buf != BUFFER_UNUSED) {
+            float* fb = buffer_pool_.get(field_buf);
+            std::fill_n(fb, BLOCK_SIZE, evt.num_values > 0 ? evt.values[0]
+                                                           : evt.midi_note);
+        }
+        if (inst.inputs[1] != BUFFER_UNUSED) {
+            std::fill_n(buffer_pool_.get(inst.inputs[1]), BLOCK_SIZE, evt.velocity);
+        }
+        if (inst.inputs[2] != BUFFER_UNUSED) {
+            std::fill_n(buffer_pool_.get(inst.inputs[2]), BLOCK_SIZE, evt.duration);
+        }
+
+        // Per-iteration state isolation — same XOR scheme as run_voice_pool.
+        state_pool_.set_state_id_xor(e * 0x9E3779B9u + 1);
+        for (std::size_t bi = 0; bi < body.size(); ++bi) {
+            execute(body[bi]);
+        }
+
+        const float* vo   = buffer_pool_.get(voice_out_buf);
+        const float* vo_r = buffer_pool_.get(voice_out_buf_r);
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            mix[i]   += vo[i];
+            mix_r[i] += vo_r[i];
+        }
+    }
+
+    state_pool_.set_state_id_xor(0);
+}
+
+// SHARED — all iterations share one accumulator slot (fold). No per-iteration
+// XOR; the body runs once per event with the accumulator threaded through.
+void VM::run_foreach_shared(ForeachSharedState& shared_state,
+                            const Instruction& inst,
+                            std::span<const Instruction> body) {
+    const std::uint16_t acc_buf = inst.inputs[0];  // accumulator convention slot
+    const std::uint16_t out_buf = inst.out_buffer;
+
+    auto events_src = (shared_state.seq_state_id != 0)
+        ? state_pool_.resolve_output_events(shared_state.seq_state_id)
+        : StatePool::ResolvedEvents{};
+
+    if (events_src.events) {
+        OutputEvents& seq_output = *events_src.events;
+        for (std::uint32_t e = 0; e < seq_output.num_events; ++e) {
+            const auto& evt = seq_output.events[e];
+            // Thread the accumulator into the body's accumulator slot, run
+            // the body once, read the updated accumulator back out.
+            if (acc_buf != BUFFER_UNUSED) {
+                std::fill_n(buffer_pool_.get(acc_buf), BLOCK_SIZE,
+                            shared_state.accumulator);
+            }
+            if (inst.inputs[1] != BUFFER_UNUSED) {
+                std::fill_n(buffer_pool_.get(inst.inputs[1]), BLOCK_SIZE,
+                            evt.num_values > 0 ? evt.values[0] : evt.midi_note);
+            }
+            for (std::size_t bi = 0; bi < body.size(); ++bi) {
+                execute(body[bi]);
+            }
+            const float* result = buffer_pool_.get(out_buf);
+            shared_state.accumulator = result[0];
+        }
+    }
+
+    // Publish the running accumulator to the output buffer.
+    std::fill_n(buffer_pool_.get(out_buf), BLOCK_SIZE, shared_state.accumulator);
 }
 
 void VM::execute(const Instruction& inst) {

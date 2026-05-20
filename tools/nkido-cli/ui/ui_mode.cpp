@@ -289,6 +289,8 @@ void UIMode::compile_and_play() {
             return;
         }
         resolve_sample_ids_in_events(engine_.vm(), cr);
+        // PRD L3: stage the FOREACH_EVENT subprogram table for this hot-swap.
+        engine_.vm().set_block_table(cr.block_table, cr.main_instruction_count);
         auto load_result = engine_.vm().load_program(load.instructions);
         if (load_result != cedar::VM::LoadResult::Success) {
             switch (load_result) {

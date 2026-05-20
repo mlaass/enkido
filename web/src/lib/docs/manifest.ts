@@ -5,6 +5,7 @@ export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
 	"builtin-variables": "concepts/builtin-variables.md",
 	"record-as-options": "concepts/record-as-options.md",
+	"higher-order-dsl": "concepts/higher-order-dsl.md",
 	"functions-and-inline": "concepts/functions-and-inline.md",
 	"effect-parameters": "concepts/effect-parameters.md",
 	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
@@ -296,6 +297,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "functions-and-inline",
 			"title": "Functions,"
+		},
+		{
+			"slug": "higher-order-dsl",
+			"title": "Higher-Order DSL — each_voice"
 		}
 	]
 };
@@ -485,6 +490,53 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "record-as-options",
 		"category": "concepts",
 		"title": "Records as Builtin Options"
+	},
+	"each_voice": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"higher-order": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"foreach": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"poly": {
+		"slug": "polyphony",
+		"category": "builtins",
+		"title": "poly",
+		"anchor": "poly"
+	},
+	"event": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"lambda": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"per-event": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
+	},
+	"instrument": {
+		"slug": "soundfonts",
+		"category": "builtins",
+		"title": "instrument",
+		"anchor": "instrument"
+	},
+	"foreach_event": {
+		"slug": "higher-order-dsl",
+		"category": "concepts",
+		"title": "Higher-Order DSL — each_voice"
 	},
 	"fn": {
 		"slug": "functions-and-inline",
@@ -1061,12 +1113,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "file",
 		"anchor": "file"
-	},
-	"poly": {
-		"slug": "polyphony",
-		"category": "builtins",
-		"title": "poly",
-		"anchor": "poly"
 	},
 	"lead": {
 		"slug": "07-midi",
@@ -2185,11 +2231,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Closures"
 	},
-	"lambda": {
-		"slug": "closures",
-		"category": "language",
-		"title": "Closures"
-	},
 	"anonymous": {
 		"slug": "closures",
 		"category": "language",
@@ -2612,12 +2653,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "polyphonic",
 		"anchor": "polyphonic"
-	},
-	"instrument": {
-		"slug": "soundfonts",
-		"category": "builtins",
-		"title": "instrument",
-		"anchor": "instrument"
 	},
 	"allocation": {
 		"slug": "polyphony",
@@ -3709,6 +3744,7 @@ export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
+	"higher-order-dsl": "runs an instrument lambda once per pattern event and mixes every iteration's output. It is the higher-order generalization of : where  takes a...",
 	"functions-and-inline": "A user  groups a reusable chunk of signal graph behind a name:",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",

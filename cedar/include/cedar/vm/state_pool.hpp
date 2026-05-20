@@ -699,6 +699,20 @@ public:
                 }
                 json << "]}";
             }
+            else if constexpr (std::is_same_v<T, ForeachIterState>) {
+                json << R"({"type":"ForeachIterState")";
+                json << R"(,"block_id":)" << state.block_id;
+                json << R"(,"seq_state_id":)" << state.seq_state_id;
+                json << R"(,"max_iterations":)" << state.max_iterations;
+                json << "}";
+            }
+            else if constexpr (std::is_same_v<T, ForeachSharedState>) {
+                json << R"({"type":"ForeachSharedState")";
+                json << R"(,"block_id":)" << state.block_id;
+                json << R"(,"seq_state_id":)" << state.seq_state_id;
+                json << R"(,"accumulator":)" << state.accumulator;
+                json << "}";
+            }
             else if constexpr (std::is_same_v<T, ProbeState>) {
                 json << R"({"type":"ProbeState")";
                 json << R"(,"write_pos":)" << state.write_pos;

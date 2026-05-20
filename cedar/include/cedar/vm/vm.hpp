@@ -67,6 +67,30 @@ public:
     // Only use for initial load, not during playback
     bool load_program_immediate(std::span<const Instruction> bytecode);
 
+    // Stage a FOREACH_EVENT subprogram table for the NEXT load_program() /
+    // load_program_immediate() call (PRD prd-runtime-functions-control-flow L3).
+    // The staged table is consumed (and cleared) by that load. Call this
+    // immediately before load_program* when the compiled program carries
+    // FOREACH_EVENT blocks; programs with no blocks need not call it.
+    // `bytecode` passed to the subsequent load is the full [ main | bodies ]
+    // stream; `main_inst_count` is the main/body boundary.
+    void set_block_table(std::span<const BlockEntry> block_table,
+                         std::uint32_t main_inst_count);
+
+    // Load a program that carries a FOREACH_EVENT subprogram table (PRD L3).
+    // Convenience: stages the table, then loads. `bytecode` is the full
+    // [ main | block bodies ] stream.
+    [[nodiscard]] LoadResult load_program_with_blocks(
+        std::span<const Instruction> bytecode,
+        std::span<const BlockEntry> block_table,
+        std::uint32_t main_inst_count);
+
+    // Immediate variant of load_program_with_blocks (initial load only).
+    bool load_program_with_blocks_immediate(
+        std::span<const Instruction> bytecode,
+        std::span<const BlockEntry> block_table,
+        std::uint32_t main_inst_count);
+
     // =========================================================================
     // Audio Processing (Audio thread only)
     // =========================================================================
@@ -214,6 +238,51 @@ public:
         const float release_clamped = release_seconds > 0.0f ? release_seconds : 0.0f;
         state.release_window_samples = release_clamped * ctx_.sample_rate;
         state.ensure_voices(&audio_arena_);
+    }
+
+    // Initialize FOREACH_EVENT instance state (PRD prd-runtime-functions-control-flow L3).
+    // `allocator_kind` selects the state struct: 0=VOICE_POOL (PolyAllocState),
+    // 1=PER_ITERATION (ForeachIterState), 2=SHARED (ForeachSharedState).
+    // For VOICE_POOL the voice config (max_voices/mode/steal/release) is reused
+    // exactly as init_poly_state — POLY migrates onto this path bit-exact.
+    void init_foreach_state(std::uint32_t state_id, std::uint8_t allocator_kind,
+                            std::uint32_t block_id,
+                            std::uint32_t event_src_state_id,
+                            std::uint16_t max_iterations,
+                            std::uint8_t max_voices, std::uint8_t mode,
+                            std::uint8_t steal_strategy,
+                            float release_seconds = 0.0f) {
+        switch (allocator_kind) {
+            case 0: {  // VOICE_POOL — identical setup to init_poly_state
+                auto& state = state_pool_.get_or_create<PolyAllocState>(state_id);
+                state.seq_state_id = event_src_state_id;
+                state.block_id = block_id;
+                state.max_voices = std::min(
+                    max_voices,
+                    static_cast<std::uint8_t>(PolyAllocState::MAX_VOICES));
+                state.mode = mode;
+                state.steal_strategy = steal_strategy;
+                const float rc = release_seconds > 0.0f ? release_seconds : 0.0f;
+                state.release_window_samples = rc * ctx_.sample_rate;
+                state.ensure_voices(&audio_arena_);
+                break;
+            }
+            case 1: {  // PER_ITERATION
+                auto& state = state_pool_.get_or_create<ForeachIterState>(state_id);
+                state.block_id = block_id;
+                state.seq_state_id = event_src_state_id;
+                state.max_iterations = max_iterations;
+                break;
+            }
+            case 2: {  // SHARED
+                auto& state = state_pool_.get_or_create<ForeachSharedState>(state_id);
+                state.block_id = block_id;
+                state.seq_state_id = event_src_state_id;
+                break;
+            }
+            default:
+                break;
+        }
     }
 
     // PRD prd-midi-input §7.1: initialize a SoundFontVoiceState for the
@@ -477,9 +546,40 @@ private:
     // Execute single instruction
     void execute(const Instruction& inst);
 
-    // Execute a POLY block — iterates voices, sets XOR isolation, accumulates mix
-    // Returns the instruction pointer past POLY_END
+    // Execute a legacy POLY block (POLY_BEGIN/POLY_END inline body) — iterates
+    // voices, sets XOR isolation, accumulates mix. Returns the instruction
+    // pointer past POLY_END. Retained for the --legacy-poly compat window.
     std::size_t execute_poly_block(std::span<const Instruction> program, std::size_t ip);
+
+    // Execute a FOREACH_EVENT opcode (PRD prd-runtime-functions-control-flow L3).
+    // Dispatches the subprogram body from slot->blocks[] once per event/voice
+    // per the allocator kind. The body lives in the subprogram table, not
+    // inline — the dispatch loop advances by 1 after this returns.
+    void execute_foreach_event(const ProgramSlot* slot,
+                               std::span<const Instruction> program,
+                               std::size_t ip);
+
+    // Shared voice-pool engine: event scan, voice alloc/release, per-voice
+    // body execution with XOR isolation, release-countdown mix. Used by both
+    // execute_poly_block (inline body) and execute_foreach_event (table body).
+    void run_voice_pool(PolyAllocState& poly_state,
+                        std::uint16_t mix_buf,
+                        std::uint16_t voice_freq_buf,
+                        std::uint16_t voice_gate_buf,
+                        std::uint16_t voice_vel_buf,
+                        std::uint16_t voice_trig_buf,
+                        std::uint16_t voice_out_buf,
+                        std::span<const Instruction> body);
+
+    // PER_ITERATION allocator: one body run per upstream event, per-iteration
+    // XOR isolation, outputs mixed. SHARED allocator: fold accumulator threaded
+    // through the body once per event.
+    void run_foreach_per_iteration(ForeachIterState& iter_state,
+                                   const Instruction& inst,
+                                   std::span<const Instruction> body);
+    void run_foreach_shared(ForeachSharedState& shared_state,
+                            const Instruction& inst,
+                            std::span<const Instruction> body);
 
     // Handle block-boundary swap logic
     void handle_swap();
@@ -502,6 +602,13 @@ private:
 
     // Triple-buffer swap controller
     SwapController swap_controller_;
+
+    // PRD L3: FOREACH_EVENT subprogram table staged for the next load.
+    // Consumed and cleared by load_program / load_program_immediate.
+    std::array<BlockEntry, MAX_SUBPROGRAMS> pending_blocks_{};
+    std::uint32_t pending_block_count_ = 0;
+    std::uint32_t pending_main_count_ = 0;
+    bool has_pending_blocks_ = false;
 
     // Crossfade state
     CrossfadeState crossfade_state_;

@@ -202,6 +202,20 @@ LoadResult load_bytecode(const Options& opts) {
 
 bool write_bytecode_file(const std::string& path,
                          std::span<const cedar::Instruction> instructions) {
+    // PRD prd-runtime-functions-control-flow L3: the raw-instruction dump has
+    // no channel for the FOREACH_EVENT subprogram table. A program that uses
+    // poly()/each_voice()/fold() cannot round-trip through this debug format —
+    // refuse rather than emit a file whose FOREACH_EVENT blocks are
+    // unresolvable on reload.
+    for (const auto& inst : instructions) {
+        if (inst.opcode == cedar::Opcode::FOREACH_EVENT) {
+            std::cerr << "error: program uses FOREACH_EVENT subprograms; raw "
+                         "bytecode dump cannot represent the subprogram table "
+                         "— recompile from source instead.\n";
+            return false;
+        }
+    }
+
     std::ofstream file(path, std::ios::binary);
     if (!file) {
         return false;

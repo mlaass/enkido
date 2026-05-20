@@ -1258,6 +1258,14 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    {NAN, NAN, 64.0f, 0.0f, NAN},
                    "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128. `release` (seconds) extends per-voice mix tail past note-off.",
                    0, {}, {}, ChannelCount::Stereo, true}},
+    // Higher-order per-event instrument (PRD prd-runtime-functions-control-flow L3).
+    // each_voice(input, lambda): runs the lambda once per event, mixing all
+    // iterations. v1: the lambda parameter is the per-event frequency signal.
+    {"each_voice", {cedar::Opcode::NOP, 2, 0, true,
+                    {"input", "lambda", "", "", "", ""},
+                    {NAN, NAN, NAN},
+                    "Higher-order per-event instrument: each_voice(input, (v) -> ...) runs the lambda once per pattern event and mixes the outputs.",
+                    0, {}, {}, ChannelCount::Stereo, true}},
     // Dual-role builtin: mono(stereo_signal) downmixes stereo→mono via (L+R)*0.5,
     // while mono(instrument) is the monophonic voice manager. The codegen
     // dispatcher routes based on argument type (see handle_mono_call).

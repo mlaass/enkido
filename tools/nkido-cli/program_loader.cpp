@@ -298,6 +298,15 @@ void apply_state_inits(cedar::VM& vm,
                                init.poly_max_voices, init.poly_mode,
                                init.poly_steal_strategy,
                                init.poly_release_seconds);
+        } else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+            // PRD L3: FOREACH_EVENT instance config.
+            vm.init_foreach_state(init.state_id, init.foreach_allocator_kind,
+                                  init.foreach_block_id,
+                                  init.foreach_event_src_state_id,
+                                  init.foreach_max_iterations,
+                                  init.poly_max_voices, init.poly_mode,
+                                  init.poly_steal_strategy,
+                                  init.poly_release_seconds);
 #ifndef CEDAR_NO_SOUNDFONT
         } else if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
             vm.init_soundfont_voice_event_state(
@@ -380,7 +389,18 @@ bool load_and_prepare_immediate(cedar::VM& vm,
         (void)prepare_program_assets(vm, opts, empty, err);
     }
 
-    if (!vm.load_program_immediate(load.instructions)) {
+    // PRD L3: a program with FOREACH_EVENT blocks carries a subprogram table
+    // that must be loaded alongside the instruction stream.
+    bool loaded = false;
+    if (load.compile_result && !load.compile_result->block_table.empty()) {
+        loaded = vm.load_program_with_blocks_immediate(
+            load.instructions,
+            load.compile_result->block_table,
+            load.compile_result->main_instruction_count);
+    } else {
+        loaded = vm.load_program_immediate(load.instructions);
+    }
+    if (!loaded) {
         err << "error: failed to load program into VM\n";
         return false;
     }

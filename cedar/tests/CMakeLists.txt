@@ -45,6 +45,7 @@ add_executable(cedar_tests
     test_seqpat_gate.cpp
     test_soundfont_registry.cpp
     test_audit_inst_rate.cpp
+    test_subprogram_table.cpp
 )
 
 # Add concurrency tests if enabled

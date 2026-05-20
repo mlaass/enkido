@@ -1115,6 +1115,9 @@ struct PolyAllocState {
 
     PolyVoice* voices = nullptr;          // Arena-allocated array
     std::uint32_t seq_state_id = 0;       // Linked SequenceState for events
+    // FOREACH_EVENT(VOICE_POOL) subprogram body index into ProgramSlot::blocks[].
+    // Set by VM::init_foreach_state; the legacy POLY_BEGIN path leaves it 0.
+    std::uint32_t block_id = 0;
     std::uint8_t max_voices = 8;
     std::uint8_t mode = 0;               // 0=poly, 1=mono, 2=legato
     std::uint8_t steal_strategy = 0;     // 0=oldest, 1=quietest
@@ -1314,6 +1317,28 @@ struct PolyAllocState {
     }
 };
 
+// FOREACH_EVENT non-VOICE_POOL allocator state (PRD prd-runtime-functions-control-flow L3).
+//
+// PER_ITERATION: every upstream event maps to one iteration in the same block,
+// re-derived each block (no gate-on/off lifecycle). Per-iteration DSP state is
+// isolated at runtime via state_id XOR, exactly as POLY isolates voices — so
+// this struct only needs the block/source linkage and the iteration cap.
+struct ForeachIterState {
+    std::uint32_t block_id = 0;        // index into ProgramSlot::blocks[]
+    std::uint32_t seq_state_id = 0;    // linked event source (Sequence/MidiQueue)
+    std::uint16_t max_iterations = 64; // events beyond this are dropped this block
+};
+
+// SHARED: all iterations share a single state slot — the fold accumulator. No
+// per-iteration XOR; the body runs once per event with `accumulator` threaded
+// through. The running value persists across blocks.
+struct ForeachSharedState {
+    std::uint32_t block_id = 0;
+    std::uint32_t seq_state_id = 0;
+    float accumulator = 0.0f;
+    bool seeded = false;               // false until the seed value is applied
+};
+
 // ============================================================================
 // Visualization States
 // ============================================================================
@@ -1493,6 +1518,9 @@ using DSPState = std::variant<
     PingPongDelayState,
     // Polyphony state
     PolyAllocState,
+    // FOREACH_EVENT non-VOICE_POOL allocator states (PRD L3)
+    ForeachIterState,
+    ForeachSharedState,
     // Visualization states
     ProbeState,
 #ifndef CEDAR_NO_FFT
