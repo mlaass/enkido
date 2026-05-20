@@ -65,6 +65,13 @@ private:
     // Pass 2.5: Update function body nodes to point to transformed AST
     void update_function_body_nodes();
 
+    // Pass 2.7: Reject recursive `fn` definitions (PRD
+    // prd-runtime-functions-control-flow L2). Builds a call graph over
+    // user functions and emits E240 (or E244 if a member is #inline) on
+    // any cycle. Recursion is rejected in v1 — it would otherwise
+    // infinite-loop codegen's per-call-site body inlining.
+    void detect_recursive_functions();
+
     // Pass 3: Resolve function calls and validate
     void resolve_and_validate(NodeIndex node);
 

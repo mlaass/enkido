@@ -3,6 +3,7 @@
 #include "cedar/opcodes/opcodes.hpp"
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -331,6 +332,16 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
                 }
             }
             ip += body_len + 1;
+        } else if (inst.opcode == Opcode::BLOCK_CALL ||
+                   inst.opcode == Opcode::RET) {
+            // L2: BLOCK_CALL/RET are compile-time-expansion markers. Akkado
+            // codegen inlines every fn body before bytecode is finalized, so
+            // a well-formed program never contains these. Reaching one means
+            // the expansion pass did not run — skip it rather than execute()
+            // an unimplemented opcode (assert in debug builds).
+            assert(false && "BLOCK_CALL/RET reached the audio thread — "
+                             "fn-body expansion pass did not run");
+            ++ip;
         } else {
             execute(program[ip]);
             ++ip;

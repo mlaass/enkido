@@ -1,4 +1,10 @@
-> **Status: NOT STARTED** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20 (factual claims validated against the codebase; error codes, line numbers, and the bytecode-model section fixed). Design is converged and the open questions are implementation-time, not design-blocking — implementation simply has not begun. PRs should split L1 → L2 → L3 as three independent rollouts. Source: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
+> **Status: L1 SHIPPED · L2 PARTIAL · L3 NOT STARTED** — Brainstorm-converged design (2026-05-17); reviewed and corrected 2026-05-20. PRs split L1 → L2 → L3 as three independent rollouts.
+>
+> - **L1 (Phase 1) — SHIPPED.** `when()` (commit `41bb96c`) and `loop(N){body}` (commit `9776ded`): `SKIP_IF_ZERO`/`SKIP_IF_NONZERO`/`LOOP_STATIC` opcodes + Akkado surface.
+> - **L2 (Phase 2) — PARTIAL.** Shipped: the `#inline` annotation (lexer `#` token + statement-position parsing), recursion rejection (E240/E244/E246/E249), and the `BLOCK_CALL`/`RET` opcode reservations (compile-time-expansion markers; the VM hard-errors if one is reached). **Deferred to L3:** the `Subprogram` side-table and the `expand_block_calls()` machinery — under the chosen compile-time-expansion model the table has no L2 consumer and is not the runtime-resident shape L3's `FOREACH_EVENT` needs, so it is co-designed with L3.
+> - **L3 (Phase 3) — NOT STARTED.**
+>
+> Source: design framework at `~/.claude/plans/there-is-no-harmonic-flute.md`.
 
 # Cedar Runtime Functions, Callable Blocks & Control Flow PRD
 
@@ -646,14 +652,32 @@ Three independent PRs. Each one is shippable on its own.
 
 ### Phase 2 — L2: Subprogram Table & BLOCK_CALL (PR2)
 
+> **Implementation note (2026-05-20).** L2 was split during implementation.
+> The **surface-language half shipped** (see the Status block at the top):
+> the `#inline` annotation, recursion rejection (E240/E244/E246/E249), and the
+> `BLOCK_CALL`/`RET` opcode reservations. The **`Subprogram` table +
+> `expand_block_calls()` machinery is deferred to L3.** Reason: the agreed
+> model expands fn bodies at *compile time* inside Akkado codegen (not a
+> swap-prepare pass), which makes the runtime bytecode byte-identical to
+> today's per-site inlining. A `Subprogram` side-table therefore has **no L2
+> consumer** and the AST-indexed shape it would take in L2 is not the
+> runtime-resident shape L3's `FOREACH_EVENT` dispatch needs — so it is
+> co-designed with L3. The original L2 scope below is retained for the
+> historical record; items struck through are deferred.
+
 **Scope:**
-- Bytecode format extension: `Subprogram` table.
-- New opcodes: `BLOCK_CALL`, `RET`, optional `BLOCK_BIND`.
-- Akkado codegen emits `Subprogram` entries for all `fn` definitions (with `#inline` opt-out).
-- Swap-prepare pass: `expand_block_calls()` — walks main program, inlines bodies, patches buffer indices and state IDs.
-- State-ID path scheme extended with `"block:<name>@callsite_<N>"`.
-- New Akkado annotation: `#inline`.
-- Compile error for recursive `fn` definitions.
+- ~~Bytecode format extension: `Subprogram` table.~~ *(deferred to L3)*
+- New opcodes: `BLOCK_CALL`, `RET`, ~~optional `BLOCK_BIND`~~ — shipped as
+  compile-time-expansion marker reservations; `BLOCK_BIND` dropped (unnecessary
+  under compile-time expansion).
+- ~~Akkado codegen emits `Subprogram` entries for all `fn` definitions.~~
+  *(deferred to L3)*
+- ~~Swap-prepare pass: `expand_block_calls()`.~~ *(deferred to L3)*
+- ~~State-ID path scheme extended with `"block:<name>@callsite_<N>"`.~~
+  *(deferred — L2 keeps the existing `name#N` scheme, so bytecode + state IDs
+  stay byte-identical to today.)*
+- New Akkado annotation: `#inline`. **— SHIPPED**
+- Compile error for recursive `fn` definitions. **— SHIPPED**
 
 **Files touched:**
 - `cedar/include/cedar/vm/instruction.hpp` — opcode enum additions

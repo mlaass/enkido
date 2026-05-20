@@ -72,6 +72,7 @@ enum class TokenType : std::uint8_t {
     Semicolon,      // ;
 
     // Special
+    Hash,           // # (annotation prefix, e.g. #inline)
     Hole,           // %
     At,             // @ (for weight modifier in mini-notation)
     Bang,           // ! (for repeat modifier)
@@ -138,6 +139,7 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::Comma:        return "Comma";
         case TokenType::Colon:        return "Colon";
         case TokenType::Semicolon:    return "Semicolon";
+        case TokenType::Hash:         return "Hash";
         case TokenType::Hole:         return "Hole";
         case TokenType::At:           return "At";
         case TokenType::Bang:         return "Bang";

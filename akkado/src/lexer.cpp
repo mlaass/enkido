@@ -200,6 +200,7 @@ Token Lexer::lex_token() {
         case ',': return make_token(TokenType::Comma);
         case ':': return make_token(TokenType::Colon);
         case ';': return make_token(TokenType::Semicolon);
+        case '#': return make_token(TokenType::Hash);
         case '%': return make_token(TokenType::Hole);
         case '@': return make_token(TokenType::At);
         case '~': return make_token(TokenType::Tilde);

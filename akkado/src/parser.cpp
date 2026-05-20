@@ -302,6 +302,40 @@ NodeIndex Parser::parse_statement() {
         return parse_directive();
     }
 
+    // Check for annotation: #inline fn ... (PRD prd-runtime-functions-control-flow L2).
+    // Annotations are a `#` followed by an identifier at statement position,
+    // attached to the next `fn` declaration. v1 defines `#inline` only.
+    if (match(TokenType::Hash)) {
+        Token hash_tok = previous();
+        if (!check(TokenType::Identifier)) {
+            error_with_code(current(), "E249",
+                            "expected annotation name after '#'");
+            return NULL_NODE;
+        }
+        Token ann_tok = advance();
+        if (ann_tok.lexeme != "inline") {
+            error_with_code(ann_tok, "E249",
+                            "unknown annotation '#" + std::string(ann_tok.lexeme) +
+                            "' — see docs for supported annotations");
+            return NULL_NODE;
+        }
+        // #inline must precede a `fn` declaration (optionally `const fn`).
+        if (match(TokenType::Const)) {
+            if (match(TokenType::Fn)) {
+                return parse_fn_def(/*is_const=*/true, /*is_inline=*/true);
+            }
+            error_with_code(previous(), "E246",
+                            "#inline must precede a `fn` declaration");
+            return NULL_NODE;
+        }
+        if (match(TokenType::Fn)) {
+            return parse_fn_def(/*is_const=*/false, /*is_inline=*/true);
+        }
+        error_with_code(hash_tok, "E246",
+                        "#inline must precede a `fn` declaration");
+        return NULL_NODE;
+    }
+
     // Check for const declaration: const fn ... or const x = ...
     if (match(TokenType::Const)) {
         if (match(TokenType::Fn)) {
@@ -1650,7 +1684,7 @@ NodeIndex Parser::parse_const_decl(const Token& name_token) {
 // Function definition parsing
 // fn name(params) -> body
 // fn name(params) -> { block }
-NodeIndex Parser::parse_fn_def(bool is_const) {
+NodeIndex Parser::parse_fn_def(bool is_const, bool is_inline) {
     Token fn_tok = previous();  // 'fn' was already consumed
 
     if (check(TokenType::Underscore)) {
@@ -1696,7 +1730,8 @@ NodeIndex Parser::parse_fn_def(bool is_const) {
         std::string(name_tok.lexeme),
         params.size(),
         has_rest,
-        is_const
+        is_const,
+        is_inline
     };
 
     // Add parameters as Identifier children (using ClosureParamData for those with defaults/rest).

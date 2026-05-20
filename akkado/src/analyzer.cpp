@@ -1,6 +1,9 @@
 #include "akkado/analyzer.hpp"
 #include "akkado/builtins.hpp"
 #include "akkado/source_map.hpp"
+#include <algorithm>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace akkado {
@@ -66,6 +69,9 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
 
     // Pass 2.5: Update function body nodes to point to transformed AST
     update_function_body_nodes();
+
+    // Pass 2.7: Reject recursive `fn` definitions (would infinite-loop codegen)
+    detect_recursive_functions();
 
     // Pass 3: Resolve and validate function calls
     resolve_and_validate(new_root);
@@ -737,6 +743,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         func_info.def_node = node;
         func_info.has_rest_param = fn_data.has_rest_param;
         func_info.is_const = fn_data.is_const;
+        func_info.is_inline = fn_data.is_inline;
 
         NodeIndex child = n.first_child;
         std::size_t param_idx = 0;
@@ -793,6 +800,108 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 void SemanticAnalyzer::update_function_body_nodes() {
     // Update all user function definitions to point to the transformed AST
     symbols_.update_function_nodes(node_map_);
+}
+
+void SemanticAnalyzer::detect_recursive_functions() {
+    // PRD prd-runtime-functions-control-flow L2: recursion is rejected in v1.
+    // Codegen inlines a fn body per call site; a recursive fn would inline
+    // forever. Build a call graph over user functions and reject any cycle.
+    struct FnEntry {
+        NodeIndex body_node = NULL_NODE;
+        bool is_inline = false;
+        SourceLocation location{};
+    };
+    std::unordered_map<std::string, FnEntry> fns;
+    for (const auto& [hash, sym] : symbols_.globals()) {
+        if (sym.kind != SymbolKind::UserFunction) continue;
+        FnEntry e;
+        e.body_node = sym.user_function.body_node;
+        e.is_inline = sym.user_function.is_inline;
+        if (output_arena_.valid(sym.user_function.def_node)) {
+            e.location = output_arena_[sym.user_function.def_node].location;
+        }
+        fns[sym.user_function.name] = e;
+    }
+    if (fns.empty()) return;
+
+    // Edges: F -> user-fn names F directly calls. Do not descend into nested
+    // Closure / FunctionDef scopes — their calls belong to that inner scope.
+    std::unordered_map<std::string, std::vector<std::string>> edges;
+    for (const auto& [name, e] : fns) {
+        std::vector<std::string> callees;
+        std::vector<NodeIndex> stack;
+        if (e.body_node != NULL_NODE) stack.push_back(e.body_node);
+        while (!stack.empty()) {
+            NodeIndex idx = stack.back();
+            stack.pop_back();
+            if (!output_arena_.valid(idx)) continue;
+            const Node& nn = output_arena_[idx];
+            if (nn.type == NodeType::Call &&
+                std::holds_alternative<Node::IdentifierData>(nn.data)) {
+                const std::string& callee = nn.as_identifier();
+                if (fns.count(callee)) callees.push_back(callee);
+            }
+            for (NodeIndex c = nn.first_child; output_arena_.valid(c);) {
+                const Node& cn = output_arena_[c];
+                NodeIndex next = cn.next_sibling;
+                if (cn.type != NodeType::Closure &&
+                    cn.type != NodeType::FunctionDef) {
+                    stack.push_back(c);
+                }
+                c = next;
+            }
+        }
+        edges[name] = std::move(callees);
+    }
+
+    // Cycle detection: DFS with white/grey/black colouring.
+    enum Color { White, Grey, Black };
+    std::unordered_map<std::string, Color> color;
+    for (const auto& [name, e] : fns) color[name] = White;
+    std::vector<std::string> path;     // current DFS name stack
+    std::set<std::string> reported;    // members already covered by a cycle
+
+    std::function<void(const std::string&)> dfs = [&](const std::string& u) {
+        color[u] = Grey;
+        path.push_back(u);
+        for (const std::string& v : edges[u]) {
+            if (color[v] == Grey) {
+                auto it = std::find(path.begin(), path.end(), v);
+                std::vector<std::string> cycle(it, path.end());
+                bool already = false;
+                for (const auto& m : cycle) {
+                    if (reported.count(m)) already = true;
+                }
+                if (!already) {
+                    bool any_inline = false;
+                    for (const auto& m : cycle) {
+                        if (fns[m].is_inline) any_inline = true;
+                    }
+                    std::string desc;
+                    for (const auto& m : cycle) desc += m + " -> ";
+                    desc += cycle.front();
+                    const SourceLocation loc = fns[cycle.front()].location;
+                    if (any_inline) {
+                        error("E244", "recursive #inline fn '" + cycle.front() +
+                              "' not supported in v1 (cycle: " + desc + ")", loc);
+                    } else {
+                        error("E240", "recursive fn '" + cycle.front() +
+                              "' not supported in v1 — see follow-up PRD "
+                              "(cycle: " + desc + ")", loc);
+                    }
+                    for (const auto& m : cycle) reported.insert(m);
+                }
+            } else if (color[v] == White) {
+                dfs(v);
+            }
+        }
+        path.pop_back();
+        color[u] = Black;
+    };
+
+    for (const auto& [name, e] : fns) {
+        if (color[name] == White) dfs(name);
+    }
 }
 
 NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) {

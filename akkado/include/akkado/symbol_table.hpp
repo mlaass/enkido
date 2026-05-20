@@ -37,6 +37,7 @@ struct UserFunctionInfo {
     bool has_rest_param = false;  // true if last param is ...rest
     bool returns_closure = false; // true if body is explicitly a Closure in source
     bool is_const = false;  // true for const fn (compile-time evaluable)
+    bool is_inline = false; // true for #inline fn (forces per-site inlining)
 };
 
 /// Compile-time constant value (scalar or array)

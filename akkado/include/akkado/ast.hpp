@@ -267,6 +267,7 @@ struct Node {
         std::size_t param_count;  // Number of Identifier children before body
         bool has_rest_param = false;  // true if last param is ...rest
         bool is_const = false;  // true for const fn
+        bool is_inline = false;  // true for #inline fn (per-site inlining)
     };
 
     // Data for match arms (pattern: body, or pattern && guard: body)

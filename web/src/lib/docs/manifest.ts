@@ -5,6 +5,7 @@ export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
 	"builtin-variables": "concepts/builtin-variables.md",
 	"record-as-options": "concepts/record-as-options.md",
+	"functions-and-inline": "concepts/functions-and-inline.md",
 	"effect-parameters": "concepts/effect-parameters.md",
 	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
 	"signals": "concepts/signals.md",
@@ -291,6 +292,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "builtin-variables",
 			"title": "Builtin Variables"
+		},
+		{
+			"slug": "functions-and-inline",
+			"title": "Functions,"
 		}
 	]
 };
@@ -480,6 +485,61 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "record-as-options",
 		"category": "concepts",
 		"title": "Records as Builtin Options"
+	},
+	"fn": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"function": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"inline": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"#inline": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"annotation": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"recursion": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"recursive": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"e240": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"e244": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"callable": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
+	},
+	"block": {
+		"slug": "functions-and-inline",
+		"category": "concepts",
+		"title": "Functions,"
 	},
 	"effect": {
 		"slug": "effect-parameters",
@@ -3649,6 +3709,7 @@ export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
+	"functions-and-inline": "A user  groups a reusable chunk of signal graph behind a name:",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Channel count isn't a runtime property — it's a type...",

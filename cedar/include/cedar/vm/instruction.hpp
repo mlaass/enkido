@@ -219,6 +219,16 @@ enum class Opcode : std::uint8_t {
     LOOP_STATIC = 212,       // header: rate=body_len, out_buffer=iteration count;
                              // re-runs the next body_len instructions `count` times
 
+    // Callable blocks (213-214) — PRD prd-runtime-functions-control-flow L2.
+    // Compile-time-expansion markers ONLY. Akkado codegen expands every fn call
+    // site into an inlined body before bytecode is finalized, so a well-formed
+    // program never contains these — they must never reach the audio thread.
+    // The VM dispatch loop treats them as a hard error (the expansion pass did
+    // not run). Reserved here so the IR/disassembler can name them and L3 can
+    // reuse them for true subprogram dispatch.
+    BLOCK_CALL = 213,        // marker: call site of a shared fn body
+    RET = 214,               // marker: terminates a subprogram body
+
     INVALID = 255
 };
 
