@@ -29,15 +29,15 @@ This PRD makes the callback parameter list a first-class, flexible thing — con
 
 ### 1.1 What exists today
 
-`poly`, `mono`, and `legato` are registered as builtins with opcode `NOP`; they are lowered specially by `CodeGenerator::handle_poly_call` (`akkado/src/codegen_functions.cpp:1931`). The handler:
+`poly`, `mono`, and `legato` are registered as builtins with opcode `NOP`; they are lowered specially by `CodeGenerator::handle_poly_call` (`akkado/src/codegen_functions.cpp:1992`). The handler:
 
 - resolves the instrument argument via `resolve_function_arg` into a `FunctionRef`,
-- **requires `func_ref->params.size() == 3`** (`codegen_functions.cpp:2020`, error `E404`),
-- binds the three params, *by position*, to three scratch buffers — `voice_freq_buf`, `voice_gate_buf`, `voice_vel_buf` (`codegen_functions.cpp:2077-2079`),
+- **requires `func_ref->params.size() == 3`** (`codegen_functions.cpp:2104`, error `E404`),
+- binds the three params, *by position*, to three scratch buffers — `voice_freq_buf`, `voice_gate_buf`, `voice_vel_buf` (`codegen_functions.cpp:2113-2115`),
 - allocates a `voice_trig_buf` and wires it to `POLY_BEGIN.inputs[3]` but **never binds it to a callback parameter**,
 - inlines the function body between `POLY_BEGIN` / `POLY_END`.
 
-At runtime `VM::execute_poly_block` (`cedar/src/vm/vm.cpp:262`) fills `freq_buf` / `gate_buf` / `vel_buf` / `trig_buf` per active voice and re-runs the inlined body once per voice with XOR-isolated DSP state.
+At runtime `VM::execute_poly_block` (`cedar/src/vm/vm.cpp:323`) fills `freq_buf` / `gate_buf` / `vel_buf` / `trig_buf` per active voice and re-runs the inlined body once per voice with XOR-isolated DSP state.
 
 ### 1.2 Limitations
 
@@ -191,10 +191,10 @@ instrument arg ──► resolve_function_arg ──► FunctionRef
 Rules:
 - A param list is **at most one** of `{…}`-destructure *or* `...name`-rest, and it must be **trailing**.
 - Empty param list `() ->` is legal (a voice that ignores the event).
-- Positional params past position 11 → error `E406`.
-- A field bound both positionally and in the trailing destructure (e.g. `(freq, {freq})`) → error `E407`.
-- Multiple rest params, or a rest param not in trailing position → error `E408`.
-- Both a destructure and a rest param → error `E409`.
+- Positional params past position 11 → error `E407`.
+- A field bound both positionally and in the trailing destructure (e.g. `(freq, {freq})`) → error `E408`.
+- Multiple rest params, or a rest param not in trailing position → error `E409`.
+- Both a destructure and a rest param → error `E415`.
 
 ### 3.3 Field resolution and the referenced-field set
 
@@ -251,7 +251,7 @@ struct PolyFieldBinding {
 | Constraint | Value | Rationale |
 |---|---|---|
 | Max positional params | 11 | One per fixed field |
-| Canonical order | `freq, gate, vel, trig, type, note, dur, chance, time, phase, sample_id` | `freq,gate,vel` first preserves the historical 3-param callback |
+| Canonical order | `freq, gate, vel, trig, type, note, dur, chance, time, phase, sample_id` | `freq,gate,vel` first preserves the historical 3-param callback; the tail matches `PatternPayload` field-constant order after the leading three (confirmed, see §8) |
 | Field-buffer table size | ≤ `11 + MAX_PROPS_PER_EVENT` (= 15) | Worst case: every fixed field + all 4 custom props referenced |
 | Body length | ≤ 255 instructions (unchanged) | `POLY_BEGIN.rate` is `uint8` |
 | Voice count | 1–128 literal (unchanged) | Static allocation |
@@ -287,7 +287,7 @@ struct PolyFieldBinding {
 | `handle_poly_call` param binding | **Modified** | Classify param shapes; build referenced-field set; emit field-buffer table |
 | `resolve_function_arg` | **Modified (maybe)** | Must surface destructure/rest param info to `handle_poly_call` — may already suffice |
 | Error codes `E403` / `E404` | **Modified** | Messages no longer say "exactly 3 parameters" |
-| Error codes `E406`–`E409` | **New** | Param-list validation (too many positionals, dup binding, rest placement, destructure+rest) |
+| Error codes `E407`–`E409`, `E415` | **New** | Param-list validation (too many positionals, dup binding, rest placement, destructure+rest). `E406` is already taken by the poly `release` literal check, hence the non-contiguous `E415` |
 | `POLY_BEGIN` input wiring | **Modified** | `inputs[0..3]` replaced by field-buffer table in StateInitData |
 | `StateInitData` (PolyAlloc) | **Modified** | Add `poly_field_bindings` |
 | `PolyAllocState` | **Modified** | Add arena-allocated `field_bindings` + count |
@@ -353,7 +353,7 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 
 ### Phase 1 — Callback param model (codegen, fixed fields freq/gate/vel/trig)
 **Goal:** positional-N, destructure, mixed, and rest forms all compile, limited to the four fields the VM already plumbs (`freq, gate, vel, trig`).
-- Rewrite `handle_poly_call` param classification; drop the `==3` check; add `E406`–`E409`; update `E403`/`E404` messages.
+- Rewrite `handle_poly_call` param classification; drop the `==3` check; add `E407`–`E409` + `E415`; update `E403`/`E404` messages.
 - Bind positional/destructure/mixed/rest params to the existing `voice_freq/gate/vel/trig` buffers.
 - **Verify:** `(freq) ->`, `(freq, gate, vel) ->`, `({freq, vel}) ->`, `(freq, {vel}) ->`, `(...e) -> e.freq` all compile and produce identical audio to the old 3-param form where equivalent. `akkado_tests`, `cedar_tests` green.
 
@@ -387,8 +387,9 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 
 ## 8. Open Questions
 
-1. **Canonical tail order.** `freq, gate, vel` must lead (back-compat). The tail order chosen here is `trig, type, note, dur, chance, time, phase, sample_id` (matches `PatternPayload` field-constant order after the leading three). Low-stakes — confirm or reorder during Phase 1 review.
-2. **Rest param + field plumbing.** §3.3 plumbs only statically-seen `e.field` accesses for a rest-bound `e`. Confirm the field-access codegen already rejects/handles non-static field access on a rest-bound record, so no field is silently missed.
+1. **Rest param + field plumbing.** §3.3 plumbs only statically-seen `e.field` accesses for a rest-bound `e`. Confirm the field-access codegen already rejects/handles non-static field access on a rest-bound record, so no field is silently missed.
+
+> **Resolved.** Canonical tail order — `freq, gate, vel` lead (back-compat), followed by `trig, type, note, dur, chance, time, phase, sample_id`, matching `PatternPayload` field-constant order. Confirmed; see §3.6 Constraints.
 
 ---
 
@@ -400,10 +401,10 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 | `() -> osc("sin", 220)` | Legal — voice ignores the event entirely. |
 | `({frqe}) -> …` (typo) | `frqe` binds to `0` silently (decision #4). No diagnostic. |
 | `(a, b, c) -> …` | Identical to `(freq, gate, vel) -> …` — positional names are ignored. |
-| `(freq, {freq}) -> …` | `E407` — `freq` bound both positionally and in the destructure. |
-| 12+ positional params | `E406` — exceeds the 11 canonical fields. |
-| `(...e, freq) -> …` | `E408` — rest param must be trailing. |
-| `({freq}, ...e) -> …` | `E409` — cannot combine a destructure and a rest param. |
+| `(freq, {freq}) -> …` | `E408` — `freq` bound both positionally and in the destructure. |
+| 12+ positional params | `E407` — exceeds the 11 canonical fields. |
+| `(...e, freq) -> …` | `E409` — rest param must be trailing. |
+| `({freq}, ...e) -> …` | `E415` — cannot combine a destructure and a rest param. |
 | `({pitch}) -> …` | `pitch` resolves to `freq` via the alias table. |
 | `({cutoff = 0.5}) ->`, pattern never sets `cutoff` | `cutoff` binds to `0.5` (explicit default beats the `0` fallback). |
 | `({cutoff}) ->`, pattern never sets `cutoff` | `cutoff` binds to `0`. |
@@ -419,7 +420,7 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 
 ### Codegen (`akkado/tests/test_codegen.cpp`)
 - Each shape compiles: `(freq)`, `(freq,gate,vel)`, all 11 positional, `({freq,vel})`, `(freq,{cutoff})`, `(...e)`, `()`.
-- `E406` on 12 positionals; `E407` on `(freq,{freq})`; `E408` on non-trailing/duplicate rest; `E409` on destructure+rest.
+- `E407` on 12 positionals; `E408` on `(freq,{freq})`; `E409` on non-trailing/duplicate rest; `E415` on destructure+rest.
 - Field-buffer table: emitted entries match the referenced-field set; signal-valued custom field produces *no* per-voice entry.
 - `E403`/`E404` message text updated (no "exactly 3").
 
