@@ -129,6 +129,15 @@ std::string format_instruction(const cedar::Instruction& inst, std::size_t index
             }
             break;
 
+        case cedar::Opcode::BLOCK_BIND:
+            // rate carries the logical param slot index (>=5); in0 the source
+            // buffer for that slot (PRD §4.2 — >5-param shared fn call).
+            oss << " slot=" << static_cast<int>(inst.rate);
+            if (inst.inputs[0] != cedar::BUFFER_UNUSED) {
+                oss << " in0=buf[" << inst.inputs[0] << "]";
+            }
+            break;
+
         default:
             // Generic input display
             for (int i = 0; i < 4; ++i) {

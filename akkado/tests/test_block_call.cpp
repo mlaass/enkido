@@ -293,14 +293,125 @@ TEST_CASE("BLOCK_CALL: #inline fn is never shared",
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
-TEST_CASE("BLOCK_CALL: fn with >5 params is not shared",
+TEST_CASE("BLOCK_CALL: fn with >32 params falls back to inlining",
           "[block_call][L2][eligibility]") {
+    // MAX_SHARED_FN_PARAMS = 32; a fn beyond that inlines (BLOCK_BIND's slot
+    // index lives in a uint8 `rate`, and the contiguous param bank gets
+    // impractically large — graceful fallback, never an error).
+    std::string fn = "fn big(";
+    std::string sum;
+    for (int i = 0; i < 33; ++i) {
+        if (i) { fn += ", "; sum += " + "; }
+        fn += "p" + std::to_string(i);
+        sum += "p" + std::to_string(i);
+    }
+    fn += ") -> " + sum + "\n";
+    auto args = [](int base) {
+        std::string a;
+        for (int i = 0; i < 33; ++i) {
+            if (i) a += ",";
+            a += std::to_string(base + i);
+        }
+        return a;
+    };
     auto r = akkado::compile(
-        "fn big(a, b, c, d, e, f) -> a + b + c + d + e + f\n"
-        "saw(big(1,2,3,4,5,6)) + saw(big(6,5,4,3,2,1)) |> out(@)");
+        fn + "saw(big(" + args(1) + ")) + saw(big(" + args(2) + ")) |> out(@)");
     REQUIRE(r.success);
     CHECK(r.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
+}
+
+// ============================================================================
+// BLOCK_BIND — shared blocks with >5 parameters (PRD §4.2)
+// ============================================================================
+
+TEST_CASE("BLOCK_BIND: 7-param fn is shared, renders identically to inlined",
+          "[block_call][L2][block_bind]") {
+    // Params 0..4 ride BLOCK_CALL.inputs[0..4]; params 5..6 ride a run of two
+    // BLOCK_BIND instructions before each BLOCK_CALL. Audio must be sample-
+    // identical to the #inline expansion.
+    const char* shared_src =
+        "fn mix7(a, b, c, d, e, g, h) -> a + b + c + d + e + g + h\n"
+        "saw(mix7(30,40,50,60,70,80,90)) "
+        "+ saw(mix7(90,80,70,60,50,40,30)) |> out(@)";
+    const char* inline_src =
+        "#inline fn mix7(a, b, c, d, e, g, h) -> a + b + c + d + e + g + h\n"
+        "saw(mix7(30,40,50,60,70,80,90)) "
+        "+ saw(mix7(90,80,70,60,50,40,30)) |> out(@)";
+
+    auto shared = akkado::compile(shared_src);
+    auto inlined = akkado::compile(inline_src);
+    REQUIRE(shared.success);
+    REQUIRE(inlined.success);
+
+    // One shared body; two call sites; two BLOCK_BIND per site (slots 5,6).
+    CHECK(shared.block_table.size() == 1);
+    CHECK(count_op(shared, cedar::Opcode::BLOCK_CALL) == 2);
+    CHECK(count_op(shared, cedar::Opcode::BLOCK_BIND) == 4);
+    CHECK(count_op(inlined, cedar::Opcode::BLOCK_CALL) == 0);
+    CHECK(count_op(inlined, cedar::Opcode::BLOCK_BIND) == 0);
+
+    auto a = render(shared, 300);
+    auto b = render(inlined, 300);
+    CHECK(samples_identical(a, b));
+}
+
+TEST_CASE("BLOCK_BIND: each BLOCK_BIND run precedes its BLOCK_CALL",
+          "[block_call][L2][block_bind]") {
+    // The VM dispatch loop relies on BLOCK_BIND runs being contiguous and
+    // terminated by exactly one BLOCK_CALL. Pin that codegen invariant.
+    auto r = akkado::compile(
+        "fn mix6(a, b, c, d, e, g) -> a + b + c + d + e + g\n"
+        "saw(mix6(1,2,3,4,5,6)) + saw(mix6(6,5,4,3,2,1)) |> out(@)");
+    REQUIRE(r.success);
+
+    auto insts = get_instructions(r);
+    int bind_run = 0;
+    int calls_with_run = 0;
+    for (std::size_t i = 0; i < r.main_instruction_count; ++i) {
+        if (insts[i].opcode == cedar::Opcode::BLOCK_BIND) {
+            ++bind_run;
+            // BLOCK_BIND only ever binds slots >= 5.
+            CHECK(insts[i].rate >= 5);
+        } else if (insts[i].opcode == cedar::Opcode::BLOCK_CALL) {
+            if (bind_run > 0) {
+                CHECK(bind_run == 1);  // 6-param fn -> exactly slot 5
+                ++calls_with_run;
+            }
+            bind_run = 0;
+        } else {
+            // No BLOCK_BIND may dangle without an immediately following CALL.
+            CHECK(bind_run == 0);
+        }
+    }
+    CHECK(calls_with_run == 2);
+}
+
+TEST_CASE("BLOCK_BIND: 7-param stateful fn isolates state per call site",
+          "[block_call][L2][block_bind]") {
+    // A >5-param body carrying a stateful opcode (lp) must keep independent
+    // state per call site, exactly as the <=5-param path does.
+    const char* shared_src =
+        "fn flt7(s, c, g1, g2, g3, g4, g5) -> "
+        "lp(s, c) * g1 * g2 * g3 * g4 * g5\n"
+        "flt7(saw(220), 600, 1, 1, 1, 1, 1) "
+        "+ flt7(saw(330), 1800, 1, 1, 1, 1, 1) |> out(@)";
+    const char* inline_src =
+        "#inline fn flt7(s, c, g1, g2, g3, g4, g5) -> "
+        "lp(s, c) * g1 * g2 * g3 * g4 * g5\n"
+        "flt7(saw(220), 600, 1, 1, 1, 1, 1) "
+        "+ flt7(saw(330), 1800, 1, 1, 1, 1, 1) |> out(@)";
+
+    auto shared = akkado::compile(shared_src);
+    auto inlined = akkado::compile(inline_src);
+    REQUIRE(shared.success);
+    REQUIRE(inlined.success);
+    CHECK(count_op(shared, cedar::Opcode::BLOCK_CALL) == 2);
+    CHECK(count_op(shared, cedar::Opcode::BLOCK_BIND) == 4);
+
+    auto a = render(shared, 300);
+    auto b = render(inlined, 300);
+    CHECK(samples_identical(a, b));
 }
 
 TEST_CASE("BLOCK_CALL: fn with a default param is not shared",

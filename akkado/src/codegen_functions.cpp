@@ -11,6 +11,14 @@ namespace akkado {
 using codegen::encode_const_value;
 using codegen::emit_push_const;
 
+// Maximum parameter count for a shareable `fn` (PRD §4.2). Params 0..4 travel
+// in the BLOCK_CALL instruction's inputs[0..4]; params 5..N-1 travel in a run
+// of preceding BLOCK_BIND instructions (slot index in `rate`, a uint8). The
+// cap stays well within the uint8 range; the contiguous param-bank allocation
+// in get_or_compile_shared_block self-limits in practice. A `fn` with more
+// parameters falls back to per-site inlining.
+static constexpr std::size_t MAX_SHARED_FN_PARAMS = 32;
+
 // Try to resolve an AST node to a compile-time constant value.
 // Returns nullopt if the node cannot be resolved at compile time.
 static std::optional<ConstValue> resolve_const_value(
@@ -804,7 +812,7 @@ bool CodeGenerator::fn_shareable_by_signature(
         func.has_rest_param || func.body_node == NULL_NODE) {
         return false;
     }
-    if (func.params.empty() || func.params.size() > 5) {
+    if (func.params.empty() || func.params.size() > MAX_SHARED_FN_PARAMS) {
         return false;
     }
     for (const auto& p : func.params) {
@@ -953,6 +961,7 @@ CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
         // stay inlined (in the main stream, where the dispatch loop runs).
         for (const auto& bi : desc.body) {
             if (bi.opcode == cedar::Opcode::BLOCK_CALL ||
+                bi.opcode == cedar::Opcode::BLOCK_BIND ||
                 bi.opcode == cedar::Opcode::RET ||
                 bi.opcode == cedar::Opcode::FOREACH_EVENT ||
                 bi.opcode == cedar::Opcode::POLY_BEGIN ||
@@ -1029,6 +1038,24 @@ TypedValue CodeGenerator::emit_block_call(
                 return TypedValue::void_val();
             }
         }
+    }
+
+    // Params 5..N-1 (for fns with >5 params) travel in a contiguous run of
+    // BLOCK_BIND instructions emitted immediately before the BLOCK_CALL — one
+    // per logical slot, slot index in `rate`. Slots 0..4 stay in BLOCK_CALL's
+    // inputs[0..4]. Fns with <=5 params emit no BLOCK_BIND (bit-identical to
+    // pre-§4.2 codegen).
+    for (std::size_t i = 5; i < arg_bufs.size(); ++i) {
+        cedar::Instruction bind{};
+        bind.opcode = cedar::Opcode::BLOCK_BIND;
+        bind.rate = static_cast<std::uint8_t>(i);
+        bind.out_buffer = 0xFFFF;
+        bind.inputs[0] = arg_bufs[i];
+        bind.inputs[1] = bind.inputs[2] = bind.inputs[3] =
+            bind.inputs[4] = 0xFFFF;
+        bind.flags = 0;
+        bind.state_id = 0;
+        emit(bind);
     }
 
     cedar::Instruction bc{};

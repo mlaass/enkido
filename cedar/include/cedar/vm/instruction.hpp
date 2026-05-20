@@ -219,15 +219,16 @@ enum class Opcode : std::uint8_t {
     LOOP_STATIC = 212,       // header: rate=body_len, out_buffer=iteration count;
                              // re-runs the next body_len instructions `count` times
 
-    // Callable blocks (213-214) — PRD prd-runtime-functions-control-flow L2.
-    // Compile-time-expansion markers ONLY. Akkado codegen expands every fn call
-    // site into an inlined body before bytecode is finalized, so a well-formed
-    // program never contains these — they must never reach the audio thread.
-    // The VM dispatch loop treats them as a hard error (the expansion pass did
-    // not run). Reserved here so the IR/disassembler can name them and L3 can
-    // reuse them for true subprogram dispatch.
-    BLOCK_CALL = 213,        // marker: call site of a shared fn body
-    RET = 214,               // marker: terminates a subprogram body
+    // Callable blocks (213-214, 216) — PRD prd-runtime-functions-control-flow L2.
+    // BLOCK_CALL is a real runtime-dispatch opcode (as shipped in L2): it is a
+    // dispatch-loop opcode (like POLY_BEGIN/FOREACH_EVENT) that invokes a shared
+    // user-`fn` body resident in the ProgramSlot subprogram table. `rate` carries
+    // the block_id; `inputs[0..4]` carry the caller's first 5 argument buffers;
+    // `out_buffer` receives the result; `state_id` is the per-call-site
+    // disambiguator driving state isolation. The VM dispatch loop handles it
+    // directly — it must NOT reach the execute() opcode switch.
+    BLOCK_CALL = 213,        // dispatch: call site of a shared fn body
+    RET = 214,               // reserved no-op: body length lives in BlockEntry
 
     // Event iteration (215) — PRD prd-runtime-functions-control-flow L3.
     // Dispatch-loop opcode (like POLY_BEGIN): invokes a subprogram body once
@@ -236,6 +237,16 @@ enum class Opcode : std::uint8_t {
     // matching StateInitData (ForeachAlloc), keyed by state_id. Generalizes
     // POLY_BEGIN/POLY_END; see cedar/opcodes/foreach_event.hpp.
     FOREACH_EVENT = 215,
+
+    // BLOCK_BIND (216) — PRD prd-runtime-functions-control-flow §4.2.
+    // Extra-argument carrier for a BLOCK_CALL whose target shared `fn` has more
+    // than 5 parameters (BLOCK_CALL's inputs[0..4] cover only the first 5). One
+    // BLOCK_BIND binds one logical parameter slot >= 5: `rate` = slot index
+    // (5..MAX_SHARED_FN_PARAMS-1), `inputs[0]` = source buffer. A contiguous run
+    // of BLOCK_BINDs precedes its BLOCK_CALL; the VM dispatch loop scans the run
+    // and hands it to execute_block_call. Dispatch-loop opcode — never reaches
+    // execute().
+    BLOCK_BIND = 216,        // dispatch: bind logical param slot >=5 for BLOCK_CALL
 
     INVALID = 255
 };

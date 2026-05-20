@@ -407,6 +407,21 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
             // The body is not inline — advance by exactly one.
             execute_block_call(slot, program, ip);
             ++ip;
+        } else if (inst.opcode == Opcode::BLOCK_BIND) {
+            // L2 >5-param call: a contiguous run of BLOCK_BIND carries the
+            // logical param slots >=5 for the BLOCK_CALL that terminates the
+            // run. Scan the run, then dispatch the BLOCK_CALL with the binds.
+            const std::size_t bind_start = ip;
+            while (ip < main_end && program[ip].opcode == Opcode::BLOCK_BIND) {
+                ++ip;
+            }
+            assert(ip < main_end && program[ip].opcode == Opcode::BLOCK_CALL &&
+                   "BLOCK_BIND run not terminated by BLOCK_CALL");
+            if (ip < main_end && program[ip].opcode == Opcode::BLOCK_CALL) {
+                execute_block_call(slot, program, ip,
+                                   program.subspan(bind_start, ip - bind_start));
+            }
+            ++ip;
         } else if (inst.opcode == Opcode::RET) {
             // RET terminates a subprogram body and is consumed by the body
             // runner (which bounds itself to BlockEntry::length) — it must
@@ -482,7 +497,8 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
 //   inst.state_id   = per-call-site disambiguator (drives state isolation)
 void VM::execute_block_call(const ProgramSlot* slot,
                             std::span<const Instruction> program,
-                            std::size_t ip) {
+                            std::size_t ip,
+                            std::span<const Instruction> binds) {
     const auto& inst = program[ip];
     const std::uint32_t block_id = inst.rate;
     const auto body = slot->block_body(block_id);
@@ -494,13 +510,24 @@ void VM::execute_block_call(const ProgramSlot* slot,
 
     // Copy each caller argument buffer into the body's fixed convention param
     // bank, so the once-compiled shared body reads its parameters from stable
-    // indices regardless of which call site invoked it.
+    // indices regardless of which call site invoked it. The first 5 logical
+    // slots travel in inputs[0..4]; slots >=5 (for >5-param fns) travel in the
+    // preceding BLOCK_BIND run.
     const std::uint16_t slots = std::min<std::uint16_t>(entry.frame_slot_count, 5);
     for (std::uint16_t k = 0; k < slots; ++k) {
         const std::uint16_t src = inst.inputs[k];
         if (src == BUFFER_UNUSED) continue;
         const float* sb = buffer_pool_.get(src);
         float* db = buffer_pool_.get(entry.param_base + k);
+        std::copy_n(sb, BLOCK_SIZE, db);
+    }
+    for (const auto& bind : binds) {
+        const std::uint16_t slot_idx = bind.rate;
+        if (slot_idx >= entry.frame_slot_count) continue;  // E248 guard
+        const std::uint16_t src = bind.inputs[0];
+        if (src == BUFFER_UNUSED) continue;
+        const float* sb = buffer_pool_.get(src);
+        float* db = buffer_pool_.get(entry.param_base + slot_idx);
         std::copy_n(sb, BLOCK_SIZE, db);
     }
 

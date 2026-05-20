@@ -565,9 +565,12 @@ private:
     // runs the body once under per-call-site state-ID isolation, then copies
     // the body output back into the caller's result buffer. The body lives in
     // the subprogram table, not inline — the dispatch loop advances by 1.
+    // `binds` is the contiguous run of preceding BLOCK_BIND instructions
+    // (empty for fns with <=5 params); each carries one logical param slot >=5.
     void execute_block_call(const ProgramSlot* slot,
                             std::span<const Instruction> program,
-                            std::size_t ip);
+                            std::size_t ip,
+                            std::span<const Instruction> binds = {});
 
     // Per-block cycle-position timing, computed once per block from the
     // upstream cycle length. Shared by run_voice_pool (voice gate-on/off

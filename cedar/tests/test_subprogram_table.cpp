@@ -158,6 +158,89 @@ TEST_CASE("BLOCK_CALL copies params, runs the body, copies the result",
     }
 }
 
+// --- BLOCK_BIND: shared blocks with >5 parameters (PRD §4.2) ---------------
+
+TEST_CASE("BLOCK_BIND carries params 5..N into a >5-slot block",
+          "[subprogram][L2][block_bind]") {
+    // 7-param body sums all seven convention slots. Slots 0..4 ride
+    // BLOCK_CALL.inputs[0..4]; slots 5,6 ride two preceding BLOCK_BINDs.
+    // Layout: [ main: BIND BIND CALL | body: ADD x6 ].
+    std::vector<Instruction> stream;
+    stream.push_back(Instruction{Opcode::BLOCK_BIND, /*rate=slot*/5, 0xFFFF,
+                                 {6, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, 0, 0});
+    stream.push_back(Instruction{Opcode::BLOCK_BIND, /*rate=slot*/6, 0xFFFF,
+                                 {7, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, 0, 0});
+    stream.push_back(Instruction{Opcode::BLOCK_CALL, /*rate=block_id*/0, 0,
+                                 {1, 2, 3, 4, 5}, 0, 0x12345678u});
+    // Body: chain-add the seven param-bank buffers (10..16) into buffer 20.
+    stream.push_back(Instruction::make_binary(Opcode::ADD, 20, 10, 11));
+    for (std::uint16_t k = 12; k <= 16; ++k) {
+        stream.push_back(Instruction::make_binary(Opcode::ADD, 20, 20, k));
+    }
+
+    std::array<BlockEntry, 1> table{};
+    table[0].offset = 3;
+    table[0].length = 6;
+    table[0].frame_slot_count = 7;
+    table[0].output_count = 1;
+    table[0].param_base = 10;
+    table[0].body_output = 20;
+
+    VM vm;
+    REQUIRE(vm.load_program_with_blocks_immediate(
+        std::span<const Instruction>(stream),
+        std::span<const BlockEntry>(table), /*main_count=*/3));
+
+    // Seed the 7 caller argument buffers (1..7) with values 1..7.
+    for (std::uint16_t b = 1; b <= 7; ++b) {
+        std::fill_n(vm.buffers().get(b), BLOCK_SIZE, static_cast<float>(b));
+    }
+
+    std::array<float, BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+
+    const float* result = vm.buffers().get(0);
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK(result[i] == 28.0f);  // 1+2+3+4+5+6+7 — all seven slots bound
+    }
+}
+
+TEST_CASE("BLOCK_BIND slot >= frame_slot_count is ignored (E248 guard)",
+          "[subprogram][L2][block_bind]") {
+    // A bind addressing a slot the block does not have must be dropped, not
+    // scribble outside the param bank. Body reads only slots 0,1.
+    std::vector<Instruction> stream;
+    stream.push_back(Instruction{Opcode::BLOCK_BIND, /*rate=*/9, 0xFFFF,
+                                 {3, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, 0, 0});
+    stream.push_back(Instruction{Opcode::BLOCK_CALL, 0, 0,
+                                 {1, 2, 0xFFFF, 0xFFFF, 0xFFFF}, 0, 0});
+    stream.push_back(Instruction::make_binary(Opcode::ADD, 20, 10, 11));
+
+    std::array<BlockEntry, 1> table{};
+    table[0].offset = 2;
+    table[0].length = 1;
+    table[0].frame_slot_count = 2;
+    table[0].output_count = 1;
+    table[0].param_base = 10;
+    table[0].body_output = 20;
+
+    VM vm;
+    REQUIRE(vm.load_program_with_blocks_immediate(
+        std::span<const Instruction>(stream),
+        std::span<const BlockEntry>(table), /*main_count=*/2));
+
+    std::fill_n(vm.buffers().get(1), BLOCK_SIZE, 3.0f);
+    std::fill_n(vm.buffers().get(2), BLOCK_SIZE, 4.0f);
+
+    std::array<float, BLOCK_SIZE> L{}, R{};
+    vm.process_block(L.data(), R.data());
+
+    const float* result = vm.buffers().get(0);
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        CHECK(result[i] == 7.0f);  // out-of-range bind ignored, body intact
+    }
+}
+
 TEST_CASE("BLOCK_CALL with an out-of-range block id is a silent no-op",
           "[subprogram][L2][block_call]") {
     std::vector<Instruction> stream;
