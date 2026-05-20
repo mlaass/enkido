@@ -1,6 +1,10 @@
 # PRD: Builtin Variables (`bpm`, `sr`)
 
-> **Status: MOSTLY SHIPPED** — Compile-time setter path (`bpm = 120` → override → `_cedar_set_bpm`) and the Transport-sync round-trip work end-to-end: `BUILTIN_VARIABLES` registry, analyzer E170/E171/E172, codegen Identifier desugar to `ENV_GET("__bpm")`, WASM override exports, worklet override application, audio-store sync, and Transport `$effect` re-bind. **Remaining gap:** PRD step 8's live-tracking writes are not wired — the worklet's `setBpm` handler (`cedar-processor.js:165`) does not also `cedar_set_param("__bpm", value)`, and there is no init-time write for `__sr`. Effect: reads like `60 / bpm` return the PUSH_CONST fallback (120 / 48000) instead of the live Transport BPM. Verification step 3 (live tracking) is therefore unmet; verification steps 1–2 pass.
+> **Status: SHIPPED** — The full feature works end-to-end: `BUILTIN_VARIABLES` registry, analyzer E170/E171/E172, codegen Identifier desugar to `ENV_GET`, compile-time `bpm` override path, WASM override exports, worklet override application, audio-store sync, and Transport `$effect` re-bind.
+>
+> Live tracking is wired through a cleaner path than PRD step 8 described: instead of the worklet calling `cedar_set_param("__bpm")` separately, `VM::set_bpm()` itself writes `__bpm` and `__spb` into the EnvMap (`cedar/src/vm/vm.cpp:1249-1253`), and `VM::set_sample_rate()` writes `__sr` (`vm.cpp:1243-1247`). The worklet's `setBpm` handler calls `_cedar_set_bpm()`, so Transport BPM changes propagate to `ENV_GET` reads with no recompile. Reads like `60 / bpm` and `spb` track the live Transport tempo.
+>
+> A third builtin variable, **`spb`** (seconds-per-beat, read-only, `= 60 / bpm`), was added during implementation. User-facing documentation lives at `web/static/docs/concepts/builtin-variables.md`.
 
 ## Context
 
@@ -15,7 +19,7 @@ Each builtin variable `X` maps to a pair of getter/setter builtin functions. The
 
 No new opcodes. No new SymbolKind. The getter/setter functions reuse existing infrastructure (ENV_GET, special call handlers, compile-time metadata).
 
-**Initial builtin variables**: `bpm` (read-write) and `sr` (read-only).
+**Builtin variables**: `bpm` (read-write), `sr` (read-only), and `spb` (read-only, seconds-per-beat = `60 / bpm`).
 
 ## Changes
 
@@ -36,6 +40,7 @@ struct BuiltinVarDef {
 inline const std::unordered_map<std::string_view, BuiltinVarDef> BUILTIN_VARIABLES = {
     {"bpm", {"get_bpm", "set_bpm", "__bpm", 120.0f, 1.0f, 999.0f}},
     {"sr",  {"get_sr",  "",         "__sr",  48000.0f, 0.0f, 0.0f}},
+    {"spb", {"get_spb", "",         "__spb", 0.5f, 0.0f, 0.0f}},  // seconds per beat = 60.0 / bpm
 };
 ```
 
@@ -193,8 +198,11 @@ $effect(() => { bpmInput = audioEngine.bpm.toString(); });
 - `web/static/worklet/cedar-processor.js` — EnvMap writes + override extraction
 - `web/src/lib/stores/audio.svelte.ts` — Sync Transport UI
 - `web/src/lib/components/Transport/Transport.svelte` — $effect for bpmInput sync
+- `web/static/docs/concepts/builtin-variables.md` — user-facing documentation
 
 ## Verification
+
+All items below are met. C++ coverage lives in `akkado/tests/test_codegen.cpp` (`[builtins]` tag) — including a runtime test that confirms `spb` tracks `VM::set_bpm()`.
 
 1. **C++ tests**:
    - `bpm = 120` → `builtin_var_overrides` contains `{bpm, 120.0}`

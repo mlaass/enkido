@@ -3,6 +3,7 @@
 
 export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
+	"builtin-variables": "concepts/builtin-variables.md",
 	"record-as-options": "concepts/record-as-options.md",
 	"effect-parameters": "concepts/effect-parameters.md",
 	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
@@ -286,6 +287,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "effect-parameters",
 			"title": "Effect Parameters Convention"
+		},
+		{
+			"slug": "builtin-variables",
+			"title": "Builtin Variables"
 		}
 	]
 };
@@ -390,6 +395,46 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "runtime-controls",
 		"category": "concepts",
 		"title": "Runtime Controls"
+	},
+	"bpm": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"sr": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"spb": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"tempo": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"sample rate": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"builtin variable": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"tempo-relative": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
+	},
+	"env": {
+		"slug": "builtin-variables",
+		"category": "concepts",
+		"title": "Builtin Variables"
 	},
 	"options": {
 		"slug": "record-as-options",
@@ -3563,11 +3608,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "MIDI Input"
 	},
-	"tempo": {
-		"slug": "midi",
-		"category": "builtins",
-		"title": "MIDI Input"
-	},
 	"mpk": {
 		"slug": "midi",
 		"category": "builtins",
@@ -3607,6 +3647,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 
 export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
+	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
