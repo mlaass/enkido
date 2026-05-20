@@ -1,88 +1,109 @@
-> **Status: NOT STARTED** — Draft PRD; reviewed and revised. Phase 1.5 (builtin signature migration) added as a hard prerequisite; closure desugaring inserts as a named argument keyed on the closure-typed slot.
+> **Status: NOT STARTED** — Draft PRD; redesigned 2026-05-20 from a single-closure
+> operator into a **universal** closure-pipe: chained labeled `->>` clauses fill any
+> number of named closure slots on any callable (builtin, `when`, or user `fn`);
+> nested `->>` is supported with scoped hole resolution. Phase 1.5 (builtin signature
+> migration) from the prior draft is **removed** — closures now route by name.
 
-# PRD: `->>` Closure-Pipe Operator
+# PRD: `->>` Closure-Pipe Operator (Universal)
 
 ## Executive Summary
 
-This PRD specifies a new binary operator `->>` that provides syntactic sugar for passing a closure as the last argument to a function call. It combines the ergonomics of pipe-style block syntax (familiar from Ruby, Swift, and other languages) with Akkado's existing field-access pattern on `@` (the canonical hole token; `%` is a legacy alias).
+This PRD specifies a binary operator `->>` that provides syntactic sugar for passing
+**closures as named arguments** to a function call. It combines the ergonomics of
+pipe-style block syntax (familiar from Ruby, Swift, Kotlin) with Akkado's existing
+field-access pattern on `@` (the canonical hole token; `%` is a legacy alias).
+
+`->>` is **universal**: one mechanism serves *any callable that takes a callable* —
+single-closure builtins (`poly`, `map`, `tap_delay`, …), multi-callback constructs
+(`when(cond, then, else)`), user-defined `fn`s with function-typed parameters, and
+future parallel/router effects. There are no per-builtin special cases in the
+operator itself.
 
 ### Why?
 
-Many Akkado builtins take a function/closure as their last argument — `poly()`, `mono()`, `legato()`, `tap_delay()`, `map()`, `reduce()`, `zipWith()`, and future higher-order functions. Today, passing an inline closure is verbose:
+Many Akkado callables take a function/closure argument. Today, passing an inline
+closure is verbose, and there is no concise way at all to supply *more than one*
+callback:
 
 ```akkado
-// Current: must write full closure signature and param names
+// Current: must write the full closure signature and param names
 n"C4' Am7' G4'" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
 
-// Proposed: ->> provides the closure body, compiler fills params
+// Proposed: ->> provides the closure body, compiler fills the params
 n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
-```
 
-The operator saves repetitions of boilerplate parameter names, makes the instrument body the visual focus, and works uniformly across all higher-order builtins.
+// Multiple callbacks — one labeled ->> clause per slot:
+when(beat(2) > 1)
+  ->> then: saw(@.freq)
+  ->> else: sine(@.freq)
+```
 
 ### Key Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Token | `->>` (single 3-char token) | Combines `->` (closure arrow) and `>` (pipe direction); distinct from both `->` and `\|>` |
-| Hole aliases | `@` is canonical; `%` is a legacy alias | Both parse identically as holes; new code should prefer `@` |
-| Precedence | Higher than `\|>` | `f() ->> body \|> rest` = `(f() ->> body) \|> rest` — `->>` binds the closure body first |
-| Closure param count | Inferred from function definition | Compiler knows the target function's closure signature; `@.field` maps to named params |
-| Body grouping | Both `(...)` and `{...}` | Parens for inline pipe chains; braces for multi-statement blocks |
+| Hole aliases | `@` is canonical; `%` is a legacy alias | Both parse identically as holes; new code prefers `@` |
+| Multiple callbacks | **chained labeled `->>`** — one clause per closure slot | A function with N closure slots receives N `->>` clauses, each routed by `label:` |
+| Label requirement | required when the callable has >1 closure slot; optional (omitted) when it has exactly 1 | Single-closure ergonomics stay terse; multi-closure stays unambiguous |
+| Nesting | **allowed** — a `->>` body may contain further `->>` calls | `@` binds to the *innermost* closure; outer closures are reached via `as name` |
+| Closure routing | inserted as a **named argument** keyed on the slot name | Closures need not be the last positional slot — no signature migration |
+| Precedence | binds tighter than `\|>`, looser than every arithmetic/logical operator | `f() ->> body \|> rest` = `(f() ->> body) \|> rest` |
+| Body grouping | both `(...)` and `{...}` | Parens for inline pipe chains; braces for multi-statement blocks |
 
 ---
 
 ## 1. Current State
 
-### 1.1 Higher-Order Builtins
+### 1.1 Callables That Take Closures
 
-Several builtins accept a closure today. The position of the closure parameter varies between builtins:
+| Callable | Current signature | Closure slot(s) | Closure arity | Closure param names |
+|----------|-------------------|-----------------|---------------|---------------------|
+| `poly(input, instrument, voices=64)` | `instrument` (slot 1) | 1 | 3 | `freq`, `gate`, `vel` |
+| `mono` / `legato` | instrument slot | 1 | 3 | `freq`, `gate`, `vel` |
+| `tap_delay(in, time, fb, processor, dry?, wet?)` | `processor` (slot 3) | 1 | 1 | `x` |
+| `tap_delay_ms` / `tap_delay_smp` | mirror `tap_delay` | 1 | 1 | `x` |
+| `map(array, fn)` | `fn` (slot 1) | 1 | 1–2 | `val`, `idx` |
+| `reduce(array, fn, init)` | `fn` (slot 1) | 1 | 2 | `acc`, `elem` |
+| `zipWith(a, b, fn)` | `fn` (slot 2) | 1 | 2 | `a`, `b` |
+| `when(cond, then, else)` | *future* — closure-based `when` from `prd-runtime-functions-control-flow.md` | **2** | per construct | per construct |
+| user `fn` | function-typed params (see §1.5) | 0..N | per declaration | per declaration |
 
-| Builtin | Current Signature | Closure Slot | Closure Arity | Closure Param Names |
-|---------|------------------|---------------|---------------|---------------------|
-| `poly(input, instrument, voices=64)` | `instrument` (slot 1) — `voices` follows | 3 params | `freq`, `gate`, `vel` |
-| `mono(instrument)` / `mono(input, instrument)` | last (1-arg form) / last (2-arg form) | 3 params | `freq`, `gate`, `vel` |
-| `legato(instrument)` / `legato(input, instrument)` | last (1-arg form) / last (2-arg form) | 3 params | `freq`, `gate`, `vel` |
-| `tap_delay(in, time, fb, processor, dry?, wet?)` | `processor` (slot 3) — optional `dry`/`wet` follow | 1 param | `x` (or user-named) |
-| `map(array, fn)` | last | 1 param | `x` |
-| `reduce(array, fn, init)` | `fn` (slot 1) — `init` follows | 2 params | `acc`, `x` |
-| `zipWith(a, b, fn)` | last | 2 params | `a`, `b` |
+No builtin today takes *more than one* closure (`compose(f, g, …)` is multi-function
+but chains its arguments — not the multi-slot case). The closure-based
+`when(cond, then, else)` is the first concrete multi-callback callable and is the
+motivating case for this redesign.
 
-> **Note:** `->>` requires the closure parameter to occupy the **last positional slot** of the call. Builtins where this is not currently the case (`poly`, `reduce`, plus `tap_delay`'s optional trailing `dry`/`wet`) are reordered as part of Phase 1.5 (see §8). The post-migration shape is:
->
-> - `poly(input, voices, instrument)` (closure last; `voices` defaults to 64)
-> - `reduce(array, init, fn)` (closure last)
-> - `tap_delay(in, time, fb, dry, wet, processor)` (closure last; `dry`/`wet` keep their defaults)
-> - `tap_delay_ms`, `tap_delay_smp` mirror `tap_delay`
+### 1.2 How Closure Params Are Resolved Today
 
-In every case, the caller must supply an explicit closure:
-
-```akkado
-// poly — 3-param closure
-n"C4' Am7'" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
-
-// tap_delay — 1-param closure
-tap_delay(in, 0.5, 0.3, (x) -> x * 0.5)
-
-// map — 1-param closure
-map([1, 2, 3], (x) -> x * 2)
-```
-
-### 1.2 How Closure Params Are Resolved
-
-For builtins, the closure's expected parameter count and names are **not** stored in `BuiltinInfo` metadata — they are hardcoded in each codegen handler:
-
-- `handle_poly_call()` (`codegen_functions.cpp:1967-1976`): validates **exactly 3 params** named `freq`, `gate`, `vel`
-- `handle_tap_delay_call()` (`codegen_functions.cpp:1738-1771`): validates **exactly 1 param**
-- Array op handlers (`codegen_arrays.cpp`): accept 1 or 2 params depending on op
+For builtins, the expected closure arity and param names are **not** in `BuiltinInfo`
+— they are hardcoded in each codegen handler (`handle_poly_call`,
+`handle_tap_delay_call`, array op handlers in `codegen_arrays.cpp`). `->>` requires
+this metadata to be declared (see §4).
 
 ### 1.3 Hole Operator `@` (canonical) / `%` (legacy alias)
 
-Both `%` (`TokenType::Hole`) and `@` (`TokenType::At`) parse identically as holes via `parse_hole()` (`parser.cpp:554-556`). `%` was the original token; `@` was added later and is now the canonical form used in docs and examples. `%` continues to parse for backward compatibility.
+Both `%` (`TokenType::Hole`) and `@` (`TokenType::At`) parse identically as holes via
+`parse_hole()` (`parser.cpp:705-772`). `@` is canonical; `%` parses for backward
+compatibility. `@.field` / `@field` (dotless) access a field of the hole.
 
 ### 1.4 Pipe Operator `|>`
 
-The pipe operator rewrites `a |> f(@)` to `f(a)` (hole substitution) during semantic analysis (`analyzer.cpp:694-750`). It has the lowest operator precedence.
+`a |> f(@)` rewrites to `f(a)` (hole substitution) during semantic analysis via
+`rewrite_pipes()` in `analyzer.cpp`. `|>` has the lowest operator precedence
+(`Precedence::Pipe`, `parser.hpp:14`).
+
+### 1.5 User Functions with Function-Typed Parameters
+
+User functions can already *receive* a function and call it:
+
+```akkado
+fn apply(sig, fx) -> fx(sig)
+apply(saw(440), my_gain)
+```
+
+But there is **no syntax today to declare** that a `fn` parameter is function-typed
+or what its callback's parameter names are. §4.4 adds that.
 
 ---
 
@@ -90,24 +111,36 @@ The pipe operator rewrites `a |> f(@)` to `f(a)` (hole substitution) during sema
 
 ### Goals
 
-1. **Concise closure-as-last-arg syntax**: `fn(args) ->> body` desugars to `fn(args, (params) -> body)` where `@.field` maps to named closure params
-2. **Works with all existing higher-order builtins**: `poly`, `mono`, `legato`, `tap_delay` family, `map`, `reduce`, `zipWith`
-3. **Field-access destructuring**: `@.freq` inside the `->>` body is replaced with a direct reference to the `freq` closure param
-4. **Body grouping**: support both `(parens)` and `{braces}` for closure bodies containing pipe chains
-5. **Backwards compatible**: all existing closure syntax continues to work unchanged
+1. **Concise closure-as-argument syntax**: `fn(args) ->> body` desugars to
+   `fn(args, slot: (params) -> body)`.
+2. **Multiple callbacks**: `fn(args) ->> a: bodyA ->> b: bodyB` fills several named
+   closure slots in one call.
+3. **Universal**: one implementation works for builtins, `when`, and user `fn`s — the
+   operator does no callable-specific branching.
+4. **Nested callbacks**: a `->>` body may itself contain `->>` calls; `@` resolves to
+   the innermost closure, outer closures are reachable via `as name`.
+5. **Field-access destructuring**: `@.freq` inside a body maps to the named closure
+   param `freq`.
+6. **Body grouping**: both `(parens)` and `{braces}` for bodies containing pipe chains.
+7. **Backwards compatible**: all existing explicit-closure syntax works unchanged.
 
 ### Non-Goals
 
-- **Not a general "pipe to any function"**: `->>` is specifically for providing a closure argument to a partial function call. For ordinary function application, `|>` already works.
-- **Not a standalone expression**: `->> body` without a preceding partial call is a compile error
-- **No implicit function inference**: `->>` does not guess which function to call — the LHS must be an explicit (possibly partial) function invocation
-- **No runtime closure type**: the desugaring is purely syntactic — the same AST nodes are produced as if the user wrote an explicit closure
+- **Not a general "pipe to any function"**: `->>` supplies *closure* arguments only.
+  For ordinary function application, `|>` already works.
+- **Not a standalone expression**: `->> body` without a preceding call is an error.
+- **No implicit function inference**: the LHS must be an explicit call.
+- **No runtime closure type**: desugaring is purely syntactic — the same AST nodes
+  are produced as if the user wrote explicit closures. Closures stay fully inlined at
+  compile time.
+- **MVP LHS is a `Call`**: `MethodCall` LHS (`n"…".each_voice(...)`) is deferred to
+  Future Work (§11).
 
 ---
 
 ## 3. Target Syntax
 
-### 3.1 Basic Polyphony
+### 3.1 Single Closure (unlabeled)
 
 ```akkado
 // Current:
@@ -121,53 +154,59 @@ n"C4' Am7' G4' F4'"
   |> out(@, @)
 ```
 
-The compiler knows `poly()` expects `(freq, gate, vel)` from its builtin definition. Inside the `->>` body:
-- `@.freq` → direct reference to the `freq` parameter
-- `@.gate` → direct reference to the `gate` parameter (held high with a 1-sample drop at every event onset; use `.trig` if you want a 1-sample pulse instead — see mini-notation-reference §Event Fields for the trigger-vs-gate distinction)
-- `@.vel` → direct reference to the `vel` parameter
+`poly` has exactly one closure slot, so the clause needs no label. Inside the body:
+`@.freq` / `@.gate` / `@.vel` are direct references to the `instrument` closure's
+parameters.
 
-### 3.2 Mono / Legato
+> `.gate` is held high with a 1-sample drop at every event onset (pair with ADSR);
+> `.trig` is a 1-sample pulse (pair with AR / sample retrigger). See
+> mini-notation-reference §Event Fields.
+
+### 3.2 Multiple Callbacks (chained labeled `->>`)
+
+When a callable has more than one closure slot, each `->>` clause **must** carry a
+`label:` naming the slot it fills:
 
 ```akkado
-// mono with piped pattern (2-arg form)
-n"c4 e4 g4"
-  |> mono(@) ->> saw(@.freq) * ar(@.gate)
-  |> out(@, @)
+// when(cond, then, else) — two closure slots `then` and `else`
+when(beat(2) > 1)
+  ->> then: saw(@.freq)
+  ->> else: sine(@.freq)
 
-// legato with piped pattern
-n"c4 e4 g4"
-  |> legato(@) ->> saw(@.freq) * ar(@.gate)
-  |> out(@, @)
+// → when(beat(2) > 1,
+//        then: (freq, gate, vel) -> saw(freq),
+//        else: (freq, gate, vel) -> sine(freq))
 ```
 
-> The 1-arg closure-only form (`mono((freq,gate,vel) -> …)`) requires writing the closure explicitly — `->>` always needs a function call to the **left** (per the Non-Goal in §2). Writing `mono(->> body)` is a compile error.
+Clause order is free — labels route each closure to its slot. Omitting a label when
+the callable has >1 slot is error **E510**.
 
-### 3.3 Pipes Inside the Closure Body (Parens)
+### 3.3 Mono / Legato
 
-When the closure body itself contains pipe chains, wrap it in `(...)` to disambiguate from the outer pipeline. Inside this grouped body, `@` follows context-dependent rules relative to `|>`:
+```akkado
+n"c4 e4 g4" |> mono(@)   ->> saw(@.freq) * ar(@.gate) |> out(@, @)
+n"c4 e4 g4" |> legato(@) ->> saw(@.freq) * ar(@.gate) |> out(@, @)
+```
+
+### 3.4 Pipes Inside the Closure Body (Parens)
+
+When the body contains its own pipe chain, wrap it in `(...)`. Inside a grouped body,
+`@` follows context-dependent rules relative to `|>`:
 
 - `@.freq` **before** `|>` → closure param `freq`
 - `@` **after** `|>` → standard pipe hole (filled by the pipe input)
 
 ```akkado
-// Current:
-n"C4'"
-  |> poly(@, (freq, gate, vel) ->
-       saw(freq) |> lp(freq, 2000 * adsr(gate)) * vel
-     )
-  |> out(@, @)
-
-// With ->> (parens):
 n"C4'"
   |> poly(@) ->> (saw(@.freq) |> lp(@, 2000 * adsr(@.gate)) * @.vel)
   |> out(@, @)
 ```
 
-Here `@.freq` (before `|>`) resolves to the closure param `freq`, while `@` in `lp(@, 2000)` (after `|>`) is filled by `saw(freq)` output — following standard pipe semantics. The parens explicitly scope the pipe chain to the closure body. The outer `|> out(@)` attaches to the `poly()` result, not the inner pipe chain.
+`@.freq` and `@.gate` (before `|>`) resolve to closure params; `@` in `lp(@, …)`
+(after `|>`) is filled by `saw(freq)`'s output. The outer `|> out(@, @)` attaches to
+`poly()`'s result.
 
-### 3.4 Pipes Inside the Closure Body (Braces)
-
-Braces `{...}` are an alternative grouping for multi-line or visually distinct closure bodies:
+### 3.5 Pipes Inside the Closure Body (Braces)
 
 ```akkado
 n"C4'"
@@ -181,46 +220,52 @@ n"C4'"
 
 Semantically identical to the parens form; the choice is stylistic.
 
-### 3.5 tap_delay
+### 3.6 tap_delay
 
 ```akkado
-// Post-migration signature: tap_delay(in, time, fb, dry, wet, processor)
-// Pre-migration call (today): tap_delay(sig, 0.5, 0.3, (x) -> x * 0.5) * 0.7
-
-// With ->>:
+// tap_delay(in, time, fb, processor, dry?, wet?)
 tap_delay(sig, 0.5, 0.3) ->> @ * 0.5
 ```
 
-For single-param closures, bare `@` (without field access) refers to the single parameter directly. Optional `dry`/`wet` keep their defaults; users can supply them positionally before `->>`:
+For a single-param closure, bare `@` (no field) refers to that one parameter.
+Optional `dry`/`wet` keep their defaults; supply them positionally or by name *before*
+`->>`:
 
 ```akkado
-tap_delay(sig, 0.5, 0.3, 0.2, 0.8) ->> @ * 0.5  // dry=0.2, wet=0.8
+tap_delay(sig, 0.5, 0.3, dry: 0.2, wet: 0.8) ->> @ * 0.5
 ```
 
-### 3.6 Array Operations
+### 3.7 Array Operations
 
 ```akkado
-// Post-migration signatures: map(array, fn), reduce(array, init, fn), zipWith(a, b, fn)
-// Pre-migration reduce signature (today): reduce(array, fn, init) — closure NOT last
-// Pre-migration explicit calls:
-map([1, 2, 3], (x) -> x * 2)
-reduce([1, 2, 3], (a, b) -> a + b, 0)
-
-// Post-migration explicit calls:
-map([1, 2, 3], (x) -> x * 2)
-reduce([1, 2, 3], 0, (acc, x) -> acc + x)
-
-// With ->>:
-map([1, 2, 3]) ->> @.x * 2
-reduce([1, 2, 3], 0) ->> @.acc + @.x
+map([1, 2, 3])      ->> @.val * 2
+reduce([1, 2, 3], 0) ->> @.acc + @.elem
 zipWith([1, 2], [3, 4]) ->> @.a + @.b
 ```
 
-Closure params are accessed exclusively via record-style `@.field` syntax. The available field names come from the builtin's `closure_param_names` metadata (see §4.3). For single-param closures, bare `@` is also accepted as shorthand.
+Closure params are accessed via `@.field` (field names come from the slot's
+`callback_params` metadata, §4.3). For single-param closures, bare `@` is shorthand.
+Note `reduce` keeps its existing `(array, fn, init)` signature — the closure routes
+to the `fn` slot by name, so `init` may follow it (see §5).
 
-### 3.7 `as` Binding Inside the Closure Body
+### 3.8 Nested `->>` and `as` Binding
 
-The `as` binding works naturally inside the closure body, just as it does in any expression:
+A `->>` body may itself contain `->>` calls. `@` always refers to the **innermost**
+closure. To reach an **outer** closure's record, name it with `as name` on the call:
+
+```akkado
+n"C4'"
+  |> poly(@) as v ->> ( map(harmonics) ->> osc("sin", @.val * v.freq) )
+  |> out(@, @)
+```
+
+- `@.val` → `map`'s closure param (innermost scope)
+- `v.freq` → `poly`'s `instrument` closure param, reached via the `as v` binding
+- `as` here names the synthesized closure's event record; it is scoped to the `->>`
+  construct and is distinct from the `expr as name` pipe-binding (which still works
+  for ordinary pipelines).
+
+The plain `as` pipe-binding also works *inside* a body, exactly as in any expression:
 
 ```akkado
 n"C4'"
@@ -231,19 +276,13 @@ n"C4'"
   |> out(@, @)
 ```
 
-### 3.8 Chaining with `|>`
+### 3.9 Chaining with `|>`
 
-Because `->>` binds tighter than `|>`, the outer pipeline operates on the result of the completed function call:
+`->>` binds tighter than `|>`, so the outer pipeline operates on the completed call:
 
 ```akkado
-// Precedence:
-// (poly(n"C4'") ->> body) |> out(@, @)
+// parses as: (poly(n"C4'") ->> body) |> out(@, @)
 n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
-
-// This parses (post-Phase-1.5 signature: poly(input, voices=64, instrument)) as:
-// let __result = poly(n"C4'", instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)
-// out(__result, __result)
-// Note: `instrument` is inserted as a NAMED arg so prior named/positional args route correctly.
 ```
 
 ---
@@ -252,89 +291,135 @@ n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
 
 ### 4.1 The Transformation
 
-```
-fn(<positional_args>) ->> <body>
-  ⇒
-fn(<positional_args>, <closure_param_name>: (<params>) -> <body_with_holes_resolved>)
+A `->>` chain is a postfix construct on a call:
 
-fn(<positional_args>, name1: v1, name2: v2) ->> <body>
+```
+<call> [as <name>] ->> [label₁:] body₁  ->> [label₂:] body₂  ...
   ⇒
-fn(<positional_args>, name1: v1, name2: v2, <closure_param_name>: (<params>) -> <body_with_holes_resolved>)
+<call>( <existing args...>,
+        <slot₁>: (<params₁>) -> body₁′,
+        <slot₂>: (<params₂>) -> body₂′,
+        ... )
 ```
 
 Where:
-1. `<closure_param_name>` is the builtin's named slot whose type is `Function` (e.g., `instrument` for `poly`, `fn` for `reduce`/`map`/`zipWith`, `processor` for `tap_delay`). After Phase 1.5 this is always the **last** positional slot, but the desugaring inserts as a **named argument** so the closure routes correctly even when prior args were named (see §9.2).
-2. `<params>` are determined from `BuiltinInfo.closure_param_names` (see §4.3)
-3. `<body>` is scanned for `@`/`@` references
-4. `@.field` → direct reference to parameter named `field`
-5. `@` (bare, no field) → the single parameter for 1-param closures; for multi-param closures, resolves to the **first** param and emits **W150** (see §5.5 / §9.4)
-6. `@` works identically to `@` throughout
+1. Each clause produces one synthetic `Closure`, appended to the call as a **named
+   argument** keyed on the closure slot's name. Named-arg routing places it at the
+   correct `param_names` index regardless of position — closures need **not** be the
+   last positional slot.
+2. `<slotᵢ>` is the slot named by `labelᵢ`. If the callable has exactly one closure
+   slot, the (single) clause may omit its label and fills that slot.
+3. `<paramsᵢ>` are the slot's `callback_params` (§4.3).
+4. `bodyᵢ′` is `bodyᵢ` with all `@`/`%` holes resolved against the closure scope
+   stack (§4.5).
 
-### 4.2 `@` Semantics in the Closure Body with Pipes
+### 4.2 `@` Semantics in the Body with Pipes
 
-Inside the `->>` body, `@` follows a **context-dependent** rule relative to `|>`:
+Inside a `->>` body, `@` follows a **context-dependent** rule relative to `|>`:
 
-- **Before any `|>` in the closure body**: `@` refers to the closure parameter (the event record). `@.freq` accesses the `freq` field.
-- **After a `|>` in the closure body**: `@` follows standard pipe-hole semantics — it is replaced by the value flowing through the pipe.
+- **Before any `|>`**: `@` is the closure parameter record. `@.freq` accesses `freq`.
+- **After a `|>`**: `@` is a standard pipe hole, replaced by the piped value.
 
 ```akkado
 poly(pat) ->> (saw(@.freq) |> lp(@, 2000))
+// @.freq (before |>)        → closure param `freq`
+// @ in lp(@, 2000) (after |>) → pipe hole, filled by saw(freq)
+// result: (freq,gate,vel) -> saw(freq) |> lp(@, 2000)
 ```
 
-Desugaring:
-1. `@.freq` (before `|>`) → `freq` (closure param reference)
-2. `@` in `lp(@, 2000)` (after `|>`) → pipe hole, filled by the output of `saw(freq)`
-3. Result: `(freq, gate, vel) -> saw(freq) |> lp(@, 2000)`
-
-To use `@` as the closure param deeper in a pipe chain, use `as` to bind it before the pipe:
+To use the closure param deeper in a pipe chain, bind it first with `as`:
 
 ```akkado
 poly(pat) ->> (@.freq as f |> saw(f) |> lp(@, 2000))
 ```
 
-### 4.3 Parameter Name Resolution
+### 4.3 Closure Slot Metadata
 
-The compiler determines the closure's parameter names from the function definition:
+A single metadata shape describes every closure slot, for builtins and user `fn`s
+alike:
 
-**Builtins:** Add a new field to `BuiltinInfo` (e.g., `closure_param_names`) that lists the expected closure parameter names. For `poly`: `{"freq", "gate", "vel"}`. For `tap_delay`: `{"x"}`.
-
-> **Scope of `closure_param_names`:** This metadata only governs `->>` desugaring. Users writing an explicit closure keep full naming freedom — `tap_delay(s, t, fb, (sample) -> sample * 0.5)` continues to work with `sample`, not `x`. The metadata is consulted only when `->>` is the operator and the compiler must synthesize the param list itself.
-
-**User-defined functions:** The closure parameter names are the function's parameter names themselves. When a user writes:
-```akkado
-fn my_hof(a, b, fn): fn(a, b)
+```cpp
+struct ClosureSlotInfo {
+    std::string_view slot_name;                                   // "instrument", "then", "fn"
+    std::array<std::string_view, MAX_CLOSURE_PARAMS> callback_params; // {"freq","gate","vel"}
+    std::uint8_t callback_param_count = 0;
+    bool required = true;
+};
 ```
 
-The last parameter type is `Function`, and its signature is determined by the function's own parameter expectations (future work — MVP focuses on builtins).
+> **Scope:** this metadata only governs `->>` desugaring. An explicit closure keeps
+> full naming freedom — `tap_delay(s, t, fb, (sample) -> sample * 0.5)` still works
+> with `sample`. Metadata is consulted only when `->>` synthesizes the param list.
 
-### 4.4 Body Parsing
+### 4.4 Declaring Closure Slots
 
-The RHS of `->>` is parsed at `Precedence::Or` — that is, the parser captures everything down to (but not including) the outer `|>`. This is broader than the existing `|>` RHS (which parses at `Precedence::Addition`) so that comparisons (`==`, `<`), logicals (`&&`, `||`), and arithmetic all flow into the closure body without parens.
+**Builtins** — `BuiltinInfo` gains `closure_slots[]` + `closure_slot_count`. Each
+`slot_name` must match a `param_names[i]` whose `param_types[i]` is
+`ParamValueType::Function` (the enum value already exists in `builtins.hpp:34` but is
+currently unused). Example:
 
-| Operator class | Captured by RHS? |
+```cpp
+{"poly", { /* ... existing fields ... */
+           .param_types = { /* slot 1 = */ ParamValueType::Function, ... },
+           .closure_slots = {{ .slot_name = "instrument",
+                               .callback_params = {"freq","gate","vel"},
+                               .callback_param_count = 3, .required = true }},
+           .closure_slot_count = 1 }},
+```
+
+**User functions** — a `fn` parameter written `name(p1, p2, …)` is function-typed,
+with `p1..pn` as its callback param names:
+
+```akkado
+fn router(sig, wet(x), dry(x)) -> ...
+fn voiced(notes, instrument(freq, gate, vel)) -> instrument(...)
+```
+
+`ParsedParam` and `FunctionParamInfo` gain `is_function` + `callback_params`;
+`UserFunctionInfo` gains `closure_slots`, populated during FunctionDef registration.
+
+**Unified lookup** — one helper `resolve_closure_slots(call_name)` checks the builtin
+table first, then the user-function table, returning a span of `ClosureSlotInfo`. The
+desugaring pass calls *only* this — no builtin-vs-user branching anywhere.
+
+### 4.5 Scoped Hole Resolution
+
+Desugaring maintains a **stack of closure scopes**, each
+`{ param_names, optional as_name }`:
+
+- Entering a synthesized closure for a clause **pushes** a scope with the slot's
+  `callback_params`; if the originating call had `as name`, the scope records it.
+- A nested `->>` inside a body pushes a further (innermost) scope.
+
+Resolution of a hole in a body:
+
+| Hole form | Resolves to |
+|-----------|-------------|
+| `@.field` / `@field` | the **innermost** scope's param `field`; **E502** if `field` is not an innermost param |
+| bare `@` | the innermost scope's sole param; **E503** if the innermost closure has ≠1 param (ambiguous) |
+| `name.field` where `name` is an `as`-bound scope | that outer scope's param `field` (**E502** variant if `field` absent) |
+
+Outer-scope params are **not** reachable via bare `@` — only via an `as` binding.
+Holes appearing in a `Pipe` RHS are **left untouched** (the closure-pipe pass runs
+*before* `rewrite_pipes`, which then fills them as ordinary pipe holes — see §5.2).
+
+### 4.6 Body Parsing
+
+Each clause body is parsed at `Precedence::Or`: it captures unary, arithmetic, power,
+comparison, equality, and logical operators, but **stops at the outer `|>`** and at
+the next `->>`.
+
+| Operator class | Captured by a clause body? |
 |---|---|
 | Method/Call/Primary (`. ()`) | Yes |
 | Unary (`!`, `-`) | Yes |
 | Power, Multiplication, Addition (`^ * / + -`) | Yes |
 | Comparison, Equality (`< > == !=`) | Yes |
 | Logical (`&& \|\|`) | Yes |
+| `->>` | **No** — continues the chain (a nested `->>` attaches to a `Call` *inside* the body) |
 | Pipe (`\|>`) | **No** — terminates the body |
 
-When the user wraps the body in `(...)` or `{...}`, the parser enters a delimited sub-expression that can contain its own `|>` operators.
-
-```
-// Without grouping: RHS stops at the next outer |>
-poly(@) ->> saw(@.freq) * @.vel |> out(@)
-// parses as: (poly(@) ->> saw(@.freq) * @.vel) |> out(@)
-
-// Comparisons captured by the body (no parens needed):
-poly(@) ->> saw(@.freq) * (@.vel > 0.5 ? 1.0 : 0.5) |> out(@)
-
-// With parens: RHS captures everything including pipes
-poly(@) ->> (saw(@.freq) |> lp(@, 2000)) |> out(@)
-// RHS = "(saw(@.freq) |> lp(@, 2000))"
-// poly(@) ->> (saw(@.freq) |> lp(@, 2000))  →  poly(@, instrument: (freq, gate, vel) -> saw(freq) |> lp(freq, 2000))
-```
+`(...)` / `{...}` groupings admit their own `|>` chains.
 
 ---
 
@@ -342,24 +427,15 @@ poly(@) ->> (saw(@.freq) |> lp(@, 2000)) |> out(@)
 
 ### 5.1 Lexer
 
-Add a new token type:
+Add `TokenType::ArrowPipe` (`token.hpp`) and a `"ArrowPipe"` entry in
+`token_type_name()`. In `lexer.cpp`, in the `-` branch, after matching `>`, peek for a
+second `>`; the 3-char match must precede the 2-char `Arrow`:
 
 ```cpp
-// token.hpp
-ArrowPipe,      // ->>
-```
-
-Lexing rule: When the lexer sees `-` followed by `>`, it checks if a third `>` follows. If so, emit `TokenType::ArrowPipe` (three chars). If not, emit `TokenType::Arrow` (two chars).
-
-```
-// lexer.cpp
 case '-':
     if (peek() == '>') {
         advance();
-        if (peek() == '>') {
-            advance();
-            return make_token(TokenType::ArrowPipe);
-        }
+        if (peek() == '>') { advance(); return make_token(TokenType::ArrowPipe); }
         return make_token(TokenType::Arrow);
     }
     // ... rest of minus handling
@@ -367,110 +443,88 @@ case '-':
 
 ### 5.2 Parser
 
-Add `->>` as a binary infix operator at a new `PipeArg` precedence level inserted between `Pipe` (the existing lowest level) and `Or`:
+`->>` is **not** a new entry in the `Precedence` enum — adding one shifts every value
+and forces a numeric-threshold audit. Instead, `->>` is parsed as a **postfix chain on
+a `Call` node**, hooked into the existing postfix loop alongside `.method()` and
+`[index]` (`parser.cpp:513-524`, `578-587`), guarded by "left is a `Call`". That loop
+runs whenever `prec <= Precedence::Method`, which covers the `|>` RHS (parsed at
+`Precedence::Addition`) and the top-level expression (`Precedence::Pipe`) — so the
+`->>` chain binds tighter than `|>` *and* still fires correctly inside a `|>` RHS
+(`a |> poly(@) ->> body`).
 
-| Operator | Precedence Level (existing values) |
-|----------|-----------------|
-| `\|>` | `Pipe` (1, lowest) |
-| `->>` | `PipeArg` (new, slotted at value 2 — `Pipe < PipeArg < Or`) |
-| `\|\|` | `Or` (now value 3) |
-| `&&` | `And` |
-| `==` `!=` | `Equality` |
-| `< > <= >=` | `Comparison` |
-| `+` `-` | `Addition` |
-| `*` `/` | `Multiplication` |
-| `^` | `Power` |
-| `!` (prefix) | `Unary` |
-| `.method()` | `Method` |
-| `f()`, `[]`, `.` | `Call` |
-| literals | `Primary` (highest) |
+New method `parse_closure_pipe_chain(NodeIndex call_lhs)`:
 
-> Inserting `PipeArg` shifts every existing precedence value up by one. Parser code that compares precedence by value (e.g., the loop at `parser.cpp:459`) must be audited for hard-coded numeric thresholds during Phase 1.
+1. Require `call_lhs` is a `NodeType::Call` (else **E500**).
+2. Optionally consume `as <Identifier>` — only when followed by `->>` (3-token
+   lookahead `as` `Identifier` `->>`), so a plain `poly(@) as v` with no `->>` still
+   parses as ordinary pipe-binding.
+3. Loop while `check(TokenType::ArrowPipe)`:
+   - Consume `->>`.
+   - **Label**: if the next two tokens are `Identifier` then `Colon`, consume both —
+     this clause is labeled. (2-token lookahead; unambiguous — record literals start
+     with `{`, and a ternary `:` is never clause-leading.)
+   - Parse the body with `parse_precedence(Precedence::Or)` (or a `(...)`/`{...}`
+     group).
+   - Emit one `ClosureClause` node (`ClosureClauseData{ optional<string> label }`)
+     with the body as its child.
+4. Build one `ClosurePipe` node (`ClosurePipeData{ optional<string> as_name }`):
+   first child = the `Call`, then N `ClosureClause` children.
 
-Parsing rule for `->>`:
+New AST: `NodeType::ClosurePipe`, `NodeType::ClosureClause`, the two data structs
+added to the `Node::data` variant, plus `node_type_name()` entries.
 
-1. The LHS must be a function call (detected as a `Call` expression node). Non-call LHS is an error (E500).
-2. Parse the RHS at `Precedence::Or` (broader than `|>`'s RHS — see §4.4).
-3. Create a new AST node `ClosurePipe` with children: the call node and the body node.
+### 5.3 `BuiltinInfo` / Symbol Table Extension
 
-During semantic analysis (or a dedicated desugaring pass), `ClosurePipe` is rewritten:
-
-```
-ClosurePipe
-  ├── Call(fn_name, [arg_0, arg_1, ...])  // LHS: partial call
-  └── body_expr                            // RHS: closure body
-  ⇒
-Call(fn_name, [arg_0, arg_1, ..., NamedArg(<closure_slot_name>, Closure([param_0, param_1, ...], body_expr))])
-```
-
-Where:
-- The `Closure` node is constructed synthetically with the correct parameter list
-- The synthesized argument is a **named** argument keyed on the builtin's closure-typed slot, so that `->>` works correctly even when prior args were named (see §9.2)
-- All `@`/`@` references in `body_expr` are rewritten to the corresponding parameter identifiers
-- `@.freq` → `Identifier("freq")` (if `freq` is one of the closure params)
-- Bare `@` → `Identifier(first_param_name)` (for single-param closures, or first param + W150 for multi-param)
-
-### 5.3 BuiltinInfo Extension
-
-Add closure parameter metadata to `BuiltinInfo`:
-
-```cpp
-struct BuiltinInfo {
-    // ... existing fields ...
-
-    // Closure parameter names for the function parameter marked as Function type.
-    // Empty = no closure signature metadata (params are user-defined at call site).
-    std::array<std::string_view, MAX_CLOSURE_PARAMS> closure_param_names = {};
-    std::uint8_t closure_param_count = 0;
-};
-```
-
-Example definitions (post-migration ordering — closure is in the **last** positional slot):
-
-```cpp
-// poly  (signature: input, voices, instrument)
-{"poly", {cedar::Opcode::NOP, 3, 0, true,
-          {"input", "voices", "instrument", "", "", ""},
-          {NAN, 64.0f, NAN, NAN, NAN},
-          "Polyphonic voice manager...",
-          .closure_param_names = {"freq", "gate", "vel"},
-          .closure_param_count = 3}},
-
-// tap_delay  (signature: in, time, fb, dry, wet, processor)
-{"tap_delay", {cedar::Opcode::DELAY_TAP, 6, 0, true,
-               {"in", "time", "fb", "dry", "wet", "processor"},
-               {NAN, NAN, NAN, 0.0f, 1.0f, NAN},
-               "Tap delay with feedback chain...",
-               .closure_param_names = {"x"},
-               .closure_param_count = 1}},
-```
-
-> The exact `required_count` / `optional_count` numbers above illustrate the slot layout — Phase 1.5 owns the actual `BuiltinInfo` rewrite and may keep optional defaults using a different shape (e.g., remaining `(4, 2, …)` with reordered name list). The invariant is: **closure slot is last positional**.
+- `builtins.hpp`: `ClosureSlotInfo` struct, `MAX_CLOSURE_SLOTS` (4),
+  `MAX_CLOSURE_PARAMS` (e.g. 4); `BuiltinInfo` gains `closure_slots[]` +
+  `closure_slot_count`. Populate `poly`/`mono`/`legato`/`tap_delay`/`tap_delay_ms`/
+  `tap_delay_smp`/`map`/`reduce`/`zipWith`, and the closure-based `when` once
+  `prd-runtime-functions-control-flow.md` ships it. Set `param_types[slot] =
+  ParamValueType::Function` for each closure slot.
+- `symbol_table.hpp`: `FunctionParamInfo` gains `is_function` + `callback_params`;
+  `UserFunctionInfo` gains `closure_slots`.
+- `parser.hpp`/`parser.cpp`: `ParsedParam` gains `is_function` + `callback_params`;
+  `parse_param_list` parses `name(p1, p2, …)` function-typed params.
 
 ### 5.4 Analyzer / Desugaring Pass
 
-The desugaring can happen either:
+New pre-pass `desugar_closure_pipes(root)`, invoked **before** `rewrite_pipes` in the
+`analyze` entry point (`analyzer.cpp:~65`). Running first means the synthetic closures
+and any pipes inside their bodies are processed by the unchanged `rewrite_pipes` +
+`substitute_nodes` afterward.
 
-**Option A — During semantic analysis** (recommended for MVP):
-When the analyzer encounters a `ClosurePipe` node:
-1. Look up the function being called (by name) in the builtin table
-2. Read `closure_param_count`, `closure_param_names`, and the **closure slot name** (the param marked as `Function` type) from the definition
-3. Create a synthetic `Closure` node with those params
-4. Walk the body expression, replacing `@`/`@` hole references with the corresponding `Identifier` nodes
-5. Replace the `ClosurePipe` node with a `Call` node whose child list is the original positional/named args **plus** a new `NamedArg(<closure_slot_name>, synthetic_closure)`
+For each `ClosurePipe`:
 
-**Option B — During codegen**:
-Handle `ClosurePipe` directly in the codegen dispatcher, creating the closure structure at codegen time without an intermediate AST rewrite.
+1. `slots = resolve_closure_slots(fn_name)`. Empty → **E501**.
+2. **Label resolution.** >1 slot → every clause must be labeled (**E510**), each label
+   must match a `slot_name` (**E511**). Exactly 1 slot → a single unlabeled (or
+   matching-labeled) clause fills it. More clauses than slots → **E512**.
+3. **Required-slot check.** Every `required` slot must be filled (**E513**).
+4. For each clause, synthesize a `Closure` node whose param children are `Identifier`
+   nodes from the slot's `callback_params`, and whose body is the scope-resolved
+   clause body (§4.5).
+5. Append each synthetic closure as a **named `Argument`** (`ArgumentData.name =
+   slot_name`) to the `Call`. Replace the `ClosurePipe` with that `Call`.
+6. Recurse into the produced `Call` (so nested `->>` inside bodies desugar too).
+
+The codegen path is unchanged: after desugaring, codegen sees standard `Call` +
+`Closure` nodes, which the existing `handle_poly_call` / `handle_tap_delay_call` /
+array-op handlers already accept.
 
 ### 5.5 Validation
 
 | Condition | Code | Type | Message |
 |-----------|------|------|---------|
-| LHS is not a call expression | E500 | Error | `->>` left side must be a function call, got <type> |
-| LHS call has no closure slot | E501 | Error | `<fn>()` does not accept a closure argument |
-| `@.field` not in closure params | E502 | Error | `@` has no field `<field>` in closure signature for `<fn>()`. Available params: <list> |
-| `@` used bare but closure has >1 param | W150 | Warning | Ambiguous bare `@` reference — resolves to first param `<name>`. Use `@.<param_name>` to be explicit |
-| `->>` used outside function call context | E504 | Error | `->>` operator requires a function call on the left |
+| LHS is not a call expression | E500 | Error | `->>` left side must be a function call, got `<type>` |
+| Callable has no closure slot | E501 | Error | `<fn>()` does not accept a closure argument |
+| `@.field` not in innermost signature, not reachable via an `as` scope | E502 | Error | `@` has no field `<field>` in closure signature for `<fn>()`. Available: `<list>` |
+| bare `@` used where innermost closure has ≠1 param | E503 | Error | Ambiguous bare `@` — closure `<slot>` has params `<list>`; use `@.<name>` |
+| clause label omitted but callable has >1 closure slot | E510 | Error | `<fn>()` has multiple closure slots — label each `->>` clause (`->> <slot>: …`) |
+| clause label matches no closure slot | E511 | Error | `<fn>()` has no closure slot `<label>`. Slots: `<list>` |
+| more `->>` clauses than closure slots | E512 | Error | `<fn>()` has `<n>` closure slot(s) but `<m>` `->>` clauses given |
+| a required closure slot left unfilled | E513 | Error | `<fn>()` requires a closure for slot `<slot>` |
+| `as` name collides with an enclosing `->>` `as` name | E514 | Error | `as <name>` shadows an enclosing closure binding |
+| `as` name shadows an in-scope variable/param | W151 | Warning | `as <name>` shadows an in-scope name |
 
 ---
 
@@ -478,160 +532,116 @@ Handle `ClosurePipe` directly in the codegen dispatcher, creating the closure st
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Lexer | **Modified** | New `TokenType::ArrowPipe`, 3-char lexing rule |
-| Token enum | **Modified** | New `ArrowPipe` token type |
-| Parser | **Modified** | New precedence level `PipeArg`; new `parse_closure_pipe()` handler; new `NodeType::ClosurePipe` |
-| AST | **Modified** | New `NodeType::ClosurePipe` (or reuses existing `Pipe` with flag) |
-| Semantic Analyzer | **Modified** | ClosurePipe desugaring pass (walk body, replace holes, build synthetic Closure) |
-| `BuiltinInfo` | **Modified** | New `closure_param_names` and `closure_param_count` fields |
-| Codegen handlers (`handle_poly_call`, `handle_reduce_call`, `handle_tap_delay_call`) | **Modified** | Phase 1.5 reorders builtin signatures so the closure occupies the last positional slot. Each handler's `extract_call_args` arity, arg-index reads, and error messages must update accordingly. |
-| Codegen (post-desugaring path) | **Stays** | After Phase 3 desugaring, codegen sees standard `Call` + `Closure` nodes — no `ClosurePipe`-specific changes needed |
-| Builtin definitions (`builtins.hpp`) | **Modified** | Phase 1.5: reorder `poly`, `reduce`, `tap_delay` family parameter lists. Phase 2: add `closure_param_names` / `closure_param_count` to every closure-taking builtin |
-| Existing call sites (tests, examples, web docs, experiments) | **Modified** | Phase 1.5: every existing call to a reordered builtin must update positional args. Named-arg calls (`reduce(arr, fn: f, init: 0)`) keep working. |
-| User functions with closure params | **Stays** | Future work — MVP covers builtins only |
-| Existing closure syntax | **Stays** | `(params) -> body` continues to work unchanged |
-| Pipe operator `|>` | **Stays** | No changes to `|>` semantics |
+| Lexer / Token enum | **Modified** | New `TokenType::ArrowPipe`, 3-char lexing rule |
+| Parser | **Modified** | `parse_closure_pipe_chain()` as a `Call`-postfix; no `Precedence` enum change |
+| AST | **Modified** | New `NodeType::ClosurePipe` / `ClosureClause` + data structs |
+| `BuiltinInfo` | **Modified** | *Additive* — `closure_slots[]`, `closure_slot_count`; set `param_types[slot]=Function` |
+| Symbol table | **Modified** | `FunctionParamInfo` / `UserFunctionInfo` gain closure-slot fields |
+| Parser param list | **Modified** | `name(p1,…)` function-typed param syntax |
+| Semantic Analyzer | **Modified** | New `desugar_closure_pipes` pre-pass (scoped hole resolution) |
+| Codegen handlers | **Stays** | Desugaring produces standard `Call` + `Closure`; existing handlers accept them |
+| Builtin signatures (`poly`/`reduce`/`tap_delay*`) | **Stays** | No reordering — closures route by name (see §5) |
+| Existing call sites / tests / docs | **Stays** | No positional-signature migration |
+| Existing closure syntax `(params) -> body` | **Stays** | Unchanged |
+| Pipe operator `\|>` | **Stays** | No changes to `\|>` semantics |
+| Cedar VM | **Stays** | Purely an Akkado-compiler syntactic rewrite |
+
+> **Why no signature migration?** The prior draft of this PRD had a "Phase 1.5" that
+> reordered `poly`/`reduce`/`tap_delay*` so the closure was the last positional slot,
+> because flat single-closure `->>` appended the closure positionally. The redesigned
+> `->>` inserts each closure as a **named** argument keyed on its slot name, which the
+> existing named-arg routing places correctly at any position. Phase 1.5 is therefore
+> **removed entirely** — no `BuiltinInfo` reorder, no `handle_*_call` index changes,
+> no call-site/test/doc churn.
 
 ---
 
 ## 7. File-Level Changes
 
-### Files to Modify
-
 | File | Phase | Change |
 |------|-------|--------|
-| `akkado/include/akkado/builtins.hpp` | **1.5** | Reorder `poly` to `(input, voices, instrument)`, `reduce` to `(array, init, fn)`, `tap_delay`/`tap_delay_ms`/`tap_delay_smp` to `(in, time, fb, dry, wet, processor)`. Update `param_names`, defaults, `required_count`/`optional_count`. |
-| `akkado/src/codegen_functions.cpp` | **1.5** | `handle_poly_call`: read `instrument` from slot 2 (after voices) instead of slot 1. `handle_tap_delay_call`: read `processor` (now slot 5) instead of slot 3. Update E400/E301 error messages. |
-| `akkado/src/codegen_arrays.cpp` | **1.5** | `handle_reduce_call`: read `init` from slot 1 and `fn` from slot 2 (currently `fn` slot 1, `init` slot 2). Update E141/E142 messages. |
-| Test fixtures and Akkado example files | **1.5** | Update every call to `poly`, `reduce`, `tap_delay*` that uses positional ordering. Named-arg calls are unaffected. |
-| `web/static/docs/**/*.md` | **1.5** | Update reference docs for `poly`, `reduce`, `tap_delay*` to reflect new positional order. |
-| `experiments/test_op_*.py` (poly, reduce, tap_delay drivers) | **1.5** | If any Python harness drives these via `make_*nary` with positional inputs, update buffer-index ordering. |
-| `akkado/include/akkado/token.hpp` | 1 | Add `ArrowPipe` to `TokenType` enum; add `"ArrowPipe"` to `token_type_name()` |
-| `akkado/src/lexer.cpp` | 1 | Add 3-char `->>` lexing rule before `->` Arrow rule |
-| `akkado/include/akkado/parser.hpp` | 1 | Insert `PipeArg` into the `Precedence` enum between `Pipe` and `Or` (shifts subsequent values) |
-| `akkado/include/akkado/ast.hpp` | 1 | Add `NodeType::ClosurePipe`; possibly add `ClosurePipeData` struct if needed for metadata |
-| `akkado/src/parser.cpp` | 1 | Add `parse_closure_pipe()`; register `->>` infix at `PipeArg` precedence; audit hard-coded numeric precedence comparisons (e.g., `parser.cpp:459`) for the enum shift |
-| `akkado/include/akkado/parser.hpp` | 1 | Add `parse_closure_pipe()` declaration |
-| `akkado/src/analyzer.cpp` | 3 | Add closure-pipe desugaring pass: `ClosurePipe` → `Call` + `NamedArg(closure_slot, Closure(...))` with hole substitution |
-| `akkado/include/akkado/builtins.hpp` | 2 | Add `closure_param_names`, `closure_param_count`, and a way to identify the closure-typed slot (e.g., a `ParamValueType::Function` annotation in `param_types`); populate for `poly`, `mono`, `legato`, `tap_delay` family, `map`, `reduce`, `zipWith` |
-| `akkado/src/codegen.cpp` | 3 (optional) | (Only if desugaring is at codegen time instead of analysis) add `ClosurePipe` handler |
+| `akkado/include/akkado/token.hpp` | 1 | Add `ArrowPipe` to `TokenType`; `"ArrowPipe"` in `token_type_name()` |
+| `akkado/src/lexer.cpp` | 1 | 3-char `->>` lexing rule (before 2-char `->`) |
+| `akkado/include/akkado/ast.hpp` | 1 | `NodeType::ClosurePipe` / `ClosureClause`; `ClosurePipeData` / `ClosureClauseData`; `Node::data` variant + `node_type_name()` |
+| `akkado/include/akkado/parser.hpp` | 1 | Declare `parse_closure_pipe_chain()`; add `is_function`/`callback_params` to `ParsedParam` |
+| `akkado/src/parser.cpp` | 1, 2 | Hook `parse_closure_pipe_chain` into the `Call`-postfix loop; parse `as name`, label lookahead, clause bodies at `Precedence::Or`; extend `parse_param_list` for `name(p1,…)` |
+| `akkado/include/akkado/builtins.hpp` | 2 | `ClosureSlotInfo`, `MAX_CLOSURE_SLOTS`/`MAX_CLOSURE_PARAMS`; `BuiltinInfo.closure_slots` + `closure_slot_count`; populate closure-taking builtins; set `param_types[slot]=Function` |
+| `akkado/include/akkado/symbol_table.hpp` | 2 | `FunctionParamInfo` / `UserFunctionInfo` closure-slot fields |
+| `akkado/src/analyzer.cpp` | 2, 3 | Build `UserFunctionInfo::closure_slots` at FunctionDef registration; `resolve_closure_slots()`; `desugar_closure_pipes()` pre-pass before `rewrite_pipes` |
+| `akkado/tests/**` | 1–4 | Parser, metadata, desugaring, integration, error tests |
+| `web/static/docs/**` | 5 | Document `->>`, chained labels, `as name`, nesting |
 
 ### Files That Stay
 
 | File | Reason |
 |------|--------|
-| `cedar/**/*` | No Cedar VM changes — desugaring and signature reorder are purely in the Akkado compiler |
-| `tools/**/*` | No CLI tool changes |
+| `cedar/**` | No VM changes — `->>` is an Akkado-compiler syntactic rewrite |
+| `tools/**` | No CLI changes |
+| `akkado/src/codegen*.cpp` handlers | Desugaring produces standard `Call` + `Closure` — existing handlers consume them; only a regression test is added |
 
 ---
 
 ## 8. Implementation Phases
 
-### Phase 1.5: Builtin Signature Migration (prerequisite — closure must be the last positional slot)
+### Phase 1 — Lexer / Parser / AST
+- `TokenType::ArrowPipe` + 3-char lexing rule.
+- `NodeType::ClosurePipe` / `ClosureClause` + data structs.
+- `parse_closure_pipe_chain()` hooked into the `Call`-postfix loop; optional `as
+  name`; label lookahead; per-clause body at `Precedence::Or`; `(...)`/`{...}` groups.
+- **Tests:** `lex("->>") == ArrowPipe`; `lex("->") != ArrowPipe`;
+  `"poly(x) ->> y"` → `ClosurePipe(Call, ClosureClause(nolabel, Identifier))`;
+  `"x ->> y"` → E500; `"when(c) ->> a: p ->> b: q"` → `ClosurePipe` with two labeled
+  clauses; `"poly(@) as v ->> body"` records `as_name`; nested `->>` inside a body
+  parses to a nested `ClosurePipe`.
 
-`->>` desugaring relies on a uniform invariant: the closure parameter is always the **last positional slot** of the call. Today, three builtins violate this (closure followed by trailing non-closure params). This phase reorders them and migrates every call site so Phases 1–4 can proceed against a clean invariant.
+### Phase 2 — Universal Closure-Slot Metadata
+- `ClosureSlotInfo`; `BuiltinInfo.closure_slots`; populate every closure-taking
+  builtin; `param_types[slot]=Function`.
+- Callback-signature param syntax `name(p1,…)`; `UserFunctionInfo.closure_slots`.
+- `resolve_closure_slots()` (builtins then user fns).
+- **Tests:** each builtin's metadata correct; `fn router(sig, wet(x), dry(x))`
+  registers two closure slots `wet`/`dry`.
 
-**Builtin signature changes:**
+### Phase 3 — Desugaring (Analysis Pre-Pass)
+- `desugar_closure_pipes()` before `rewrite_pipes`; per-clause `Closure` synthesis;
+  named-arg insertion; scope stack; `@`/`@.field` resolution; `as`-name outer reach;
+  recurse for nesting; emit E50x/E51x/W151.
+- **Tests:**
+  - `poly(pat) ->> saw(@.freq)` → `poly(pat, instrument: (freq,gate,vel) -> saw(freq))`
+  - `tap_delay(sig, 0.5, 0.3) ->> @ * 0.5` → `tap_delay(sig, 0.5, 0.3, processor: (x) -> x * 0.5)`
+  - `when(c) ->> then: a ->> else: b` → `when(c, then: …, else: …)`
+  - `poly(input: pat) ->> saw(@.freq)` — mixed named + positional
+  - nested: `poly(@) as v ->> (map(h) ->> osc("sin", @.val * v.freq))`
+  - `@` after `|>` in a body is left for `rewrite_pipes`
 
-| Builtin | Before | After |
-|---------|--------|-------|
-| `poly` | `(input, instrument, voices=64)` | `(input, voices=64, instrument)` |
-| `reduce` | `(array, fn, init)` | `(array, init, fn)` |
-| `tap_delay` | `(in, time, fb, processor, dry=0, wet=1)` | `(in, time, fb, dry=0, wet=1, processor)` |
-| `tap_delay_ms` | same shape as `tap_delay` | same shape as `tap_delay` |
-| `tap_delay_smp` | same shape as `tap_delay` | same shape as `tap_delay` |
+### Phase 4 — Integration & Error Tests
+- Full compile tests; `->>` output bytecode-identical to the equivalent explicit
+  named-closure-arg call, for `poly`, `mono`, `legato`, `tap_delay`, `map`, `reduce`,
+  `zipWith`, and a user `fn` with a function-typed param.
+- All error codes E500–E514 + W151 exercised.
+- `when(...) ->> then: … ->> else: …` integration once the closure-based `when` from
+  `prd-runtime-functions-control-flow.md` exists.
 
-`mono`, `legato`, `map`, `zipWith` already place the closure last and are not affected.
+### Phase 5 — Docs
+- Document `->>`, chained labels, `as name`, nesting/scoping in `web/static/docs/**`
+  and the language reference.
 
-**Per-handler updates:**
-
-- `handle_poly_call` (`codegen_functions.cpp:1885+`): swap `args.nodes[1]` (instrument) and `args.nodes[2]` (voices). Keep voice-count literal extraction; only the slot index moves.
-- `handle_tap_delay_call` (`codegen_functions.cpp:1704+`): closure is now `args.nodes[5]`, with `dry`=`args.nodes[3]` and `wet`=`args.nodes[4]`. Update validation and message text.
-- `handle_reduce_call` (`codegen_arrays.cpp` reduce path): `init`=`args.nodes[1]`, `fn`=`args.nodes[2]`.
-- Update existing E301/E303/E400/E141 error messages to reflect the new ordering.
-
-**Migration scope (every positional call site):**
-
-- `akkado/tests/**` — fixture files using the affected builtins
-- Akkado example/tutorial files (in repo + `web/static/docs`)
-- `experiments/test_op_*.py` — only if any harness drives `poly`/`reduce`/`tap_delay*` via positional input arrays; named buffer wiring (e.g. `set_param`) is unaffected
-- Any internal codegen helpers that emit synthetic positional calls to the renamed slots
-
-**Tests:**
-
-- Existing tests that explicitly used the old ordering must be migrated and re-run. Tests passing only via named arguments (`reduce(arr, fn: f, init: 0)`) need no change.
-- New regression test: an explicit pre-`->>` call in the new ordering compiles and produces the same bytecode shape as the equivalent named-arg call.
-
-**Exit criteria:** All builtin call sites pass against the new signatures; full test suite green; no remaining references to the old positional ordering anywhere in the repo.
-
-### Phase 1: Lexer + Parser
-
-- Add `TokenType::ArrowPipe`
-- Add 3-char `->>` lexing rule (3-char must be matched before 2-char `->`)
-- Insert `Precedence::PipeArg` between `Pipe` and `Or` in the precedence enum (audit any code that compared precedence values numerically — see §5.2)
-- Add `NodeType::ClosurePipe` to AST
-- Add `parse_closure_pipe()` in parser; register at `PipeArg` precedence; parse RHS at `Precedence::Or`
-- Validate LHS is a call expression (error E500)
-- **Test**: `"poly(x) ->> y"` parses to `ClosurePipe(Call("poly", ["x"]), Identifier("y"))`
-- **Test**: `"x ->> y"` (LHS is identifier, not a call) → E500
-- **Test**: `"poly(x) ->> a == 1"` parses with `a == 1` inside the closure body (RHS captures the comparison)
-
-### Phase 2: BuiltinInfo Metadata
-
-- Add `closure_param_names`, `closure_param_count`, and closure-slot identification (e.g. `ParamValueType::Function` annotation) to `BuiltinInfo`
-- Populate for every closure-taking builtin (closure-slot name in **bold**):
-
-  | Builtin | Closure slot | Closure params |
-  |---------|--------------|----------------|
-  | `poly` | **`instrument`** (last after Phase 1.5) | `freq`, `gate`, `vel` |
-  | `mono` | **`instrument`** (last) | `freq`, `gate`, `vel` |
-  | `legato` | **`instrument`** (last) | `freq`, `gate`, `vel` |
-  | `tap_delay` | **`processor`** (last after Phase 1.5) | `x` |
-  | `tap_delay_ms` | **`processor`** (last after Phase 1.5) | `x` |
-  | `tap_delay_smp` | **`processor`** (last after Phase 1.5) | `x` |
-  | `map` | **`fn`** (last) | `x` |
-  | `reduce` | **`fn`** (last after Phase 1.5) | `acc`, `x` |
-  | `zipWith` | **`fn`** (last) | `a`, `b` |
-
-- **Test**: Verify each builtin's metadata is correct (closure-slot name resolves to a `Function`-typed parameter, `closure_param_count` matches the number of names)
-
-### Phase 3: Desugaring (Analysis Pass)
-
-- Implement the `ClosurePipe` → `Call` + `NamedArg(closure_slot, Closure)` rewrite in the analyzer
-- Walk the body tree, find all `@`/`@` hole references
-- For `@.field`: resolve to parameter name; error if field not in closure params (E502)
-- For bare `@` with single-param closure: resolve to the one param
-- For bare `@` with multi-param closure: emit **warning W150** and resolve to the first param
-- Append the synthetic `Closure` as a **named argument** keyed on the builtin's closure-slot name (so `->>` works correctly with prior named args — see §9.2)
-- **Test**: `poly(pat) ->> saw(@.freq)` → `poly(pat, instrument: (freq, gate, vel) -> saw(freq))`
-- **Test**: `tap_delay(sig, 0.5, 0.3) ->> @ * 0.5` → `tap_delay(sig, 0.5, 0.3, processor: (x) -> x * 0.5)` (with `dry`/`wet` defaulted)
-- **Test**: `poly(input: pat) ->> saw(@.freq)` → `poly(input: pat, instrument: …)` — works with mixed named + positional
-
-### Phase 4: Integration Tests
-
-- Full compilation tests with real codegen output
-- Test poly with `->>`, mono, legato, tap_delay, map, reduce
-- Test pipe chains inside parens/braces
-- Test `as` binding inside closure body
-- Test error cases
-
-### Phase 5 (Future): User-Defined Functions
-
-- Extend the `->>` desugaring to work with user-defined functions that accept closures
-- The function definition must declare its closure parameter signature
-- This requires encoding closure param info in the function symbol table, not just `BuiltinInfo`
+### Phase 6 (Future) — see §11.
 
 ---
 
 ## 9. Edge Cases
 
-### 9.1 Nested `->>` Calls
+### 9.1 Nested `->>` (now supported)
 
 ```akkado
-outer(@.a) ->> inner(@.b) ->> body  // Invalid: closure body cannot contain another ->>
+poly(@) as v ->> ( map(harmonics) ->> osc("sin", @.val * v.freq) )
 ```
 
-**Expected:** Compile error — `->>` bodies cannot contain another `->>` operator. Users should use explicit closures for nested cases.
+**Expected:** Works. Inner `->>` desugars recursively; `@.val` is `map`'s innermost
+param; `v.freq` reaches `poly`'s closure via the `as v` binding. Without `as v`,
+`v.freq` would be an undefined-name error and `@.freq` (inside `map`'s body) would be
+**E502** — `freq` is not a `map` callback param.
 
 ### 9.2 `->>` with Named Arguments
 
@@ -639,66 +649,70 @@ outer(@.a) ->> inner(@.b) ->> body  // Invalid: closure body cannot contain anot
 poly(input: n"C4'") ->> saw(@.freq) * ar(@.gate) * @.vel
 ```
 
-**Expected:** Works correctly. The desugaring inserts the closure as a **named argument** keyed on the builtin's closure-slot name (`instrument` for `poly`). The result is `poly(input: n"C4'", instrument: (freq, gate, vel) -> saw(freq) * ar(gate) * vel)`. The remaining unfilled positional slot (`voices`) keeps its default. This works regardless of which prior args were named or positional.
+**Expected:** Works. The closure is inserted as a named argument
+(`instrument: (freq,gate,vel) -> …`); `voices` keeps its default. Routing is correct
+regardless of which prior args were named or positional.
 
 ### 9.3 `->>` with Optional Arguments
 
-After Phase 1.5, all closure-taking builtins put the closure in the **last** positional slot. Optional arguments (e.g., `tap_delay`'s `dry`/`wet`, `poly`'s `voices`) sit *before* the closure.
-
 ```akkado
-// tap_delay post-migration: (in, time, fb, dry=0, wet=1, processor)
-tap_delay(sig, 0.5, 0.3) ->> @ * 0.5
-// → tap_delay(sig, 0.5, 0.3, processor: (x) -> x * 0.5)  with dry/wet defaulted
-
-// Override dry/wet positionally before ->>:
-tap_delay(sig, 0.5, 0.3, 0.2, 0.8) ->> @ * 0.5
-
-// Or by name:
+tap_delay(sig, 0.5, 0.3) ->> @ * 0.5                 // dry/wet defaulted
 tap_delay(sig, 0.5, 0.3, dry: 0.2, wet: 0.8) ->> @ * 0.5
 ```
 
-**Expected:** Optional args before the closure slot fill via positional or named syntax as usual; `->>` only synthesizes the closure-slot argument.
+**Expected:** Optional args fill positionally or by name as usual; `->>` only
+synthesizes the closure-slot argument.
 
-### 9.4 Bare `@` with Multi-Param Closure
+### 9.4 Bare `@` with a Multi-Param Closure
 
 ```akkado
-poly(n"C4'") ->> @  // Bare @ with multi-param closure
+poly(n"C4'") ->> @          // E503
 ```
 
-**Expected:** Warning W150. Bare `@` resolves to the first closure param (`freq` for poly). The compiled output is equivalent to writing `@.freq`. Users who intended a different param or who want to be explicit should use `@.<name>` syntax. This is a warning, not an error — the code compiles and runs correctly.
+**Expected:** **Error E503** — `poly`'s `instrument` closure has 3 params; bare `@` is
+ambiguous. Use `@.freq` / `@.gate` / `@.vel`. (This is stricter than the prior draft,
+which made it a warning with silent first-param fallback.)
 
 ### 9.5 `->>` on a Non-Closure-Taking Function
 
 ```akkado
-out(@) ->> saw(@.freq)  // out() doesn't take a closure
+out(@) ->> saw(@.freq)      // E501
 ```
 
-**Expected:** Error E501 — `out()` does not accept a closure argument.
-
-### 9.6 `->>` with Zero-Argument Function
+### 9.6 `->>` with No Positional Arguments
 
 ```akkado
 myFn() ->> body
 ```
 
-**Expected:** Works. The closure is the function's first and only argument. `myFn` must accept a function/closure as its sole parameter.
+**Expected:** Works when `myFn` declares a function-typed parameter (a closure slot)
+that the `->>` clause fills. `myFn` is not parameter-less — it is *called* with no
+positional arguments, and `->>` supplies the lone closure-slot argument by name.
 
-### 9.7 `->>` as Standalone Expression (No LHS Call)
-
-```akkado
-x ->> body  // x is not a call
-```
-
-**Expected:** Error E500 — LHS must be a function call.
-
-### 9.8 Mismatched Hole Usage Count
+### 9.7 `->>` as a Standalone Expression (no LHS call)
 
 ```akkado
-poly(pat) ->> saw(@.freq)                        // Uses only 1 of 3 params
-poly(pat) ->> saw(@.freq) * ar(@.gate) * @.vel  // Uses all 3
+x ->> body                  // E500
 ```
 
-**Expected:** Both valid. The closure signature always includes all 3 params regardless of how many are referenced in the body. Unused params are bound but not referenced — codegen handles them the same way.
+### 9.8 Missing / Extra Clauses
+
+```akkado
+when(c) ->> then: a                        // E513 — `else` slot unfilled (if required)
+when(c) ->> then: a ->> else: b ->> x: c    // E511 — no slot `x`
+poly(@) ->> a ->> b                          // E512 — poly has 1 slot, 2 clauses
+when(c) ->> a ->> b                          // E510 — labels required (>1 slot)
+```
+
+### 9.9 Partial Hole Usage
+
+```akkado
+poly(pat) ->> saw(@.freq)                          // uses 1 of 3 params — OK
+poly(pat) ->> saw(@.freq) * ar(@.gate) * @.vel     // uses all 3 — OK
+```
+
+**Expected:** Both valid. The synthesized closure always declares all of the slot's
+params; unused ones are bound but unreferenced.
 
 ---
 
@@ -707,102 +721,69 @@ poly(pat) ->> saw(@.freq) * ar(@.gate) * @.vel  // Uses all 3
 ### 10.1 Parser Tests
 
 ```cpp
-// Token recognition
 CHECK(lex("->>") == TokenType::ArrowPipe);
-CHECK(lex("->")  != TokenType::ArrowPipe);  // plain arrow is separate
+CHECK(lex("->")  != TokenType::ArrowPipe);
 
-// AST construction
 auto r = parse("poly(x) ->> y");
 CHECK(r.node_type == NodeType::ClosurePipe);
-CHECK(r.children[0].type == NodeType::Call);  // LHS call
+CHECK(r.children[0].type == NodeType::Call);
 
-// Error: LHS not a call
-auto r2 = parse("x ->> y");
-CHECK_FALSE(r2.success);  // E500
+CHECK_FALSE(parse("x ->> y").success);                       // E500
 
-// Parens grouping
-auto r3 = parse("poly(x) ->> (y |> z)");
-CHECK(r3.success);
+auto w = parse("when(c) ->> then: a ->> else: b");
+CHECK(w.children.size() == 3);                               // call + 2 clauses
+
+auto n = parse("poly(@) as v ->> (map(h) ->> @.val)");
+CHECK(n.success);                                            // nested ->>
 ```
 
 ### 10.2 Desugaring Tests
 
 ```cpp
-// Basic poly desugaring
 auto r = compile_and_desugar("poly(pat) ->> saw(@.freq)");
-auto closure = r.find_node(NodeType::Closure);
-CHECK(closure.params.size() == 3);
-CHECK(closure.params[0].name == "freq");
-CHECK(closure.params[1].name == "gate");
-CHECK(closure.params[2].name == "vel");
-CHECK(closure.body.contains(Identifier("freq")));
+auto c = r.find_node(NodeType::Closure);
+CHECK(c.params.size() == 3);
+CHECK(c.params[0].name == "freq");
 
-// Single-param tap_delay
-auto r2 = compile_and_desugar("tap_delay(sig, 0.5, 0.3) ->> @ * 0.5");
-auto closure2 = r2.find_node(NodeType::Closure);
-CHECK(closure2.params.size() == 1);
-CHECK(closure2.params[0].name == "x");
+auto t = compile_and_desugar("tap_delay(sig, 0.5, 0.3) ->> @ * 0.5");
+CHECK(t.find_node(NodeType::Closure).params.size() == 1);
 
-// Pipe chain inside parens — @ before |> is closure param, after |> is pipe hole
-auto r3 = compile_and_desugar("poly(pat) ->> (saw(@.freq) |> lp(@, 2000))");
-// body: (freq, gate, vel) -> saw(freq) |> lp(@, 2000)
-// @.freq before |> → Identifier("freq")
-// @ after |> → pipe hole (standard semantics)
+auto when = compile_and_desugar("when(c) ->> then: a ->> else: b");
+// → when(c, then: () -> a, else: () -> b)  with labels routed by name
 
-// @ after pipe still works as pipe hole
-auto r3b = compile_and_desugar("poly(pat) ->> (saw(@.freq) * @.vel |> lp(@, 2000))");
-// @.freq and @.vel before |> → closure params
-// @ after |> → pipe hole
-
-// as binding inside body
-auto r4 = compile_and_desugar("poly(pat) ->> saw(@.freq) as snd |> lp(snd, 2000)");
-CHECK(r4.success);
+auto nest = compile_and_desugar(
+    "poly(@) as v ->> (map(h) ->> osc(\"sin\", @.val * v.freq))");
+CHECK(nest.success);   // @.val → map param, v.freq → poly param via `as v`
 ```
 
 ### 10.3 Error Tests
 
 ```cpp
-// E500: LHS not a call
 CHECK(has_error(compile("x ->> y"), "E500"));
-
-// E501: Function doesn't take closure
 CHECK(has_error(compile("out(@) ->> saw(@.freq)"), "E501"));
-
-// E502: Field not in closure params
-CHECK(has_error(compile("poly(pat) ->> saw(@.nonexistent)"), "E502"));
-
-// W150: Bare @ with multi-param closure (warning only)
-auto r = compile("poly(pat) ->> saw(@)");
-CHECK(r.success);
-CHECK(has_warning(r, "W150"));
+CHECK(has_error(compile("poly(pat) ->> saw(@.nope)"), "E502"));
+CHECK(has_error(compile("poly(pat) ->> @"), "E503"));
+CHECK(has_error(compile("when(c) ->> a ->> b"), "E510"));
+CHECK(has_error(compile("when(c) ->> then: a ->> x: b"), "E511"));
+CHECK(has_error(compile("poly(@) ->> a ->> b"), "E512"));
 ```
 
 ### 10.4 Integration Tests
 
 ```cpp
-// Full poly compilation with ->>
-auto r = compile("c\"C4'\" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)");
-CHECK(r.success);
+// ->> bytecode-identical to the explicit named-closure-arg form
+auto a = compile("c\"C4'\" |> poly(@) ->> saw(@.freq)*ar(@.gate)*@.vel |> out(@,@)");
+auto b = compile("c\"C4'\" |> poly(@, instrument: (freq,gate,vel) -> "
+                 "saw(freq)*ar(gate)*vel) |> out(@,@)");
+CHECK(a.bytecode == b.bytecode);
 
-// Compare bytecode with explicit closure version (post-Phase-1.5 ordering: closure last)
-auto r_explicit = compile("c\"C4'\" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)");
-CHECK(r.bytecode == r_explicit.bytecode);
+CHECK(compile("tap_delay(sig, 0.5, 0.3) ->> @ * 0.5").success);
+CHECK(compile("reduce([1,2,3], 0) ->> @.acc + @.elem").success);
+CHECK(compile("map([1,2,3]) ->> @.val * 2").success);
 
-// tap_delay with ->> (closure now last after dry/wet)
-auto r2 = compile("tap_delay(sig, 0.5, 0.3) ->> @ * 0.5");
-CHECK(r2.success);
-
-// reduce with ->> (closure last after Phase 1.5: reduce(array, init, fn))
-auto r2b = compile("reduce([1, 2, 3], 0) ->> @.acc + @.x");
-CHECK(r2b.success);
-
-// map with ->>
-auto r3 = compile("map([1, 2, 3]) ->> @.x * 2");
-CHECK(r3.success);
-
-// Named-arg interaction: closure inserts as named arg
-auto r4 = compile("poly(input: c\"C4'\") ->> saw(@.freq) * ar(@.gate) * @.vel");
-CHECK(r4.success);
+// user fn with a declared function-typed param
+CHECK(compile("fn apply(sig, fx(x)) -> fx(sig)\n"
+              "apply(saw(440)) ->> @ * 0.5").success);
 ```
 
 ### 10.5 Build & Run
@@ -818,6 +799,11 @@ cmake --build build --target akkado_tests
 
 ## 11. Future Work
 
-- **User-defined functions with closure params**: Support `->>` with non-builtin functions that accept closures. Requires encoding closure param signatures in the user function symbol table.
-- **`@` as primary hole in `->>` context**: Some users may prefer `@.freq` over `@.freq` for visual distinction from pipe holes.
-- **Multiple `->>` in argument list**: Currently only the last argument can be provided via `->>`. Future work could allow `->>` for other argument positions, though this is complex and unlikely to be needed.
+- **`MethodCall` LHS**: `->>` on method calls (`n"…".each_voice(…) ->> …`). Requires
+  the E500 check and `resolve_closure_slots` to accept method names.
+- **N-way / variadic closure slots**: routers or switches with an unbounded set of
+  labeled closure slots (`switch(sel) ->> a: … ->> b: … ->> c: …`).
+- **Closure-slot type checking**: validating that a `->>` body's result type matches
+  what the slot expects, via the type system (`prd-compiler-type-system.md`).
+- **Block bodies with local bindings**: richer multi-statement `{...}` bodies inside
+  a clause (`let`-style locals).
