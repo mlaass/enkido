@@ -1107,6 +1107,17 @@ struct PolyVoice {
     // 0 on retrigger. release_window_samples == 0 (default) leaves
     // countdown at 0 and the legacy zero-on-gate-off behavior runs.
     std::int32_t release_countdown = 0;
+
+    // Event-record fields (PRD prd-poly-callback-event-record Phase 2),
+    // snapshotted at allocate time so a voice's release tail survives the
+    // OutputEvents buffer being regenerated each cycle. Surfaced to the
+    // instrument callback via the per-voice field bank — see run_voice_pool.
+    float duration   = 0.0f;  // evt.duration (beats)
+    float chance     = 1.0f;  // evt.chance
+    float time       = 0.0f;  // evt.time (cycle-relative onset, beats)
+    float type_id    = 0.0f;  // evt.type_id as float
+    float note_value = 0.0f;  // evt.notes[vi] (chord) or evt.midi_note (single)
+    std::uint64_t onset_sample = 0;  // absolute global sample at gate-on (PHASE)
 };
 
 // PolyAllocState — arena-allocated voices (same pattern as SoundFontVoiceState)
@@ -1151,9 +1162,24 @@ struct PolyAllocState {
         return count;
     }
 
+    // Snapshot the event-record scalar fields onto a voice (PRD Phase 2).
+    static void apply_event_fields(PolyVoice& v, float dur, float chance_in,
+                                   float evt_time, float type_id_in,
+                                   float note_in, std::uint64_t onset_abs) {
+        v.duration = dur;
+        v.chance = chance_in;
+        v.time = evt_time;
+        v.type_id = type_id_in;
+        v.note_value = note_in;
+        v.onset_sample = onset_abs;
+    }
+
     // Allocate a voice for a new note, returns voice index or -1 if failed
     int allocate_voice(float freq, float vel, std::uint16_t event_idx,
-                       std::uint32_t cyc, std::uint32_t gate_on_sample) {
+                       std::uint32_t cyc, std::uint32_t gate_on_sample,
+                       float dur, float chance_in, float evt_time,
+                       float type_id_in, float note_in,
+                       std::uint64_t onset_abs_sample) {
         if (!voices) return -1;
 
         if (mode == 1 || mode == 2) {
@@ -1169,6 +1195,8 @@ struct PolyAllocState {
             v.cycle = cyc;
             v.pending_gate_on = gate_on_sample;
             v.pending_gate_off = BLOCK_SIZE;
+            apply_event_fields(v, dur, chance_in, evt_time, type_id_in,
+                               note_in, onset_abs_sample);
             // Mono: always retrigger. Legato: only trigger if wasn't active
             if (mode == 1 || !was_active) {
                 v.gate = 1.0f;
@@ -1193,6 +1221,8 @@ struct PolyAllocState {
                 v.age = 0;
                 v.pending_gate_on = gate_on_sample;  // Retrigger for envelope
                 v.pending_gate_off = BLOCK_SIZE;
+                apply_event_fields(v, dur, chance_in, evt_time, type_id_in,
+                                   note_in, onset_abs_sample);
                 return static_cast<int>(i);
             }
         }
@@ -1212,6 +1242,8 @@ struct PolyAllocState {
                 v.cycle = cyc;
                 v.pending_gate_on = gate_on_sample;
                 v.pending_gate_off = BLOCK_SIZE;
+                apply_event_fields(v, dur, chance_in, evt_time, type_id_in,
+                                   note_in, onset_abs_sample);
                 return static_cast<int>(i);
             }
         }
@@ -1249,6 +1281,8 @@ struct PolyAllocState {
             v.cycle = cyc;
             v.pending_gate_on = gate_on_sample;
             v.pending_gate_off = BLOCK_SIZE;
+            apply_event_fields(v, dur, chance_in, evt_time, type_id_in,
+                               note_in, onset_abs_sample);
         }
         return steal_idx;
     }

@@ -444,8 +444,7 @@ std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::si
     auto& poly_state = state_pool_.get_or_create<PolyAllocState>(poly_inst.state_id);
     run_voice_pool(poly_state,
                    poly_inst.out_buffer,
-                   poly_inst.inputs[0], poly_inst.inputs[1], poly_inst.inputs[2],
-                   poly_inst.inputs[3], poly_inst.inputs[4],
+                   poly_inst.inputs[0], poly_inst.inputs[4],
                    program.subspan(ip + 1, body_length));
 
     // Advance past POLY_BEGIN + body + POLY_END
@@ -469,8 +468,7 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
         const auto body = slot->block_body(poly_state->block_id);
         run_voice_pool(*poly_state,
                        inst.out_buffer,
-                       inst.inputs[0], inst.inputs[1], inst.inputs[2],
-                       inst.inputs[3], inst.inputs[4],
+                       inst.inputs[0], inst.inputs[4],
                        body);
         return;
     }
@@ -613,10 +611,7 @@ VM::BlockCycleTiming VM::compute_block_timing(float cycle_length) const {
 
 void VM::run_voice_pool(PolyAllocState& poly_state,
                         std::uint16_t mix_buf,
-                        std::uint16_t voice_freq_buf,
-                        std::uint16_t voice_gate_buf,
-                        std::uint16_t voice_vel_buf,
-                        std::uint16_t voice_trig_buf,
+                        std::uint16_t bank_base,
                         std::uint16_t voice_out_buf,
                         std::span<const Instruction> body) {
     // poly is stereo-native: voice_out and mix are adjacent L/R pairs. The
@@ -624,6 +619,10 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
     // adjacency convention (codegen guarantees the pairs are adjacent).
     std::uint16_t mix_buf_r = mix_buf + 1;
     std::uint16_t voice_out_buf_r = voice_out_buf + 1;
+
+    // The 11-slot per-voice field bank is contiguous from bank_base, indexed
+    // by PatternPayload field id: 0 FREQ, 1 VEL, 2 TRIG, 3 GATE, 4 TYPE,
+    // 5 NOTE, 6 DUR, 7 CHANCE, 8 TIME, 9 PHASE, 10 SAMPLE_ID.
 
     poly_state.ensure_voices(ctx_.arena);
 
@@ -694,11 +693,18 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
                     std::max(0.0f, on_beat_offset * spb));
                 if (on_sample >= BLOCK_SIZE) on_sample = BLOCK_SIZE - 1;
 
-                // Allocate a voice for each chord note in this event
+                // Allocate a voice for each chord note in this event. The
+                // per-voice .note is the chord voice's own MIDI note for a
+                // multi-value event, else the event-wide midi_note.
                 for (std::uint8_t vi = 0; vi < evt.num_values; ++vi) {
+                    const float note_in = (evt.num_values > 1)
+                        ? evt.notes[vi] : evt.midi_note;
                     poly_state.allocate_voice(
                         evt.values[vi], evt.velocity,
-                        static_cast<std::uint16_t>(e), on_cycle, on_sample);
+                        static_cast<std::uint16_t>(e), on_cycle, on_sample,
+                        evt.duration, evt.chance, evt.time,
+                        static_cast<float>(evt.type_id), note_in,
+                        ctx_.global_sample_counter + on_sample);
                 }
             }
 
@@ -757,15 +763,40 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
 
         auto& voice = poly_state.voices[v];
 
-        // Fill voice parameter buffers
-        float* freq_buf = buffer_pool_.get(voice_freq_buf);
-        float* gate_buf = buffer_pool_.get(voice_gate_buf);
-        float* vel_buf = buffer_pool_.get(voice_vel_buf);
-        float* trig_buf = buffer_pool_.get(voice_trig_buf);
+        // Fill the 11-slot per-voice field bank (indexed by PatternPayload
+        // field id). FREQ/VEL/TYPE/NOTE/DUR/CHANCE/TIME/PHASE/SAMPLE_ID are
+        // event-scalar (block-constant); GATE/TRIG are synthesized per-sample.
+        float* freq_buf = buffer_pool_.get(bank_base + 0);
+        float* vel_buf  = buffer_pool_.get(bank_base + 1);
+        float* trig_buf = buffer_pool_.get(bank_base + 2);
+        float* gate_buf = buffer_pool_.get(bank_base + 3);
 
         std::fill_n(freq_buf, BLOCK_SIZE, voice.freq);
         std::fill_n(vel_buf, BLOCK_SIZE, voice.vel);
         std::fill_n(trig_buf, BLOCK_SIZE, 0.0f);
+        std::fill_n(buffer_pool_.get(bank_base + 4), BLOCK_SIZE, voice.type_id);
+        std::fill_n(buffer_pool_.get(bank_base + 5), BLOCK_SIZE, voice.note_value);
+        std::fill_n(buffer_pool_.get(bank_base + 6), BLOCK_SIZE, voice.duration);
+        std::fill_n(buffer_pool_.get(bank_base + 7), BLOCK_SIZE, voice.chance);
+        std::fill_n(buffer_pool_.get(bank_base + 8), BLOCK_SIZE, voice.time);
+        // SAMPLE_ID shares the primary value slot with FREQ (for sample
+        // patterns evt.values[vi] is the sample id).
+        std::fill_n(buffer_pool_.get(bank_base + 10), BLOCK_SIZE, voice.freq);
+
+        // PHASE — block-constant voice progress (0..1) through its event
+        // duration, derived from the absolute onset sample.
+        {
+            const float spb = (60.0f / ctx_.bpm) * ctx_.sample_rate;
+            const float dur_samp = voice.duration * spb;
+            double elapsed = static_cast<double>(ctx_.global_sample_counter)
+                           - static_cast<double>(voice.onset_sample);
+            if (elapsed < 0.0) elapsed = 0.0;
+            const float phase = dur_samp > 0.0f
+                ? std::clamp(static_cast<float>(elapsed / dur_samp),
+                             0.0f, 1.0f)
+                : 0.0f;
+            std::fill_n(buffer_pool_.get(bank_base + 9), BLOCK_SIZE, phase);
+        }
 
         // Per-sample gate and trigger accuracy
         if (voice.pending_gate_on < BLOCK_SIZE) {
@@ -817,7 +848,7 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
         // and tick() reaps the slot.
         const float* voice_out = buffer_pool_.get(voice_out_buf);
         const float* voice_out_r = buffer_pool_.get(voice_out_buf_r);
-        const float* gate = buffer_pool_.get(voice_gate_buf);
+        const float* gate = gate_buf;  // bank_base + 3 (GATE)
         for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
             float g;
             if (voice.release_countdown > 0) {

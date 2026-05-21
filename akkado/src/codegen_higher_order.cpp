@@ -274,13 +274,13 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
         if (func_ref->is_user_function) {
             body_tv = visit(func_ref->closure_node);
         } else {
+            // Body is the last child (preceding children are parameters —
+            // Identifier or DestructureParam nodes).
             const Node& closure_node = ast_->arena[func_ref->closure_node];
-            NodeIndex child = closure_node.first_child;
             NodeIndex body = NULL_NODE;
-            while (child != NULL_NODE) {
-                const Node& child_node = ast_->arena[child];
-                if (child_node.type != NodeType::Identifier) { body = child; break; }
-                child = ast_->arena[child].next_sibling;
+            for (NodeIndex child = closure_node.first_child; child != NULL_NODE;
+                 child = ast_->arena[child].next_sibling) {
+                body = child;
             }
             if (body != NULL_NODE) body_tv = visit(body);
         }

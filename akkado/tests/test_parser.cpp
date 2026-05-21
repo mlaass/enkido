@@ -1047,13 +1047,10 @@ TEST_CASE("Parser rejects deferred destructure forms", "[parser][destructure]") 
         CHECK(got_error);
     }
 
-    SECTION("destructure parameter in closure does not parse cleanly") {
-        // Phase 3b only enables destructure params in `fn` definitions, not
-        // arrow-style closures. The closure-detection heuristic doesn't
-        // recognize `{` as a param start, so the `({x,y}) -> …` form falls
-        // through to grouped-expression parsing, which fails. The exact
-        // error message is implementation-detail; what matters is the
-        // form doesn't silently compile to something surprising.
+    SECTION("destructure parameter in closure parses cleanly") {
+        // prd-poly-callback-event-record: closures accept `{x, y}` destructure
+        // params, same as `fn` definitions. The closure-detection heuristic
+        // recognizes `{` as a param start.
         auto [tokens, lex_diags] = lex(R"(
             f = ({x, y}) -> x + y
         )");
@@ -1063,7 +1060,17 @@ TEST_CASE("Parser rejects deferred destructure forms", "[parser][destructure]") 
         for (const auto& d : parse_diags) {
             if (d.severity == Severity::Error) any_error = true;
         }
-        CHECK(any_error);
+        CHECK_FALSE(any_error);
+
+        // The closure carries a DestructureParam node before its body.
+        bool found_destructure = false;
+        for (std::size_t i = 0; i < ast.arena.size(); ++i) {
+            if (ast.arena[static_cast<NodeIndex>(i)].type ==
+                NodeType::DestructureParam) {
+                found_destructure = true;
+            }
+        }
+        CHECK(found_destructure);
     }
 }
 

@@ -1858,6 +1858,34 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 }
             }
         }
+
+        // poly()/mono()/legato() take an instrument callback. A trailing
+        // `...rest` parameter binds the whole event record — mark it so the
+        // Closure handler defines it record-capable (skips the E061 non-record
+        // check on `e.freq` etc.). Plain/positional params stay scalars.
+        if (func_name == "poly" || func_name == "mono" ||
+            func_name == "legato") {
+            for (NodeIndex arg = output_arena_[node].first_child;
+                 arg != NULL_NODE; arg = output_arena_[arg].next_sibling) {
+                NodeIndex inner = arg;
+                if (output_arena_[inner].type == NodeType::Argument) {
+                    inner = output_arena_[inner].first_child;
+                }
+                if (inner == NULL_NODE ||
+                    output_arena_[inner].type != NodeType::Closure) {
+                    continue;
+                }
+                for (NodeIndex c = output_arena_[inner].first_child;
+                     c != NULL_NODE; c = output_arena_[c].next_sibling) {
+                    const Node& cn = output_arena_[c];
+                    if (cn.type != NodeType::Identifier) break;  // body node
+                    if (std::holds_alternative<Node::ClosureParamData>(cn.data) &&
+                        cn.as_closure_param().is_rest) {
+                        foreach_record_param_[inner] = cn.as_closure_param().name;
+                    }
+                }
+            }
+        }
     }
 
     if (n.type == NodeType::MatchExpr) {
@@ -2243,6 +2271,23 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
 
         while (child != NULL_NODE) {
             const Node& child_node = output_arena_[child];
+            if (child_node.type == NodeType::DestructureParam) {
+                // `{x, y}` destructure param — bind each field as a parameter
+                // so the body can reference it by name (mirrors the `fn` path).
+                const auto& dp = child_node.as_destructure_param();
+                for (const auto& field : dp.fields) {
+                    if (params.count(field.name)) {
+                        error("E188",
+                              "Duplicate parameter name '" + field.name +
+                              "' in destructure pattern", child_node.location);
+                    } else {
+                        params.insert(field.name);
+                        symbols_.define_parameter(field.name, 0xFFFF);
+                    }
+                }
+                child = child_node.next_sibling;
+                continue;
+            }
             if (child_node.type == NodeType::Identifier) {
                 // Check if it's IdentifierData or ClosureParamData
                 std::string param_name;

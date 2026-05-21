@@ -438,6 +438,90 @@ def test_chord_progression_voice_churn():
               f"{settle_blocks} blocks")
 
 
+# =============================================================================
+# Test 4: Phase 2 — per-voice event-record field bank
+# =============================================================================
+
+def _rms(x: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))
+
+
+def test_field_bank_phase_plumbing():
+    """
+    Verify the Phase-2 per-voice field bank (prd-poly-callback-event-record):
+    a callback that destructures {freq, note, dur, phase} and multiplies the
+    voice by (1 - phase) must produce an audibly attenuated, decaying signal.
+
+    If `phase` were stuck at the old constant-0 buffer, (1 - phase) == 1 and
+    the phase patch would be bit-identical to the plain patch. So:
+    - plain  = osc(freq) * 0.3
+    - phased = osc(freq) * 0.3 * (1 - phase), destructuring all four fields.
+    Expect: phased RMS is clearly below plain RMS (phase ramps 0->1), but not
+    silent (phase never pinned at 1). Renders >=300s; asserts no NaN/DC and
+    no RMS drift across the render (voice-leak guard).
+
+    If this fails, check VM::run_voice_pool field-bank fill (cedar/src/vm/vm.cpp)
+    and handle_poly_call bank wiring (akkado/src/codegen_functions.cpp).
+    """
+    print("\n[test_field_bank_phase_plumbing]")
+
+    plain_src = OUT_DIR / "phase2_plain.akk"
+    phased_src = OUT_DIR / "phase2_phased.akk"
+    plain_src.write_text(
+        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> osc("sin", freq) * 0.3) |> out(@)\n'
+    )
+    phased_src.write_text(
+        'n"c4 e4 g4 b4" |> poly(@, ({freq, note, dur, phase}) ->\n'
+        '    osc("sin", freq) * 0.3 * (1 - phase)) |> out(@)\n'
+    )
+
+    plain_wav = str(OUT_DIR / "phase2_plain.wav")
+    phased_wav = str(OUT_DIR / "phase2_phased.wav")
+    render(str(plain_src), plain_wav, str(OUT_DIR / "phase2_plain.jsonl"),
+           seconds=RENDER_SECONDS, bpm=RENDER_BPM)
+    render(str(phased_src), phased_wav, str(OUT_DIR / "phase2_phased.jsonl"),
+           seconds=RENDER_SECONDS, bpm=RENDER_BPM)
+
+    plain, _ = load_wav_int16_to_float(plain_wav)
+    phased, sr = load_wav_int16_to_float(phased_wav)
+    plain_l = plain[:, 0]
+    phased_l = phased[:, 0]
+
+    assert np.all(np.isfinite(phased_l)), "phased render produced NaN/Inf"
+    dc = abs(float(np.mean(phased_l)))
+    assert dc < 0.01, f"phased render has DC offset {dc:.4f}"
+
+    plain_rms = _rms(plain_l)
+    phased_rms = _rms(phased_l)
+    assert plain_rms > 0.01, f"plain render is silent (rms {plain_rms:.4f})"
+    # phase ramps 0->1: (1-phase) averages ~0.5, so phased must be clearly
+    # below plain. Stuck-at-0 phase would make them equal.
+    assert phased_rms < plain_rms * 0.85, (
+        f"phased rms {phased_rms:.4f} not below plain rms {plain_rms:.4f} — "
+        f"`phase` field not plumbed (still constant 0?)"
+    )
+    # ...but not pinned at 1 (which would silence the voice).
+    assert phased_rms > plain_rms * 0.15, (
+        f"phased rms {phased_rms:.4f} far too low vs plain {plain_rms:.4f} — "
+        f"`phase` may be pinned at 1"
+    )
+
+    # Voice-leak / drift guard: RMS stable across the >=300s render.
+    thirds = np.array_split(phased_l, 3)
+    rms_thirds = [_rms(t) for t in thirds]
+    lo, hi = min(rms_thirds), max(rms_thirds)
+    assert lo > 0.0 and hi / lo < 1.5, (
+        f"phased RMS drifts across render: thirds {rms_thirds} — possible "
+        f"voice leak"
+    )
+
+    print(f"  plain rms {plain_rms:.4f}, phased rms {phased_rms:.4f} "
+          f"(ratio {phased_rms / plain_rms:.2f})")
+    print(f"  RMS thirds {[round(r, 4) for r in rms_thirds]}")
+    print(f"  ✓ PASS: per-voice `phase` plumbed; no NaN/DC/drift")
+    print(f"  Saved {phased_wav} — listen for each note ramping down in level")
+
+
 def main():
     print("POLY Opcode Quality Tests")
     print("=" * 60)
@@ -458,6 +542,7 @@ def main():
         test_chord_stab_voice_grid,
         test_chord_stab_audio_quality,
         test_chord_progression_voice_churn,
+        test_field_bank_phase_plumbing,
     ]:
         try:
             test()

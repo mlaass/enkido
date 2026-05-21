@@ -2461,33 +2461,125 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // Resolve instrument function
     auto func_ref = resolve_function_arg(instrument_arg);
     if (!func_ref) {
-        error("E403", func_name + "() instrument argument must be a function with 3 parameters (freq, gate, vel)", n.location);
+        error("E403", func_name + "() instrument argument must be a function", n.location);
         return TypedValue::void_val();
     }
 
-    // Validate exactly 3 parameters
-    if (func_ref->params.size() != 3) {
-        error("E404", func_name + "() instrument function must have exactly 3 parameters (freq, gate, vel), got " +
-              std::to_string(func_ref->params.size()), n.location);
-        return TypedValue::void_val();
+    // --- Classify the callback parameter list -------------------------------
+    // The callback takes positional parameters (canonical order
+    // freq,gate,vel,trig,type,note,dur,chance,time,phase,sample_id), a trailing
+    // record destructure `{...}`, a mix of both, or a trailing `...rest` param.
+    // The historical 3-param `(freq, gate, vel)` callback is the 3-prefix of
+    // the canonical order, so it keeps compiling unchanged.
+    // Phase 1: only freq/gate/vel/trig have VM-plumbed per-voice buffers; any
+    // other referenced field is accepted but resolves to a constant-0 buffer
+    // (Phase 2 wires the remaining fixed fields, Phase 3 the custom fields).
+    struct PolyBind {
+        std::string  name;
+        std::uint8_t field_id;              // PatternPayload index, or 0xFF = deferred
+        NodeIndex    default_node = NULL_NODE;
+    };
+    std::vector<PolyBind> binds;
+    bool        has_rest = false;
+    std::string rest_name;
+    {
+        const auto& params = func_ref->params;
+        const std::size_t np = params.size();
+        int destr_count = 0, rest_count = 0;
+        std::size_t destr_idx = 0, rest_idx = 0;
+        for (std::size_t i = 0; i < np; ++i) {
+            if (params[i].is_rest) { rest_count++; rest_idx = i; }
+            else if (params[i].is_destructure) { destr_count++; destr_idx = i; }
+        }
+        if (destr_count > 0 && rest_count > 0) {
+            error("E418", func_name + "() callback cannot combine a record "
+                  "destructure and a rest parameter", n.location);
+            return TypedValue::void_val();
+        }
+        if (rest_count > 1) {
+            error("E417", func_name + "() callback may declare only one rest "
+                  "parameter", n.location);
+            return TypedValue::void_val();
+        }
+        if (rest_count == 1 && rest_idx != np - 1) {
+            error("E417", func_name + "() rest parameter must be the last "
+                  "parameter", n.location);
+            return TypedValue::void_val();
+        }
+        if (destr_count > 1) {
+            error("E417", func_name + "() callback may declare only one record "
+                  "destructure parameter", n.location);
+            return TypedValue::void_val();
+        }
+        if (destr_count == 1 && destr_idx != np - 1) {
+            error("E417", func_name + "() record destructure must be the last "
+                  "parameter", n.location);
+            return TypedValue::void_val();
+        }
+
+        std::size_t positional_count = np;
+        if (destr_count == 1) positional_count = destr_idx;
+        else if (rest_count == 1) positional_count = rest_idx;
+        if (positional_count > kPolyCanonicalOrder.size()) {
+            error("E415", func_name + "() callback accepts at most " +
+                  std::to_string(kPolyCanonicalOrder.size()) +
+                  " positional parameters", n.location);
+            return TypedValue::void_val();
+        }
+
+        std::array<bool, 11> field_bound{};
+        for (std::size_t i = 0; i < positional_count; ++i) {
+            std::uint8_t field = kPolyCanonicalOrder[i];
+            binds.push_back({params[i].name, field, NULL_NODE});
+            field_bound[field] = true;
+        }
+        if (destr_count == 1) {
+            for (const auto& df : params[destr_idx].destructure_fields) {
+                int idx = pattern_field_index(df.name);
+                if (idx < 0) {
+                    // Custom or unknown field — Phase 3 wires prop_vals; until
+                    // then it resolves to the constant-0 buffer.
+                    binds.push_back({df.name, 0xFF, df.default_node});
+                    continue;
+                }
+                if (field_bound[static_cast<std::size_t>(idx)]) {
+                    error("E416", func_name + "() field '" + df.name +
+                          "' is bound both positionally and in the record "
+                          "destructure", n.location);
+                    return TypedValue::void_val();
+                }
+                field_bound[static_cast<std::size_t>(idx)] = true;
+                binds.push_back({df.name, static_cast<std::uint8_t>(idx),
+                                 df.default_node});
+            }
+        }
+        if (rest_count == 1) {
+            has_rest = true;
+            rest_name = params[rest_idx].name;
+        }
     }
 
-    // Allocate scratch buffers for voice parameters and output.
-    // poly is stereo-native: voice_out and mix are adjacent L/R pairs (R = L+1),
-    // and the VM derives the R buffers via +1 (POLY_BEGIN has no free slots).
-    std::uint16_t voice_freq_buf = buffers_.allocate();
-    std::uint16_t voice_gate_buf = buffers_.allocate();
-    std::uint16_t voice_vel_buf = buffers_.allocate();
-    std::uint16_t voice_trig_buf = buffers_.allocate();
+    // Allocate scratch buffers: an 11-slot contiguous per-voice field bank
+    // (indexed by PatternPayload field id), then the stereo voice-out and mix
+    // pairs. poly is stereo-native: voice_out and mix are adjacent L/R pairs
+    // (R = L+1). The instruction carries only bank_base (inputs[0]) and
+    // voice_out (inputs[4]); the VM fills every bank buffer per voice — see
+    // VM::run_voice_pool.
+    constexpr std::size_t kPolyFieldCount = 11;
+    std::uint16_t bank_base = buffers_.allocate();
+    bool bank_ok = (bank_base != BufferAllocator::BUFFER_UNUSED);
+    for (std::size_t i = 1; i < kPolyFieldCount; ++i) {
+        std::uint16_t b = buffers_.allocate();
+        if (b == BufferAllocator::BUFFER_UNUSED || b != bank_base + i) {
+            bank_ok = false;
+        }
+    }
     std::uint16_t voice_out_buf = buffers_.allocate();
     std::uint16_t voice_out_buf_r = buffers_.allocate();
     std::uint16_t mix_buf = buffers_.allocate();
     std::uint16_t mix_buf_r = buffers_.allocate();
 
-    if (voice_freq_buf == BufferAllocator::BUFFER_UNUSED ||
-        voice_gate_buf == BufferAllocator::BUFFER_UNUSED ||
-        voice_vel_buf == BufferAllocator::BUFFER_UNUSED ||
-        voice_trig_buf == BufferAllocator::BUFFER_UNUSED ||
+    if (!bank_ok ||
         voice_out_buf == BufferAllocator::BUFFER_UNUSED ||
         voice_out_buf_r == BufferAllocator::BUFFER_UNUSED ||
         mix_buf == BufferAllocator::BUFFER_UNUSED ||
@@ -2520,10 +2612,10 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         cedar::Instruction poly_begin{};
         poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
         poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        poly_begin.inputs[0] = voice_freq_buf;
-        poly_begin.inputs[1] = voice_gate_buf;
-        poly_begin.inputs[2] = voice_vel_buf;
-        poly_begin.inputs[3] = voice_trig_buf;
+        poly_begin.inputs[0] = bank_base;  // 11-slot per-voice field bank
+        poly_begin.inputs[1] = 0xFFFF;
+        poly_begin.inputs[2] = 0xFFFF;
+        poly_begin.inputs[3] = 0xFFFF;
         poly_begin.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
         poly_begin.flags = cedar::InstructionFlag::STEREO_OUTPUT;
         poly_begin.rate = 0;  // Patched after body emission
@@ -2535,11 +2627,69 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     }
 
     // Inline function body
-    // Push scope and bind params to voice buffers
+    // Push scope and bind callback params to per-voice buffers.
     symbols_->push_scope();
-    symbols_->define_variable(func_ref->params[0].name, voice_freq_buf);
-    symbols_->define_variable(func_ref->params[1].name, voice_gate_buf);
-    symbols_->define_variable(func_ref->params[2].name, voice_vel_buf);
+
+    // All 11 fixed pattern-event fields are plumbed per voice via the
+    // contiguous field bank (bank_base + PatternPayload field id); the VM
+    // fills every bank buffer in run_voice_pool. A custom/unknown destructure
+    // name (field_id == 0xFF) still resolves to a lazily-allocated constant-0
+    // buffer — Phase 3 will wire custom fields through prop_vals.
+    std::uint16_t zero_buf = BufferAllocator::BUFFER_UNUSED;
+    auto field_buffer = [&](std::uint8_t field_id) -> std::uint16_t {
+        if (field_id < kPolyFieldCount) {
+            return static_cast<std::uint16_t>(bank_base + field_id);
+        }
+        if (zero_buf == BufferAllocator::BUFFER_UNUSED) {
+            zero_buf = buffers_.allocate();
+            if (zero_buf != BufferAllocator::BUFFER_UNUSED) {
+                cedar::Instruction zc{};
+                zc.opcode = cedar::Opcode::PUSH_CONST;
+                zc.out_buffer = zero_buf;
+                zc.inputs[0] = 0xFFFF;
+                zc.inputs[1] = 0xFFFF;
+                zc.inputs[2] = 0xFFFF;
+                zc.inputs[3] = 0xFFFF;
+                encode_const_value(zc, 0.0f);
+                emit(zc);
+            }
+        }
+        return zero_buf;
+    };
+
+    for (const auto& b : binds) {
+        symbols_->define_variable(b.name, field_buffer(b.field_id));
+    }
+    if (has_rest) {
+        // Bind the rest name as an event record: bare use reads freq, `.field`
+        // access resolves through the Record typed_value. All 11 fixed fields
+        // are plumbed via the per-voice field bank; aliases mirror
+        // pattern_field_aliases().
+        std::unordered_map<std::string, TypedValue> rec;
+        auto add = [&](std::initializer_list<const char*> aliases,
+                       std::size_t field_id) {
+            std::uint16_t buf = static_cast<std::uint16_t>(bank_base + field_id);
+            for (const char* a : aliases) rec.emplace(a, TypedValue::signal(buf));
+        };
+        add({"freq", "frequency", "pitch", "f", "p"}, PatternPayload::FREQ);
+        add({"vel", "velocity", "v"},                 PatternPayload::VEL);
+        add({"trig", "trigger"},                      PatternPayload::TRIG);
+        add({"gate", "g"},                            PatternPayload::GATE);
+        add({"type"},                                 PatternPayload::TYPE);
+        add({"note", "midi", "n"},                    PatternPayload::NOTE);
+        add({"dur", "duration"},                      PatternPayload::DUR);
+        add({"chance"},                               PatternPayload::CHANCE);
+        add({"time", "t0", "start"},                  PatternPayload::TIME);
+        add({"phase", "cycle", "co"},                 PatternPayload::PHASE);
+        add({"sample_id", "sample", "s"},             PatternPayload::SAMPLE_ID);
+        Symbol sym;
+        sym.kind = SymbolKind::Variable;
+        sym.name = rest_name;
+        sym.name_hash = fnv1a_hash(rest_name);
+        sym.buffer_index = bank_base;
+        sym.typed_value = TypedValue::make_record(std::move(rec), bank_base);
+        symbols_->define(sym);
+    }
 
     // Bind captures for closures
     for (const auto& capture : func_ref->captures) {
@@ -2565,19 +2715,13 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             // User function: body is directly the body_node
             body_tv = visit(func_ref->closure_node);
         } else {
-            // Closure: find body (last child of closure node)
+            // Closure: the body is the last child (all preceding children are
+            // parameters — Identifier *or* DestructureParam nodes).
             const Node& closure_node = ast_->arena[func_ref->closure_node];
-            NodeIndex child = closure_node.first_child;
             NodeIndex body = NULL_NODE;
-            while (child != NULL_NODE) {
-                const Node& child_node = ast_->arena[child];
-                if (child_node.type == NodeType::Identifier) {
-                    // parameter — skip
-                } else {
-                    body = child;
-                    break;
-                }
-                child = ast_->arena[child].next_sibling;
+            for (NodeIndex child = closure_node.first_child; child != NULL_NODE;
+                 child = ast_->arena[child].next_sibling) {
+                body = child;
             }
             if (body != NULL_NODE) {
                 body_tv = visit(body);
@@ -2657,10 +2801,10 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         cedar::Instruction fe{};
         fe.opcode = cedar::Opcode::FOREACH_EVENT;
         fe.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        fe.inputs[0] = voice_freq_buf;
-        fe.inputs[1] = voice_gate_buf;
-        fe.inputs[2] = voice_vel_buf;
-        fe.inputs[3] = voice_trig_buf;
+        fe.inputs[0] = bank_base;  // 11-slot per-voice field bank
+        fe.inputs[1] = 0xFFFF;
+        fe.inputs[2] = 0xFFFF;
+        fe.inputs[3] = 0xFFFF;
         fe.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
         fe.flags = cedar::InstructionFlag::STEREO_OUTPUT;
         fe.rate = 0;  // body is in the subprogram table, not inline
@@ -2686,6 +2830,8 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         poly_init.foreach_allocator_kind = 0;  // VOICE_POOL
         poly_init.foreach_block_id = poly_block_id;
         poly_init.foreach_event_src_state_id = seq_state_id;
+        // VOICE_POOL never indexes a param bank (run_voice_pool fills the
+        // field bank directly), so this slot count is inert here.
         poly_init.foreach_field_slot_count = 5;
         poly_init.foreach_output_count = 2;
     }

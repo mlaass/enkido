@@ -19,27 +19,31 @@ using Catch::Matchers::WithinAbs;
 // Helper: Build a POLY program with OSC_SIN body
 // ============================================================================
 
-// Buffer layout for poly tests. poly is stereo-native: voice_out and mix are
-// adjacent L/R pairs (R = L+1), and POLY_BEGIN derives the R buffers via +1.
-//   0 = voice freq (written by POLY_BEGIN per-voice)
-//   1 = voice gate
-//   2 = voice vel
-//   3 = voice trig
-//   4 = voice output L (body writes here, POLY_BEGIN reads for mix)
-//   5 = voice output R (= 4 + 1)
-//   6 = mix output L (POLY_BEGIN accumulates here)
-//   7 = mix output R (= 6 + 1)
-//   8 = left output
-//   9 = right output
+// Buffer layout for poly tests. The per-voice field bank is 11 contiguous
+// buffers indexed by PatternPayload field id; voice_out and mix are adjacent
+// stereo L/R pairs (R = L+1). POLY_BEGIN carries inputs[0]=bank base,
+// inputs[4]=voice_out L, and the VM fills every bank buffer per voice.
+//   0..10 = field bank: freq,vel,trig,gate,type,note,dur,chance,time,
+//           phase,sample_id
+//   11 = voice output L   12 = voice output R (= 11 + 1)
+//   13 = mix output L     14 = mix output R (= 13 + 1)
 
-static constexpr std::uint16_t BUF_FREQ = 0;
-static constexpr std::uint16_t BUF_GATE = 1;
-static constexpr std::uint16_t BUF_VEL  = 2;
-static constexpr std::uint16_t BUF_TRIG = 3;
-static constexpr std::uint16_t BUF_VOICE_OUT   = 4;
-static constexpr std::uint16_t BUF_VOICE_OUT_R = 5;
-static constexpr std::uint16_t BUF_MIX   = 6;
-static constexpr std::uint16_t BUF_MIX_R = 7;
+static constexpr std::uint16_t BUF_BANK = 0;
+static constexpr std::uint16_t BUF_FREQ = 0;   // bank + FREQ
+static constexpr std::uint16_t BUF_VEL  = 1;   // bank + VEL
+static constexpr std::uint16_t BUF_TRIG = 2;   // bank + TRIG
+static constexpr std::uint16_t BUF_GATE = 3;   // bank + GATE
+static constexpr std::uint16_t BUF_TYPE      = 4;
+static constexpr std::uint16_t BUF_NOTE      = 5;
+static constexpr std::uint16_t BUF_DUR       = 6;
+static constexpr std::uint16_t BUF_CHANCE    = 7;
+static constexpr std::uint16_t BUF_TIME      = 8;
+static constexpr std::uint16_t BUF_PHASE     = 9;
+static constexpr std::uint16_t BUF_SAMPLE_ID = 10;
+static constexpr std::uint16_t BUF_VOICE_OUT   = 11;
+static constexpr std::uint16_t BUF_VOICE_OUT_R = 12;
+static constexpr std::uint16_t BUF_MIX   = 13;
+static constexpr std::uint16_t BUF_MIX_R = 14;
 
 static constexpr std::uint32_t POLY_STATE_ID = 0x10000;
 static constexpr std::uint32_t OSC_STATE_ID  = 0x20000;
@@ -57,7 +61,7 @@ TEST_CASE("POLY basic execution with active voices", "[poly]") {
     //   in0=BUF_FREQ, in1=BUF_GATE, in2=BUF_VEL, in3=BUF_TRIG, in4=BUF_VOICE_OUT
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2; // body length = 2 instructions
@@ -121,7 +125,7 @@ TEST_CASE("POLY XOR state isolation", "[poly]") {
 
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -226,7 +230,7 @@ TEST_CASE("POLY empty block produces silence", "[poly]") {
 
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -277,7 +281,7 @@ TEST_CASE("POLY stereo body: distinct L/R channels", "[poly][stereo]") {
 
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -332,7 +336,7 @@ TEST_CASE("POLY stereo: multi-voice sums each channel independently",
 
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -383,7 +387,7 @@ TEST_CASE("POLY mono-equivalent body broadcasts into both channels",
 
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -434,7 +438,7 @@ static std::vector<Instruction> build_seq_poly_program() {
     // POLY_BEGIN: rate=2 (body length), out=BUF_MIX (L; R derived as +1)
     auto poly_begin = Instruction::make_quinary(
         Opcode::POLY_BEGIN, BUF_MIX,
-        BUF_FREQ, BUF_GATE, BUF_VEL, BUF_TRIG, BUF_VOICE_OUT,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOICE_OUT,
         POLY_STATE_ID);
     poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
     poly_begin.rate = 2;
@@ -586,6 +590,124 @@ TEST_CASE("POLY voice allocation: chord produces multiple voices", "[poly][alloc
     }
     rms = std::sqrt(rms / BLOCK_SIZE);
     CHECK(rms > 0.1f);
+}
+
+// ============================================================================
+// Phase 2: per-voice event-record field bank
+// ============================================================================
+
+TEST_CASE("POLY field bank: single note exposes event fields per voice",
+          "[poly][fields]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // One C4 note spanning 2 beats, with distinct type_id / midi_note.
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event evt;
+    evt.type = EventType::DATA;
+    evt.time = 0.0f;
+    evt.duration = 2.0f / CYCLE_LENGTH;   // output duration = 2 beats
+    evt.chance = 1.0f;                    // 1.0 so the event always plays
+    evt.velocity = 0.6f;
+    evt.midi_note = 60.0f;                // C4
+    evt.type_id = 7;
+    evt.num_values = 1;
+    evt.values[0] = 261.63f;
+
+    Sequence seq;
+    seq.events = &evt;
+    seq.num_events = 1;
+    seq.capacity = 1;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH, false, 1);
+
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 1);
+
+    // With one active voice the bank buffers hold that voice's fields.
+    CHECK(std::abs(vm.buffers().get(BUF_FREQ)[0] - 261.63f) < 0.01f);
+    CHECK(std::abs(vm.buffers().get(BUF_VEL)[0] - 0.6f) < 0.001f);
+    CHECK(std::abs(vm.buffers().get(BUF_TYPE)[0] - 7.0f) < 0.001f);
+    CHECK(std::abs(vm.buffers().get(BUF_NOTE)[0] - 60.0f) < 0.001f);
+    CHECK(std::abs(vm.buffers().get(BUF_DUR)[0] - 2.0f) < 0.01f);
+    CHECK(std::abs(vm.buffers().get(BUF_CHANCE)[0] - 1.0f) < 0.001f);
+    CHECK(std::abs(vm.buffers().get(BUF_TIME)[0] - 0.0f) < 0.001f);
+    // SAMPLE_ID shares the primary value with FREQ.
+    CHECK(std::abs(vm.buffers().get(BUF_SAMPLE_ID)[0] - 261.63f) < 0.01f);
+
+    // PHASE is block-constant, in [0,1], and advances as the voice ages.
+    const float phase0 = vm.buffers().get(BUF_PHASE)[0];
+    CHECK(phase0 >= 0.0f);
+    CHECK(phase0 <= 1.0f);
+    for (int b = 0; b < 30; ++b) {
+        vm.process_block(left.data(), right.data());
+    }
+    const float phase1 = vm.buffers().get(BUF_PHASE)[0];
+    CHECK(phase1 > phase0);
+    CHECK(phase1 <= 1.0f);
+}
+
+TEST_CASE("POLY field bank: chord exposes per-voice notes", "[poly][fields]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // C major chord — each voice has its own MIDI note in notes[].
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event evt;
+    evt.type = EventType::DATA;
+    evt.time = 0.0f;
+    evt.duration = 4.0f / CYCLE_LENGTH;
+    evt.chance = 1.0f;
+    evt.velocity = 1.0f;
+    evt.midi_note = 60.0f;                 // root
+    evt.num_values = 3;
+    evt.values[0] = 261.63f; evt.notes[0] = 60.0f;  // C4
+    evt.values[1] = 329.63f; evt.notes[1] = 64.0f;  // E4
+    evt.values[2] = 392.00f; evt.notes[2] = 67.0f;  // G4
+
+    Sequence seq;
+    seq.events = &evt;
+    seq.num_events = 1;
+    seq.capacity = 1;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH, false, 1);
+
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 3);
+
+    // Each voice's note_value is its own chord note, not the root.
+    bool saw_c = false, saw_e = false, saw_g = false;
+    for (std::uint8_t i = 0; i < poly.max_voices; ++i) {
+        if (!poly.voices[i].active) continue;
+        const float f = poly.voices[i].freq;
+        const float nv = poly.voices[i].note_value;
+        if (std::abs(f - 261.63f) < 0.1f) { CHECK(std::abs(nv - 60.0f) < 0.01f); saw_c = true; }
+        if (std::abs(f - 329.63f) < 0.1f) { CHECK(std::abs(nv - 64.0f) < 0.01f); saw_e = true; }
+        if (std::abs(f - 392.00f) < 0.1f) { CHECK(std::abs(nv - 67.0f) < 0.01f); saw_g = true; }
+    }
+    CHECK(saw_c);
+    CHECK(saw_e);
+    CHECK(saw_g);
 }
 
 TEST_CASE("POLY voice allocation: voice release on event end", "[poly][alloc]") {

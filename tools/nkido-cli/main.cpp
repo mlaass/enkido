@@ -357,10 +357,14 @@ int handle_render_mode(const nkido::Options& opts) {
         vm->set_bpm(*opts.render_bpm);
     }
 
-    // Find PolyAllocState IDs (for tracing)
+    // Find PolyAllocState IDs (for tracing). poly()/mono()/legato() compile to
+    // a ForeachAlloc/VOICE_POOL state by default (legacy PolyAlloc only under
+    // the `legacy_poly` option); both back a PolyAllocState in the state pool.
     std::vector<std::uint32_t> poly_state_ids;
     for (const auto& init : load.compile_result->state_inits) {
-        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+        if (init.type == akkado::StateInitData::Type::PolyAlloc ||
+            (init.type == akkado::StateInitData::Type::ForeachAlloc &&
+             init.foreach_allocator_kind == 0 /* VOICE_POOL */)) {
             poly_state_ids.push_back(init.state_id);
         }
     }

@@ -444,6 +444,8 @@ private:
                 float freq = 440.0f * std::pow(2.0f,
                     (static_cast<float>(midi) - 69.0f) / 12.0f);
                 e.values[i] = freq;
+                // Per-voice MIDI note — each chord voice has its own pitch.
+                e.notes[i] = static_cast<float>(midi);
                 spec.intervals.push_back(static_cast<int>(atom_data.chord_intervals[i]));
             }
             chord_ctx = std::move(spec);
@@ -2282,13 +2284,19 @@ static bool compile_pattern_for_transform(
                 auto semitones = get_number_arg(ast, pat_node, 1);
                 if (!semitones.has_value()) return false;
                 float ratio = std::pow(2.0f, *semitones / 12.0f);
+                const float st = static_cast<float>(*semitones);
                 if (!compiler.is_sample_pattern()) {
                     for (auto& seq_events : out_events) {
                         for (auto& event : seq_events) {
-                            if (event.type == cedar::EventType::DATA) {
+                            // Shift frequencies *and* the MIDI note fields so
+                            // %.note / per-voice .note track the transposition.
+                            if (event.type == cedar::EventType::DATA &&
+                                event.num_values > 0) {
                                 for (std::uint8_t i = 0; i < event.num_values; ++i) {
                                     event.values[i] *= ratio;
+                                    event.notes[i] += st;
                                 }
+                                event.midi_note += st;
                             }
                         }
                     }
@@ -3193,10 +3201,15 @@ TypedValue CodeGenerator::handle_transpose_call(NodeIndex node, const Node& n) {
     if (!compiler.is_sample_pattern()) {
         for (auto& seq_events : sequence_events) {
             for (auto& event : seq_events) {
-                if (event.type == cedar::EventType::DATA) {
+                // Shift frequencies *and* the MIDI note fields so %.note /
+                // per-voice .note track the transposition.
+                if (event.type == cedar::EventType::DATA &&
+                    event.num_values > 0) {
                     for (std::uint8_t i = 0; i < event.num_values; ++i) {
                         event.values[i] *= transpose_ratio;
+                        event.notes[i] += semitones_value;
                     }
+                    event.midi_note += semitones_value;
                 }
             }
         }
@@ -4938,6 +4951,8 @@ static void apply_voicing(SequenceCompiler& compiler,
             float midi_f = static_cast<float>(notes[i]);
             float freq = 440.0f * std::pow(2.0f, (midi_f - 69.0f) / 12.0f);
             ev.values[i] = freq;
+            // Per-voice MIDI note for the revoiced chord.
+            ev.notes[i] = midi_f;
         }
     }
 }

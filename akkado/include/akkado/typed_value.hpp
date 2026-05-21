@@ -120,6 +120,25 @@ struct PatternPayload {
     static constexpr std::size_t SAMPLE_ID = 10;
 };
 
+/// Canonical poly()/mono()/legato() callback positional-parameter order.
+/// Position i (0..10) of a positional callback parameter binds to the
+/// PatternPayload field kPolyCanonicalOrder[i]. `freq, gate, vel` lead the
+/// list so every historical `(freq, gate, vel)` callback keeps its meaning;
+/// the order is otherwise distinct from PatternPayload's storage order.
+inline constexpr std::array<std::uint8_t, 11> kPolyCanonicalOrder = {
+    static_cast<std::uint8_t>(PatternPayload::FREQ),
+    static_cast<std::uint8_t>(PatternPayload::GATE),
+    static_cast<std::uint8_t>(PatternPayload::VEL),
+    static_cast<std::uint8_t>(PatternPayload::TRIG),
+    static_cast<std::uint8_t>(PatternPayload::TYPE),
+    static_cast<std::uint8_t>(PatternPayload::NOTE),
+    static_cast<std::uint8_t>(PatternPayload::DUR),
+    static_cast<std::uint8_t>(PatternPayload::CHANCE),
+    static_cast<std::uint8_t>(PatternPayload::TIME),
+    static_cast<std::uint8_t>(PatternPayload::PHASE),
+    static_cast<std::uint8_t>(PatternPayload::SAMPLE_ID),
+};
+
 /// Build a human-readable list of available pattern field names: the five
 /// fixed fields plus any custom keys registered on the payload. Used for
 /// E136 diagnostics.

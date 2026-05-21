@@ -946,12 +946,49 @@ NodeIndex Parser::parse_grouping() {
         }
         current_idx_ = saved;
     }
-    // Check if it's identifier(s) (with optional defaults and rest params) followed by ) ->
-    else if (check(TokenType::Identifier) || check(TokenType::DotDotDot)) {
+    // Check if it's identifier(s) / `{...}` destructure params (with optional
+    // defaults and rest params) followed by ) ->
+    else if (check(TokenType::Identifier) || check(TokenType::DotDotDot) ||
+             check(TokenType::LBrace)) {
         std::size_t saved = current_idx_;
         bool looks_like_params = true;
 
         while (!is_at_end() && looks_like_params) {
+            // A `{...}` destructure param — skip the balanced brace group.
+            if (check(TokenType::LBrace)) {
+                int brace_depth = 0;
+                bool brace_closed = false;
+                while (!is_at_end()) {
+                    if (check(TokenType::LBrace)) {
+                        brace_depth++;
+                        advance();
+                    } else if (check(TokenType::RBrace)) {
+                        brace_depth--;
+                        advance();
+                        if (brace_depth == 0) { brace_closed = true; break; }
+                    } else {
+                        advance();
+                    }
+                }
+                if (!brace_closed) {
+                    looks_like_params = false;
+                    break;
+                }
+                if (check(TokenType::Comma)) {
+                    advance();
+                    continue;
+                } else if (check(TokenType::RParen)) {
+                    advance();
+                    if (check(TokenType::Arrow)) {
+                        is_closure = true;
+                    }
+                    break;
+                } else {
+                    looks_like_params = false;
+                    break;
+                }
+            }
+
             // Allow ... prefix for rest params
             if (check(TokenType::DotDotDot)) {
                 advance();
@@ -1029,8 +1066,9 @@ NodeIndex Parser::parse_closure() {
     Token start_tok = previous();
     NodeIndex node = make_node(NodeType::Closure, start_tok);
 
-    // Parse parameter list
-    std::vector<ParsedParam> params = parse_param_list();
+    // Parse parameter list. Closures accept `{x, y}` destructure params just
+    // like `fn` definitions (prd-poly-callback-event-record).
+    std::vector<ParsedParam> params = parse_param_list(/*allow_destructure=*/true);
 
     consume(TokenType::RParen, "Expected ')' after parameters");
     consume(TokenType::Arrow, "Expected '->' after closure parameters");
@@ -1048,23 +1086,33 @@ NodeIndex Parser::parse_closure() {
         NodeIndex prev_param = NULL_NODE;
 
         for (const auto& param : params) {
-            NodeIndex param_node = arena_.alloc(NodeType::Identifier, start_tok.location);
-
-            if (param.default_value.has_value() || param.default_string.has_value() ||
-                param.is_rest || param.default_node != NULL_NODE) {
-                // Parameter with default value, string default, rest flag, or expression default
-                arena_[param_node].data = Node::ClosureParamData{
-                    param.name, param.default_value, param.default_string, param.is_rest};
+            NodeIndex param_node;
+            if (param.is_destructure) {
+                // `{x, y}` destructure param — its own AST node type, same as
+                // the `fn` definition path.
+                param_node = arena_.alloc(NodeType::DestructureParam,
+                                          start_tok.location);
+                arena_[param_node].data =
+                    Node::DestructureParamData{param.destructure_fields};
             } else {
-                // Simple parameter - use IdentifierData
-                arena_[param_node].data = Node::IdentifierData{param.name};
-            }
+                param_node = arena_.alloc(NodeType::Identifier, start_tok.location);
 
-            // Attach expression/numeric default as child of param node. String
-            // defaults stay carried only in ClosureParamData (their node is
-            // synthetic and routed through match string-dispatch instead).
-            if (param.default_node != NULL_NODE && !param.default_string.has_value()) {
-                arena_[param_node].first_child = param.default_node;
+                if (param.default_value.has_value() || param.default_string.has_value() ||
+                    param.is_rest || param.default_node != NULL_NODE) {
+                    // Parameter with default value, string default, rest flag, or expression default
+                    arena_[param_node].data = Node::ClosureParamData{
+                        param.name, param.default_value, param.default_string, param.is_rest};
+                } else {
+                    // Simple parameter - use IdentifierData
+                    arena_[param_node].data = Node::IdentifierData{param.name};
+                }
+
+                // Attach expression/numeric default as child of param node. String
+                // defaults stay carried only in ClosureParamData (their node is
+                // synthetic and routed through match string-dispatch instead).
+                if (param.default_node != NULL_NODE && !param.default_string.has_value()) {
+                    arena_[param_node].first_child = param.default_node;
+                }
             }
 
             if (first_param == NULL_NODE) {

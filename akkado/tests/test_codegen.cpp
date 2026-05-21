@@ -1545,6 +1545,49 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
     }
 }
 
+TEST_CASE("Codegen: transpose() shifts MIDI note fields", "[codegen][pattern][transpose]") {
+    auto find_seq = [](const akkado::CompileResult& r) -> const akkado::StateInitData* {
+        for (const auto& init : r.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) return &init;
+        }
+        return nullptr;
+    };
+
+    SECTION("single note: midi_note shifts by the semitone count") {
+        auto result = akkado::compile(R"(n"c4" |> transpose(@, 12) |> out(@, @))");
+        REQUIRE(result.success);
+        const auto* seq = find_seq(result);
+        REQUIRE(seq != nullptr);
+        REQUIRE(seq->sequence_events.size() >= 1);
+        REQUIRE(seq->sequence_events[0].size() >= 1);
+        // c4 = MIDI 60, transposed up an octave = 72.
+        CHECK(seq->sequence_events[0][0].midi_note ==
+              Catch::Approx(72.0f).margin(0.01f));
+    }
+
+    SECTION("chord: per-voice notes[] all shift by the semitone count") {
+        auto result = akkado::compile(
+            R"(chord("C") |> transpose(@, 12) |> poly(@, ({freq}) -> osc("sin", freq)) |> out(@, @))");
+        REQUIRE(result.success);
+        const auto* seq = find_seq(result);
+        REQUIRE(seq != nullptr);
+        const cedar::Event* chord = nullptr;
+        for (const auto& events : seq->sequence_events) {
+            for (const auto& e : events) {
+                if (e.type == cedar::EventType::DATA && e.num_values == 3) {
+                    chord = &e;
+                }
+            }
+        }
+        REQUIRE(chord != nullptr);
+        // C major = MIDI 60,64,67 -> +12 = 72,76,79.
+        CHECK(chord->midi_note == Catch::Approx(72.0f).margin(0.01f));
+        CHECK(chord->notes[0] == Catch::Approx(72.0f).margin(0.01f));
+        CHECK(chord->notes[1] == Catch::Approx(76.0f).margin(0.01f));
+        CHECK(chord->notes[2] == Catch::Approx(79.0f).margin(0.01f));
+    }
+}
+
 // =============================================================================
 // Parameter Exposure Tests
 // =============================================================================
@@ -7423,19 +7466,154 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
     }
 
-    SECTION("error: instrument function must have 3 params") {
+    // --- Flexible callback param shapes (prd-poly-callback-event-record) ----
+    auto has_code = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    SECTION("callback: 1 positional param (freq) compiles") {
         auto result = akkado::compile(R"(
-            fn bad(x) -> osc("sin", x)
-            n"c4" |> poly(%, bad, 4) |> out(%, %)
+            n"c4 e4 g4" |> poly(@, (freq) -> osc("sin", freq)) |> out(@, @)
         )");
-        CHECK(!result.success);
+        CHECK(result.success);
     }
 
-    SECTION("error: instrument must be a function") {
+    SECTION("callback: historical (freq, gate, vel) still compiles") {
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, (f, g, v) -> osc("sin", f) * v * g, 4) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("callback: empty param list compiles") {
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, () -> osc("sin", 220)) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("callback: record destructure compiles") {
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, ({freq, vel, gate}) ->
+                osc("sin", freq) * vel * gate) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("callback: mixed positional + destructure compiles") {
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, (freq, gate, {vel}) ->
+                osc("sin", freq) * vel * gate) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("callback: rest param compiles") {
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, (...e) ->
+                osc("sin", e.freq) * e.vel * e.gate) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("callback: fn-defined destructure instrument compiles") {
+        auto result = akkado::compile(R"(
+            fn inst({freq, gate, vel}) -> osc("sin", freq) * vel * gate
+            n"c4 e4 g4" |> poly(@, inst, 4) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("error E415: more than 11 positional params") {
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, (a,b,c,d,e,f,g,h,i,j,k,l) -> osc("sin", a)) |> out(@, @)
+        )");
+        REQUIRE_FALSE(result.success);
+        CHECK(has_code(result, "E415"));
+    }
+
+    SECTION("error E416: field bound positionally and in destructure (alias)") {
+        // `pitch` is an alias of `freq`; the literal-name case (freq, {freq})
+        // is caught earlier by E188, but an alias collision only the
+        // field-resolution check can see surfaces E416.
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, (freq, {pitch}) -> osc("sin", freq)) |> out(@, @)
+        )");
+        REQUIRE_FALSE(result.success);
+        CHECK(has_code(result, "E416"));
+    }
+
+    SECTION("(freq, {freq}) literal duplicate is rejected (E188)") {
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, (freq, {freq}) -> osc("sin", freq)) |> out(@, @)
+        )");
+        CHECK_FALSE(result.success);
+    }
+
+    SECTION("rest param not trailing is rejected (parser P001)") {
+        // The parser enforces rest-must-be-last; codegen's E417 is a defensive
+        // guard behind that. Either way the shape never compiles.
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, (...e, freq) -> osc("sin", freq)) |> out(@, @)
+        )");
+        CHECK_FALSE(result.success);
+    }
+
+    SECTION("destructure combined with rest param is rejected (parser P001)") {
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, ({freq}, ...e) -> osc("sin", freq)) |> out(@, @)
+        )");
+        CHECK_FALSE(result.success);
+    }
+
+    SECTION("error: instrument must be a function (E403)") {
         auto result = akkado::compile(R"(
             n"c4" |> poly(%, 440, 4) |> out(%, %)
         )");
-        CHECK(!result.success);
+        REQUIRE_FALSE(result.success);
+        CHECK(has_code(result, "E403"));
+    }
+
+    SECTION("many poly() calls — field banks do not exhaust the buffer pool") {
+        // Each poly() reserves an 11-slot field bank + 4 stereo buffers.
+        auto result = akkado::compile(R"(
+            n"c4" |> poly(@, ({freq}) -> osc("sin", freq)) |> @ +
+            (n"d4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"e4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"f4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"g4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"a4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"b4" |> poly(@, ({freq}) -> osc("sin", freq))) +
+            (n"c5" |> poly(@, ({freq}) -> osc("sin", freq))) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        CHECK_FALSE(has_code(result, "E101"));
+    }
+
+    SECTION("callback: field-bank wiring — FOREACH_EVENT carries bank base only") {
+        // Phase 2: the 11-slot per-voice field bank travels in inputs[0];
+        // inputs[1..3] are unused; inputs[4] is the voice-out L sink.
+        auto result = akkado::compile(R"(
+            n"c4 e4 g4" |> poly(@, ({freq, note, dur, phase}) ->
+                osc("sin", freq) * (1 - phase)) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        bool found = false;
+        for (const auto& in : insts) {
+            if (in.opcode == cedar::Opcode::FOREACH_EVENT) {
+                found = true;
+                CHECK(in.inputs[0] != 0xFFFF);   // field bank base
+                CHECK(in.inputs[1] == 0xFFFF);
+                CHECK(in.inputs[2] == 0xFFFF);
+                CHECK(in.inputs[3] == 0xFFFF);
+                CHECK(in.inputs[4] != 0xFFFF);   // voice-out L
+            }
+        }
+        CHECK(found);
     }
 
     SECTION("poly with default voice count (no voices arg)") {

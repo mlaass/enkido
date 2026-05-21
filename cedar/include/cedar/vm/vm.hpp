@@ -596,12 +596,11 @@ private:
     // Shared voice-pool engine: event scan, voice alloc/release, per-voice
     // body execution with XOR isolation, release-countdown mix. Used by both
     // execute_poly_block (inline body) and execute_foreach_event (table body).
+    // bank_base is the first of 11 contiguous per-voice field buffers (indexed
+    // by PatternPayload field id); voice_out_buf is the body's stereo L sink.
     void run_voice_pool(PolyAllocState& poly_state,
                         std::uint16_t mix_buf,
-                        std::uint16_t voice_freq_buf,
-                        std::uint16_t voice_gate_buf,
-                        std::uint16_t voice_vel_buf,
-                        std::uint16_t voice_trig_buf,
+                        std::uint16_t bank_base,
                         std::uint16_t voice_out_buf,
                         std::span<const Instruction> body);
 

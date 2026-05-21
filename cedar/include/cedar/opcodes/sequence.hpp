@@ -66,6 +66,11 @@ struct Event {
     // so `[cp, bd{vel:0.05}]` plays cp at 1.0 and bd at 0.05 independently
     // (op_sample_play applies velocities[v] per voice). Default 1.0.
     float velocities[MAX_VALUES_PER_EVENT];
+    // Per-voice MIDI note, parallel to values[]. Populated only for chord
+    // events (num_values > 1) where each voice has a distinct pitch — chord
+    // expansion knows the per-voice note. Single-voice events use the scalar
+    // `midi_note` instead. Default 0.0f.
+    float notes[MAX_VALUES_PER_EVENT];
     // Custom property values (Phase 2.1, PRD §11). Slot indices are assigned
     // at compile time by SequenceCompiler; semantics are pattern-local.
     // Default 0.0f means "not set".
@@ -78,6 +83,7 @@ struct Event {
         values[0] = 0.0f;
         for (std::size_t i = 0; i < MAX_VALUES_PER_EVENT; ++i) {
             velocities[i] = 1.0f;
+            notes[i] = 0.0f;
         }
         for (std::size_t i = 0; i < MAX_PROPS_PER_EVENT; ++i) {
             prop_vals[i] = 0.0f;
@@ -129,6 +135,9 @@ struct OutputEvents {
         float values[MAX_VALUES_PER_EVENT];
         // Per-voice velocity, parallel to values[]. Mirrors Event::velocities.
         float velocities[MAX_VALUES_PER_EVENT];
+        // Per-voice MIDI note, parallel to values[]. Mirrors Event::notes.
+        // Populated for chord events; single-voice events use midi_note.
+        float notes[MAX_VALUES_PER_EVENT];
         std::uint8_t num_values;
         std::uint16_t type_id;        // Type identifier for routing
         std::uint16_t source_offset;
@@ -161,8 +170,11 @@ struct OutputEvents {
             }
             // Default per-voice velocity to the event-wide value; callers that
             // want per-voice control overwrite e.velocities[] after add().
+            // Default per-voice note to the event-wide midi_note; chord-aware
+            // callers (process_event) overwrite e.notes[] after add().
             for (std::size_t i = 0; i < MAX_VALUES_PER_EVENT; ++i) {
                 e.velocities[i] = velocity;
+                e.notes[i] = midi_note;
             }
         }
     }
@@ -328,6 +340,7 @@ inline void process_event(SequenceState& state, const Event& e, std::uint64_t se
             auto& last = out.events[out.num_events - 1];
             for (std::size_t i = 0; i < MAX_VALUES_PER_EVENT; ++i) {
                 last.velocities[i] = e.velocities[i];
+                last.notes[i] = e.notes[i];
             }
             for (std::size_t i = 0; i < MAX_PROPS_PER_EVENT; ++i) {
                 last.prop_vals[i] = e.prop_vals[i];
