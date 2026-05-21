@@ -3,7 +3,7 @@ title: Arrays
 category: language
 order: 6
 index_headings: true
-keywords: [array, list, arrays, indexing, len, length, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension, index, stereo, variadic]
+keywords: [array, list, arrays, indexing, len, length, dynamic array, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension, index, stereo, variadic]
 group: language
 subgroup: data
 icon: Brackets
@@ -94,6 +94,13 @@ Returns the number of elements as a constant signal. Errors if the argument is n
 ```akk
 n = len([1, 2, 3, 4])  // 4
 osc("sin", 220) * (1 / n) |> out(@)
+```
+
+`len()` is **polymorphic**. On a static array it is a compile-time constant, as above. On a *dynamic* array — the per-event chord arrays returned by `notes()` / `freqs()` (see [Chords](../mini-notation/chords#notes)) — it is a **runtime signal** carrying the current event's chord size:
+
+```akk
+n"[c4,e4,g4] g3 [a3,c4]" as e
+len(e.notes)   // runtime: 3, then 1, then 2
 ```
 
 ## map

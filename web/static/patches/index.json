@@ -106,5 +106,15 @@
     "slug": "stepper-demo",
     "title": "Stepper Demo",
     "description": "Userspace `step` and `step_dir` operators built from `state`, `counter`, and method-call syntax — no C++ changes."
+  },
+  {
+    "slug": "arpeggio-demo",
+    "title": "Arpeggiator",
+    "description": "`e.notes` surfaces each chord as a dynamic array; `step()` walks it on every trigger — a userspace arpeggiator with no new C++ opcode."
+  },
+  {
+    "slug": "harmonizer-demo",
+    "title": "Harmonizer",
+    "description": "`map()` over a static interval array turns every melody note into a triad; `osc()` fans out across the array and `sum()` mixes it back."
   }
 ]

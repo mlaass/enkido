@@ -2,7 +2,7 @@
 title: Chords
 category: mini-notation
 order: 3
-keywords: [chord, chords, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, triad, seventh, sixth, ninth, eleventh, thirteenth, extended, polyphony, poly, soundfont, E410, M, maj, m, min, dim, aug, sus, sus2, sus4, "5", power, "6", m6, min6, "7", dom7, M7, maj7, "^", "^7", m7, min7, "-7", dim7, o7, m7b5, "0", aug7, "+7", mM7, "m^7", minmaj7, "9", M9, maj9, m9, min9, add9, add2, "11", m11, "13", "-", "+", o]
+keywords: [chord, chords, notes, freqs, dynamic array, arpeggiator, voicing, voicings, anchor, mode, addVoicings, drop2, drop3, close, open, inversion, triad, seventh, sixth, ninth, eleventh, thirteenth, extended, polyphony, poly, soundfont, E410, E181, M, maj, m, min, dim, aug, sus, sus2, sus4, "5", power, "6", m6, min6, "7", dom7, M7, maj7, "^", "^7", m7, min7, "-7", dim7, o7, m7b5, "0", aug7, "+7", mM7, "m^7", minmaj7, "9", M9, maj9, m9, min9, add9, add2, "11", m11, "13", "-", "+", o]
 group: sequencing
 subgroup: patterns
 icon: Music2
@@ -24,6 +24,10 @@ subfeatures:
     anchor: voicing
     tagline: Inversions and spread voicings.
     snippet: '.voicing("open")'
+  - name: Notes
+    anchor: notes
+    tagline: Chord notes as a dynamic array.
+    snippet: 'e.notes.step(trigger(8))'
 ---
 
 # Chords
@@ -52,9 +56,9 @@ chord("Cmaj9")      // C major 9th — 5 voices
 chord("Am C Dm G")  // One chord per beat
 ```
 
-All three syntaxes — `chord("C^7")`, `c"C^7"` mini-notation, and the
-apostrophe-literal `C^7_4'` — share one canonical quality table
-(`akkado::CHORD_INTERVALS`). Whatever works in one works in all of them.
+Both syntaxes — `chord("C^7")` and `c"C^7"` mini-notation — share one
+canonical quality table (`akkado::CHORD_INTERVALS`). Whatever works in one
+works in the other.
 
 ## triad
 
@@ -166,6 +170,47 @@ Chord patterns produce events with multiple voices per step. How those voices re
   ```
 
 > **Voice limit**: chord events carry up to **16 voices** per step (`MAX_VALUES_PER_EVENT`). The largest built-in quality is `13` at 6 voices, so every chord in the standard table fits comfortably. Custom voicings registered via `addVoicings()` are truncated past 16 intervals.
+
+## notes
+
+`poly()` and `soundfont()` *sound* a chord; `notes()` and `freqs()` hand you the chord as **data** you can transform. They take a pattern and return a **dynamic array** — an array whose length is the current event's chord size, varying per event at runtime.
+
+| Function   | Returns                                    |
+|------------|--------------------------------------------|
+| `notes(e)` | dynamic array of MIDI numbers              |
+| `freqs(e)` | dynamic array of frequencies (Hz)          |
+
+The method-style forms `e.notes` and `e.freqs` are equivalent and usually read better:
+
+```akk
+n"[c4,e4,g4] g3 [a3,c4]" as e
+e.notes        // dynamic array: [60,64,67], then [55], then [57,60]
+e.freqs        // same chords in Hz
+len(e.notes)   // runtime signal: 3, then 1, then 2
+```
+
+`len()` is polymorphic — a constant for static arrays, a runtime signal for dynamic ones. Indexing wraps by default, so a free-running counter walks the chord regardless of its size. Combined with `step()` (see [State Cells](../builtins/state)) that is a complete arpeggiator:
+
+```akk
+fn step (arr, trig) -> arr[counter(trig)]
+
+n"[c4,e4,g4] [a3,c4,e4] g3 [b3,d4,f#4]" as e
+e.notes.step(trigger(8))     // walk the current chord on each 8th
+  |> mtof(@) |> osc("saw", @) |> out(@)
+```
+
+`map()` over a dynamic array transposes every chord note and stays dynamic:
+
+```akk
+map(e.notes, (v) -> v + 7)   // the chord up a fifth — still a dynamic array
+```
+
+Dynamic arrays cannot auto-fan-out across a stateful UGen (the chord size is not known at compile time): `osc("sin", e.freqs)` is a compile error (**E181**) directing you to `poly()`. For a *fixed*-size transform, map over a **static** array instead — that fans out at compile time:
+
+```akk
+n"c4 e4 g4" as e
+sum(osc("saw", mtof(map([0, 4, 7], (i) -> e.note + i))))   // every note → a triad
+```
 
 ## anchor
 

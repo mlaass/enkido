@@ -1244,6 +1244,26 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "mini-notation",
 		"title": "Chords"
 	},
+	"notes": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"freqs": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"dynamic array": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"arpeggiator": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
 	"voicing": {
 		"slug": "chords",
 		"category": "mini-notation",
@@ -1335,6 +1355,11 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Chords"
 	},
 	"e410": {
+		"slug": "chords",
+		"category": "mini-notation",
+		"title": "Chords"
+	},
+	"e181": {
 		"slug": "chords",
 		"category": "mini-notation",
 		"title": "Chords"

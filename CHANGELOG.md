@@ -58,6 +58,19 @@ mini-notation) is unaffected.
 
 ### Added
 
+- **Pattern event arrays — `notes()` / `freqs()`** — surface a pattern
+  event's chord notes as a first-class **dynamic array** (an array
+  whose length is a runtime signal). `notes(e)` returns MIDI numbers,
+  `freqs(e)` returns Hz; the method forms `e.notes` / `e.freqs` are
+  equivalent. `len()` is now polymorphic (compile-time constant for
+  static arrays, runtime signal for dynamic ones), `arr[i]` indexes
+  dynamic arrays with wrap-by-default, and `map()` over a dynamic
+  array stays dynamic. Combined with `step()` / `counter()` this makes
+  arpeggiators and harmonizers userspace closures — no new C++ opcode
+  per musical operator. A stateful UGen cannot auto-fan-out over a
+  dynamic array (`osc("sin", e.freqs)` → E181, use `poly()`). New
+  `SEQPAT_VALUES` opcode; demo patches `arpeggio-demo` and
+  `harmonizer-demo`.
 - **Unified `dry`/`wet` convention across every effect builtin** — all 33
   effect builtins (delays incl. `pingpong`, reverbs, modulation, comb,
   filters, distortion, dynamics) now expose `dry` and `wet` as their
