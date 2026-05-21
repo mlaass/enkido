@@ -99,6 +99,24 @@
 		}
 	}
 
+	// Push the live editor contents up to the embedding parent so it can build a
+	// deep link that opens this exact patch — including the visitor's edits — in
+	// the full IDE. Debounced because CodeMirror fires on every keystroke.
+	let codeDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	function postPatchCode(code: string) {
+		if (window.parent && window.parent !== window) {
+			window.parent.postMessage({ type: 'nkido:patch-code', code }, '*');
+		}
+	}
+
+	$effect(() => {
+		const code = editorStore.code;
+		if (!patchLoaded) return;
+		if (codeDebounce) clearTimeout(codeDebounce);
+		codeDebounce = setTimeout(() => postPatchCode(code), 300);
+	});
+
 	onMount(async () => {
 		// Do not let the embed overwrite the main app's localStorage-saved code.
 		editorStore.setPersistenceEnabled(false);
@@ -138,6 +156,7 @@
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('message', handleParentMessage);
 		}
+		if (codeDebounce) clearTimeout(codeDebounce);
 		editorStore.setPersistenceEnabled(true);
 		editorStore.reloadFromPersistence();
 	});
