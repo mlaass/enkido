@@ -234,11 +234,25 @@ PYBIND11_MODULE(cedar_core, m) {
             }
         })
 
-        // Polyphony state initialization
-        .def("init_poly_state", &cedar::VM::init_poly_state,
+        // Polyphony state initialization. `prop_defaults` is an optional
+        // per-slot array of callback-destructure defaults (PRD
+        // prd-poly-callback-event-record Phase 3); pass an empty array for
+        // none.
+        .def("init_poly_state",
+            [](cedar::VM& vm, std::uint32_t state_id, std::uint32_t seq_state_id,
+               std::uint8_t max_voices, std::uint8_t mode,
+               std::uint8_t steal_strategy, float release_seconds,
+               py::array_t<float> prop_defaults) {
+                auto d = prop_defaults.unchecked<1>();
+                const auto prop_count = static_cast<std::uint8_t>(d.size());
+                vm.init_poly_state(state_id, seq_state_id, max_voices, mode,
+                                   steal_strategy, release_seconds, prop_count,
+                                   prop_count > 0 ? d.data(0) : nullptr);
+            },
             py::arg("state_id"), py::arg("seq_state_id"),
             py::arg("max_voices"), py::arg("mode"), py::arg("steal_strategy"),
-            py::arg("release_seconds") = 0.0f)
+            py::arg("release_seconds") = 0.0f,
+            py::arg("prop_defaults") = py::array_t<float>())
 
         // Extended-params initialization (PRD prd-extended-params §5).
         // `constants` and `buffer_indices` must be equal-length arrays of

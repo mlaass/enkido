@@ -140,7 +140,7 @@ own detuned cluster:
 fn pad_voice(freq, gate, vel, ext) ->
     saw(freq, ext.phase) * adsr(gate, 0.4, 0.6, 0.7, 1.2) * vel
 
-fn fat(freq, gate, vel) ->
+fn fat({freq, gate, vel}) ->
     unison(freq, gate, vel, pad_voice,
         voices: 4, detune: 0.25, width: 0.7)
 

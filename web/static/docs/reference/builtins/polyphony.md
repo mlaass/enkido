@@ -11,7 +11,7 @@ subfeatures:
   - name: Poly
     anchor: poly
     tagline: Polyphonic voice allocation.
-    snippet: 'n"c4 e4 g4 b4" |> poly(@, (f, g, v) -> osc("sin", f) * v, 8)'
+    snippet: 'n"c4 e4 g4 b4" |> poly(@, ({freq, vel}) -> osc("sin", freq) * vel, 8)'
   - name: Mono
     anchor: mono
     tagline: Monophonic last-note priority.
@@ -35,17 +35,17 @@ Voice allocation for patterns. `poly()` runs an instrument function per voice an
 | Param      | Type     | Default | Description |
 |------------|----------|---------|-------------|
 | input      | pattern  | -       | Pattern or `chord(...)` producing events (notes or chords) |
-| instrument | function | -       | A function `(freq, gate, vel) -> signal` run per voice |
+| instrument | function | -       | A function `({freq, gate, vel}) -> signal` run per voice |
 | voices     | number   | 64      | Voice count (1-128, must be a literal) |
 | `release:` | number   | 0.0     | Seconds of voice-mix tail past note-off. Holds the gate high for the window so the instrument's ADSR finishes its release stage instead of being multiplied to zero. |
 
-`poly()` reads pattern events at runtime and assigns each note to its own voice slot. The instrument function receives per-voice frequency, gate, and velocity, and the outputs of all active voices are summed. When the same note appears in consecutive events, the voice slot is reused (preserving phase continuity); when all voices are busy, the oldest is stolen.
+`poly()` reads pattern events at runtime and assigns each note to its own voice slot. The instrument runs once per voice and the outputs of all active voices are summed. When the same note appears in consecutive events, the voice slot is reused (preserving phase continuity); when all voices are busy, the oldest is stolen.
 
-The instrument must be a 3-parameter function; the names don't matter but the order is fixed: `(freq, gate, vel)`. The instrument may return a **mono** or **stereo** signal — `poly` always produces stereo output, broadcasting mono bodies to both channels.
+The instrument **destructures the event record** — name the fields you want and they bind per voice: `({freq, gate, vel}) -> signal`. Any pattern event field works (`freq`, `gate`, `vel`, `trig`, `note`, `dur`, `phase`, …) plus custom record-suffix fields like `c4{cutoff:0.8}`. Missing fields bind to `0`, or to an explicit `{cutoff = 0.5}` default. The instrument may return a **mono** or **stereo** signal — `poly` always produces stereo output, broadcasting mono bodies to both channels.
 
 ```akk
 // Polyphonic chord progression with the default 64 voices
-stab = (freq, gate, vel) ->
+stab = ({freq, gate, vel}) ->
     saw(freq) * ar(gate, 0.05, 0.4) * vel
     |> lp(@, 1100)
 
@@ -55,20 +55,32 @@ chord("C Em Am G") |> poly(@, stab) |> out(@)
 ```akk
 // Lower voice count if you want predictable stealing
 n"c4 e4 g4 b4"
-    |> poly(@, (f, g, v) -> osc("sin", f) * v, 8)
+    |> poly(@, ({freq, vel}) -> osc("sin", freq) * vel, 8)
+    |> out(@)
+```
+
+```akk
+// Per-note filter from a custom record-suffix field
+n"c4{cutoff:0.9} e4{cutoff:0.3} g4{cutoff:0.6}"
+    |> poly(@, ({freq, gate, cutoff}) ->
+        saw(freq) |> lp(@, cutoff * 4000) |> @ * ar(gate, 0.01, 0.3))
     |> out(@)
 ```
 
 ```akk
 // Stereo instrument: each voice returns L/R, poly sums per-channel.
 n"c4 e4 g4"
-    |> poly(@, (f, g, v) -> stereo(saw(f), saw(f * 1.01)) * v, 4)
+    |> poly(@, ({freq, vel}) -> stereo(saw(freq), saw(freq * 1.01)) * vel, 4)
     |> out(@)
 ```
 
+The instrument may also take a `(...e)` rest param to bind the whole event
+record (`e.freq`, `e.vel`, …). The legacy positional form `(freq, gate, vel)
+->` — fields by position, not name — stays valid for back-compat, but the
+record form is canonical.
+
 For *unison* per voice — fanning each chord note into a stereo-spread,
-detuned cluster — wrap [`unison`](unison) inside the 3-arg `poly`
-instrument.
+detuned cluster — wrap [`unison`](unison) inside the `poly` instrument.
 
 ### `release:` — click-free note-off
 
@@ -84,7 +96,7 @@ isn't reusable until the window expires, so set the window roughly equal
 to your longest ADSR release.
 
 ```akk
-fn lead(freq, gate, vel) ->
+fn lead({freq, gate, vel}) ->
     saw(freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel
 
 midi() |> poly(@, lead, 8, release: 0.3) |> out(@)
@@ -99,17 +111,17 @@ Same option is available on [`mono`](#mono) and [`legato`](#legato).
 | Param      | Type     | Default | Description |
 |------------|----------|---------|-------------|
 | input      | pattern  | -       | Pattern producing events |
-| instrument | function | -       | A function `(freq, gate, vel) -> signal` |
+| instrument | function | -       | A function `({freq, gate, vel}) -> signal` |
 | `release:` | number   | 0.0     | Seconds of mix tail past note-off (voice-manager mode). See [`poly`](#poly) for mechanics. |
 
-`mono()` is `poly()` with one voice and last-note priority. Every new note retriggers the gate so envelopes restart cleanly, the classic hardware-mono behavior.
+`mono()` is `poly()` with one voice and last-note priority. Every new note retriggers the gate so envelopes restart cleanly, the classic hardware-mono behavior. The instrument destructures the event record exactly like [`poly`](#poly).
 
 `mono(stereo_signal)` is a different builtin (stereo-to-mono downmix). The compiler routes based on argument type: a function instrument gets the voice manager; a stereo signal gets the downmix.
 
 ```akk
 // Mono lead with retrigger on every note
 n"c4 e4 g4 c5"
-    |> mono((f, g, v) -> saw(f) * adsr(g, 0.01, 0.1, 0.6, 0.3))
+    |> mono(({freq, gate}) -> saw(freq) * adsr(gate, 0.01, 0.1, 0.6, 0.3))
     |> out(@)
 ```
 
@@ -120,15 +132,15 @@ n"c4 e4 g4 c5"
 | Param      | Type     | Default | Description |
 |------------|----------|---------|-------------|
 | input      | pattern  | -       | Pattern producing events |
-| instrument | function | -       | A function `(freq, gate, vel) -> signal` |
+| instrument | function | -       | A function `({freq, gate, vel}) -> signal` |
 | `release:` | number   | 0.0     | Seconds of mix tail past note-off. See [`poly`](#poly) for mechanics. |
 
-Like `mono()`, but the gate stays high while notes overlap, so envelopes don't restart on every note. Frequency and velocity update but the AR/ADSR keeps decaying through the phrase. Best for legato leads and bass lines.
+Like `mono()`, but the gate stays high while notes overlap, so envelopes don't restart on every note. Frequency and velocity update but the AR/ADSR keeps decaying through the phrase. Best for legato leads and bass lines. The instrument destructures the event record exactly like [`poly`](#poly).
 
 ```akk
 // Smooth bassline, gate stays high across notes
 n"c2 e2 g2 c3"
-    |> legato((f, g, v) -> saw(f) * adsr(g, 0.01, 0.2, 0.8, 0.4))
+    |> legato(({freq, gate}) -> saw(freq) * adsr(gate, 0.01, 0.2, 0.8, 0.4))
     |> out(@)
 ```
 

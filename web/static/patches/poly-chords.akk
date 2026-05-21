@@ -5,7 +5,7 @@
 
 bpm = 96
 
-pad = (freq, gate, vel) -> {
+pad = ({freq, gate, vel}) -> {
     // Two slightly-detuned saws for chorusing.
     voices = saw(freq) + saw(freq * 1.005)
     voices * adsr(gate, 0.08, 0.7, .1, 0.5) * vel * 0.18

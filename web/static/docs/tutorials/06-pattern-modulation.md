@@ -94,10 +94,10 @@ The fix is to consume them with `poly()`, which fans out per voice:
 
 ```akk
 c"Am C G Em"
-    |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig))
+    |> poly(@, ({freq, trig}) -> osc("saw", freq) * ar(trig), 4)
     |> out(@)
-// AR + `e.trig` (per-note pulse).
-// Swap to `e.gate` for ADSR-style sustain.
+// AR + `trig` (per-note pulse).
+// Swap to `gate` for ADSR-style sustain.
 ```
 
 Sample patterns route through `SAMPLE_PLAY` and produce audio. Pipe them to `out()` directly:

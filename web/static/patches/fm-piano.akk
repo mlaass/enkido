@@ -8,7 +8,7 @@
 
 bpm = 96
 
-ep = (freq, gate, vel) -> {
+ep = ({freq, gate, vel}) -> {
     // Modulator at double frequency, scaled by an AR envelope so the
     // FM index is high at attack and decays toward zero.
     mod_env = ar(gate, 0.001, 0.6)

@@ -121,6 +121,12 @@ fn lp_voice(freq, {cutoff, q}) ->
 lp_voice(440, {cutoff: 2000, q: 0.7})
 ```
 
+The `poly()` / `mono()` / `legato()` instrument callback consumes the pattern
+event record by destructuring it — write the instrument as
+`({freq, gate, vel}) -> body`, naming only the event fields the body needs.
+See [Polyphony](../builtins/polyphony.md) for the full instrument-callback
+convention.
+
 ## Defaults
 
 Both the statement form and the parameter form accept default expressions per field. The default is evaluated only when the source record omits the field:

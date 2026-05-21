@@ -14,7 +14,7 @@ Plug in a keyboard and play through your patch. This tutorial walks from a one-l
 The shortest playable MIDI patch is one line:
 
 ```akk
-midi() |> poly(@, (f, g, v) -> osc("sin", f) * adsr(g, 0.01, 0.2, 0.7, 0.3) * v, 8) |> out(@)
+midi() |> poly(@, ({freq, gate, vel}) -> osc("sin", freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel, 8) |> out(@)
 ```
 
 Bare `midi()` opens the host's default MIDI input. On the web, the Files panel has a MIDI tab that lists every visible device and asks for browser permission on first use. On the CLI, run `nkido-cli --list-midi-devices` to see what's connected, then pass `--midi-in "Name"` (substring match) to pick one.
@@ -28,7 +28,7 @@ cutoff_base = param("cutoff", 600, 100, 4000)
 env_amount  = param("env",   1800, 0, 6000)
 res         = param("res",    0.4, 0, 1)
 
-fn lead(freq, gate, vel) ->
+fn lead({freq, gate, vel}) ->
     osc("saw", freq) * 0.6 + osc("sqr", freq * 0.5) * 0.3
         |> lp(@, cutoff_base + env_amount * vel * ar(gate, 0.005, 0.4), res)
         |> @ * adsr(gate, 0.05, 0.2, 0.7, 0.3) * vel

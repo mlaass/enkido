@@ -32,7 +32,7 @@ Bare `midi()` opens the default live device. All options are inside a single rec
 Polyphonic synth from any plugged-in keyboard:
 
 ```akk
-fn lead(freq, gate, vel) ->
+fn lead({freq, gate, vel}) ->
     saw(freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel
         |> lp(@, 2000, 0.7)
 
@@ -101,7 +101,7 @@ Only `freq`, `gate`, `vel`, and `trig` are synthesised. Accessing pattern-only f
 `poly`, `mono`, `legato`, and `soundfont` read the full polyphonic note list directly off the MIDI state — they ignore the mono buffers and call the instrument function per voice:
 
 ```akk
-chord_pad = (freq, gate, vel) ->
+chord_pad = ({freq, gate, vel}) ->
     osc("saw", freq) * adsr(gate, 0.05, 0.3, 0.7, 0.4) * vel
         |> lp(@, 1600)
 

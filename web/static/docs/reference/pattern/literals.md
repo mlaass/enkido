@@ -57,9 +57,9 @@ Atoms are chord symbols (`Am`, `C7`, `Fmaj7`, …). Multi-voice; consume via `po
 
 ```akk
 c"Am C G Em"
-    |> poly(4, fn (e) -> osc("saw", e.freq) * ar(e.trig) )
+    |> poly(@, ({freq, trig}) -> osc("saw", freq) * ar(trig), 4)
     |> out(@)
-// `e.trig` is the per-note pulse for AR. Use `e.gate` instead
+// `trig` is the per-note pulse for AR. Use `gate` instead
 // if the instrument is an ADSR that should sustain across the
 // note's duration.
 ```

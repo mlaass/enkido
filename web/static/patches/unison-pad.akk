@@ -11,7 +11,7 @@ fn pad_voice(freq, gate, vel, ext) ->
 
 // fat(): a normal 3-arg poly instrument that fans each note into 4 detuned
 // unison voices. `unison` always returns stereo, so `poly` will too.
-fn fat(freq, gate, vel) ->
+fn fat({freq, gate, vel}) ->
     unison(freq, gate, vel, pad_voice,
            voices: 4, detune: 0.25, width: 0.7, phase: 0.5)
 

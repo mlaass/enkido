@@ -127,7 +127,7 @@ n"a2 a3 c3 a2 e3 a2 g3 c3"
 
 bpm = 80
 
-pad = (freq, gate, vel) ->
+pad = ({freq, gate, vel}) ->
     osc("saw", freq) * adsr(gate, 0.3, 0.4, 0.8, 0.8) * vel * 0.1
         |> lp(@, 1400)
 

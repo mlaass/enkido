@@ -1272,7 +1272,7 @@ constexpr const char* STATE_PRESERVE_SOURCES[] = {
     R"(n"[c4 d4 e4 f4]" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
     // Chord pattern via poly (E410 requires poly() wrapping for multi-voice
     // chords into a mono synth — see reference/mini-notation/chords.md).
-    R"(fn lead(freq, gate, vel) -> osc("sin", freq) * vel * 0.05
+    R"(fn lead({freq, gate, vel}) -> osc("sin", freq) * vel * 0.05
        c"<Am Em F G>" |> poly(@, lead, 4) |> out(@))",
     // Value pattern modulating amplitude (no osc-on-pattern needed).
     R"(v"<0.2 0.5 0.8 0.5>" * osc("sin", 220) |> out(@, @))",

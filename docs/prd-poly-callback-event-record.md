@@ -1,4 +1,4 @@
-**Status: IN PROGRESS — Phases 1–4 + 6 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–4 (callback param model, all 11 fixed fields, custom record-suffix fields, mono/legato parity) are complete. Phase 6 (destructure-param closure codegen — a Phase 1 corner that only the doc sweep surfaced) is shipped. Phase 5 (migration sweep + docs) remains.
+**Status: COMPLETE — all phases shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–4 (callback param model, all 11 fixed fields, custom record-suffix fields, mono/legato parity), Phase 6 (destructure-param closure codegen — a Phase 1 corner the doc sweep surfaced), and Phase 5 (migration sweep + docs — record form is now canonical everywhere in-repo) are all shipped.
 
 # Poly Callback Event-Record PRD — flexible instrument callbacks
 
@@ -386,7 +386,7 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 1. **Error-code drift.** The PRD §3.2/§5 list `E407/E408/E409/E415`; the codes that actually shipped (Phases 1–3) are `E415` (>11 positionals), `E416` (field bound positionally and in destructure), `E419` (non-constant destructure default). The Phase 4 tests assert the shipped codes.
 2. **Pre-existing legato VM bug found and fixed.** `docs/prd-polyphony-system.md` §3.1 and `web/static/docs/reference/builtins/polyphony.md` specify legato as "on a new note, update freq/vel but do NOT retrigger (gate stays high)". `PolyAllocState::allocate_voice` (`cedar/include/cedar/opcodes/dsp_state.hpp`) was setting `pending_gate_on` unconditionally for both mono and legato, so the VM emitted a 0→1 gate edge + `trig` pulse on every legato note — legato retriggered identically to mono. This predated this PRD (the mono/legato VM branch is from `prd-polyphony-system.md`). Fixed by computing `legato_hold = (mode == 2) && was_active && !was_releasing` and, when held, skipping the gate-on edge (`pending_gate_on = BLOCK_SIZE`) and the `gate`/`age` reset — so an overlapping legato note glides without re-attacking, while a note landing after the previous one's release tail still retriggers. The Phase 4 VM test `POLY legato: gate stays high across overlapping notes` asserts the documented behaviour (one gate onset for the held phrase) and passes.
 
-### Phase 5 — Migration sweep + docs
+### Phase 5 — Migration sweep + docs  ✅ COMPLETE
 **Goal:** record form is the canonical idiom everywhere in-repo.
 - Rewrite all docs, example patches, and test fixtures listed in §6 — plus
   every other in-repo `poly`/`mono`/`legato` callback (the goal is *everywhere*,
@@ -402,6 +402,36 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 - **Verify:** `bun run check`, `bun run build`; full `akkado_tests` + `cedar_tests`; `experiments/run_all.sh`.
 - **Depends on Phase 6** — the doc sweep uses `name = ({…}) -> body` named
   instrument functions, which only compile after the Phase 6 fix.
+
+**Implementation notes vs. this PRD:**
+1. **`polyphony.md`** rewritten — `poly`/`mono`/`legato` param tables,
+   prose, and frontmatter snippet all describe the record-destructure
+   instrument; a new per-note-`cutoff` example was added; positional form is
+   one back-compat sentence.
+2. **Docs migrated:** `tutorials/05`/`06`/`07`, `pattern/literals.md`,
+   `mini-notation/chords.md`, `builtins/midi.md`, `builtins/unison.md`;
+   `records.md` got a cross-link note. The §6 files `signals.md`,
+   `audio-input.md`, `arrays.md`, `stereo.md`, `soundfonts.md`,
+   `higher-order-dsl.md`, `glide-and-interpolation.md` turned out to hold
+   only prose mentions of `poly()` — no callback to migrate. A `fn lead(…) =`
+   typo in `chords.md` was fixed to `->` along the way.
+3. **Patches migrated:** `poly-chords`, `chord-stab`, `fm-piano`,
+   `welcome/11-chord-pad`, `midi-cc-filter`, `midi-keys`, `unison-pad`.
+   `unison()` 4-arg `(freq, gate, vel, ext)` instruments are untouched —
+   they are not poly callbacks.
+4. **Test fixtures:** only `test_higher_order.cpp` and
+   `test_fuzz_recompile_audio.cpp` carried positional poly callbacks;
+   migrated. `test_codegen.cpp`'s deliberate "historical `(freq, gate, vel)`
+   still compiles" regression SECTION is kept positional on purpose.
+5. **`cedar_core` binding fix.** Verification surfaced a pre-existing build
+   break: Phase 3 added `prop_count` / `prop_defaults` params to
+   `VM::init_poly_state` but never updated the pybind binding
+   (`cedar/bindings/bindings.cpp`), so `cedar_core` — and therefore every
+   `experiments/` test — failed to build. Rebound via a lambda that takes an
+   optional `py::array_t<float>` for `prop_defaults`.
+- **Verified:** `bun run check` (0 errors) + `bun run build` clean;
+  `akkado_tests` 877, `cedar_tests` 292; `test_op_poly` / `test_op_mono` /
+  `test_op_legato` all green (300 s renders).
 
 ### Phase 6 — Destructure-param closure codegen  ✅ COMPLETE
 **Goal:** a destructure-param closure works in *every* context, not only as a

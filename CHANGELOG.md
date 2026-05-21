@@ -58,6 +58,22 @@ mini-notation) is unaffected.
 
 ### Added
 
+- **Flexible `poly()` / `mono()` / `legato()` instrument callbacks** — the
+  instrument is no longer fixed to a 3-parameter `(freq, gate, vel)`
+  signature. It can read *any* pattern event field: by record destructure
+  (`({freq, note, dur, cutoff}) -> …`), by positional prefix (canonical
+  order `freq, gate, vel, trig, type, note, dur, chance, time, phase,
+  sample_id`), by a mix of the two, or by a rest param binding the whole
+  event (`(...e) -> e.freq`). Custom mini-notation record-suffix fields
+  (`c4{cutoff:0.8}`) are readable per voice; an absent field binds to `0`
+  or to an explicit `{cutoff = 0.5}` destructure default. The historical
+  `(freq, gate, vel)` positional form stays valid; `mono` and `legato`
+  accept every callback shape identically. Record form is now the
+  canonical idiom across all docs and example patches.
+- Destructure-param closures compile in every context — a closure
+  assigned to a name (`stab = ({freq, gate, vel}) -> …`) and used as a
+  `poly`/`mono`/`legato` instrument, or called directly, not only when
+  passed inline as a direct `poly()` argument.
 - **Pattern event arrays — `notes()` / `freqs()`** — surface a pattern
   event's chord notes as a first-class **dynamic array** (an array
   whose length is a runtime signal). `notes(e)` returns MIDI numbers,
@@ -110,6 +126,15 @@ mini-notation) is unaffected.
   `web/static/docs/reference/builtins/` carries a Category-A/B intro
   paragraph and per-effect `dry`/`wet` rows in the parameter tables.
   CLAUDE.md §"Effect Parameters" rewritten with the full convention.
+
+### Fixed
+
+- `legato()` no longer retriggers on every note. A pre-existing VM bug
+  set the gate-on edge unconditionally for both `mono` and `legato`, so
+  `legato` re-attacked the envelope identically to `mono`. Overlapping
+  legato notes now glide without re-attacking (gate stays high); a note
+  arriving after the previous one's release tail still retriggers, as
+  documented.
 
 ### Known limitations / deferred work
 

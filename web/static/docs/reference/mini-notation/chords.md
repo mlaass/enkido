@@ -164,7 +164,7 @@ Chord patterns produce events with multiple voices per step. How those voices re
   c"CM Am Dm G" |> osc("saw", @freq) |> out(@)
 
   // ✓ poly() wraps the synth in N parallel voices
-  fn lead(freq, gate, vel) =
+  fn lead({freq, gate, vel}) ->
     osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
   c"CM Am Dm G" |> poly(@, lead, 8) |> out(@)
   ```
