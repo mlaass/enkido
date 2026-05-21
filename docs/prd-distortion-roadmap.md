@@ -10,7 +10,7 @@ Nkido already ships nine distortion opcodes — `saturate`, `softclip`, `bitcrus
 2. **Common shapers users want but cannot get from the existing opcodes** — hard clipping (the current `softclip` is true polynomial soft-clip; there is no hard clipper), asymmetric clipping with bias DC-compensated, sawtooth-style linear foldback (distinct from `fold`'s sine wavefolder), and pure bit-depth quantization (distinct from `bitcrush` which couples bit-depth with sample-rate reduction).
 3. **A user-supplied transfer function** for arbitrary nonlinear curves not covered by any existing opcode — the Serum / Vital / Phase Plant "Shaper" primitive.
 
-This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher modeled on the existing `osc(type, freq, ...)` pattern at `akkado/include/akkado/stdlib.hpp:14`. The dispatcher provides one uniform entry point across all distortion algorithms — new and existing — without breaking the per-name builtins or adding any runtime cost (the `match()` dispatch resolves at compile time and only the matched arm reaches bytecode).
+This PRD also introduces a polymorphic `dist(algo, sig, drive, n)` dispatcher modeled on the existing `osc(type, freq, ...)` pattern in `akkado/include/akkado/stdlib.hpp`. The dispatcher provides one uniform entry point across all distortion algorithms — new and existing — without breaking the per-name builtins or adding any runtime cost (the `match()` dispatch resolves at compile time and only the matched arm reaches bytecode).
 
 ### Why now?
 
@@ -20,13 +20,13 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 
 ### Major design decisions
 
-- **Stdlib-first.** New stateless shapers ship as userspace `fn` definitions in `akkado/include/akkado/stdlib.hpp`, not new opcodes. Stdlib `fn`s are fully inlined at every call site (per `docs/agent-guide-userspace-functions.md:144`), so a userspace `hardclip(sig, thresh) -> clamp(sig, -thresh, thresh)` compiles to a single `CLAMP` opcode with no function-call overhead. Only stateful / ADAA / polynomial-fit shapers earn an opcode.
+- **Stdlib-first.** New stateless shapers ship as userspace `fn` definitions in `akkado/include/akkado/stdlib.hpp`, not new opcodes. Stdlib `fn`s are fully inlined at every call site (per `docs/agent-guide-userspace-functions.md`), so a userspace `hardclip(sig, thresh) -> clamp(sig, -thresh, thresh)` compiles to a single `CLAMP` opcode with no function-call overhead. Only stateful / ADAA / polynomial-fit shapers earn an opcode.
 - **No unified `shape(in, drive, mode)` opcode.** An early design considered consolidating multiple shapers into one mode-dispatched opcode. The Plan-mode review pushed back: stdlib `fn` inlining already eliminates the runtime branch a multiplexer opcode would re-introduce. A `match(algo)` dispatcher in stdlib gives users the same named-mode UX without any per-sample switch.
 - **`dist(algo, sig, ...)` mirrors `osc(type, freq, ...)`.** Same compile-time `match()` pattern. Drive is the always-present second runtime param; `n` is the optional secondary param (asym bias, bitcrush rate, tube bias). All existing distortion opcodes are exposed through `dist` for uniformity.
 - **No `sine` or `cosine` stdlib shapers.** `sine` collides with `osc("sin", ...)`; `cosine` is `cos(x) * scale`, too thin to justify a named slot. Both were dropped from the initial brain-dump after user review.
 - **Filter-feedback saturation is opt-in.** Adding `tanh` to SVF/Formant feedback changes their impulse response. Gate behind an `ExtendedParams<1> fb_sat` (default 0=off) so existing patches and regression tests stay bit-identical.
-- **ADAA upgrade scoped to `tube` only.** `tape`, `xfmr`, `excite` already use 2× oversampling with ~24 dB aliasing headroom; the visible win is `tube` at extreme drive (per `prd-squelch-engine.md:104`). Defer the others until a user actually hits aliasing.
-- **Polynomial Chebyshev, not LUT, for the generic shaper.** Lookup tables would require a bank registry analog to wavetables (`cedar/include/cedar/opcodes/oscillators.hpp:1026-1029`), which is a significant infra lift. Polynomials fit `ExtendedParams<8>` directly and have closed-form ADAA (antiderivative of degree-N is degree-N+1).
+- **ADAA upgrade scoped to `tube` only.** `tape`, `xfmr`, `excite` already use 2× oversampling with ~24 dB aliasing headroom; the visible win is `tube` at extreme drive (per `prd-squelch-engine.md` §4). Defer the others until a user actually hits aliasing.
+- **Polynomial Chebyshev, not LUT, for the generic shaper.** Lookup tables would require a bank registry analog to wavetables (`cedar/include/cedar/opcodes/oscillators.hpp`), which is a significant infra lift. Polynomials fit `ExtendedParams<8>` directly and have closed-form ADAA (antiderivative of degree-N is degree-N+1).
 - **`multiband3fx` already ships.** This PRD documents it and adds a 2-band `multiband2fx` variant for the common bass/treble split. True Linkwitz-Riley alignment is deferred until phase coherence becomes a user complaint.
 
 ---
@@ -38,13 +38,13 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 | Capability | Status | Reference |
 |---|---|---|
 | Nine distortion opcodes (saturate, softclip, bitcrush, fold, tube, smooth, tape, xfmr, excite) | ✅ Shipped | `cedar/include/cedar/opcodes/distortion.hpp` |
-| `multiband3fx(sig, f1, f2, fx_lo, fx_mid, fx_hi)` | ✅ Shipped | `akkado/include/akkado/stdlib.hpp:38` |
+| `multiband3fx(sig, f1, f2, fx_lo, fx_mid, fx_hi)` | ✅ Shipped | `akkado/include/akkado/stdlib.hpp` |
 | Distortion docs | ✅ Shipped | `web/static/docs/reference/builtins/distortion.md` |
 | Distortion experiments | ✅ Shipped | `experiments/test_op_{saturate,softclip,bitcrush,fold,tube,smooth,tape,xfmr,excite}.py` |
-| Compile-time `match()` dispatch in stdlib | ✅ Shipped | `osc(type, freq, ...)` at `stdlib.hpp:14` |
-| `ExtendedParams<N>` mechanism (1, 2, 3, 4, 8 registered) | ✅ Shipped | `docs/extended-params-mechanism.md` |
-| `soft_clip` helper for filters | ✅ Shipped | `cedar/include/cedar/opcodes/filters.hpp:140` |
-| ADAA pattern (used by `smooth`) | ✅ Shipped | `cedar/include/cedar/opcodes/distortion.hpp:234-283` |
+| Compile-time `match()` dispatch in stdlib | ✅ Shipped | `osc(type, freq, ...)` in `stdlib.hpp` |
+| `ExtendedParams<N>` mechanism (1, 2, 3, 5, 8 registered) | ✅ Shipped | `docs/extended-params-mechanism.md` |
+| `soft_clip` helper for filters | ✅ Shipped | `cedar/include/cedar/opcodes/filters.hpp` |
+| ADAA pattern (used by `smooth`) | ✅ Shipped | `cedar/include/cedar/opcodes/distortion.hpp` (`op_distort_smooth`) |
 
 ### What's missing
 
@@ -56,8 +56,8 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 | Pure bit-depth quantization without S&H rate | New — `bitcrush` couples both axes |
 | User-supplied polynomial transfer function | New — no opcode exposes coefficients |
 | Polymorphic `dist(algo, sig, ...)` entry point | New — users memorize nine opcode names |
-| Tanh feedback in SVF and Formant filters | `prd-squelch-engine.md:103` — specced, not shipped |
-| ADAA on `tube` (currently 2× oversample) | `prd-squelch-engine.md:104` — specced, not shipped |
+| Tanh feedback in SVF and Formant filters | `prd-squelch-engine.md` §4 — specced, not shipped |
+| ADAA on `tube` (currently 2× oversample) | `prd-squelch-engine.md` §4 — specced, not shipped |
 | `multiband2fx` 2-band variant | New — only 3-band ships today |
 
 ### Out of scope (deliberately excluded)
@@ -65,7 +65,7 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 - **`ds_fold` / `ds_overdrive`** — owned by `prd-daisysp-integration.md` Phase 5 (side-by-side A/B alternatives).
 - **Fuzz pedal models** (Big Muff, Fuzz Face) — circuit-modeled, stateful, would warrant its own fuzz-pedal-emulation PRD.
 - **Unified `shape(in, drive, mode)` opcode** — pushed back during plan review; stdlib inlining makes it strictly worse than per-shape fns.
-- **Migrating existing `saturate`/`softclip` to userspace forwards** — they ship with documented aliases (`distort`, etc. at `akkado/include/akkado/builtins.hpp:1398-1410`), tests, and patches in the wild.
+- **Migrating existing `saturate`/`softclip` to userspace forwards** — they ship with documented aliases (`distort`, etc. in `akkado/include/akkado/builtins.hpp`), tests, and patches in the wild.
 - **LUT-driven generic waveshaper** — requires a transfer-function bank registry analog to wavetables; defer until a user asks.
 - **`tape`/`xfmr`/`excite` ADAA upgrades** — 2× oversampling already buys enough headroom for current use cases.
 - **True Linkwitz-Riley alignment in `multiband3fx`** — defer until phase coherence becomes a user complaint.
@@ -87,19 +87,19 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, p)` dispatcher mo
 
 ### Phase 1 — Squelch-engine DSP carryover (no language surface change)
 
-Three localized C++ edits. Each ships behind an opt-in `ExtendedParams<1>` flag so impulse-response regressions stay bit-identical when the flag is off (default = 0).
+Three localized C++ edits. The two filter-feedback edits (1a, 1b) ship behind an opt-in `ExtendedParams<1>` flag (`fb_sat`, default = 0) so impulse-response regressions stay bit-identical when the flag is off. The tube ADAA edit (1c) is an unconditional algorithm change — it is *not* flag-gated and *not* bit-identical to trunk; see §6 for its regression-tolerance criteria.
 
 #### 1a. SVF feedback saturation
 
 **File:** `cedar/include/cedar/opcodes/filters.hpp`
 
-Wrap the state-writeback feedback term in `soft_clip(...)` (the helper at `filters.hpp:140` is a Padé-style tanh approximation, already used by Moog/Diode/Sallen-Key):
+Wrap the state-writeback feedback term in `soft_clip(...)` (the `soft_clip` helper in `filters.hpp` is a Padé-style tanh approximation, already used by the Moog ladder feedback path):
 
-| Line | Current | After |
+| Filter fn | Current | After |
 |---|---|---|
-| 67-68 (LP) | `state.ic1eq[ch] = clamp_audio(2.0f * v1 - state.ic1eq[ch]);` and `ic2eq` parallel | wrap `2.0f * v1 - state.ic1eq[ch]` and `2.0f * v2 - state.ic2eq[ch]` in `soft_clip(...)` inside the `clamp_audio(...)` |
-| 96-97 (HP) | (same shape) | (same wrap) |
-| 126-127 (BP) | (same shape) | (same wrap) |
+| `op_filter_svf_lp` | `state.ic1eq[ch] = clamp_audio(2.0f * v1 - state.ic1eq[ch]);` and `ic2eq` parallel | wrap `2.0f * v1 - state.ic1eq[ch]` and `2.0f * v2 - state.ic2eq[ch]` in `soft_clip(...)` inside the `clamp_audio(...)` |
+| `op_filter_svf_hp` | (same shape) | (same wrap) |
+| `op_filter_svf_bp` | (same shape) | (same wrap) |
 
 Add `fb_sat` ExtendedParams<1> slot:
 - 0.0 = off (default — bit-identical to trunk)
@@ -110,7 +110,7 @@ Keep the outer `clamp_audio(...)` blowup guard.
 
 #### 1b. Formant feedback saturation
 
-**File:** `cedar/include/cedar/opcodes/filters.hpp:477-495` (three BPF stages)
+**File:** `cedar/include/cedar/opcodes/filters.hpp`, `op_filter_formant` (three BPF stages)
 
 Each band has the form `hp_N = x - state.bpN_z1[ch] * q_coef - state.bpN_z2[ch]`. Wrap the `state.bpN_z1[ch] * q_coef` feedback product in `soft_clip(...)`. Do it three times (one per formant band) so each formant peak gets its own saturation character.
 
@@ -118,21 +118,21 @@ Same `fb_sat` ExtendedParams<1> slot, default off.
 
 #### 1c. ADAA upgrade for `tube`
 
-**File:** `cedar/include/cedar/opcodes/distortion.hpp:178-221`
+**File:** `cedar/include/cedar/opcodes/distortion.hpp`, `op_distort_tube`
 
-Drop the 2× oversample delay line; replace with ADAA following the pattern in `op_distort_smooth` at `distortion.hpp:234-283`.
+Drop the 2× oversample delay line; replace with ADAA following the pattern in `op_distort_smooth`.
 
 **Trap:** `tube` is *asymmetric*. Current core is roughly `1 - exp(-driven)` for x ≥ 0 and `tanh(driven * 1.2)` for x < 0. ADAA needs:
 1. Antiderivative of `1 - exp(-x)` is `x + exp(-x)`.
 2. Antiderivative of `tanh(1.2 * x)` is `log(cosh(1.2 * x)) / 1.2` — same form as `smooth`.
-3. Piecewise switch at the sign-crossing must use the linearization fallback (per the `if (abs(x - x1) < eps)` branch in `smooth`'s `tanh_adaa()` at `distortion.hpp:266-272`).
+3. Piecewise switch at the sign-crossing must use the linearization fallback (per the inline `if (std::abs(diff) < 1e-4f)` linearization branch inside `op_distort_smooth` — `smooth` implements ADAA inline, there is no separate `tanh_adaa()` function).
 4. The sign-crossing itself needs a fallback to direct evaluation when the sample crosses zero between two adjacent samples; otherwise the AD difference is across two different antiderivatives and is nonsense.
 
 Reuse `SmoothSatState` fields (previous sample + previous antiderivative value) on `TubeState`. Drop the per-channel oversample delay buffer — ADAA alone is sufficient and saves memory.
 
-#### 1d. Update `prd-squelch-engine.md`
+#### 1d. `prd-squelch-engine.md` cross-reference — already done
 
-Mark the SVF/Formant feedback and ADAA-on-tube items in §4 as moved to this PRD, with a back-reference.
+`prd-squelch-engine.md` already marks the SVF/Formant feedback and ADAA-on-`tube` items as moved here: its status line and §4 both carry the back-reference ("→ Moved to `docs/prd-distortion-roadmap.md` Phase 1a/1b" / "Phase 1c"). No edit needed — just verify the back-reference is still present when Phase 1 ships.
 
 ### Phase 2 — Four stateless shapers + polymorphic `dist` dispatcher
 
@@ -161,25 +161,27 @@ fn quantize(sig, bits = 8) -> {
 
 #### Polymorphic dispatcher
 
-Mirrors `osc(type, freq, ...)` at `stdlib.hpp:14`:
+Mirrors `osc(type, freq, ...)` in `stdlib.hpp`. Match arms use Akkado's
+`pattern: body` syntax — colon-separated, one per line, no commas (same as
+the real `osc` dispatcher):
 
 ```akkado
-fn dist(algo, sig, drive = 1.0, p = 0.0) -> match(algo) {
-    "hardclip" -> hardclip(sig, drive),
-    "softclip" -> softclip(sig, drive),
-    "saturate" -> saturate(sig, drive),
-    "tanh"     -> saturate(sig, drive),
-    "asym"     -> asym(sig, drive, p),
-    "foldback" -> foldback(sig, drive),
-    "fold"     -> fold(sig, drive),
-    "wavefold" -> fold(sig, drive),
-    "quantize" -> quantize(sig, drive),
-    "bitcrush" -> bitcrush(sig, drive, p),
-    "tube"     -> tube(sig, drive, p),
-    "tape"     -> tape(sig, drive),
-    "xfmr"     -> xfmr(sig, drive),
-    "smooth"   -> smooth(sig, drive),
-    _          -> sig
+fn dist(algo, sig, drive = 1.0, n = 0.0) -> match(algo) {
+    "hardclip": hardclip(sig, drive)
+    "softclip": softclip(sig, drive)
+    "saturate": saturate(sig, drive)
+    "tanh":     saturate(sig, drive)
+    "asym":     asym(sig, drive, n)
+    "foldback": foldback(sig, drive)
+    "fold":     fold(sig, drive)
+    "wavefold": fold(sig, drive)
+    "quantize": quantize(sig, drive)
+    "bitcrush": bitcrush(sig, drive, n)
+    "tube":     tube(sig, drive, n)
+    "tape":     tape(sig, drive)
+    "xfmr":     xfmr(sig, drive)
+    "smooth":   smooth(sig, drive)
+    _:          sig
 }
 ```
 
@@ -211,13 +213,16 @@ fn dist(algo, sig, drive = 1.0, p = 0.0) -> match(algo) {
 
 ### Phase 3 — Multiband: document and add 2-band variant
 
-`multiband3fx` already exists at `akkado/include/akkado/stdlib.hpp:38-40`. Actions:
+`multiband3fx` already exists in `akkado/include/akkado/stdlib.hpp`. Actions:
 
-1. **Add `multiband2fx`** to `stdlib.hpp` for the common bass/treble split:
+1. **Add `multiband2fx`** to `stdlib.hpp` for the common bass/treble split.
+   The crossover filters are cascaded (`lp(lp(...))` / `hp(hp(...))`) to match
+   `multiband3fx`'s ~24 dB/oct band separation — consistent slope order across
+   both multiband fns:
    ```akkado
    fn multiband2fx(sig, freq, fx_lo, fx_hi) -> {
-       lo = lp(sig, freq)
-       hi = hp(sig, freq)
+       lo = lp(lp(sig, freq), freq)
+       hi = hp(hp(sig, freq), freq)
        fx_lo(lo) + fx_hi(hi)
    }
    ```
@@ -245,13 +250,13 @@ New opcode `DISTORT_SHAPER` exposed as `shaper(in, drive, c)`.
 shaper(sig, drive = 1.0, c = {c0: 0, c1: 1, c2: 0, c3: 0, c4: 0, c5: 0, c6: 0, c7: 0})
 ```
 
-`c` is record-as-options (per `CLAUDE.md` §Record-as-Options Convention) declared via `OptionSchema`. The eight coefficients map to Chebyshev terms T₀ through T₇. Default coeffs implement an identity passthrough (`c1=1` only); a useful tanh-like preset is documented in the reference docs.
+The eight coefficients `c0..c7` map to Chebyshev terms T₀ through T₇ and are **runtime-tunable**: they wire through `ExtendedParams<8>` (one slot per coefficient), so each accepts a constant or an audio-rate buffer. The `c` record literal is caller sugar — codegen spreads its eight fields onto the eight `ExtendedParams<8>` slots. Default coeffs implement an identity passthrough (`c1=1` only); a useful tanh-like preset is documented in the reference docs. (This is the `ExtendedParams<8>` path, *not* the compile-time record-as-options/`OptionSchema` mechanism — coefficients must be modulatable.)
 
 **ADAA:** generalize cleanly because the antiderivative of a polynomial is a polynomial of degree+1. Implementation follows the pattern in `op_distort_smooth` at `distortion.hpp:234-283` — keep the previous sample, evaluate the antiderivative at current and previous, divide by the difference, and fall back to direct polynomial evaluation when the samples are within `eps` of each other.
 
 **Add `"shaper"` to `dist` dispatcher** once Phase 4 ships:
 ```akkado
-"shaper" -> shaper(sig, drive, p)   // p here is the coeffs record
+"shaper": shaper(sig, drive, n)   // n here is the coeffs record
 ```
 (This requires `dist` to accept record-typed `n`; verify Akkado supports that or accept a more limited form like `dist("shaper", sig, drive)` that uses default coeffs.)
 
@@ -261,9 +266,9 @@ shaper(sig, drive = 1.0, c = {c0: 0, c1: 1, c2: 0, c3: 0, c4: 0, c5: 0, c6: 0, c
 
 | Phase | File | What changes |
 |---|---|---|
-| 1a/1b | `cedar/include/cedar/opcodes/filters.hpp` | SVF: 67-68, 96-97, 126-127. Formant: 480, 487, 494. `soft_clip` helper at 140 already available. Add `fb_sat` ExtendedParams<1>. |
-| 1c | `cedar/include/cedar/opcodes/distortion.hpp` | Tube ADAA rewrite at 178-221; mirror `smooth` at 234-283. |
-| 1d | `docs/prd-squelch-engine.md` | §4: mark SVF/Formant feedback and tube ADAA items as moved to this PRD. |
+| 1a/1b | `cedar/include/cedar/opcodes/filters.hpp` | SVF feedback writeback in `op_filter_svf_lp/hp/bp`; Formant feedback products in `op_filter_formant` (three BPF stages). `soft_clip` helper already available. Add `fb_sat` ExtendedParams<1>. |
+| 1c | `cedar/include/cedar/opcodes/distortion.hpp` | Tube ADAA rewrite in `op_distort_tube`; mirror `op_distort_smooth`. |
+| 1d | `docs/prd-squelch-engine.md` | Already done — §4 + status line already carry the back-reference. Verify only. |
 | 2 | `akkado/include/akkado/stdlib.hpp` | Append four shaper fns + `dist` dispatcher after line 40. |
 | 3 | `akkado/include/akkado/stdlib.hpp`, `web/static/docs/reference/builtins/multiband.md` (new) | Append `multiband2fx`; write reference docs for both. |
 | 4 | `cedar/include/cedar/opcodes/distortion.hpp`, `cedar/include/cedar/vm/instruction.hpp`, `akkado/include/akkado/builtins.hpp` | New `DISTORT_SHAPER` opcode + enum + builtin registration with `extended_param_count = 8`. |
@@ -280,7 +285,7 @@ Per `CLAUDE.md` rules: tests verify expected behavior; do not adjust thresholds 
 |---|---|
 | 1a/1b | New `experiments/test_op_svf_feedback_sat.py`; extend `experiments/test_op_formant.py`. With `fb_sat=0`, output bit-identical to current trunk (regression guard). With `fb_sat=1`, harmonic content increases at high Q and self-oscillation point shifts. ≥ 300 s simulation. |
 | 1c | New `experiments/test_op_tube_adaa.py`. Aliasing energy at drive=10.0 with 6 kHz input ≥ 6 dB reduction vs current 2× oversampled `tube`. Keep `experiments/test_op_tube.py` passing for moderate drive. |
-| 2 | New `experiments/test_op_shapers_userspace.py`. Drive each new shaper with a 100 Hz sine and verify harmonic series: hardclip → 1, 3, 5, 7; asym → odd + even with bias-controlled even/odd ratio; foldback → triangle-like; quantize → stair-step. All four produce WAV output. Plus `experiments/test_dist_dispatcher.py`: call `dist("hardclip", ...)` vs direct `hardclip(...)` and confirm bytecode is identical (compile-time match dispatch verification). |
+| 2 | New `experiments/test_op_shapers_userspace.py`. Drive each new shaper with a 100 Hz sine and verify harmonic series: hardclip → 1, 3, 5, 7; asym → odd + even with bias-controlled even/odd ratio; foldback → triangle-like; quantize → stair-step. All four produce WAV output. Plus a new Akkado unit test in `akkado/tests/` (or an `akkado-cli` bytecode-dump diff): compile `dist("hardclip", ...)` and direct `hardclip(...)` and confirm identical bytecode (compile-time match dispatch verification). This belongs in the Akkado test suite — `experiments/` runs Cedar opcodes via `cedar_core` and has no Akkado compiler. |
 | 3 | New `experiments/test_op_multiband.py` (or extend existing). Three-band split sums back to original within −60 dB; per-band fx functions apply only to their band. Two-band split: same. |
 | 4 | New `experiments/test_op_shaper.py`. Identity coeffs (c1=1, others=0) → bit-identical passthrough; Chebyshev T2/T3 coefficients reproduce 2nd/3rd harmonics analytically; ADAA cleanly antialiases under chirp input. |
 
@@ -297,7 +302,7 @@ After each phase ships:
 - **Add `web/static/docs/reference/builtins/multiband.md`** covering `multiband3fx` and `multiband2fx` with worked distortion examples.
 - **Rebuild docs index:** `cd web && bun run build:docs` after markdown changes.
 - **Update `docs/dsp-quality-checklist.md`** test-coverage section after each phase ships.
-- **Update `docs/prd-squelch-engine.md`** §4: cross-reference this PRD for the SVF/Formant feedback and `tube` ADAA items.
+- **`docs/prd-squelch-engine.md`** §4 — no action needed; it already cross-references this PRD for the SVF/Formant feedback and `tube` ADAA items (see Phase 1d).
 
 ---
 
