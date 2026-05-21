@@ -1209,6 +1209,14 @@ struct PolyAllocState {
             // Mono/Legato: always use voice 0
             auto& v = voices[0];
             bool was_active = v.active;
+            bool was_releasing = v.releasing;
+            // Legato holds the gate only across genuinely overlapping notes:
+            // a voice still active AND not yet in its release tail. A
+            // retrigger is needed for mono always, for the first note, and
+            // when the previous note has already begun releasing (no
+            // overlap — the key was lifted). When holding, the gate stays
+            // high so the voice's envelope glides through the phrase.
+            bool legato_hold = (mode == 2) && was_active && !was_releasing;
             v.freq = freq;
             v.vel = vel;
             v.active = true;
@@ -1216,16 +1224,19 @@ struct PolyAllocState {
             v.release_countdown = 0;
             v.event_index = event_idx;
             v.cycle = cyc;
-            v.pending_gate_on = gate_on_sample;
+            // No pending gate-on edge when holding — the gate buffer stays
+            // high so the body's ADSR/AR sees no rising edge and does not
+            // re-attack.
+            v.pending_gate_on = legato_hold ? BLOCK_SIZE : gate_on_sample;
             v.pending_gate_off = BLOCK_SIZE;
             apply_event_fields(v, dur, chance_in, evt_time, type_id_in,
                                note_in, onset_abs_sample, prop_src, prop_mask);
-            // Mono: always retrigger. Legato: only trigger if wasn't active
-            if (mode == 1 || !was_active) {
+            // Retrigger (gate re-attack, age reset) in every case except a
+            // legato hold, where freq/vel update but the gate is kept.
+            if (!legato_hold) {
                 v.gate = 1.0f;
                 v.age = 0;
             }
-            // Legato with already-active voice: update freq/vel but keep gate
             return 0;
         }
 

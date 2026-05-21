@@ -1,4 +1,4 @@
-**Status: IN PROGRESS — Phases 1–3 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–3 (callback param model, all 11 fixed fields, custom record-suffix fields) are complete; Phase 4 (mono/legato parity tests) and Phase 5 (migration sweep + docs) remain.
+**Status: IN PROGRESS — Phases 1–4 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–4 (callback param model, all 11 fixed fields, custom record-suffix fields, mono/legato parity) are complete; Phase 5 (migration sweep + docs) remains.
 
 # Poly Callback Event-Record PRD — flexible instrument callbacks
 
@@ -377,10 +377,14 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 2. **No `PolyFieldBinding`/`prop_index` struct.** Phase 2 shipped a contiguous field bank rather than a binding table, so a custom field is just a higher bank index; no separate CUSTOM marker is needed.
 3. **Latent analyzer bug fixed.** `substitute_nodes` (the pipe-RHS clone path) did not remap `DestructureField::default_node`, so a `({x = expr}) ->` closure on a pipe RHS carried a stale node index. `default_node` was dead code before Phase 3, so this never surfaced. Fixed by mirroring `clone_subtree`'s `DestructureParam`/`DestructureAssignment` field-default handling into `substitute_nodes`.
 
-### Phase 4 — mono / legato parity
+### Phase 4 — mono / legato parity  ✅ COMPLETE
 **Goal:** `mono` and `legato` accept every callback shape.
-- Confirm the shared `handle_poly_call` path covers all three; add mono/legato-specific tests.
-- **Verify:** mono/legato with positional, destructure, mixed, rest callbacks; retrigger/legato semantics unchanged.
+- Confirmed the shared `handle_poly_call` path covers all three: `mono` routes via `handle_mono_call`'s function-arg fast path, `legato` is registered straight to `handle_poly_call`. Callback param classification, the referenced-field set, field-bank emission, and `StateInitData` are built identically — the only divergence is `mode` (0/1/2) and `max_voices` (`poly`=64, `mono`/`legato`=1). **No codegen change was needed** — this phase is test-only.
+- **Verify:** ✅ `akkado/tests/test_codegen.cpp` `[phase4]` — every callback shape (positional-1/3/11, empty, destructure, mixed, rest, custom-field, custom default) compiles for both `mono` and `legato`, error codes fire identically, `poly_mode`/`poly_max_voices` correct. `cedar/tests/test_poly.cpp` `[phase4]` — mono and legato reuse voice 0 and the per-voice field bank tracks the active event. `experiments/test_op_mono.py` + `test_op_legato.py` — 300 s renders, single-voice invariant, no NaN/DC/drift, all callback shapes render.
+
+**Implementation notes vs. this PRD:**
+1. **Error-code drift.** The PRD §3.2/§5 list `E407/E408/E409/E415`; the codes that actually shipped (Phases 1–3) are `E415` (>11 positionals), `E416` (field bound positionally and in destructure), `E419` (non-constant destructure default). The Phase 4 tests assert the shipped codes.
+2. **Pre-existing legato VM bug found and fixed.** `docs/prd-polyphony-system.md` §3.1 and `web/static/docs/reference/builtins/polyphony.md` specify legato as "on a new note, update freq/vel but do NOT retrigger (gate stays high)". `PolyAllocState::allocate_voice` (`cedar/include/cedar/opcodes/dsp_state.hpp`) was setting `pending_gate_on` unconditionally for both mono and legato, so the VM emitted a 0→1 gate edge + `trig` pulse on every legato note — legato retriggered identically to mono. This predated this PRD (the mono/legato VM branch is from `prd-polyphony-system.md`). Fixed by computing `legato_hold = (mode == 2) && was_active && !was_releasing` and, when held, skipping the gate-on edge (`pending_gate_on = BLOCK_SIZE`) and the `gate`/`age` reset — so an overlapping legato note glides without re-attacking, while a note landing after the previous one's release tail still retriggers. The Phase 4 VM test `POLY legato: gate stays high across overlapping notes` asserts the documented behaviour (one gate onset for the held phrase) and passes.
 
 ### Phase 5 — Migration sweep + docs
 **Goal:** record form is the canonical idiom everywhere in-repo.

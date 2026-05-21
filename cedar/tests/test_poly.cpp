@@ -1455,3 +1455,190 @@ TEST_CASE("POLY field bank: custom prop default applies when event omits it",
     // destructure default.
     CHECK(std::abs(vm.buffers().get(BUF_CUSTOM)[0] - 0.5f) < 0.001f);
 }
+
+// ============================================================================
+// Phase 4: mono / legato parity (prd-poly-callback-event-record)
+//
+// mono (mode 1) and legato (mode 2) share PolyAllocState with poly: the same
+// per-voice field bank, the same apply_event_fields snapshot, the same gate
+// fill. These tests lock that parity down — every Phase 1-3 field-bank
+// behaviour must hold on the single voice 0 that mono/legato reuse — and pin
+// the documented mono-retrigger vs legato-hold gate semantics.
+// ============================================================================
+
+namespace {
+// Install a two-note sequential sequence (note 1 then note 2, no overlap):
+// note 1 at beat 0, note 2 at beat n2_time, each spanning dur_frac of a
+// 4-beat cycle. midi_note / prop carry distinct per-note field values so the
+// per-voice field bank can be checked against the active event.
+void setup_two_note_seq(VM& vm, float n1_freq, float n1_note, float n1_prop,
+                        float n2_freq, float n2_note, float n2_prop,
+                        float n2_time = 2.0f, float dur_frac = 0.5f) {
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event events[2];
+    for (int i = 0; i < 2; ++i) {
+        events[i].type = EventType::DATA;
+        events[i].duration = dur_frac;
+        events[i].chance = 1.0f;
+        events[i].velocity = 1.0f;
+        events[i].num_values = 1;
+        events[i].prop_set_mask = 0x1;  // slot 0 explicitly declared
+    }
+    events[0].time = 0.0f;
+    events[0].values[0] = n1_freq;
+    events[0].midi_note = n1_note;
+    events[0].prop_vals[0] = n1_prop;
+    events[1].time = n2_time;
+    events[1].values[0] = n2_freq;
+    events[1].midi_note = n2_note;
+    events[1].prop_vals[0] = n2_prop;
+
+    Sequence seq;
+    seq.events = events;
+    seq.num_events = 2;
+    seq.capacity = 2;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH,
+                                   false, 2);
+}
+
+// Count rising gate edges (note-on blocks) across `num_blocks` processed
+// blocks. A note-on block is one where the GATE field buffer starts low and
+// ends high — the 0->1 step the VM writes at pending_gate_on. Note-off blocks
+// (high->low) and steady blocks are not counted.
+int count_gate_onsets(VM& vm, int num_blocks) {
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    int onsets = 0;
+    for (int b = 0; b < num_blocks; ++b) {
+        vm.process_block(left.data(), right.data());
+        const float* gate = vm.buffers().get(BUF_GATE);
+        if (gate[0] < 0.5f && gate[BLOCK_SIZE - 1] > 0.5f) ++onsets;
+    }
+    return onsets;
+}
+}  // namespace
+
+TEST_CASE("POLY field bank: mono reuses voice 0 and tracks the active event",
+          "[poly][phase4]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // C4 (note 60, cutoff 0.9) then E4 (note 64, cutoff 0.3).
+    setup_two_note_seq(vm, 261.63f, 60.0f, 0.9f, 329.63f, 64.0f, 0.3f);
+
+    const float defaults[MAX_PROPS_PER_EVENT] = {0.5f, 0.0f, 0.0f, 0.0f};
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, /*mode*/ 1, 0,
+                       /*release*/ 0.0f, /*prop_count*/ 1, defaults);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    // ~100 blocks (~0.27 s) lands inside note 1's 2-beat span.
+    for (int b = 0; b < 100; ++b) vm.process_block(left.data(), right.data());
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 1);
+    CHECK(poly.voices[0].active);
+    CHECK(std::abs(poly.voices[0].freq - 261.63f) < 0.5f);
+    CHECK(std::abs(poly.voices[0].note_value - 60.0f) < 0.001f);
+    CHECK(std::abs(poly.voices[0].prop_vals[0] - 0.9f) < 0.001f);
+
+    // ~400 blocks total (~1.07 s) is past beat 2 — note 2 now owns voice 0.
+    for (int b = 0; b < 300; ++b) vm.process_block(left.data(), right.data());
+    REQUIRE(poly.active_voice_count() == 1);
+    CHECK(poly.voices[0].active);
+    CHECK(std::abs(poly.voices[0].freq - 329.63f) < 0.5f);
+    CHECK(std::abs(poly.voices[0].note_value - 64.0f) < 0.001f);
+    CHECK(std::abs(poly.voices[0].prop_vals[0] - 0.3f) < 0.001f);
+    // mono reuses slot 0 — no other slot is ever touched.
+    for (std::uint8_t i = 1; i < poly.max_voices; ++i) {
+        CHECK_FALSE(poly.voices[i].active);
+    }
+}
+
+TEST_CASE("POLY field bank: legato reuses voice 0 and tracks the active event",
+          "[poly][phase4]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    setup_two_note_seq(vm, 261.63f, 60.0f, 0.9f, 329.63f, 64.0f, 0.3f);
+
+    const float defaults[MAX_PROPS_PER_EVENT] = {0.5f, 0.0f, 0.0f, 0.0f};
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, /*mode*/ 2, 0,
+                       0.0f, /*prop_count*/ 1, defaults);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+
+    for (int b = 0; b < 100; ++b) vm.process_block(left.data(), right.data());
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 1);
+    CHECK(std::abs(poly.voices[0].freq - 261.63f) < 0.5f);
+    CHECK(std::abs(poly.voices[0].note_value - 60.0f) < 0.001f);
+    CHECK(std::abs(poly.voices[0].prop_vals[0] - 0.9f) < 0.001f);
+
+    for (int b = 0; b < 300; ++b) vm.process_block(left.data(), right.data());
+    REQUIRE(poly.active_voice_count() == 1);
+    CHECK(std::abs(poly.voices[0].freq - 329.63f) < 0.5f);
+    CHECK(std::abs(poly.voices[0].note_value - 64.0f) < 0.001f);
+    CHECK(std::abs(poly.voices[0].prop_vals[0] - 0.3f) < 0.001f);
+    for (std::uint8_t i = 1; i < poly.max_voices; ++i) {
+        CHECK_FALSE(poly.voices[i].active);
+    }
+}
+
+TEST_CASE("POLY mono: gate retriggers on every note onset", "[poly][phase4]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // Note 1 spans 3 beats (dur 0.75) so it is still sounding when note 2
+    // onsets at beat 2 — i.e. the notes overlap. mono must still retrigger.
+    setup_two_note_seq(vm, 261.63f, 60.0f, 0.9f, 329.63f, 64.0f, 0.3f,
+                       /*n2_time*/ 2.0f, /*dur_frac*/ 0.75f);
+
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, /*mode*/ 1, 0);
+
+    // 600 blocks covers note 1's onset (block 0) and note 2's onset
+    // (beat 2 = block 375); note 1's note-off (beat 3 = block ~562) is a
+    // falling edge and is not counted.
+    int onsets = count_gate_onsets(vm, 600);
+    CHECK(onsets == 2);  // mono re-attacks the envelope on each note
+}
+
+// docs/prd-polyphony-system.md §3.1 and web/static/docs/reference/builtins/
+// polyphony.md specify legato mode: "On new note: update freq/vel but do NOT
+// retrigger (gate stays 1)". PolyAllocState::allocate_voice holds the gate
+// (pending_gate_on = BLOCK_SIZE, no 0->1 edge) when a new legato note lands
+// on a voice that is still active and not yet releasing — so the body's
+// envelope glides through the phrase instead of re-attacking.
+TEST_CASE("POLY legato: gate stays high across overlapping notes (no retrigger)",
+          "[poly][phase4]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_seq_poly_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    // Identical overlapping layout to the mono test: note 1 spans 3 beats,
+    // note 2 onsets at beat 2 while note 1 still holds voice 0.
+    setup_two_note_seq(vm, 261.63f, 60.0f, 0.9f, 329.63f, 64.0f, 0.3f,
+                       /*n2_time*/ 2.0f, /*dur_frac*/ 0.75f);
+
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, /*mode*/ 2, 0);
+
+    int onsets = count_gate_onsets(vm, 600);
+    // Legato: note 2 arrives on the already-gated voice, so the gate must
+    // stay high — only note 1's onset is a rising edge.
+    CHECK(onsets == 1);
+}

@@ -7873,6 +7873,168 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
 }
 
 // =============================================================================
+// Codegen: mono/legato callback parity (Phase 4, prd-poly-callback-event-record)
+// =============================================================================
+//
+// mono() and legato() route through the same handle_poly_call as poly() (mono
+// via handle_mono_call's function-arg fast path, legato registered directly).
+// These cases prove every Phase 1-3 callback shape compiles identically for
+// mono/legato as for poly, and that the param-list error codes fire the same.
+// Shipped error codes: E415 (>11 positionals), E416 (field bound positionally
+// and in destructure), E419 (non-constant destructure default).
+
+TEST_CASE("Codegen: mono/legato callback parity",
+          "[codegen][poly][phase4]") {
+    auto has_code = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    // Compile `pattern |> <builtin>(@, <callback>) |> out(@, @)`.
+    auto compile_inst = [](const char* builtin, const char* pattern,
+                           const char* callback) {
+        std::string src = std::string(pattern) + " |> " + builtin +
+                          "(@, " + callback + ") |> out(@, @)";
+        return akkado::compile(src);
+    };
+
+    // Every shape below is run for both mono and legato; the expected
+    // poly_mode (1=mono, 2=legato) is asserted on the ForeachAlloc state_init.
+    struct ModeCase { const char* name; std::uint8_t mode; };
+    const ModeCase modes[] = {{"mono", 1}, {"legato", 2}};
+
+    for (const auto& m : modes) {
+        DYNAMIC_SECTION(m.name << ": positional-1 (freq) compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                                  "(freq) -> osc(\"sin\", freq)");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": historical (f, g, v) compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                                  "(f, g, v) -> osc(\"sin\", f) * v * g");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": all 11 positional params compile") {
+            // Canonical order freq..sample_id; positional names are ignored.
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                                  "(a,b,c,d,e,f,g,h,i,j,k) -> osc(\"sin\", a)");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": empty param list compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                                  "() -> osc(\"sin\", 220)");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": record destructure compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                "({freq, vel, gate}) -> osc(\"sin\", freq) * vel * gate");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": mixed positional + destructure compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                "(freq, gate, {vel}) -> osc(\"sin\", freq) * vel * gate");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": rest param compiles") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                "(...e) -> osc(\"sin\", e.freq) * e.vel * e.gate");
+            CHECK(r.success);
+        }
+
+        DYNAMIC_SECTION(m.name << ": custom-field destructure compiles") {
+            auto r = compile_inst(m.name, R"(n"c4{cutoff:0.9} e4{cutoff:0.3}")",
+                "({freq, gate, cutoff}) -> osc(\"saw\", freq) * gate * cutoff");
+            REQUIRE(r.success);
+            bool found = false;
+            for (const auto& init : r.state_inits) {
+                if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                    found = true;
+                    CHECK(init.poly_prop_count == 1);
+                }
+            }
+            CHECK(found);
+        }
+
+        DYNAMIC_SECTION(m.name << ": custom-field default in prop_defaults") {
+            auto r = compile_inst(m.name, R"(n"c4{cutoff:0.9} e4")",
+                "({freq, gate, cutoff = 0.5}) -> "
+                "osc(\"saw\", freq) * gate * cutoff");
+            REQUIRE(r.success);
+            bool found = false;
+            for (const auto& init : r.state_inits) {
+                if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                    found = true;
+                    CHECK(init.poly_prop_count == 1);
+                    CHECK(init.poly_prop_defaults[0] == Catch::Approx(0.5f));
+                }
+            }
+            CHECK(found);
+        }
+
+        DYNAMIC_SECTION(m.name << ": mode and max_voices=1 in state_init") {
+            auto r = compile_inst(m.name, R"(n"c4 e4 g4")",
+                                  "({freq, gate}) -> osc(\"sin\", freq) * gate");
+            REQUIRE(r.success);
+            bool found = false;
+            for (const auto& init : r.state_inits) {
+                if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                    found = true;
+                    CHECK(init.poly_mode == m.mode);
+                    CHECK(init.poly_max_voices == 1);
+                }
+            }
+            CHECK(found);
+        }
+
+        DYNAMIC_SECTION(m.name << ": error E415 — more than 11 positionals") {
+            auto r = compile_inst(m.name, R"(n"c4")",
+                "(a,b,c,d,e,f,g,h,i,j,k,l) -> osc(\"sin\", a)");
+            REQUIRE_FALSE(r.success);
+            CHECK(has_code(r, "E415"));
+        }
+
+        DYNAMIC_SECTION(m.name << ": error E416 — alias dup (freq, {pitch})") {
+            auto r = compile_inst(m.name, R"(n"c4")",
+                                  "(freq, {pitch}) -> osc(\"sin\", freq)");
+            REQUIRE_FALSE(r.success);
+            CHECK(has_code(r, "E416"));
+        }
+
+        DYNAMIC_SECTION(m.name << ": error E419 — non-constant default") {
+            auto r = compile_inst(m.name, R"(n"c4{cutoff:0.9}")",
+                "({freq, gate, cutoff = osc(\"sin\", 440)}) -> "
+                "osc(\"saw\", freq) * gate * cutoff");
+            REQUIRE_FALSE(r.success);
+            CHECK(has_code(r, "E419"));
+        }
+    }
+
+    SECTION("mono 1-arg instrument-only form accepts destructure callback") {
+        // mono/legato also accept the instrument as the sole argument
+        // (no piped pattern input).
+        auto r = akkado::compile(R"(
+            mono(({freq, gate}) -> osc("sin", freq) * gate) |> out(@, @)
+        )");
+        CHECK(r.success);
+    }
+
+    SECTION("legato 1-arg instrument-only form accepts rest-param callback") {
+        auto r = akkado::compile(R"(
+            legato((...e) -> osc("sin", e.freq) * e.gate) |> out(@, @)
+        )");
+        CHECK(r.success);
+    }
+}
+
+// =============================================================================
 // Codegen: Record spreading
 // =============================================================================
 
