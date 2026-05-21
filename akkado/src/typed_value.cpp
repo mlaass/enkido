@@ -22,6 +22,13 @@ std::vector<std::uint16_t> buffers_of(const TypedValue& tv) {
             if (tv.buffer != 0xFFFF) return {tv.buffer};
             return {};
 
+        case ValueType::DynArray:
+            // A DynArray is a single packed buffer; its length is a runtime
+            // signal, so it never participates in compile-time multi-buffer
+            // fan-out (see codegen reject path).
+            if (tv.dyn && tv.dyn->data_buffer != 0xFFFF) return {tv.dyn->data_buffer};
+            return {};
+
         default:
             return {};
     }

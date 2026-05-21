@@ -425,6 +425,31 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 arr_len = static_cast<std::uint8_t>(arr_tv.array->elements.size());
             }
 
+            // DynArray (PRD prd-pattern-event-arrays §5.5): data is already
+            // packed in one buffer; the length is a runtime signal. Emit
+            // ARRAY_INDEX directly with the runtime len_buffer — wrap mode
+            // handles per-sample varying length and the empty-event case.
+            if (arr_tv.type == ValueType::DynArray && arr_tv.dyn) {
+                TypedValue idx_tv = visit(idx_node);
+                std::uint16_t out = buffers_.allocate();
+                if (out == BufferAllocator::BUFFER_UNUSED) {
+                    error("E101", "Buffer pool exhausted", n.location);
+                    return TypedValue::error_val();
+                }
+                cedar::Instruction index_inst{};
+                index_inst.opcode = cedar::Opcode::ARRAY_INDEX;
+                index_inst.out_buffer = out;
+                index_inst.inputs[0] = arr_tv.dyn->data_buffer;
+                index_inst.inputs[1] = idx_tv.buffer;
+                index_inst.inputs[2] = arr_tv.dyn->len_buffer;
+                index_inst.inputs[3] = 0xFFFF;
+                index_inst.inputs[4] = 0xFFFF;
+                index_inst.rate = 0;  // 0 = wrap mode
+                index_inst.state_id = 0;
+                emit(index_inst);
+                return cache_and_return(node, TypedValue::signal(out));
+            }
+
             // Check if index is a constant number
             const Node& idx = ast_->arena[idx_node];
             if (idx.type == NodeType::NumberLit && arr_len > 0) {
@@ -1385,12 +1410,30 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                               ast_->arena[arg_value].location);
                     }
 
+                    // PRD prd-pattern-event-arrays §4.5/§5.6: a DynArray
+                    // (notes(e)/freqs(e)) has a runtime-varying length, so it
+                    // cannot auto-fan-out across a builtin's fixed arity the
+                    // way a static array does. Reject it with a directive
+                    // pointing at poly() for runtime polyphony.
+                    if (arg_tv.type == ValueType::DynArray) {
+                        error("E181",
+                              func_name + "() cannot auto-expand over a dynamic "
+                              "array (chord size varies per pattern event). "
+                              "Wrap with poly() for runtime polyphony:\n"
+                              "  e |> poly(@, (f, g, v) -> osc(\"sin\", f) * "
+                              "ar(g, 0.01, 0.3) * v)",
+                              ast_->arena[arg_value].location);
+                    }
+
                     arg_buffers.push_back(arg_tv.buffer);
 
-                    // Type check against annotation (non-fatal — continue for max error reporting)
+                    // Type check against annotation (non-fatal — continue for max error reporting).
+                    // DynArray already reported the dedicated E181 above; skip
+                    // the generic type-mismatch to avoid a duplicate diagnostic.
                     if (arg_idx < MAX_BUILTIN_PARAMS &&
                         builtin->param_types[arg_idx] != ParamValueType::Any &&
-                        !arg_tv.error && arg_tv.type != ValueType::Void) {
+                        !arg_tv.error && arg_tv.type != ValueType::Void &&
+                        arg_tv.type != ValueType::DynArray) {
                         if (!type_compatible(arg_tv.type, builtin->param_types[arg_idx])) {
                             error("E160", func_name + "() argument '" +
                                   std::string(builtin->param_names[arg_idx]) + "' expects " +
@@ -2823,6 +2866,8 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
 
         case ValueType::Function:
         case ValueType::String:
+        case ValueType::EventSource:
+        case ValueType::DynArray:
         case ValueType::Void:
             error("E135", "Cannot access field '" + field_name + "' on " +
                   std::string(value_type_name(expr_tv.type)) + " value", n.location);

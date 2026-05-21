@@ -22,6 +22,7 @@ enum class ValueType : std::uint8_t {
     Function,    // Function reference (no runtime buffer)
     StateCell,   // Handle to a CellState slot (state(init) in userspace)
     EventSource, // External event stream (midi()); carries a state_id read by poly()
+    DynArray,    // Runtime-varying-length array (chord notes from pattern events)
     Void         // No value (statements, directives)
 };
 
@@ -134,6 +135,20 @@ struct ArrayPayload {
     std::vector<TypedValue> elements;
 };
 
+/// Dynamic-array payload (PRD prd-pattern-event-arrays §5.1): an array whose
+/// length is a runtime signal, not a compile-time constant. Produced by
+/// `notes(e)` / `freqs(e)` from pattern-event chord data.
+///
+/// `data_buffer` is packed: the array elements live in samples
+/// `0 .. len-1` of a single block buffer (a chord carries at most
+/// `MAX_VALUES_PER_EVENT` notes, well within BLOCK_SIZE). `len_buffer`
+/// carries `num_values` broadcast across the block (per-block constant).
+/// Both are consumed directly by `ARRAY_INDEX` (`inputs[0]` / `inputs[2]`).
+struct DynArrayPayload {
+    std::uint16_t data_buffer = 0xFFFF;  // Packed element data (samples 0..len-1)
+    std::uint16_t len_buffer  = 0xFFFF;  // Per-block length signal (num_values)
+};
+
 /// EventSource payload (PRD prd-midi-input §4.7): an external runtime event
 /// stream produced by `midi()`. The `state_id` points at a MidiQueueState
 /// in the state pool; `poly()` reads it through
@@ -167,6 +182,7 @@ struct TypedValue {
     std::shared_ptr<RecordPayload> record;
     std::shared_ptr<ArrayPayload> array;
     std::shared_ptr<EventSourcePayload> event_source;
+    std::shared_ptr<DynArrayPayload> dyn;  // populated when type == DynArray
 
     // String ID (FNV-1a hash) for ValueType::String
     std::uint32_t string_id = 0;
@@ -262,6 +278,17 @@ struct TypedValue {
         return tv;
     }
 
+    static TypedValue make_dyn_array(std::uint16_t data_buffer,
+                                     std::uint16_t len_buffer) {
+        TypedValue tv;
+        tv.type = ValueType::DynArray;
+        tv.buffer = data_buffer;
+        tv.dyn = std::make_shared<DynArrayPayload>();
+        tv.dyn->data_buffer = data_buffer;
+        tv.dyn->len_buffer = len_buffer;
+        return tv;
+    }
+
     static TypedValue make_event_source(std::shared_ptr<EventSourcePayload> p,
                                          std::uint16_t primary_buf = 0xFFFF) {
         TypedValue tv;
@@ -284,6 +311,7 @@ constexpr const char* value_type_name(ValueType type) {
         case ValueType::Function:    return "Function";
         case ValueType::StateCell:   return "StateCell";
         case ValueType::EventSource: return "EventSource";
+        case ValueType::DynArray:    return "DynArray";
         case ValueType::Void:        return "Void";
     }
     return "Unknown";

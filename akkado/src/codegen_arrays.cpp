@@ -882,6 +882,17 @@ TypedValue CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
 
     const Node& arr = ast_->arena[arr_node];
 
+    // Polymorphic dispatch (PRD prd-pattern-event-arrays §5.4): a DynArray
+    // (produced by notes(e)/freqs(e)) carries its length as a runtime signal
+    // in `len_buffer` — no PUSH_CONST. Visiting is cached via node_types_, so
+    // it is safe; static arrays fall through to the compile-time count below.
+    if (arr.type != NodeType::ArrayLit) {
+        TypedValue arg_tv = visit(arr_node);
+        if (arg_tv.type == ValueType::DynArray && arg_tv.dyn) {
+            return cache_and_return(node, TypedValue::signal(arg_tv.dyn->len_buffer));
+        }
+    }
+
     // Count elements based on node type
     std::size_t length = 0;
 
