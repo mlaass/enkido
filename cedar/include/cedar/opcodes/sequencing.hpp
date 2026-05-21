@@ -504,7 +504,10 @@ inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
         }
 
         // Handle wrap: also trigger if we wrapped and crossed first event
-        if (wrapped && state.output.num_events > 0 && beat_pos >= state.output.events[0].time) {
+        // (rest = num_values 0, must not fire — matches the main loop guard)
+        if (wrapped && state.output.num_events > 0 &&
+            beat_pos >= state.output.events[0].time &&
+            state.output.events[0].num_values > 0) {
             trigger_val = 1.0f;
         }
 
