@@ -1,4 +1,4 @@
-**Status: IN PROGRESS — Phases 1–4 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–4 (callback param model, all 11 fixed fields, custom record-suffix fields, mono/legato parity) are complete; Phase 5 (migration sweep + docs) remains.
+**Status: IN PROGRESS — Phases 1–4 + 6 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–4 (callback param model, all 11 fixed fields, custom record-suffix fields, mono/legato parity) are complete. Phase 6 (destructure-param closure codegen — a Phase 1 corner that only the doc sweep surfaced) is shipped. Phase 5 (migration sweep + docs) remains.
 
 # Poly Callback Event-Record PRD — flexible instrument callbacks
 
@@ -388,10 +388,59 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 
 ### Phase 5 — Migration sweep + docs
 **Goal:** record form is the canonical idiom everywhere in-repo.
-- Rewrite all docs, example patches, and test fixtures listed in §6.
+- Rewrite all docs, example patches, and test fixtures listed in §6 — plus
+  every other in-repo `poly`/`mono`/`legato` callback (the goal is *everywhere*,
+  not just the §6 list): `tutorials/05`, `tutorials/07`, `builtins/midi.md`,
+  `builtins/unison.md`, the MIDI patches, and the extra test files.
+- The stale `poly(1, fn (e) -> …)` examples in `tutorials/05`/`06` (a
+  first-arg-number form that no longer matches `poly(input, instrument,
+  voices)`) are corrected to valid syntax.
+- The positional `(freq, gate, vel) ->` form stays valid forever (back-compat)
+  but is **not** shown in docs beyond a one-line note; record form is canonical.
 - Regenerate opcode + docs indices.
 - CHANGELOG entry; `/update-changelog`.
 - **Verify:** `bun run check`, `bun run build`; full `akkado_tests` + `cedar_tests`; `experiments/run_all.sh`.
+- **Depends on Phase 6** — the doc sweep uses `name = ({…}) -> body` named
+  instrument functions, which only compile after the Phase 6 fix.
+
+### Phase 6 — Destructure-param closure codegen  ✅ COMPLETE
+**Goal:** a destructure-param closure works in *every* context, not only as a
+direct `poly`/`mono`/`legato` argument.
+
+**Why this is a phase of *this* PRD.** Phase 1 enabled `({…}) ->` closures in
+the parser (`parser.cpp:1069-1071`, comment cites `prd-poly-callback-event-record`)
+but only wired the codegen for the one call site it needed — a closure passed
+directly to `poly()`/`mono()`/`legato()`, where `handle_poly_call` runs its own
+param classification. Every *other* use of a destructure-param closure —
+assigning it to a name (`stab = ({freq, gate, vel}) -> …`), then `poly(@,
+stab)`, or calling it directly — fell through to the generic closure paths,
+which only understood `Identifier` params and raised `E199 Unsupported node
+type`. (`prd-records-system-unification.md` G6 introduced *function-parameter*
+destructuring but deliberately scoped it to the `fn name(…)` keyword form, so
+this is not its gap.) The Phase 5 doc sweep surfaced it: making record form
+canonical means named instrument functions, and the idiomatic `name = (…) ->`
+form did not compile.
+
+**Fix (three spots, all in `akkado/`):**
+1. `codegen_functions.cpp` `handle_closure` — a `DestructureParam` child is no
+   longer mistaken for the closure body; each declared field is allocated a
+   buffer and bound as a local.
+2. `analyzer.cpp` closure-to-`FunctionValue` classification — a
+   `DestructureParam` child is registered as an `is_destructure`
+   `FunctionParamInfo` (synthetic `__destr_param_<N>` name + field list),
+   mirroring the `fn`-def path, so `name = ({…}) -> body` becomes a deferred
+   user function instead of being eagerly (and wrongly) codegen'd.
+3. `codegen_functions.cpp` `handle_function_value_call` + `symbol_table.cpp`
+   `update_symbol_nodes` — the direct-call path now `bind_destructure_fields`
+   for an `is_destructure` param and skips `DestructureParam` children when
+   locating the body; the `FunctionValue` branch of node-remapping now remaps
+   `destructure_fields[].default_node` (the `UserFunction` branch already did),
+   so a `{cutoff = 0.5}` default survives the analyzer's AST clone.
+- **Verify:** ✅ `akkado/tests/test_codegen.cpp` `[phase6]` — named destructure
+  closure as a `poly`/`mono`/`legato` instrument, mixed positional+destructure,
+  fixed- and custom-field defaults, direct call, and a positional-closure
+  regression all compile; no `E199`/`E419`. Full `akkado_tests` (877) +
+  `cedar_tests` (292) green.
 
 ---
 

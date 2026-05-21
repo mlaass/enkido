@@ -361,7 +361,19 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             NodeIndex child = (*input_ast_).arena[rhs].first_child;
             while (child != NULL_NODE) {
                 const Node& child_node = (*input_ast_).arena[child];
-                if (child_node.type == NodeType::Identifier) {
+                if (child_node.type == NodeType::DestructureParam) {
+                    // Closure destructure param `name = ({x, y}) -> …`. The
+                    // `name` is a synthetic placeholder; the per-field bindings
+                    // in `destructure_fields` drive call-time destructure, the
+                    // same as the `fn f({x, y})` path.
+                    const auto& dp = child_node.as_destructure_param();
+                    FunctionParamInfo param;
+                    param.name = "__destr_param_" +
+                                 std::to_string(func_ref.params.size());
+                    param.is_destructure = true;
+                    param.destructure_fields = dp.fields;
+                    func_ref.params.push_back(std::move(param));
+                } else if (child_node.type == NodeType::Identifier) {
                     FunctionParamInfo param;
                     if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                         const auto& cp = child_node.as_closure_param();

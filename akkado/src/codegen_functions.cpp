@@ -1368,6 +1368,28 @@ TypedValue CodeGenerator::handle_function_value_call(
         symbols_->define_variable(capture.name, capture.buffer_index);
     }
     for (std::size_t i = 0; i < func.params.size(); ++i) {
+        // Destructure param `name = ({x, y}) -> …`: the caller arg must
+        // resolve to a Record; each declared field becomes a local in this
+        // scope. Mirrors the `fn f({x, y})` path in handle_user_function_call.
+        if (func.params[i].is_destructure) {
+            const TypedValue* destr_tv = nullptr;
+            if (i < args.size()) {
+                auto type_it = node_types_.find(args[i]);
+                if (type_it != node_types_.end()) destr_tv = &type_it->second;
+            }
+            if (destr_tv == nullptr) {
+                error("E140",
+                      "Cannot destructure: missing or unresolved argument for "
+                      "closure", n.location);
+                continue;
+            }
+            bind_destructure_fields(*destr_tv,
+                                    func.params[i].destructure_fields,
+                                    n.location,
+                                    "E187");
+            continue;
+        }
+
         // Record argument: bind as a record so `param.field` resolves inside
         // the closure body (mirrors handle_user_function_call). Needed for the
         // unison `ext` record passed to instrument closures.
@@ -1454,7 +1476,8 @@ TypedValue CodeGenerator::handle_function_value_call(
             NodeIndex child = closure_node.first_child;
             while (child != NULL_NODE) {
                 const Node& child_node = ast_->arena[child];
-                if (child_node.type == NodeType::Identifier) {
+                if (child_node.type == NodeType::Identifier ||
+                    child_node.type == NodeType::DestructureParam) {
                     // parameter — skip
                 } else {
                     body = child;
@@ -1536,7 +1559,14 @@ TypedValue CodeGenerator::handle_closure(NodeIndex node, const Node& n) {
 
     while (child != NULL_NODE) {
         const Node& child_node = ast_->arena[child];
-        if (child_node.type == NodeType::Identifier) {
+        if (child_node.type == NodeType::DestructureParam) {
+            // Destructure param `({x, y}) -> …`: each field becomes a local.
+            // Allocated a free buffer below, just like a positional param —
+            // the caller (or poly's own param classification) fills them.
+            for (const auto& f : child_node.as_destructure_param().fields) {
+                param_names.push_back(f.name);
+            }
+        } else if (child_node.type == NodeType::Identifier) {
             // Check if it's IdentifierData or ClosureParamData
             if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 param_names.push_back(child_node.as_closure_param().name);

@@ -7748,6 +7748,94 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 }
 
 // =============================================================================
+// Codegen: destructure-param closures (Phase 6, prd-poly-callback-event-record)
+//
+// Phase 1 enabled `({...}) ->` closures in the parser but only wired codegen
+// for the direct poly()/mono()/legato() argument. A closure assigned to a name
+// (`stab = ({freq, gate, vel}) -> ...`) hit E199 because handle_closure and the
+// analyzer's closure-to-FunctionValue classification only handled Identifier
+// params. Phase 6 completes the corner.
+// =============================================================================
+
+TEST_CASE("Codegen: destructure-param closure assigned to a name",
+          "[codegen][poly][phase6][closure-destructure]") {
+    auto has_code = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    SECTION("named destructure closure as poly instrument compiles") {
+        auto result = akkado::compile(R"(
+            pad = ({freq, gate, vel}) -> saw(freq) * ar(gate, 0.05, 0.4) * vel
+            chord("C Em Am G") |> poly(@, pad) |> out(@, @)
+        )");
+        CHECK(result.success);
+        CHECK_FALSE(has_code(result, "E199"));
+    }
+
+    SECTION("named mixed positional + destructure closure compiles") {
+        auto result = akkado::compile(R"(
+            v = (freq, {gate, vel}) -> saw(freq) * ar(gate, 0.01, 0.3) * vel
+            n"c4 e4 g4" |> poly(@, v) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("named destructure closure with custom-field default compiles") {
+        // Exercises the symbol_table FunctionValue default_node remapping fix:
+        // the `cutoff = 0.5` default expression moves during the analyzer's
+        // AST clone and must be remapped, or poly() reads a stale node.
+        auto result = akkado::compile(R"(
+            v = ({freq, gate, cutoff = 0.5}) ->
+                saw(freq) |> lp(@, cutoff * 4000) |> @ * ar(gate, 0.01, 0.3)
+            n"c4 e4{cutoff:0.7} g4" |> poly(@, v) |> out(@, @)
+        )");
+        CHECK(result.success);
+        CHECK_FALSE(has_code(result, "E419"));
+    }
+
+    SECTION("named destructure closure with fixed-field default compiles") {
+        auto result = akkado::compile(R"(
+            v = ({freq, gate, vel = 0.8}) -> saw(freq) * ar(gate, 0.01, 0.3) * vel
+            n"c4 e4 g4" |> poly(@, v) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("named destructure closure works with mono and legato") {
+        auto result = akkado::compile(R"(
+            m = ({freq, gate, vel}) -> saw(freq) * adsr(gate, 0.01, 0.1, 0.6, 0.3) * vel
+            n"c2 e2 g2 c3" |> mono(m) |> out(@, @)
+        )");
+        CHECK(result.success);
+        auto result2 = akkado::compile(R"(
+            l = ({freq, gate}) -> saw(freq) * adsr(gate, 0.01, 0.2, 0.8, 0.4)
+            n"c2 e2 g2 c3" |> legato(l) |> out(@, @)
+        )");
+        CHECK(result2.success);
+    }
+
+    SECTION("directly calling a destructure-param closure compiles") {
+        auto result = akkado::compile(R"(
+            dist = ({x, y}) -> sqrt(x * x + y * y)
+            out(stereo(dist({x: 3, y: 4})))
+        )");
+        CHECK(result.success);
+        CHECK_FALSE(has_code(result, "E199"));
+    }
+
+    SECTION("regression: named positional closure still compiles") {
+        auto result = akkado::compile(R"(
+            stab = (freq, gate, vel) -> saw(freq) * ar(gate, 0.05, 0.4) * vel
+            chord("C Em Am G") |> poly(@, stab) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+}
+
+// =============================================================================
 // Codegen: poly() custom record-suffix fields (Phase 3,
 // prd-poly-callback-event-record)
 // =============================================================================

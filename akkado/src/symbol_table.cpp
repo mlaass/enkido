@@ -164,6 +164,15 @@ static void update_symbol_nodes(Symbol& sym, const std::unordered_map<NodeIndex,
                 auto param_it = node_map.find(param.default_node);
                 if (param_it != node_map.end()) param.default_node = param_it->second;
             }
+            // A `name = ({x = expr}) -> …` closure carries per-field default
+            // expressions that moved during the analyzer's AST clone, same as
+            // the UserFunction branch above.
+            for (auto& f : param.destructure_fields) {
+                if (f.default_node != NULL_NODE) {
+                    auto it = node_map.find(f.default_node);
+                    if (it != node_map.end()) f.default_node = it->second;
+                }
+            }
         }
     } else if (sym.kind == SymbolKind::Pattern) {
         auto pat_it = node_map.find(sym.pattern.pattern_node);
