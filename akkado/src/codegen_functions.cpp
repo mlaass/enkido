@@ -704,6 +704,19 @@ TypedValue CodeGenerator::handle_user_function_call(
                         }
                     }
                     symbols_->define_record(func.params[i].name, record_type);
+                } else if (type_it != node_types_.end() &&
+                           type_it->second.type == ValueType::DynArray) {
+                    // PRD prd-pattern-event-arrays: a DynArray argument keeps
+                    // its type across the call boundary via the symbol's
+                    // typed_value, so notes()/freqs() results stay indexable
+                    // (and rejectable) inside the function body.
+                    Symbol sym{};
+                    sym.kind = SymbolKind::Variable;
+                    sym.name_hash = fnv1a_hash(func.params[i].name);
+                    sym.name = func.params[i].name;
+                    sym.buffer_index = param_bufs[i];
+                    sym.typed_value = type_it->second;
+                    symbols_->define(sym);
                 } else if (!param_multi_bufs[i].empty()) {
                     ArrayInfo arr;
                     arr.source_node = NULL_NODE;

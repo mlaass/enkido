@@ -792,6 +792,7 @@ inline void op_seqpat_prop(ExecutionContext& ctx, const Instruction& inst) {
 //   2 = time     (event start within cycle, beats)
 //   3 = midi_note (0..127, may be fractional for microtonal)
 //   4 = type_id  (sample id; 0 for pitch events)
+//   5 = num_values (active event's chord size — the DynArray length signal)
 // inputs[0]: voice index for polyphonic patterns (0..7, default 0 if 0xFFFF)
 // inputs[1]: external clock buffer (0xFFFF = use internal)
 // state_id: must match the SEQPAT_QUERY that populated the SequenceState
@@ -841,6 +842,26 @@ inline void op_seqpat_field(ExecutionContext& ctx, const Instruction& inst) {
         }
 
         const auto& evt = state.output.events[event_index];
+
+        // num_values (field 5) is the DynArray length: the total chord size
+        // at the active onset. A chord shows up either as one multi-value
+        // event (chord symbols) or as several single-value events sharing a
+        // start time (polyrhythm `[c4,e4,g4]`); both are counted here. Must
+        // stay in lockstep with op_seqpat_values' identical scan.
+        if (field == 5) {
+            const float t0 = evt.time;
+            int total = 0;
+            for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
+                if (std::fabs(state.output.events[e].time - t0) < 1e-4f) {
+                    total += state.output.events[e].num_values;
+                }
+            }
+            if (total > static_cast<int>(MAX_VALUES_PER_EVENT)) {
+                total = static_cast<int>(MAX_VALUES_PER_EVENT);
+            }
+            out[i] = static_cast<float>(total);
+            continue;
+        }
 
         if (voice_index >= evt.num_values) {
             out[i] = 0.0f;
@@ -940,6 +961,79 @@ inline void op_seqpat_phase(ExecutionContext& ctx, const Instruction& inst) {
             else if (phase_val > 1.0f) phase_val = 1.0f;
         }
         out[i] = phase_val;
+    }
+}
+
+// ============================================================================
+// SEQPAT_VALUES - Pack the active event's chord notes into a DynArray buffer
+// ============================================================================
+// out_buffer: samples 0..N-1 receive the active chord's notes, the rest of the
+//             block is zeroed. This is the packed `data_buffer` of a DynArray
+//             (PRD prd-pattern-event-arrays). N must match the length reported
+//             by SEQPAT_FIELD field=5 — both run the identical chord scan.
+// rate: 0 = raw values[] (Hz, for freqs(e)); 1 = freq→MIDI (for notes(e))
+// inputs[1]: external clock buffer (0xFFFF = use internal; matches SEQPAT_FIELD)
+// state_id: must match the SEQPAT_QUERY that populated the SequenceState
+//
+// A chord shows up two ways: one multi-value event (chord symbols set
+// num_values) or several single-value events sharing a start time (polyrhythm
+// `[c4,e4,g4]`). Both are gathered by collecting every event whose start time
+// matches the active event's. Per-block snapshot: resolved once at block start.
+[[gnu::always_inline]]
+inline void op_seqpat_values(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    std::fill_n(out, BLOCK_SIZE, 0.0f);
+
+    auto& state = ctx.states->get_or_create<SequenceState>(inst.state_id);
+    if (state.output.num_events == 0) {
+        return;
+    }
+
+    bool external_clock = (inst.inputs[1] != BUFFER_UNUSED);
+    float beat_pos;
+    if (external_clock) {
+        beat_pos = std::fmod(ctx.buffers->get(inst.inputs[1])[0], state.cycle_length);
+        if (beat_pos < 0.0f) beat_pos += state.cycle_length;
+    } else {
+        beat_pos = std::fmod(
+            static_cast<float>(ctx.global_sample_counter) / ctx.samples_per_beat(),
+            state.cycle_length);
+    }
+
+    // Active event: last event whose start is at or before beat_pos
+    // (wrapping to the final event before the first event's start).
+    std::uint32_t event_index = 0;
+    for (std::uint32_t e = 0; e < state.output.num_events; ++e) {
+        if (state.output.events[e].time <= beat_pos) event_index = e;
+        else break;
+    }
+    if (beat_pos < state.output.events[0].time) {
+        event_index = state.output.num_events - 1;
+    }
+
+    // Gather every event sharing the active event's start time (one chord),
+    // packing each event's value(s) in order. Stays in lockstep with the
+    // SEQPAT_FIELD field=5 length scan.
+    const float t0 = state.output.events[event_index].time;
+    const bool to_midi = (inst.rate == 1);
+    std::size_t slot = 0;
+    for (std::uint32_t e = 0;
+         e < state.output.num_events && slot < MAX_VALUES_PER_EVENT; ++e) {
+        const auto& ev = state.output.events[e];
+        if (std::fabs(ev.time - t0) >= 1e-4f) continue;
+        for (std::uint8_t v = 0;
+             v < ev.num_values && slot < MAX_VALUES_PER_EVENT; ++v) {
+            float hz = ev.values[v];
+            if (to_midi) {
+                // freq → MIDI: n = 69 + 12*log2(f/440). Guard non-positive Hz.
+                out[slot] = (hz > 0.0f)
+                    ? 69.0f + 12.0f * std::log2(hz / 440.0f)
+                    : 0.0f;
+            } else {
+                out[slot] = hz;
+            }
+            ++slot;
+        }
     }
 }
 

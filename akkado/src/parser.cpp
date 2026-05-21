@@ -69,7 +69,9 @@ void Parser::error(std::string_view message) {
 // Names reserved for state-cell built-ins (Phase 3 of userspace-state PRD).
 // Users cannot bind these — silent shadowing would let `s.get()` resolve to
 // a user closure that doesn't understand StateCell args, producing a
-// confusing error far from the cause.
+// confusing error far from the cause. (notes/freqs are intentionally NOT
+// reserved — they are common variable names; they behave like len/map:
+// special-cased by codegen but shadowable by a user binding.)
 static bool is_reserved_state_name(std::string_view name) {
     return name == "state" || name == "get" || name == "set";
 }
@@ -526,6 +528,7 @@ bool Parser::is_indexable(NodeIndex node) const {
         case NodeType::Call:
         case NodeType::MethodCall:
         case NodeType::Index:
+        case NodeType::FieldAccess:  // Allow e.notes[i] / record.field[i]
         case NodeType::ArrayLit:
         case NodeType::StringLit:  // Allow "str"[0] for string indexing
             return true;

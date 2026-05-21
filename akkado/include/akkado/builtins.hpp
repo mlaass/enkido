@@ -1157,7 +1157,21 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     {"len",     {cedar::Opcode::PUSH_CONST, 1, 0, false,
                  {"arr", "", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Array length (compile-time)"}},
+                 "Array length (compile-time for static arrays, runtime for dynamic arrays)"}},
+
+    // Pattern-event chord accessors (PRD prd-pattern-event-arrays). Both are
+    // dispatched by name in codegen.cpp's special_handlers map; the opcode
+    // here is a placeholder so the analyzer accepts the call. They take a
+    // Pattern and return a DynArray of the active event's chord notes.
+    // Not reserved — a user binding shadows them, exactly like len/map.
+    {"notes",   {cedar::Opcode::SEQPAT_VALUES, 1, 0, true,
+                 {"pattern", "", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Active pattern event's chord notes as a dynamic array of MIDI numbers"}},
+    {"freqs",   {cedar::Opcode::SEQPAT_VALUES, 1, 0, true,
+                 {"pattern", "", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Active pattern event's chord notes as a dynamic array of frequencies (Hz)"}},
 
     // User state cells (Phase 3 of userspace-state PRD). All three are
     // dispatched by name in codegen.cpp's special_handlers map; the opcode

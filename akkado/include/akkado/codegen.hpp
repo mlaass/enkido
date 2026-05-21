@@ -465,6 +465,19 @@ private:
     /// Handle len() function calls - compile-time array length
     TypedValue handle_len_call(NodeIndex node, const Node& n);
 
+    /// Handle notes(e) / freqs(e) — surface a pattern event's chord notes as a
+    /// DynArray (MIDI numbers / frequencies respectively). Both delegate to
+    /// emit_pattern_values(). See PRD prd-pattern-event-arrays §5.3.
+    TypedValue handle_notes_call(NodeIndex node, const Node& n);
+    TypedValue handle_freqs_call(NodeIndex node, const Node& n);
+    /// Shared codegen for notes()/freqs() and the e.notes/e.freqs field forms.
+    /// `pattern_src` is the argument/receiver node (used to clear E410
+    /// polyphony tracking — notes()/freqs() consume the chord as data).
+    /// `to_midi` selects SEQPAT_VALUES rate (true = MIDI, false = Hz).
+    TypedValue emit_pattern_values(NodeIndex node, NodeIndex pattern_src,
+                                   const TypedValue& pattern_tv,
+                                   bool to_midi, SourceLocation loc);
+
     /// Handle state(init) calls - allocate a CellState slot, return a StateCell
     /// TypedValue carrying the slot's state_id (per-call-site path-hash).
     TypedValue handle_state_call(NodeIndex node, const Node& n);
@@ -1241,8 +1254,21 @@ private:
     struct PolyPatternInfo {
         SourceLocation location;
         std::uint8_t max_voices;
+        std::uint32_t state_id = 0;  // pattern's SequenceState id (for erase-by-identity)
     };
     std::unordered_map<NodeIndex, PolyPatternInfo> polyphonic_pattern_nodes_;
+
+    /// Drop every polyphony-tracking entry for the pattern with this state_id.
+    /// notes()/freqs() consume the chord regardless of how the pattern is
+    /// referenced (literal, `as`-bound variable, ...), so identity-based.
+    void consume_polyphonic_pattern(std::uint32_t state_id) {
+        for (auto it = polyphonic_pattern_nodes_.begin();
+             it != polyphonic_pattern_nodes_.end();) {
+            it = (it->second.state_id == state_id && state_id != 0)
+                     ? polyphonic_pattern_nodes_.erase(it)
+                     : std::next(it);
+        }
+    }
 };
 
 } // namespace akkado

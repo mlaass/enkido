@@ -227,6 +227,12 @@ void SymbolTable::hide_symbol(std::string_view name, std::string_view module_pat
 void SymbolTable::register_builtins() {
     // Register all built-in functions from the builtins table
     for (const auto& [name, info] : BUILTIN_FUNCTIONS) {
+        // notes/freqs (pattern-event-arrays PRD) are codegen-dispatched but
+        // intentionally NOT pre-registered as global symbols: they are common
+        // variable names and must remain bindable (`notes = [...]`). The
+        // analyzer special-cases the call form; codegen's special_handlers
+        // map dispatches it.
+        if (name == "notes" || name == "freqs") continue;
         Symbol sym{};
         sym.kind = SymbolKind::Builtin;
         sym.name_hash = fnv1a_hash(name);

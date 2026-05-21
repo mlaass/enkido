@@ -1683,7 +1683,12 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         // Look up in symbol table
         auto sym = symbols_.lookup(func_name);
         if (!sym) {
-            error("E004", "Unknown function: '" + func_name + "'", n.location);
+            // notes()/freqs() (pattern-event-arrays PRD) are codegen-dispatched
+            // builtins deliberately absent from the symbol table so the names
+            // stay bindable as variables. Accept the call here.
+            if (func_name != "notes" && func_name != "freqs") {
+                error("E004", "Unknown function: '" + func_name + "'", n.location);
+            }
         } else if (sym->kind == SymbolKind::UserFunction) {
             // Validate user function call
             const auto& fn = sym->user_function;

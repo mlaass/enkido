@@ -1323,7 +1323,7 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
 
     // Track polyphonic patterns for error reporting (must be consumed by poly())
     if (max_voices > 1 && !is_sample_pattern) {
-        polyphonic_pattern_nodes_[node] = {n.location, max_voices};
+        polyphonic_pattern_nodes_[node] = {n.location, max_voices, state_id};
     }
 
     // Emit single-voice SEQPAT_STEP/GATE/TYPE (voice 0 only)
@@ -1663,7 +1663,7 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
 
     // Track polyphonic patterns for error reporting (must be consumed by poly())
     if (max_voices > 1 && !is_sample_pattern) {
-        polyphonic_pattern_nodes_[pattern_node] = {loc, max_voices};
+        polyphonic_pattern_nodes_[pattern_node] = {loc, max_voices, state_id};
     }
 
     auto pattern_payload = emit_per_voice_seqpat(pattern_node, state_id, max_voices, value_buf, velocity_buf,
@@ -1814,7 +1814,7 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     // chord polyphony natively (e.g. soundfont) erase this entry; mono synth
     // chains still produce E410.
     if (max_voices > 1) {
-        polyphonic_pattern_nodes_[node] = {n.location, max_voices};
+        polyphonic_pattern_nodes_[node] = {n.location, max_voices, state_id};
     }
 
     // Emit per-voice SEQPAT_STEP plus the voice-0 GATE/TYPE/FIELD/PHASE block.

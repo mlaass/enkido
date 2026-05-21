@@ -303,7 +303,31 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     }
     const bool with_index = (arity == 2);
 
-    std::uint16_t array_buf = visit(args.nodes[0]).buffer;
+    TypedValue array_tv = visit(args.nodes[0]);
+    std::uint16_t array_buf = array_tv.buffer;
+
+    // map over a DynArray (PRD prd-pattern-event-arrays §10 Q3): the data is
+    // packed in samples 0..len-1 of a single buffer, so a pointwise closure
+    // applied to the whole buffer transforms every slot in one shot — no
+    // runtime loop opcode. The closure must be pointwise/stateless; per-sample
+    // state would be inconsistent across slots. Output is a same-length
+    // DynArray sharing the input's runtime len_buffer.
+    if (array_tv.type == ValueType::DynArray && array_tv.dyn) {
+        if (with_index) {
+            error("E183", "map() over a dynamic array supports only a "
+                  "1-parameter closure (val); the per-element index form is "
+                  "not available for dynamic arrays", n.location);
+            return TypedValue::error_val();
+        }
+        push_path("map#" + std::to_string(call_counters_["map"]++));
+        push_path("dyn");
+        std::array<std::uint16_t, 1> arg_bufs{array_tv.dyn->data_buffer};
+        std::uint16_t result = apply_function_ref(*func_ref, arg_bufs, n.location);
+        pop_path();
+        pop_path();
+        return cache_and_return(
+            node, TypedValue::make_dyn_array(result, array_tv.dyn->len_buffer));
+    }
 
     if (!is_multi_buffer(args.nodes[0])) {
         push_path("map#" + std::to_string(call_counters_["map"]++));
@@ -939,6 +963,92 @@ TypedValue CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
     emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out));
+}
+
+// Shared codegen for notes()/freqs() and the e.notes/e.freqs field forms.
+// Emits SEQPAT_VALUES (packed chord data) + SEQPAT_FIELD/num_values (runtime
+// length), wrapped into a DynArray. PRD prd-pattern-event-arrays §5.3.
+TypedValue CodeGenerator::emit_pattern_values(NodeIndex node,
+                                              NodeIndex pattern_src,
+                                              const TypedValue& pattern_tv,
+                                              bool to_midi, SourceLocation loc) {
+    const char* fn = to_midi ? "notes()" : "freqs()";
+    if (pattern_tv.type != ValueType::Pattern || !pattern_tv.pattern) {
+        error("E182", std::string(fn) + " expects a pattern argument, got " +
+              value_type_name(pattern_tv.type), loc);
+        return TypedValue::error_val();
+    }
+
+    std::uint32_t state_id = pattern_tv.pattern->state_id;
+
+    // notes()/freqs() turn the chord into data — count as a polyphony
+    // consumer (by pattern identity) so a chord-symbol pattern is not
+    // flagged by the E410 "chord pattern not wrapped in poly()" check.
+    (void)pattern_src;
+    consume_polyphonic_pattern(state_id);
+    std::uint16_t data_buf = buffers_.allocate();
+    std::uint16_t len_buf  = buffers_.allocate();
+    if (data_buf == BufferAllocator::BUFFER_UNUSED ||
+        len_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", loc);
+        return TypedValue::error_val();
+    }
+
+    // Packed chord-note data buffer. rate 1 = MIDI (notes), 0 = Hz (freqs).
+    cedar::Instruction values_inst{};
+    values_inst.opcode = cedar::Opcode::SEQPAT_VALUES;
+    values_inst.out_buffer = data_buf;
+    values_inst.rate = to_midi ? 1 : 0;
+    values_inst.inputs[0] = 0xFFFF;
+    values_inst.inputs[1] = 0xFFFF;  // internal clock
+    values_inst.inputs[2] = 0xFFFF;
+    values_inst.inputs[3] = 0xFFFF;
+    values_inst.inputs[4] = 0xFFFF;
+    values_inst.state_id = state_id;
+    emit(values_inst);
+
+    // Runtime length buffer — SEQPAT_FIELD num_values selector (5).
+    cedar::Instruction len_inst{};
+    len_inst.opcode = cedar::Opcode::SEQPAT_FIELD;
+    len_inst.out_buffer = len_buf;
+    len_inst.rate = 5;  // num_values
+    len_inst.inputs[0] = 0;       // voice 0 (num_values is event-scoped)
+    len_inst.inputs[1] = 0xFFFF;  // internal clock
+    len_inst.inputs[2] = 0xFFFF;
+    len_inst.inputs[3] = 0xFFFF;
+    len_inst.inputs[4] = 0xFFFF;
+    len_inst.state_id = state_id;
+    emit(len_inst);
+
+    return cache_and_return(node, TypedValue::make_dyn_array(data_buf, len_buf));
+}
+
+// notes(e) / freqs(e): pattern-event chord notes as a dynamic array.
+static NodeIndex unwrap_len_style_arg(const AstArena& arena, const Node& n) {
+    NodeIndex arg = n.first_child;
+    if (arg == NULL_NODE) return NULL_NODE;
+    const Node& arg_node = arena[arg];
+    return (arg_node.type == NodeType::Argument) ? arg_node.first_child : arg;
+}
+
+TypedValue CodeGenerator::handle_notes_call(NodeIndex node, const Node& n) {
+    NodeIndex arr_node = unwrap_len_style_arg(ast_->arena, n);
+    if (arr_node == NULL_NODE) {
+        error("E182", "notes() requires exactly 1 pattern argument", n.location);
+        return TypedValue::error_val();
+    }
+    TypedValue pat = visit(arr_node);
+    return emit_pattern_values(node, arr_node, pat, /*to_midi=*/true, n.location);
+}
+
+TypedValue CodeGenerator::handle_freqs_call(NodeIndex node, const Node& n) {
+    NodeIndex arr_node = unwrap_len_style_arg(ast_->arena, n);
+    if (arr_node == NULL_NODE) {
+        error("E182", "freqs() requires exactly 1 pattern argument", n.location);
+        return TypedValue::error_val();
+    }
+    TypedValue pat = visit(arr_node);
+    return emit_pattern_values(node, arr_node, pat, /*to_midi=*/false, n.location);
 }
 
 // ============================================================================

@@ -816,10 +816,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     symbols_->define(new_sym);
                 } else if (value_tv.type == ValueType::Record ||
                            value_tv.type == ValueType::Pattern ||
-                           value_tv.type == ValueType::StateCell) {
+                           value_tv.type == ValueType::StateCell ||
+                           value_tv.type == ValueType::DynArray) {
                     // Preserve rich type info through symbol table.
                     // StateCell carries cell_state_id which get/set need to
                     // route the STATE_OP instruction to the right slot.
+                    // DynArray carries the data/len buffer pair so len() and
+                    // indexing keep working after `x = notes(e)`.
                     Symbol new_sym;
                     new_sym.kind = SymbolKind::Variable;
                     new_sym.name = var_name;
@@ -1054,6 +1057,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             using Handler = TypedValue (CodeGenerator::*)(NodeIndex, const Node&);
             static const std::unordered_map<std::string_view, Handler> special_handlers = {
                 {"len",     &CodeGenerator::handle_len_call},
+                // Pattern-event chord accessors (pattern-event-arrays PRD).
+                // Special-cased by name like len/map (not reserved).
+                {"notes",   &CodeGenerator::handle_notes_call},
+                {"freqs",   &CodeGenerator::handle_freqs_call},
                 // User state cells (Phase 3 of userspace-state PRD). state/get/set
                 // are reserved at parser level — no user closure can shadow them.
                 {"state",   &CodeGenerator::handle_state_call},
@@ -2765,6 +2772,16 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
     // Type-based dispatch
     switch (expr_tv.type) {
         case ValueType::Pattern: {
+            // PRD prd-pattern-event-arrays §5.3: `e.notes` / `e.freqs` are
+            // not pattern scalar fields — they surface the event's chord as
+            // a DynArray. UFCS covers only method calls, so bare field
+            // access is wired here directly.
+            if (field_name == "notes" || field_name == "freqs") {
+                return emit_pattern_values(node, expr_node, expr_tv,
+                                           /*to_midi=*/field_name == "notes",
+                                           n.location);
+            }
+
             TypedValue result = pattern_field(expr_tv, field_name);
             if (!result.error) {
                 return cache_and_return(node, result);

@@ -248,6 +248,15 @@ enum class Opcode : std::uint8_t {
     // execute().
     BLOCK_BIND = 216,        // dispatch: bind logical param slot >=5 for BLOCK_CALL
 
+    // Pattern Event Arrays (217) — PRD prd-pattern-event-arrays.
+    // Packs the active sequence event's chord notes (evt.values[]) into a
+    // single buffer for the DynArray data path: samples 0..num_values-1 hold
+    // the notes, the rest are 0. rate: 0 = raw Hz (freqs(e)), 1 = MIDI via
+    // freq→note conversion (notes(e)). inputs[1] = external clock (0xFFFF =
+    // internal; matches SEQPAT_FIELD's clock slot). state_id must match the
+    // SEQPAT_QUERY that filled the state.
+    SEQPAT_VALUES = 217,
+
     INVALID = 255
 };
 
