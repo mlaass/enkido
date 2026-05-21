@@ -122,7 +122,7 @@ osc("sin", 440) * t"['^]*8" |> out(@)
 
 // Sidechain-style ducking (4 pumps per cycle)
 drums = s"bd _ _ _"
-synth = osc("saw", C4') * t"[_/'']*4" |> out(@)
+synth = osc("saw", 261.6) * t"[_/'']*4" |> out(@)
 
 // Panning automation
 sig = osc("saw", 220)

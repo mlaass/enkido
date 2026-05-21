@@ -316,20 +316,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             return cache_and_return(node, TypedValue::signal(freq_buf));
         }
 
-        case NodeType::ChordLit: {
-            // For MVP, emit first note (root) of chord
-            // Full chord expansion would require array support
-            const auto& chord = n.as_chord();
-            float midi_value = static_cast<float>(chord.root_midi);
-            std::uint16_t freq_buf = codegen::emit_midi_to_freq(
-                buffers_, emit_stream(), midi_value);
-            if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                return TypedValue::error_val();
-            }
-            return cache_and_return(node, TypedValue::signal(freq_buf));
-        }
-
         case NodeType::ArrayLit: {
             // Arrays: emit all elements as multi-buffer for polyphony support
             NodeIndex first_elem = n.first_child;

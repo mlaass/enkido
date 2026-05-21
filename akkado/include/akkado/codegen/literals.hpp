@@ -1,7 +1,7 @@
 #pragma once
 
 // Inline helpers for literal code generation
-// These provide common patterns used in NumberLit, BoolLit, PitchLit, ChordLit, ArrayLit
+// These provide common patterns used in NumberLit, BoolLit, PitchLit, ArrayLit
 
 #include "helpers.hpp"
 #include <cedar/vm/instruction.hpp>
@@ -10,7 +10,7 @@ namespace akkado {
 namespace codegen {
 
 /// Emit PUSH_CONST for a MIDI note value, then MTOF to convert to frequency.
-/// This is the common pattern used by PitchLit and ChordLit.
+/// This is the common pattern used by PitchLit.
 /// Returns the frequency buffer index, or BUFFER_UNUSED on error.
 [[gnu::always_inline]]
 inline std::uint16_t emit_midi_to_freq(

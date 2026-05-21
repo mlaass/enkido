@@ -19,7 +19,6 @@ enum class TokenType : std::uint8_t {
     String,         // "hello"
     Identifier,     // foo, bar_baz
     PitchLit,       // 'c4', 'f#3', 'Bb5'
-    ChordLit,       // C4', Am3', F#m7_4'
 
     // Keywords
     True,           // true
@@ -100,7 +99,6 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::String:       return "String";
         case TokenType::Identifier:   return "Identifier";
         case TokenType::PitchLit:     return "PitchLit";
-        case TokenType::ChordLit:     return "ChordLit";
         case TokenType::True:         return "True";
         case TokenType::False:        return "False";
         case TokenType::Match:        return "Match";
@@ -166,14 +164,8 @@ struct PitchValue {
     std::uint8_t midi_note;
 };
 
-/// Chord value (root MIDI note + intervals)
-struct ChordValue {
-    std::uint8_t root_midi;
-    std::vector<std::int8_t> intervals;
-};
-
-/// Token value - can be a number, string, pitch, chord, or nothing
-using TokenValue = std::variant<std::monostate, NumericValue, std::string, PitchValue, ChordValue>;
+/// Token value - can be a number, string, pitch, or nothing
+using TokenValue = std::variant<std::monostate, NumericValue, std::string, PitchValue>;
 
 /// A single token from the lexer
 struct Token {
@@ -201,11 +193,6 @@ struct Token {
     /// Get pitch MIDI note (assumes type == PitchLit)
     [[nodiscard]] std::uint8_t as_pitch() const {
         return std::get<PitchValue>(value).midi_note;
-    }
-
-    /// Get chord value (assumes type == ChordLit)
-    [[nodiscard]] const ChordValue& as_chord() const {
-        return std::get<ChordValue>(value);
     }
 };
 

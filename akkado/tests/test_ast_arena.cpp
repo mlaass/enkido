@@ -317,7 +317,6 @@ TEST_CASE("node_type_name returns correct strings", "[ast_arena]") {
     CHECK(std::string(node_type_name(NodeType::BoolLit)) == "BoolLit");
     CHECK(std::string(node_type_name(NodeType::StringLit)) == "StringLit");
     CHECK(std::string(node_type_name(NodeType::PitchLit)) == "PitchLit");
-    CHECK(std::string(node_type_name(NodeType::ChordLit)) == "ChordLit");
     CHECK(std::string(node_type_name(NodeType::ArrayLit)) == "ArrayLit");
     CHECK(std::string(node_type_name(NodeType::Identifier)) == "Identifier");
     CHECK(std::string(node_type_name(NodeType::Hole)) == "Hole");
@@ -389,19 +388,6 @@ TEST_CASE("Node::as_pitch accessor", "[ast_arena]") {
     CHECK(arena[idx].as_pitch() == 69);
 }
 
-TEST_CASE("Node::as_chord accessor", "[ast_arena]") {
-    AstArena arena;
-    SourceLocation loc{1, 1, 0, 0};
-
-    NodeIndex idx = arena.alloc(NodeType::ChordLit, loc);
-    arena[idx].data = Node::ChordData{60, {0, 4, 7}};  // C major
-    const auto& chord = arena[idx].as_chord();
-    CHECK(chord.root_midi == 60);
-    REQUIRE(chord.intervals.size() == 3);
-    CHECK(chord.intervals[0] == 0);
-    CHECK(chord.intervals[1] == 4);
-    CHECK(chord.intervals[2] == 7);
-}
 
 TEST_CASE("Node::as_arg_name accessor", "[ast_arena]") {
     AstArena arena;

@@ -134,18 +134,6 @@ TEST_CASE("Codegen: Pitch literals", "[codegen][literals]") {
     }
 }
 
-TEST_CASE("Codegen: Chord literals", "[codegen][literals]") {
-    SECTION("major chord uses root note") {
-        auto result = akkado::compile("C4'");
-        REQUIRE(result.success);
-        auto insts = get_instructions(result);
-        REQUIRE(insts.size() >= 2);
-        CHECK(insts[0].opcode == cedar::Opcode::PUSH_CONST);
-        CHECK(decode_const_float(insts[0]) == 60.0f);  // C4 root
-        CHECK(insts[1].opcode == cedar::Opcode::MTOF);
-    }
-}
-
 TEST_CASE("Codegen: Array literals", "[codegen][literals]") {
     SECTION("simple array") {
         auto result = akkado::compile("[1, 2, 3]");

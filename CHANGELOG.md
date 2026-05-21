@@ -45,6 +45,17 @@ restore the previous behaviour. The `pingpong` opcode previously did
 `out = in + delayed` (effectively `dry=1, wet=1`) — pass `wet: 1.0` to
 reproduce the prior echo loudness.
 
+### ⚠ BREAKING — `ChordLit` (`C4'`) syntax removed
+
+The Strudel-style chord literal — an identifier-shaped token with a
+trailing apostrophe, e.g. `C4'`, `F#m7_4'` — has been removed from the
+language. It was an MVP stub that only ever emitted the chord's root
+note, was unused in any shipped patch, and is superseded by pattern
+events carrying real chord data. Write chords as patterns instead
+(`n"[c4,e4,g4]"`, `chord("Am G C")`); `C4'` now lexes as the identifier
+`C4` followed by a quote. The internal `chord_parser` API (used by
+mini-notation) is unaffected.
+
 ### Added
 
 - **Unified `dry`/`wet` convention across every effect builtin** — all 33

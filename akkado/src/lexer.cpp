@@ -289,9 +289,9 @@ Token Lexer::lex_token() {
         case '`':
             return lex_string(c);
         case '\'':
-            // Try to lex as pitch or chord literal first ('c4', 'f#3', C4', etc.)
-            if (auto pitch_or_chord = try_lex_pitch_or_chord()) {
-                return *pitch_or_chord;
+            // Try to lex as a pitch literal first ('c4', 'f#3', etc.)
+            if (auto pitch = try_lex_pitch()) {
+                return *pitch;
             }
             return lex_string(c);
 
@@ -415,12 +415,6 @@ Token Lexer::lex_string(char quote) {
 }
 
 Token Lexer::lex_identifier() {
-    // Try Strudel-style chord first (e.g., C4', F#m3', Am7_3')
-    // We're positioned after the first character which was already consumed
-    if (auto chord = try_lex_strudel_chord()) {
-        return *chord;
-    }
-
     // Check for timeline string prefix: t"..." or t`...`
     if (source_[start_] == 't' && current_ == start_ + 1) {
         char next = peek();
@@ -483,7 +477,7 @@ Token Lexer::lex_directive() {
     return make_token(TokenType::Directive, std::string(text));
 }
 
-std::optional<Token> Lexer::try_lex_pitch_or_chord() {
+std::optional<Token> Lexer::try_lex_pitch() {
     // Try to match pitch pattern: [a-gA-G][#b]?[0-9]'
     // We're positioned right after the opening quote
     std::size_t lookahead = current_;
@@ -554,132 +548,6 @@ std::optional<Token> Lexer::try_lex_pitch_or_chord() {
     advance(); // closing quote
 
     return make_token(TokenType::PitchLit, PitchValue{static_cast<std::uint8_t>(midi_note)});
-}
-
-std::optional<Token> Lexer::try_lex_strudel_chord() {
-    // Strudel chord format: [A-G][#b]*[quality][_]?[octave]'
-    // Examples: C4', F#m3', Am7_3', Bb4', E5_2'
-    // We're positioned after the first character (note letter) was consumed
-
-    // First char must be uppercase A-G
-    char first_char = source_[start_];
-    if (first_char < 'A' || first_char > 'G') {
-        return std::nullopt;
-    }
-
-    // Lookahead to find the closing apostrophe
-    std::size_t lookahead = current_;
-
-    // Parse accidentals (# or b, can be double: ##, bb)
-    int accidental = 0;
-    while (lookahead < source_.size()) {
-        char c = source_[lookahead];
-        if (c == '#') {
-            accidental++;
-            lookahead++;
-        } else if (c == 'b' && lookahead > current_) {
-            // Only allow 'b' as accidental if we've already seen something after the note
-            // This prevents "Bb" from being parsed as "B" + "b" accidental incorrectly
-            // Instead we need to handle 'b' immediately after the note letter
-            break;
-        } else if (c == 'b' && lookahead == current_) {
-            // 'b' immediately after note letter is a flat
-            accidental--;
-            lookahead++;
-        } else {
-            break;
-        }
-    }
-
-    // Find closing apostrophe to determine the extent
-    std::size_t apos_pos = lookahead;
-    while (apos_pos < source_.size() && source_[apos_pos] != '\'') {
-        if (!is_alphanumeric(source_[apos_pos]) && source_[apos_pos] != '_') {
-            return std::nullopt;  // Invalid character before apostrophe
-        }
-        apos_pos++;
-    }
-
-    if (apos_pos >= source_.size()) {
-        return std::nullopt;  // No closing apostrophe found
-    }
-
-    // Extract the part between accidentals and apostrophe: [quality][_]?[octave]
-    std::string_view middle = source_.substr(lookahead, apos_pos - lookahead);
-
-    if (middle.empty()) {
-        return std::nullopt;  // Need at least an octave
-    }
-
-    // Split quality from octave
-    // If underscore present, split at underscore
-    // Otherwise, try longest matching quality that leaves a valid octave
-    std::string_view quality;
-    std::string_view octave_str;
-
-    std::size_t underscore_pos = middle.find('_');
-    if (underscore_pos != std::string_view::npos) {
-        quality = middle.substr(0, underscore_pos);
-        octave_str = middle.substr(underscore_pos + 1);
-    } else {
-        // Try to find the longest quality prefix that leaves valid digits as octave
-        // Start from the end, find where digits begin
-        std::size_t digit_start = middle.size();
-        while (digit_start > 0 && is_digit(middle[digit_start - 1])) {
-            digit_start--;
-        }
-
-        if (digit_start == middle.size()) {
-            return std::nullopt;  // No octave digits found
-        }
-
-        quality = middle.substr(0, digit_start);
-        octave_str = middle.substr(digit_start);
-    }
-
-    // Validate octave is all digits and non-empty
-    if (octave_str.empty()) {
-        return std::nullopt;
-    }
-    for (char c : octave_str) {
-        if (!is_digit(c)) {
-            return std::nullopt;
-        }
-    }
-
-    // Look up chord intervals
-    const std::vector<std::int8_t>* chord_intervals = lookup_chord(quality);
-    if (chord_intervals == nullptr) {
-        return std::nullopt;  // Unknown chord quality
-    }
-
-    // Parse octave
-    int octave = 0;
-    for (char c : octave_str) {
-        octave = octave * 10 + (c - '0');
-    }
-
-    // Calculate MIDI note
-    // Note letter semitones: C=0, D=2, E=4, F=5, G=7, A=9, B=11
-    static constexpr int semitones[] = {9, 11, 0, 2, 4, 5, 7}; // A, B, C, D, E, F, G
-    int note_semitone = semitones[first_char - 'A'];
-
-    // MIDI note: (octave + 1) * 12 + semitone + accidental
-    int midi_note = (octave + 1) * 12 + note_semitone + accidental;
-
-    // Clamp to valid MIDI range
-    if (midi_note < 0) midi_note = 0;
-    if (midi_note > 127) midi_note = 127;
-
-    // Consume all characters including closing apostrophe
-    while (current_ <= apos_pos) {
-        advance();
-    }
-
-    return make_token(TokenType::ChordLit, ChordValue{
-        static_cast<std::uint8_t>(midi_note),
-        *chord_intervals
-    });
 }
 
 void Lexer::add_error(std::string_view message) {

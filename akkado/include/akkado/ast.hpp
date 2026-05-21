@@ -31,7 +31,6 @@ enum class NodeType : std::uint8_t {
     BoolLit,        // true/false
     StringLit,      // "..." or '...' or `...`
     PitchLit,       // 'c4', 'f#3', 'Bb5' (MIDI note)
-    ChordLit,       // C4', Am3', F#m7_4' (chord)
     ArrayLit,       // [a, b, c] - array literal
 
     // Identifiers
@@ -106,7 +105,6 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::BoolLit:     return "BoolLit";
         case NodeType::StringLit:   return "StringLit";
         case NodeType::PitchLit:    return "PitchLit";
-        case NodeType::ChordLit:    return "ChordLit";
         case NodeType::ArrayLit:    return "ArrayLit";
         case NodeType::Identifier:  return "Identifier";
         case NodeType::Hole:        return "Hole";
@@ -190,7 +188,6 @@ struct Node {
         NodeIndex spread_source = NULL_NODE;    // ..expr — set when arg is spread; expression hung here, not added as child
     };
     struct PitchData { std::uint8_t midi_note; };
-    struct ChordData { std::uint8_t root_midi; std::vector<std::int8_t> intervals; };
     struct ClosureParamData {
         std::string name;
         std::optional<double> default_value;
@@ -355,7 +352,6 @@ struct Node {
         BinaryOpData,
         ArgumentData,
         PitchData,
-        ChordData,
         ClosureParamData,
         MiniAtomData,
         MiniEuclideanData,
@@ -407,10 +403,6 @@ struct Node {
 
     [[nodiscard]] std::uint8_t as_pitch() const {
         return std::get<PitchData>(data).midi_note;
-    }
-
-    [[nodiscard]] const ChordData& as_chord() const {
-        return std::get<ChordData>(data);
     }
 
     [[nodiscard]] const ClosureParamData& as_closure_param() const {

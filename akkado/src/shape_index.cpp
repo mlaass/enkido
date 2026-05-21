@@ -55,7 +55,6 @@ const char* type_label_for_rhs_node(const Ast& ast, NodeIndex rhs) {
         case NodeType::BoolLit:     return "bool";
         case NodeType::StringLit:   return "string";
         case NodeType::PitchLit:    return "number";
-        case NodeType::ChordLit:    return "number";
         case NodeType::RecordLit:   return "record";
         case NodeType::ArrayLit:    return "array";
         case NodeType::MiniLiteral: return "pattern";

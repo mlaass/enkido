@@ -90,24 +90,6 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         CHECK(inst[2].inputs[0] == inst[1].out_buffer);
     }
 
-    SECTION("chord literal as oscillator frequency (uses root)") {
-        auto result = akkado::compile("saw(C4')");  // C4 major chord, root = 60
-
-        REQUIRE(result.success);
-        // Should have 3 instructions: PUSH_CONST (60), MTOF, OSC_SAW
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
-
-        cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
-
-        // PUSH_CONST should push MIDI note 60 (C4 - root of chord)
-        CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
-        CHECK(decode_const_float(inst[0]) == 60.0f);
-
-        CHECK(inst[1].opcode == cedar::Opcode::MTOF);
-        CHECK(inst[2].opcode == cedar::Opcode::OSC_SAW);
-    }
-
     SECTION("pipe expression: saw(440) |> out(%, %)") {
         auto result = akkado::compile("saw(440) |> out(%, %)");
 
