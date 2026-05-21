@@ -522,6 +522,106 @@ def test_field_bank_phase_plumbing():
     print(f"  Saved {phased_wav} — listen for each note ramping down in level")
 
 
+def test_custom_field_plumbing():
+    """
+    Verify the Phase-3 per-voice custom record-suffix field bank
+    (prd-poly-callback-event-record): a callback that destructures a
+    mini-notation `{cutoff:V}` field reads each voice's own value, and a
+    destructure default applies per-event when a note omits the field.
+
+    Three >=300s renders of a 4-note pattern (one note per cycle):
+    - plain   = osc("saw", freq) * 0.3                       (no custom field)
+    - custom  = osc("saw", freq) * 0.3 * cutoff, every note {cutoff:0.8}
+    - default = osc("saw", freq) * 0.3 * cutoff, no note sets cutoff,
+                callback declares `{cutoff = 0.6}`
+
+    If `cutoff` were stuck at the old constant-0 buffer, custom and default
+    would both be silent. Expect custom RMS ~= plain * 0.8 and default
+    RMS ~= plain * 0.6 — proving the field value and the per-event default
+    are both plumbed. Asserts no NaN/DC and no RMS drift across the render.
+
+    If this fails, check VM::run_voice_pool custom-slot fill (cedar/src/vm/
+    vm.cpp), PolyAllocState::prop_defaults plumbing, and handle_poly_call
+    custom-field bank wiring (akkado/src/codegen_functions.cpp).
+    """
+    print("\n[test_custom_field_plumbing]")
+
+    plain_src = OUT_DIR / "phase3_plain.akk"
+    custom_src = OUT_DIR / "phase3_custom.akk"
+    default_src = OUT_DIR / "phase3_default.akk"
+    plain_src.write_text(
+        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> osc("saw", freq) * 0.3)'
+        ' |> out(@)\n'
+    )
+    custom_src.write_text(
+        'n"c4{cutoff:0.8} e4{cutoff:0.8} g4{cutoff:0.8} b4{cutoff:0.8}"'
+        ' |> poly(@, ({freq, cutoff}) -> osc("saw", freq) * 0.3 * cutoff)'
+        ' |> out(@)\n'
+    )
+    default_src.write_text(
+        'n"c4 e4 g4 b4" |> poly(@, ({freq, cutoff = 0.6}) ->'
+        ' osc("saw", freq) * 0.3 * cutoff) |> out(@)\n'
+    )
+
+    plain_wav = str(OUT_DIR / "phase3_plain.wav")
+    custom_wav = str(OUT_DIR / "phase3_custom.wav")
+    default_wav = str(OUT_DIR / "phase3_default.wav")
+    render(str(plain_src), plain_wav, str(OUT_DIR / "phase3_plain.jsonl"),
+           seconds=RENDER_SECONDS, bpm=RENDER_BPM)
+    render(str(custom_src), custom_wav, str(OUT_DIR / "phase3_custom.jsonl"),
+           seconds=RENDER_SECONDS, bpm=RENDER_BPM)
+    render(str(default_src), default_wav, str(OUT_DIR / "phase3_default.jsonl"),
+           seconds=RENDER_SECONDS, bpm=RENDER_BPM)
+
+    plain, _ = load_wav_int16_to_float(plain_wav)
+    custom, _ = load_wav_int16_to_float(custom_wav)
+    default, _ = load_wav_int16_to_float(default_wav)
+    plain_l = plain[:, 0]
+    custom_l = custom[:, 0]
+    default_l = default[:, 0]
+
+    for name, sig in (("custom", custom_l), ("default", default_l)):
+        assert np.all(np.isfinite(sig)), f"{name} render produced NaN/Inf"
+        dc = abs(float(np.mean(sig)))
+        assert dc < 0.01, f"{name} render has DC offset {dc:.4f}"
+
+    plain_rms = _rms(plain_l)
+    custom_rms = _rms(custom_l)
+    default_rms = _rms(default_l)
+    assert plain_rms > 0.01, f"plain render is silent (rms {plain_rms:.4f})"
+
+    # custom: every note carries {cutoff:0.8} -> RMS ~= plain * 0.8.
+    custom_ratio = custom_rms / plain_rms
+    assert 0.7 < custom_ratio < 0.9, (
+        f"custom/plain rms ratio {custom_ratio:.3f} not ~0.8 — per-voice "
+        f"`cutoff` not plumbed (still constant 0?)"
+    )
+    # default: no note sets cutoff -> the `{cutoff = 0.6}` default applies
+    # to every voice -> RMS ~= plain * 0.6.
+    default_ratio = default_rms / plain_rms
+    assert 0.5 < default_ratio < 0.7, (
+        f"default/plain rms ratio {default_ratio:.3f} not ~0.6 — per-event "
+        f"destructure default not applied (cutoff stuck at 0?)"
+    )
+
+    # Voice-leak / drift guard: RMS stable across the >=300s render.
+    thirds = np.array_split(custom_l, 3)
+    rms_thirds = [_rms(t) for t in thirds]
+    lo, hi = min(rms_thirds), max(rms_thirds)
+    assert lo > 0.0 and hi / lo < 1.5, (
+        f"custom RMS drifts across render: thirds {rms_thirds} — possible "
+        f"voice leak"
+    )
+
+    print(f"  plain rms {plain_rms:.4f}, custom rms {custom_rms:.4f} "
+          f"(ratio {custom_ratio:.2f}), default rms {default_rms:.4f} "
+          f"(ratio {default_ratio:.2f})")
+    print(f"  RMS thirds {[round(r, 4) for r in rms_thirds]}")
+    print(f"  ✓ PASS: per-voice `cutoff` + per-event default plumbed; "
+          f"no NaN/DC/drift")
+    print(f"  Saved {custom_wav} — listen for the saw notes at 0.8 level")
+
+
 def main():
     print("POLY Opcode Quality Tests")
     print("=" * 60)
@@ -543,6 +643,7 @@ def main():
         test_chord_stab_audio_quality,
         test_chord_progression_voice_churn,
         test_field_bank_phase_plumbing,
+        test_custom_field_plumbing,
     ]:
         try:
             test()

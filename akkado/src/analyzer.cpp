@@ -1462,6 +1462,36 @@ NodeIndex SemanticAnalyzer::substitute_nodes(NodeIndex node, const SubstituteOpt
         }
     }
 
+    // Destructure default expressions ride inside the data variant (one
+    // NodeIndex per field), not as child links — substitute/clone them into
+    // the output arena and patch the indices, mirroring clone_subtree. A pipe
+    // RHS that carries a `({x = default}) ->` closure (e.g.
+    // `pat |> poly(@, ({freq, cutoff = 0.5}) -> …)`) reaches this path.
+    if (n.type == NodeType::DestructureParam &&
+        std::holds_alternative<Node::DestructureParamData>(n.data)) {
+        const auto& dp_src = n.as_destructure_param();
+        auto& dst_data =
+            std::get<Node::DestructureParamData>(output_arena_[new_node].data);
+        for (std::size_t i = 0; i < dp_src.fields.size(); ++i) {
+            if (dp_src.fields[i].default_node != NULL_NODE) {
+                dst_data.fields[i].default_node =
+                    substitute_nodes(dp_src.fields[i].default_node, opts);
+            }
+        }
+    }
+    if (n.type == NodeType::DestructureAssignment &&
+        std::holds_alternative<Node::DestructureAssignmentData>(n.data)) {
+        const auto& dd_src = n.as_destructure_assignment();
+        auto& dst_data = std::get<Node::DestructureAssignmentData>(
+            output_arena_[new_node].data);
+        for (std::size_t i = 0; i < dd_src.fields.size(); ++i) {
+            if (dd_src.fields[i].default_node != NULL_NODE) {
+                dst_data.fields[i].default_node =
+                    substitute_nodes(dd_src.fields[i].default_node, opts);
+            }
+        }
+    }
+
     NodeIndex src_child = n.first_child;
     NodeIndex prev_dst_child = NULL_NODE;
 

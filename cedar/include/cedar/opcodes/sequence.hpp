@@ -75,11 +75,16 @@ struct Event {
     // at compile time by SequenceCompiler; semantics are pattern-local.
     // Default 0.0f means "not set".
     float prop_vals[MAX_PROPS_PER_EVENT];
+    // Per-event presence mask for prop_vals (Phase 3, prd-poly-callback-event-
+    // record). Bit S set means this event explicitly declared prop slot S.
+    // Distinguishes "set to 0.0" from "absent" so a poly-callback destructure
+    // default (`{cutoff = 0.5}`) applies only to notes that omit the field.
+    std::uint8_t prop_set_mask;
 
     Event() : time(0.0f), duration(1.0f), chance(1.0f), velocity(1.0f),
               midi_note(0.0f),
               type(EventType::DATA), num_values(0), type_id(0),
-              source_offset(0), source_length(0) {
+              source_offset(0), source_length(0), prop_set_mask(0) {
         values[0] = 0.0f;
         for (std::size_t i = 0; i < MAX_VALUES_PER_EVENT; ++i) {
             velocities[i] = 1.0f;
@@ -144,6 +149,8 @@ struct OutputEvents {
         std::uint16_t source_length;
         // Custom property values (Phase 2.1, PRD §11). Mirrors Event::prop_vals.
         float prop_vals[MAX_PROPS_PER_EVENT];
+        // Per-event prop presence mask (Phase 3). Mirrors Event::prop_set_mask.
+        std::uint8_t prop_set_mask;
     };
 
     OutputEvent* events = nullptr;    // Pointer to arena-allocated output events
@@ -175,6 +182,13 @@ struct OutputEvents {
             for (std::size_t i = 0; i < MAX_VALUES_PER_EVENT; ++i) {
                 e.velocities[i] = velocity;
                 e.notes[i] = midi_note;
+            }
+            // Phase 3: prop presence defaults to "none set"; process_event
+            // overwrites prop_vals + mask for pattern events. Non-pattern
+            // callers (e.g. MIDI queue) leave the event prop-free.
+            e.prop_set_mask = 0;
+            for (std::size_t i = 0; i < MAX_PROPS_PER_EVENT; ++i) {
+                e.prop_vals[i] = 0.0f;
             }
         }
     }
@@ -345,6 +359,7 @@ inline void process_event(SequenceState& state, const Event& e, std::uint64_t se
             for (std::size_t i = 0; i < MAX_PROPS_PER_EVENT; ++i) {
                 last.prop_vals[i] = e.prop_vals[i];
             }
+            last.prop_set_mask = e.prop_set_mask;
         }
     } else {
         // SUB_SEQ: recursively query the referenced sequence

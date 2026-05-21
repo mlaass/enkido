@@ -2443,6 +2443,9 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
 
     // Visit pattern input if present (emits SEQPAT_QUERY etc.)
     std::uint32_t seq_state_id = 0;
+    // Phase 3: the upstream pattern's custom record-suffix property slot map.
+    // Drives custom-field plumbing into the per-voice field bank below.
+    std::shared_ptr<PatternPayload> poly_pattern;
     if (pattern_arg != NULL_NODE) {
         auto pat_tv = visit(pattern_arg);
         // Look up upstream state_id. Patterns and midi() sources both feed
@@ -2450,6 +2453,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         // here we just record whichever state_id the upstream produced.
         if (pat_tv.pattern) {
             seq_state_id = pat_tv.pattern->state_id;
+            poly_pattern = pat_tv.pattern;
         } else if (pat_tv.type == ValueType::EventSource && pat_tv.event_source) {
             seq_state_id = pat_tv.event_source->state_id;
         }
@@ -2482,6 +2486,17 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     std::vector<PolyBind> binds;
     bool        has_rest = false;
     std::string rest_name;
+
+    // Phase 3: the per-voice field bank holds the 11 fixed pattern-event
+    // fields followed by `prop_count` contiguous custom record-suffix
+    // property slots (`c4{cutoff:0.8}`). A custom field at prop slot S binds
+    // to bank slot kPolyFieldCount + S.
+    constexpr std::size_t kPolyFieldCount = 11;
+    const std::size_t prop_count = poly_pattern
+        ? std::min(poly_pattern->custom_field_slots.size(),
+                   cedar::MAX_PROPS_PER_EVENT)
+        : std::size_t{0};
+    const std::size_t bank_count = kPolyFieldCount + prop_count;
     {
         const auto& params = func_ref->params;
         const std::size_t np = params.size();
@@ -2537,9 +2552,19 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             for (const auto& df : params[destr_idx].destructure_fields) {
                 int idx = pattern_field_index(df.name);
                 if (idx < 0) {
-                    // Custom or unknown field — Phase 3 wires prop_vals; until
-                    // then it resolves to the constant-0 buffer.
-                    binds.push_back({df.name, 0xFF, df.default_node});
+                    // Phase 3: a custom record-suffix field declared on the
+                    // upstream pattern binds to a field-bank slot after the
+                    // 11 fixed fields. A name no note declares stays 0xFF and
+                    // resolves to a constant default buffer.
+                    std::uint8_t fid = 0xFF;
+                    if (poly_pattern) {
+                        auto cs = poly_pattern->custom_field_slots.find(df.name);
+                        if (cs != poly_pattern->custom_field_slots.end()) {
+                            fid = static_cast<std::uint8_t>(
+                                kPolyFieldCount + cs->second);
+                        }
+                    }
+                    binds.push_back({df.name, fid, df.default_node});
                     continue;
                 }
                 if (field_bound[static_cast<std::size_t>(idx)]) {
@@ -2559,16 +2584,15 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         }
     }
 
-    // Allocate scratch buffers: an 11-slot contiguous per-voice field bank
-    // (indexed by PatternPayload field id), then the stereo voice-out and mix
-    // pairs. poly is stereo-native: voice_out and mix are adjacent L/R pairs
-    // (R = L+1). The instruction carries only bank_base (inputs[0]) and
-    // voice_out (inputs[4]); the VM fills every bank buffer per voice — see
-    // VM::run_voice_pool.
-    constexpr std::size_t kPolyFieldCount = 11;
+    // Allocate scratch buffers: the contiguous per-voice field bank (11 fixed
+    // fields + prop_count custom slots, indexed by PatternPayload field id),
+    // then the stereo voice-out and mix pairs. poly is stereo-native:
+    // voice_out and mix are adjacent L/R pairs (R = L+1). The instruction
+    // carries only bank_base (inputs[0]) and voice_out (inputs[4]); the VM
+    // fills every bank buffer per voice — see VM::run_voice_pool.
     std::uint16_t bank_base = buffers_.allocate();
     bool bank_ok = (bank_base != BufferAllocator::BUFFER_UNUSED);
-    for (std::size_t i = 1; i < kPolyFieldCount; ++i) {
+    for (std::size_t i = 1; i < bank_count; ++i) {
         std::uint16_t b = buffers_.allocate();
         if (b == BufferAllocator::BUFFER_UNUSED || b != bank_base + i) {
             bank_ok = false;
@@ -2612,7 +2636,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         cedar::Instruction poly_begin{};
         poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
         poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        poly_begin.inputs[0] = bank_base;  // 11-slot per-voice field bank
+        poly_begin.inputs[0] = bank_base;  // per-voice field bank base
         poly_begin.inputs[1] = 0xFFFF;
         poly_begin.inputs[2] = 0xFFFF;
         poly_begin.inputs[3] = 0xFFFF;
@@ -2630,35 +2654,69 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // Push scope and bind callback params to per-voice buffers.
     symbols_->push_scope();
 
-    // All 11 fixed pattern-event fields are plumbed per voice via the
-    // contiguous field bank (bank_base + PatternPayload field id); the VM
-    // fills every bank buffer in run_voice_pool. A custom/unknown destructure
-    // name (field_id == 0xFF) still resolves to a lazily-allocated constant-0
-    // buffer — Phase 3 will wire custom fields through prop_vals.
-    std::uint16_t zero_buf = BufferAllocator::BUFFER_UNUSED;
-    auto field_buffer = [&](std::uint8_t field_id) -> std::uint16_t {
-        if (field_id < kPolyFieldCount) {
-            return static_cast<std::uint16_t>(bank_base + field_id);
+    // The 11 fixed pattern-event fields plus prop_count custom record-suffix
+    // fields are plumbed per voice via the contiguous field bank (bank_base +
+    // field id); the VM fills every bank buffer in run_voice_pool. A
+    // destructure name no note declares (field_id == 0xFF) resolves to a
+    // constant buffer holding the const-evaluated `= expr` default.
+    //
+    // Const-evaluate a destructure `= expr` default; NULL_NODE -> fallback,
+    // non-constant expression -> E419.
+    auto eval_poly_default = [&](NodeIndex dn, float fallback) -> float {
+        if (dn == NULL_NODE) return fallback;
+        ConstEvaluator evaluator(*ast_, *symbols_);
+        auto result = evaluator.evaluate(dn);
+        for (const auto& diag : evaluator.diagnostics()) {
+            diagnostics_.push_back(diag);
         }
-        if (zero_buf == BufferAllocator::BUFFER_UNUSED) {
-            zero_buf = buffers_.allocate();
-            if (zero_buf != BufferAllocator::BUFFER_UNUSED) {
-                cedar::Instruction zc{};
-                zc.opcode = cedar::Opcode::PUSH_CONST;
-                zc.out_buffer = zero_buf;
-                zc.inputs[0] = 0xFFFF;
-                zc.inputs[1] = 0xFFFF;
-                zc.inputs[2] = 0xFFFF;
-                zc.inputs[3] = 0xFFFF;
-                encode_const_value(zc, 0.0f);
-                emit(zc);
-            }
+        if (result && std::holds_alternative<double>(*result)) {
+            return static_cast<float>(std::get<double>(*result));
         }
-        return zero_buf;
+        error("E419", func_name + "() destructure default for a custom field "
+              "must be a compile-time constant", n.location);
+        return fallback;
     };
 
+    std::vector<std::pair<float, std::uint16_t>> const_field_bufs;
+    auto field_buffer = [&](const PolyBind& b) -> std::uint16_t {
+        if (b.field_id < bank_count) {
+            return static_cast<std::uint16_t>(bank_base + b.field_id);
+        }
+        // Unknown field: constant buffer holding the `= expr` default
+        // (0.0 when absent), cached per distinct value.
+        float dv = eval_poly_default(b.default_node, 0.0f);
+        for (const auto& [v, buf] : const_field_bufs) {
+            if (v == dv) return buf;
+        }
+        std::uint16_t cb = buffers_.allocate();
+        if (cb != BufferAllocator::BUFFER_UNUSED) {
+            cedar::Instruction zc{};
+            zc.opcode = cedar::Opcode::PUSH_CONST;
+            zc.out_buffer = cb;
+            zc.inputs[0] = 0xFFFF;
+            zc.inputs[1] = 0xFFFF;
+            zc.inputs[2] = 0xFFFF;
+            zc.inputs[3] = 0xFFFF;
+            encode_const_value(zc, dv);
+            emit(zc);
+            const_field_bufs.emplace_back(dv, cb);
+        }
+        return cb;
+    };
+
+    // Const-evaluate destructure defaults for declared custom fields into the
+    // per-slot default table the VM applies when a voice's event omits the
+    // property (Phase 3 per-event presence mask).
+    std::array<float, cedar::MAX_PROPS_PER_EVENT> prop_defaults{};
     for (const auto& b : binds) {
-        symbols_->define_variable(b.name, field_buffer(b.field_id));
+        if (b.field_id >= kPolyFieldCount && b.field_id < bank_count) {
+            prop_defaults[b.field_id - kPolyFieldCount] =
+                eval_poly_default(b.default_node, 0.0f);
+        }
+    }
+
+    for (const auto& b : binds) {
+        symbols_->define_variable(b.name, field_buffer(b));
     }
     if (has_rest) {
         // Bind the rest name as an event record: bare use reads freq, `.field`
@@ -2682,6 +2740,16 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         add({"time", "t0", "start"},                  PatternPayload::TIME);
         add({"phase", "cycle", "co"},                 PatternPayload::PHASE);
         add({"sample_id", "sample", "s"},             PatternPayload::SAMPLE_ID);
+        // Phase 3: custom record-suffix fields are reachable on the rest
+        // record too (`(...e) -> e.cutoff`). Each lives at its field-bank
+        // slot after the 11 fixed fields.
+        if (poly_pattern) {
+            for (const auto& [key, slot] : poly_pattern->custom_field_slots) {
+                std::uint16_t buf = static_cast<std::uint16_t>(
+                    bank_base + kPolyFieldCount + slot);
+                rec.emplace(key, TypedValue::signal(buf));
+            }
+        }
         Symbol sym;
         sym.kind = SymbolKind::Variable;
         sym.name = rest_name;
@@ -2801,7 +2869,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         cedar::Instruction fe{};
         fe.opcode = cedar::Opcode::FOREACH_EVENT;
         fe.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        fe.inputs[0] = bank_base;  // 11-slot per-voice field bank
+        fe.inputs[0] = bank_base;  // per-voice field bank base
         fe.inputs[1] = 0xFFFF;
         fe.inputs[2] = 0xFFFF;
         fe.inputs[3] = 0xFFFF;
@@ -2823,6 +2891,13 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     poly_init.poly_mode = mode;
     poly_init.poly_steal_strategy = 0;  // oldest
     poly_init.poly_release_seconds = release_seconds;
+    // Phase 3: custom record-suffix property plumbing. prop_count contiguous
+    // field-bank slots follow the 11 fixed fields; prop_defaults are applied
+    // per voice by the VM when an event omits the property.
+    poly_init.poly_prop_count = static_cast<std::uint8_t>(prop_count);
+    for (std::size_t i = 0; i < cedar::MAX_PROPS_PER_EVENT; ++i) {
+        poly_init.poly_prop_defaults[i] = prop_defaults[i];
+    }
     if (legacy_poly) {
         poly_init.type = StateInitData::Type::PolyAlloc;
     } else {

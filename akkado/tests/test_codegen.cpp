@@ -7748,6 +7748,131 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 }
 
 // =============================================================================
+// Codegen: poly() custom record-suffix fields (Phase 3,
+// prd-poly-callback-event-record)
+// =============================================================================
+
+TEST_CASE("Codegen: poly() custom record-suffix fields",
+          "[codegen][poly][phase3][custom_property]") {
+    auto has_code = [](const akkado::CompileResult& r, const char* code) {
+        for (const auto& d : r.diagnostics) {
+            if (d.code == code) return true;
+        }
+        return false;
+    };
+
+    SECTION("declared custom field compiles and sets poly_prop_count") {
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, ({freq, gate, cutoff}) ->
+                osc("saw", freq) * gate * cutoff) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        bool found = false;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                found = true;
+                CHECK(init.poly_prop_count == 1);
+            }
+        }
+        CHECK(found);
+    }
+
+    SECTION("no custom fields keeps poly_prop_count at 0") {
+        auto result = akkado::compile(R"(
+            n"c4 e4" |> poly(@, ({freq, gate}) ->
+                osc("saw", freq) * gate) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                CHECK(init.poly_prop_count == 0);
+            }
+        }
+    }
+
+    SECTION("undeclared destructure field with default → poly_prop_count 0") {
+        // `wobble` is declared by no note, so it resolves to a constant
+        // default buffer rather than a field-bank slot.
+        auto result = akkado::compile(R"(
+            n"c4 e4" |> poly(@, ({freq, gate, wobble = 0.5}) ->
+                osc("saw", freq) * gate * wobble) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                CHECK(init.poly_prop_count == 0);
+            }
+        }
+    }
+
+    SECTION("declared custom field carries destructure default into "
+            "prop_defaults") {
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.9} e4" |> poly(@, ({freq, gate, cutoff = 0.5}) ->
+                osc("saw", freq) * gate * cutoff) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        bool found = false;
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                found = true;
+                CHECK(init.poly_prop_count == 1);
+                CHECK(init.poly_prop_defaults[0] == Catch::Approx(0.5f));
+            }
+        }
+        CHECK(found);
+    }
+
+    SECTION("non-constant destructure default → E419") {
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.9}" |> poly(@,
+                ({freq, gate, cutoff = osc("sin", 440)}) ->
+                osc("saw", freq) * gate * cutoff) |> out(@, @)
+        )");
+        REQUIRE_FALSE(result.success);
+        CHECK(has_code(result, "E419"));
+    }
+
+    SECTION("rest param exposes custom fields — e.cutoff compiles") {
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, (...e) ->
+                osc("saw", e.freq) * e.gate * e.cutoff) |> out(@, @)
+        )");
+        CHECK(result.success);
+    }
+
+    SECTION("two custom fields → poly_prop_count 2") {
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.9, res:0.2} e4{cutoff:0.3, res:0.8}"
+              |> poly(@, ({freq, gate, cutoff, res}) ->
+                osc("saw", freq) * gate * cutoff * res) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        for (const auto& init : result.state_inits) {
+            if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+                CHECK(init.poly_prop_count == 2);
+            }
+        }
+    }
+
+    SECTION("6× poly with custom fields does not exhaust the buffer pool") {
+        // Custom record-suffix fields cost an extra field-bank slot plus a
+        // SEQPAT_PROP buffer per poly() — a heavier footprint than the plain
+        // 8× guard above. Six custom-field poly() calls still fit.
+        auto result = akkado::compile(R"(
+            n"c4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff) |> @ +
+            (n"d4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
+            (n"e4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
+            (n"f4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
+            (n"g4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
+            (n"a4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) |> out(@, @)
+        )");
+        REQUIRE(result.success);
+        CHECK_FALSE(has_code(result, "E101"));
+    }
+}
+
+// =============================================================================
 // Codegen: Record spreading
 // =============================================================================
 

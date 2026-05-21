@@ -70,6 +70,13 @@ struct PatternPayload {
     /// Resolved by `pattern_field()` after the fixed-field check fails.
     std::unordered_map<std::string, std::uint16_t> custom_fields;
 
+    /// Phase 3 (prd-poly-callback-event-record): custom record-suffix property
+    /// slot map. Keyed by source name; value is the event prop_vals[] slot
+    /// (0..MAX_PROPS_PER_EVENT-1). Parallels `custom_fields` but carries the
+    /// runtime slot index rather than a SEQPAT_PROP buffer — `handle_poly_call`
+    /// uses it to plumb custom fields into the per-voice field bank.
+    std::unordered_map<std::string, std::uint8_t> custom_field_slots;
+
     /// State ID for SEQPAT instructions (links poly() to upstream pattern).
     /// poly() reads its source events through the SequenceState directly via
     /// POLY_BEGIN — there is intentionally no per-voice buffer plumbing here.

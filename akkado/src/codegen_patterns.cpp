@@ -396,6 +396,7 @@ private:
         for (std::size_t s = 0; s < cedar::MAX_PROPS_PER_EVENT; ++s) {
             if (props.prop_vals_used & (1u << s)) {
                 e.prop_vals[s] = props.prop_vals[s];
+                e.prop_set_mask |= static_cast<std::uint8_t>(1u << s);
             }
         }
 
@@ -982,6 +983,7 @@ private:
                     int s = __builtin_ctz(new_bits);
                     e.prop_vals[static_cast<std::size_t>(s)] =
                         hit->prop_vals[static_cast<std::size_t>(s)];
+                    e.prop_set_mask |= static_cast<std::uint8_t>(1u << s);
                     new_bits &= new_bits - 1;
                 }
                 merged_props_used |= hit->prop_vals_used;
@@ -1478,6 +1480,9 @@ bool CodeGenerator::emit_custom_property_buffers(
         inst.state_id = state_id;
         emit(inst);
         payload.custom_fields[key] = buf;
+        // Phase 3: also record the runtime prop slot so handle_poly_call can
+        // plumb this custom field into the per-voice field bank.
+        payload.custom_field_slots[key] = slot;
     }
     return true;
 }
@@ -2321,6 +2326,8 @@ static bool compile_pattern_for_transform(
                 for (auto& seq_events : out_events) {
                     for (auto& event : seq_events) {
                         event.prop_vals[slot] = *value;
+                        event.prop_set_mask |=
+                            static_cast<std::uint8_t>(1u << slot);
                     }
                 }
             } else if (func_name == "dur") {
@@ -3507,6 +3514,8 @@ TypedValue CodeGenerator::handle_property_transform_call(
             for (auto& seq_events : sequence_events) {
                 for (auto& event : seq_events) {
                     event.prop_vals[slot] = 0.0f;
+                    event.prop_set_mask |=
+                        static_cast<std::uint8_t>(1u << slot);
                 }
             }
         } else {
@@ -3518,6 +3527,8 @@ TypedValue CodeGenerator::handle_property_transform_call(
                     const auto& vevt = vseq[hidx % vcount];
                     float v = (vevt.num_values > 0) ? vevt.values[0] : 0.0f;
                     event.prop_vals[slot] = v;
+                    event.prop_set_mask |=
+                        static_cast<std::uint8_t>(1u << slot);
                     ++hidx;
                 }
             }
@@ -3526,6 +3537,7 @@ TypedValue CodeGenerator::handle_property_transform_call(
         for (auto& seq_events : sequence_events) {
             for (auto& event : seq_events) {
                 event.prop_vals[slot] = *value;
+                event.prop_set_mask |= static_cast<std::uint8_t>(1u << slot);
             }
         }
     }

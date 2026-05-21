@@ -226,10 +226,29 @@ public:
     //   first `release_seconds * ctx_.sample_rate` samples after note-off
     //   so the voice's own ADSR can run its release tail. See PRD
     //   prd-midi-input §7.2.
+    // Copy the Phase 3 custom-property config onto a PolyAllocState. Shared
+    // by init_poly_state and the VOICE_POOL branch of init_foreach_state.
+    static void apply_poly_props(PolyAllocState& state, std::uint8_t prop_count,
+                                 const float* prop_defaults) {
+        state.prop_count = std::min(
+            prop_count, static_cast<std::uint8_t>(MAX_PROPS_PER_EVENT));
+        for (std::size_t i = 0; i < MAX_PROPS_PER_EVENT; ++i) {
+            state.prop_defaults[i] = prop_defaults ? prop_defaults[i] : 0.0f;
+        }
+    }
+
+    //
+    // @param prop_count     Number of custom record-suffix property slots
+    //   plumbed into the per-voice field bank after the 11 fixed fields
+    //   (Phase 3, prd-poly-callback-event-record). 0 = no custom fields.
+    // @param prop_defaults  Per-slot callback destructure defaults, applied
+    //   when a voice's event omits the property. May be null (all 0.0).
     void init_poly_state(std::uint32_t state_id, std::uint32_t seq_state_id,
                          std::uint8_t max_voices, std::uint8_t mode,
                          std::uint8_t steal_strategy,
-                         float release_seconds = 0.0f) {
+                         float release_seconds = 0.0f,
+                         std::uint8_t prop_count = 0,
+                         const float* prop_defaults = nullptr) {
         auto& state = state_pool_.get_or_create<PolyAllocState>(state_id);
         state.seq_state_id = seq_state_id;
         state.max_voices = std::min(max_voices, static_cast<std::uint8_t>(PolyAllocState::MAX_VOICES));
@@ -237,6 +256,7 @@ public:
         state.steal_strategy = steal_strategy;
         const float release_clamped = release_seconds > 0.0f ? release_seconds : 0.0f;
         state.release_window_samples = release_clamped * ctx_.sample_rate;
+        apply_poly_props(state, prop_count, prop_defaults);
         state.ensure_voices(&audio_arena_);
     }
 
@@ -251,7 +271,9 @@ public:
                             std::uint16_t max_iterations,
                             std::uint8_t max_voices, std::uint8_t mode,
                             std::uint8_t steal_strategy,
-                            float release_seconds = 0.0f) {
+                            float release_seconds = 0.0f,
+                            std::uint8_t prop_count = 0,
+                            const float* prop_defaults = nullptr) {
         switch (allocator_kind) {
             case 0: {  // VOICE_POOL — identical setup to init_poly_state
                 auto& state = state_pool_.get_or_create<PolyAllocState>(state_id);
@@ -264,6 +286,7 @@ public:
                 state.steal_strategy = steal_strategy;
                 const float rc = release_seconds > 0.0f ? release_seconds : 0.0f;
                 state.release_window_samples = rc * ctx_.sample_rate;
+                apply_poly_props(state, prop_count, prop_defaults);
                 state.ensure_voices(&audio_arena_);
                 break;
             }

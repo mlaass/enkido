@@ -1,4 +1,4 @@
-**Status: NOT STARTED** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event.
+**Status: IN PROGRESS — Phases 1–3 shipped** — Reworks the `poly()` / `mono()` / `legato()` instrument callback so it can read *any* pattern event field, not just `(freq, gate, vel)`. Adds a record-destructure callback form, a positional "take the prefix you need" form, mixing of the two, and a rest-param escape hatch for binding the whole event. Phases 1–3 (callback param model, all 11 fixed fields, custom record-suffix fields) are complete; Phase 4 (mono/legato parity tests) and Phase 5 (migration sweep + docs) remain.
 
 # Poly Callback Event-Record PRD — flexible instrument callbacks
 
@@ -364,12 +364,18 @@ After `builtins.hpp` changes: `cd web && bun run build:opcodes` and `bun run bui
 - `execute_poly_block`: fill each bound field buffer from the voice's `OutputEvent` / cycle position.
 - **Verify:** experiment under `experiments/` driving `poly` with `({freq, note, dur, phase}) ->` for ≥300 s of audio; assert per-voice `note`/`dur`/`phase` track the voice's event. WAV written for human listening.
 
-### Phase 3 — Custom fields
+### Phase 3 — Custom fields  ✅ COMPLETE
 **Goal:** mini-notation `c4{cutoff:0.8}` record-suffix fields readable per voice.
-- `handle_poly_call` reads `SequenceCompiler::custom_slots_` for the name→slot map; custom destructure names become `PolyFieldBinding` entries with `field_id = CUSTOM`, `prop_index = slot`.
-- VM fills the per-voice buffer from `OutputEvent::prop_vals[slot]` for the voice's event.
-- Unknown destructure names → constant-`0` buffer; honour explicit `= expr` defaults.
-- **Verify:** `n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, ({freq, gate, cutoff}) -> …)` — each voice's `cutoff` matches its note; `{cutoff = 0.5}` default applies when the note omits `cutoff`; an undeclared name binds to `0`.
+- `handle_poly_call` reads the upstream pattern's `PatternPayload::custom_field_slots` (name→prop-slot map, populated by `emit_custom_property_buffers`); a custom destructure name binds to a field-bank slot after the 11 fixed fields (`field_id = 11 + slot`). The bank grows to `11 + prop_count` slots.
+- VM `run_voice_pool` fills each custom bank slot per voice from `OutputEvent::prop_vals[slot]`, gated by a new per-event presence mask.
+- Unknown destructure names → constant buffer holding the const-evaluated `= expr` default (`E419` if non-constant).
+- The rest-param record exposes custom names too (`(...e) -> e.cutoff`).
+- **Verify:** ✅ `n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, ({freq, gate, cutoff}) -> …)` — each voice's `cutoff` matches its note (`test_op_poly.py::test_custom_field_plumbing`, 300s render). `cedar/tests/test_poly.cpp` `[phase3]` covers present/default fill; `akkado/tests/test_codegen.cpp` `[phase3]` covers codegen wiring.
+
+**Implementation notes vs. this PRD:**
+1. **Per-event presence mask, not constant-0.** A `{cutoff = 0.5}` default applies whenever an *individual note* omits the field, not only when the name is undeclared pattern-wide. This added a `std::uint8_t prop_set_mask` to `Event`/`OutputEvent` (set from the compile-time `prop_vals_used` bitmap) and to `PolyVoice`; the VM picks `prop_vals[s]` vs `PolyAllocState::prop_defaults[s]` per voice. Defaults travel codegen→VM via `StateInitData::poly_prop_count` / `poly_prop_defaults[]` (no `run_voice_pool` signature change).
+2. **No `PolyFieldBinding`/`prop_index` struct.** Phase 2 shipped a contiguous field bank rather than a binding table, so a custom field is just a higher bank index; no separate CUSTOM marker is needed.
+3. **Latent analyzer bug fixed.** `substitute_nodes` (the pipe-RHS clone path) did not remap `DestructureField::default_node`, so a `({x = expr}) ->` closure on a pipe RHS carried a stale node index. `default_node` was dead code before Phase 3, so this never surfaced. Fixed by mirroring `clone_subtree`'s `DestructureParam`/`DestructureAssignment` field-default handling into `substitute_nodes`.
 
 ### Phase 4 — mono / legato parity
 **Goal:** `mono` and `legato` accept every callback shape.

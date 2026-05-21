@@ -181,6 +181,14 @@ struct StateInitData {
     // The VM converts to samples at init time via current sample_rate.
     // 0 = legacy "gate-multiplied silence at note-off" behavior.
     float poly_release_seconds = 0.0f;
+    // Phase 3 (prd-poly-callback-event-record): custom record-suffix property
+    // plumbing for poly()/mono()/legato(). poly_prop_count is the number of
+    // contiguous custom field-bank slots after the 11 fixed fields;
+    // poly_prop_defaults[S] is the callback destructure default applied when
+    // a voice's event omits prop slot S.
+    std::uint8_t poly_prop_count = 0;
+    float poly_prop_defaults[cedar::MAX_PROPS_PER_EVENT] = {0.0f, 0.0f,
+                                                            0.0f, 0.0f};
 
     // PRD prd-midi-input §7.1: SoundfontEvents init payload. sf_seq_state_id
     // is the upstream MidiQueueState / SequenceState the soundfont opcode

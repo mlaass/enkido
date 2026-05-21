@@ -297,7 +297,8 @@ void apply_state_inits(cedar::VM& vm,
             vm.init_poly_state(init.state_id, init.poly_seq_state_id,
                                init.poly_max_voices, init.poly_mode,
                                init.poly_steal_strategy,
-                               init.poly_release_seconds);
+                               init.poly_release_seconds,
+                               init.poly_prop_count, init.poly_prop_defaults);
         } else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             // PRD L3: FOREACH_EVENT instance config.
             vm.init_foreach_state(init.state_id, init.foreach_allocator_kind,
@@ -306,7 +307,9 @@ void apply_state_inits(cedar::VM& vm,
                                   init.foreach_max_iterations,
                                   init.poly_max_voices, init.poly_mode,
                                   init.poly_steal_strategy,
-                                  init.poly_release_seconds);
+                                  init.poly_release_seconds,
+                                  init.poly_prop_count,
+                                  init.poly_prop_defaults);
 #ifndef CEDAR_NO_SOUNDFONT
         } else if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
             vm.init_soundfont_voice_event_state(

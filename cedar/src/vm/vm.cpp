@@ -620,9 +620,10 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
     std::uint16_t mix_buf_r = mix_buf + 1;
     std::uint16_t voice_out_buf_r = voice_out_buf + 1;
 
-    // The 11-slot per-voice field bank is contiguous from bank_base, indexed
-    // by PatternPayload field id: 0 FREQ, 1 VEL, 2 TRIG, 3 GATE, 4 TYPE,
-    // 5 NOTE, 6 DUR, 7 CHANCE, 8 TIME, 9 PHASE, 10 SAMPLE_ID.
+    // The per-voice field bank is contiguous from bank_base, indexed by
+    // PatternPayload field id: 0 FREQ, 1 VEL, 2 TRIG, 3 GATE, 4 TYPE,
+    // 5 NOTE, 6 DUR, 7 CHANCE, 8 TIME, 9 PHASE, 10 SAMPLE_ID, followed by
+    // poly_state.prop_count custom record-suffix property slots (Phase 3).
 
     poly_state.ensure_voices(ctx_.arena);
 
@@ -704,7 +705,8 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
                         static_cast<std::uint16_t>(e), on_cycle, on_sample,
                         evt.duration, evt.chance, evt.time,
                         static_cast<float>(evt.type_id), note_in,
-                        ctx_.global_sample_counter + on_sample);
+                        ctx_.global_sample_counter + on_sample,
+                        evt.prop_vals, evt.prop_set_mask);
                 }
             }
 
@@ -763,9 +765,10 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
 
         auto& voice = poly_state.voices[v];
 
-        // Fill the 11-slot per-voice field bank (indexed by PatternPayload
-        // field id). FREQ/VEL/TYPE/NOTE/DUR/CHANCE/TIME/PHASE/SAMPLE_ID are
-        // event-scalar (block-constant); GATE/TRIG are synthesized per-sample.
+        // Fill the per-voice field bank (indexed by PatternPayload field id).
+        // The 11 fixed fields first: FREQ/VEL/TYPE/NOTE/DUR/CHANCE/TIME/PHASE/
+        // SAMPLE_ID are event-scalar (block-constant); GATE/TRIG are
+        // synthesized per-sample. Custom prop slots follow (filled below).
         float* freq_buf = buffer_pool_.get(bank_base + 0);
         float* vel_buf  = buffer_pool_.get(bank_base + 1);
         float* trig_buf = buffer_pool_.get(bank_base + 2);
@@ -796,6 +799,19 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
                              0.0f, 1.0f)
                 : 0.0f;
             std::fill_n(buffer_pool_.get(bank_base + 9), BLOCK_SIZE, phase);
+        }
+
+        // Custom record-suffix property slots (Phase 3) — contiguous after
+        // the 11 fixed fields. Each voice reads its own event's prop value
+        // when the presence bit is set, else the callback destructure
+        // default. Block-constant per voice.
+        for (std::uint8_t s = 0; s < poly_state.prop_count; ++s) {
+            const float prop_v = (voice.prop_set_mask & (1u << s))
+                ? voice.prop_vals[s]
+                : poly_state.prop_defaults[s];
+            const std::uint16_t prop_buf = static_cast<std::uint16_t>(
+                bank_base + 11 + s);
+            std::fill_n(buffer_pool_.get(prop_buf), BLOCK_SIZE, prop_v);
         }
 
         // Per-sample gate and trigger accuracy

@@ -1187,7 +1187,9 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                 init.poly_max_voices,
                 init.poly_mode,
                 init.poly_steal_strategy,
-                init.poly_release_seconds
+                init.poly_release_seconds,
+                init.poly_prop_count,
+                init.poly_prop_defaults
             );
             count++;
         }
@@ -1202,7 +1204,9 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                 init.poly_max_voices,
                 init.poly_mode,
                 init.poly_steal_strategy,
-                init.poly_release_seconds
+                init.poly_release_seconds,
+                init.poly_prop_count,
+                init.poly_prop_defaults
             );
             count++;
         }

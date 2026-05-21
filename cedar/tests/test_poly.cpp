@@ -1324,3 +1324,134 @@ TEST_CASE("POLY release window: retrigger resets countdown so silenced voice "
     }
     CHECK(active_440 == 1);
 }
+
+// ============================================================================
+// Phase 3: custom record-suffix property fields
+// (prd-poly-callback-event-record)
+// ============================================================================
+
+namespace {
+// Field bank with one custom prop slot: 0..10 fixed, 11 = custom slot 0.
+constexpr std::uint16_t BUF_CUSTOM = 11;
+constexpr std::uint16_t BUF_VOUT_L = 12;
+constexpr std::uint16_t BUF_VOUT_R = 13;
+constexpr std::uint16_t BUF_PROP_MIX_L = 14;
+
+// SEQPAT_QUERY + POLY program whose voice body copies the custom prop-slot
+// bank buffer (bank_base + 11) into the voice output — so the post-block
+// bank buffer is observable and the body actually consumes the custom field.
+std::vector<Instruction> build_poly_prop_program() {
+    std::vector<Instruction> program;
+    program.push_back(Instruction::make_nullary(
+        Opcode::SEQPAT_QUERY, 0, SEQ_STATE_ID));
+    auto poly_begin = Instruction::make_quinary(
+        Opcode::POLY_BEGIN, BUF_PROP_MIX_L,
+        BUF_BANK, 0xFFFF, 0xFFFF, 0xFFFF, BUF_VOUT_L,
+        POLY_STATE_ID);
+    poly_begin.flags = InstructionFlag::STEREO_OUTPUT;
+    poly_begin.rate = 2;
+    program.push_back(poly_begin);
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOUT_L, BUF_CUSTOM));
+    program.push_back(Instruction::make_unary(
+        Opcode::COPY, BUF_VOUT_R, BUF_CUSTOM));
+    program.push_back(Instruction::make_nullary(Opcode::POLY_END, 0));
+    program.push_back(Instruction::make_unary(
+        Opcode::OUTPUT, 0, BUF_PROP_MIX_L));
+    return program;
+}
+}  // namespace
+
+TEST_CASE("POLY field bank: custom prop value surfaces per voice",
+          "[poly][fields][phase3]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_poly_prop_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event evt;
+    evt.type = EventType::DATA;
+    evt.time = 0.0f;
+    evt.duration = 4.0f / CYCLE_LENGTH;
+    evt.chance = 1.0f;
+    evt.velocity = 1.0f;
+    evt.num_values = 1;
+    evt.values[0] = 261.63f;
+    evt.prop_vals[0] = 0.9f;
+    evt.prop_set_mask = 0x1;            // slot 0 explicitly declared
+
+    Sequence seq;
+    seq.events = &evt;
+    seq.num_events = 1;
+    seq.capacity = 1;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH, false, 1);
+
+    // prop_count=1, default 0.5 — must be ignored since the event sets it.
+    const float defaults[MAX_PROPS_PER_EVENT] = {0.5f, 0.0f, 0.0f, 0.0f};
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0,
+                       /*release*/ 0.0f, /*prop_count*/ 1, defaults);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 1);
+    for (std::uint8_t i = 0; i < poly.max_voices; ++i) {
+        if (!poly.voices[i].active) continue;
+        CHECK((poly.voices[i].prop_set_mask & 0x1) != 0);
+        CHECK(std::abs(poly.voices[i].prop_vals[0] - 0.9f) < 0.001f);
+    }
+    // The custom field-bank slot holds the event's value, not the default.
+    CHECK(std::abs(vm.buffers().get(BUF_CUSTOM)[0] - 0.9f) < 0.001f);
+}
+
+TEST_CASE("POLY field bank: custom prop default applies when event omits it",
+          "[poly][fields][phase3]") {
+    VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+
+    auto program = build_poly_prop_program();
+    vm.load_program_immediate(std::span<const Instruction>(program));
+
+    static constexpr float CYCLE_LENGTH = 4.0f;
+    Event evt;
+    evt.type = EventType::DATA;
+    evt.time = 0.0f;
+    evt.duration = 4.0f / CYCLE_LENGTH;
+    evt.chance = 1.0f;
+    evt.velocity = 1.0f;
+    evt.num_values = 1;
+    evt.values[0] = 261.63f;
+    // prop_set_mask left 0 — the event declares no custom property.
+
+    Sequence seq;
+    seq.events = &evt;
+    seq.num_events = 1;
+    seq.capacity = 1;
+    seq.duration = CYCLE_LENGTH;
+    seq.mode = SequenceMode::NORMAL;
+    vm.init_sequence_program_state(SEQ_STATE_ID, &seq, 1, CYCLE_LENGTH, false, 1);
+
+    const float defaults[MAX_PROPS_PER_EVENT] = {0.5f, 0.0f, 0.0f, 0.0f};
+    vm.init_poly_state(POLY_STATE_ID, SEQ_STATE_ID, 8, 0, 0,
+                       0.0f, 1, defaults);
+
+    std::array<float, BLOCK_SIZE> left{}, right{};
+    vm.process_block(left.data(), right.data());
+
+    auto& poly = vm.states().get_or_create<PolyAllocState>(POLY_STATE_ID);
+    REQUIRE(poly.active_voice_count() == 1);
+    for (std::uint8_t i = 0; i < poly.max_voices; ++i) {
+        if (!poly.voices[i].active) continue;
+        CHECK((poly.voices[i].prop_set_mask & 0x1) == 0);
+    }
+    // The event omits the property → the field bank carries the callback
+    // destructure default.
+    CHECK(std::abs(vm.buffers().get(BUF_CUSTOM)[0] - 0.5f) < 0.001f);
+}
