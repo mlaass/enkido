@@ -1005,6 +1005,31 @@ private:
         return static_cast<std::uint16_t>(0xFF00 + n);
     }
 
+    // --- Per-bus FX (prd-bus-routing Phase 2) ----------------------------
+    /// A recorded mixer(N, closure) / master(closure) call. handle_mixer_call
+    /// records these without emitting anything; emit_bus_epilogue inlines the
+    /// closure body into the per-bus epilogue.
+    struct MixerCall {
+        int            bus_index = 0;
+        NodeIndex      closure_node = NULL_NODE;  // the Closure AST node
+        int            arity = 1;                 // 1 = (s)->…  2 = (l,r)->…
+        std::string    param_l;                   // closure param name(s)
+        std::string    param_r;                   // empty for arity 1
+        SourceLocation call_loc;
+    };
+    std::vector<MixerCall> mixer_calls_;
+    /// Codegen for mixer()/master(). Validates, records into mixer_calls_,
+    /// and emits no instruction at the call site (deferred to the epilogue).
+    TypedValue handle_mixer_call(NodeIndex node, const Node& n);
+    /// Recursively scan a mixer/master closure body for a forbidden sink call
+    /// (out/bus/mixer/master); emits E261 per offending call. Returns true if
+    /// any sink was found.
+    bool scan_closure_for_sinks(NodeIndex body);
+    /// Inline one mixer/master closure body, processing the bus stereo pair
+    /// (bus_l, bus_l+1) in place. Called from emit_bus_epilogue.
+    void inline_mixer_closure(const MixerCall& mc, std::uint16_t bus_l,
+                              std::uint16_t bus_r);
+
     /// Begin a new FOREACH_EVENT subprogram body; returns its block_id and
     /// redirects emit() into it until end_subprogram() is called.
     std::uint32_t begin_subprogram();

@@ -1,7 +1,8 @@
-> **Status: Phase 1 SHIPPED (2026-05-22)** — Drafted 2026-05-18; scope
+> **Status: Phases 1 & 2 SHIPPED (2026-05-22)** — Drafted 2026-05-18; scope
 > expanded 2026-05-20 (numbered buses, per-bus FX, routing operators).
-> Phase 1 (numbered buses + always-safe master) is implemented and tested.
-> Phase 2 (per-bus FX) and Phase 3 (diamond operator) are not started.
+> Phase 1 (numbered buses + always-safe master) and Phase 2 (per-bus FX:
+> `mixer`/`master`) are implemented and tested. Phase 3 (diamond operator)
+> is not started.
 
 # Bus Routing & Master Bus PRD
 
@@ -72,12 +73,44 @@ Implementation notes / deviations from the draft below:
   non-disableable-safety guarantee (§4.3) still holds for every program
   a user can write.
 
-### Phase 2 — Per-bus FX
+### Phase 2 — Per-bus FX *(shipped 2026-05-22)*
 
 - `mixer(N, closure)` + `master(closure)` alias; closure bodies inlined
   into the epilogue; both closure arities (`(s) -> …` and `(l, r) -> …`).
-- Diagnostics `E_BUS_SINK_IN_CLOSURE`, `W_BUS_MIXER_OVERRIDDEN`,
-  `W_BUS_MIXER_MONO_RETURN`, `W_BUS_NO_WRITERS`.
+- Diagnostics `E_BUS_SINK_IN_CLOSURE` (`E261`), `E_BUS_MIXER_ARITY`
+  (`E262`), `W_BUS_MIXER_OVERRIDDEN` (`W203`), `W_BUS_MIXER_MONO_RETURN`
+  (`W204`), `W_BUS_NO_WRITERS` (`W205`).
+
+Implementation notes / deviations from the draft below:
+
+- **`handle_mixer_call` is deferred-codegen.** It validates the call and
+  records a `MixerCall {bus_index, closure_node, arity, params, loc}`,
+  emitting nothing at the call site. `emit_bus_epilogue` consumes the
+  recorded calls — for each non-zero bus it inlines the closure body
+  before summing into bus 0, and for bus 0 it inlines the closure body
+  *instead of* the default soft-clip. The forced safety stage always
+  follows. Closures are inlined with `inline_mixer_closure`, which binds
+  the param(s) to the bus stereo pair and `visit()`s the body.
+- **`E262 E_BUS_MIXER_ARITY`** was added (not in the draft's §7 table):
+  a `mixer`/`master` closure must take exactly 1 (stereo) or 2 (left,
+  right) plain parameters — 0, 3+, destructure, or rest params are
+  rejected.
+- **`W204` fires for both arities.** The draft scoped the mono-return
+  warning to the `(s) -> …` form; in practice a `(l, r) -> …` closure
+  that returns mono is also auto-broadcast `L = R` with `W204` (lenient,
+  uniform) rather than a hard error.
+- **No `top_level_only` enforcement.** No such mechanism exists in the
+  compiler and Phase 1 shipped `bus`/`out` without it. `E261`
+  (sink-in-closure) is the structural guard; a general top-level-only
+  check is left as a follow-up.
+- **Analyzer fix (general).** Phase 2's idiomatic closure form
+  `(s) -> s |> f(@)` exposed a latent bug: the closure-from-pipe sugar
+  in `rewrite_pipes` misfired on a pipe whose innermost LHS is a bound
+  closure/function parameter (it saw the param as unbound during the
+  pre-pass), wrongly producing a spurious nested closure. Fixed in
+  `clone_subtree` by registering closure/function parameters in the
+  symbol table before cloning the body. This also fixes the latent case
+  for `poly`/`each`/`fn` bodies written as `(p) -> p |> …`.
 
 ### Phase 3 — Diamond operator + docs
 
@@ -440,14 +473,15 @@ implementation; placeholder names below):
 |------|--------|------|-------|---------|
 | `E_BUS_INDEX_NOT_LITERAL` | `E260` | error | P1 | `bus`/`mixer`/`<>(N)` index is not a compile-time non-negative integer literal (also covers index ≥ 200). |
 | `W_BUS_MONO_INPUT` | `W202` | warning | P1 | `bus(N, mono)` single-arg form auto-broadcasts `L = R`. (Not emitted for legacy `out(mono)` — that path stays silent to avoid warning every existing mono program.) |
-| `E_BUS_SINK_IN_CLOSURE` | *(P2)* | error | P2 | `out`/`bus`/`mixer`/`master`/`<>` used inside a `mixer`/`master` closure body. |
-| `W_BUS_MIXER_OVERRIDDEN` | *(P2)* | warning | P2 | More than one `mixer(N, …)` (or `master`) targets the same bus `N`. Lists dropped + winning sites. |
-| `W_BUS_MIXER_MONO_RETURN` | *(P2)* | warning | P2 | A stereo-form `mixer`/`master` closure (`(s) -> …`) returns a mono value. Auto-broadcasts `L = R`. |
-| `W_BUS_NO_WRITERS` | *(P2)* | warning | P2 | `mixer(N, …)` with `N > 0` targets a bus that has no `bus(N, …)`/`<>(N)` writers — the closure processes silence. |
+| `E_BUS_SINK_IN_CLOSURE` | `E261` | error | P2 | `out`/`bus`/`mixer`/`master` used inside a `mixer`/`master` closure body. |
+| `E_BUS_MIXER_ARITY` | `E262` | error | P2 | A `mixer`/`master` closure does not take exactly 1 or 2 plain parameters. |
+| `W_BUS_MIXER_OVERRIDDEN` | `W203` | warning | P2 | More than one `mixer(N, …)` (or `master`) targets the same bus `N`. Lists dropped + winning sites. |
+| `W_BUS_MIXER_MONO_RETURN` | `W204` | warning | P2 | A `mixer`/`master` closure returns a mono value. Auto-broadcasts `L = R`. |
+| `W_BUS_NO_WRITERS` | `W205` | warning | P2 | `mixer(N, …)` with `N > 0` targets a bus that has no `bus(N, …)`/`<>(N)` writers — the closure processes silence. |
 
 > Phase 1 allocated `E260` and `W202` from the next free codegen slots.
-> Phase 2 codes will take the next consecutive slots when that phase
-> lands.
+> Phase 2 allocated `E261`, `E262`, `W203`, `W204`, `W205` from the next
+> consecutive slots.
 
 ---
 
@@ -589,30 +623,35 @@ Each criterion is tagged with its phase (§0).
       identically to `|> bus(N, @)`.
 - [x] **(P1)** A non-zero bus with multiple `bus(N, …)` writers sums all
       contributions and feeds bus 0.
-- [ ] **(P2)** `mixer(N, …)` on a non-zero bus processes that bus's summed
+- [x] **(P2)** `mixer(N, …)` on a non-zero bus processes that bus's summed
       signal before it reaches bus 0; a bus with no `mixer` is identity.
-- [ ] **(P2)** `master((s) -> s)` produces output identical to a program
+- [x] **(P2)** `master((s) -> s)` produces output identical to a program
       with no master tone processing (only the forced ±1.0 rail and NaN
       guard).
-- [ ] **(P2)** `mixer`/`master` closures of both arities (`(s) -> …` and
+- [x] **(P2)** `mixer`/`master` closures of both arities (`(s) -> …` and
       `(l, r) -> …`) compile and produce expected stereo output.
-- [ ] **(P2)** Multiple `mixer(N, …)` for the same bus: only the last
+- [x] **(P2)** Multiple `mixer(N, …)` for the same bus: only the last
       takes effect; `W_BUS_MIXER_OVERRIDDEN` reports all sites. `master`
       and `mixer(0, …)` together count as targeting the same bus.
-- [ ] **(P2)** Stereo-form closure returning mono: `W_BUS_MIXER_MONO_RETURN`
+- [x] **(P2)** Stereo-form closure returning mono: `W_BUS_MIXER_MONO_RETURN`
       reported; output is `L = R`.
 - [x] **(P1)** `bus(N, expr)` with a non-literal `N` is rejected with
       `E_BUS_INDEX_NOT_LITERAL` (allocated as `E260`).
-- [ ] **(P2)** A sink (`out`/`bus`/`mixer`/`<>`) inside a `mixer` closure
-      is rejected with `E_BUS_SINK_IN_CLOSURE`.
-- [x] **(P1)** An aggressive signal into the master is clamped to ±1.0 by
-      the safety stage; the device receives no |sample| > 1.0. (Phase 1
-      verifies this with `osc("saw",110) |> @ * 100 |> out(@)`; the
-      `(s) -> s * 100` *closure* form lands with Phase 2.)
+- [x] **(P2)** A sink (`out`/`bus`/`mixer`) inside a `mixer` closure
+      is rejected with `E_BUS_SINK_IN_CLOSURE` (`E261`).
+- [x] **(P1/P2)** An aggressive signal into the master is clamped to ±1.0
+      by the safety stage; the device receives no |sample| > 1.0. Phase 1
+      verifies this with `osc("saw",110) |> @ * 100 |> out(@)`; Phase 2
+      adds the `master((s) -> s |> @ * 100)` *closure* form.
 - [ ] **(P2)** Hot-swap: editing inside a `mixer`/`master` closure
       preserves stateful opcode state under the standard hot-swap rules.
+      *(Mechanism in place — `inline_mixer_closure` uses a stable
+      `push_path("mixer#" + N)` semantic-ID path keyed on the bus index;
+      no dedicated hot-swap test added yet.)*
 - [ ] **(P2)** A `param(...)` captured by a closure is live-tweakable from
       the web UI and updates the bus chain without recompile.
+      *(Captures resolve through the normal closure path; no dedicated
+      web-UI test added yet.)*
 - [ ] **(P3)** The diamond `<>` lexes as a single token and `<>(3)` routes
       to bus 3; `gain < 3` still lexes as a comparison.
 

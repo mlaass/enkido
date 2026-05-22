@@ -52,6 +52,22 @@ std::array<float, cedar::BLOCK_SIZE> render_left(const akkado::CompileResult& r)
     return L;
 }
 
+// Render one block, returning both channels.
+struct StereoBlock {
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+};
+StereoBlock render_lr(const akkado::CompileResult& r) {
+    auto insts = get_instructions(r);
+    cedar::VM vm;
+    vm.set_sample_rate(48000.0f);
+    vm.set_bpm(120.0f);
+    REQUIRE(vm.load_program_immediate(
+        std::span<const cedar::Instruction>(insts)));
+    StereoBlock b;
+    vm.process_block(b.L.data(), b.R.data());
+    return b;
+}
+
 }  // namespace
 
 TEST_CASE("bus-routing: out(@) and bus(0, @) are byte-identical", "[bus]") {
@@ -162,4 +178,124 @@ TEST_CASE("bus-routing: out() still produces audio through the master",
     float peak = 0.0f;
     for (float v : L) peak = std::max(peak, std::abs(v));
     CHECK(peak > 0.01f);
+}
+
+// --- Phase 2: per-bus FX (mixer / master) --------------------------------
+
+TEST_CASE("bus-routing: master identity closure skips the default soft-clip",
+          "[bus][mixer]") {
+    auto r = akkado::compile("master((s) -> s)\nout(0.5)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    // The default tone chain is replaced by the (identity) closure — no
+    // soft-clip is emitted. The forced safety clamp still runs.
+    CHECK(count_op(insts, cedar::Opcode::DISTORT_SOFT) == 0);
+    CHECK(count_op(insts, cedar::Opcode::CLAMP) == 2);
+    auto L = render_left(r);
+    // 0.5 passes through untouched (only the ±1.0 rail, no soft-clip pull).
+    CHECK_THAT(L[0], Catch::Matchers::WithinAbs(0.5f, 1e-4f));
+}
+
+TEST_CASE("bus-routing: an arity-1 master closure processes bus 0",
+          "[bus][mixer]") {
+    auto r = akkado::compile("master((s) -> s |> @ * 0.5)\nout(0.8)");
+    REQUIRE(r.success);
+    auto L = render_left(r);
+    CHECK_THAT(L[0], Catch::Matchers::WithinAbs(0.4f, 1e-3f));
+}
+
+TEST_CASE("bus-routing: an arity-2 mixer closure drives L and R separately",
+          "[bus][mixer]") {
+    auto r = akkado::compile(
+        "mixer(0, (l, r) -> stereo(l * 0.5, r * 0.25))\nout(0.8)");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.4f, 1e-3f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.2f, 1e-3f));
+}
+
+TEST_CASE("bus-routing: a mixer closure processes a non-zero bus before the "
+          "sum into bus 0", "[bus][mixer]") {
+    auto r = akkado::compile(
+        "bus(1, 0.6)\nmixer(1, (s) -> s |> @ * 0.5)");
+    REQUIRE(r.success);
+    auto L = render_left(r);
+    // bus 1 = 0.6, halved by the mixer → 0.3 into bus 0; the default
+    // soft-clip @ 0.9 is near-linear at 0.3.
+    CHECK(L[0] > 0.25f);
+    CHECK(L[0] < 0.34f);
+}
+
+TEST_CASE("bus-routing: multiple masters — last wins, W203 on the dropped one",
+          "[bus][mixer][diag]") {
+    auto r = akkado::compile(
+        "master((s) -> s |> @ * 0.5)\nmaster((s) -> s)\nout(0.8)");
+    REQUIRE(r.success);
+    CHECK(has_code(r, "W203"));
+    auto L = render_left(r);
+    // The last master (identity) wins — 0.8 passes through.
+    CHECK_THAT(L[0], Catch::Matchers::WithinAbs(0.8f, 1e-3f));
+}
+
+TEST_CASE("bus-routing: a mono closure return broadcasts L = R with W204",
+          "[bus][mixer][diag]") {
+    auto r = akkado::compile("master((s) -> 0.3)\nout(0.8)");
+    REQUIRE(r.success);
+    CHECK(has_code(r, "W204"));
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.3f, 1e-3f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.3f, 1e-3f));
+}
+
+TEST_CASE("bus-routing: a sink inside a mixer closure is E261",
+          "[bus][mixer][diag]") {
+    auto a = akkado::compile("master((s) -> out(s))\nout(0.5)");
+    CHECK_FALSE(a.success);
+    CHECK(has_code(a, "E261"));
+
+    auto b = akkado::compile("mixer(1, (s) -> bus(2, s))\nbus(1, 0.5)");
+    CHECK_FALSE(b.success);
+    CHECK(has_code(b, "E261"));
+}
+
+TEST_CASE("bus-routing: a mixer on a bus with no writers warns W205",
+          "[bus][mixer][diag]") {
+    auto r = akkado::compile("out(0.5)\nmixer(3, (s) -> s)");
+    REQUIRE(r.success);
+    CHECK(has_code(r, "W205"));
+}
+
+TEST_CASE("bus-routing: a mixer closure with bad arity is E262",
+          "[bus][mixer][diag]") {
+    auto a = akkado::compile("master(() -> 0.5)\nout(0.5)");
+    CHECK_FALSE(a.success);
+    CHECK(has_code(a, "E262"));
+
+    auto b = akkado::compile("master((a, b, c) -> 0.5)\nout(0.5)");
+    CHECK_FALSE(b.success);
+    CHECK(has_code(b, "E262"));
+}
+
+TEST_CASE("bus-routing: the safety stage clamps an aggressive master closure",
+          "[bus][mixer][runtime]") {
+    auto r = akkado::compile("master((s) -> s |> @ * 100)\nout(0.5)");
+    REQUIRE(r.success);
+    auto L = render_left(r);
+    float peak = 0.0f;
+    for (float v : L) peak = std::max(peak, std::abs(v));
+    CHECK(peak <= 1.0001f);   // the forced ±1.0 rail still holds
+    CHECK(peak > 0.5f);       // and the signal is present
+}
+
+TEST_CASE("bus-routing: bypass_master leaves mixer/master inert",
+          "[bus][mixer]") {
+    auto r = akkado::compile("master((s) -> s |> @ * 0.5)\nout(0.8)",
+                             "<input>", nullptr, nullptr, false,
+                             /*bypass_master=*/true);
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::DISTORT_SOFT) == 0);
+    auto L = render_left(r);
+    // No epilogue: out() writes 0.8 straight to the device, mixer ignored.
+    CHECK_THAT(L[0], Catch::Matchers::WithinAbs(0.8f, 1e-3f));
 }

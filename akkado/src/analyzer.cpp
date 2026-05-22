@@ -1316,6 +1316,55 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
     const bool child_closure_allowed =
         clone_propagates_closure_allowed(src.type) ? true : closure_allowed;
 
+    // Register the parameters of a closure / function definition before
+    // cloning its body, so the closure-from-pipe sugar in rewrite_pipes does
+    // not misfire on a pipe whose innermost LHS is a bound parameter. Without
+    // this, `(s) -> s |> f(@)` is wrongly rewritten into a spurious nested
+    // closure `(s) -> ((s) -> f(s))` instead of `(s) -> f(s)` — the sugar's
+    // `!symbols_.lookup(name)` gate sees `s` as unbound during this pre-pass.
+    const bool is_fn_scope =
+        (src.type == NodeType::Closure || src.type == NodeType::FunctionDef);
+    if (is_fn_scope) {
+        symbols_.push_scope();
+        std::size_t param_count = 0;
+        if (src.type == NodeType::FunctionDef &&
+            std::holds_alternative<Node::FunctionDefData>(src.data)) {
+            param_count = src.as_function_def().param_count;
+        } else if (src.type == NodeType::Closure) {
+            // All children except the last (the body) are parameters.
+            std::size_t total = 0;
+            for (NodeIndex c = src.first_child; c != NULL_NODE;
+                 c = (*input_ast_).arena[c].next_sibling) {
+                ++total;
+            }
+            param_count = total > 0 ? total - 1 : 0;
+        }
+        std::size_t pi = 0;
+        for (NodeIndex c = src.first_child;
+             c != NULL_NODE && pi < param_count;
+             c = (*input_ast_).arena[c].next_sibling, ++pi) {
+            const Node& pn = (*input_ast_).arena[c];
+            if (pn.type == NodeType::Identifier) {
+                std::string pname;
+                if (std::holds_alternative<Node::IdentifierData>(pn.data)) {
+                    pname = pn.as_identifier();
+                } else if (std::holds_alternative<Node::ClosureParamData>(
+                               pn.data)) {
+                    pname = pn.as_closure_param().name;
+                }
+                if (!pname.empty()) symbols_.define_variable(pname, 0xFFFF);
+            } else if (pn.type == NodeType::DestructureParam &&
+                       std::holds_alternative<Node::DestructureParamData>(
+                           pn.data)) {
+                for (const auto& f : pn.as_destructure_param().fields) {
+                    if (!f.name.empty()) {
+                        symbols_.define_variable(f.name, 0xFFFF);
+                    }
+                }
+            }
+        }
+    }
+
     NodeIndex src_child = src.first_child;
     NodeIndex prev_dst_child = NULL_NODE;
 
@@ -1333,6 +1382,8 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
 
         src_child = (*input_ast_).arena[src_child].next_sibling;
     }
+
+    if (is_fn_scope) symbols_.pop_scope();
 
     return dst_idx;
 }

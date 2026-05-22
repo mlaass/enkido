@@ -1076,6 +1076,22 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {NAN, NAN, NAN},
                  "Route a signal into numbered bus N (bus 0 is the master)"}},
 
+    // Per-bus FX (prd-bus-routing Phase 2). mixer(N, closure) attaches a
+    // processing closure to bus N; master(closure) is an alias for
+    // mixer(0, closure). NOP — both emit nothing at the call site; codegen
+    // (handle_mixer_call) records the closure and inlines it into the bus
+    // epilogue. The closure body runs once per block on the bus's summed
+    // signal.
+    {"mixer",   {cedar::Opcode::NOP, 2, 0, false,
+                 {"N", "closure", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Attach a processing closure to bus N"}},
+    {"master",  {cedar::Opcode::NOP, 1, 0, false,
+                 {"closure", "", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Attach a processing closure to bus 0 — alias for "
+                 "mixer(0, ...)"}},
+
     // Stereo Operations (handled specially by codegen for stereo signal propagation)
     // stereo(mono) creates stereo from mono by duplicating to both channels
     // stereo(left, right) creates stereo from two separate signals

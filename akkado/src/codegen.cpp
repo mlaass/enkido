@@ -1072,6 +1072,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // out(@) and bus(0, @) produce byte-identical bytecode.
                 {"out",     &CodeGenerator::handle_bus_call},
                 {"bus",     &CodeGenerator::handle_bus_call},
+                // Per-bus FX (prd-bus-routing Phase 2). master is a pure
+                // alias for mixer(0, ...); both share handle_mixer_call.
+                {"mixer",   &CodeGenerator::handle_mixer_call},
+                {"master",  &CodeGenerator::handle_mixer_call},
                 // Pattern-event chord accessors (pattern-event-arrays PRD).
                 // Special-cased by name like len/map (not reserved).
                 {"notes",   &CodeGenerator::handle_notes_call},
@@ -2475,6 +2479,219 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::void_val());
 }
 
+// handle_mixer_call serves both mixer(N, closure) and master(closure).
+// master(c) is a pure alias for mixer(0, c). It validates the call, records a
+// MixerCall, and emits NOTHING at the call site — emit_bus_epilogue inlines
+// the closure body into the per-bus epilogue (prd-bus-routing Phase 2 §3.3).
+TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
+    const std::string func_name = n.as_identifier();  // "mixer" or "master"
+    const SourceLocation call_loc = n.location;
+    current_source_loc_ = call_loc;
+
+    // Gather argument child nodes.
+    std::vector<NodeIndex> args;
+    for (NodeIndex c = n.first_child; c != NULL_NODE;
+         c = ast_->arena[c].next_sibling) {
+        args.push_back(c);
+    }
+
+    // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a
+    // compile-time non-negative integer literal as its first argument
+    // (validation mirrors handle_bus_call exactly).
+    int bus_index = 0;
+    NodeIndex closure_arg = NULL_NODE;
+    if (func_name == "mixer") {
+        if (args.size() < 2) {
+            error("E260",
+                  "mixer() requires a bus index and a closure argument",
+                  call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        const Node& idx_arg = ast_->arena[args[0]];
+        NodeIndex idx_val = (idx_arg.type == NodeType::Argument)
+                                ? idx_arg.first_child : args[0];
+        bool ok = idx_val != NULL_NODE &&
+                  ast_->arena[idx_val].type == NodeType::NumberLit;
+        double raw = ok ? ast_->arena[idx_val].as_number() : 0.0;
+        if (ok && (raw < 0.0 || std::floor(raw) != raw)) ok = false;
+        if (!ok) {
+            error("E260",
+                  "mixer() index must be a compile-time non-negative integer "
+                  "literal", call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        if (static_cast<int>(raw) >= MAX_BUS_INDEX) {
+            error("E260",
+                  "mixer() index must be below " + std::to_string(MAX_BUS_INDEX),
+                  call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        bus_index = static_cast<int>(raw);
+        closure_arg = args[1];
+    } else {  // master
+        if (args.empty()) {
+            error("E260", "master() requires a closure argument", call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        closure_arg = args[0];
+    }
+
+    // Unwrap an Argument wrapper, then require an inline closure literal.
+    if (ast_->arena[closure_arg].type == NodeType::Argument) {
+        closure_arg = ast_->arena[closure_arg].first_child;
+    }
+    if (closure_arg == NULL_NODE ||
+        ast_->arena[closure_arg].type != NodeType::Closure) {
+        error("E260",
+              func_name + "() expects an inline closure argument "
+              "(e.g. (s) -> s |> ...)", call_loc);
+        return cache_and_return(node, TypedValue::void_val());
+    }
+
+    // Resolve params + arity via the shared function-arg resolver.
+    auto ref = resolve_function_arg(closure_arg);
+    if (!ref || ref->is_user_function) {
+        error("E260", func_name + "() closure could not be resolved",
+              call_loc);
+        return cache_and_return(node, TypedValue::void_val());
+    }
+    // The closure must take exactly 1 (stereo) or 2 (left, right) plain
+    // signal parameters — no destructure, no rest param.
+    bool arity_ok = (ref->params.size() == 1 || ref->params.size() == 2);
+    for (const auto& p : ref->params) {
+        if (p.is_destructure || p.is_rest) arity_ok = false;
+    }
+    if (!arity_ok) {
+        error("E262",
+              func_name + "() closure must take exactly 1 (stereo) or 2 "
+              "(left, right) plain parameters", call_loc);
+        return cache_and_return(node, TypedValue::void_val());
+    }
+
+    // Locate the closure body (last child of the Closure node) and reject a
+    // sink call inside it (out/bus/mixer/master) — rules out routing cycles.
+    NodeIndex body = NULL_NODE;
+    for (NodeIndex c = ast_->arena[closure_arg].first_child; c != NULL_NODE;
+         c = ast_->arena[c].next_sibling) {
+        body = c;
+    }
+    scan_closure_for_sinks(body);
+
+    MixerCall mc;
+    mc.bus_index = bus_index;
+    mc.closure_node = closure_arg;
+    mc.arity = static_cast<int>(ref->params.size());
+    mc.param_l = ref->params[0].name;
+    if (ref->params.size() == 2) mc.param_r = ref->params[1].name;
+    mc.call_loc = call_loc;
+    mixer_calls_.push_back(std::move(mc));
+
+    return cache_and_return(node, TypedValue::void_val());
+}
+
+// scan_closure_for_sinks recursively walks a mixer/master closure body and
+// emits E261 for every out/bus/mixer/master call found inside it. (The <>
+// diamond operator is Phase 3 — no token exists yet to scan for.)
+bool CodeGenerator::scan_closure_for_sinks(NodeIndex body) {
+    if (body == NULL_NODE) return false;
+    const Node& n = ast_->arena[body];
+    bool found = false;
+    if (n.type == NodeType::Call) {
+        const std::string callee = n.as_identifier();
+        if (callee == "out" || callee == "bus" || callee == "mixer" ||
+            callee == "master") {
+            error("E261",
+                  callee + "() is not allowed inside a mixer/master closure "
+                  "body", n.location);
+            found = true;
+        }
+    }
+    for (NodeIndex c = n.first_child; c != NULL_NODE;
+         c = ast_->arena[c].next_sibling) {
+        if (scan_closure_for_sinks(c)) found = true;
+    }
+    return found;
+}
+
+// inline_mixer_closure inlines one mixer/master closure body into the bus
+// epilogue, processing the bus stereo pair (bus_l, bus_r) in place.
+void CodeGenerator::inline_mixer_closure(const MixerCall& mc,
+                                         std::uint16_t bus_l,
+                                         std::uint16_t bus_r) {
+    // Body = last child of the Closure node.
+    NodeIndex body = NULL_NODE;
+    for (NodeIndex c = ast_->arena[mc.closure_node].first_child;
+         c != NULL_NODE; c = ast_->arena[c].next_sibling) {
+        body = c;
+    }
+    if (body == NULL_NODE) return;
+
+    // Stable semantic-ID path keyed on the bus index (not a call counter) so
+    // stateful opcodes inside the closure rebind across recompiles
+    // (prd-bus-routing §9 hot-swap).
+    push_path("mixer#" + std::to_string(mc.bus_index));
+    symbols_->push_scope();
+
+    if (mc.arity == 1) {
+        // Bind the single param to the bus stereo pair: the L buffer is the
+        // symbol; (L, R) recorded in stereo_buffer_pairs_ so stereo-native
+        // ops in the body see a stereo input.
+        symbols_->define_variable(mc.param_l, bus_l);
+        stereo_buffer_pairs_[bus_l] = bus_r;
+    } else {
+        // Two mono params: left and right channels separately.
+        symbols_->define_variable(mc.param_l, bus_l);
+        symbols_->define_variable(mc.param_r, bus_r);
+    }
+
+    auto saved_node_types = std::move(node_types_);
+    node_types_.clear();
+
+    TypedValue result = visit(body);
+
+    node_types_ = std::move(saved_node_types);
+    symbols_->pop_scope();
+    pop_path();
+
+    // Resolve the result's stereo pair (variable/alias TypedValues may not
+    // carry the R buffer directly — recover it from the legacy stereo map).
+    std::uint16_t rl = result.buffer;
+    std::uint16_t rr = result.right_buffer;
+    bool stereo = result.is_stereo() || is_stereo_buffer(rl);
+    if (stereo && rr == 0xFFFF && rl != BufferAllocator::BUFFER_UNUSED) {
+        StereoBuffers sb = get_stereo_buffers_by_buffer(rl);
+        rl = sb.left;
+        rr = sb.right;
+    }
+    if (rl == BufferAllocator::BUFFER_UNUSED) {
+        // Closure produced no value — leave the bus signal unchanged.
+        return;
+    }
+
+    // Copy the processed result back into the bus pair in place. op_copy is
+    // mono-only, so a stereo result needs two COPYs; a mono result is
+    // broadcast L = R with a W204 warning (prd-bus-routing §3.3).
+    if (stereo) {
+        if (rl != bus_l) {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_l,
+                                                rl));
+        }
+        if (rr != bus_r) {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_r,
+                                                rr));
+        }
+    } else {
+        warn("W204",
+             "mixer/master closure returned a mono value — auto-broadcast "
+             "L = R", mc.call_loc);
+        if (rl != bus_l) {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_l,
+                                                rl));
+        }
+        emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_r, rl));
+    }
+}
+
 // emit_bus_epilogue runs once, after the main DAG is generated. It allocates
 // the per-bus scratch buffers, rewrites bus placeholders to real indices,
 // appends the per-block epilogue (sum non-zero buses into bus 0, default
@@ -2496,19 +2713,26 @@ void CodeGenerator::emit_bus_epilogue() {
     //    (main stream + subprogram bodies). Bus 0 always exists.
     std::set<int> indices;
     indices.insert(0);
+    std::set<int> writer_indices;   // bus indices with ≥1 out()/bus() writer
     std::size_t writer_count = 0;
     auto scan = [&](const std::vector<cedar::Instruction>& code) {
         for (const auto& inst : code) {
             if (inst.opcode == cedar::Opcode::OUTPUT) {
                 ++writer_count;
                 if (is_placeholder(inst.out_buffer)) {
-                    indices.insert(inst.out_buffer - kPlaceLo);
+                    int idx = inst.out_buffer - kPlaceLo;
+                    indices.insert(idx);
+                    writer_indices.insert(idx);
                 }
             }
         }
     };
     scan(instructions_);
     for (const auto& desc : subprograms_) scan(desc.body);
+
+    // Per-bus FX (Phase 2): a mixer(N,…)/master(…) call references a bus even
+    // when no out()/bus() writes to it — allocate that bus too.
+    for (const auto& mc : mixer_calls_) indices.insert(mc.bus_index);
 
     // A program with no out()/bus() writer produces no audio — skip the
     // whole bus epilogue. (prd-bus-routing §5.3 specifies an always-emitted
@@ -2517,6 +2741,34 @@ void CodeGenerator::emit_bus_epilogue() {
     // snippets free of a silent master chain.)
     if (writer_count == 0) {
         return;
+    }
+
+    // 1b. Per-bus FX: resolve mixer/master overrides — the last call per bus
+    //     wins (prd-bus-routing §5.4); earlier calls are dropped with W203.
+    //     master(c) was recorded as mixer(0, c), so master and an explicit
+    //     mixer(0, …) collide naturally.
+    std::map<int, MixerCall> winning_mixers;
+    for (const auto& mc : mixer_calls_) {
+        auto it = winning_mixers.find(mc.bus_index);
+        if (it != winning_mixers.end()) {
+            warn("W203",
+                 "mixer(" + std::to_string(mc.bus_index) + ")/master "
+                 "overridden — the closure at line " +
+                 std::to_string(it->second.call_loc.line) +
+                 " is dropped; the call at line " +
+                 std::to_string(mc.call_loc.line) + " takes effect",
+                 it->second.call_loc);
+        }
+        winning_mixers[mc.bus_index] = mc;
+    }
+    // W205: a non-zero-bus mixer whose bus has no out()/bus() writers
+    // processes silence (the prologue still clears the buffer, so it is safe).
+    for (const auto& [idx, mc] : winning_mixers) {
+        if (idx != 0 && writer_indices.find(idx) == writer_indices.end()) {
+            warn("W205",
+                 "mixer(" + std::to_string(idx) + ") targets a bus with no "
+                 "writers — the closure processes silence", mc.call_loc);
+        }
     }
 
     // 2. Allocate a stereo scratch pair per bus index (ascending order).
@@ -2578,9 +2830,15 @@ void CodeGenerator::emit_bus_epilogue() {
     };
 
     // 5. Emit the epilogue into the main stream.
-    // (a) Sum every non-zero bus into bus 0.
+    // (a) For each non-zero bus: run its mixer closure (if any) on the bus
+    //     signal in place, then sum the bus into bus 0.
     for (const auto& [idx, l] : bus_left) {
         if (idx == 0) continue;
+        auto mit = winning_mixers.find(idx);
+        if (mit != winning_mixers.end()) {
+            inline_mixer_closure(mit->second, l,
+                                 static_cast<std::uint16_t>(l + 1));
+        }
         cedar::Instruction o{};
         o.opcode = cedar::Opcode::OUTPUT;
         o.out_buffer = bus0_l;
@@ -2593,22 +2851,29 @@ void CodeGenerator::emit_bus_epilogue() {
         emit(o);
     }
 
-    // (b) Default tone chain: polynomial soft-clip @ 0.9 on bus 0, in place.
+    // (b) Bus-0 tone chain: the master / mixer(0) closure if one was given,
+    //     otherwise the default polynomial soft-clip @ 0.9. Either runs in
+    //     place on bus 0; the forced safety stage below always follows.
     {
-        emit_push_const(c1, 0.9f);         // c1 = soft-clip threshold
-        cedar::Instruction soft{};
-        soft.opcode = cedar::Opcode::DISTORT_SOFT;
-        soft.out_buffer = bus0_l;          // in place: writes bus0_l, bus0_l+1
-        soft.inputs[0] = bus0_l;           // STEREO_INPUT → also reads bus0_l+1
-        soft.inputs[1] = c1;
-        soft.inputs[2] = 0xFFFF;           // dry  → default 0.0
-        soft.inputs[3] = 0xFFFF;           // wet  → default 1.0
-        soft.inputs[4] = 0xFFFF;
-        soft.flags = static_cast<std::uint16_t>(
-            cedar::InstructionFlag::STEREO_INPUT |
-            cedar::InstructionFlag::STEREO_OUTPUT);
-        soft.state_id = 0;
-        emit(soft);
+        auto mit = winning_mixers.find(0);
+        if (mit != winning_mixers.end()) {
+            inline_mixer_closure(mit->second, bus0_l, bus0_r);
+        } else {
+            emit_push_const(c1, 0.9f);         // c1 = soft-clip threshold
+            cedar::Instruction soft{};
+            soft.opcode = cedar::Opcode::DISTORT_SOFT;
+            soft.out_buffer = bus0_l;          // in place: bus0_l, bus0_l+1
+            soft.inputs[0] = bus0_l;           // STEREO_INPUT → reads bus0_l+1
+            soft.inputs[1] = c1;
+            soft.inputs[2] = 0xFFFF;           // dry  → default 0.0
+            soft.inputs[3] = 0xFFFF;           // wet  → default 1.0
+            soft.inputs[4] = 0xFFFF;
+            soft.flags = static_cast<std::uint16_t>(
+                cedar::InstructionFlag::STEREO_INPUT |
+                cedar::InstructionFlag::STEREO_OUTPUT);
+            soft.state_id = 0;
+            emit(soft);
+        }
     }
 
     // (c) Forced safety: hard rail at ±1.0 — "do not damage speakers".
