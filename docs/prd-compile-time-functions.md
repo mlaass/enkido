@@ -8,7 +8,7 @@
 
 **Related:**
 - [prd-builtin-variables.md](prd-builtin-variables.md) — defines `bpm`/`sr` as compile-time-known names; this PRD reads them
-- [prd-module-import.md](prd-module-import.md) — `import` statement; this PRD's `$imports()` returns its resolved-import list once that lands
+- [prd-module-import.md](prd-module-import.md) — `import` statement (Phases A+B SHIPPED); this PRD's `$imports()` reads its resolved-module list (`ImportResult::modules`) as a real v1 builtin
 - [prd-error-handling-recovery.md](prd-error-handling-recovery.md) — NOT STARTED. The `Diagnostic`/`SourceLocation` types this PRD reuses already exist; that PRD's *multi-stage error collection* is what the "failed compiles surface `compile_log`" guarantee depends on (see §10.5)
 - [prd-language-extensions.md](prd-language-extensions.md) — broader language roadmap; macros (Phase 2) will live in their own future PRD
 - [prd-runtime-functions-control-flow.md](prd-runtime-functions-control-flow.md) — shipped the sibling `#` annotation sigil (`#inline`); §5.2.1 carves the `#` vs `$` boundary
@@ -41,7 +41,7 @@ This PRD is also a **stepping stone**. Reserving the `$`-prefix and defining `Co
 - **F-string interpolation** uses `{name[:spec]}`. Format specs are limited to a numeric subset: `.Nf` (float precision), `d`, `x`, `s`. No width, alignment, fill, or sign. `{{` / `}}` escape literal braces.
 - **Anything name-resolvable can interpolate.** Constants render as values. Signals render as typed shape: `<signal mono>` / `<chord[3]>` / `<pattern>`. Undefined names render as `<undefined: name>` and emit a Warning diagnostic; compilation continues.
 - **Top-level only** for `$print` statements. Inside function bodies, lambdas, and runtime expressions, `$print` is an error. Query functions (`$samples()`, `$env(...)`) are also top-level-only when used as expressions, valid both inside `$print` interpolations and as compile-time bindings (`names = $samples()`).
-- **Pipeline stage: after analysis, before codegen.** ConstEvaluator-resolvable values are folded; the symbol table is fully populated; nothing in `CodeGenResult` exists yet. Source order matches lexical order across imported files (depth-first, when imports land).
+- **Pipeline stage: after analysis, before codegen.** ConstEvaluator-resolvable values are folded; the symbol table is fully populated; nothing in `CodeGenResult` exists yet. Source order matches lexical order across imported files (depth-first; `import` Phases A+B have shipped, so this is a real v1 path — see §5.9).
 - **`compile()` gains an optional `CompileTimeContext*` parameter.** Hosts construct the context with their `SampleRegistry`, `FileResolver`, and (when recompiling a running patch) a snapshot of the live `cedar::EnvMap`.
 - **Phase-1 query function set:** `$samples()`, `$env(key)`, `$files(glob?)`, `$imports()`. Each list-returning query has `_lines` and `_table` variants for formatting.
 - **Hot-swap-failed compiles still emit prints.** The user sees `$print` output on every successful compile, regardless of whether the bytecode subsequently swapped in. Useful for debugging swap rejection.
@@ -476,8 +476,9 @@ public:
     // File resolver — list URIs matching glob (or all, if glob == "").
     virtual std::vector<std::string> list_files(std::string_view glob) const = 0;
 
-    // Imports — list source files imported by current compile (after import lands).
-    // v1 returns empty (imports not shipped); the hook is in place.
+    // Imports — list source files imported by the current compile.
+    // `import` Phases A+B have shipped; the default impl reads the
+    // canonical paths from the compile's ImportResult::modules.
     virtual std::vector<std::string> list_imports() const = 0;
 };
 
@@ -526,7 +527,7 @@ If `compile_ctx == nullptr`, a `DefaultCompileTimeContext` is constructed intern
 | `$files(glob?)` | optional string | List of URIs | `"file://..., file://..."` |
 | `$files_lines(glob?)` | optional string | string | newline-joined |
 | `$files_table(glob?)` | optional string | string | aligned `kind uri` columns |
-| `$imports()` | none | List of paths | `"a.ak, b.ak"` (empty until imports lands) |
+| `$imports()` | none | List of paths | `"a.ak, b.ak"` (canonical paths from `ImportResult::modules`) |
 | `$imports_lines()` | none | string | newline-joined |
 | `$imports_table()` | none | string | aligned `path symbols` columns |
 
@@ -572,7 +573,7 @@ A separate pass keeps codegen ignorant of compile-time calls. The pass is no-op 
 
 ### 5.9 Multi-file ordering (post-`import`)
 
-When `import` lands, the compile-time pass walks AST in **depth-first source order**:
+`import` Phases A+B have shipped, so multi-file compiles are a real v1 path. The compile-time pass walks AST in **depth-first source order**:
 
 ```
 main.ak
@@ -667,7 +668,7 @@ When the host doesn't pass a context (or passes one with no live env, no resolve
 | `$samples()` | Returns empty list. Renders as `""` or `<empty>` (TBD §13). |
 | `$env(key)` | Returns `<unset>`. Warning W314 emitted: "no live env; $env returned <unset>". |
 | `$files(glob)` | Returns empty. Same warning pattern. |
-| `$imports()` | Always empty in v1 (imports not shipped). No warning. |
+| `$imports()` | Returns empty for a single-file compile with no `import` statements. Returns the real resolved-module list when the compile imports modules. No warning either way. |
 
 ---
 
@@ -775,7 +776,7 @@ Each phase ends with a deployable, demo-able artifact.
    - Implement `$samples`, `$samples_lines`, `$samples_table`.
    - Implement `$env` (returns `<unset>` when no live env).
    - Implement `$files`, `$files_lines`, `$files_table`.
-   - Implement `$imports` (returns empty list in v1).
+   - Implement `$imports`, `$imports_lines`, `$imports_table` — read `ImportResult::modules` canonical paths via `CompileTimeContext::list_imports()`.
 6. Create `format.cpp` with template parser + interpolation evaluator. Supports `{name}`, `{name:.Nf}`, `{name:d}`, `{name:x}`, `{name:s}`, `{{`, `}}`, nested `$call`.
 7. Add the compile-time pass driver in `compile_time.cpp`. Walks AST in source order, dispatches each `$`-call to the handler table, builds `compile_log`.
 8. Wire into `akkado.cpp::compile()`: run the pass after analyzer, before codegen.
@@ -975,7 +976,9 @@ Each phase ends with a deployable, demo-able artifact.
 | `$nonexistent()` | error E682 |
 | `$ print("hi")` (whitespace after $) | lexer error |
 | `$print("a") $print("b")` | two log entries in source order |
-| `$print` from imports (when imports land) | preserves depth-first source order |
+| `$print` from imported files | preserves depth-first source order; each entry's `filename` is the imported file |
+| `$imports()` in a compile with `import "lib"` | text contains `lib`'s canonical path |
+| `$imports()` in a single-file compile | empty list; renders `""` |
 
 ### 11.2 Format-string unit tests (`akkado/tests/test_format.cpp`, tag `[format]`)
 
@@ -1059,7 +1062,7 @@ Out of v1 scope, but anticipated and worth flagging so v1 doesn't paint future P
 | PRD | Status | Dependency |
 |---|---|---|
 | `prd-builtin-variables.md` | SHIPPED | `bpm`/`sr` shipped as **`ENV_GET`-backed builtin variables** — codegen desugars the identifier to `ENV_GET`, they are *not* plain const-folded identifiers. The compile-time pass must resolve `{bpm}`/`{sr}` interpolations through the `BUILTIN_VARIABLES` registry + env-snapshot path (the same channel `$env` uses): read the user's constant `bpm = N` override when present, the host default otherwise. See §5.8. |
-| `prd-module-import.md` | READY FOR IMPLEMENTATION | Not yet shipped. `$imports()` returns its resolved-import list when this lands; v1 of this PRD ships an empty stub regardless. |
+| `prd-module-import.md` | Phases A+B SHIPPED (header label: READY FOR IMPLEMENTATION — refers to remaining Phases C/D + stdlib migration) | The `import` statement is live: direct injection + namespace imports compile and run, and `import_scanner` produces `ImportResult::modules` (canonical paths). `$imports()` is therefore a **real v1 builtin** reading that list — not a stub — and §5.9 depth-first multi-file `$print` ordering is a real v1 path. Phases C/D (URI-resolver unification, web VFS) and stdlib migration are unshipped but `$imports()` does not depend on them. |
 | `prd-error-handling-recovery.md` | **NOT STARTED** | The basic `Diagnostic` / `SourceLocation` types this PRD reuses already exist independently of that PRD. But its **multi-stage error collection** (lex+parse+semantic errors collected instead of aborting between stages) has *not* shipped — today the pipeline still aborts between stages. This bounds the "failed compiles still surface `compile_log`" guarantee to codegen-stage failures (§1.2, §10.5): see the dependency note in §10.5. Error/warning codes were rebased on review onto verified-free ranges `E680–E699` / `W310–W319` (the 180s were occupied). |
 | `prd-language-extensions.md` | COMPLETE | Macros (Phase 2 of this PRD's lineage) live in a separate future PRD. |
 | `prd-shareable-patches.md` | CODE-COMPLETE | Independent. Compile-time logs should NOT be embedded into shared patches (shares carry source code; the log is host-side, regenerated on recompile). |
