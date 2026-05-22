@@ -1284,11 +1284,6 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                    {"array", "lo", "hi", "", "", ""},
                    {NAN, 0.0f, 1.0f},
                    "Scale array to [lo, hi] range (defaults to [0, 1])"}},
-    {"scale",     {cedar::Opcode::NOP, 3, 0, false,
-                   {"array", "lo", "hi", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Scale array to [lo, hi] range"}},
-
     // Polyphony control. `release` (seconds) holds the voice in the mix
     // for that long past note-off so the instrument's own ADSR can finish
     // its release tail instead of being silenced by gate-multiplied mixing

@@ -1148,7 +1148,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"shuffle",   &CodeGenerator::handle_shuffle_call},
                 {"sort",      &CodeGenerator::handle_sort_call},
                 {"normalize", &CodeGenerator::handle_normalize_call},
-                {"scale",     &CodeGenerator::handle_scale_call},
                 // Array generation operations
                 {"linspace",  &CodeGenerator::handle_linspace_call},
                 {"random",    &CodeGenerator::handle_random_call},

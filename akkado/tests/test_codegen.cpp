@@ -6400,10 +6400,6 @@ TEST_CASE("Codegen: Array transformations", "[codegen][arrays]") {
         CHECK(count_instructions(insts, cedar::Opcode::MAX) > 0);
     }
 
-    SECTION("scale") {
-        auto result = akkado::compile("scale([10, 20, 30], 0, 100)");
-        REQUIRE(result.success);
-    }
 }
 
 // =============================================================================

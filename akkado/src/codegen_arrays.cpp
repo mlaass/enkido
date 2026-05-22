@@ -1538,58 +1538,6 @@ TypedValue CodeGenerator::handle_normalize_call(NodeIndex node, const Node& n) {
     return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
 }
 
-// scale(array, lo, hi) - map to new range
-TypedValue CodeGenerator::handle_scale_call(NodeIndex node, const Node& n) {
-    auto args = extract_call_args(ast_->arena, n.first_child, 3);
-    if (!args.valid) {
-        error("E171", "scale() requires 3 arguments: scale(array, lo, hi)", n.location);
-        return TypedValue::void_val();
-    }
-
-    std::uint16_t array_buf = visit(args.nodes[0]).buffer;
-    std::uint16_t lo_buf = visit(args.nodes[1]).buffer;
-    std::uint16_t hi_buf = visit(args.nodes[2]).buffer;
-
-    if (!is_multi_buffer(args.nodes[0])) {
-        // Single element - just return lo (or could interpolate)
-        return cache_and_return(node, TypedValue::signal(lo_buf));
-    }
-
-    auto elem_bufs = get_multi_buffers(args.nodes[0]);
-    if (elem_bufs.size() <= 1) {
-        return cache_and_return(node, TypedValue::signal(lo_buf));
-    }
-
-    // First normalize to 0-1
-    // Find min
-    std::uint16_t min_buf = elem_bufs[0];
-    for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        min_buf = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MIN, min_buf, elem_bufs[i]);
-    }
-
-    // Find max
-    std::uint16_t max_buf = elem_bufs[0];
-    for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        max_buf = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MAX, max_buf, elem_bufs[i]);
-    }
-
-    // range = max - min
-    std::uint16_t src_range = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::SUB, max_buf, min_buf);
-    // target_range = hi - lo
-    std::uint16_t dst_range = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::SUB, hi_buf, lo_buf);
-
-    // Scale each element: ((elem - min) / src_range) * dst_range + lo
-    std::vector<std::uint16_t> result_buffers;
-    for (auto buf : elem_bufs) {
-        std::uint16_t shifted = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::SUB, buf, min_buf);
-        std::uint16_t normalized = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::DIV, shifted, src_range);
-        std::uint16_t scaled = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MUL, normalized, dst_range);
-        std::uint16_t result = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::ADD, scaled, lo_buf);
-        result_buffers.push_back(result);
-    }
-
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
-}
 
 // ============================================================================
 // Array generation operations

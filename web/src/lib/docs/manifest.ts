@@ -2196,12 +2196,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "normalize",
 		"anchor": "normalize"
 	},
-	"scale": {
-		"slug": "waveform",
-		"category": "builtins",
-		"title": "scale",
-		"anchor": "scale"
-	},
 	"range": {
 		"slug": "arrays",
 		"category": "language",
@@ -3035,6 +3029,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "showGrid",
 		"anchor": "showgrid"
+	},
+	"scale": {
+		"slug": "waveform",
+		"category": "builtins",
+		"title": "scale",
+		"anchor": "scale"
 	},
 	"chromatic": {
 		"slug": "pianoroll",

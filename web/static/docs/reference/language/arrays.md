@@ -3,7 +3,7 @@ title: Arrays
 category: language
 order: 6
 index_headings: true
-keywords: [array, list, arrays, indexing, len, length, dynamic array, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, scale, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension, index, stereo, variadic]
+keywords: [array, list, arrays, indexing, len, length, dynamic array, map, reduce, fold, zipWith, zip, take, drop, reverse, sum, mean, average, rotate, shuffle, sort, normalize, range, repeat, linspace, random, harmonics, polyphony, voices, multi-buffer, comprehension, index, stereo, variadic]
 group: language
 subgroup: data
 icon: Brackets
@@ -335,25 +335,13 @@ sort([3, 1, 4, 1, 5, 9, 2, 6], true)  // [9, 6, 5, 4, 3, 2, 1, 1]
 ```akk
 normalize([10, 20, 30])         // [0.0, 0.5, 1.0]
 normalize([10, 20, 30], -1, 1)  // [-1.0, 0.0, 1.0]
+
+// Map a normalized envelope shape to a filter cutoff range
+shape = [0, 0.5, 1, 0.3]
+cutoffs = normalize(shape, 200, 4000)
 ```
 
 If all elements are equal, the divisor is zero; avoid `normalize` on constant-valued arrays.
-
-## scale
-
-**Scale**: Map elements from their current min/max to `[lo, hi]`.
-
-| Param | Type   | Default | Description |
-|-------|--------|---------|-------------|
-| array | array  | -       | Input array |
-| lo    | signal | -       | Target minimum |
-| hi    | signal | -       | Target maximum |
-
-```akk
-// Map a normalized envelope shape to a filter cutoff range
-shape = [0, 0.5, 1, 0.3]
-cutoffs = scale(shape, 200, 4000)
-```
 
 ## range
 
@@ -478,7 +466,7 @@ linspace(220, 1100, 5)
 
 ```akk
 base = 220
-detune = scale(random(6), -5, 5)  // ±5 Hz spread
+detune = normalize(random(6), -5, 5)  // ±5 Hz spread
 detune
   |> map(@, (d) -> osc("saw", base + d))
   |> sum(@) * 0.15

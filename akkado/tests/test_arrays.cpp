@@ -688,24 +688,14 @@ TEST_CASE("normalize: scales array to [0, 1]", "[arrays][normalize]") {
         auto result = akkado::compile("normalize([1, 2, 3], 0, freq)");
         CHECK_FALSE(result.success);
     }
-}
 
-// =============================================================================
-// scale
-// =============================================================================
-
-TEST_CASE("scale: maps array to [lo, hi]", "[arrays][scale]") {
-    SECTION("typical case") {
-        auto result = must_compile("sum(scale([0, 0.5, 1], 100, 200))");
-        auto insts = get_instructions(result);
-        // Per-element pipeline: SUB, DIV, MUL, ADD = 4 ops × 3 elements
-        CHECK(count_instructions(insts, cedar::Opcode::MUL) >= 3);
-    }
-
-    SECTION("single element returns lo") {
-        auto result = must_compile("scale([42], 5, 10)");
-        auto values = collect_consts(get_instructions(result));
-        CHECK(std::find(values.begin(), values.end(), 5.0f) != values.end());
+    // The old `scale(array, lo, hi)` builtin was removed in favor of
+    // `normalize` (identical behavior). The `scale` name is now free for the
+    // future scale-quantize transform — guard that it no longer resolves as
+    // an array builtin.
+    SECTION("removed scale() builtin does not compile") {
+        auto result = akkado::compile("scale([1, 2, 3], 0, 1)");
+        CHECK_FALSE(result.success);
     }
 }
 

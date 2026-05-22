@@ -56,6 +56,17 @@ events carrying real chord data. Write chords as patterns instead
 `C4` followed by a quote. The internal `chord_parser` API (used by
 mini-notation) is unaffected.
 
+### ⚠ BREAKING — `scale()` array builtin removed
+
+The `scale(array, lo, hi)` array builtin has been removed. It was
+functionally identical to `normalize(array, lo, hi)`, which already
+maps an array's value range to an arbitrary `[lo, hi]` range (its
+`lo`/`hi` arguments are optional, defaulting to `0`/`1`) and emits
+identical bytecode. Replace any `scale(arr, lo, hi)` call with
+`normalize(arr, lo, hi)`. Removing the builtin frees the `scale` name
+for the planned Strudel-style scale-quantize transform
+(`prd-runtime-event-transforms.md`).
+
 ### Added
 
 - **Flexible `poly()` / `mono()` / `legato()` instrument callbacks** — the

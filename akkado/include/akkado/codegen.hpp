@@ -1288,9 +1288,6 @@ private:
     /// Handle normalize(array) call - scale to 0-1 range
     TypedValue handle_normalize_call(NodeIndex node, const Node& n);
 
-    /// Handle scale(array, lo, hi) call - map to new range
-    TypedValue handle_scale_call(NodeIndex node, const Node& n);
-
     // ============================================================================
     // Array generation operations
     // ============================================================================

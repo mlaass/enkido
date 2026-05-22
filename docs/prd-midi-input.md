@@ -1322,7 +1322,7 @@ by current CI:
 - **14-bit CC pair auto-detection.**
 - **Runtime event transforms** (`prd-runtime-event-transforms.md`,
   not yet drafted). Today `transpose()`, `fast()`, `slow()`, `rev()`,
-  `scale()`, and `velocity()` mutate baked `Event` arrays at compile
+  and `velocity()` mutate baked `Event` arrays at compile
   time (`akkado/src/codegen_patterns.cpp:3056-3311`) and have no
   runtime path, so they can't operate on a live MIDI event stream.
   Wiring them up requires a new opcode family that consumes an
@@ -1390,7 +1390,7 @@ by current CI:
   §7 should be marked shipped with a back-link here.
 - `prd-runtime-event-transforms.md` *(not yet drafted)* — the natural
   follow-up that makes `transpose()`, `fast()`, `slow()`, `rev()`,
-  `scale()`, `velocity()` work on live MIDI streams. Out of scope
+  `velocity()` work on live MIDI streams. Out of scope
   here; see §9 Future.
 - [`prd-audio-input.md`](prd-audio-input.md) — architectural template for
   "host fills VM-side buffer pre-block." Shipped 2026-04-26.
