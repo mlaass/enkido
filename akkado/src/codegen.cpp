@@ -1106,6 +1106,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"rev",       &CodeGenerator::handle_rev_call},
                 {"transpose", &CodeGenerator::handle_transpose_call},
                 {"velocity",  &CodeGenerator::handle_velocity_call},
+                // Runtime event-stream transforms (closure builtins)
+                {"event_map",    &CodeGenerator::handle_event_map_call},
+                {"event_filter", &CodeGenerator::handle_event_filter_call},
                 // Phase 2.1 PRD §11.2: standalone note-property transforms
                 {"bend",        &CodeGenerator::handle_bend_call},
                 {"aftertouch",  &CodeGenerator::handle_aftertouch_call},

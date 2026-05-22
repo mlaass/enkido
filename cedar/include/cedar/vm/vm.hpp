@@ -648,6 +648,15 @@ private:
                             const Instruction& inst,
                             std::span<const Instruction> body);
 
+    // Closure EVENT_MAP / EVENT_FILTER (PRD prd-runtime-event-transforms
+    // Phase 2). For each upstream event the closure subprogram body runs once
+    // under per-event XOR isolation: EVENT_MAP overlays the closure's returned
+    // field bank onto a copied-through event; EVENT_FILTER keeps the event iff
+    // the closure's predicate buffer is non-zero. The body lives in the
+    // subprogram table — the dispatch loop advances by 1 after these return.
+    void run_event_map_closure(const ProgramSlot* slot, const Instruction& inst);
+    void run_event_filter_closure(const ProgramSlot* slot, const Instruction& inst);
+
     // Handle block-boundary swap logic
     void handle_swap();
 

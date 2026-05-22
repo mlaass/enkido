@@ -41,4 +41,37 @@ enum : std::uint8_t {
     return static_cast<std::uint8_t>((field & 0x0F) | ((op & 0x03) << 4));
 }
 
+// ----------------------------------------------------------------------------
+// Phase 2 — closure EVENT_MAP / EVENT_FILTER (InstructionFlag::EVENT_CLOSURE).
+// ----------------------------------------------------------------------------
+//
+// A closure EVENT_MAP / EVENT_FILTER instruction encodes:
+//   flags:      EVENT_CLOSURE | (write-mask << EVENT_MASK_SHIFT)
+//   rate:       closure subprogram block_id
+//   inputs[0]:  primary (freq) input buffer for the closure's event record
+//   inputs[1]:  input event-record bank base (vel,dur,note,chance,time,gate,
+//               trig — the FOREACH bank layout), or 0xFFFF if unused
+//   inputs[2/3]:low / high 16 bits of the upstream state_id
+//   inputs[4]:  EVENT_MAP — output field-bank base (7 contiguous buffers,
+//               EVENT_OUT_* layout); EVENT_FILTER — predicate result buffer
+//   out_buffer: 0xFFFF
+//   state_id:   the transform-owned downstream SequenceState
+//
+// The closure body writes the assigned EVENT_OUT_* slots (EVENT_MAP) or the
+// predicate buffer (EVENT_FILTER); the opcode overlays / filters per event.
+
+// Output field-bank slots for a closure EVENT_MAP. The closure's returned
+// record maps each field name to one of these; the write mask records which
+// slots were assigned so unset fields pass through unchanged (shallow overlay).
+enum : std::uint8_t {
+    EVENT_OUT_NOTE   = 0,  // absolute MIDI note; coupled rewrite of notes[]/values[]
+    EVENT_OUT_VEL    = 1,
+    EVENT_OUT_DUR    = 2,
+    EVENT_OUT_TIME   = 3,
+    EVENT_OUT_CHANCE = 4,
+    EVENT_OUT_BEND   = 5,  // custom prop slot 0
+    EVENT_OUT_AT     = 6,  // custom prop slot 1
+    EVENT_OUT_COUNT  = 7,
+};
+
 }  // namespace cedar

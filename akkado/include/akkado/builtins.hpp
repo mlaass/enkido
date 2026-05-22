@@ -1310,6 +1310,24 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
               {NAN, NAN, NAN},
               "Higher-order per-event sink: each(input, (n) -> ...) runs the lambda once per event for side effects (the body calls out() itself).",
               0, {}, {}, ChannelCount::Mono, true}},
+    // Runtime event-stream transforms (PRD prd-runtime-event-transforms
+    // Phase 2). event_map(events, (e) -> {...}) rewrites every event of a
+    // pattern / MIDI stream via a closure returning a field-overlay record;
+    // event_filter(events, (e) -> bool) drops events whose predicate is false.
+    // Both compile to a closure EVENT_MAP / EVENT_FILTER opcode + a subprogram.
+    {"event_map", {cedar::Opcode::NOP, 2, 0, true,
+                   {"events", "transform", "", "", "", ""},
+                   {NAN, NAN, NAN},
+                   "Per-event rewrite: event_map(events, (e) -> {note: e.note + 7}) "
+                   "transforms every event of a pattern or MIDI stream; the closure "
+                   "returns a record whose fields overlay the event.",
+                   0, {}, {}, ChannelCount::Mono, false}},
+    {"event_filter", {cedar::Opcode::NOP, 2, 0, true,
+                      {"events", "predicate", "", "", "", ""},
+                      {NAN, NAN, NAN},
+                      "Per-event filter: event_filter(events, (e) -> e.vel > 0.5) "
+                      "keeps only the events whose predicate closure is truthy.",
+                      0, {}, {}, ChannelCount::Mono, false}},
     // Dual-role builtin: mono(stereo_signal) downmixes stereo→mono via (L+R)*0.5,
     // while mono(instrument) is the monophonic voice manager. The codegen
     // dispatcher routes based on argument type (see handle_mono_call).

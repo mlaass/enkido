@@ -385,6 +385,22 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
             // table. The body is not inline — advance by exactly one.
             execute_foreach_event(slot, program, ip);
             ++ip;
+        } else if (inst.opcode == Opcode::EVENT_MAP) {
+            // prd-runtime-event-transforms: closure form needs slot->blocks[],
+            // so it dispatches here; the Phase-1 packed form has no body.
+            if (inst.flags & InstructionFlag::EVENT_CLOSURE) {
+                run_event_map_closure(slot, inst);
+            } else {
+                op_event_map(ctx_, inst);
+            }
+            ++ip;
+        } else if (inst.opcode == Opcode::EVENT_FILTER) {
+            if (inst.flags & InstructionFlag::EVENT_CLOSURE) {
+                run_event_filter_closure(slot, inst);
+            } else {
+                op_event_filter(ctx_, inst);
+            }
+            ++ip;
         } else if (inst.opcode == Opcode::SKIP_IF_ZERO ||
                    inst.opcode == Opcode::SKIP_IF_NONZERO) {
             // Forward control flow: sample the predicate once per block at
@@ -1042,6 +1058,117 @@ void VM::run_foreach_shared(ForeachSharedState& shared_state,
     std::fill_n(buffer_pool_.get(out_buf), BLOCK_SIZE, acc);
 }
 
+// Closure EVENT_MAP (PRD prd-runtime-event-transforms Phase 2). For each
+// upstream event: copy it through, bind the closure's event-record input
+// buffers, run the closure subprogram body once under per-event XOR isolation,
+// then overlay the closure-assigned output fields. See event_transform_encoding.hpp
+// for the instruction layout.
+void VM::run_event_map_closure(const ProgramSlot* slot, const Instruction& inst) {
+    auto& dst = state_pool_.get_or_create<SequenceState>(inst.state_id);
+    auto src = state_pool_.resolve_output_events(event_transform_upstream_id(inst));
+    if (!src.events) {
+        dst.output.clear();
+        dst.current_index = 0;
+        return;
+    }
+    dst.cycle_length = src.cycle_length;
+
+    const auto body = slot->block_body(inst.rate);
+    const BlockCycleTiming timing = compute_block_timing(src.cycle_length);
+    const std::uint16_t freq_buf = inst.inputs[0];
+    const std::uint16_t bank_buf = inst.inputs[1];
+    const std::uint16_t out_bank = inst.inputs[4];
+    const std::uint8_t  mask =
+        static_cast<std::uint8_t>((inst.flags >> InstructionFlag::EVENT_MASK_SHIFT)
+                                  & ((1u << EVENT_OUT_COUNT) - 1u));
+
+    dst.output.clear();
+    const std::uint32_t n = std::min(src.events->num_events, dst.output.capacity);
+    const std::uint32_t prev_xor = state_pool_.state_id_xor();
+    for (std::uint32_t i = 0; i < n; ++i) {
+        OutputEvents::OutputEvent e = src.events->events[i];  // copy-through
+
+        if (freq_buf != BUFFER_UNUSED) {
+            std::fill_n(buffer_pool_.get(freq_buf), BLOCK_SIZE,
+                        e.num_values > 0 ? e.values[0] : e.midi_note);
+        }
+        if (bank_buf != BUFFER_UNUSED) {
+            fill_event_record_bank(bank_buf, e, timing);
+        }
+
+        state_pool_.set_state_id_xor(prev_xor ^ (i * 0x9E3779B9u + 1));
+        for (std::size_t bi = 0; bi < body.size(); ++bi) {
+            execute(body[bi]);
+        }
+
+        if (out_bank != BUFFER_UNUSED) {
+            for (std::uint8_t s = 0; s < EVENT_OUT_COUNT; ++s) {
+                if (!((mask >> s) & 1u)) continue;
+                overlay_event_field(e, s, buffer_pool_.get(out_bank + s)[0]);
+            }
+        }
+        dst.output.events[i] = e;
+    }
+    dst.output.num_events = n;
+    state_pool_.set_state_id_xor(prev_xor);
+
+    // Only a TIME rewrite can reorder events.
+    if (mask & (1u << EVENT_OUT_TIME)) {
+        dst.output.sort_by_time();
+    }
+    event_transform_reposition(dst, ctx_);
+}
+
+// Closure EVENT_FILTER (PRD prd-runtime-event-transforms Phase 2). The closure
+// body writes a predicate value into inputs[4]; events copy through only when
+// the predicate is non-zero.
+void VM::run_event_filter_closure(const ProgramSlot* slot, const Instruction& inst) {
+    auto& dst = state_pool_.get_or_create<SequenceState>(inst.state_id);
+    auto src = state_pool_.resolve_output_events(event_transform_upstream_id(inst));
+    if (!src.events) {
+        dst.output.clear();
+        dst.current_index = 0;
+        return;
+    }
+    dst.cycle_length = src.cycle_length;
+
+    const auto body = slot->block_body(inst.rate);
+    const BlockCycleTiming timing = compute_block_timing(src.cycle_length);
+    const std::uint16_t freq_buf = inst.inputs[0];
+    const std::uint16_t bank_buf = inst.inputs[1];
+    const std::uint16_t pred_buf = inst.inputs[4];
+
+    dst.output.clear();
+    std::uint32_t written = 0;
+    const std::uint32_t prev_xor = state_pool_.state_id_xor();
+    for (std::uint32_t i = 0;
+         i < src.events->num_events && written < dst.output.capacity; ++i) {
+        const OutputEvents::OutputEvent& e = src.events->events[i];
+
+        if (freq_buf != BUFFER_UNUSED) {
+            std::fill_n(buffer_pool_.get(freq_buf), BLOCK_SIZE,
+                        e.num_values > 0 ? e.values[0] : e.midi_note);
+        }
+        if (bank_buf != BUFFER_UNUSED) {
+            fill_event_record_bank(bank_buf, e, timing);
+        }
+
+        state_pool_.set_state_id_xor(prev_xor ^ (i * 0x9E3779B9u + 1));
+        for (std::size_t bi = 0; bi < body.size(); ++bi) {
+            execute(body[bi]);
+        }
+
+        const bool keep = (pred_buf != BUFFER_UNUSED) &&
+                          (buffer_pool_.get(pred_buf)[0] != 0.0f);
+        if (keep) {
+            dst.output.events[written++] = e;
+        }
+    }
+    dst.output.num_events = written;
+    state_pool_.set_state_id_xor(prev_xor);
+    event_transform_reposition(dst, ctx_);
+}
+
 void VM::execute(const Instruction& inst) {
     // Every audio-signal opcode is stereo-native (prd-stereo-native-opcodes
     // Phase 5): it handles both channels in one dispatch with one state struct,
@@ -1380,14 +1507,8 @@ void VM::execute(const Instruction& inst) {
             op_seqpat_values(ctx_, inst);
             break;
 
-        // === Runtime Event-Stream Transforms ===
-        case Opcode::EVENT_MAP:
-            op_event_map(ctx_, inst);
-            break;
-
-        case Opcode::EVENT_FILTER:
-            op_event_filter(ctx_, inst);
-            break;
+        // EVENT_MAP / EVENT_FILTER are dispatched in execute_program (the
+        // closure form needs slot->blocks[]); they never reach execute().
 
         // === Envelopes ===
         case Opcode::ENV_ADSR:

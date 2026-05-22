@@ -301,6 +301,14 @@ namespace InstructionFlag {
     // — a numbered bus — instead of the device sinks. Without it OUTPUT
     // accumulates into ctx.output_left/right as before.
     constexpr std::uint16_t BUS_WRITE     = 1u << 2;
+    // EVENT_CLOSURE (prd-runtime-event-transforms Phase 2): on an EVENT_MAP /
+    // EVENT_FILTER instruction, the transform is a closure subprogram block
+    // (`rate` = block_id) rather than the Phase-1 packed field+op `rate`.
+    // Bits 4..10 of `flags` then carry the EVENT_MAP output-field write mask
+    // (which of the 7 EVENT_OUT_* slots the closure assigns); see
+    // event_transform_encoding.hpp.
+    constexpr std::uint16_t EVENT_CLOSURE = 1u << 3;
+    constexpr int           EVENT_MASK_SHIFT = 4;
 }
 
 // XOR mask applied to state_id when storing/reading the ExtendedParams<N>

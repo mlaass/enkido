@@ -1298,10 +1298,30 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
 }
 
 NodeIndex Parser::parse_closure_body() {
-    // Closure body is greedy - captures everything including pipes
-    // Can be a block { ... } or an expression (pipe_expr)
+    // Closure body is greedy - captures everything including pipes.
+    // Can be a block `{ ... }`, a record literal `{ k: v }`, or an
+    // expression (pipe_expr).
+    //
+    // A `{ … }` body defaults to a block, but a record-literal body
+    // (`(e) -> {note: e.note + 7}`, `(e) -> {}`) is disambiguated by shape:
+    // an empty `{}`, a `{..spread}`, or a leading `{ ident :` field opener
+    // is a record literal — none of those can begin a block statement.
+    // Used by event_map / event_filter closures (PRD prd-runtime-event-
+    // transforms), which return a field-overlay record.
     if (check(TokenType::LBrace)) {
-        return parse_block();
+        const std::size_t j = current_idx_ + 1;  // first token after `{`
+        bool is_record = false;
+        if (j < tokens_.size()) {
+            const TokenType t1 = tokens_[j].type;
+            if (t1 == TokenType::RBrace || t1 == TokenType::DotDot) {
+                is_record = true;  // `{}` or `{..spread}`
+            } else if (t1 == TokenType::Identifier &&
+                       j + 1 < tokens_.size() &&
+                       tokens_[j + 1].type == TokenType::Colon) {
+                is_record = true;  // `{ field: … }`
+            }
+        }
+        return is_record ? parse_record_literal() : parse_block();
     }
 
     // Parse pipe expression (greedy)

@@ -1922,9 +1922,12 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         // PRD L3: each_voice/each/reduce take a lambda whose last parameter is
         // the per-event record. Register that parameter so the Closure handler
         // defines it record-capable (n.freq / n.gate / ... pass the E061
-        // non-record check).
+        // non-record check). event_map / event_filter (PRD prd-runtime-event-
+        // transforms Phase 2) follow the same convention — their single
+        // closure parameter is the per-event record.
         if (func_name == "each_voice" || func_name == "each" ||
-            func_name == "reduce") {
+            func_name == "reduce" ||
+            func_name == "event_map" || func_name == "event_filter") {
             for (NodeIndex arg = output_arena_[node].first_child;
                  arg != NULL_NODE; arg = output_arena_[arg].next_sibling) {
                 NodeIndex inner = arg;

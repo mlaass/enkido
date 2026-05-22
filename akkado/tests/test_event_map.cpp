@@ -120,6 +120,21 @@ const cedar::SequenceState* final_transform_state(RenderHost& host) {
     return host.vm.states().get_if<cedar::SequenceState>(id);
 }
 
+// The SequenceState the final EVENT_MAP / EVENT_FILTER publishes into.
+const cedar::SequenceState* final_event_state(RenderHost& host) {
+    std::uint32_t id = 0;
+    bool found = false;
+    for (const auto& i : host.insts) {
+        if (i.opcode == cedar::Opcode::EVENT_MAP ||
+            i.opcode == cedar::Opcode::EVENT_FILTER) {
+            id = i.state_id;
+            found = true;
+        }
+    }
+    if (!found) return nullptr;
+    return host.vm.states().get_if<cedar::SequenceState>(id);
+}
+
 // c4 = MIDI 60; equal-tempered frequency.
 constexpr float kC4 = 261.6256f;
 
@@ -266,4 +281,171 @@ TEST_CASE("event-map: signal-valued transpose is rejected in Phase 1",
         R"(lfo = osc("sin", 1)
            n"c4".transpose(lfo))");
     CHECK_FALSE(r.success);
+}
+
+// ============================================================================
+// Phase 2a — closure-taking event_map / event_filter builtins
+// ============================================================================
+
+TEST_CASE("event-map: event_map() lowers to a closure EVENT_MAP + subprogram",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_map(n"c4", (e) -> {note: e.note + 12}) |> osc("sin", @.freq) |> out(@))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
+    // The closure body compiled into one subprogram block.
+    CHECK(r.block_table.size() >= 1);
+    CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 1);
+
+    for (const auto& i : insts) {
+        if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
+        // Closure form: EVENT_CLOSURE flag set, `rate` carries the block_id.
+        CHECK((i.flags & cedar::InstructionFlag::EVENT_CLOSURE) != 0);
+        CHECK(i.rate < r.block_table.size());
+        // Write mask (flags bits 4+) records that the `note` field was set.
+        std::uint8_t mask = static_cast<std::uint8_t>(
+            (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT)
+            & ((1u << cedar::EVENT_OUT_COUNT) - 1u));
+        CHECK((mask & (1u << cedar::EVENT_OUT_NOTE)) != 0);
+        std::uint32_t up = static_cast<std::uint32_t>(i.inputs[2]) |
+                           (static_cast<std::uint32_t>(i.inputs[3]) << 16);
+        CHECK(up != 0u);
+    }
+}
+
+TEST_CASE("event-map: event_map closure transposes notes at runtime",
+          "[event-map]") {
+    auto r = akkado::compile(R"(event_map(n"c4", (e) -> {note: e.note + 12}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK_THAT(e.midi_note, WithinAbs(72.0f, 0.01f));
+    CHECK_THAT(e.values[0], WithinAbs(kC4 * 2.0f, 1.0f));
+}
+
+TEST_CASE("event-map: event_map closure scales velocity at runtime",
+          "[event-map]") {
+    auto r = akkado::compile(R"(event_map(n"[c4 e4]", (e) -> {vel: e.vel * 0.5}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 2);
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        CHECK_THAT(st->output.events[i].velocity, WithinAbs(0.5f, 0.001f));
+        CHECK_THAT(st->output.events[i].velocities[0], WithinAbs(0.5f, 0.001f));
+    }
+}
+
+TEST_CASE("event-map: event_map closure overlays multiple fields",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_map(n"c4", (e) -> {note: e.note + 7, vel: e.vel * 0.5}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK_THAT(e.midi_note, WithinAbs(67.0f, 0.01f));
+    CHECK_THAT(e.velocity, WithinAbs(0.5f, 0.001f));
+}
+
+TEST_CASE("event-map: empty record closure is an identity transform",
+          "[event-map]") {
+    auto r = akkado::compile(R"(event_map(n"c4", (e) -> {}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    // Nothing assigned — the event passes through untouched.
+    CHECK_THAT(e.midi_note, WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.velocity, WithinAbs(1.0f, 0.001f));
+}
+
+TEST_CASE("event-map: event_map closure transposes every voice of a chord",
+          "[event-map]") {
+    auto r = akkado::compile(R"(event_map(c"CM", (e) -> {note: e.note + 12}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(72.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(76.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(79.0f, 0.01f));
+    CHECK_THAT(e.values[0], WithinAbs(kC4 * 2.0f, 1.0f));
+}
+
+TEST_CASE("event-map: chained event_map calls compose at runtime",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_map(event_map(n"c4", (e) -> {note: e.note + 5}),
+                     (e) -> {note: e.note + 7}))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 2);
+    CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 2);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    // 60 + 5 + 7 = 72.
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(72.0f, 0.01f));
+}
+
+TEST_CASE("event-map: event_filter lowers to a closure EVENT_FILTER",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_filter(n"[c4 e4 g4]", (e) -> e.note > 63))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_FILTER) == 1);
+    for (const auto& i : insts) {
+        if (i.opcode != cedar::Opcode::EVENT_FILTER) continue;
+        CHECK((i.flags & cedar::InstructionFlag::EVENT_CLOSURE) != 0);
+        CHECK(i.inputs[4] != 0xFFFF);  // predicate result buffer
+    }
+}
+
+TEST_CASE("event-map: event_filter drops events failing the predicate",
+          "[event-map]") {
+    // c4=60, e4=64, g4=67. Keep only notes above 63 → e4 and g4 survive.
+    auto r = akkado::compile(
+        R"(event_filter(n"[c4 e4 g4]", (e) -> e.note > 63))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 2);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(64.0f, 0.01f));
+    CHECK_THAT(st->output.events[1].midi_note, WithinAbs(67.0f, 0.01f));
+}
+
+TEST_CASE("event-map: event_map closure with wrong arity is rejected",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_map(n"c4", (e, x) -> {note: e.note}))");
+    CHECK_FALSE(r.success);  // E404 — closure must have exactly 1 parameter
+}
+
+TEST_CASE("event-map: event_map closure not returning a record is rejected",
+          "[event-map]") {
+    auto r = akkado::compile(R"(event_map(n"c4", (e) -> e.note + 1))");
+    CHECK_FALSE(r.success);  // E174 — closure must return a record literal
+}
+
+TEST_CASE("event-map: event_map on a non-pattern argument is rejected",
+          "[event-map]") {
+    auto r = akkado::compile(
+        R"(event_map(osc("sin", 440), (e) -> {note: e.note}))");
+    CHECK_FALSE(r.success);  // E242 — first argument must be an event source
 }

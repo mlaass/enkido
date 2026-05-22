@@ -20,6 +20,8 @@
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
 
+#include <cedar/opcodes/event_transform_encoding.hpp>
+
 #include <set>
 #include <string>
 
@@ -67,6 +69,19 @@ int field_slot(const std::string& name) {
     if (name == "gate" || name == "g")                       return 5;
     if (name == "trig" || name == "trigger")                 return 6;
     return -2;
+}
+
+// Map a closure-returned record field name to a writable EVENT_OUT_* slot.
+// Returns -1 for a name that is not a writable event field.
+int event_map_out_slot(const std::string& name) {
+    if (name == "note" || name == "midi" || name == "n")    return cedar::EVENT_OUT_NOTE;
+    if (name == "vel" || name == "velocity" || name == "v") return cedar::EVENT_OUT_VEL;
+    if (name == "dur" || name == "duration")                return cedar::EVENT_OUT_DUR;
+    if (name == "time")                                     return cedar::EVENT_OUT_TIME;
+    if (name == "chance")                                   return cedar::EVENT_OUT_CHANCE;
+    if (name == "bend")                                     return cedar::EVENT_OUT_BEND;
+    if (name == "at" || name == "aftertouch")               return cedar::EVENT_OUT_AT;
+    return -1;
 }
 
 // Build the event-record TypedValue. `freq_buf` is the primary slot; when
@@ -391,6 +406,308 @@ TypedValue CodeGenerator::handle_each_voice_call(NodeIndex node, const Node& n) 
 
 TypedValue CodeGenerator::handle_each_call(NodeIndex node, const Node& n) {
     return emit_foreach(node, n, 1);
+}
+
+// ============================================================================
+// event_map / event_filter — closure-taking event-stream transforms
+// (PRD prd-runtime-event-transforms Phase 2a)
+// ============================================================================
+//
+// `event_map(events, (e) -> {note: e.note + 7})` and
+// `event_filter(events, (e) -> e.vel > 0.5)` compile the closure body into a
+// subprogram block and emit a closure EVENT_MAP / EVENT_FILTER opcode that
+// runs the block once per upstream event. event_map overlays the closure's
+// returned field record onto each event; event_filter drops events whose
+// predicate is falsy. The transform owns a downstream SequenceState; the
+// pattern readout is emitted against it so `as e |> …` keeps working.
+TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
+                                               bool is_filter) {
+    using codegen::extract_call_args;
+    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
+    const char* name = is_filter ? "event_filter" : "event_map";
+
+    auto args = extract_call_args(ast_->arena, n.first_child, 2, 2);
+    if (!args.valid) {
+        error("E407", std::string(name) + "() requires 2 arguments "
+              "(events, closure)", n.location);
+        return TypedValue::void_val();
+    }
+    NodeIndex input_arg  = args.nodes[0];
+    NodeIndex lambda_arg = args.nodes[1];
+
+    // --- Resolve the upstream event source ---------------------------------
+    std::uint32_t upstream_state_id = 0;
+    float cycle_length = 1.0f;
+    bool is_sample_pattern = false;
+    std::uint8_t max_voices = 1;
+    std::vector<RequiredSample> sample_refs;
+    std::vector<std::pair<std::string, std::uint8_t>> custom_props;
+    {
+        TypedValue in_tv = visit(input_arg);
+        if (in_tv.type == ValueType::Pattern && in_tv.pattern) {
+            const PatternPayload& p = *in_tv.pattern;
+            upstream_state_id = p.state_id;
+            cycle_length      = p.cycle_length;
+            is_sample_pattern = p.is_sample_pattern;
+            max_voices        = p.max_voices;
+            sample_refs       = p.sample_refs;
+            for (const auto& [key, slot] : p.custom_field_slots) {
+                custom_props.emplace_back(key, slot);
+            }
+        } else if (in_tv.type == ValueType::EventSource && in_tv.event_source) {
+            upstream_state_id = in_tv.event_source->state_id;
+            cycle_length      = in_tv.event_source->cycle_length;
+        } else {
+            error("E242", std::string(name) + "() first argument must be a "
+                  "pattern or MIDI event source", n.location);
+            return TypedValue::void_val();
+        }
+        // The upstream is consumed as an event stream — clear its E410
+        // polyphony tracking so a transformed chord is not double-flagged.
+        polyphonic_pattern_nodes_.erase(input_arg);
+        consume_polyphonic_pattern(upstream_state_id);
+    }
+    if (upstream_state_id == 0) {
+        error("E242", std::string(name) + "() upstream event source has no "
+              "runtime state", n.location);
+        return TypedValue::void_val();
+    }
+
+    // --- Resolve the closure -----------------------------------------------
+    auto func_ref = resolve_function_arg(lambda_arg);
+    if (!func_ref) {
+        error("E403", std::string(name) + "() second argument must be a "
+              "closure", n.location);
+        return TypedValue::void_val();
+    }
+    if (func_ref->params.size() != 1) {
+        error("E404", std::string(name) + "() closure must have exactly 1 "
+              "parameter, got " + std::to_string(func_ref->params.size()),
+              n.location);
+        return TypedValue::void_val();
+    }
+    const std::string& record_param = func_ref->params[0].name;
+
+    // Pre-scan: which event-record fields does the closure body read?
+    std::set<std::string> fields;
+    collect_param_fields(ast_->arena, func_ref->closure_node, record_param,
+                         fields);
+    bool need_bank = false;
+    for (const auto& f : fields) {
+        int slot = field_slot(f);
+        if (slot == -2) {
+            error("E408", "field '" + f + "' is not available on an event "
+                  "record — available fields: freq, vel, dur, note, chance, "
+                  "time, gate, trig", n.location);
+            return TypedValue::void_val();
+        }
+        if (slot >= 0) need_bank = true;
+    }
+
+    // --- Allocate the closure's input convention buffers -------------------
+    std::uint16_t freq_buf = buffers_.allocate();
+    if (freq_buf == UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+    std::uint16_t bank_buf = UNUSED;
+    if (need_bank) {
+        bank_buf = buffers_.allocate();
+        bool ok = (bank_buf != UNUSED);
+        std::uint16_t prev = bank_buf;
+        for (int i = 1; i < 7 && ok; ++i) {
+            std::uint16_t b = buffers_.allocate();
+            if (b == UNUSED || b != prev + 1) ok = false;
+            prev = b;
+        }
+        if (!ok) {
+            error("E166", "Internal error: event-record bank buffers not "
+                  "contiguous", n.location);
+            return TypedValue::void_val();
+        }
+    }
+
+    // --- Allocate the closure's output buffers -----------------------------
+    // event_map: a contiguous EVENT_OUT_COUNT-buffer output field bank.
+    // event_filter: a single predicate result buffer.
+    std::uint16_t out_bank = UNUSED;
+    std::uint16_t pred_buf = UNUSED;
+    if (is_filter) {
+        pred_buf = buffers_.allocate();
+        if (pred_buf == UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
+        }
+    } else {
+        out_bank = buffers_.allocate();
+        bool ok = (out_bank != UNUSED);
+        std::uint16_t prev = out_bank;
+        for (int i = 1; i < cedar::EVENT_OUT_COUNT && ok; ++i) {
+            std::uint16_t b = buffers_.allocate();
+            if (b == UNUSED || b != prev + 1) ok = false;
+            prev = b;
+        }
+        if (!ok) {
+            error("E166", "Internal error: event-map output bank buffers not "
+                  "contiguous", n.location);
+            return TypedValue::void_val();
+        }
+    }
+
+    std::uint32_t count = call_counters_[name]++;
+    push_path(std::string(name) + "#" + std::to_string(count));
+    std::uint32_t state_id = compute_state_id();
+
+    // --- Compile the closure body into a subprogram block ------------------
+    std::uint32_t block_id = begin_subprogram();
+
+    symbols_->push_scope();
+    {
+        Symbol sym;
+        sym.kind = SymbolKind::Variable;
+        sym.name = record_param;
+        sym.name_hash = fnv1a_hash(record_param);
+        sym.buffer_index = freq_buf;
+        sym.typed_value = build_event_record(freq_buf, bank_buf);
+        symbols_->define(sym);
+    }
+    for (const auto& capture : func_ref->captures) {
+        symbols_->define_variable(capture.name, capture.buffer_index);
+    }
+
+    auto saved_node_types = std::move(node_types_);
+    node_types_.clear();
+
+    TypedValue body_tv = TypedValue::void_val();
+    if (func_ref->is_user_function) {
+        body_tv = visit(func_ref->closure_node);
+    } else {
+        // Closure literal: the body is the last child of the Closure node
+        // (preceding children are parameter declarations).
+        const Node& closure_node = ast_->arena[func_ref->closure_node];
+        NodeIndex body = NULL_NODE;
+        for (NodeIndex child = closure_node.first_child; child != NULL_NODE;
+             child = ast_->arena[child].next_sibling) {
+            body = child;
+        }
+        if (body != NULL_NODE) body_tv = visit(body);
+    }
+
+    // Wire the closure result into the transform's output buffers.
+    std::uint8_t write_mask = 0;
+    if (is_filter) {
+        if (body_tv.buffer == UNUSED) {
+            error("E174", "event_filter() closure must return a numeric "
+                  "predicate", n.location);
+        } else {
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY,
+                                                pred_buf, body_tv.buffer));
+        }
+    } else {
+        if (body_tv.type != ValueType::Record || !body_tv.record) {
+            error("E174", "event_map() closure must return a record literal, "
+                  "e.g. (e) -> {note: e.note + 7}", n.location);
+        } else {
+            for (const auto& [fname, fval] : body_tv.record->fields) {
+                int slot = event_map_out_slot(fname);
+                if (slot < 0) {
+                    error("E408", "event_map() closure returned field '" +
+                          fname + "' — writable event fields are note, vel, "
+                          "dur, time, chance, bend, at", n.location);
+                    continue;
+                }
+                if (fval.buffer == UNUSED) {
+                    error("E174", "event_map() field '" + fname +
+                          "' has no value", n.location);
+                    continue;
+                }
+                emit(cedar::Instruction::make_unary(
+                    cedar::Opcode::COPY,
+                    static_cast<std::uint16_t>(out_bank + slot), fval.buffer));
+                write_mask = static_cast<std::uint8_t>(write_mask | (1u << slot));
+            }
+        }
+    }
+
+    for (auto& [k, v] : saved_node_types) {
+        if (node_types_.find(k) == node_types_.end()) node_types_[k] = v;
+    }
+    symbols_->pop_scope();
+
+    std::size_t body_length = subprograms_[block_id].body.size();
+    if (body_length > 255) {
+        error("E405", std::string(name) + "() closure body too large "
+              "(max 255 instructions)", n.location);
+        end_subprogram(block_id, need_bank ? 8 : 1, 1);
+        pop_path();
+        return TypedValue::void_val();
+    }
+    end_subprogram(block_id, /*frame_slot_count=*/need_bank ? 8 : 1,
+                   /*output_count=*/1);
+    pop_path();
+
+    // --- Emit the closure EVENT_MAP / EVENT_FILTER opcode ------------------
+    cedar::Instruction et{};
+    et.opcode = is_filter ? cedar::Opcode::EVENT_FILTER : cedar::Opcode::EVENT_MAP;
+    et.rate = static_cast<std::uint8_t>(block_id);
+    et.flags = cedar::InstructionFlag::EVENT_CLOSURE;
+    if (!is_filter) {
+        et.flags = static_cast<std::uint16_t>(
+            et.flags | (write_mask << cedar::InstructionFlag::EVENT_MASK_SHIFT));
+    }
+    et.out_buffer = UNUSED;
+    et.inputs[0] = freq_buf;
+    et.inputs[1] = bank_buf;
+    et.inputs[2] = static_cast<std::uint16_t>(upstream_state_id & 0xFFFF);
+    et.inputs[3] = static_cast<std::uint16_t>((upstream_state_id >> 16) & 0xFFFF);
+    et.inputs[4] = is_filter ? pred_buf : out_bank;
+    et.state_id = state_id;
+    emit(et);
+
+    // EventTransform StateInitData — allocates the transform's OutputEvents
+    // buffer. total_events is not known from an already-compiled upstream
+    // payload; size generously (the runtime floors to >=32 regardless).
+    StateInitData et_init;
+    et_init.state_id = state_id;
+    et_init.type = StateInitData::Type::EventTransform;
+    et_init.cycle_length = cycle_length;
+    et_init.is_sample_pattern = is_sample_pattern;
+    et_init.total_events = 256;
+    state_inits_.push_back(std::move(et_init));
+
+    // --- Emit the readout for the transform-owned SequenceState ------------
+    PatternQuerySource src;
+    src.ok = true;
+    src.state_id = state_id;
+    src.cycle_length = cycle_length;
+    src.is_sample_pattern = is_sample_pattern;
+    src.max_voices = max_voices;
+    src.total_events = 256;
+    src.sample_refs = std::move(sample_refs);
+    src.custom_props = std::move(custom_props);
+    // event_map closures that write bend/at surface them as custom props on
+    // the readout (fixed prop slots 0/1, matching overlay_event_field).
+    if (!is_filter) {
+        auto add_prop = [&](const char* key, std::uint8_t prop_slot,
+                            std::uint8_t out_slot) {
+            if (!(write_mask & (1u << out_slot))) return;
+            for (const auto& kv : src.custom_props) {
+                if (kv.first == key) return;
+            }
+            src.custom_props.emplace_back(key, prop_slot);
+        };
+        add_prop("bend", 0, cedar::EVENT_OUT_BEND);
+        add_prop("aftertouch", 1, cedar::EVENT_OUT_AT);
+    }
+    return emit_pattern_readout(node, src, n.location);
+}
+
+TypedValue CodeGenerator::handle_event_map_call(NodeIndex node, const Node& n) {
+    return emit_event_transform(node, n, /*is_filter=*/false);
+}
+
+TypedValue CodeGenerator::handle_event_filter_call(NodeIndex node, const Node& n) {
+    return emit_event_transform(node, n, /*is_filter=*/true);
 }
 
 }  // namespace akkado

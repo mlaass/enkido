@@ -911,6 +911,17 @@ private:
     /// `kind`: 0=each_voice, 1=each, 2=reduce (event-stream accumulator).
     TypedValue emit_foreach(NodeIndex node, const Node& n, int kind);
 
+    /// Closure-taking event-stream transform builtins (PRD prd-runtime-event-
+    /// transforms Phase 2). `event_map(events, (e) -> {...})` rewrites every
+    /// event via a record-returning closure; `event_filter(events, (e) -> b)`
+    /// drops events whose predicate is falsy. Both lower to a closure
+    /// EVENT_MAP / EVENT_FILTER opcode + a subprogram block, then emit the
+    /// pattern readout for the transform-owned SequenceState. Defined in
+    /// codegen_higher_order.cpp.
+    TypedValue handle_event_map_call(NodeIndex node, const Node& n);
+    TypedValue handle_event_filter_call(NodeIndex node, const Node& n);
+    TypedValue emit_event_transform(NodeIndex node, const Node& n, bool is_filter);
+
     // ============================================================================
     // Stereo handlers
     // ============================================================================

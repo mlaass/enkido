@@ -114,6 +114,44 @@ inline std::uint32_t event_transform_upstream_id(const Instruction& inst) {
            (static_cast<std::uint32_t>(inst.inputs[3]) << 16);
 }
 
+// Phase 2 — overlay one closure-produced field value onto an event in place.
+// `slot` is an EVENT_OUT_* index; `v` is the closure's returned value for that
+// field. NOTE is a coupled rewrite: the closure returns the new *absolute*
+// MIDI note, and the per-voice notes[]/values[] (Hz) shift by the same delta
+// so a transposed chord stays coherent (primary-voice driven, PRD OQ-1).
+[[gnu::always_inline]]
+inline void overlay_event_field(OutputEvents::OutputEvent& e,
+                                std::uint8_t slot, float v) {
+    switch (slot) {
+        case EVENT_OUT_NOTE: {
+            const float delta = v - e.midi_note;
+            const float ratio = std::pow(2.0f, delta / 12.0f);
+            e.midi_note = v;
+            for (std::uint8_t k = 0; k < e.num_values; ++k) {
+                e.notes[k] += delta;
+                e.values[k] *= ratio;
+            }
+            break;
+        }
+        case EVENT_OUT_VEL:
+            e.velocity = v;
+            for (std::uint8_t k = 0; k < e.num_values; ++k) e.velocities[k] = v;
+            break;
+        case EVENT_OUT_DUR:    e.duration = v; break;
+        case EVENT_OUT_TIME:   e.time     = v; break;
+        case EVENT_OUT_CHANCE: e.chance   = v; break;
+        case EVENT_OUT_BEND:
+            e.prop_vals[0] = v;
+            e.prop_set_mask = static_cast<std::uint8_t>(e.prop_set_mask | 0x01u);
+            break;
+        case EVENT_OUT_AT:
+            e.prop_vals[1] = v;
+            e.prop_set_mask = static_cast<std::uint8_t>(e.prop_set_mask | 0x02u);
+            break;
+        default: break;
+    }
+}
+
 // ============================================================================
 // EVENT_MAP — per-event field rewrite
 // ============================================================================
