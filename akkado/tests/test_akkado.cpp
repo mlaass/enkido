@@ -1428,6 +1428,34 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
         CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
     }
+
+    SECTION("bare-param pipe in a function/closure body does not misfire "
+            "the closure-from-pipe sugar") {
+        // Regression: a pipe whose innermost LHS is a *bound* parameter —
+        // `(p) -> p |> f(@)` — must rewrite to `(p) -> f(p)`, NOT a spurious
+        // nested closure `(p) -> ((p) -> f(p))`. (The closure-from-pipe sugar
+        // in rewrite_pipes used to misfire here because its pre-pass saw the
+        // param as unbound.) The pipe form must compile *byte-identically*
+        // to the equivalent hole-free form.
+        auto require_identical = [](const akkado::CompileResult& a,
+                                    const akkado::CompileResult& b) {
+            REQUIRE(a.success);
+            REQUIRE(b.success);
+            REQUIRE(a.bytecode.size() == b.bytecode.size());
+            CHECK(std::memcmp(a.bytecode.data(), b.bytecode.data(),
+                              a.bytecode.size()) == 0);
+        };
+
+        // fn body: `x |> @ * 0.5`  ==  `x * 0.5`
+        require_identical(
+            akkado::compile("fn half(x) -> x |> @ * 0.5\nhalf(0.8) |> out(@)"),
+            akkado::compile("fn half(x) -> x * 0.5\nhalf(0.8) |> out(@)"));
+
+        // inline closure passed to a higher-order builtin: `x |> @ * 2`.
+        require_identical(
+            akkado::compile("map([1, 2, 3], (x) -> x |> @ * 2) |> sum(@)"),
+            akkado::compile("map([1, 2, 3], (x) -> x * 2) |> sum(@)"));
+    }
 }
 
 // Regression: top-level `expr as name` followed by `name |> f(@)` used to be
