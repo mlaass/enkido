@@ -29,7 +29,8 @@ static std::size_t count_lines(std::string_view s) {
 CompileResult compile(std::string_view source, std::string_view filename,
                      SampleRegistry* sample_registry,
                      const FileResolver* resolver,
-                     bool lint_strict) {
+                     bool lint_strict,
+                     bool bypass_master) {
     CompileResult result;
 
     if (source.empty()) {
@@ -170,7 +171,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
 
     // Phase 4: Code Generation
     CodeGenerator codegen;
-    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry, &source_map);
+    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry, &source_map, bypass_master);
     source_map.adjust_all(gen.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(),
                               gen.diagnostics.begin(),

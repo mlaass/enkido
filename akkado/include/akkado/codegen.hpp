@@ -391,10 +391,16 @@ public:
     /// @param filename Filename for error reporting
     /// @param sample_registry Optional sample registry for resolving sample names to IDs
     /// @param source_map Optional source map for module-aware semantic ID paths
+    /// @param bypass_master  When true, suppress the prd-bus-routing master
+    ///        bus entirely: out()/bus() writers go straight to the device and
+    ///        no epilogue (soft-clip / safety stage) is emitted. Test-only —
+    ///        not reachable from user source, so the PRD's non-disableable
+    ///        safety guarantee still holds for every compiled program.
     CodeGenResult generate(const Ast& ast, SymbolTable& symbols,
                           std::string_view filename = "<input>",
                           SampleRegistry* sample_registry = nullptr,
-                          const class SourceMap* source_map = nullptr);
+                          const class SourceMap* source_map = nullptr,
+                          bool bypass_master = false);
 
 private:
     /// Visit AST node and emit instructions
@@ -953,6 +959,7 @@ private:
 
     // Context
     CompilerOptions options_;  // Compiler options set by directives
+    bool bypass_master_ = false;  // Test-only: suppress the bus epilogue
     const Ast* ast_ = nullptr;
     SymbolTable* symbols_ = nullptr;
     SampleRegistry* sample_registry_ = nullptr;
@@ -978,6 +985,25 @@ private:
     std::unordered_map<std::string, int> fn_call_counts_;
     /// Pre-pass: count every Call node by callee name (drives fn_call_counts_).
     void count_fn_calls(NodeIndex node);
+
+    // --- Bus routing (prd-bus-routing Phase 1) ---------------------------
+    /// Codegen for out()/bus() sinks. Emits an OUTPUT instruction whose
+    /// out_buffer is a bus placeholder (bus_placeholder(N)); emit_bus_epilogue
+    /// later rewrites placeholders to real per-bus scratch buffers.
+    TypedValue handle_bus_call(NodeIndex node, const Node& n);
+    /// After the main DAG: allocate per-bus stereo scratch buffers, rewrite
+    /// bus placeholders to real indices, append the per-block epilogue
+    /// (sum non-zero buses into bus 0, default soft-clip @ 0.9, forced
+    /// NaN/clamp safety stage, device store) and prepend the prologue that
+    /// clears every bus accumulator to silence.
+    void emit_bus_epilogue();
+    /// Bus indices must be compile-time literals below this bound — keeps
+    /// bus_placeholder() values clear of the 0xFFFF device sentinel.
+    static constexpr int MAX_BUS_INDEX = 200;
+    /// Placeholder out_buffer encoding a not-yet-allocated bus index.
+    static constexpr std::uint16_t bus_placeholder(int n) {
+        return static_cast<std::uint16_t>(0xFF00 + n);
+    }
 
     /// Begin a new FOREACH_EVENT subprogram body; returns its block_id and
     /// redirects emit() into it until end_subprogram() is called.

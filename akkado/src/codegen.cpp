@@ -10,7 +10,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <optional>
+#include <set>
 
 namespace akkado {
 
@@ -73,7 +75,9 @@ void CodeGenerator::emit_extended_params_init(std::uint32_t state_id,
 CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
                                        std::string_view filename,
                                        SampleRegistry* sample_registry,
-                                       const SourceMap* source_map) {
+                                       const SourceMap* source_map,
+                                       bool bypass_master) {
+    bypass_master_ = bypass_master;
     ast_ = &ast;
     symbols_ = &symbols;
     sample_registry_ = sample_registry;
@@ -132,6 +136,12 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     visit(ast.root);
 
     pop_path();
+
+    // prd-bus-routing Phase 1: append the per-block bus epilogue (sum
+    // non-zero buses into bus 0, default soft-clip @ 0.9, forced NaN/clamp
+    // safety stage, device store) and prepend the bus-clear prologue.
+    // Always emitted — a program with no out() simply processes silence.
+    emit_bus_epilogue();
 
     // Emit errors for polyphonic patterns not consumed by poly()
     for (const auto& [node, info] : polyphonic_pattern_nodes_) {
@@ -1057,6 +1067,11 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             using Handler = TypedValue (CodeGenerator::*)(NodeIndex, const Node&);
             static const std::unordered_map<std::string_view, Handler> special_handlers = {
                 {"len",     &CodeGenerator::handle_len_call},
+                // Bus routing sinks (prd-bus-routing Phase 1). out() is a
+                // pure alias for bus(0, ...); both share handle_bus_call so
+                // out(@) and bus(0, @) produce byte-identical bytecode.
+                {"out",     &CodeGenerator::handle_bus_call},
+                {"bus",     &CodeGenerator::handle_bus_call},
                 // Pattern-event chord accessors (pattern-event-arrays PRD).
                 // Special-cased by name like len/map (not reserved).
                 {"notes",   &CodeGenerator::handle_notes_call},
@@ -2315,6 +2330,339 @@ void CodeGenerator::warn(const std::string& code, const std::string& message,
     diag.filename = filename_;
     diag.location = loc;
     diagnostics_.push_back(std::move(diag));
+}
+
+// ===========================================================================
+// Bus routing — prd-bus-routing Phase 1
+// ===========================================================================
+// handle_bus_call serves both out() and bus(). out(...) is a pure alias for
+// bus(0, ...); routing both through one handler guarantees the byte-identical
+// bytecode the PRD requires. It emits an OUTPUT instruction whose out_buffer
+// is a bus *placeholder* (bus_placeholder(N)); emit_bus_epilogue later
+// allocates the real per-bus scratch buffers and rewrites the placeholders.
+TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
+    const std::string func_name = n.as_identifier();  // "out" or "bus"
+    const SourceLocation call_loc = n.location;
+    current_source_loc_ = call_loc;
+
+    // Gather argument child nodes.
+    std::vector<NodeIndex> args;
+    for (NodeIndex c = n.first_child; c != NULL_NODE;
+         c = ast_->arena[c].next_sibling) {
+        args.push_back(c);
+    }
+
+    // Resolve the bus index. out(...) targets bus 0; bus(N, ...) takes a
+    // compile-time non-negative integer literal as its first argument.
+    int bus_index = 0;
+    std::size_t sig_start = 0;
+    if (func_name == "bus") {
+        if (args.empty()) {
+            error("E260", "bus() requires a bus index and a signal argument",
+                  call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        const Node& idx_arg = ast_->arena[args[0]];
+        NodeIndex idx_val = (idx_arg.type == NodeType::Argument)
+                                ? idx_arg.first_child : args[0];
+        bool ok = idx_val != NULL_NODE &&
+                  ast_->arena[idx_val].type == NodeType::NumberLit;
+        double raw = ok ? ast_->arena[idx_val].as_number() : 0.0;
+        if (ok && (raw < 0.0 || std::floor(raw) != raw)) ok = false;
+        if (!ok) {
+            error("E260",
+                  "bus() index must be a compile-time non-negative integer "
+                  "literal", call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        if (static_cast<int>(raw) >= MAX_BUS_INDEX) {
+            error("E260",
+                  "bus() index must be below " + std::to_string(MAX_BUS_INDEX),
+                  call_loc);
+            return cache_and_return(node, TypedValue::void_val());
+        }
+        bus_index = static_cast<int>(raw);
+        sig_start = 1;
+    }
+
+    const std::size_t sig_count = args.size() - sig_start;
+    if (sig_count < 1 || sig_count > 2) {
+        error("E260", func_name + "() expects 1 or 2 signal arguments",
+              call_loc);
+        return cache_and_return(node, TypedValue::void_val());
+    }
+
+    // Resolve a signal argument to its left/right buffers. Mirrors the
+    // mono-broadcast / stereo-split handling of the legacy out() path.
+    struct Chan { std::uint16_t left; std::uint16_t right; bool stereo; };
+    auto resolve = [&](NodeIndex child) -> Chan {
+        const Node& an = ast_->arena[child];
+        NodeIndex val = (an.type == NodeType::Argument) ? an.first_child : child;
+        TypedValue tv = visit(val);
+        // Argument type check — mirrors the generic builtin path (E160).
+        // out()/bus() signal slots are declared Signal; String/Array/etc.
+        // are rejected. Number and Pattern auto-promote (type_compatible).
+        if (val != NULL_NODE && !tv.error && tv.type != ValueType::Void &&
+            tv.type != ValueType::DynArray &&
+            !type_compatible(tv.type, ParamValueType::Signal)) {
+            error("E160",
+                  func_name + "() argument expects " +
+                  param_value_type_name(ParamValueType::Signal) +
+                  ", got " + value_type_name(tv.type),
+                  ast_->arena[val].location);
+        }
+        std::uint16_t buf = tv.buffer;
+        bool node_stereo = (val != NULL_NODE) && is_stereo(val);
+        bool buf_stereo = (buf != BufferAllocator::BUFFER_UNUSED) &&
+                          is_stereo_buffer(buf);
+        if (node_stereo || buf_stereo) {
+            StereoBuffers sb = node_stereo ? get_stereo_buffers(val)
+                                           : get_stereo_buffers_by_buffer(buf);
+            return {sb.left, sb.right, true};
+        }
+        return {buf, buf, false};  // mono: broadcast L = R
+    };
+
+    // Normal: write to a bus placeholder (emit_bus_epilogue allocates the
+    // real buffer and runs the master chain). bypass_master_: write straight
+    // to the device sink, raw — no bus, no epilogue (test-only).
+    const std::uint16_t dst =
+        bypass_master_ ? std::uint16_t{0xFFFF} : bus_placeholder(bus_index);
+    const std::uint16_t out_flags =
+        bypass_master_ ? std::uint16_t{0}
+                       : std::uint16_t{cedar::InstructionFlag::BUS_WRITE};
+    auto emit_output = [&](std::uint16_t l, std::uint16_t r) {
+        cedar::Instruction o{};
+        o.opcode = cedar::Opcode::OUTPUT;
+        o.rate = 0;
+        o.out_buffer = dst;
+        o.inputs[0] = l;
+        o.inputs[1] = r;
+        o.inputs[2] = 0xFFFF;
+        o.inputs[3] = 0xFFFF;
+        o.inputs[4] = 0xFFFF;
+        o.flags = out_flags;
+        o.state_id = 0;
+        emit(o);
+    };
+
+    if (sig_count == 1) {
+        Chan c = resolve(args[sig_start]);
+        if (!c.stereo && func_name == "bus") {
+            warn("W202",
+                 "bus(): mono signal auto-broadcast to both channels (L = R)",
+                 call_loc);
+        }
+        current_source_loc_ = call_loc;
+        emit_output(c.left, c.right);
+    } else {
+        Chan a = resolve(args[sig_start]);
+        Chan b = resolve(args[sig_start + 1]);
+        current_source_loc_ = call_loc;
+        if (a.stereo || b.stereo) {
+            warn("W185",
+                 func_name + "() with mixed channel shapes — auto-escalating: "
+                 "mono args broadcast to both buses, stereo args drive both "
+                 "buses; contributions sum.", call_loc);
+            emit_output(a.left, a.right);
+            emit_output(b.left, b.right);
+        } else {
+            // Explicit L / R: a single OUTPUT with distinct channels.
+            emit_output(a.left, b.left);
+        }
+    }
+
+    return cache_and_return(node, TypedValue::void_val());
+}
+
+// emit_bus_epilogue runs once, after the main DAG is generated. It allocates
+// the per-bus scratch buffers, rewrites bus placeholders to real indices,
+// appends the per-block epilogue (sum non-zero buses into bus 0, default
+// soft-clip @ 0.9, forced NaN/clamp safety stage, device store) and prepends
+// the prologue that clears every bus accumulator to silence.
+void CodeGenerator::emit_bus_epilogue() {
+    // Test-only bypass: out()/bus() already emitted plain device writes.
+    if (bypass_master_) return;
+
+    current_source_loc_ = SourceLocation{};
+
+    constexpr std::uint16_t kPlaceLo = 0xFF00;
+    constexpr std::uint16_t kPlaceHi = 0xFFFE;  // 0xFFFF stays the device sink
+    auto is_placeholder = [](std::uint16_t b) {
+        return b >= kPlaceLo && b <= kPlaceHi;
+    };
+
+    // 1. Collect every referenced bus index from emitted OUTPUT writers
+    //    (main stream + subprogram bodies). Bus 0 always exists.
+    std::set<int> indices;
+    indices.insert(0);
+    std::size_t writer_count = 0;
+    auto scan = [&](const std::vector<cedar::Instruction>& code) {
+        for (const auto& inst : code) {
+            if (inst.opcode == cedar::Opcode::OUTPUT) {
+                ++writer_count;
+                if (is_placeholder(inst.out_buffer)) {
+                    indices.insert(inst.out_buffer - kPlaceLo);
+                }
+            }
+        }
+    };
+    scan(instructions_);
+    for (const auto& desc : subprograms_) scan(desc.body);
+
+    // A program with no out()/bus() writer produces no audio — skip the
+    // whole bus epilogue. (prd-bus-routing §5.3 specifies an always-emitted
+    // epilogue; emitting it only when a sink exists is functionally
+    // identical for every audible program and keeps pure-computation
+    // snippets free of a silent master chain.)
+    if (writer_count == 0) {
+        return;
+    }
+
+    // 2. Allocate a stereo scratch pair per bus index (ascending order).
+    std::map<int, std::uint16_t> bus_left;
+    for (int idx : indices) {
+        std::uint16_t l = buffers_.allocate();
+        std::uint16_t r = buffers_.allocate();
+        if (l == BufferAllocator::BUFFER_UNUSED ||
+            r == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted (bus routing)", {});
+            return;
+        }
+        if (r != l + 1) {
+            error("E166",
+                  "Internal error: bus buffer allocation not adjacent", {});
+            return;
+        }
+        bus_left[idx] = l;
+    }
+
+    // 3. Rewrite bus placeholders to real left-buffer indices.
+    auto fixup = [&](std::vector<cedar::Instruction>& code) {
+        for (auto& inst : code) {
+            if (inst.opcode == cedar::Opcode::OUTPUT &&
+                is_placeholder(inst.out_buffer)) {
+                inst.out_buffer = bus_left[inst.out_buffer - kPlaceLo];
+            }
+        }
+    };
+    fixup(instructions_);
+    for (auto& desc : subprograms_) fixup(desc.body);
+
+    const std::uint16_t bus0_l = bus_left[0];
+    const std::uint16_t bus0_r = static_cast<std::uint16_t>(bus0_l + 1);
+
+    // 4. Allocate epilogue constant buffers. The chain processes bus 0 in
+    //    place, so only two PUSH_CONST scratch slots are needed: `c1` is
+    //    reused (soft-clip threshold, then the clamp lower bound) since the
+    //    threshold is dead by the time the clamp runs. allocate() is
+    //    monotonic — if the last one succeeds all did.
+    const std::uint16_t c1 = buffers_.allocate();
+    const std::uint16_t c2 = buffers_.allocate();
+    if (c2 == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted (bus epilogue)", {});
+        return;
+    }
+
+    auto emit_push_const = [&](std::uint16_t dst, float value) {
+        cedar::Instruction push{};
+        push.opcode = cedar::Opcode::PUSH_CONST;
+        push.out_buffer = dst;
+        push.inputs[0] = 0xFFFF;
+        push.inputs[1] = 0xFFFF;
+        push.inputs[2] = 0xFFFF;
+        push.inputs[3] = 0xFFFF;
+        push.inputs[4] = 0xFFFF;
+        encode_const_value(push, value);
+        emit(push);
+    };
+
+    // 5. Emit the epilogue into the main stream.
+    // (a) Sum every non-zero bus into bus 0.
+    for (const auto& [idx, l] : bus_left) {
+        if (idx == 0) continue;
+        cedar::Instruction o{};
+        o.opcode = cedar::Opcode::OUTPUT;
+        o.out_buffer = bus0_l;
+        o.inputs[0] = l;
+        o.inputs[1] = static_cast<std::uint16_t>(l + 1);
+        o.inputs[2] = 0xFFFF;
+        o.inputs[3] = 0xFFFF;
+        o.inputs[4] = 0xFFFF;
+        o.flags = cedar::InstructionFlag::BUS_WRITE;
+        emit(o);
+    }
+
+    // (b) Default tone chain: polynomial soft-clip @ 0.9 on bus 0, in place.
+    {
+        emit_push_const(c1, 0.9f);         // c1 = soft-clip threshold
+        cedar::Instruction soft{};
+        soft.opcode = cedar::Opcode::DISTORT_SOFT;
+        soft.out_buffer = bus0_l;          // in place: writes bus0_l, bus0_l+1
+        soft.inputs[0] = bus0_l;           // STEREO_INPUT → also reads bus0_l+1
+        soft.inputs[1] = c1;
+        soft.inputs[2] = 0xFFFF;           // dry  → default 0.0
+        soft.inputs[3] = 0xFFFF;           // wet  → default 1.0
+        soft.inputs[4] = 0xFFFF;
+        soft.flags = static_cast<std::uint16_t>(
+            cedar::InstructionFlag::STEREO_INPUT |
+            cedar::InstructionFlag::STEREO_OUTPUT);
+        soft.state_id = 0;
+        emit(soft);
+    }
+
+    // (c) Forced safety: hard rail at ±1.0 — "do not damage speakers".
+    //     std::clamp() passes NaN through unchanged; the device-store
+    //     OUTPUT below sanitizes any remaining NaN/Inf to 0. Together they
+    //     guarantee the device never sees |sample| > 1.0 or a non-finite
+    //     value, regardless of what the bus-0 chain produced.
+    emit_push_const(c1, -1.0f);            // c1 reused: clamp lower bound
+    emit_push_const(c2, 1.0f);             // c2: clamp upper bound
+    emit(cedar::Instruction::make_ternary(cedar::Opcode::CLAMP, bus0_l,
+                                          bus0_l, c1, c2));
+    emit(cedar::Instruction::make_ternary(cedar::Opcode::CLAMP, bus0_r,
+                                          bus0_r, c1, c2));
+
+    // (d) Device store: a plain OUTPUT (no BUS_WRITE flag) accumulates into
+    //     the device sinks and sanitizes NaN/Inf → 0 on the way.
+    {
+        cedar::Instruction o{};
+        o.opcode = cedar::Opcode::OUTPUT;
+        o.out_buffer = 0xFFFF;
+        o.inputs[0] = bus0_l;
+        o.inputs[1] = bus0_r;
+        o.inputs[2] = 0xFFFF;
+        o.inputs[3] = 0xFFFF;
+        o.inputs[4] = 0xFFFF;
+        emit(o);
+    }
+
+    // 6. Prologue: clear every bus accumulator to silence before any writer.
+    //    Prepended to the main stream — safe because no opcode encodes an
+    //    absolute instruction address (control flow uses relative offsets
+    //    and the post-finalization subprogram table).
+    std::vector<cedar::Instruction> prologue;
+    for (const auto& [idx, l] : bus_left) {
+        (void)idx;
+        prologue.push_back(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, l, cedar::BUFFER_ZERO));
+        prologue.push_back(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY, static_cast<std::uint16_t>(l + 1),
+            cedar::BUFFER_ZERO));
+    }
+    instructions_.insert(instructions_.begin(),
+                         prologue.begin(), prologue.end());
+    source_locations_.insert(source_locations_.begin(),
+                             prologue.size(), SourceLocation{});
+
+    // Prepending shifts every main-stream instruction index. Patch the
+    // absolute-index metadata recorded during visit(). (Control-flow
+    // offsets are relative and subprogram offsets are resolved after this,
+    // so only scalar_sample_mappings_ needs fixing.)
+    const auto shift = static_cast<std::uint32_t>(prologue.size());
+    for (auto& m : scalar_sample_mappings_) {
+        m.instruction_index += shift;
+    }
 }
 
 // FM Detection: Check if buffer was produced by audio-rate source (recursively traces arithmetic)

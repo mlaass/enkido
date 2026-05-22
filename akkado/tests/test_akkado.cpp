@@ -23,6 +23,14 @@ static bool has_diagnostic_code(const std::vector<akkado::Diagnostic>& diagnosti
     return false;
 }
 
+// prd-bus-routing: bytecode-shape tests that predate the master bus. Bypass
+// it so out() compiles to a single device-write OUTPUT with no surrounding
+// bus prologue/epilogue. The master bus has its own dedicated tests.
+static akkado::CompileResult compile_raw(std::string_view src) {
+    return akkado::compile(src, "<input>", nullptr, nullptr,
+                           /*lint_strict=*/false, /*bypass_master=*/true);
+}
+
 TEST_CASE("Akkado compilation", "[akkado]") {
     SECTION("empty source produces error") {
         auto result = akkado::compile("");
@@ -91,7 +99,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
     }
 
     SECTION("pipe expression: saw(440) |> out(%, %)") {
-        auto result = akkado::compile("saw(440) |> out(%, %)");
+        auto result = compile_raw("saw(440) |> out(%, %)");
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST, OSC_SAW, OUTPUT
@@ -114,7 +122,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         // produces a stereo output pair. out(%) takes the stereo pair.
         // Post-unified-drywet: lp also takes dry+wet as optional inputs,
         // so the chain has 2 extra PUSH_CONSTs for the dry=0/wet=1 defaults.
-        auto result = akkado::compile("saw(440) |> lp(%, 1000, 0.7) |> out(%)");
+        auto result = compile_raw("saw(440) |> lp(%, 1000, 0.7) |> out(%)");
 
         REQUIRE(result.success);
         // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7),
@@ -1436,7 +1444,7 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
 TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
           "[akkado][pipe][regression]") {
     SECTION("bytecode wires OUTPUT to the bound expression's buffer") {
-        auto result = akkado::compile(R"(
+        auto result = compile_raw(R"(
             saw(220) * 0.3 as x
             x |> out(@)
         )");

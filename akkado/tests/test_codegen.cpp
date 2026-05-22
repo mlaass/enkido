@@ -53,6 +53,14 @@ static size_t count_instructions(const std::vector<cedar::Instruction>& insts,
     return count;
 }
 
+// prd-bus-routing: instruction-shape tests that predate the master bus.
+// Bypass it so out() compiles to a single device-write OUTPUT with no bus
+// prologue/epilogue. The master bus has its own dedicated tests.
+static akkado::CompileResult compile_raw(std::string_view src) {
+    return akkado::compile(src, "<input>", nullptr, nullptr,
+                           /*lint_strict=*/false, /*bypass_master=*/true);
+}
+
 // =============================================================================
 // Literal Tests
 // =============================================================================
@@ -6766,7 +6774,7 @@ TEST_CASE("Codegen: stereo pipeline examples", "[codegen][stereo]") {
     }
 
     SECTION("full stereo chain with ping-pong") {
-        auto result = akkado::compile(R"(
+        auto result = compile_raw(R"(
             saw(220)
             |> stereo(%)
             |> lp(%, 1000)
@@ -7356,7 +7364,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // poly is stereo-native, so the correct sink idiom is out(%) — a
         // single stereo arg. (out(%, %) would auto-escalate per W185 and emit
         // two OUTPUTs.)
-        auto result = akkado::compile(R"(
+        auto result = compile_raw(R"(
             fn lead(freq, gate, vel) -> osc("sin", freq)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
@@ -7579,7 +7587,9 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("many poly() calls — field banks do not exhaust the buffer pool") {
         // Each poly() reserves an 11-slot field bank + 4 stereo buffers.
-        auto result = akkado::compile(R"(
+        // compile_raw: the master-bus epilogue would add ~4 more buffers and
+        // this program is deliberately calibrated to the 255-buffer limit.
+        auto result = compile_raw(R"(
             n"c4" |> poly(@, ({freq}) -> osc("sin", freq)) |> @ +
             (n"d4" |> poly(@, ({freq}) -> osc("sin", freq))) +
             (n"e4" |> poly(@, ({freq}) -> osc("sin", freq))) +

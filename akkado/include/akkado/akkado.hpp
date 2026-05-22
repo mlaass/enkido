@@ -98,11 +98,15 @@ struct CompileResult {
 /// @param sample_registry Optional sample registry for resolving sample names to IDs
 /// @param resolver Optional file resolver for import statements
 /// @param lint_strict Enable opt-in lint warnings (e.g. W201 dotted hole-field).
+/// @param bypass_master Test-only: suppress the bus-routing master bus so
+///        out()/bus() write raw to the device (no soft-clip / safety stage).
+///        Not reachable from user source — the safety guarantee still holds.
 /// @return Compilation result with bytecode and diagnostics
 CompileResult compile(std::string_view source, std::string_view filename = "<input>",
                      SampleRegistry* sample_registry = nullptr,
                      const FileResolver* resolver = nullptr,
-                     bool lint_strict = false);
+                     bool lint_strict = false,
+                     bool bypass_master = false);
 
 /// Compile from file (creates a FilesystemResolver for the file's directory)
 /// @param path Path to the source file

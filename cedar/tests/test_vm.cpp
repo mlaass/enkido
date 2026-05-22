@@ -224,6 +224,71 @@ TEST_CASE("VM output", "[vm][output]") {
     }
 }
 
+TEST_CASE("VM OUTPUT BUS_WRITE", "[vm][output][bus]") {
+    // prd-bus-routing Phase 1: an OUTPUT with the BUS_WRITE flag accumulates
+    // into the scratch buffer pair (out_buffer, out_buffer+1) instead of the
+    // device sinks.
+    SECTION("BUS_WRITE leaves the device sinks untouched") {
+        Instruction bus_write{};
+        bus_write.opcode = Opcode::OUTPUT;
+        bus_write.out_buffer = 10;
+        bus_write.inputs[0] = 0;
+        bus_write.inputs[1] = 0;
+        bus_write.inputs[2] = bus_write.inputs[3] = bus_write.inputs[4] = 0xFFFF;
+        bus_write.flags = InstructionFlag::BUS_WRITE;
+
+        std::array<Instruction, 2> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 0.5f),
+            bus_write
+        };
+        VM vm;
+        vm.load_program(program);
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK(left[i] == 0.0f);
+            CHECK(right[i] == 0.0f);
+        }
+    }
+
+    SECTION("BUS_WRITE pair is readable by a downstream device OUTPUT") {
+        Instruction bus_write{};
+        bus_write.opcode = Opcode::OUTPUT;
+        bus_write.out_buffer = 10;          // writes buffers 10 and 11
+        bus_write.inputs[0] = 0;
+        bus_write.inputs[1] = 0;
+        bus_write.inputs[2] = bus_write.inputs[3] = bus_write.inputs[4] = 0xFFFF;
+        bus_write.flags = InstructionFlag::BUS_WRITE;
+
+        // The device store reads the bus pair (no BUS_WRITE flag).
+        Instruction device{};
+        device.opcode = Opcode::OUTPUT;
+        device.out_buffer = 0xFFFF;
+        device.inputs[0] = 10;
+        device.inputs[1] = 11;
+        device.inputs[2] = device.inputs[3] = device.inputs[4] = 0xFFFF;
+
+        std::array<Instruction, 5> program = {
+            // Clear the bus pair, then accumulate 0.5 into it, then store.
+            make_const_instruction(Opcode::PUSH_CONST, 10, 0.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 11, 0.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 0, 0.5f),
+            bus_write,
+            device
+        };
+        VM vm;
+        vm.load_program(program);
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            CHECK_THAT(left[i], WithinAbs(0.5f, 1e-6f));
+            CHECK_THAT(right[i], WithinAbs(0.5f, 1e-6f));
+        }
+    }
+}
+
 TEST_CASE("VM INPUT opcode", "[vm][input]") {
     VM vm;
 

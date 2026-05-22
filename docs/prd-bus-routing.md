@@ -1,5 +1,7 @@
-> **Status: NOT STARTED** — Drafted 2026-05-18; scope expanded 2026-05-20
-> (numbered buses, per-bus FX, routing operators).
+> **Status: Phase 1 SHIPPED (2026-05-22)** — Drafted 2026-05-18; scope
+> expanded 2026-05-20 (numbered buses, per-bus FX, routing operators).
+> Phase 1 (numbered buses + always-safe master) is implemented and tested.
+> Phase 2 (per-bus FX) and Phase 3 (diamond operator) are not started.
 
 # Bus Routing & Master Bus PRD
 
@@ -33,6 +35,56 @@ This PRD adds a **unified bus system**:
 Goals: make global compression / soft-clipping a one-liner, give
 live-coders real group/track buses, prevent amplitude blow-ups by
 default, and keep hot-swap and live-coding ergonomics.
+
+---
+
+## 0. Implementation Phases
+
+The feature ships in three phases. Each phase is independently useful and
+leaves the compiler in a working, tested state.
+
+### Phase 1 — Bus core + always-safe master *(shipped 2026-05-22)*
+
+- `bus(N, …)` builtin; `out(…)` lowered to `bus(0, …)` (both routed
+  through one `handle_bus_call` so `out(@)` ≡ `bus(0, @)` byte-identical).
+- Per-bus stereo scratch buffer pairs, allocated after the main DAG.
+- The per-block epilogue: clear bus accumulators (prologue), sum non-zero
+  buses into bus 0, run the default soft-clip @ 0.9, run the forced
+  safety stage (NaN/Inf sanitize + hard rail ±1.0), store to the device.
+- Diagnostics `E260` (non-literal bus index) and `W202` (mono `bus()`
+  auto-broadcast).
+- No `mixer`/`master`, no `<>`.
+
+Implementation notes / deviations from the draft below:
+
+- **No new VM opcode.** A new `InstructionFlag::BUS_WRITE` bit selects
+  whether `op_output` accumulates into the device sinks (clear) or into
+  the `(out_buffer, out_buffer+1)` scratch pair (set). This is the
+  smallest possible change and keeps every hand-written `OUTPUT` test
+  (which never sets the flag) writing to the device unchanged.
+- **The default soft-clip uses `Opcode::DISTORT_SOFT`** (the `softclip`
+  builtin's opcode); the draft's "`distort_softclip`" is informal.
+- **The epilogue is emitted only when the program has ≥1 sink** — see
+  §5.3.
+- A test-only `bypass_master` flag on `akkado::compile()` suppresses the
+  whole master bus so pre-existing tests can probe raw `out()` values.
+  It is **not reachable from user source**, so the PRD's
+  non-disableable-safety guarantee (§4.3) still holds for every program
+  a user can write.
+
+### Phase 2 — Per-bus FX
+
+- `mixer(N, closure)` + `master(closure)` alias; closure bodies inlined
+  into the epilogue; both closure arities (`(s) -> …` and `(l, r) -> …`).
+- Diagnostics `E_BUS_SINK_IN_CLOSURE`, `W_BUS_MIXER_OVERRIDDEN`,
+  `W_BUS_MIXER_MONO_RETURN`, `W_BUS_NO_WRITERS`.
+
+### Phase 3 — Diamond operator + docs
+
+- `<>` / `<>(N)` lexer + parser sugar.
+- `web/static/docs/concepts/bus-routing.md`; builtin reference entries.
+
+§12 tags each acceptance criterion with its phase.
 
 ---
 
@@ -330,10 +382,13 @@ Each closure body is inlined into the epilogue at compile time, exactly
 as if typed in source at the end of the program. State-ids inside a
 closure follow the normal hot-swap rules — no reserved `/__bus/` path.
 
-The epilogue is **always emitted**, even for programs with no `out()`
-calls; in that case the buses are zero buffers and the chains process
-silence. Cost is negligible (`softclip(0) = 0`, no allocation), and the
-uniform behavior simplifies the compiler.
+The epilogue is emitted **whenever the program has at least one
+`out()`/`bus()` sink** — i.e. for every program that produces audio.
+A program with no sink produces no audio and gets no epilogue, so
+pure-computation snippets stay free of a silent master chain. (The
+draft specified an unconditionally-emitted epilogue; emitting it only
+when a sink exists is functionally identical for every audible program
+and was adopted in Phase 1.)
 
 ### 5.4 Multiple `mixer`/`master` calls for the same bus
 
@@ -381,18 +436,18 @@ allowed. `<>` with no argument lowers to `bus(0, @)`; `<>(N)` lowers to
 New diagnostic codes (numbers allocated from the next free slots during
 implementation; placeholder names below):
 
-| Code | Kind | Trigger |
-|------|------|---------|
-| `E_BUS_INDEX_NOT_LITERAL` | error | `bus`/`mixer`/`<>(N)` index is not a compile-time non-negative integer literal. |
-| `E_BUS_SINK_IN_CLOSURE` | error | `out`/`bus`/`mixer`/`master`/`<>` used inside a `mixer`/`master` closure body. |
-| `W_BUS_MIXER_OVERRIDDEN` | warning | More than one `mixer(N, …)` (or `master`) targets the same bus `N`. Lists dropped + winning sites. |
-| `W_BUS_MIXER_MONO_RETURN` | warning | A stereo-form `mixer`/`master` closure (`(s) -> …`) returns a mono value. Auto-broadcasts `L = R`. |
-| `W_BUS_NO_WRITERS` | warning | `mixer(N, …)` with `N > 0` targets a bus that has no `bus(N, …)`/`<>(N)` writers — the closure processes silence. |
-| `W_BUS_MONO_INPUT` | warning | `bus(N, mono)` / `out(mono)` single-arg form auto-broadcasts `L = R` (existing `out(mono)` behavior, generalized). |
+| Code | Number | Kind | Phase | Trigger |
+|------|--------|------|-------|---------|
+| `E_BUS_INDEX_NOT_LITERAL` | `E260` | error | P1 | `bus`/`mixer`/`<>(N)` index is not a compile-time non-negative integer literal (also covers index ≥ 200). |
+| `W_BUS_MONO_INPUT` | `W202` | warning | P1 | `bus(N, mono)` single-arg form auto-broadcasts `L = R`. (Not emitted for legacy `out(mono)` — that path stays silent to avoid warning every existing mono program.) |
+| `E_BUS_SINK_IN_CLOSURE` | *(P2)* | error | P2 | `out`/`bus`/`mixer`/`master`/`<>` used inside a `mixer`/`master` closure body. |
+| `W_BUS_MIXER_OVERRIDDEN` | *(P2)* | warning | P2 | More than one `mixer(N, …)` (or `master`) targets the same bus `N`. Lists dropped + winning sites. |
+| `W_BUS_MIXER_MONO_RETURN` | *(P2)* | warning | P2 | A stereo-form `mixer`/`master` closure (`(s) -> …`) returns a mono value. Auto-broadcasts `L = R`. |
+| `W_BUS_NO_WRITERS` | *(P2)* | warning | P2 | `mixer(N, …)` with `N > 0` targets a bus that has no `bus(N, …)`/`<>(N)` writers — the closure processes silence. |
 
-> **[OPEN QUESTION]** Exact `W###`/`E###` numbers and their families
-> (lexer vs. parser vs. codegen). Assign during implementation; take
-> the next consecutive slots after the most recent existing diagnostic.
+> Phase 1 allocated `E260` and `W202` from the next free codegen slots.
+> Phase 2 codes will take the next consecutive slots when that phase
+> lands.
 
 ---
 
@@ -523,38 +578,43 @@ No reserved `/__bus/` state-id path. No special handling.
 
 ## 12. Acceptance Criteria
 
-- [ ] Programs with no `master`/`mixer(0)` call run the default
+Each criterion is tagged with its phase (§0).
+
+- [x] **(P1)** Programs with no `master`/`mixer(0)` call run the default
       polynomial softclip at 0.9 + safety stage on bus 0; existing test
       programs produce audible output unchanged in character below 0.9
       amplitude.
-- [ ] `out(@)` and `bus(0, @)` produce byte-identical bytecode.
-- [ ] `<>` compiles identically to `|> out(@)`; `<>(N)` compiles
+- [x] **(P1)** `out(@)` and `bus(0, @)` produce byte-identical bytecode.
+- [ ] **(P3)** `<>` compiles identically to `|> out(@)`; `<>(N)` compiles
       identically to `|> bus(N, @)`.
-- [ ] A non-zero bus with multiple `bus(N, …)` writers sums all
+- [x] **(P1)** A non-zero bus with multiple `bus(N, …)` writers sums all
       contributions and feeds bus 0.
-- [ ] `mixer(N, …)` on a non-zero bus processes that bus's summed
+- [ ] **(P2)** `mixer(N, …)` on a non-zero bus processes that bus's summed
       signal before it reaches bus 0; a bus with no `mixer` is identity.
-- [ ] `master((s) -> s)` produces output identical to a program with no
-      master tone processing (only the forced ±1.0 rail and NaN guard).
-- [ ] `mixer`/`master` closures of both arities (`(s) -> …` and
+- [ ] **(P2)** `master((s) -> s)` produces output identical to a program
+      with no master tone processing (only the forced ±1.0 rail and NaN
+      guard).
+- [ ] **(P2)** `mixer`/`master` closures of both arities (`(s) -> …` and
       `(l, r) -> …`) compile and produce expected stereo output.
-- [ ] Multiple `mixer(N, …)` for the same bus: only the last takes
-      effect; `W_BUS_MIXER_OVERRIDDEN` reports all sites. `master` and
-      `mixer(0, …)` together count as targeting the same bus.
-- [ ] Stereo-form closure returning mono: `W_BUS_MIXER_MONO_RETURN`
+- [ ] **(P2)** Multiple `mixer(N, …)` for the same bus: only the last
+      takes effect; `W_BUS_MIXER_OVERRIDDEN` reports all sites. `master`
+      and `mixer(0, …)` together count as targeting the same bus.
+- [ ] **(P2)** Stereo-form closure returning mono: `W_BUS_MIXER_MONO_RETURN`
       reported; output is `L = R`.
-- [ ] `bus(N, expr)` with a non-literal `N` is rejected with
-      `E_BUS_INDEX_NOT_LITERAL`.
-- [ ] A sink (`out`/`bus`/`mixer`/`<>`) inside a `mixer` closure
+- [x] **(P1)** `bus(N, expr)` with a non-literal `N` is rejected with
+      `E_BUS_INDEX_NOT_LITERAL` (allocated as `E260`).
+- [ ] **(P2)** A sink (`out`/`bus`/`mixer`/`<>`) inside a `mixer` closure
       is rejected with `E_BUS_SINK_IN_CLOSURE`.
-- [ ] An aggressive master closure (`(s) -> s * 100`) is clamped to
-      ±1.0 by the safety stage; the device receives no |sample| > 1.0.
-- [ ] Hot-swap: editing inside a `mixer`/`master` closure preserves
-      stateful opcode state under the standard hot-swap rules.
-- [ ] A `param(...)` captured by a closure is live-tweakable from the
-      web UI and updates the bus chain without recompile.
-- [ ] The diamond `<>` lexes as a single token and `<>(3)` routes to
-      bus 3; `gain < 3` still lexes as a comparison.
+- [x] **(P1)** An aggressive signal into the master is clamped to ±1.0 by
+      the safety stage; the device receives no |sample| > 1.0. (Phase 1
+      verifies this with `osc("saw",110) |> @ * 100 |> out(@)`; the
+      `(s) -> s * 100` *closure* form lands with Phase 2.)
+- [ ] **(P2)** Hot-swap: editing inside a `mixer`/`master` closure
+      preserves stateful opcode state under the standard hot-swap rules.
+- [ ] **(P2)** A `param(...)` captured by a closure is live-tweakable from
+      the web UI and updates the bus chain without recompile.
+- [ ] **(P3)** The diamond `<>` lexes as a single token and `<>(3)` routes
+      to bus 3; `gain < 3` still lexes as a comparison.
 
 ---
 

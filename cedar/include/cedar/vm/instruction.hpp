@@ -284,6 +284,11 @@ enum class Opcode : std::uint8_t {
 namespace InstructionFlag {
     constexpr std::uint16_t STEREO_INPUT  = 1u << 0;  // see truth table above
     constexpr std::uint16_t STEREO_OUTPUT = 1u << 1;  // see truth table above
+    // BUS_WRITE (prd-bus-routing Phase 1): on an OUTPUT instruction, route
+    // the accumulation into the scratch buffer pair (out_buffer, out_buffer+1)
+    // — a numbered bus — instead of the device sinks. Without it OUTPUT
+    // accumulates into ctx.output_left/right as before.
+    constexpr std::uint16_t BUS_WRITE     = 1u << 2;
 }
 
 // XOR mask applied to state_id when storing/reading the ExtendedParams<N>

@@ -1060,11 +1060,21 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  0, {}, {}, ChannelCount::Match, /*stereo_native=*/true, /*inst_rate=*/3}},
 
     // Output (1 required for mono, 2 for stereo)
+    // out(...) is an alias for bus(0, ...) — the master bus (prd-bus-routing).
     {"out",     {cedar::Opcode::OUTPUT, 1, 1, false,
                  {"L", "R", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Audio output (mono or stereo)", 0,
+                 "Audio output (mono or stereo) — alias for bus(0, ...)", 0,
                  {ParamValueType::Signal, ParamValueType::Signal}}},
+
+    // Bus routing (prd-bus-routing Phase 1). bus(N, L, R?) sums a signal
+    // into numbered bus N. Bus 0 is the master/device bus; every non-zero
+    // bus auto-sums into bus 0. N must be a compile-time non-negative
+    // integer literal. Handled entirely by handle_bus_call in codegen.
+    {"bus",     {cedar::Opcode::OUTPUT, 2, 1, false,
+                 {"N", "L", "R", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Route a signal into numbered bus N (bus 0 is the master)"}},
 
     // Stereo Operations (handled specially by codegen for stereo signal propagation)
     // stereo(mono) creates stereo from mono by duplicating to both channels

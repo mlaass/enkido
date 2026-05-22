@@ -51,8 +51,16 @@ static bool diagnostic_has_code(const akkado::CompileResult& r, const std::strin
     return false;
 }
 
+// prd-bus-routing: these tests probe out() / runtime values directly. Bypass
+// the master bus so out() stays a transparent device write — no default
+// soft-clip @ 0.9, no ±1.0 safety clamp. The master bus has its own tests.
+static akkado::CompileResult compile_raw(std::string_view src) {
+    return akkado::compile(src, "<input>", nullptr, nullptr,
+                           /*lint_strict=*/false, /*bypass_master=*/true);
+}
+
 TEST_CASE("State: state(init) emits STATE_OP rate=0", "[state]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(0)\n"
         "out(s.get(), s.get())\n"
     );
@@ -63,7 +71,7 @@ TEST_CASE("State: state(init) emits STATE_OP rate=0", "[state]") {
 }
 
 TEST_CASE("State: distinct call sites get distinct slots", "[state][slots]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "a = state(0)\n"
         "b = state(0)\n"
         "out(a.get(), b.get())\n"
@@ -86,7 +94,7 @@ TEST_CASE("State: distinct call sites get distinct slots", "[state][slots]") {
 TEST_CASE("State: get/set chain stores and reads correctly at runtime", "[state][runtime]") {
     // Cell starts at 0, set to 42, then get — should output 42.
     // s.set(42) is a bare expression statement (its return value is unused).
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(0)\n"
         "s.set(42)\n"
         "out(s.get(), s.get())\n"
@@ -110,7 +118,7 @@ TEST_CASE("State: get/set chain stores and reads correctly at runtime", "[state]
 }
 
 TEST_CASE("State: cell value persists across blocks", "[state][persistence]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(7)\n"
         "out(s.get(), s.get())\n"
     );
@@ -132,7 +140,7 @@ TEST_CASE("State: cell value persists across blocks", "[state][persistence]") {
 }
 
 TEST_CASE("State: get on non-cell argument is an error", "[state][types]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "x = 5\n"
         "out(get(x), get(x))\n"
     );
@@ -141,7 +149,7 @@ TEST_CASE("State: get on non-cell argument is an error", "[state][types]") {
 }
 
 TEST_CASE("State: set on non-cell first argument is an error", "[state][types]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "x = 5\n"
         "out(set(x, 1), set(x, 1))\n"
     );
@@ -150,26 +158,26 @@ TEST_CASE("State: set on non-cell first argument is an error", "[state][types]")
 }
 
 TEST_CASE("State: 'state' is a reserved identifier", "[state][reserved]") {
-    auto r = akkado::compile("state = 5\n");
+    auto r = compile_raw("state = 5\n");
     CHECK_FALSE(r.success);
     CHECK(diagnostic_contains(r, "reserved"));
 }
 
 TEST_CASE("State: 'get' is a reserved identifier", "[state][reserved]") {
-    auto r = akkado::compile("get = 5\n");
+    auto r = compile_raw("get = 5\n");
     CHECK_FALSE(r.success);
     CHECK(diagnostic_contains(r, "reserved"));
 }
 
 TEST_CASE("State: 'set' is a reserved identifier", "[state][reserved]") {
-    auto r = akkado::compile("set = 5\n");
+    auto r = compile_raw("set = 5\n");
     CHECK_FALSE(r.success);
     CHECK(diagnostic_contains(r, "reserved"));
 }
 
 TEST_CASE("State: defining a function named 'state' is a reserved-name error",
           "[state][reserved]") {
-    auto r = akkado::compile("fn state(x) -> x + 1\n");
+    auto r = compile_raw("fn state(x) -> x + 1\n");
     CHECK_FALSE(r.success);
     CHECK(diagnostic_contains(r, "reserved"));
 }
@@ -179,7 +187,7 @@ TEST_CASE("State: defining a function named 'state' is a reserved-name error",
 // the init buffer into the slot before any reads.
 TEST_CASE("State: get() before any set() returns the init value",
           "[state][edge_case]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(7)\n"
         "out(s.get(), s.get())\n"
     );
@@ -208,7 +216,7 @@ TEST_CASE("State: closure invoked at two sites has independent slots per site",
     // different syntactic positions must produce two distinct STATE_OP rate=0
     // (init) instructions with different state_ids — proving the per-call-site
     // slot isolation.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "bump_and_read = (init) -> {\n"
         "  s = state(init)\n"
         "  s.set(s.get() + 1)\n"
@@ -249,7 +257,7 @@ TEST_CASE("State: closure invoked at two sites has independent slots per site",
 // (state cells were the persistence story, not generic compile-time
 // reflection on closure parameters); it is captured in the audit report.
 TEST_CASE("State: step variant with reset compiles", "[state][step][step_reset]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "step = (arr, trig, reset) -> arr[counter(trig, reset)]\n"
         "freq = [220, 330, 440, 550].step(trigger(4), trigger(1))\n"
         "sine(freq) * 0.2 |> out(%, %)\n"
@@ -263,7 +271,7 @@ TEST_CASE("State: step variant with reset compiles", "[state][step][step_reset]"
 
 TEST_CASE("State: step variant with reset and start compiles",
           "[state][step][step_reset_start]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "step = (arr, trig, reset, start) -> arr[counter(trig, reset, start)]\n"
         "freq = [220, 330, 440, 550].step(trigger(4), trigger(1), 1)\n"
         "sine(freq) * 0.2 |> out(%, %)\n"
@@ -288,7 +296,7 @@ TEST_CASE("State: step variant with reset and start compiles",
 // `ARRAY_INDEX` both fall back to a safe value (0.0) rather than crashing.
 TEST_CASE("State: empty array stepper produces silence not a crash",
           "[state][step][edge_case]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "step = (arr, trig) -> arr[counter(trig)]\n"
         "[].step(trigger(4)) |> sine(%) |> out(%, %)\n"
     );
@@ -331,7 +339,7 @@ TEST_CASE("State: empty array stepper produces silence not a crash",
 
 TEST_CASE("State record: state(record) emits one STATE_OP rate=0 per field",
           "[state][record]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 1, y: 2})\n"
         "out(get(s).x, get(s).y)\n"
     );
@@ -352,7 +360,7 @@ TEST_CASE("State record: state(record) emits one STATE_OP rate=0 per field",
 
 TEST_CASE("State record: get returns a Record; field access reaches each field",
           "[state][record][runtime]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 11, y: 22})\n"
         "out(get(s).x, get(s).y)\n"
     );
@@ -373,7 +381,7 @@ TEST_CASE("State record: get returns a Record; field access reaches each field",
 }
 
 TEST_CASE("State record: set roundtrips per field", "[state][record][runtime]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 0, y: 0})\n"
         "set(s, {x: 42, y: 99})\n"
         "out(get(s).x, get(s).y)\n"
@@ -399,7 +407,7 @@ TEST_CASE("State record: set roundtrips per field", "[state][record][runtime]") 
 }
 
 TEST_CASE("State record: E189 on extra field in set value", "[state][record]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 0})\n"
         "set(s, {x: 1, y: 2})\n"
         "out(0, 0)\n"
@@ -411,7 +419,7 @@ TEST_CASE("State record: E189 on extra field in set value", "[state][record]") {
 }
 
 TEST_CASE("State record: E189 on missing field in set value", "[state][record]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 0, y: 0})\n"
         "set(s, {x: 1})\n"
         "out(0, 0)\n"
@@ -422,7 +430,7 @@ TEST_CASE("State record: E189 on missing field in set value", "[state][record]")
 
 TEST_CASE("State record: E122 widened — scalar value to record cell",
           "[state][record][types]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 0})\n"
         "set(s, 42)\n"
         "out(0, 0)\n"
@@ -433,7 +441,7 @@ TEST_CASE("State record: E122 widened — scalar value to record cell",
 
 TEST_CASE("State record: E122 widened — record value to scalar cell",
           "[state][record][types]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(0)\n"
         "set(s, {x: 1})\n"
         "out(0, 0)\n"
@@ -444,7 +452,7 @@ TEST_CASE("State record: E122 widened — record value to scalar cell",
 
 TEST_CASE("State record: E122 — nested-record init field rejected",
           "[state][record][types]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({inner: {x: 1}})\n"
         "out(0, 0)\n"
     );
@@ -454,7 +462,7 @@ TEST_CASE("State record: E122 — nested-record init field rejected",
 
 TEST_CASE("State record: empty record state({}) compiles with zero STATE_OPs",
           "[state][record][edge_case]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({})\n"
         "set(s, {})\n"
         "out(0, 0)\n"
@@ -469,7 +477,7 @@ TEST_CASE("State record: empty record state({}) compiles with zero STATE_OPs",
 TEST_CASE("State record: distinct call sites get distinct per-field slots",
           "[state][record][slots]") {
     // Two separate state({x, y}) literals → 4 distinct STATE_OP rate=0 inits.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "a = state({x: 1, y: 2})\n"
         "b = state({x: 3, y: 4})\n"
         "out(get(a).x + get(b).x, get(a).y + get(b).y)\n"
@@ -488,7 +496,7 @@ TEST_CASE("State record: distinct call sites get distinct per-field slots",
 
 TEST_CASE("State record: cell value persists across blocks",
           "[state][record][persistence]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state({x: 7, y: 13})\n"
         "out(get(s).x, get(s).y)\n"
     );
@@ -522,12 +530,12 @@ TEST_CASE("State record: cross-shape hot-swap freshly initializes new fields",
     // (a) load_program(B) succeeds, (b) `y` reads 2.0 after the crossfade
     // settles. Per PRD §10.4: "Cross-shape reloads fall back to the new
     // initial record (no silent partial-merge)."
-    auto rA = akkado::compile(
+    auto rA = compile_raw(
         "s = state({x: 1})\n"
         "out(get(s).x, get(s).x)\n"
     );
     REQUIRE(rA.success);
-    auto rB = akkado::compile(
+    auto rB = compile_raw(
         "s = state({x: 1, y: 2})\n"
         "out(get(s).y, get(s).y)\n"
     );
@@ -570,7 +578,7 @@ TEST_CASE("State record: closure invoking record state cell — independent slot
     // make_pair builds a record cell internally. Two call sites must produce
     // 2 × 2 = 4 distinct STATE_OP rate=0 inits, mirroring the scalar
     // `bump_and_read` test above.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "make_pair = (a, b) -> {\n"
         "  s = state({x: a, y: b})\n"
         "  get(s).x + get(s).y\n"
@@ -594,7 +602,7 @@ TEST_CASE("State record: signal-valued field accepted in init and set",
           "[state][record][types]") {
     // Parity with scalar cells: a field's init / set value can be Signal
     // (audio-rate) as well as Number — CellState stores the last sample.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "carrier = osc(\"sin\", 440)\n"
         "s = state({sig: carrier, level: 0.5})\n"
         "set(s, {sig: carrier, level: 0.7})\n"
@@ -617,7 +625,7 @@ TEST_CASE("State record: signal-valued field accepted in init and set",
 
 TEST_CASE("State record sugar: cell.field read emits one STATE_OP rate=1",
           "[state][record][sugar]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({freq: 440, vel: 0.5})\n"
         "tone = osc(\"sin\", v.freq) * v.vel\n"
         "out(tone, tone)\n"
@@ -633,11 +641,11 @@ TEST_CASE("State record sugar: cell.field read emits one STATE_OP rate=1",
 
 TEST_CASE("State record sugar: cell.field read matches get(cell).field semantics",
           "[state][record][sugar][runtime]") {
-    auto sugar = akkado::compile(
+    auto sugar = compile_raw(
         "v = state({freq: 440, vel: 0.5})\n"
         "out(v.freq, v.vel)\n"
     );
-    auto explicit_ = akkado::compile(
+    auto explicit_ = compile_raw(
         "v = state({freq: 440, vel: 0.5})\n"
         "out(get(v).freq, get(v).vel)\n"
     );
@@ -664,7 +672,7 @@ TEST_CASE("State record sugar: cell.field read matches get(cell).field semantics
 
 TEST_CASE("State record sugar: cell.field = expr stores via STATE_OP rate=2",
           "[state][record][sugar][runtime]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({freq: 440, vel: 0.5})\n"
         "v.freq = 880\n"
         "v.vel = 0.9\n"
@@ -692,12 +700,12 @@ TEST_CASE("State record sugar: cell.field = expr stores via STATE_OP rate=2",
 TEST_CASE("State record sugar: write sugar matches set+spread observably",
           "[state][record][sugar][runtime]") {
     // Both forms should land the same per-field values into the cell.
-    auto sugar = akkado::compile(
+    auto sugar = compile_raw(
         "v = state({freq: 440, gate: 0})\n"
         "v.gate = 1\n"
         "out(get(v).freq, get(v).gate)\n"
     );
-    auto explicit_ = akkado::compile(
+    auto explicit_ = compile_raw(
         "v = state({freq: 440, gate: 0})\n"
         "set(v, {..get(v), gate: 1})\n"
         "out(get(v).freq, get(v).gate)\n"
@@ -729,7 +737,7 @@ TEST_CASE("State record sugar: self-referential update reads then writes",
     // same slot. The previous-value invariant of STATE_OP guarantees the
     // load returns the value present at block start, so increment is well-
     // defined even though source and target are the same slot.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "c = state({n: 0})\n"
         "c.n = c.n + 1\n"
         "c.n = c.n + 1\n"
@@ -765,7 +773,7 @@ TEST_CASE("State record sugar: pipe-position field assignment is E205 (parse)",
     // catches this and tells the user to move the write to a top-level
     // statement. (The PRD's "wrap in a block" hint isn't yet a real
     // workaround because pipes don't currently accept block RHS.)
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({gate: 0})\n"
         "button(\"go\") |> v.gate = 1\n"
         "out(get(v).gate, get(v).gate)\n"
@@ -780,7 +788,7 @@ TEST_CASE("State record sugar: top-level write next to a pipe is allowed",
     // The recommended workaround for E205 today: hoist the field assignment
     // out of the pipe and write it as its own statement. Cell identity flows
     // through the binding so the effect is the same as if it were inline.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({gate: 0})\n"
         "trig = button(\"go\")\n"
         "v.gate = trig\n"
@@ -793,7 +801,7 @@ TEST_CASE("State record sugar: top-level write next to a pipe is allowed",
 
 TEST_CASE("State record sugar: E150 on field assignment to value record",
           "[state][record][sugar][diagnostics]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "r = {x: 1, y: 2}\n"
         "r.x = 5\n"
         "out(0, 0)\n"
@@ -805,7 +813,7 @@ TEST_CASE("State record sugar: E150 on field assignment to value record",
 
 TEST_CASE("State record sugar: E136 on unknown field assignment",
           "[state][record][sugar][diagnostics]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({x: 0})\n"
         "v.y = 5\n"
         "out(0, 0)\n"
@@ -818,7 +826,7 @@ TEST_CASE("State record sugar: E136 on unknown field assignment",
 
 TEST_CASE("State record sugar: E135 on field access on scalar cell",
           "[state][record][sugar][diagnostics]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "s = state(0)\n"
         "out(s.value, s.value)\n"
     );
@@ -831,7 +839,7 @@ TEST_CASE("State record sugar: E204 on nested-field write",
     // The receiver of the outer FieldAssignment is itself a FieldAccess —
     // codegen rejects this up front rather than trying to load+spread the
     // intermediate record (which would be deferred-feature territory).
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({x: 1, y: 2})\n"
         "v.x.foo = 5\n"
         "out(0, 0)\n"
@@ -846,7 +854,7 @@ TEST_CASE("State record sugar: aliasing — `t = v` shares cell identity",
     // Cell identity flows through the binding. Writing through an alias
     // should be visible through the original handle (same per-field state_id
     // for both names).
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "v = state({n: 0})\n"
         "t = v\n"
         "t.n = 7\n"

@@ -36,15 +36,37 @@ inline void op_copy(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
-// OUTPUT: Add input buffer to stereo output (accumulates)
+// OUTPUT: Add input buffer to a stereo destination (accumulates)
 // inputs[0]: left channel (required)
 // inputs[1]: right channel (optional, uses left if BUFFER_UNUSED)
+// flags BUS_WRITE: destination selector (prd-bus-routing Phase 1)
+//   - clear: accumulate into the device sinks ctx.output_left/right —
+//     the final master store (the historical OUTPUT behavior).
+//   - set: accumulate into the scratch buffer pair (out_buffer, out_buffer+1)
+//     — a numbered bus accumulator. The compiler clears bus buffers in a
+//     per-block prologue, so `+=` starts from silence.
 [[gnu::always_inline]]
 inline void op_output(ExecutionContext& ctx, const Instruction& inst) {
     const float* left = ctx.buffers->get(inst.inputs[0]);
     const float* right = (inst.inputs[1] != BUFFER_UNUSED)
         ? ctx.buffers->get(inst.inputs[1])
         : left;  // mono: use left for both
+
+    if ((inst.flags & InstructionFlag::BUS_WRITE) != 0) {
+        // Bus accumulator: sum into an adjacent scratch buffer pair.
+        float* dst_l = ctx.buffers->get(inst.out_buffer);
+        float* dst_r = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+            float l = left[i];
+            float r = right[i];
+            // Sanitize NaN/Inf to prevent one chain from killing all audio
+            if (!std::isfinite(l)) l = 0.0f;
+            if (!std::isfinite(r)) r = 0.0f;
+            dst_l[i] += l;
+            dst_r[i] += r;
+        }
+        return;
+    }
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
         float l = left[i];

@@ -87,11 +87,19 @@ std::array<float, cedar::BLOCK_SIZE> run_blocks(const akkado::CompileResult& r,
     return L;
 }
 
+// prd-bus-routing: these tests probe out() / runtime values directly. Bypass
+// the master bus so out() stays a transparent device write — no default
+// soft-clip @ 0.9, no ±1.0 safety clamp. The master bus has its own tests.
+akkado::CompileResult compile_raw(std::string_view src) {
+    return akkado::compile(src, "<input>", nullptr, nullptr,
+                           /*lint_strict=*/false, /*bypass_master=*/true);
+}
+
 }  // namespace
 
 TEST_CASE("event-arrays: notes() emits SEQPAT_VALUES (MIDI) + length opcode",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "out(len(e.notes), len(e.notes))\n");
     REQUIRE(r.success);
@@ -104,7 +112,7 @@ TEST_CASE("event-arrays: notes() emits SEQPAT_VALUES (MIDI) + length opcode",
 
 TEST_CASE("event-arrays: freqs() emits SEQPAT_VALUES in Hz mode (rate 0)",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "x = e.freqs\n"
         "out(x[0], x[1])\n");
@@ -115,7 +123,7 @@ TEST_CASE("event-arrays: freqs() emits SEQPAT_VALUES in Hz mode (rate 0)",
 
 TEST_CASE("event-arrays: len(e.notes) is the runtime chord size",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "out(len(e.notes), len(e.notes))\n");
     REQUIRE(r.success);
@@ -127,7 +135,7 @@ TEST_CASE("event-arrays: len(e.notes) is the runtime chord size",
 
 TEST_CASE("event-arrays: notes() yields the chord's MIDI numbers",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "x = e.notes\n"
         "out(x[0], x[1])\n");
@@ -140,7 +148,7 @@ TEST_CASE("event-arrays: notes() yields the chord's MIDI numbers",
 TEST_CASE("event-arrays: indexing wraps past the chord length",
           "[pattern_event_arrays]") {
     // x[3] on a 3-note chord wraps to x[0].
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "x = e.notes\n"
         "out(x[3], x[3])\n");
@@ -152,7 +160,7 @@ TEST_CASE("event-arrays: indexing wraps past the chord length",
 TEST_CASE("event-arrays: e.notes can be indexed directly without a binding",
           "[pattern_event_arrays]") {
     // The parser allows `[i]` directly after a field access.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "out(e.notes[1], e.notes[1])\n");
     REQUIRE(r.success);
@@ -162,7 +170,7 @@ TEST_CASE("event-arrays: e.notes can be indexed directly without a binding",
 
 TEST_CASE("event-arrays: freqs() yields the chord frequencies in Hz",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "x = e.freqs\n"
         "out(x[0], x[0])\n");
@@ -174,7 +182,7 @@ TEST_CASE("event-arrays: freqs() yields the chord frequencies in Hz",
 
 TEST_CASE("event-arrays: monophonic event is a length-1 dynamic array",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"c4\" as e\n"
         "out(len(e.notes), len(e.notes))\n");
     REQUIRE(r.success);
@@ -185,7 +193,7 @@ TEST_CASE("event-arrays: monophonic event is a length-1 dynamic array",
 TEST_CASE("event-arrays: notes(pattern-literal) accepts a literal directly",
           "[pattern_event_arrays]") {
     // PRD Q4: notes() accepts any Pattern, not just an `as`-bound variable.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "x = notes(n\"[c4,e4,g4]\")\n"
         "out(x[0], x[1])\n");
     REQUIRE(r.success);
@@ -193,7 +201,7 @@ TEST_CASE("event-arrays: notes(pattern-literal) accepts a literal directly",
 
 TEST_CASE("event-arrays: e.notes UFCS method call composes with step",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "fn step (arr, trig) -> arr[counter(trig)]\n"
         "n\"[c4,e4,g4] g3\" as e\n"
         "e.notes.step(trigger(8)) |> mtof(@) |> osc(\"sin\", @) |> out(@, @)\n");
@@ -206,7 +214,7 @@ TEST_CASE("event-arrays: e.notes UFCS method call composes with step",
 
 TEST_CASE("event-arrays: stateful UGen over a dynamic array is rejected",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "osc(\"sin\", e.freqs) |> out(@, @)\n");
     CHECK_FALSE(r.success);
@@ -217,7 +225,7 @@ TEST_CASE("event-arrays: map() over a dynamic array stays dynamic",
           "[pattern_event_arrays]") {
     // map(e.notes, (v) -> v + 7) transposes every chord note; the result is
     // still a DynArray, indexable through step().
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "fn step (arr, trig) -> arr[counter(trig)]\n"
         "n\"[c4,e4,g4] g3\" as e\n"
         "map(e.notes, (v) -> v + 7).step(trigger(8))\n"
@@ -227,7 +235,7 @@ TEST_CASE("event-arrays: map() over a dynamic array stays dynamic",
 
 TEST_CASE("event-arrays: map() over a dynamic array rejects the index form",
           "[pattern_event_arrays]") {
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "x = map(e.notes, (v, i) -> v + i)\n"
         "out(x[0], x[0])\n");
@@ -239,7 +247,7 @@ TEST_CASE("event-arrays: scalar e.freq accessor is unchanged",
           "[pattern_event_arrays]") {
     // Regression: the existing first-note scalar accessor still compiles and
     // does not emit SEQPAT_VALUES.
-    auto r = akkado::compile(
+    auto r = compile_raw(
         "n\"[c4,e4,g4]\" as e\n"
         "osc(\"sin\", e.freq) |> out(@, @)\n");
     REQUIRE(r.success);
@@ -251,6 +259,6 @@ TEST_CASE("event-arrays: notes is a normal (non-reserved) identifier",
           "[pattern_event_arrays]") {
     // `notes` is a common variable name — unlike state/get/set it is NOT
     // reserved; a user binding shadows the builtin like len/map.
-    auto r = akkado::compile("notes = [60, 64, 67]\nout(notes[0], notes[1])\n");
+    auto r = compile_raw("notes = [60, 64, 67]\nout(notes[0], notes[1])\n");
     REQUIRE(r.success);
 }
