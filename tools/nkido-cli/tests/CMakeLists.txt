@@ -54,6 +54,10 @@ add_executable(nkido_cli_tests
     test_render.cpp
     test_serve.cpp
     test_midi_cc_dispatch.cpp
+    test_tdm_catalog.cpp
+    # parse_tdm_catalog() is unit-tested directly, so the CLI's asset_loader
+    # translation unit is compiled into the test binary.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../asset_loader.cpp
 )
 
 # Make sure the CLI binary is built before tests try to invoke it.
@@ -62,7 +66,7 @@ add_dependencies(nkido_cli_tests nkido-cli)
 target_include_directories(nkido_cli_tests
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/..  # for midi_input.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/..  # for midi_input.hpp, asset_loader.hpp
 )
 
 target_link_libraries(nkido_cli_tests
@@ -70,6 +74,7 @@ target_link_libraries(nkido_cli_tests
         Catch2::Catch2WithMain
         nkido_compiler_options
         cedar  # dispatch_midi_cc inlines into the test; cedar provides VM + EnvMap
+        akkado  # asset_loader.cpp uses akkado::RequiredSample
 )
 
 catch_discover_tests(nkido_cli_tests)

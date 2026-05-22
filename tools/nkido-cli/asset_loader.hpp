@@ -22,6 +22,48 @@ struct BankManifest {
     std::unordered_map<std::string, std::vector<std::string>> samples;
 };
 
+/// One machine from the Tidal Drum Machines catalog: its directory prefix
+/// plus the sound-code → variant-path map. Variant paths are relative to
+/// `TdmCatalog::base + path` and are stored verbatim (un-encoded).
+struct TdmCatalogBank {
+    std::string path;  // e.g. "RolandTR808/" — relative to the catalog base
+    std::unordered_map<std::string, std::vector<std::string>> sounds;
+};
+
+/// The combined catalog produced by `scripts/generate-tdm-catalog.sh`. Maps
+/// 70+ drum-machine names to their sound/variant layout, all pinned to one
+/// upstream commit SHA via `base`.
+struct TdmCatalog {
+    std::string base;    // _base — absolute URL ending in "machines/"
+    std::string commit;  // _commit — upstream SHA the URLs are pinned to
+    std::unordered_map<std::string, TdmCatalogBank> banks;
+
+    bool has_bank(const std::string& name) const {
+        return banks.find(name) != banks.end();
+    }
+};
+
+/// Parse the combined Tidal Drum Machines catalog JSON. Throws
+/// `std::runtime_error` on malformed input.
+TdmCatalog parse_tdm_catalog(std::string_view json);
+
+/// Discover the built-in `catalog.json`. Tries (in order):
+///   1. `NKIDO_TDM_CATALOG` env var (URI or bare path → file://). An empty
+///      value is an explicit silent opt-out.
+///   2. `NKIDO_TDM_CATALOG_PATH` compile-time macro (in-tree builds).
+///   3. Walk-up from CWD for
+///      `web/static/samples/tidal-drum-machines/catalog.json`.
+///   4. Install-relative `<binary_dir>/../share/nkido/tidal-drum-machines/catalog.json`.
+///
+/// Returns `std::nullopt` if nothing is found.
+std::optional<std::string> find_tdm_catalog_uri(std::ostream& diag);
+
+/// Discover, fetch, and parse the Tidal Drum Machines catalog. Returns
+/// `std::nullopt` when no catalog is found or it fails to parse (a one-line
+/// diagnostic is emitted to `diag`); `.bank()` then falls back to the
+/// existing unknown-bank behavior.
+std::optional<TdmCatalog> load_tdm_catalog(std::ostream& diag);
+
 /// Set up the process-wide UriResolver with the standard native handler
 /// stack: file://, http://, https:// (cached via the supplied FileCache),
 /// github:, bundled://. Idempotent — calling twice replaces the handlers.
@@ -49,12 +91,17 @@ std::uint32_t load_sample_uri(cedar::VM& vm, const std::string& uri, const std::
 /// or "default"; named banks take their entry from `named_banks`. Missing
 /// samples are reported on stderr but do not abort the run.
 ///
+/// When `catalog` is non-null, a RequiredSample whose bank field matches a
+/// catalog machine resolves ahead of `named_banks` — streaming the pinned
+/// GitHub raw URL (or, if present, the local download cache).
+///
 /// Returns the number of samples successfully registered.
 std::size_t register_required_samples(
     cedar::VM& vm,
     const std::vector<akkado::RequiredSample>& required,
     const std::vector<BankManifest>& default_banks,
-    const std::unordered_map<std::string, BankManifest>& named_banks);
+    const std::unordered_map<std::string, BankManifest>& named_banks,
+    const TdmCatalog* catalog = nullptr);
 
 /// Discover the built-in default sample-kit manifest URI. Tries (in order):
 ///   1. `NKIDO_DEFAULT_KIT` env var (URI or bare path → file://).

@@ -10,6 +10,7 @@ import { midiBank } from '$lib/audio/midi-bank';
 import type { MidiMeta } from '$lib/audio/midi-meta';
 import { settingsStore } from './settings.svelte';
 import { bankRegistry, type SampleReference } from '$lib/audio/bank-registry';
+import { ensureCatalogLoaded, hasCatalogBank } from '$lib/audio/bank-catalog';
 import { loadFile } from '$lib/io/file-loader';
 import { pathToFetchUri } from '$lib/io/path-to-uri';
 import { listUploads, forgetUpload } from '$lib/io/upload-manifest';
@@ -1360,18 +1361,44 @@ function createAudioEngine() {
 			// caused cross-chain coupling where one chain's missing
 			// extended entry redirected another chain's loader path.
 			const extendedSamples = compileResult.requiredSamplesExtended || [];
+
+			// Register the Tidal Drum Machines catalog before resolving
+			// samples, so `.bank("<Machine>")` references find a known bank.
+			// Only pay the fetch when the program actually uses a named bank.
+			if (extendedSamples.some((s) => s.bank && s.bank !== 'default')) {
+				await ensureCatalogLoaded();
+			}
+
+			// A sample that fails to load is a hard error for user banks and
+			// the default kit, but a *soft* failure for the built-in
+			// drum-machine catalog: a missing catalog sample (offline, 404,
+			// GitHub down) warns and leaves that one voice silent — the rest
+			// of the program keeps running.
 			const missingSamples: string[] = [];
+			const missingCatalog: string[] = [];
 			for (const sample of extendedSamples) {
 				const loaded = await ensureBankSampleLoaded(sample);
 				if (!loaded) {
 					const displayName = sample.bank
 						? `${sample.bank}/${sample.name}:${sample.variant}`
 						: sample.name;
-					missingSamples.push(displayName);
+					if (sample.bank && hasCatalogBank(sample.bank)) {
+						missingCatalog.push(displayName);
+					} else {
+						missingSamples.push(displayName);
+					}
 				}
 			}
 
-			// If any samples couldn't be loaded, report as error
+			if (missingCatalog.length > 0) {
+				console.warn(
+					`[AudioEngine] ${missingCatalog.length} drum-machine sample(s) ` +
+						`could not be loaded — those voices are silent:`,
+					missingCatalog
+				);
+			}
+
+			// If any non-catalog samples couldn't be loaded, report as error
 			if (missingSamples.length > 0) {
 				return {
 					success: false,

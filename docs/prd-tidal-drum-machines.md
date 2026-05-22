@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — Make the 80 drum machines of `geikha/tidal-drum-machines` available as built-in, auto-resolving banks. Samples stream from GitHub on demand (web) or via a local download script (CLI); nothing is bundled into the webapp deployment.
+> **Status: IMPLEMENTED** — The drum machines of `geikha/tidal-drum-machines` (72 at the pinned commit) are available as built-in, auto-resolving banks. Samples stream from GitHub on demand (web) or via a local download script (CLI); nothing is bundled into the webapp deployment.
 
 # PRD: Tidal Drum Machines — Built-in Catalog, On-Demand Samples
 

@@ -168,6 +168,179 @@ private:
     std::size_t pos_ = 0;
 };
 
+/// Minimal recursive-descent parser for the combined Tidal Drum Machines
+/// catalog: a top-level object with `_base`/`_commit` strings and a `banks`
+/// object whose entries are themselves objects (`_path` string + sound-code
+/// → string-array). Reuses the same JSON subset as ManifestScanner; nested
+/// objects are handled explicitly here (ManifestScanner skips them).
+class TdmCatalogScanner {
+public:
+    explicit TdmCatalogScanner(std::string_view text) : src_(text) {}
+
+    TdmCatalog parse() {
+        TdmCatalog cat;
+        skip_ws();
+        if (!consume('{')) throw std::runtime_error("catalog: expected '{'");
+        skip_ws();
+        if (consume('}')) return cat;
+
+        while (true) {
+            skip_ws();
+            std::string key = parse_string();
+            skip_ws();
+            if (!consume(':')) throw std::runtime_error("catalog: expected ':' after '" + key + "'");
+            skip_ws();
+            if (key == "_base" && peek() == '"') {
+                cat.base = parse_string();
+            } else if (key == "_commit" && peek() == '"') {
+                cat.commit = parse_string();
+            } else if (key == "banks" && peek() == '{') {
+                parse_banks(cat);
+            } else {
+                skip_value();
+            }
+            skip_ws();
+            if (consume(',')) continue;
+            if (consume('}')) break;
+            throw std::runtime_error("catalog: expected ',' or '}'");
+        }
+        if (cat.base.empty()) throw std::runtime_error("catalog: missing _base");
+        return cat;
+    }
+
+private:
+    void parse_banks(TdmCatalog& cat) {
+        if (!consume('{')) throw std::runtime_error("catalog: expected '{' for banks");
+        skip_ws();
+        if (consume('}')) return;
+        while (true) {
+            skip_ws();
+            std::string bank_name = parse_string();
+            skip_ws();
+            if (!consume(':')) throw std::runtime_error("catalog: expected ':' after bank name");
+            skip_ws();
+            cat.banks.emplace(std::move(bank_name), parse_bank());
+            skip_ws();
+            if (consume(',')) continue;
+            if (consume('}')) break;
+            throw std::runtime_error("catalog: expected ',' or '}' in banks");
+        }
+    }
+
+    TdmCatalogBank parse_bank() {
+        TdmCatalogBank bank;
+        if (!consume('{')) throw std::runtime_error("catalog: expected '{' for bank");
+        skip_ws();
+        if (consume('}')) return bank;
+        while (true) {
+            skip_ws();
+            std::string key = parse_string();
+            skip_ws();
+            if (!consume(':')) throw std::runtime_error("catalog: expected ':' in bank");
+            skip_ws();
+            if (key == "_path" && peek() == '"') {
+                bank.path = parse_string();
+            } else if (peek() == '[') {
+                bank.sounds[std::move(key)] = parse_string_array();
+            } else {
+                skip_value();
+            }
+            skip_ws();
+            if (consume(',')) continue;
+            if (consume('}')) break;
+            throw std::runtime_error("catalog: expected ',' or '}' in bank");
+        }
+        return bank;
+    }
+
+    char peek() { return pos_ < src_.size() ? src_[pos_] : '\0'; }
+    char advance() { return pos_ < src_.size() ? src_[pos_++] : '\0'; }
+    bool consume(char c) { if (peek() == c) { advance(); return true; } return false; }
+    void skip_ws() {
+        while (pos_ < src_.size()) {
+            char c = src_[pos_];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') ++pos_;
+            else break;
+        }
+    }
+    std::string parse_string() {
+        if (!consume('"')) throw std::runtime_error("catalog: expected string");
+        std::string out;
+        while (pos_ < src_.size()) {
+            char c = src_[pos_++];
+            if (c == '"') return out;
+            if (c == '\\') {
+                if (pos_ >= src_.size()) break;
+                char esc = src_[pos_++];
+                switch (esc) {
+                    case 'n': out.push_back('\n'); break;
+                    case 't': out.push_back('\t'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    default:  out.push_back(esc); break;  // ", \, /, permissive
+                }
+            } else {
+                out.push_back(c);
+            }
+        }
+        throw std::runtime_error("catalog: unterminated string");
+    }
+    std::vector<std::string> parse_string_array() {
+        std::vector<std::string> out;
+        if (!consume('[')) throw std::runtime_error("catalog: expected '['");
+        skip_ws();
+        if (consume(']')) return out;
+        while (true) {
+            skip_ws();
+            out.push_back(parse_string());
+            skip_ws();
+            if (consume(',')) continue;
+            if (consume(']')) break;
+            throw std::runtime_error("catalog: expected ',' or ']' in array");
+        }
+        return out;
+    }
+    void skip_value() {
+        int depth = 0;
+        while (pos_ < src_.size()) {
+            char c = src_[pos_];
+            if (c == '"') { parse_string(); continue; }
+            if (c == '{' || c == '[') { ++depth; ++pos_; continue; }
+            if (c == '}' || c == ']') {
+                if (depth == 0) return;
+                --depth; ++pos_; continue;
+            }
+            if (c == ',' && depth == 0) return;
+            ++pos_;
+        }
+    }
+
+    std::string_view src_;
+    std::size_t pos_ = 0;
+};
+
+/// Percent-encode a relative URL path so filenames with spaces or other
+/// reserved characters resolve correctly against raw.githubusercontent.com.
+/// Path separators and the RFC 3986 unreserved set pass through unchanged.
+std::string url_encode_path(const std::string& path) {
+    static const char* kHex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(path.size());
+    for (char raw : path) {
+        const unsigned char c = static_cast<unsigned char>(raw);
+        if (std::isalnum(c) || c == '/' || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[c >> 4]);
+            out.push_back(kHex[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
 std::string derive_base_url(const std::string& uri) {
     // Strip everything after the last '/' to get the directory URL.
     auto last = uri.find_last_of('/');
@@ -210,6 +383,16 @@ BankManifest fetch_bank_manifest(const std::string& uri) {
     }
     if (!m.base_url.empty() && m.base_url.back() != '/') m.base_url.push_back('/');
     return m;
+}
+
+TdmCatalog parse_tdm_catalog(std::string_view json) {
+    TdmCatalogScanner scanner(json);
+    TdmCatalog cat = scanner.parse();
+    if (cat.base.empty()) {
+        throw std::runtime_error("catalog: missing _base");
+    }
+    if (cat.base.back() != '/') cat.base.push_back('/');
+    return cat;
 }
 
 int load_soundfont_uri(cedar::VM& vm, const std::string& uri, const std::string& display_name) {
@@ -263,18 +446,81 @@ std::string resolve_sample_url(const BankManifest& m, const std::string& path) {
     return m.base_url + path;
 }
 
+/// If `rel` (a `<Machine>/<sub>/<file>` path) exists under the local
+/// download cache, return its `file://` URI. The cache is populated by
+/// `scripts/download-tdm.sh` and lets the CLI play catalog kits offline.
+std::optional<std::string> tdm_local_cache_path(const std::string& rel) {
+    namespace fs = std::filesystem;
+    fs::path cache_dir;
+    if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && xdg[0]) {
+        cache_dir = fs::path(xdg);
+    } else if (const char* home = std::getenv("HOME"); home && home[0]) {
+        cache_dir = fs::path(home) / ".cache";
+    } else {
+        return std::nullopt;
+    }
+    fs::path full = cache_dir / "nkido" / "tidal-drum-machines" / rel;
+    std::error_code ec;
+    if (!fs::is_regular_file(full, ec) || ec) return std::nullopt;
+    fs::path canon = fs::canonical(full, ec);
+    if (ec) canon = full;
+    std::string s = canon.generic_string();
+    if (!s.empty() && s.front() != '/') s.insert(s.begin(), '/');
+    return "file://" + s;
+}
+
+/// Resolve a Tidal Drum Machines catalog sample to a URI. Prefers a local
+/// download-cache copy (populated by scripts/download-tdm.sh) so the CLI
+/// works offline; otherwise builds the pinned GitHub raw URL with the path
+/// percent-encoded (filenames upstream contain spaces).
+std::string resolve_tdm_sample_uri(const TdmCatalog& catalog,
+                                   const TdmCatalogBank& bank,
+                                   const std::string& rel) {
+    if (auto local = tdm_local_cache_path(bank.path + rel)) {
+        return *local;
+    }
+    return catalog.base + url_encode_path(bank.path + rel);
+}
+
 }  // namespace
 
 std::size_t register_required_samples(
     cedar::VM& vm,
     const std::vector<akkado::RequiredSample>& required,
     const std::vector<BankManifest>& default_banks,
-    const std::unordered_map<std::string, BankManifest>& named_banks) {
+    const std::unordered_map<std::string, BankManifest>& named_banks,
+    const TdmCatalog* catalog) {
     std::size_t loaded = 0;
 
     for (const auto& req : required) {
         if (vm.sample_bank().has_sample(req.qualified_name())) {
             ++loaded;
+            continue;
+        }
+
+        // Tidal Drum Machines catalog banks resolve ahead of user banks: a
+        // `.bank("RolandTR808")` whose name matches the built-in catalog
+        // streams the pinned GitHub raw URL (cached via the https handler).
+        // A missing variant or a failed fetch is a soft failure — warn and
+        // continue so the rest of the program keeps playing.
+        if (catalog && !req.bank.empty() && req.bank != "default" &&
+            catalog->has_bank(req.bank)) {
+            const TdmCatalogBank& bank = catalog->banks.at(req.bank);
+            auto sit = bank.sounds.find(req.name);
+            if (sit == bank.sounds.end() || sit->second.empty()) {
+                std::cerr << "warning: sample '" << req.qualified_name()
+                          << "' not found in catalog bank '" << req.bank
+                          << "'\n";
+                continue;
+            }
+            const int n = static_cast<int>(sit->second.size());
+            int idx = req.variant % n;
+            if (idx < 0) idx += n;
+            const std::string& rel = sit->second[static_cast<std::size_t>(idx)];
+            std::string url = resolve_tdm_sample_uri(*catalog, bank, rel);
+            if (load_sample_uri(vm, url, req.qualified_name()) != 0) {
+                ++loaded;
+            }
             continue;
         }
 
@@ -314,6 +560,9 @@ namespace {
 
 constexpr const char* kDefaultKitRelative =
     "web/static/samples/bpb_808_clean/strudel.json";
+
+constexpr const char* kTdmCatalogRelative =
+    "web/static/samples/tidal-drum-machines/catalog.json";
 
 // Convert a filesystem path to a file:// URI. Already-URI inputs (with a
 // "scheme://" prefix) pass through unchanged.
@@ -520,6 +769,88 @@ std::optional<std::string> find_default_bank_uri(std::ostream& diag) {
     }
 
     return std::nullopt;
+}
+
+std::optional<std::string> find_tdm_catalog_uri(std::ostream& diag) {
+    namespace fs = std::filesystem;
+
+    // 1. Env var override. Empty = explicit silent opt-out.
+    if (const char* env = std::getenv("NKIDO_TDM_CATALOG")) {
+        std::string value(env);
+        if (value.empty()) return std::nullopt;
+        if (value.find("://") == std::string::npos && !path_exists(value)) {
+            diag << "info: NKIDO_TDM_CATALOG='" << value
+                 << "' does not exist on disk; will still attempt fetch\n";
+        }
+        return path_to_uri(value);
+    }
+
+    // 2. Compile-time macro (in-tree dev builds).
+#ifdef NKIDO_TDM_CATALOG_PATH
+    {
+        std::string p(NKIDO_TDM_CATALOG_PATH);
+        if (!p.empty() && path_exists(p)) {
+            return path_to_uri(p);
+        }
+    }
+#endif
+
+    // 3. Walk up from CWD looking for the committed catalog.
+    {
+        std::error_code ec;
+        fs::path cwd = fs::current_path(ec);
+        if (!ec) {
+            for (fs::path dir = cwd; !dir.empty(); ) {
+                fs::path candidate = dir / kTdmCatalogRelative;
+                if (fs::exists(candidate, ec) && !ec) {
+                    return path_to_uri(candidate.generic_string());
+                }
+                fs::path parent = dir.parent_path();
+                if (parent == dir) break;
+                dir = std::move(parent);
+            }
+        }
+    }
+
+    // 4. Install-relative fallback.
+    if (auto exe_dir = executable_dir()) {
+        fs::path candidate = *exe_dir / ".." / "share" / "nkido"
+                             / "tidal-drum-machines" / "catalog.json";
+        std::error_code ec;
+        if (fs::exists(candidate, ec) && !ec) {
+            fs::path canon = fs::canonical(candidate, ec);
+            if (ec) canon = candidate;
+            return path_to_uri(canon.generic_string());
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<TdmCatalog> load_tdm_catalog(std::ostream& diag) {
+    auto uri = find_tdm_catalog_uri(diag);
+    if (!uri) {
+        diag << "info: Tidal Drum Machines catalog not found; "
+                ".bank(\"<Machine>\") falls back to unknown-bank behavior\n";
+        return std::nullopt;
+    }
+    auto& r = cedar::UriResolver::instance();
+    auto result = r.load(*uri);
+    if (!result.success()) {
+        diag << "info: drum-machine catalog '" << *uri << "' could not be "
+                "loaded: " << result.error().message << "\n";
+        return std::nullopt;
+    }
+    const auto& bytes = result.buffer();
+    std::string_view text(reinterpret_cast<const char*>(bytes.data()),
+                          bytes.size());
+    try {
+        return parse_tdm_catalog(text);
+    } catch (const std::exception& e) {
+        diag << "info: drum-machine catalog '" << *uri
+             << "' failed to parse: " << e.what() << "\n";
+        return std::nullopt;
+    }
 }
 
 }  // namespace nkido

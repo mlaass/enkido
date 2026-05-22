@@ -280,3 +280,26 @@ TEST_CASE("render mode resolves bare sample names via built-in default kit",
     auto left = channel(w, 0);
     CHECK(peak(left) > 0.05f);
 }
+
+TEST_CASE("catalog-bank sample fetch failure is a soft failure",
+          "[render][sample][tdm]") {
+    // A `.bank("<Machine>")` sample that cannot be fetched must NOT abort the
+    // render — the program completes and that voice is silent. The fixture
+    // catalog (tdm_catalog_bad.json) points the bank at an unreachable
+    // file:// base, so this regression test is fully offline. Without the
+    // soft-fail path a missing catalog sample would have aborted the run.
+    const std::string wav = out_path("tdm_softfail");
+    std::filesystem::remove(wav);
+
+    std::ostringstream args;
+    args << "render --seconds 1 --bpm 120"
+         << " --source 's\"bd\".bank(\"FakeMachine\").out()'"
+         << " -o " << wav;
+
+    const std::string env_prefix =
+        std::string("NKIDO_TDM_CATALOG=") + nkido::test::FIXTURES_DIR +
+        "/tdm_catalog_bad.json";
+    // Exit 0 — the unreachable sample warns but does not abort the render.
+    REQUIRE(run_cli_env(env_prefix, args.str()) == 0);
+    REQUIRE(std::filesystem::exists(wav));
+}

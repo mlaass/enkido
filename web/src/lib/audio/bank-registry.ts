@@ -266,6 +266,18 @@ class BankRegistryClass {
 	}
 
 	/**
+	 * Register a known/lazy catalog bank (e.g. a Tidal Drum Machine). Only
+	 * metadata is stored — `samples` holds variant *paths* relative to
+	 * `baseUrl`, and individual samples are fetched on demand by
+	 * `ensureBankSampleLoaded`. A bank already present is left untouched so
+	 * a user-loaded bank of the same name keeps priority.
+	 */
+	registerCatalogBank(name: string, baseUrl: string, samples: Map<string, string[]>): void {
+		if (this.banks.has(name)) return;
+		this.banks.set(name, { name, baseUrl, samples, loaded: new Set() });
+	}
+
+	/**
 	 * Clear a specific bank
 	 */
 	clearBank(name: string): void {

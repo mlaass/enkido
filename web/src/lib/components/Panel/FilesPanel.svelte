@@ -14,6 +14,7 @@
 	} from '$lib/audio/file-router';
 	import { gmProgramName } from '$lib/audio/gm-programs';
 	import { ChevronDown, ChevronRight, Copy, Check } from 'lucide-svelte';
+	import DrumMachineCatalog from './DrumMachineCatalog.svelte';
 
 	let dropping = $state(false);
 	let errors = $state<string[]>([]);
@@ -286,6 +287,9 @@
 			</div>
 		{/if}
 	</section>
+
+	<!-- Drum Machines catalog (Tidal Drum Machines) -->
+	<DrumMachineCatalog />
 
 	<!-- SoundFonts section -->
 	<section class="kind-section">

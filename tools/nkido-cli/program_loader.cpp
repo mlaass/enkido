@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -207,11 +208,24 @@ bool prepare_program_assets(cedar::VM& vm,
 
     // Resolve every RequiredSample referenced by the program against the
     // loaded bank list. Default-bank events search `default_banks`
-    // first-hit-wins; events qualified with `.bank("Name")` look up
-    // `named_banks` by the derived bank name.
+    // first-hit-wins; events qualified with `.bank("Name")` look up the
+    // built-in Tidal Drum Machines catalog first, then `named_banks`.
     if (!cr.required_samples_extended.empty()) {
+        // Load the catalog only when the program references a non-default
+        // bank — pure default-kit patches stay network-free and quiet.
+        std::optional<TdmCatalog> tdm_catalog;
+        const bool wants_named_bank = std::any_of(
+            cr.required_samples_extended.begin(),
+            cr.required_samples_extended.end(),
+            [](const akkado::RequiredSample& r) {
+                return !r.bank.empty() && r.bank != "default";
+            });
+        if (wants_named_bank) {
+            tdm_catalog = load_tdm_catalog(err);
+        }
         register_required_samples(
-            vm, cr.required_samples_extended, default_banks, named_banks);
+            vm, cr.required_samples_extended, default_banks, named_banks,
+            tdm_catalog ? &*tdm_catalog : nullptr);
     }
 
     // Wavetables declared via wt_load() in source order. The runtime slot

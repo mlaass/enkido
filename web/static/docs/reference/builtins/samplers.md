@@ -13,6 +13,8 @@ tagline: One-shot and looping playback with kit shortcuts.
 
 Samplers play recorded audio. The common path is a **sample pattern** like `s"bd sd hh sd"`, which triggers events from the loaded sample bank. nkido ships with a default 808 drum kit so common drum names work out of the box. For trigger-driven one-shots — e.g. firing a kick on a button press — `sample()` accepts the same names as patterns. `sample_loop()` plays a sample looped while a gate is held.
 
+Beyond the default kit, the 70+ vintage drum machines of [`geikha/tidal-drum-machines`](https://github.com/geikha/tidal-drum-machines) are a **built-in, auto-resolving catalog** — name a machine with `.bank()` and its samples stream from GitHub on demand (`s"bd sd hh".bank("RolandTR808").out()`), no `samples()` directive needed. See [URI Schemes — Built-in drum machines](../uri-schemes.md) for the full reference.
+
 ## sample
 
 **One-shot sampler** - Trigger a sample on every rising edge.

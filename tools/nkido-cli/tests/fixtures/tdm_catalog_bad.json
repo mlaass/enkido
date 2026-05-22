@@ -1,0 +1,12 @@
+{
+  "_source": "test-fixture",
+  "_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "_generated": "2026-05-22",
+  "_base": "file:///nonexistent-nkido-tdm-test-base/machines/",
+  "banks": {
+    "FakeMachine": {
+      "_path": "FakeMachine/",
+      "bd": ["fakemachine-bd/Bassdrum.wav"]
+    }
+  }
+}

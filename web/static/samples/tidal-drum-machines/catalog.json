@@ -1,0 +1,4219 @@
+{
+ "_source": "github:geikha/tidal-drum-machines",
+ "_commit": "15eac73c5e878550f91d864a4863e014799403f1",
+ "_generated": "2026-05-22",
+ "_base": "https://raw.githubusercontent.com/geikha/tidal-drum-machines/15eac73c5e878550f91d864a4863e014799403f1/machines/",
+ "banks": {
+  "AJKPercusyn": {
+   "_path": "AJKPercusyn/",
+   "bd": [
+    "ajkpercusyn-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "ajkpercusyn-cb/Cowbell.wav",
+    "ajkpercusyn-cb/Snarepop.wav"
+   ],
+   "ht": [
+    "ajkpercusyn-ht/Tom.wav"
+   ],
+   "sd": [
+    "ajkpercusyn-sd/Noise.wav"
+   ]
+  },
+  "AkaiLinn": {
+   "_path": "AkaiLinn/",
+   "bd": [
+    "akailinn-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "akailinn-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "akailinn-cp/Clap.wav"
+   ],
+   "cr": [
+    "akailinn-cr/Crash.wav"
+   ],
+   "hh": [
+    "akailinn-hh/Closed Hat.wav"
+   ],
+   "ht": [
+    "akailinn-ht/Tom H.wav"
+   ],
+   "lt": [
+    "akailinn-lt/Tom L.wav"
+   ],
+   "mt": [
+    "akailinn-mt/Tom M.wav"
+   ],
+   "oh": [
+    "akailinn-oh/Open Hat.wav"
+   ],
+   "rd": [
+    "akailinn-rd/Ride.wav"
+   ],
+   "sd": [
+    "akailinn-sd/SD.wav"
+   ],
+   "sh": [
+    "akailinn-sh/Shuffle.wav"
+   ],
+   "tb": [
+    "akailinn-tb/Tambourin.wav"
+   ]
+  },
+  "AkaiMPC60": {
+   "_path": "AkaiMPC60/",
+   "bd": [
+    "akaimpc60-bd/0 Bassdrum.wav",
+    "akaimpc60-bd/Bassdrum Gated.wav"
+   ],
+   "cp": [
+    "akaimpc60-cp/Clap.wav"
+   ],
+   "cr": [
+    "akaimpc60-cr/Crash.wav"
+   ],
+   "hh": [
+    "akaimpc60-hh/Closed Hat.wav"
+   ],
+   "ht": [
+    "akaimpc60-ht/Tom H.wav"
+   ],
+   "lt": [
+    "akaimpc60-lt/Tom L.wav"
+   ],
+   "misc": [
+    "akaimpc60-misc/Bass.wav",
+    "akaimpc60-misc/Electric Piano.wav"
+   ],
+   "mt": [
+    "akaimpc60-mt/Tom M.wav"
+   ],
+   "oh": [
+    "akaimpc60-oh/Open Hat.wav"
+   ],
+   "perc": [
+    "akaimpc60-perc/Bongo.wav",
+    "akaimpc60-perc/Click.wav",
+    "akaimpc60-perc/Conga H.wav",
+    "akaimpc60-perc/Conga L.wav",
+    "akaimpc60-perc/Timbale.wav"
+   ],
+   "rd": [
+    "akaimpc60-rd/Ride.wav"
+   ],
+   "rim": [
+    "akaimpc60-rim/Rim Gated.wav"
+   ],
+   "sd": [
+    "akaimpc60-sd/Snare 1.wav",
+    "akaimpc60-sd/Snare 2.wav",
+    "akaimpc60-sd/Snare 3.wav"
+   ]
+  },
+  "AkaiXR10": {
+   "_path": "AkaiXR10/",
+   "bd": [
+    "akaixr10-bd/Bassdrum-01.wav",
+    "akaixr10-bd/Bassdrum-02.wav",
+    "akaixr10-bd/Bassdrum-03.wav",
+    "akaixr10-bd/Bassdrum-04.wav",
+    "akaixr10-bd/Bassdrum-05.wav",
+    "akaixr10-bd/Bassdrum-06.wav",
+    "akaixr10-bd/Bassdrum-07.wav",
+    "akaixr10-bd/Bassdrum-08.wav",
+    "akaixr10-bd/Bassdrum-09.wav",
+    "akaixr10-bd/Bassdrum-10.wav"
+   ],
+   "cb": [
+    "akaixr10-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "akaixr10-cp/Clap.wav"
+   ],
+   "cr": [
+    "akaixr10-cr/Crash-01.wav",
+    "akaixr10-cr/Crash-02.wav",
+    "akaixr10-cr/Crash-03.wav"
+   ],
+   "hh": [
+    "akaixr10-hh/Hat Closed.wav",
+    "akaixr10-hh/Hat Middle.wav"
+   ],
+   "ht": [
+    "akaixr10-ht/Tom H-02.wav"
+   ],
+   "lt": [
+    "akaixr10-lt/Tom L-01.wav",
+    "akaixr10-lt/Tom L-02.wav"
+   ],
+   "misc": [
+    "akaixr10-misc/Hit.wav",
+    "akaixr10-misc/Slap Bass.wav",
+    "akaixr10-misc/Square Kick-01.wav",
+    "akaixr10-misc/Square Kick-02.wav"
+   ],
+   "mt": [
+    "akaixr10-mt/Tom M-01.wav",
+    "akaixr10-mt/Tom M-02.wav"
+   ],
+   "oh": [
+    "akaixr10-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "akaixr10-perc/Agogo.wav",
+    "akaixr10-perc/Claves.wav",
+    "akaixr10-perc/Conga-01.wav",
+    "akaixr10-perc/Conga-02.wav",
+    "akaixr10-perc/Conga-03.wav",
+    "akaixr10-perc/Conga-04.wav",
+    "akaixr10-perc/Fingersanp.wav",
+    "akaixr10-perc/Guiro-01.wav",
+    "akaixr10-perc/Guirro-02.wav",
+    "akaixr10-perc/Timbale H.wav",
+    "akaixr10-perc/Timbale L.wav",
+    "akaixr10-perc/Toma H-01.wav",
+    "akaixr10-perc/Triangle.wav",
+    "akaixr10-perc/Vibrator.wav",
+    "akaixr10-perc/Whistle.wav"
+   ],
+   "rd": [
+    "akaixr10-rd/Ride.wav"
+   ],
+   "rim": [
+    "akaixr10-rim/Rim Shot-01.wav",
+    "akaixr10-rim/Rim Shot-02.wav"
+   ],
+   "sd": [
+    "akaixr10-sd/Snaredrum-01.wav",
+    "akaixr10-sd/Snaredrum-02.wav",
+    "akaixr10-sd/Snaredrum-03.wav",
+    "akaixr10-sd/Snaredrum-04.wav",
+    "akaixr10-sd/Snaredrum-05.wav",
+    "akaixr10-sd/Snaredrum-06.wav",
+    "akaixr10-sd/Snaredrum-07.wav",
+    "akaixr10-sd/Snaredrum-08.wav",
+    "akaixr10-sd/Snaredrum-09.wav",
+    "akaixr10-sd/Snaredrum-10.wav"
+   ],
+   "sh": [
+    "akaixr10-sh/Cabasa.wav"
+   ],
+   "tb": [
+    "akaixr10-tb/Tambourine.wav"
+   ]
+  },
+  "AlesisHR16": {
+   "_path": "AlesisHR16/",
+   "bd": [
+    "alesishr16-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "alesishr16-cp/Clap.wav"
+   ],
+   "hh": [
+    "alesishr16-hh/Closed Hat.wav"
+   ],
+   "ht": [
+    "alesishr16-ht/Tom-2.wav"
+   ],
+   "lt": [
+    "alesishr16-lt/Tom-1.wav"
+   ],
+   "oh": [
+    "alesishr16-oh/Open Hat.wav"
+   ],
+   "perc": [
+    "alesishr16-perc/Agogo Bell.wav",
+    "alesishr16-perc/Claves.wav",
+    "alesishr16-perc/Conga H.wav",
+    "alesishr16-perc/Conga L.wav",
+    "alesishr16-perc/Timbale.wav",
+    "alesishr16-perc/Triangle.wav",
+    "alesishr16-perc/Wood Block H.wav",
+    "alesishr16-perc/Wood Block L.wav"
+   ],
+   "rim": [
+    "alesishr16-rim/Rim.wav"
+   ],
+   "sd": [
+    "alesishr16-sd/Snaredrum.wav"
+   ],
+   "sh": [
+    "alesishr16-sh/Cabasa.wav",
+    "alesishr16-sh/Maracas.wav",
+    "alesishr16-sh/Shaker.wav"
+   ]
+  },
+  "AlesisSR16": {
+   "_path": "AlesisSR16/",
+   "bd": [
+    "alesissr16-bd/Bassdrum-01.wav",
+    "alesissr16-bd/Bassdrum-02.wav",
+    "alesissr16-bd/Bassdrum-03.wav",
+    "alesissr16-bd/Bassdrum-04.wav",
+    "alesissr16-bd/Bassdrum-05.wav",
+    "alesissr16-bd/Bassdrum-06.wav",
+    "alesissr16-bd/Bassdrum-07.wav",
+    "alesissr16-bd/Bassdrum-08.wav",
+    "alesissr16-bd/Bassdrum-09.wav",
+    "alesissr16-bd/Bassdrum-10.wav",
+    "alesissr16-bd/Bassdrum-11.wav",
+    "alesissr16-bd/Bassdrum-12.wav",
+    "alesissr16-bd/Bassdrum-13.wav"
+   ],
+   "cb": [
+    "alesissr16-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "alesissr16-cp/Clap.wav"
+   ],
+   "cr": [
+    "alesissr16-cr/Crash-01.wav",
+    "alesissr16-cr/Crash-02.wav"
+   ],
+   "hh": [
+    "alesissr16-hh/Hat Closed-01.wav",
+    "alesissr16-hh/Hat Closed-02.wav",
+    "alesissr16-hh/Hat Closed-03.wav"
+   ],
+   "misc": [
+    "alesissr16-misc/Hit.wav",
+    "alesissr16-misc/Metal.wav",
+    "alesissr16-misc/Synth Cymbal.wav"
+   ],
+   "oh": [
+    "alesissr16-oh/Hat Open-01.wav",
+    "alesissr16-oh/Hat Open-02.wav",
+    "alesissr16-oh/Hat Open-03.wav",
+    "alesissr16-oh/Hat Reverse.wav"
+   ],
+   "perc": [
+    "alesissr16-perc/Block.wav",
+    "alesissr16-perc/Bongo.wav",
+    "alesissr16-perc/Congo.wav",
+    "alesissr16-perc/Finger.wav",
+    "alesissr16-perc/Guiro.wav",
+    "alesissr16-perc/Timbale.wav",
+    "alesissr16-perc/Triangle.wav"
+   ],
+   "rd": [
+    "alesissr16-rd/Ride-01.wav",
+    "alesissr16-rd/Ride-02.wav",
+    "alesissr16-rd/Ride-03.wav"
+   ],
+   "rim": [
+    "alesissr16-rim/Rim.wav"
+   ],
+   "sd": [
+    "alesissr16-sd/Snaredrum-01.wav",
+    "alesissr16-sd/Snaredrum-02.wav",
+    "alesissr16-sd/Snaredrum-03.wav",
+    "alesissr16-sd/Snaredrum-04.wav",
+    "alesissr16-sd/Snaredrum-05.wav",
+    "alesissr16-sd/Snaredrum-06.wav",
+    "alesissr16-sd/Snaredrum-07.wav",
+    "alesissr16-sd/Snaredrum-08.wav",
+    "alesissr16-sd/Snaredrum-09.wav",
+    "alesissr16-sd/Snaredrum-10.wav",
+    "alesissr16-sd/Snaredrum-11.wav",
+    "alesissr16-sd/Snaredrum-12.wav"
+   ],
+   "sh": [
+    "alesissr16-sh/Shaker.wav"
+   ],
+   "tb": [
+    "alesissr16-tb/Tamb.wav"
+   ]
+  },
+  "BossDR110": {
+   "_path": "BossDR110/",
+   "bd": [
+    "bossdr110-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "bossdr110-cp/Clap.wav"
+   ],
+   "cr": [
+    "bossdr110-cr/Crash.wav"
+   ],
+   "hh": [
+    "bossdr110-hh/Hat Closed.wav"
+   ],
+   "oh": [
+    "bossdr110-oh/Hat Open.wav"
+   ],
+   "rd": [
+    "bossdr110-rd/Ride.wav"
+   ],
+   "sd": [
+    "bossdr110-sd/Snaredrum.wav"
+   ]
+  },
+  "BossDR220": {
+   "_path": "BossDR220/",
+   "bd": [
+    "bossdr220-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "bossdr220-cp/Clap.wav"
+   ],
+   "cr": [
+    "bossdr220-cr/Crash.wav"
+   ],
+   "hh": [
+    "bossdr220-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "bossdr220-ht/Tom H.wav"
+   ],
+   "lt": [
+    "bossdr220-lt/Tom L.wav"
+   ],
+   "mt": [
+    "bossdr220-mt/Tom M.wav"
+   ],
+   "oh": [
+    "bossdr220-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "bossdr220-perc/Clave.wav"
+   ],
+   "rd": [
+    "bossdr220-rd/Ride.wav"
+   ],
+   "sd": [
+    "bossdr220-sd/Snaredrum.wav"
+   ]
+  },
+  "BossDR55": {
+   "_path": "BossDR55/",
+   "bd": [
+    "bossdr55-bd/Bassdrum-01.wav",
+    "bossdr55-bd/Bassdrum-02.wav"
+   ],
+   "hh": [
+    "bossdr55-hh/Hihat1.wav",
+    "bossdr55-hh/Hihat2.wav"
+   ],
+   "rim": [
+    "bossdr55-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "bossdr55-sd/Snaredrum-01.wav",
+    "bossdr55-sd/Snaredrum-02.wav",
+    "bossdr55-sd/Snaredrum-03.wav",
+    "bossdr55-sd/Snaredrum-05.wav",
+    "bossdr55-sd/Snaredrum-06.wav",
+    "bossdr55-sd/Snaredrum-07.wav",
+    "bossdr55-sd/Snaredrum-08.wav",
+    "bossdr55-sd/Snaredrum-09.wav"
+   ]
+  },
+  "BossDR550": {
+   "_path": "BossDR550/",
+   "bd": [
+    "bossdr550-bd/Bassdrum-01.wav",
+    "bossdr550-bd/Bassdrum-02.wav",
+    "bossdr550-bd/Bassdrum-03.wav",
+    "bossdr550-bd/Bassdrum-04.wav",
+    "bossdr550-bd/Bassdrum-05.wav"
+   ],
+   "cb": [
+    "bossdr550-cb/Cowbell-01.wav",
+    "bossdr550-cb/Cowbell-02.wav"
+   ],
+   "cp": [
+    "bossdr550-cp/Clap.wav"
+   ],
+   "cr": [
+    "bossdr550-cr/Crash.wav"
+   ],
+   "hh": [
+    "bossdr550-hh/Hat Closed-01.wav",
+    "bossdr550-hh/Hat Closed-02.wav"
+   ],
+   "ht": [
+    "bossdr550-ht/Tom H-01.wav",
+    "bossdr550-ht/Tom H-02.wav",
+    "bossdr550-ht/Tom H-03.wav"
+   ],
+   "lt": [
+    "bossdr550-lt/Tom L-01.wav",
+    "bossdr550-lt/Tom L-02.wav",
+    "bossdr550-lt/Tom L-03.wav"
+   ],
+   "misc": [
+    "bossdr550-misc/Hi Q.wav",
+    "bossdr550-misc/Srcatch-01.wav",
+    "bossdr550-misc/Srcatch-02.wav"
+   ],
+   "mt": [
+    "bossdr550-mt/Tom M-01.wav",
+    "bossdr550-mt/Tom M-02.wav"
+   ],
+   "oh": [
+    "bossdr550-oh/Hat Open-01.wav",
+    "bossdr550-oh/Hat Open-02.wav"
+   ],
+   "perc": [
+    "bossdr550-perc/Agogo H.wav",
+    "bossdr550-perc/Agogo L.wav",
+    "bossdr550-perc/Bongo H.wav",
+    "bossdr550-perc/Bongo L.wav",
+    "bossdr550-perc/Claves.wav",
+    "bossdr550-perc/Conga H.wav",
+    "bossdr550-perc/Conga L.wav",
+    "bossdr550-perc/Conga S.wav",
+    "bossdr550-perc/Timbale H.wav",
+    "bossdr550-perc/Timbale L.wav",
+    "bossdr550-perc/Whistle.wav"
+   ],
+   "rd": [
+    "bossdr550-rd/Ride-01.wav",
+    "bossdr550-rd/Ride-02.wav"
+   ],
+   "rim": [
+    "bossdr550-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "bossdr550-sd/Snaredrum-01.wav",
+    "bossdr550-sd/Snaredrum-02.wav",
+    "bossdr550-sd/Snaredrum-03.wav",
+    "bossdr550-sd/Snaredrum-04.wav",
+    "bossdr550-sd/Snaredrum-05.wav",
+    "bossdr550-sd/Snaredrum-06.wav"
+   ],
+   "sh": [
+    "bossdr550-sh/Cabasa-01.wav",
+    "bossdr550-sh/Cabasa-02.wav"
+   ],
+   "tb": [
+    "bossdr550-tb/Tambourine.wav"
+   ]
+  },
+  "BossDR660": {
+   "_path": "BossDR660/",
+   "bd": [
+    "bossdr660-bd/808AcK.wav",
+    "bossdr660-bd/808ElK.wav",
+    "bossdr660-bd/808GtK.wav",
+    "bossdr660-bd/909HdK.wav",
+    "bossdr660-bd/Ambo k.wav",
+    "bossdr660-bd/AttackK.wav",
+    "bossdr660-bd/BBallK.wav",
+    "bossdr660-bd/BoSldK.wav",
+    "bossdr660-bd/BreatK.wav",
+    "bossdr660-bd/BriteK.wav",
+    "bossdr660-bd/DanceK.wav",
+    "bossdr660-bd/Deep K.wav",
+    "bossdr660-bd/DelayK.wav",
+    "bossdr660-bd/Door K.wav",
+    "bossdr660-bd/DpVrbK.wav",
+    "bossdr660-bd/Dry K1.wav",
+    "bossdr660-bd/Dry K2.wav",
+    "bossdr660-bd/Dull K.wav",
+    "bossdr660-bd/ElecK1.wav",
+    "bossdr660-bd/ElecK2.wav",
+    "bossdr660-bd/GateK1.wav",
+    "bossdr660-bd/GateK2.wav",
+    "bossdr660-bd/Hard K.wav",
+    "bossdr660-bd/HouseK.wav",
+    "bossdr660-bd/HybrdK.wav",
+    "bossdr660-bd/MdVrbK.wav",
+    "bossdr660-bd/MonDpK.wav",
+    "bossdr660-bd/MonodoK.wav",
+    "bossdr660-bd/PillwK.wav",
+    "bossdr660-bd/PunchK.wav",
+    "bossdr660-bd/Rap K.wav",
+    "bossdr660-bd/Real K.wav",
+    "bossdr660-bd/RevrbK.wav",
+    "bossdr660-bd/RoomK1.wav",
+    "bossdr660-bd/RoomK2.wav",
+    "bossdr660-bd/SharpK.wav",
+    "bossdr660-bd/ShellK.wav",
+    "bossdr660-bd/SmashK.wav",
+    "bossdr660-bd/Soft K.wav",
+    "bossdr660-bd/SolidK.wav",
+    "bossdr660-bd/StrenK.wav",
+    "bossdr660-bd/Syn K.wav",
+    "bossdr660-bd/TR808K.wav",
+    "bossdr660-bd/TR909K.wav",
+    "bossdr660-bd/TeknoK.wav",
+    "bossdr660-bd/Thight K.wav",
+    "bossdr660-bd/Thud K.wav",
+    "bossdr660-bd/Tom K.wav",
+    "bossdr660-bd/VbSldK.wav",
+    "bossdr660-bd/VerbyK.wav",
+    "bossdr660-bd/Wood K.wav"
+   ],
+   "cb": [
+    "bossdr660-cb/78Cow.wav",
+    "bossdr660-cb/808Cow.wav",
+    "bossdr660-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "bossdr660-cp/808Clap.wav"
+   ],
+   "cr": [
+    "bossdr660-cr/ChinaC.wav",
+    "bossdr660-cr/CrachC1.wav",
+    "bossdr660-cr/CrachC2.wav"
+   ],
+   "fx": [
+    "bossdr660-fx/Chink.wav",
+    "bossdr660-fx/DncClp.wav",
+    "bossdr660-fx/FXShot.wav",
+    "bossdr660-fx/FXnoiz.wav",
+    "bossdr660-fx/GatVrb.wav",
+    "bossdr660-fx/GlsSht.wav",
+    "bossdr660-fx/HiQ.wav",
+    "bossdr660-fx/Hoo.wav",
+    "bossdr660-fx/KikAmb.wav",
+    "bossdr660-fx/LongVrb.wav",
+    "bossdr660-fx/LtShot.wav",
+    "bossdr660-fx/RevAmb.wav",
+    "bossdr660-fx/RevBt.wav",
+    "bossdr660-fx/RevCas.wav",
+    "bossdr660-fx/RevClp.wav",
+    "bossdr660-fx/RevCym.wav",
+    "bossdr660-fx/RevHiQ.wav",
+    "bossdr660-fx/RevKik.wav",
+    "bossdr660-fx/RevSht.wav",
+    "bossdr660-fx/RevSnr.wav",
+    "bossdr660-fx/RevTom.wav",
+    "bossdr660-fx/RevVrb.wav",
+    "bossdr660-fx/Scrch1.wav",
+    "bossdr660-fx/Scrch2.wav",
+    "bossdr660-fx/Scrch3.wav",
+    "bossdr660-fx/Scrch4.wav",
+    "bossdr660-fx/SlapBs.wav",
+    "bossdr660-fx/Snaps.wav",
+    "bossdr660-fx/SnrAmb.wav",
+    "bossdr660-fx/SynBs.wav",
+    "bossdr660-fx/TomAmb.wav",
+    "bossdr660-fx/Uut.wav",
+    "bossdr660-fx/VrbClp.wav",
+    "bossdr660-fx/VrbSht.wav"
+   ],
+   "hh": [
+    "bossdr660-hh/78CHH.wav",
+    "bossdr660-hh/808CHH.wav",
+    "bossdr660-hh/BrsCHH.wav",
+    "bossdr660-hh/PopCHH.wav",
+    "bossdr660-hh/RealCH.wav",
+    "bossdr660-hh/RealPH.wav"
+   ],
+   "ht": [
+    "bossdr660-ht/AmboT1.wav",
+    "bossdr660-ht/BoosTH.wav",
+    "bossdr660-ht/BrshT1.wav",
+    "bossdr660-ht/Dry T1.wav",
+    "bossdr660-ht/ElecT1.wav",
+    "bossdr660-ht/LiteT1.wav",
+    "bossdr660-ht/RealT1.wav",
+    "bossdr660-ht/Rim T1.wav",
+    "bossdr660-ht/RockT1.wav",
+    "bossdr660-ht/RoomT1.wav"
+   ],
+   "lt": [
+    "bossdr660-lt/AmboT4.wav",
+    "bossdr660-lt/BoosTL.wav",
+    "bossdr660-lt/BrshT3.wav",
+    "bossdr660-lt/Dry T4.wav",
+    "bossdr660-lt/ElecT4.wav",
+    "bossdr660-lt/LiteT3.wav",
+    "bossdr660-lt/RealT3.wav",
+    "bossdr660-lt/Rim T4.wav",
+    "bossdr660-lt/RockT4.wav",
+    "bossdr660-lt/RoomT4.wav"
+   ],
+   "misc": [
+    "bossdr660-misc/WhislL.wav",
+    "bossdr660-misc/WhislS.wav"
+   ],
+   "mt": [
+    "bossdr660-mt/AmboT2.wav",
+    "bossdr660-mt/BoosT2.wav",
+    "bossdr660-mt/BrshT2.wav",
+    "bossdr660-mt/Dry T2.wav",
+    "bossdr660-mt/ElecT2.wav",
+    "bossdr660-mt/LiteT2.wav",
+    "bossdr660-mt/RealT2.wav",
+    "bossdr660-mt/Rim T2.wav",
+    "bossdr660-mt/RockT2.wav",
+    "bossdr660-mt/RoomT2.wav"
+   ],
+   "oh": [
+    "bossdr660-oh/78OHH.wav",
+    "bossdr660-oh/808OHH.wav",
+    "bossdr660-oh/BrsOHH.wav",
+    "bossdr660-oh/PopOHH.wav",
+    "bossdr660-oh/RealOH.wav"
+   ],
+   "perc": [
+    "bossdr660-perc/55Clav.wav",
+    "bossdr660-perc/78Beat.wav",
+    "bossdr660-perc/78Guir.wav",
+    "bossdr660-perc/78Marc.wav",
+    "bossdr660-perc/808Clv.wav",
+    "bossdr660-perc/808Cng.wav",
+    "bossdr660-perc/808Marc.wav",
+    "bossdr660-perc/808Tom.wav",
+    "bossdr660-perc/Agogo.wav",
+    "bossdr660-perc/BongoH.wav",
+    "bossdr660-perc/BongoL.wav",
+    "bossdr660-perc/Casta.wav",
+    "bossdr660-perc/Claves.wav",
+    "bossdr660-perc/CongHMt.wav",
+    "bossdr660-perc/CongHOp.wav",
+    "bossdr660-perc/CongLOp.wav",
+    "bossdr660-perc/CongSlp.wav",
+    "bossdr660-perc/Cuica.wav",
+    "bossdr660-perc/GuiroL.wav",
+    "bossdr660-perc/GuiroS.wav",
+    "bossdr660-perc/Marcas.wav",
+    "bossdr660-perc/SlBell.wav",
+    "bossdr660-perc/Timbal.wav",
+    "bossdr660-perc/Tring.wav",
+    "bossdr660-perc/Vibspl.wav",
+    "bossdr660-perc/Woodblk.wav"
+   ],
+   "rd": [
+    "bossdr660-rd/BrRidC.wav",
+    "bossdr660-rd/RideBlC.wav",
+    "bossdr660-rd/RideC.wav",
+    "bossdr660-rd/SplshC.wav"
+   ],
+   "rim": [
+    "bossdr660-rim/808Stk.wav",
+    "bossdr660-rim/AmbStk.wav",
+    "bossdr660-rim/HalStk.wav",
+    "bossdr660-rim/MtlStk.wav",
+    "bossdr660-rim/Sticks.wav"
+   ],
+   "sd": [
+    "bossdr660-sd/909LtS.wav",
+    "bossdr660-sd/909RnS.wav",
+    "bossdr660-sd/90s S.wav",
+    "bossdr660-sd/AttackS.wav",
+    "bossdr660-sd/BrRlS1.wav",
+    "bossdr660-sd/BrRlS2.wav",
+    "bossdr660-sd/BrSlS1.wav",
+    "bossdr660-sd/BrSlS2.wav",
+    "bossdr660-sd/BrSlS3.wav",
+    "bossdr660-sd/BrSwiS.wav",
+    "bossdr660-sd/BrethS.wav",
+    "bossdr660-sd/BriteS.wav",
+    "bossdr660-sd/ChopS1.wav",
+    "bossdr660-sd/ChopS2.wav",
+    "bossdr660-sd/CrkerS.wav",
+    "bossdr660-sd/CrudyS.wav",
+    "bossdr660-sd/DanceS.wav",
+    "bossdr660-sd/DelayS.wav",
+    "bossdr660-sd/Digi S.wav",
+    "bossdr660-sd/DiscoS.wav",
+    "bossdr660-sd/DopinS.wav",
+    "bossdr660-sd/ElecS1.wav",
+    "bossdr660-sd/ElecS2.wav",
+    "bossdr660-sd/FX S.wav",
+    "bossdr660-sd/Fat S.wav",
+    "bossdr660-sd/GlassS.wav",
+    "bossdr660-sd/Grab S.wav",
+    "bossdr660-sd/Hard S.wav",
+    "bossdr660-sd/HousS1.wav",
+    "bossdr660-sd/HousS2.wav",
+    "bossdr660-sd/HousS3.wav",
+    "bossdr660-sd/HsDpnS.wav",
+    "bossdr660-sd/Huge S.wav",
+    "bossdr660-sd/HyperS.wav",
+    "bossdr660-sd/LA S.wav",
+    "bossdr660-sd/LAFatS.wav",
+    "bossdr660-sd/LiteS1.wav",
+    "bossdr660-sd/LiteS2.wav",
+    "bossdr660-sd/LooseS.wav",
+    "bossdr660-sd/NastyS.wav",
+    "bossdr660-sd/NoiseS.wav",
+    "bossdr660-sd/PiccS1.wav",
+    "bossdr660-sd/PiccS2.wav",
+    "bossdr660-sd/PiccS3.wav",
+    "bossdr660-sd/PowerS.wav",
+    "bossdr660-sd/RadioS.wav",
+    "bossdr660-sd/RaspyS.wav",
+    "bossdr660-sd/RckLtsS.wav",
+    "bossdr660-sd/RckPwS.wav",
+    "bossdr660-sd/RckRmS.wav",
+    "bossdr660-sd/RckSpS.wav",
+    "bossdr660-sd/RckerS.wav",
+    "bossdr660-sd/RckinS.wav",
+    "bossdr660-sd/RealS1.wav",
+    "bossdr660-sd/RealS2.wav",
+    "bossdr660-sd/ReggS1.wav",
+    "bossdr660-sd/ReggS2.wav",
+    "bossdr660-sd/RingS.wav",
+    "bossdr660-sd/RockS1.wav",
+    "bossdr660-sd/RockS2.wav",
+    "bossdr660-sd/SgShtS.wav",
+    "bossdr660-sd/SplatS.wav",
+    "bossdr660-sd/SprLtS.wav",
+    "bossdr660-sd/SprWkS.wav",
+    "bossdr660-sd/SwingS.wav",
+    "bossdr660-sd/TR808S.wav",
+    "bossdr660-sd/TR909S.wav",
+    "bossdr660-sd/Thin S.wav",
+    "bossdr660-sd/TightS.wav",
+    "bossdr660-sd/Tiny S.wav",
+    "bossdr660-sd/TrashS.wav",
+    "bossdr660-sd/Yep S.wav"
+   ],
+   "sh": [
+    "bossdr660-sh/0Shaker.wav",
+    "bossdr660-sh/CabaDn.wav",
+    "bossdr660-sh/CabaUp.wav"
+   ],
+   "tb": [
+    "bossdr660-tb/78Tamb.wav",
+    "bossdr660-tb/Tambrn.wav"
+   ]
+  },
+  "CasioRZ1": {
+   "_path": "CasioRZ1/",
+   "bd": [
+    "casiorz1-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "casiorz1-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "casiorz1-cp/Clap.wav"
+   ],
+   "cr": [
+    "casiorz1-cr/Crash.wav"
+   ],
+   "hh": [
+    "casiorz1-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "casiorz1-ht/Tom H.wav"
+   ],
+   "lt": [
+    "casiorz1-lt/Tom L.wav"
+   ],
+   "mt": [
+    "casiorz1-mt/Tom M.wav"
+   ],
+   "rd": [
+    "casiorz1-rd/Hat Open.wav",
+    "casiorz1-rd/Ride.wav"
+   ],
+   "rim": [
+    "casiorz1-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "casiorz1-sd/0Snaredrum.wav"
+   ]
+  },
+  "CasioSK1": {
+   "_path": "CasioSK1/",
+   "bd": [
+    "casiosk1-bd/Bassdrum.wav"
+   ],
+   "hh": [
+    "casiosk1-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "casiosk1-ht/Tom H.wav"
+   ],
+   "mt": [
+    "casiosk1-mt/Tom L.wav"
+   ],
+   "oh": [
+    "casiosk1-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "casiosk1-sd/Snaredrum.wav"
+   ]
+  },
+  "CasioVL1": {
+   "_path": "CasioVL1/",
+   "bd": [
+    "casiovl1-bd/Bassdrum.wav"
+   ],
+   "hh": [
+    "casiovl1-hh/Hi Hat.wav"
+   ],
+   "sd": [
+    "casiovl1-sd/Snaredrum-01.wav"
+   ]
+  },
+  "DoepferMS404": {
+   "_path": "DoepferMS404/",
+   "bd": [
+    "doepferms404-bd/0Bassdrum.wav",
+    "doepferms404-bd/Bassdrum Reverse.wav"
+   ],
+   "hh": [
+    "doepferms404-hh/Hat Closed.wav"
+   ],
+   "lt": [
+    "doepferms404-lt/Tom.wav"
+   ],
+   "oh": [
+    "doepferms404-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "doepferms404-sd/Snaredrum.wav"
+   ]
+  },
+  "EmuDrumulator": {
+   "_path": "EmuDrumulator/",
+   "bd": [
+    "emudrumulator-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "emudrumulator-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "emudrumulator-cp/Clap.wav"
+   ],
+   "cr": [
+    "emudrumulator-cr/Cymbal.wav"
+   ],
+   "hh": [
+    "emudrumulator-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "emudrumulator-ht/Tom H.wav"
+   ],
+   "lt": [
+    "emudrumulator-lt/Tom L.wav"
+   ],
+   "mt": [
+    "emudrumulator-mt/Tom M.wav"
+   ],
+   "oh": [
+    "emudrumulator-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "emudrumulator-perc/Claves.wav"
+   ],
+   "rim": [
+    "emudrumulator-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "emudrumulator-sd/0Snaredrum.wav"
+   ]
+  },
+  "EmuModular": {
+   "_path": "EmuModular/",
+   "bd": [
+    "emumodular-bd/Bassdrum-01.wav",
+    "emumodular-bd/Bassdrum-02.wav"
+   ],
+   "misc": [
+    "emumodular-misc/EmuPong.wav"
+   ],
+   "perc": [
+    "emumodular-perc/Flick-02.wav",
+    "emumodular-perc/Flick01.wav"
+   ]
+  },
+  "EmuSP12": {
+   "_path": "EmuSP12/",
+   "bd": [
+    "emusp12-bd/Bassdrum-01.wav",
+    "emusp12-bd/Bassdrum-02.wav",
+    "emusp12-bd/Bassdrum-03.wav",
+    "emusp12-bd/Bassdrum-04.wav",
+    "emusp12-bd/Bassdrum-05.wav",
+    "emusp12-bd/Bassdrum-06.wav",
+    "emusp12-bd/Bassdrum-07.wav",
+    "emusp12-bd/Bassdrum-08.wav",
+    "emusp12-bd/Bassdrum-09.wav",
+    "emusp12-bd/Bassdrum-10.wav",
+    "emusp12-bd/Bassdrum-11.wav",
+    "emusp12-bd/Bassdrum-12.wav",
+    "emusp12-bd/Bassdrum-13.wav",
+    "emusp12-bd/Bassdrum-14.wav"
+   ],
+   "cb": [
+    "emusp12-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "emusp12-cp/Clap.wav"
+   ],
+   "cr": [
+    "emusp12-cr/Crash.wav"
+   ],
+   "hh": [
+    "emusp12-hh/Hat Closed-01.wav",
+    "emusp12-hh/Hat Closed-02.wav"
+   ],
+   "ht": [
+    "emusp12-ht/Tom H-01.wav",
+    "emusp12-ht/Tom H-02.wav",
+    "emusp12-ht/Tom H-03.wav",
+    "emusp12-ht/Tom H-04.wav",
+    "emusp12-ht/Tom H-05.wav",
+    "emusp12-ht/Tom H-06.wav"
+   ],
+   "lt": [
+    "emusp12-lt/Tom L-01.wav",
+    "emusp12-lt/Tom L-02.wav",
+    "emusp12-lt/Tom L-03.wav",
+    "emusp12-lt/Tom L-04.wav",
+    "emusp12-lt/Tom L-05.wav",
+    "emusp12-lt/Tom L-06.wav"
+   ],
+   "misc": [
+    "emusp12-misc/Metal-01.wav",
+    "emusp12-misc/Metal-02.wav",
+    "emusp12-misc/Metal-03.wav",
+    "emusp12-misc/Scratch.wav",
+    "emusp12-misc/Shot-01.wav",
+    "emusp12-misc/Shot-02.wav",
+    "emusp12-misc/Shot-03.wav"
+   ],
+   "mt": [
+    "emusp12-mt/Tom M-01.wav",
+    "emusp12-mt/Tom M-02.wav",
+    "emusp12-mt/Tom M-03.wav",
+    "emusp12-mt/Tom M-05.wav"
+   ],
+   "oh": [
+    "emusp12-oh/Hhopen1.wav"
+   ],
+   "perc": [
+    "emusp12-perc/Blow1.wav"
+   ],
+   "rd": [
+    "emusp12-rd/Ride.wav"
+   ],
+   "rim": [
+    "emusp12-rim/zRim Shot-01.wav",
+    "emusp12-rim/zRim Shot-02.wav"
+   ],
+   "sd": [
+    "emusp12-sd/Snaredrum-01.wav",
+    "emusp12-sd/Snaredrum-02.wav",
+    "emusp12-sd/Snaredrum-03.wav",
+    "emusp12-sd/Snaredrum-04.wav",
+    "emusp12-sd/Snaredrum-05.wav",
+    "emusp12-sd/Snaredrum-06.wav",
+    "emusp12-sd/Snaredrum-07.wav",
+    "emusp12-sd/Snaredrum-08.wav",
+    "emusp12-sd/Snaredrum-09.wav",
+    "emusp12-sd/Snaredrum-10.wav",
+    "emusp12-sd/Snaredrum-11.wav",
+    "emusp12-sd/Snaredrum-12.wav",
+    "emusp12-sd/Snaredrum-13.wav",
+    "emusp12-sd/Snaredrum-14.wav",
+    "emusp12-sd/Snaredrum-15.wav",
+    "emusp12-sd/Snaredrum-16.wav",
+    "emusp12-sd/Snaredrum-17.wav",
+    "emusp12-sd/Snaredrum-18.wav",
+    "emusp12-sd/Snaredrum-19.wav",
+    "emusp12-sd/Snaredrum-20.wav",
+    "emusp12-sd/Snaredrum-21.wav"
+   ]
+  },
+  "KorgDDM110": {
+   "_path": "KorgDDM110/",
+   "bd": [
+    "korgddm110-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "korgddm110-cp/Clap.wav"
+   ],
+   "cr": [
+    "korgddm110-cr/Crash.wav"
+   ],
+   "hh": [
+    "korgddm110-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "korgddm110-ht/Tom H.wav",
+    "korgddm110-ht/Tom-01.wav"
+   ],
+   "lt": [
+    "korgddm110-lt/Tom L.wav",
+    "korgddm110-lt/Tom-02.wav"
+   ],
+   "oh": [
+    "korgddm110-oh/Hat Open.wav"
+   ],
+   "rim": [
+    "korgddm110-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "korgddm110-sd/0Snaredrum.wav"
+   ]
+  },
+  "KorgKPR77": {
+   "_path": "KorgKPR77/",
+   "bd": [
+    "korgkpr77-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "korgkpr77-cp/Clap.wav"
+   ],
+   "hh": [
+    "korgkpr77-hh/Hat Closed.wav"
+   ],
+   "oh": [
+    "korgkpr77-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "korgkpr77-sd/Snaredrum.wav"
+   ]
+  },
+  "KorgKR55": {
+   "_path": "KorgKR55/",
+   "bd": [
+    "korgkr55-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "korgkr55-cb/Cowbell.wav"
+   ],
+   "cr": [
+    "korgkr55-cr/Cymbal.wav"
+   ],
+   "hh": [
+    "korgkr55-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "korgkr55-ht/Tom.wav"
+   ],
+   "oh": [
+    "korgkr55-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "korgkr55-perc/Claves.wav",
+    "korgkr55-perc/Conga.wav"
+   ],
+   "rim": [
+    "korgkr55-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "korgkr55-sd/0Snaredrum.wav"
+   ]
+  },
+  "KorgKRZ": {
+   "_path": "KorgKRZ/",
+   "bd": [
+    "korgkrz-bd/Bassdrum.wav"
+   ],
+   "cr": [
+    "korgkrz-cr/Crash.wav"
+   ],
+   "fx": [
+    "korgkrz-fx/FX-01.wav",
+    "korgkrz-fx/FX-02.wav"
+   ],
+   "hh": [
+    "korgkrz-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "korgkrz-ht/Tom-02.wav"
+   ],
+   "lt": [
+    "korgkrz-lt/Tom-01.wav"
+   ],
+   "misc": [
+    "korgkrz-misc/Bell.wav"
+   ],
+   "oh": [
+    "korgkrz-oh/Hat Open.wav"
+   ],
+   "rd": [
+    "korgkrz-rd/Ride.wav"
+   ],
+   "sd": [
+    "korgkrz-sd/Snaredrum-01.wav",
+    "korgkrz-sd/Snaredrum-02.wav"
+   ]
+  },
+  "KorgM1": {
+   "_path": "KorgM1/",
+   "bd": [
+    "korgm1-bd/Bassdrum-01.wav",
+    "korgm1-bd/Bassdrum-02.wav",
+    "korgm1-bd/Bassdrum-03.wav"
+   ],
+   "cb": [
+    "korgm1-cb/Cowbel.wav"
+   ],
+   "cp": [
+    "korgm1-cp/Clap.wav"
+   ],
+   "cr": [
+    "korgm1-cr/Crash.wav"
+   ],
+   "hh": [
+    "korgm1-hh/Hat Closed-01.wav",
+    "korgm1-hh/Hat Closed-02.wav"
+   ],
+   "ht": [
+    "korgm1-ht/Tom-02.wav",
+    "korgm1-ht/Tom-03.wav"
+   ],
+   "misc": [
+    "korgm1-misc/Belrng.wav",
+    "korgm1-misc/Drop.wav",
+    "korgm1-misc/Flexttone.wav",
+    "korgm1-misc/Hammer.wav",
+    "korgm1-misc/Metal.wav",
+    "korgm1-misc/Metronome-01.wav",
+    "korgm1-misc/Metronome-02.wav",
+    "korgm1-misc/Pole.wav",
+    "korgm1-misc/Scratch.wav",
+    "korgm1-misc/Snap.wav",
+    "korgm1-misc/Tubalar Bell-01.wav",
+    "korgm1-misc/Tubalar Bell-02.wav",
+    "korgm1-misc/Tubalar Bell-03.wav",
+    "korgm1-misc/Tubalar Bell-04.wav",
+    "korgm1-misc/Whiplash.wav",
+    "korgm1-misc/Windbells.wav"
+   ],
+   "mt": [
+    "korgm1-mt/Tom-01.wav"
+   ],
+   "oh": [
+    "korgm1-oh/Hat Open-01.wav",
+    "korgm1-oh/Hat Open-02.wav"
+   ],
+   "perc": [
+    "korgm1-perc/Conga-01.wav",
+    "korgm1-perc/Conga-02.wav",
+    "korgm1-perc/Hit.wav",
+    "korgm1-perc/Pluck.wav",
+    "korgm1-perc/Timbale-01.wav",
+    "korgm1-perc/Timbale-02.wav",
+    "korgm1-perc/Woodblock.wav"
+   ],
+   "rd": [
+    "korgm1-rd/Ride.wav"
+   ],
+   "rim": [
+    "korgm1-rim/Snaredrum-side.wav"
+   ],
+   "sd": [
+    "korgm1-sd/Snaredrum-01.wav",
+    "korgm1-sd/Snaredrum-02.wav",
+    "korgm1-sd/Snaredrum-03.wav",
+    "korgm1-sd/Snaredrum-04.wav"
+   ],
+   "sh": [
+    "korgm1-sh/Shakers.wav"
+   ],
+   "tb": [
+    "korgm1-tb/Tambourine.wav"
+   ]
+  },
+  "KorgMinipops": {
+   "_path": "KorgMinipops/",
+   "bd": [
+    "korgminipops-bd/Bassdrum-01.wav",
+    "korgminipops-bd/Bassdrum-02.wav",
+    "korgminipops-bd/Bassdrum-03.wav",
+    "korgminipops-bd/Bassdrum-04.wav",
+    "korgminipops-bd/Bassdrum-05.wav",
+    "korgminipops-bd/Bassdrum-06.wav",
+    "korgminipops-bd/Bassdrum-07.wav"
+   ],
+   "hh": [
+    "korgminipops-hh/Hat Closed-01.wav",
+    "korgminipops-hh/Hat Closed-02.wav",
+    "korgminipops-hh/Hat Closed-03.wav",
+    "korgminipops-hh/Hat Closed-04.wav"
+   ],
+   "misc": [
+    "korgminipops-misc/Tom-01.wav",
+    "korgminipops-misc/Tom-02.wav",
+    "korgminipops-misc/Woodblock-01.wav",
+    "korgminipops-misc/Woodblock-02.wav"
+   ],
+   "oh": [
+    "korgminipops-oh/Hat Open-01.wav",
+    "korgminipops-oh/Hat Open-02.wav",
+    "korgminipops-oh/Hat Open-03.wav",
+    "korgminipops-oh/Hat Open-04.wav"
+   ],
+   "sd": [
+    "korgminipops-sd/Snaredrum-01.wav",
+    "korgminipops-sd/Snaredrum-02.wav",
+    "korgminipops-sd/Snaredrum-03.wav",
+    "korgminipops-sd/Snaredrum-04.wav",
+    "korgminipops-sd/Snaredrum-05.wav",
+    "korgminipops-sd/Snaredrum-06.wav",
+    "korgminipops-sd/Snaredrum-07.wav",
+    "korgminipops-sd/Snaredrum-08.wav",
+    "korgminipops-sd/Snaredrum-09.wav",
+    "korgminipops-sd/Snaredrum-10.wav",
+    "korgminipops-sd/Snaredrum-11.wav",
+    "korgminipops-sd/Snaredrum-12.wav",
+    "korgminipops-sd/Snaredrum-13.wav"
+   ]
+  },
+  "KorgPoly800": {
+   "_path": "KorgPoly800/",
+   "bd": [
+    "korgpoly800-bd/Bassdrum-01.wav",
+    "korgpoly800-bd/Bassdrum-02.wav",
+    "korgpoly800-bd/Bassdrum-03.wav",
+    "korgpoly800-bd/Bassdrum-04.wav"
+   ]
+  },
+  "KorgT3": {
+   "_path": "KorgT3/",
+   "bd": [
+    "korgt3-bd/Bassdrum-01.wav",
+    "korgt3-bd/Bassdrum-02.wav",
+    "korgt3-bd/Bassdrum-03.wav",
+    "korgt3-bd/Bassdrum-04.wav",
+    "korgt3-bd/Bassdrum-05.wav"
+   ],
+   "cp": [
+    "korgt3-cp/Clap.wav"
+   ],
+   "hh": [
+    "korgt3-hh/Hat Closed-01.wav",
+    "korgt3-hh/Hat Closed-02.wav"
+   ],
+   "misc": [
+    "korgt3-misc/Bell-02.wav",
+    "korgt3-misc/Bell01.wav",
+    "korgt3-misc/Click.wav",
+    "korgt3-misc/Tubular Bell.wav"
+   ],
+   "oh": [
+    "korgt3-oh/Hat Open-01.wav",
+    "korgt3-oh/Hat Open-02.wav"
+   ],
+   "perc": [
+    "korgt3-perc/Blocks.wav",
+    "korgt3-perc/Conga.wav",
+    "korgt3-perc/Hit.wav",
+    "korgt3-perc/Stick.wav"
+   ],
+   "rim": [
+    "korgt3-rim/Rim shot.wav"
+   ],
+   "sd": [
+    "korgt3-sd/Snaredrum-01.wav",
+    "korgt3-sd/Snaredrum-02.wav",
+    "korgt3-sd/Snaredrum-03.wav",
+    "korgt3-sd/Snaredrum-04.wav",
+    "korgt3-sd/Snaredrum-05.wav"
+   ],
+   "sh": [
+    "korgt3-sh/Shaker-01.wav",
+    "korgt3-sh/Shaker-02.wav",
+    "korgt3-sh/zCabasa.wav"
+   ]
+  },
+  "Linn9000": {
+   "_path": "Linn9000/",
+   "bd": [
+    "linn9000-bd/BAssdrum.wav"
+   ],
+   "cb": [
+    "linn9000-cb/Cowbell-01.wav",
+    "linn9000-cb/Cowbell-02.wav"
+   ],
+   "cr": [
+    "linn9000-cr/Crash-01.wav",
+    "linn9000-cr/Crash-02.wav"
+   ],
+   "hh": [
+    "linn9000-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "linn9000-ht/Tom-01.wav",
+    "linn9000-ht/Tom-02.wav"
+   ],
+   "lt": [
+    "linn9000-lt/Tom-04.wav",
+    "linn9000-lt/Tom-05.wav"
+   ],
+   "mt": [
+    "linn9000-mt/Tom-03.wav"
+   ],
+   "oh": [
+    "linn9000-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "linn9000-perc/Conga H.wav",
+    "linn9000-perc/Conga L.wav",
+    "linn9000-perc/Conga M.wav"
+   ],
+   "rd": [
+    "linn9000-rd/Crash-03.wav",
+    "linn9000-rd/Ping.wav"
+   ],
+   "rim": [
+    "linn9000-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "linn9000-sd/0Snaredrum.wav"
+   ],
+   "tb": [
+    "linn9000-tb/Tambourine.wav"
+   ]
+  },
+  "LinnDrum": {
+   "_path": "LinnDrum/",
+   "bd": [
+    "linndrum-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "linndrum-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "linndrum-cp/Clap.wav"
+   ],
+   "cr": [
+    "linndrum-cr/Crash.wav"
+   ],
+   "hh": [
+    "linndrum-hh/Hat Closed-01.wav",
+    "linndrum-hh/Hat Closed-02.wav",
+    "linndrum-hh/Hat Closed-03.wav"
+   ],
+   "ht": [
+    "linndrum-ht/Tom H-01.wav",
+    "linndrum-ht/Tom H-02.wav"
+   ],
+   "lt": [
+    "linndrum-lt/Tom L-01.wav",
+    "linndrum-lt/Tom L-02.wav"
+   ],
+   "mt": [
+    "linndrum-mt/Tom M-01.wav"
+   ],
+   "oh": [
+    "linndrum-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "linndrum-perc/Conga H-01.wav",
+    "linndrum-perc/Conga H-02.wav",
+    "linndrum-perc/Conga L-01.wav",
+    "linndrum-perc/Conga L-02.wav",
+    "linndrum-perc/Conga M-01.wav",
+    "linndrum-perc/Conga M-02.wav"
+   ],
+   "rd": [
+    "linndrum-rd/Ride.wav"
+   ],
+   "rim": [
+    "linndrum-rim/Sidestick-01.wav",
+    "linndrum-rim/Sidestick-02.wav",
+    "linndrum-rim/Sidestick-03.wav"
+   ],
+   "sd": [
+    "linndrum-sd/0Snarderum-01.wav",
+    "linndrum-sd/0Snarderum-02.wav",
+    "linndrum-sd/0Snarderum-03.wav"
+   ],
+   "sh": [
+    "linndrum-sh/Cabasa.wav"
+   ],
+   "tb": [
+    "linndrum-tb/Tambourine.wav"
+   ]
+  },
+  "LinnLM1": {
+   "_path": "LinnLM1/",
+   "bd": [
+    "linnlm1-bd/LM-1_BD_1_TL.wav",
+    "linnlm1-bd/LM-1_BD_2_TL.wav",
+    "linnlm1-bd/LM-1_BD_3_TL.wav",
+    "linnlm1-bd/LM-1_BD_4_TL.wav"
+   ],
+   "cb": [
+    "linnlm1-cb/LM-1_COWBELL_TL.wav"
+   ],
+   "cp": [
+    "linnlm1-cp/LM-1_CLAP_1_TL.wav"
+   ],
+   "hh": [
+    "linnlm1-hh/LM-1_HH_1_TL.wav"
+   ],
+   "ht": [
+    "linnlm1-ht/LM-1_Tom_2_TL.wav"
+   ],
+   "lt": [
+    "linnlm1-lt/LM-1_Tom_1_TL.wav"
+   ],
+   "oh": [
+    "linnlm1-oh/LM-1_HH_2_TL.wav"
+   ],
+   "perc": [
+    "linnlm1-perc/LM-1_BONGO_1_TL.wav",
+    "linnlm1-perc/LM-1_BONGO_2_TL.wav",
+    "linnlm1-perc/LM-1_WOODBLOCK_TL.wav"
+   ],
+   "rim": [
+    "linnlm1-rim/LM-1_RIMSHOT_1_TL.wav"
+   ],
+   "sd": [
+    "linnlm1-sd/LM-1_SD_1_TL.wav"
+   ],
+   "sh": [
+    "linnlm1-sh/LM-1_SHAKER_1_TL.wav"
+   ],
+   "tb": [
+    "linnlm1-tb/LM-1_TAMB_TL.wav"
+   ]
+  },
+  "LinnLM2": {
+   "_path": "LinnLM2/",
+   "bd": [
+    "linnlm2-bd/LM-2_BD_1_TL.wav",
+    "linnlm2-bd/LM-2_BD_2_TL.wav",
+    "linnlm2-bd/LM-2_BD_3_TL.wav",
+    "linnlm2-bd/LM-2_BD_4_TL.wav"
+   ],
+   "cb": [
+    "linnlm2-cb/LM-2_COWBELL_1_TL.wav"
+   ],
+   "cp": [
+    "linnlm2-cp/LM-2_CLAP_1_TL.wav"
+   ],
+   "cr": [
+    "linnlm2-cr/LM-2_CRASH_1_TL.wav"
+   ],
+   "hh": [
+    "linnlm2-hh/LM-2_HH_1_TL.wav",
+    "linnlm2-hh/LM-2_HH_2_TL.wav"
+   ],
+   "ht": [
+    "linnlm2-ht/LM-2_TOM_1_TL.wav"
+   ],
+   "lt": [
+    "linnlm2-lt/LM-2_TOM_3_TL.wav"
+   ],
+   "mt": [
+    "linnlm2-mt/LM-2_TOM_2_TL.wav"
+   ],
+   "oh": [
+    "linnlm2-oh/LM-2_OPEN_HH_2_TL.wav",
+    "linnlm2-oh/LM-2_OPEN_HH_TL.wav"
+   ],
+   "rd": [
+    "linnlm2-rd/LM-2_RIDE_1_TL.wav"
+   ],
+   "rim": [
+    "linnlm2-rim/LM-2_RIMSHOT_1_TL.wav",
+    "linnlm2-rim/LM-2_RIMSHOT_2_TL.wav"
+   ],
+   "sd": [
+    "linnlm2-sd/LM-2_SD_1_TL.wav",
+    "linnlm2-sd/LM-2_SD_2_TL.wav",
+    "linnlm2-sd/LM-2_SD_3_TL.wav",
+    "linnlm2-sd/LM-2_SD_4_TL.wav"
+   ],
+   "sh": [
+    "linnlm2-sh/LM-2_SHAKER_1_TL.wav"
+   ],
+   "tb": [
+    "linnlm2-tb/LM-2_TAMB_1_TL.wav"
+   ]
+  },
+  "MFB512": {
+   "_path": "MFB512/",
+   "bd": [
+    "mfb512-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "mfb512-cp/Clap.wav"
+   ],
+   "cr": [
+    "mfb512-cr/Crash.wav"
+   ],
+   "hh": [
+    "mfb512-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "mfb512-ht/Tom H.wav"
+   ],
+   "lt": [
+    "mfb512-lt/Tom L.wav"
+   ],
+   "mt": [
+    "mfb512-mt/Tom M.wav"
+   ],
+   "oh": [
+    "mfb512-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "mfb512-sd/Snaredrum.wav"
+   ]
+  },
+  "MPC1000": {
+   "_path": "MPC1000/",
+   "bd": [
+    "mpc1000-bd/MPC1000_808BD_TL.wav",
+    "mpc1000-bd/MPC1000_909BD_TL.wav",
+    "mpc1000-bd/MPC1000_DB-BD2_TL.wav",
+    "mpc1000-bd/MPC1000_HH-BD_TL.wav",
+    "mpc1000-bd/MPC1000_HOUSEBD_TL.wav"
+   ],
+   "cp": [
+    "mpc1000-cp/MPC1000_CLAP_TL.wav"
+   ],
+   "hh": [
+    "mpc1000-hh/MPC1000_808HH1_TL.wav",
+    "mpc1000-hh/MPC1000_808HH2_TL.wav",
+    "mpc1000-hh/MPC1000_909CHH_TL.wav",
+    "mpc1000-hh/MPC1000_HHCHH1_TL.wav"
+   ],
+   "oh": [
+    "mpc1000-oh/MPC1000_909OHH_TL.wav"
+   ],
+   "perc": [
+    "mpc1000-perc/MPC1000_HHPERC_TL.wav"
+   ],
+   "sd": [
+    "mpc1000-sd/MPC1000_808SD_TL.wav",
+    "mpc1000-sd/MPC1000_909SD_TL.wav",
+    "mpc1000-sd/MPC1000_DB-SN_TL.wav",
+    "mpc1000-sd/MPC1000_HH-SN_TL.wav"
+   ],
+   "sh": [
+    "mpc1000-sh/MPC1000_808MRC_TL.wav"
+   ]
+  },
+  "MoogConcertMateMG1": {
+   "_path": "MoogConcertMateMG1/",
+   "bd": [
+    "moogconcertmatemg1-bd/Bassdrum-01.wav",
+    "moogconcertmatemg1-bd/Bassdrum-02.wav",
+    "moogconcertmatemg1-bd/Bassdrum-03.wav"
+   ],
+   "sd": [
+    "moogconcertmatemg1-sd/Snaredrum-1.wav",
+    "moogconcertmatemg1-sd/Snaredrum-2.wav"
+   ]
+  },
+  "OberheimDMX": {
+   "_path": "OberheimDMX/",
+   "perc": [
+    "oberheimdmx--perc/Timbale H.wav",
+    "oberheimdmx--perc/Timbale L.wav",
+    "oberheimdmx--perc/Timbale M.wav"
+   ],
+   "bd": [
+    "oberheimdmx-bd/Bassdrum-01.wav",
+    "oberheimdmx-bd/Bassdrum-02.wav",
+    "oberheimdmx-bd/Bassdrum-03.wav"
+   ],
+   "cp": [
+    "oberheimdmx-cp/Clap.wav"
+   ],
+   "cr": [
+    "oberheimdmx-cr/Crash.wav"
+   ],
+   "hh": [
+    "oberheimdmx-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "oberheimdmx-ht/Tom H.wav"
+   ],
+   "lt": [
+    "oberheimdmx-lt/Tom L.wav"
+   ],
+   "mt": [
+    "oberheimdmx-mt/Tom M.wav"
+   ],
+   "oh": [
+    "oberheimdmx-oh/Hat Open.wav"
+   ],
+   "rd": [
+    "oberheimdmx-rd/Ride.wav"
+   ],
+   "rim": [
+    "oberheimdmx-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "oberheimdmx-sd/Snaredrum-01.wav",
+    "oberheimdmx-sd/Snaredrum-02.wav",
+    "oberheimdmx-sd/Snaredrum-03.wav"
+   ],
+   "sh": [
+    "oberheimdmx-sh/Cabasa.wav"
+   ],
+   "tb": [
+    "oberheimdmx-tb/Tamborine.wav"
+   ]
+  },
+  "RhodesPolaris": {
+   "_path": "RhodesPolaris/",
+   "bd": [
+    "rhodespolaris-bd/Bassdrum-01.wav",
+    "rhodespolaris-bd/Bassdrum-02.wav",
+    "rhodespolaris-bd/Bassdrum-03.wav",
+    "rhodespolaris-bd/Bassdrum-04.wav"
+   ],
+   "misc": [
+    "rhodespolaris-misc/Noise-1.wav",
+    "rhodespolaris-misc/Noise-2.wav",
+    "rhodespolaris-misc/Noise-3.wav",
+    "rhodespolaris-misc/Noise-4.wav"
+   ],
+   "sd": [
+    "rhodespolaris-sd/Snaredrum-01.wav",
+    "rhodespolaris-sd/Snaredrum-02.wav",
+    "rhodespolaris-sd/Snaredrum-03.wav",
+    "rhodespolaris-sd/Snaredrum-04.wav"
+   ]
+  },
+  "RhythmAce": {
+   "_path": "RhythmAce/",
+   "bd": [
+    "rhythmace-bd/Bassdrum-01.wav",
+    "rhythmace-bd/Bassdrum-02.wav",
+    "rhythmace-bd/Bassdrum-03.wav"
+   ],
+   "hh": [
+    "rhythmace-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rhythmace-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rhythmace-lt/Tom L.wav"
+   ],
+   "oh": [
+    "rhythmace-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rhythmace-perc/Clave.wav",
+    "rhythmace-perc/Click.wav",
+    "rhythmace-perc/Percussion-01.wav",
+    "rhythmace-perc/Percussion-02.wav",
+    "rhythmace-perc/Percussion-03.wav",
+    "rhythmace-perc/Percussion-04.wav"
+   ],
+   "sd": [
+    "rhythmace-sd/Snaredrum-01.wav",
+    "rhythmace-sd/Snaredrum-02.wav",
+    "rhythmace-sd/Snaredrum-03.wav"
+   ]
+  },
+  "RolandCompurhythm1000": {
+   "_path": "RolandCompurhythm1000/",
+   "bd": [
+    "rolandcompurhythm1000-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandcompurhythm1000-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandcompurhythm1000-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandcompurhythm1000-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandcompurhythm1000-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandcompurhythm1000-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandcompurhythm1000-lt/Tom L.wav"
+   ],
+   "mt": [
+    "rolandcompurhythm1000-mt/Tom M.wav"
+   ],
+   "oh": [
+    "rolandcompurhythm1000-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandcompurhythm1000-perc/Conga H.wav",
+    "rolandcompurhythm1000-perc/Conga L.wav",
+    "rolandcompurhythm1000-perc/Timbale.wav"
+   ],
+   "rd": [
+    "rolandcompurhythm1000-rd/Ride.wav"
+   ],
+   "rim": [
+    "rolandcompurhythm1000-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandcompurhythm1000-sd/Snaredrum.wav"
+   ]
+  },
+  "RolandCompurhythm78": {
+   "_path": "RolandCompurhythm78/",
+   "bd": [
+    "rolandcompurhythm78-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandcompurhythm78-cb/Cowbell.wav"
+   ],
+   "hh": [
+    "rolandcompurhythm78-hh/Hat Closed-01.wav",
+    "rolandcompurhythm78-hh/Hat Closed-02.wav"
+   ],
+   "misc": [
+    "rolandcompurhythm78-misc/Quid-01.wav",
+    "rolandcompurhythm78-misc/Quid-02.wav",
+    "rolandcompurhythm78-misc/Quid-03.wav",
+    "rolandcompurhythm78-misc/Quid-04.wav"
+   ],
+   "oh": [
+    "rolandcompurhythm78-oh/Hat Open-01.wav",
+    "rolandcompurhythm78-oh/Hat Open-02.wav"
+   ],
+   "perc": [
+    "rolandcompurhythm78-perc/Conga H.wav",
+    "rolandcompurhythm78-perc/Conga L.wav",
+    "rolandcompurhythm78-perc/Conga M.wav",
+    "rolandcompurhythm78-perc/Hit.wav",
+    "rolandcompurhythm78-perc/Woodblock-01.wav",
+    "rolandcompurhythm78-perc/Woodblock-02.wav",
+    "rolandcompurhythm78-perc/Woodblock-03.wav",
+    "rolandcompurhythm78-perc/Woodblock-04.wav"
+   ],
+   "sd": [
+    "rolandcompurhythm78-sd/Snaredrum.wav"
+   ],
+   "tb": [
+    "rolandcompurhythm78-tb/Tambourine.wav"
+   ]
+  },
+  "RolandCompurhythm8000": {
+   "_path": "RolandCompurhythm8000/",
+   "bd": [
+    "rolandcompurhythm8000-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandcompurhythm8000-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandcompurhythm8000-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandcompurhythm8000-cr/Cymball.wav"
+   ],
+   "hh": [
+    "rolandcompurhythm8000-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandcompurhythm8000-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandcompurhythm8000-lt/Tom L.wav"
+   ],
+   "mt": [
+    "rolandcompurhythm8000-mt/Tom M.wav"
+   ],
+   "oh": [
+    "rolandcompurhythm8000-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandcompurhythm8000-perc/Claves.wav",
+    "rolandcompurhythm8000-perc/Cr8kmcng.wav"
+   ],
+   "rim": [
+    "rolandcompurhythm8000-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandcompurhythm8000-sd/Snarderum.wav"
+   ]
+  },
+  "RolandD110": {
+   "_path": "RolandD110/",
+   "bd": [
+    "rolandd110-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandd110-cb/Cowbell H.wav",
+    "rolandd110-cb/Cowbell L.wav"
+   ],
+   "cr": [
+    "rolandd110-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandd110-hh/Hat Closed.wav"
+   ],
+   "lt": [
+    "rolandd110-lt/Tom.wav"
+   ],
+   "oh": [
+    "rolandd110-oh/Hat Open.wav",
+    "rolandd110-oh/Hat Pedal.wav"
+   ],
+   "perc": [
+    "rolandd110-perc/Bongo.wav",
+    "rolandd110-perc/Conga.wav",
+    "rolandd110-perc/Woodblock.wav"
+   ],
+   "rd": [
+    "rolandd110-rd/Ride.wav"
+   ],
+   "rim": [
+    "rolandd110-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandd110-sd/Snaredrum-01.wav",
+    "rolandd110-sd/Snaredrum-02.wav",
+    "rolandd110-sd/Snaredrum-03.wav"
+   ],
+   "sh": [
+    "rolandd110-sh/Cabasa.wav"
+   ],
+   "tb": [
+    "rolandd110-tb/Tambourine.wav"
+   ]
+  },
+  "RolandD70": {
+   "_path": "RolandD70/",
+   "bd": [
+    "rolandd70-bd/Bassdrum-01.wav",
+    "rolandd70-bd/Bassdrum-02.wav",
+    "rolandd70-bd/Bassdrum-03.wav",
+    "rolandd70-bd/Bassdrum-04.wav"
+   ],
+   "cb": [
+    "rolandd70-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandd70-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandd70-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandd70-hh/Hat Closed.wav"
+   ],
+   "lt": [
+    "rolandd70-lt/Tom-02.wav"
+   ],
+   "mt": [
+    "rolandd70-mt/Tom.-01.wav"
+   ],
+   "oh": [
+    "rolandd70-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandd70-perc/Sticks.wav"
+   ],
+   "rd": [
+    "rolandd70-rd/Ride.wav"
+   ],
+   "rim": [
+    "rolandd70-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "rolandd70-sd/Snaredrum-01.wav",
+    "rolandd70-sd/Snaredrum-02.wav",
+    "rolandd70-sd/Snaredrum-03.wav",
+    "rolandd70-sd/Snaredrum-04.wav",
+    "rolandd70-sd/Snaredrum-05.wav"
+   ],
+   "sh": [
+    "rolandd70-sh/Cabasa.wav"
+   ]
+  },
+  "RolandDDR30": {
+   "_path": "RolandDDR30/",
+   "bd": [
+    "rolandddr30-bd/Bassdrum-01.wav",
+    "rolandddr30-bd/Bassdrum-02.wav",
+    "rolandddr30-bd/Bassdrum-03.wav",
+    "rolandddr30-bd/Bassdrum-04.wav",
+    "rolandddr30-bd/Bassdrum-05.wav",
+    "rolandddr30-bd/Bassdrum-06.wav",
+    "rolandddr30-bd/Bassdrum-07.wav",
+    "rolandddr30-bd/Bassdrum-08.wav"
+   ],
+   "ht": [
+    "rolandddr30-ht/Tom-01.wav",
+    "rolandddr30-ht/Tom-03.wav",
+    "rolandddr30-ht/Tom-05.wav",
+    "rolandddr30-ht/Tom-07.wav"
+   ],
+   "lt": [
+    "rolandddr30-lt/Tom-02.wav",
+    "rolandddr30-lt/Tom-04.wav",
+    "rolandddr30-lt/Tom-06.wav",
+    "rolandddr30-lt/Tom-08.wav"
+   ],
+   "sd": [
+    "rolandddr30-sd/Snaredrum-01.wav",
+    "rolandddr30-sd/Snaredrum-02.wav",
+    "rolandddr30-sd/Snaredrum-03.wav",
+    "rolandddr30-sd/Snaredrum-04.wav",
+    "rolandddr30-sd/Snaredrum-05.wav",
+    "rolandddr30-sd/Snaredrum-06.wav",
+    "rolandddr30-sd/Snaredrum-07.wav",
+    "rolandddr30-sd/Snaredrum-08.wav"
+   ]
+  },
+  "RolandJD990": {
+   "_path": "RolandJD990/",
+   "bd": [
+    "rolandjd990-bd/Bryt-kck.wav",
+    "rolandjd990-bd/Butt-kck.wav",
+    "rolandjd990-bd/Gate-kck.wav",
+    "rolandjd990-bd/Indstr-k.wav",
+    "rolandjd990-bd/Mach-kck.wav",
+    "rolandjd990-bd/Mondo-k.wav",
+    "rolandjd990-bd/Room-kck.wav",
+    "rolandjd990-bd/Smash-k.wav",
+    "rolandjd990-bd/Solid-k.wav",
+    "rolandjd990-bd/Tekno-k.wav"
+   ],
+   "cb": [
+    "rolandjd990-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandjd990-cp/Dance-cl.wav"
+   ],
+   "cr": [
+    "rolandjd990-cr/Crsh-cym.wav"
+   ],
+   "hh": [
+    "rolandjd990-hh/Chh_1.wav",
+    "rolandjd990-hh/Chh_2.wav",
+    "rolandjd990-hh/Lite-ch1.wav",
+    "rolandjd990-hh/Lite-ch2.wav"
+   ],
+   "ht": [
+    "rolandjd990-ht/Rim-tom1.wav"
+   ],
+   "lt": [
+    "rolandjd990-lt/Blast-tm.wav",
+    "rolandjd990-lt/Boosh-tm.wav",
+    "rolandjd990-lt/E-tom.wav",
+    "rolandjd990-lt/Power_tm.wav",
+    "rolandjd990-lt/Rim-tom4.wav"
+   ],
+   "misc": [
+    "rolandjd990-misc/Crystal.wav",
+    "rolandjd990-misc/Digibels.wav",
+    "rolandjd990-misc/Digichim.wav",
+    "rolandjd990-misc/Fingbell.wav",
+    "rolandjd990-misc/Gamelan.wav",
+    "rolandjd990-misc/Kalimba.wav",
+    "rolandjd990-misc/Marimwav.wav",
+    "rolandjd990-misc/Org_bell.wav",
+    "rolandjd990-misc/Plink.wav",
+    "rolandjd990-misc/Plunk.wav",
+    "rolandjd990-misc/Vibes.wav",
+    "rolandjd990-misc/Xylo.wav"
+   ],
+   "mt": [
+    "rolandjd990-mt/Rim-tom2.wav",
+    "rolandjd990-mt/Rim-tom3.wav"
+   ],
+   "oh": [
+    "rolandjd990-oh/Lite-ohh.wav",
+    "rolandjd990-oh/Ohh.wav"
+   ],
+   "perc": [
+    "rolandjd990-perc/Agogo_bl.wav",
+    "rolandjd990-perc/Bottlhit.wav",
+    "rolandjd990-perc/Rattles.wav",
+    "rolandjd990-perc/Sm_metal.wav",
+    "rolandjd990-perc/Snaps.wav",
+    "rolandjd990-perc/Woodcrak.wav"
+   ],
+   "rd": [
+    "rolandjd990-rd/Ride_cym.wav"
+   ],
+   "sd": [
+    "rolandjd990-sd/90's-sd.wav",
+    "rolandjd990-sd/Attack_s.wav",
+    "rolandjd990-sd/Bigshots.wav",
+    "rolandjd990-sd/Combo-sd.wav",
+    "rolandjd990-sd/Dance-s1.wav",
+    "rolandjd990-sd/Dance-s2.wav",
+    "rolandjd990-sd/Disco-sd.wav",
+    "rolandjd990-sd/Hard-sd.wav",
+    "rolandjd990-sd/Hiphop-s.wav",
+    "rolandjd990-sd/House-sd.wav",
+    "rolandjd990-sd/Power_sd.wav",
+    "rolandjd990-sd/Rap-sd.wav",
+    "rolandjd990-sd/Splat-sd.wav",
+    "rolandjd990-sd/Swing-sd.wav",
+    "rolandjd990-sd/Video-sd.wav"
+   ],
+   "tb": [
+    "rolandjd990-tb/Tambourn.wav"
+   ]
+  },
+  "RolandMC202": {
+   "_path": "RolandMC202/",
+   "bd": [
+    "rolandmc202-bd/Bassdrum-01.wav",
+    "rolandmc202-bd/Bassdrum-02.wav",
+    "rolandmc202-bd/Bassdrum-03.wav",
+    "rolandmc202-bd/Bassdrum-04.wav",
+    "rolandmc202-bd/Bassdrum-05.wav"
+   ],
+   "ht": [
+    "rolandmc202-ht/Tom H-02.wav",
+    "rolandmc202-ht/Tom H-03.wav",
+    "rolandmc202-ht/Tom H-04.wav"
+   ],
+   "perc": [
+    "rolandmc202-perc/Click.wav"
+   ]
+  },
+  "RolandMC303": {
+   "_path": "RolandMC303/",
+   "bd": [
+    "rolandmc303-bd/606bd1.wav",
+    "rolandmc303-bd/606bd2.wav",
+    "rolandmc303-bd/606bd3.wav",
+    "rolandmc303-bd/Afrofeet.wav",
+    "rolandmc303-bd/Blipbd.wav",
+    "rolandmc303-bd/Cavebd.wav",
+    "rolandmc303-bd/Cavebd2.wav",
+    "rolandmc303-bd/Distbd1.wav",
+    "rolandmc303-bd/Distbd2.wav",
+    "rolandmc303-bd/Distbd3.wav",
+    "rolandmc303-bd/Drybd1.wav",
+    "rolandmc303-bd/Drybd2.wav",
+    "rolandmc303-bd/Drybd3.wav",
+    "rolandmc303-bd/Elecbd.wav",
+    "rolandmc303-bd/Jnglebd2.wav",
+    "rolandmc303-bd/Junglebd.wav"
+   ],
+   "cb": [
+    "rolandmc303-cb/78cowbel.wav",
+    "rolandmc303-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandmc303-cp/707clap.wav",
+    "rolandmc303-cp/Hardclap.wav",
+    "rolandmc303-cp/Hc2clap.wav",
+    "rolandmc303-cp/Hipclap1.wav",
+    "rolandmc303-cp/Rapclap1.wav",
+    "rolandmc303-cp/Rapclap2.wav",
+    "rolandmc303-cp/Realclap.wav",
+    "rolandmc303-cp/Shakecla.wav"
+   ],
+   "fx": [
+    "rolandmc303-fx/Hrtbeat.wav",
+    "rolandmc303-fx/Whitnoiz.wav"
+   ],
+   "hh": [
+    "rolandmc303-hh/606ch.wav",
+    "rolandmc303-hh/707ch.wav",
+    "rolandmc303-hh/78ch.wav",
+    "rolandmc303-hh/Realch1.wav",
+    "rolandmc303-hh/Realch2.wav",
+    "rolandmc303-hh/Roomch.wav"
+   ],
+   "ht": [
+    "rolandmc303-ht/78hitom.wav",
+    "rolandmc303-ht/Achitom1.wav",
+    "rolandmc303-ht/Achitom2.wav",
+    "rolandmc303-ht/Lechito1.wav",
+    "rolandmc303-ht/Lechito2.wav"
+   ],
+   "lt": [
+    "rolandmc303-lt/78lotom.wav",
+    "rolandmc303-lt/Aclotom1.wav",
+    "rolandmc303-lt/Aclotom2.wav",
+    "rolandmc303-lt/Lecloto2.wav",
+    "rolandmc303-lt/Losyntht.wav"
+   ],
+   "misc": [
+    "rolandmc303-misc/Asiangon.wav",
+    "rolandmc303-misc/Fnkygost.wav",
+    "rolandmc303-misc/Fxsd1.wav",
+    "rolandmc303-misc/Fxsd2.wav",
+    "rolandmc303-misc/Mgblip1.wav",
+    "rolandmc303-misc/Mutecuic.wav",
+    "rolandmc303-misc/Opencuic.wav",
+    "rolandmc303-misc/Slap.wav"
+   ],
+   "mt": [
+    "rolandmc303-mt/78midtom.wav",
+    "rolandmc303-mt/Acmidtm2.wav",
+    "rolandmc303-mt/Acmidtom.wav",
+    "rolandmc303-mt/Lecmidt1.wav",
+    "rolandmc303-mt/Lecmidt2.wav",
+    "rolandmc303-mt/Midsynth.wav"
+   ],
+   "oh": [
+    "rolandmc303-oh/707oh.wav",
+    "rolandmc303-oh/78oh.wav",
+    "rolandmc303-oh/Realoh1.wav",
+    "rolandmc303-oh/Realoh2.wav",
+    "rolandmc303-oh/Roomoh.wav"
+   ],
+   "perc": [
+    "rolandmc303-perc/78guiro.wav",
+    "rolandmc303-perc/78metalb.wav",
+    "rolandmc303-perc/Bamboosd.wav",
+    "rolandmc303-perc/Bamboost.wav",
+    "rolandmc303-perc/Brushswi.wav",
+    "rolandmc303-perc/Claves.wav",
+    "rolandmc303-perc/Elechibo.wav",
+    "rolandmc303-perc/Eleclobo.wav",
+    "rolandmc303-perc/Elecloto.wav",
+    "rolandmc303-perc/Fingersn.wav",
+    "rolandmc303-perc/Hiagogo.wav",
+    "rolandmc303-perc/Hibamboo.wav",
+    "rolandmc303-perc/Hibongoo.wav",
+    "rolandmc303-perc/Hicongao.wav",
+    "rolandmc303-perc/Hicongas.wav",
+    "rolandmc303-perc/Hihyoshi.wav",
+    "rolandmc303-perc/Hisyntht.wav",
+    "rolandmc303-perc/Hitimbal.wav",
+    "rolandmc303-perc/Hiwoodbl.wav",
+    "rolandmc303-perc/Loagogo.wav",
+    "rolandmc303-perc/Lobamboo.wav",
+    "rolandmc303-perc/Lobongoo.wav",
+    "rolandmc303-perc/Locongao.wav",
+    "rolandmc303-perc/Lohyoshi.wav",
+    "rolandmc303-perc/Longguir.wav",
+    "rolandmc303-perc/Longwhis.wav",
+    "rolandmc303-perc/Lotimbal.wav",
+    "rolandmc303-perc/Lowoodbl.wav",
+    "rolandmc303-perc/Mutepand.wav",
+    "rolandmc303-perc/Mutesurd.wav",
+    "rolandmc303-perc/Mutetria.wav",
+    "rolandmc303-perc/Openpand.wav",
+    "rolandmc303-perc/Opensurd.wav",
+    "rolandmc303-perc/Opentria.wav",
+    "rolandmc303-perc/Shortgui.wav",
+    "rolandmc303-perc/Shortwhi.wav",
+    "rolandmc303-perc/Tablabay.wav",
+    "rolandmc303-perc/Udo.wav",
+    "rolandmc303-perc/Vibrasla.wav"
+   ],
+   "rd": [
+    "rolandmc303-rd/Ridecym2.wav",
+    "rolandmc303-rd/Ridecymb.wav"
+   ],
+   "rim": [
+    "rolandmc303-rim/Rimsd1.wav",
+    "rolandmc303-rim/Rimsd2.wav",
+    "rolandmc303-rim/Rimshot.wav",
+    "rolandmc303-rim/Tinyrim2.wav",
+    "rolandmc303-rim/Tinyrim3.wav",
+    "rolandmc303-rim/Tinyrim4.wav"
+   ],
+   "sd": [
+    "rolandmc303-sd/606sd1.wav",
+    "rolandmc303-sd/606sd2.wav",
+    "rolandmc303-sd/606sd3.wav",
+    "rolandmc303-sd/78sd.wav",
+    "rolandmc303-sd/80809sd.wav",
+    "rolandmc303-sd/Brushslp.wav",
+    "rolandmc303-sd/Brushtap.wav",
+    "rolandmc303-sd/Clipsd1.wav",
+    "rolandmc303-sd/Clipsd2.wav",
+    "rolandmc303-sd/Drysd1.wav",
+    "rolandmc303-sd/Drysd2.wav",
+    "rolandmc303-sd/Elecsd1.wav",
+    "rolandmc303-sd/Funkysd1.wav",
+    "rolandmc303-sd/Funkysd2.wav",
+    "rolandmc303-sd/Hardsd1.wav",
+    "rolandmc303-sd/Hypersd1.wav",
+    "rolandmc303-sd/Hypersd2.wav",
+    "rolandmc303-sd/Jnglesd1.wav",
+    "rolandmc303-sd/Jnglesd2.wav",
+    "rolandmc303-sd/Jnglesd3.wav",
+    "rolandmc303-sd/Jnglesd4.wav",
+    "rolandmc303-sd/Midbambo.wav",
+    "rolandmc303-sd/Rapsd.wav",
+    "rolandmc303-sd/Tambsd1.wav",
+    "rolandmc303-sd/Tightsd.wav",
+    "rolandmc303-sd/Tinysd.wav"
+   ],
+   "sh": [
+    "rolandmc303-sh/626shake.wav",
+    "rolandmc303-sh/Cabasado.wav",
+    "rolandmc303-sh/Cabasaup.wav",
+    "rolandmc303-sh/Maracas.wav",
+    "rolandmc303-sh/Realph1.wav",
+    "rolandmc303-sh/Realph2.wav",
+    "rolandmc303-sh/Shaker.wav"
+   ],
+   "tb": [
+    "rolandmc303-tb/78tamb.wav",
+    "rolandmc303-tb/Hittamb.wav",
+    "rolandmc303-tb/Jngletam.wav",
+    "rolandmc303-tb/Shaketam.wav",
+    "rolandmc303-tb/Tambouri.wav"
+   ]
+  },
+  "RolandMT32": {
+   "_path": "RolandMT32/",
+   "bd": [
+    "rolandmt32-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandmt32-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandmt32-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandmt32-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandmt32-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandmt32-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandmt32-lt/Tom L.wav"
+   ],
+   "mt": [
+    "rolandmt32-mt/Tom M.wav"
+   ],
+   "oh": [
+    "rolandmt32-oh/Hat Open-01.wav",
+    "rolandmt32-oh/Hat Open-02.wav"
+   ],
+   "perc": [
+    "rolandmt32-perc/Agogo H.wav",
+    "rolandmt32-perc/Agogo L.wav",
+    "rolandmt32-perc/Bongo H.wav",
+    "rolandmt32-perc/Bongo L.wav",
+    "rolandmt32-perc/Claves.wav",
+    "rolandmt32-perc/Conga H.wav",
+    "rolandmt32-perc/Conga L.wav",
+    "rolandmt32-perc/Conga Muted H.wav",
+    "rolandmt32-perc/Quijada.wav",
+    "rolandmt32-perc/Timbale H.wav",
+    "rolandmt32-perc/Timbale L.wav",
+    "rolandmt32-perc/Whistle Short.wav",
+    "rolandmt32-perc/Whistle.wav"
+   ],
+   "rd": [
+    "rolandmt32-rd/Ride.wav"
+   ],
+   "rim": [
+    "rolandmt32-rim/RimShot.wav"
+   ],
+   "sd": [
+    "rolandmt32-sd/Snaredrum-01.wav",
+    "rolandmt32-sd/Snaredrum-02.wav"
+   ],
+   "sh": [
+    "rolandmt32-sh/Cabasa.wav",
+    "rolandmt32-sh/Maracas.wav"
+   ],
+   "tb": [
+    "rolandmt32-tb/Tambourine.wav"
+   ]
+  },
+  "RolandR8": {
+   "_path": "RolandR8/",
+   "bd": [
+    "rolandr8-bd/Bassdrum-01.wav",
+    "rolandr8-bd/Bassdrum-02.wav",
+    "rolandr8-bd/Bassdrum-03.wav",
+    "rolandr8-bd/Bassdrum-04.wav",
+    "rolandr8-bd/Bassdrum-05.wav",
+    "rolandr8-bd/Bassdrum-06.wav",
+    "rolandr8-bd/Bassdrum-07.wav"
+   ],
+   "cb": [
+    "rolandr8-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandr8-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandr8-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandr8-hh/Hat Closed.wav",
+    "rolandr8-hh/Hat Pedal.wav"
+   ],
+   "ht": [
+    "rolandr8-ht/Tom H-01.wav",
+    "rolandr8-ht/Tom H-02.wav",
+    "rolandr8-ht/Tom H-03.wav",
+    "rolandr8-ht/Tom H-04.wav"
+   ],
+   "lt": [
+    "rolandr8-lt/Tom L-01.wav",
+    "rolandr8-lt/Tom L-02.wav",
+    "rolandr8-lt/Tom L-03.wav",
+    "rolandr8-lt/Tom L-04.wav"
+   ],
+   "mt": [
+    "rolandr8-mt/Tom M-01.wav",
+    "rolandr8-mt/Tom M-02.wav",
+    "rolandr8-mt/Tom M-03.wav",
+    "rolandr8-mt/Tom M-04.wav"
+   ],
+   "oh": [
+    "rolandr8-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandr8-perc/Bell-01.wav",
+    "rolandr8-perc/Bell-02.wav",
+    "rolandr8-perc/Bongo H.wav",
+    "rolandr8-perc/Bongo L.wav",
+    "rolandr8-perc/Conga.wav",
+    "rolandr8-perc/Metal.wav",
+    "rolandr8-perc/Whistle.wav",
+    "rolandr8-perc/Wood Block.wav"
+   ],
+   "rd": [
+    "rolandr8-rd/Ride-01.wav",
+    "rolandr8-rd/Ride-02.wav"
+   ],
+   "rim": [
+    "rolandr8-rim/Rimshot1.wav",
+    "rolandr8-rim/Rimshot2.wav"
+   ],
+   "sd": [
+    "rolandr8-sd/Snaredrum-01.wav",
+    "rolandr8-sd/Snaredrum-02.wav",
+    "rolandr8-sd/Snaredrum-03.wav",
+    "rolandr8-sd/Snaredrum-04.wav",
+    "rolandr8-sd/Snaredrum-05.wav",
+    "rolandr8-sd/Snaredrum-06.wav",
+    "rolandr8-sd/Snaredrum-07.wav",
+    "rolandr8-sd/Snaredrum-08.wav",
+    "rolandr8-sd/Snaredrum-09.wav",
+    "rolandr8-sd/Snaredrum-10.wav",
+    "rolandr8-sd/Snaredrum-11.wav",
+    "rolandr8-sd/Snaredrum-12.wav"
+   ],
+   "sh": [
+    "rolandr8-sh/Cabasa1.wav",
+    "rolandr8-sh/Cabasa2.wav"
+   ],
+   "tb": [
+    "rolandr8-tb/Tambourine.wav"
+   ]
+  },
+  "RolandS50": {
+   "_path": "RolandS50/",
+   "bd": [
+    "rolands50-bd/Bassdrum-01.wav",
+    "rolands50-bd/Bassdrum-02.wav",
+    "rolands50-bd/Bassdrum-03.wav",
+    "rolands50-bd/Bassdrum-04.wav"
+   ],
+   "cb": [
+    "rolands50-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolands50-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolands50-cr/China.wav",
+    "rolands50-cr/Crash.wav"
+   ],
+   "ht": [
+    "rolands50-ht/Tom-01.wav"
+   ],
+   "lt": [
+    "rolands50-lt/Tom-03.wav",
+    "rolands50-lt/Tom-04.wav"
+   ],
+   "misc": [
+    "rolands50-misc/Cuica-01.wav",
+    "rolands50-misc/Cuica-02.wav",
+    "rolands50-misc/Cuical-01.wav",
+    "rolands50-misc/Cuical-02.wav",
+    "rolands50-misc/Gong.wav",
+    "rolands50-misc/Tria-2.wav"
+   ],
+   "mt": [
+    "rolands50-mt/Tom-02.wav"
+   ],
+   "oh": [
+    "rolands50-oh/Hihat.wav"
+   ],
+   "perc": [
+    "rolands50-perc/Agogo-01.wav",
+    "rolands50-perc/Agogo-02.wav",
+    "rolands50-perc/Bongo.wav",
+    "rolands50-perc/Claves-01.wav",
+    "rolands50-perc/Claves-02.wav",
+    "rolands50-perc/Conga-01.wav",
+    "rolands50-perc/Conga-02.wav",
+    "rolands50-perc/Conga-03.wav",
+    "rolands50-perc/Qijada.wav",
+    "rolands50-perc/Timbale H.wav",
+    "rolands50-perc/Timbale L.wav",
+    "rolands50-perc/Tria-1.wav",
+    "rolands50-perc/Wblk.wav",
+    "rolands50-perc/Whstl.wav"
+   ],
+   "rd": [
+    "rolands50-rd/Ride.wav"
+   ],
+   "sd": [
+    "rolands50-sd/Snaredrum-01.wav",
+    "rolands50-sd/Snaredrum-02.wav",
+    "rolands50-sd/Snaredrum-03.wav"
+   ],
+   "sh": [
+    "rolands50-sh/Cabasa-01.wav",
+    "rolands50-sh/Cabasa-02.wav",
+    "rolands50-sh/Maracas-01.wav",
+    "rolands50-sh/Maracas-02.wav"
+   ],
+   "tb": [
+    "rolands50-tb/Tambourine-01.wav",
+    "rolands50-tb/Tambourine-02.wav"
+   ]
+  },
+  "RolandSH09": {
+   "_path": "RolandSH09/",
+   "bd": [
+    "rolandsh09-bd/Bassdrum-01.wav",
+    "rolandsh09-bd/Bassdrum-02.wav",
+    "rolandsh09-bd/Bassdrum-03.wav",
+    "rolandsh09-bd/Bassdrum-04.wav",
+    "rolandsh09-bd/Bassdrum-05.wav",
+    "rolandsh09-bd/Bassdrum-06.wav",
+    "rolandsh09-bd/Bassdrum-07.wav",
+    "rolandsh09-bd/Bassdrum-08.wav",
+    "rolandsh09-bd/Bassdrum-09.wav",
+    "rolandsh09-bd/Bassdrum-10.wav",
+    "rolandsh09-bd/Bassdrum-11.wav",
+    "rolandsh09-bd/Bassdrum-12.wav",
+    "rolandsh09-bd/Bassdrum-13.wav",
+    "rolandsh09-bd/Bassdrum-14.wav",
+    "rolandsh09-bd/Bassdrum-15.wav",
+    "rolandsh09-bd/Bassdrum-16.wav",
+    "rolandsh09-bd/Bassdrum-17.wav",
+    "rolandsh09-bd/Bassdrum-18.wav",
+    "rolandsh09-bd/Bassdrum-19.wav",
+    "rolandsh09-bd/Bassdrum-20.wav",
+    "rolandsh09-bd/Bassdrum-21.wav",
+    "rolandsh09-bd/Bassdrum-22.wav",
+    "rolandsh09-bd/Bassdrum-23.wav",
+    "rolandsh09-bd/Bassdrum-24.wav",
+    "rolandsh09-bd/Bassdrum-25.wav",
+    "rolandsh09-bd/Bassdrum-26.wav",
+    "rolandsh09-bd/Bassdrum-27.wav",
+    "rolandsh09-bd/Bassdrum-28.wav",
+    "rolandsh09-bd/Bassdrum-29.wav",
+    "rolandsh09-bd/Bassdrum-30.wav",
+    "rolandsh09-bd/Bassdrum-31.wav",
+    "rolandsh09-bd/Bassdrum-32.wav",
+    "rolandsh09-bd/Bassdrum-33.wav",
+    "rolandsh09-bd/Bassdrum-34.wav",
+    "rolandsh09-bd/Bassdrum-35.wav",
+    "rolandsh09-bd/Bassdrum-36.wav",
+    "rolandsh09-bd/Bassdrum-37.wav",
+    "rolandsh09-bd/Bassdrum-38.wav",
+    "rolandsh09-bd/Bassdrum-39.wav",
+    "rolandsh09-bd/Bassdrum-40.wav",
+    "rolandsh09-bd/Bassdrum-41.wav",
+    "rolandsh09-bd/Bassdrum-42.wav",
+    "rolandsh09-bd/Bassdrum-43.wav"
+   ]
+  },
+  "RolandSystem100": {
+   "_path": "RolandSystem100/",
+   "bd": [
+    "rolandsystem100-bd/Bassdrum-01.wav",
+    "rolandsystem100-bd/Bassdrum-02.wav",
+    "rolandsystem100-bd/Bassdrum-03.wav",
+    "rolandsystem100-bd/Bassdrum-04.wav",
+    "rolandsystem100-bd/Bassdrum-05.wav",
+    "rolandsystem100-bd/Bassdrum-06.wav",
+    "rolandsystem100-bd/Bassdrum-07.wav",
+    "rolandsystem100-bd/Bassdrum-08.wav",
+    "rolandsystem100-bd/Bassdrum-09.wav",
+    "rolandsystem100-bd/Bassdrum-10.wav",
+    "rolandsystem100-bd/Bassdrum-11.wav",
+    "rolandsystem100-bd/Bassdrum-12.wav",
+    "rolandsystem100-bd/Bassdrum-13.wav",
+    "rolandsystem100-bd/Bassdrum-14.wav",
+    "rolandsystem100-bd/Bassdrum-15.wav"
+   ],
+   "hh": [
+    "rolandsystem100-hh/Hat Closed-01.wav",
+    "rolandsystem100-hh/Hat Closed-02.wav"
+   ],
+   "misc": [
+    "rolandsystem100-misc/Tock.wav",
+    "rolandsystem100-misc/Triangle.wav"
+   ],
+   "oh": [
+    "rolandsystem100-oh/Hat Open-01.wav",
+    "rolandsystem100-oh/Hat Open-02.wav",
+    "rolandsystem100-oh/Hat Open-03.wav"
+   ],
+   "perc": [
+    "rolandsystem100-perc/Bell.wav",
+    "rolandsystem100-perc/Click-01.wav",
+    "rolandsystem100-perc/Click-02.wav",
+    "rolandsystem100-perc/Click-03.wav",
+    "rolandsystem100-perc/Click-04.wav",
+    "rolandsystem100-perc/Click-05.wav",
+    "rolandsystem100-perc/Click-06.wav",
+    "rolandsystem100-perc/Pling-01.wav",
+    "rolandsystem100-perc/Pling-02.wav",
+    "rolandsystem100-perc/Pling-03.wav",
+    "rolandsystem100-perc/Plopp-01.wav",
+    "rolandsystem100-perc/Plopp-02.wav",
+    "rolandsystem100-perc/Plopp-03.wav",
+    "rolandsystem100-perc/Plopp-04.wav",
+    "rolandsystem100-perc/Plopp-05.wav",
+    "rolandsystem100-perc/Plopp-06.wav",
+    "rolandsystem100-perc/Plopp-07.wav",
+    "rolandsystem100-perc/Plopp-08.wav",
+    "rolandsystem100-perc/Plopp-09.wav"
+   ],
+   "sd": [
+    "rolandsystem100-sd/Snaredrum-01.wav",
+    "rolandsystem100-sd/Snaredrum-02.wav",
+    "rolandsystem100-sd/Snaredrum-03.wav",
+    "rolandsystem100-sd/Snaredrum-04.wav",
+    "rolandsystem100-sd/Snaredrum-05.wav",
+    "rolandsystem100-sd/Snaredrum-06.wav",
+    "rolandsystem100-sd/Snaredrum-07.wav",
+    "rolandsystem100-sd/Snaredrum-08.wav",
+    "rolandsystem100-sd/Snaredrum-09.wav",
+    "rolandsystem100-sd/Snaredrum-10.wav",
+    "rolandsystem100-sd/Snaredrum-11.wav",
+    "rolandsystem100-sd/Snaredrum-12.wav",
+    "rolandsystem100-sd/Snaredrum-14.wav",
+    "rolandsystem100-sd/Snaredrum-15.wav",
+    "rolandsystem100-sd/Snaredrum-16.wav",
+    "rolandsystem100-sd/Snaredrum-17.wav",
+    "rolandsystem100-sd/Snaredrum-18.wav",
+    "rolandsystem100-sd/Snaredrum-19.wav",
+    "rolandsystem100-sd/Snaredrum-20.wav",
+    "rolandsystem100-sd/Snaredrum-21.wav",
+    "rolandsystem100-sd/Snaredrum-22.wav"
+   ]
+  },
+  "RolandTR505": {
+   "_path": "RolandTR505/",
+   "bd": [
+    "rolandtr505-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "rolandtr505-cb/Cowbell H.wav",
+    "rolandtr505-cb/Cowbell L.wav"
+   ],
+   "cp": [
+    "rolandtr505-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandtr505-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandtr505-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandtr505-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandtr505-lt/Tom L.wav"
+   ],
+   "mt": [
+    "rolandtr505-mt/Tom M.wav"
+   ],
+   "oh": [
+    "rolandtr505-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandtr505-perc/Conga H.wav",
+    "rolandtr505-perc/Conga L.wav",
+    "rolandtr505-perc/Timbale.wav"
+   ],
+   "rd": [
+    "rolandtr505-rd/Ride.wav"
+   ],
+   "rim": [
+    "rolandtr505-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandtr505-sd/Snaredrum.wav"
+   ]
+  },
+  "RolandTR606": {
+   "_path": "RolandTR606/",
+   "bd": [
+    "rolandtr606-bd/Bassdrum.wav"
+   ],
+   "cr": [
+    "rolandtr606-cr/Cymbal.wav"
+   ],
+   "hh": [
+    "rolandtr606-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandtr606-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandtr606-lt/Tom L.wav"
+   ],
+   "oh": [
+    "rolandtr606-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "rolandtr606-sd/Snaredrum.wav"
+   ]
+  },
+  "RolandTR626": {
+   "_path": "RolandTR626/",
+   "bd": [
+    "rolandtr626-bd/Bassdrum-01.wav",
+    "rolandtr626-bd/Bassdrum-02.wav"
+   ],
+   "cb": [
+    "rolandtr626-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandtr626-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandtr626-cr/Crash.wav",
+    "rolandtr626-cr/zChina.wav"
+   ],
+   "hh": [
+    "rolandtr626-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandtr626-ht/Tom H-01.wav",
+    "rolandtr626-ht/Tom H-02.wav"
+   ],
+   "lt": [
+    "rolandtr626-lt/Tom L-01.wav",
+    "rolandtr626-lt/Tom L-02.wav"
+   ],
+   "mt": [
+    "rolandtr626-mt/Tom M-01.wav",
+    "rolandtr626-mt/Tom M-02.wav"
+   ],
+   "oh": [
+    "rolandtr626-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "rolandtr626-perc/Agogo H.wav",
+    "rolandtr626-perc/Agogo L.wav",
+    "rolandtr626-perc/Clave.wav",
+    "rolandtr626-perc/Conga H.wav",
+    "rolandtr626-perc/Conga L.wav",
+    "rolandtr626-perc/Conga M.wav",
+    "rolandtr626-perc/Timbale H.wav",
+    "rolandtr626-perc/Timbale L.wav"
+   ],
+   "rd": [
+    "rolandtr626-rd/Ride-01.wav",
+    "rolandtr626-rd/Ride-02.wav"
+   ],
+   "rim": [
+    "rolandtr626-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandtr626-sd/Snaredrum-01.wav",
+    "rolandtr626-sd/Snaredrum-02.wav",
+    "rolandtr626-sd/Snaredrum-03.wav"
+   ],
+   "sh": [
+    "rolandtr626-sh/Shaker.wav"
+   ],
+   "tb": [
+    "rolandtr626-tb/Tambourine.wav"
+   ]
+  },
+  "RolandTR707": {
+   "_path": "RolandTR707/",
+   "bd": [
+    "rolandtr707-bd/Bassdrum-01.wav",
+    "rolandtr707-bd/Bassdrum-02.wav"
+   ],
+   "cb": [
+    "rolandtr707-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandtr707-cp/Clap.wav"
+   ],
+   "cr": [
+    "rolandtr707-cr/Crash.wav"
+   ],
+   "hh": [
+    "rolandtr707-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "rolandtr707-ht/Tom H.wav"
+   ],
+   "lt": [
+    "rolandtr707-lt/Tom L.wav"
+   ],
+   "mt": [
+    "rolandtr707-mt/Tom M.wav"
+   ],
+   "oh": [
+    "rolandtr707-oh/Hat Open.wav"
+   ],
+   "rim": [
+    "rolandtr707-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "rolandtr707-sd/Snaredrum-01.wav",
+    "rolandtr707-sd/Snaredrum-02.wav"
+   ],
+   "tb": [
+    "rolandtr707-tb/Tambourine.wav"
+   ]
+  },
+  "RolandTR727": {
+   "_path": "RolandTR727/",
+   "perc": [
+    "rolandtr727-perc/Agogo H.wav",
+    "rolandtr727-perc/Agogo L.wav",
+    "rolandtr727-perc/Bongo H.wav",
+    "rolandtr727-perc/Bongo L.wav",
+    "rolandtr727-perc/Conga L.wav",
+    "rolandtr727-perc/Quijada.wav",
+    "rolandtr727-perc/Star-chimes.wav",
+    "rolandtr727-perc/Timbale H.wav",
+    "rolandtr727-perc/Timbale L.wav",
+    "rolandtr727-perc/Whistle.wav"
+   ],
+   "sh": [
+    "rolandtr727-sh/Cabasa.wav",
+    "rolandtr727-sh/Maracas.wav"
+   ]
+  },
+  "RolandTR808": {
+   "_path": "RolandTR808/",
+   "bd": [
+    "rolandtr808-bd/BD0000.WAV",
+    "rolandtr808-bd/BD0010.WAV",
+    "rolandtr808-bd/BD0025.WAV",
+    "rolandtr808-bd/BD0050.WAV",
+    "rolandtr808-bd/BD0075.WAV",
+    "rolandtr808-bd/BD1000.WAV",
+    "rolandtr808-bd/BD1010.WAV",
+    "rolandtr808-bd/BD1025.WAV",
+    "rolandtr808-bd/BD1050.WAV",
+    "rolandtr808-bd/BD1075.WAV",
+    "rolandtr808-bd/BD2500.WAV",
+    "rolandtr808-bd/BD2510.WAV",
+    "rolandtr808-bd/BD2525.WAV",
+    "rolandtr808-bd/BD2550.WAV",
+    "rolandtr808-bd/BD2575.WAV",
+    "rolandtr808-bd/BD5000.WAV",
+    "rolandtr808-bd/BD5010.WAV",
+    "rolandtr808-bd/BD5025.WAV",
+    "rolandtr808-bd/BD5050.WAV",
+    "rolandtr808-bd/BD5075.WAV",
+    "rolandtr808-bd/BD7500.WAV",
+    "rolandtr808-bd/BD7510.WAV",
+    "rolandtr808-bd/BD7525.WAV",
+    "rolandtr808-bd/BD7550.WAV",
+    "rolandtr808-bd/BD7575.WAV"
+   ],
+   "cb": [
+    "rolandtr808-cb/CB.WAV",
+    "rolandtr808-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "rolandtr808-cp/cp0.wav",
+    "rolandtr808-cp/cp1.wav",
+    "rolandtr808-cp/cp2.wav",
+    "rolandtr808-cp/cp3.wav",
+    "rolandtr808-cp/cp4.WAV"
+   ],
+   "cr": [
+    "rolandtr808-cr/CY0000.WAV",
+    "rolandtr808-cr/CY0010.WAV",
+    "rolandtr808-cr/CY0025.WAV",
+    "rolandtr808-cr/CY0050.WAV",
+    "rolandtr808-cr/CY0075.WAV",
+    "rolandtr808-cr/CY1000.WAV",
+    "rolandtr808-cr/CY1010.WAV",
+    "rolandtr808-cr/CY1025.WAV",
+    "rolandtr808-cr/CY1050.WAV",
+    "rolandtr808-cr/CY1075.WAV",
+    "rolandtr808-cr/CY2500.WAV",
+    "rolandtr808-cr/CY2510.WAV",
+    "rolandtr808-cr/CY2525.WAV",
+    "rolandtr808-cr/CY2550.WAV",
+    "rolandtr808-cr/CY2575.WAV",
+    "rolandtr808-cr/CY5000.WAV",
+    "rolandtr808-cr/CY5010.WAV",
+    "rolandtr808-cr/CY5025.WAV",
+    "rolandtr808-cr/CY5050.WAV",
+    "rolandtr808-cr/CY5075.WAV",
+    "rolandtr808-cr/CY7500.WAV",
+    "rolandtr808-cr/CY7510.WAV",
+    "rolandtr808-cr/CY7525.WAV",
+    "rolandtr808-cr/CY7550.WAV",
+    "rolandtr808-cr/CY7575.WAV"
+   ],
+   "hh": [
+    "rolandtr808-hh/CH.WAV"
+   ],
+   "ht": [
+    "rolandtr808-ht/HT00.WAV",
+    "rolandtr808-ht/HT10.WAV",
+    "rolandtr808-ht/HT25.WAV",
+    "rolandtr808-ht/HT50.WAV",
+    "rolandtr808-ht/HT75.WAV"
+   ],
+   "lt": [
+    "rolandtr808-lt/LT00.WAV",
+    "rolandtr808-lt/LT10.WAV",
+    "rolandtr808-lt/LT25.WAV",
+    "rolandtr808-lt/LT50.WAV",
+    "rolandtr808-lt/LT75.WAV"
+   ],
+   "mt": [
+    "rolandtr808-mt/MT00.WAV",
+    "rolandtr808-mt/MT10.WAV",
+    "rolandtr808-mt/MT25.WAV",
+    "rolandtr808-mt/MT50.WAV",
+    "rolandtr808-mt/MT75.WAV"
+   ],
+   "oh": [
+    "rolandtr808-oh/OH00.WAV",
+    "rolandtr808-oh/OH10.WAV",
+    "rolandtr808-oh/OH25.WAV",
+    "rolandtr808-oh/OH50.WAV",
+    "rolandtr808-oh/OH75.WAV"
+   ],
+   "perc": [
+    "rolandtr808-perc/CL.WAV",
+    "rolandtr808-perc/HC00.WAV",
+    "rolandtr808-perc/HC10.WAV",
+    "rolandtr808-perc/HC25.WAV",
+    "rolandtr808-perc/HC50.WAV",
+    "rolandtr808-perc/HC75.WAV",
+    "rolandtr808-perc/LC00.WAV",
+    "rolandtr808-perc/LC10.WAV",
+    "rolandtr808-perc/LC25.WAV",
+    "rolandtr808-perc/LC50.WAV",
+    "rolandtr808-perc/LC75.WAV",
+    "rolandtr808-perc/MC00.WAV",
+    "rolandtr808-perc/MC10.WAV",
+    "rolandtr808-perc/MC25.WAV",
+    "rolandtr808-perc/MC50.WAV",
+    "rolandtr808-perc/MC75.WAV"
+   ],
+   "rim": [
+    "rolandtr808-rim/RS.WAV"
+   ],
+   "sd": [
+    "rolandtr808-sd/SD0000.WAV",
+    "rolandtr808-sd/SD0010.WAV",
+    "rolandtr808-sd/SD0025.WAV",
+    "rolandtr808-sd/SD0050.WAV",
+    "rolandtr808-sd/SD0075.WAV",
+    "rolandtr808-sd/SD1000.WAV",
+    "rolandtr808-sd/SD1010.WAV",
+    "rolandtr808-sd/SD1025.WAV",
+    "rolandtr808-sd/SD1050.WAV",
+    "rolandtr808-sd/SD1075.WAV",
+    "rolandtr808-sd/SD2500.WAV",
+    "rolandtr808-sd/SD2510.WAV",
+    "rolandtr808-sd/SD2525.WAV",
+    "rolandtr808-sd/SD2550.WAV",
+    "rolandtr808-sd/SD2575.WAV",
+    "rolandtr808-sd/SD5000.WAV",
+    "rolandtr808-sd/SD5010.WAV",
+    "rolandtr808-sd/SD5025.WAV",
+    "rolandtr808-sd/SD5050.WAV",
+    "rolandtr808-sd/SD5075.WAV",
+    "rolandtr808-sd/SD7500.WAV",
+    "rolandtr808-sd/SD7510.WAV",
+    "rolandtr808-sd/SD7525.WAV",
+    "rolandtr808-sd/SD7550.WAV",
+    "rolandtr808-sd/SD7575.WAV"
+   ],
+   "sh": [
+    "rolandtr808-sh/Cabasa.wav",
+    "rolandtr808-sh/MA.WAV"
+   ]
+  },
+  "RolandTR909": {
+   "_path": "RolandTR909/",
+   "bd": [
+    "rolandtr909-bd/Bassdrum-01.wav",
+    "rolandtr909-bd/Bassdrum-02.wav",
+    "rolandtr909-bd/Bassdrum-03.wav",
+    "rolandtr909-bd/Bassdrum-04.wav"
+   ],
+   "cp": [
+    "rolandtr909-cp/Clap.wav",
+    "rolandtr909-cp/cp01.wav",
+    "rolandtr909-cp/cp02.wav",
+    "rolandtr909-cp/cp03.wav",
+    "rolandtr909-cp/cp04.wav"
+   ],
+   "cr": [
+    "rolandtr909-cr/Crash.wav",
+    "rolandtr909-cr/cr01.wav",
+    "rolandtr909-cr/cr02.wav",
+    "rolandtr909-cr/cr03.wav",
+    "rolandtr909-cr/cr04.wav"
+   ],
+   "hh": [
+    "rolandtr909-hh/hh01.wav",
+    "rolandtr909-hh/hh02.wav",
+    "rolandtr909-hh/hh03.wav",
+    "rolandtr909-hh/hh04.wav"
+   ],
+   "ht": [
+    "rolandtr909-ht/Tom H.wav",
+    "rolandtr909-ht/ht01.wav",
+    "rolandtr909-ht/ht02.wav",
+    "rolandtr909-ht/ht03.wav",
+    "rolandtr909-ht/ht04.wav",
+    "rolandtr909-ht/ht05.wav",
+    "rolandtr909-ht/ht06.wav",
+    "rolandtr909-ht/ht07.wav",
+    "rolandtr909-ht/ht08.wav"
+   ],
+   "lt": [
+    "rolandtr909-lt/Tom L.wav",
+    "rolandtr909-lt/lt01.wav",
+    "rolandtr909-lt/lt02.wav",
+    "rolandtr909-lt/lt03.wav",
+    "rolandtr909-lt/lt04.wav",
+    "rolandtr909-lt/lt05.wav",
+    "rolandtr909-lt/lt06.wav",
+    "rolandtr909-lt/lt07.wav",
+    "rolandtr909-lt/lt08.wav"
+   ],
+   "mt": [
+    "rolandtr909-mt/Tom M.wav",
+    "rolandtr909-mt/mt01.wav",
+    "rolandtr909-mt/mt02.wav",
+    "rolandtr909-mt/mt03.wav",
+    "rolandtr909-mt/mt04.wav",
+    "rolandtr909-mt/mt05.wav",
+    "rolandtr909-mt/mt06.wav",
+    "rolandtr909-mt/mt07.wav",
+    "rolandtr909-mt/mt08.wav"
+   ],
+   "oh": [
+    "rolandtr909-oh/Hat Open.wav",
+    "rolandtr909-oh/oh01.wav",
+    "rolandtr909-oh/oh02.wav",
+    "rolandtr909-oh/oh03.wav",
+    "rolandtr909-oh/oh04.wav"
+   ],
+   "rd": [
+    "rolandtr909-rd/Ride.wav",
+    "rolandtr909-rd/rd01.wav",
+    "rolandtr909-rd/rd02.wav",
+    "rolandtr909-rd/rd03.wav",
+    "rolandtr909-rd/rd04.wav"
+   ],
+   "rim": [
+    "rolandtr909-rim/Rimhot.wav",
+    "rolandtr909-rim/rs01.wav",
+    "rolandtr909-rim/rs02.wav"
+   ],
+   "sd": [
+    "rolandtr909-sd/naredrum.wav",
+    "rolandtr909-sd/sd01.wav",
+    "rolandtr909-sd/sd02.wav",
+    "rolandtr909-sd/sd03.wav",
+    "rolandtr909-sd/sd04.wav",
+    "rolandtr909-sd/sd05.wav",
+    "rolandtr909-sd/sd06.wav",
+    "rolandtr909-sd/sd07.wav",
+    "rolandtr909-sd/sd08.wav",
+    "rolandtr909-sd/sd09.wav",
+    "rolandtr909-sd/sd10.wav",
+    "rolandtr909-sd/sd11.wav",
+    "rolandtr909-sd/sd12.wav",
+    "rolandtr909-sd/sd13.wav",
+    "rolandtr909-sd/sd14.wav",
+    "rolandtr909-sd/sd15.wav"
+   ]
+  },
+  "SakataDPM48": {
+   "_path": "SakataDPM48/",
+   "bd": [
+    "sakatadpm48-bd/Bassdrum-01.wav",
+    "sakatadpm48-bd/Bassdrum-02.wav",
+    "sakatadpm48-bd/Bassdrum-03.wav"
+   ],
+   "cp": [
+    "sakatadpm48-cp/Clap.wav"
+   ],
+   "cr": [
+    "sakatadpm48-cr/Crash.wav"
+   ],
+   "hh": [
+    "sakatadpm48-hh/Hat Closed-01.wav",
+    "sakatadpm48-hh/Hat Closed-02.wav"
+   ],
+   "ht": [
+    "sakatadpm48-ht/Tom-01.wav"
+   ],
+   "lt": [
+    "sakatadpm48-lt/Tom-03.wav",
+    "sakatadpm48-lt/Tom-04.wav"
+   ],
+   "mt": [
+    "sakatadpm48-mt/Tom-02.wav"
+   ],
+   "oh": [
+    "sakatadpm48-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "sakatadpm48-perc/Agogo1.wav",
+    "sakatadpm48-perc/Agogo2.wav"
+   ],
+   "rd": [
+    "sakatadpm48-rd/Ride.wav"
+   ],
+   "rim": [
+    "sakatadpm48-rim/Rim.wav"
+   ],
+   "sd": [
+    "sakatadpm48-sd/Snaredrum-01.wav",
+    "sakatadpm48-sd/Snaredrum-02.wav"
+   ],
+   "sh": [
+    "sakatadpm48-sh/Cabasa-01.wav",
+    "sakatadpm48-sh/Cabasa-02.wav"
+   ]
+  },
+  "SequentialCircuitsDrumtracks": {
+   "_path": "SequentialCircuitsDrumtracks/",
+   "bd": [
+    "sequentialcircuitsdrumtracks-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "sequentialcircuitsdrumtracks-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "sequentialcircuitsdrumtracks-cp/Clap.wav"
+   ],
+   "cr": [
+    "sequentialcircuitsdrumtracks-cr/Crash.wav"
+   ],
+   "hh": [
+    "sequentialcircuitsdrumtracks-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "sequentialcircuitsdrumtracks-ht/Tom.wav"
+   ],
+   "oh": [
+    "sequentialcircuitsdrumtracks-oh/Hat Open.wav"
+   ],
+   "rd": [
+    "sequentialcircuitsdrumtracks-rd/Ride.wav"
+   ],
+   "rim": [
+    "sequentialcircuitsdrumtracks-rim/Rim Shot.wav"
+   ],
+   "sd": [
+    "sequentialcircuitsdrumtracks-sd/Snaredrum.wav"
+   ],
+   "sh": [
+    "sequentialcircuitsdrumtracks-sh/Cabasa.wav"
+   ],
+   "tb": [
+    "sequentialcircuitsdrumtracks-tb/Tambourine.wav"
+   ]
+  },
+  "SequentialCircuitsTom": {
+   "_path": "SequentialCircuitsTom/",
+   "bd": [
+    "sequentialcircuitstom-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "sequentialcircuitstom-cp/Clap.wav"
+   ],
+   "cr": [
+    "sequentialcircuitstom-cr/Crash.wav"
+   ],
+   "hh": [
+    "sequentialcircuitstom-hh/Hat Closed.wav"
+   ],
+   "ht": [
+    "sequentialcircuitstom-ht/Tom-01.wav",
+    "sequentialcircuitstom-ht/Tom-02.wav"
+   ],
+   "oh": [
+    "sequentialcircuitstom-oh/Hat Open.wav"
+   ],
+   "sd": [
+    "sequentialcircuitstom-sd/Snaredrum.wav"
+   ]
+  },
+  "SergeModular": {
+   "_path": "SergeModular/",
+   "bd": [
+    "sergemodular-bd/Bassdrum.wav"
+   ],
+   "misc": [
+    "sergemodular-misc/Clink.wav"
+   ],
+   "perc": [
+    "sergemodular-perc/Claves.wav",
+    "sergemodular-perc/Click-01.wav",
+    "sergemodular-perc/Click-02.wav",
+    "sergemodular-perc/Click-03.wav",
+    "sergemodular-perc/Click-04.wav"
+   ]
+  },
+  "SimmonsSDS400": {
+   "_path": "SimmonsSDS400/",
+   "ht": [
+    "simmonssds400-ht/Tom-07.wav",
+    "simmonssds400-ht/Tom-09.wav",
+    "simmonssds400-ht/Tom-13.wav"
+   ],
+   "lt": [
+    "simmonssds400-lt/Tom-01.wav",
+    "simmonssds400-lt/Tom-02.wav",
+    "simmonssds400-lt/Tom-03.wav",
+    "simmonssds400-lt/Tom-08.wav",
+    "simmonssds400-lt/Tom-14.wav",
+    "simmonssds400-lt/Tom-17.wav"
+   ],
+   "mt": [
+    "simmonssds400-mt/Tom-04.wav",
+    "simmonssds400-mt/Tom-05.wav",
+    "simmonssds400-mt/Tom-06.wav",
+    "simmonssds400-mt/Tom-10.wav",
+    "simmonssds400-mt/Tom-11.wav",
+    "simmonssds400-mt/Tom-12.wav",
+    "simmonssds400-mt/Tom-15.wav",
+    "simmonssds400-mt/Tom-16.wav"
+   ],
+   "sd": [
+    "simmonssds400-sd/Slap-1.wav",
+    "simmonssds400-sd/Slap-2.wav",
+    "simmonssds400-sd/Slap-3.wav"
+   ]
+  },
+  "SimmonsSDS5": {
+   "_path": "SimmonsSDS5/",
+   "bd": [
+    "simmonssds5-bd/Bassdrum-01.wav",
+    "simmonssds5-bd/Bassdrum-02.wav",
+    "simmonssds5-bd/Bassdrum-03.wav",
+    "simmonssds5-bd/Bassdrum-04.wav",
+    "simmonssds5-bd/Bassdrum-05.wav",
+    "simmonssds5-bd/Bassdrum-06.wav",
+    "simmonssds5-bd/Bassdrum-07.wav",
+    "simmonssds5-bd/Bassdrum-08.wav",
+    "simmonssds5-bd/Bassdrum-09.wav",
+    "simmonssds5-bd/Bassdrum-10.wav",
+    "simmonssds5-bd/Bassdrum-11.wav",
+    "simmonssds5-bd/Bassdrum-12.wav"
+   ],
+   "hh": [
+    "simmonssds5-hh/Hat Closed-01.wav",
+    "simmonssds5-hh/Hat Closed-02.wav",
+    "simmonssds5-hh/Hat Closed-03.wav",
+    "simmonssds5-hh/Hat Pedal-01.wav",
+    "simmonssds5-hh/Hat Pedal-02.wav"
+   ],
+   "ht": [
+    "simmonssds5-ht/Tom-01.wav",
+    "simmonssds5-ht/Tom-04.wav",
+    "simmonssds5-ht/Tom-05.wav"
+   ],
+   "lt": [
+    "simmonssds5-lt/Tom-07.wav",
+    "simmonssds5-lt/Tom-08.wav",
+    "simmonssds5-lt/Tom-10.wav",
+    "simmonssds5-lt/Tom-11.wav",
+    "simmonssds5-lt/Tom-13.wav",
+    "simmonssds5-lt/Tom-14.wav",
+    "simmonssds5-lt/Tom-15.wav",
+    "simmonssds5-lt/Tom-17.wav"
+   ],
+   "mt": [
+    "simmonssds5-mt/Tom-02.wav",
+    "simmonssds5-mt/Tom-03.wav",
+    "simmonssds5-mt/Tom-06.wav",
+    "simmonssds5-mt/Tom-09.wav",
+    "simmonssds5-mt/Tom-12.wav",
+    "simmonssds5-mt/Tom-16.wav"
+   ],
+   "oh": [
+    "simmonssds5-oh/Hat Open-01.wav",
+    "simmonssds5-oh/Hat Open-02.wav"
+   ],
+   "rim": [
+    "simmonssds5-rim/Rimshot-01.wav",
+    "simmonssds5-rim/Rimshot-02.wav",
+    "simmonssds5-rim/Rimshot-03.wav",
+    "simmonssds5-rim/Rimshot-04.wav",
+    "simmonssds5-rim/Rimshot-05.wav",
+    "simmonssds5-rim/Rimshot-06.wav",
+    "simmonssds5-rim/Rimshot-07.wav"
+   ],
+   "sd": [
+    "simmonssds5-sd/Snaredrum-01.wav",
+    "simmonssds5-sd/Snaredrum-02.wav",
+    "simmonssds5-sd/Snaredrum-03.wav",
+    "simmonssds5-sd/Snaredrum-04.wav",
+    "simmonssds5-sd/Snaredrum-05.wav",
+    "simmonssds5-sd/Snaredrum-06.wav",
+    "simmonssds5-sd/Snaredrum-07.wav",
+    "simmonssds5-sd/Snaredrum-08.wav",
+    "simmonssds5-sd/Snaredrum-09.wav",
+    "simmonssds5-sd/Snaredrum-10.wav",
+    "simmonssds5-sd/Snaredrum-11.wav",
+    "simmonssds5-sd/Snaredrum-12.wav",
+    "simmonssds5-sd/Snaredrum-13.wav",
+    "simmonssds5-sd/Snaredrum-14.wav",
+    "simmonssds5-sd/Snaredrum-15.wav",
+    "simmonssds5-sd/Snaredrum-16.wav",
+    "simmonssds5-sd/Snaredrum-17.wav",
+    "simmonssds5-sd/Snaredrum-18.wav",
+    "simmonssds5-sd/Snaredrum-19.wav",
+    "simmonssds5-sd/Snaredrum-20.wav",
+    "simmonssds5-sd/Snaredrum-21.wav"
+   ]
+  },
+  "SoundmastersR88": {
+   "_path": "SoundmastersR88/",
+   "bd": [
+    "soundmastersr88-bd/Bassdrum.wav"
+   ],
+   "cr": [
+    "soundmastersr88-cr/Crash.wav"
+   ],
+   "hh": [
+    "soundmastersr88-hh/Closed Hat.wav"
+   ],
+   "oh": [
+    "soundmastersr88-oh/Open Hat.wav"
+   ],
+   "sd": [
+    "soundmastersr88-sd/Snare-1.wav",
+    "soundmastersr88-sd/Snare-2.wav"
+   ]
+  },
+  "UnivoxMicroRhythmer12": {
+   "_path": "UnivoxMicroRhythmer12/",
+   "bd": [
+    "univoxmicrorhythmer12-bd/Bassdrum.wav"
+   ],
+   "hh": [
+    "univoxmicrorhythmer12-hh/Closed Hat.wav"
+   ],
+   "oh": [
+    "univoxmicrorhythmer12-oh/Open Hat.wav"
+   ],
+   "sd": [
+    "univoxmicrorhythmer12-sd/Snaredrum.wav"
+   ]
+  },
+  "ViscoSpaceDrum": {
+   "_path": "ViscoSpaceDrum/",
+   "bd": [
+    "viscospacedrum-bd/Bassdrum-01.wav",
+    "viscospacedrum-bd/Bassdrum-02.wav",
+    "viscospacedrum-bd/Bassdrum-03.wav",
+    "viscospacedrum-bd/Bassdrum-04.wav",
+    "viscospacedrum-bd/Bassdrum-05.wav",
+    "viscospacedrum-bd/Bassdrum-06.wav",
+    "viscospacedrum-bd/Bassdrum-07.wav",
+    "viscospacedrum-bd/Bassdrum-08.wav",
+    "viscospacedrum-bd/Bassdrum-09.wav",
+    "viscospacedrum-bd/Bassdrum-10.wav",
+    "viscospacedrum-bd/Bassdrum-11.wav"
+   ],
+   "cb": [
+    "viscospacedrum-cb/Cowbell.wav"
+   ],
+   "hh": [
+    "viscospacedrum-hh/Hat Closed-01.wav",
+    "viscospacedrum-hh/Hat Closed-02.wav",
+    "viscospacedrum-hh/Hat Closed-03.wav",
+    "viscospacedrum-hh/Hat Closed-04.wav",
+    "viscospacedrum-hh/Hat Pedal-01.wav",
+    "viscospacedrum-hh/zHat Closed Reversed.wav"
+   ],
+   "ht": [
+    "viscospacedrum-ht/Synth Tom H.wav",
+    "viscospacedrum-ht/Tom-01.wav",
+    "viscospacedrum-ht/Tom-02.wav",
+    "viscospacedrum-ht/Tom-03.wav",
+    "viscospacedrum-ht/Tom-04.wav",
+    "viscospacedrum-ht/Tom-05.wav",
+    "viscospacedrum-ht/Tom7.wav"
+   ],
+   "lt": [
+    "viscospacedrum-lt/Synth Tom L.wav",
+    "viscospacedrum-lt/Tom-06.wav"
+   ],
+   "misc": [
+    "viscospacedrum-misc/Bleep-01.wav",
+    "viscospacedrum-misc/Bleep-02.wav"
+   ],
+   "mt": [
+    "viscospacedrum-mt/Synth Tom M-01.wav",
+    "viscospacedrum-mt/Synth Tom M-02.wav"
+   ],
+   "oh": [
+    "viscospacedrum-oh/Hat Open-01.wav",
+    "viscospacedrum-oh/Hat Open-02.wav",
+    "viscospacedrum-oh/Hat Open-03.wav"
+   ],
+   "perc": [
+    "viscospacedrum-perc/Woodblock1.wav",
+    "viscospacedrum-perc/Woodblock2.wav"
+   ],
+   "rim": [
+    "viscospacedrum-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "viscospacedrum-sd/Snaredrum-01.wav",
+    "viscospacedrum-sd/Snaredrum-02.wav",
+    "viscospacedrum-sd/Snaredrum-03.wav"
+   ]
+  },
+  "XdrumLM8953": {
+   "_path": "XdrumLM8953/",
+   "bd": [
+    "xdrumlm8953-bd/Bassdrum-01.wav",
+    "xdrumlm8953-bd/Bassdrum-02.wav",
+    "xdrumlm8953-bd/zphil-drm.wav"
+   ],
+   "cr": [
+    "xdrumlm8953-cr/Crash.wav"
+   ],
+   "hh": [
+    "xdrumlm8953-hh/Hat Closed.wav",
+    "xdrumlm8953-hh/Hat Pedal.wav"
+   ],
+   "ht": [
+    "xdrumlm8953-ht/Tom-01.wav",
+    "xdrumlm8953-ht/Tom-02.wav"
+   ],
+   "lt": [
+    "xdrumlm8953-lt/Tom-05.wav",
+    "xdrumlm8953-lt/Tom-06.wav"
+   ],
+   "mt": [
+    "xdrumlm8953-mt/Tom-03.wav",
+    "xdrumlm8953-mt/Tom-04.wav"
+   ],
+   "oh": [
+    "xdrumlm8953-oh/Hat Open.wav"
+   ],
+   "rd": [
+    "xdrumlm8953-rd/Ride.wav"
+   ],
+   "rim": [
+    "xdrumlm8953-rim/Rim Shot-01.wav",
+    "xdrumlm8953-rim/Rim Shot-02.wav"
+   ],
+   "sd": [
+    "xdrumlm8953-sd/Snaredrum-01.wav",
+    "xdrumlm8953-sd/Snaredrum-02.wav",
+    "xdrumlm8953-sd/Snaredrum-03.wav",
+    "xdrumlm8953-sd/Snaredrum-04.wav",
+    "xdrumlm8953-sd/zSnare Fill.wav"
+   ],
+   "tb": [
+    "xdrumlm8953-tb/Tambourine.wav"
+   ]
+  },
+  "YamahaRM50": {
+   "_path": "YamahaRM50/",
+   "bd": [
+    "yamaharm50-bd/BD-001.wav",
+    "yamaharm50-bd/BD-002.wav",
+    "yamaharm50-bd/BD-003.wav",
+    "yamaharm50-bd/BD-004.wav",
+    "yamaharm50-bd/BD-005.wav",
+    "yamaharm50-bd/BD-006.wav",
+    "yamaharm50-bd/BD-007.wav",
+    "yamaharm50-bd/BD-008.wav",
+    "yamaharm50-bd/BD-009.wav",
+    "yamaharm50-bd/BD-010.wav",
+    "yamaharm50-bd/BD-011..wav",
+    "yamaharm50-bd/BD-012.wav",
+    "yamaharm50-bd/BD-013.wav",
+    "yamaharm50-bd/BD-014.wav",
+    "yamaharm50-bd/BD-015.wav",
+    "yamaharm50-bd/BD-016.wav",
+    "yamaharm50-bd/BD-017.wav",
+    "yamaharm50-bd/BD-018.wav",
+    "yamaharm50-bd/BD-019.wav",
+    "yamaharm50-bd/BD-020.wav",
+    "yamaharm50-bd/BD-021.wav",
+    "yamaharm50-bd/BD-022.wav",
+    "yamaharm50-bd/BD-023.wav",
+    "yamaharm50-bd/BD-024.wav",
+    "yamaharm50-bd/BD-025.wav",
+    "yamaharm50-bd/BD-026.wav",
+    "yamaharm50-bd/BD-027.wav",
+    "yamaharm50-bd/BD-028.wav",
+    "yamaharm50-bd/BD-029.wav",
+    "yamaharm50-bd/BD-030.wav",
+    "yamaharm50-bd/BD-031.wav",
+    "yamaharm50-bd/BD-032.wav",
+    "yamaharm50-bd/BD-033.wav",
+    "yamaharm50-bd/BD-034.wav",
+    "yamaharm50-bd/BD-035.wav",
+    "yamaharm50-bd/BD-036.wav",
+    "yamaharm50-bd/BD-037.wav",
+    "yamaharm50-bd/BD-038.wav",
+    "yamaharm50-bd/BD-039.wav",
+    "yamaharm50-bd/BD-040.wav",
+    "yamaharm50-bd/BD-041.wav",
+    "yamaharm50-bd/BD-042.wav",
+    "yamaharm50-bd/BD-043.wav",
+    "yamaharm50-bd/BD-044.wav",
+    "yamaharm50-bd/BD-045.wav",
+    "yamaharm50-bd/BD-046.wav",
+    "yamaharm50-bd/BD-047.wav",
+    "yamaharm50-bd/BD-048.wav",
+    "yamaharm50-bd/BD-049.wav",
+    "yamaharm50-bd/BD-050.wav",
+    "yamaharm50-bd/BD-051.wav",
+    "yamaharm50-bd/BD-052.wav",
+    "yamaharm50-bd/BD-053.wav",
+    "yamaharm50-bd/BD-054.wav",
+    "yamaharm50-bd/BD-055.wav",
+    "yamaharm50-bd/BD-056.wav",
+    "yamaharm50-bd/BD-057.wav",
+    "yamaharm50-bd/BD-058.wav",
+    "yamaharm50-bd/BD-059.wav",
+    "yamaharm50-bd/BD-060.wav",
+    "yamaharm50-bd/BD-061.wav",
+    "yamaharm50-bd/BD-062.wav",
+    "yamaharm50-bd/BD-063.wav",
+    "yamaharm50-bd/BD-064.wav",
+    "yamaharm50-bd/BD-065.wav",
+    "yamaharm50-bd/BD-066.wav",
+    "yamaharm50-bd/BD-067.wav",
+    "yamaharm50-bd/BD-068.wav",
+    "yamaharm50-bd/BD-069.wav",
+    "yamaharm50-bd/BD-070.wav",
+    "yamaharm50-bd/BD-071.wav",
+    "yamaharm50-bd/BD-072.wav",
+    "yamaharm50-bd/BD-073.wav",
+    "yamaharm50-bd/BD-074.wav",
+    "yamaharm50-bd/BD-075.wav",
+    "yamaharm50-bd/BD-076.wav",
+    "yamaharm50-bd/BD-077.wav",
+    "yamaharm50-bd/BD-078.wav",
+    "yamaharm50-bd/BD-079.wav",
+    "yamaharm50-bd/BD-080.wav",
+    "yamaharm50-bd/BD-081.wav",
+    "yamaharm50-bd/BD-082.wav",
+    "yamaharm50-bd/BD-083.wav",
+    "yamaharm50-bd/BD-084.wav",
+    "yamaharm50-bd/BD-085.wav",
+    "yamaharm50-bd/BD-086.wav",
+    "yamaharm50-bd/BD-087.wav",
+    "yamaharm50-bd/BD-088.wav",
+    "yamaharm50-bd/BD-089.wav",
+    "yamaharm50-bd/BD-090.wav",
+    "yamaharm50-bd/BD-091.wav",
+    "yamaharm50-bd/BD-092.wav",
+    "yamaharm50-bd/BD-093.wav",
+    "yamaharm50-bd/BD-094.wav",
+    "yamaharm50-bd/BD-095.wav",
+    "yamaharm50-bd/BD-096.wav",
+    "yamaharm50-bd/BD-097.wav",
+    "yamaharm50-bd/BD-098.wav",
+    "yamaharm50-bd/BD-099.wav",
+    "yamaharm50-bd/BD-100.wav",
+    "yamaharm50-bd/BD-101.wav",
+    "yamaharm50-bd/BD-102.wav",
+    "yamaharm50-bd/BD-103.wav"
+   ],
+   "cb": [
+    "yamaharm50-cb/FX_001.wav",
+    "yamaharm50-cb/FX_002.wav",
+    "yamaharm50-cb/FX_025.wav",
+    "yamaharm50-cb/FX_026.wav",
+    "yamaharm50-cb/FX_027.wav",
+    "yamaharm50-cb/FX_061.wav"
+   ],
+   "cp": [
+    "yamaharm50-cp/FX_059.wav",
+    "yamaharm50-cp/FX_060.wav"
+   ],
+   "cr": [
+    "yamaharm50-cr/CYMBAL_043.wav",
+    "yamaharm50-cr/CYMBAL_044.wav",
+    "yamaharm50-cr/CYMBAL_045.wav",
+    "yamaharm50-cr/CYMBAL_046.wav",
+    "yamaharm50-cr/CYMBAL_047.wav",
+    "yamaharm50-cr/CYMBAL_048.wav",
+    "yamaharm50-cr/CYMBAL_049.wav",
+    "yamaharm50-cr/CYMBAL_050.wav",
+    "yamaharm50-cr/CYMBAL_051.wav",
+    "yamaharm50-cr/CYMBAL_052.wav",
+    "yamaharm50-cr/CYMBAL_053.wav",
+    "yamaharm50-cr/CYMBAL_054.wav",
+    "yamaharm50-cr/CYMBAL_055.wav",
+    "yamaharm50-cr/CYMBAL_056.wav",
+    "yamaharm50-cr/CYMBAL_057.wav",
+    "yamaharm50-cr/CYMBAL_058.wav",
+    "yamaharm50-cr/CYMBAL_059.wav",
+    "yamaharm50-cr/CYMBAL_060.wav",
+    "yamaharm50-cr/CYMBAL_061.wav",
+    "yamaharm50-cr/CYMBAL_063.wav",
+    "yamaharm50-cr/CYMBAL_064.wav",
+    "yamaharm50-cr/CYMBAL_065.wav"
+   ],
+   "hh": [
+    "yamaharm50-hh/CYMBAL_001.wav",
+    "yamaharm50-hh/CYMBAL_002.wav",
+    "yamaharm50-hh/CYMBAL_005.wav",
+    "yamaharm50-hh/CYMBAL_006.wav",
+    "yamaharm50-hh/CYMBAL_008.wav",
+    "yamaharm50-hh/CYMBAL_009.wav",
+    "yamaharm50-hh/CYMBAL_010.wav",
+    "yamaharm50-hh/CYMBAL_013.wav",
+    "yamaharm50-hh/CYMBAL_014.wav",
+    "yamaharm50-hh/CYMBAL_016.wav",
+    "yamaharm50-hh/CYMBAL_017.wav",
+    "yamaharm50-hh/CYMBAL_019.wav",
+    "yamaharm50-hh/CYMBAL_020.wav",
+    "yamaharm50-hh/CYMBAL_021.wav",
+    "yamaharm50-hh/CYMBAL_024.wav",
+    "yamaharm50-hh/CYMBAL_025.wav",
+    "yamaharm50-hh/CYMBAL_026.wav",
+    "yamaharm50-hh/CYMBAL_028.wav"
+   ],
+   "ht": [
+    "yamaharm50-ht/TOMS_001.wav",
+    "yamaharm50-ht/TOMS_005.wav",
+    "yamaharm50-ht/TOMS_009.wav",
+    "yamaharm50-ht/TOMS_010.wav",
+    "yamaharm50-ht/TOMS_013.wav",
+    "yamaharm50-ht/TOMS_017.wav",
+    "yamaharm50-ht/TOMS_021.wav",
+    "yamaharm50-ht/TOMS_022.wav",
+    "yamaharm50-ht/TOMS_025.wav",
+    "yamaharm50-ht/TOMS_026.wav",
+    "yamaharm50-ht/TOMS_029.wav",
+    "yamaharm50-ht/TOMS_035.wav",
+    "yamaharm50-ht/TOMS_039.wav",
+    "yamaharm50-ht/TOMS_043.wav",
+    "yamaharm50-ht/TOMS_047.wav",
+    "yamaharm50-ht/TOMS_049.wav",
+    "yamaharm50-ht/TOMS_052.wav",
+    "yamaharm50-ht/TOMS_056.wav",
+    "yamaharm50-ht/TOMS_064.wav",
+    "yamaharm50-ht/TOMS_068.wav",
+    "yamaharm50-ht/TOMS_072.wav",
+    "yamaharm50-ht/TOMS_077.wav",
+    "yamaharm50-ht/TOMS_085.wav",
+    "yamaharm50-ht/TOMS_089.wav",
+    "yamaharm50-ht/TOMS_101.wav"
+   ],
+   "lt": [
+    "yamaharm50-lt/TOMS_004.wav",
+    "yamaharm50-lt/TOMS_008.wav",
+    "yamaharm50-lt/TOMS_012.wav",
+    "yamaharm50-lt/TOMS_015.wav",
+    "yamaharm50-lt/TOMS_016.wav",
+    "yamaharm50-lt/TOMS_019.wav",
+    "yamaharm50-lt/TOMS_020.wav",
+    "yamaharm50-lt/TOMS_024.wav",
+    "yamaharm50-lt/TOMS_028.wav",
+    "yamaharm50-lt/TOMS_032.wav",
+    "yamaharm50-lt/TOMS_033.wav",
+    "yamaharm50-lt/TOMS_034.wav",
+    "yamaharm50-lt/TOMS_038.wav",
+    "yamaharm50-lt/TOMS_041.wav",
+    "yamaharm50-lt/TOMS_042.wav",
+    "yamaharm50-lt/TOMS_046.wav",
+    "yamaharm50-lt/TOMS_048.wav",
+    "yamaharm50-lt/TOMS_050.wav",
+    "yamaharm50-lt/TOMS_051.wav",
+    "yamaharm50-lt/TOMS_053.wav",
+    "yamaharm50-lt/TOMS_054.wav",
+    "yamaharm50-lt/TOMS_055.wav",
+    "yamaharm50-lt/TOMS_058.wav",
+    "yamaharm50-lt/TOMS_059.wav",
+    "yamaharm50-lt/TOMS_061.wav",
+    "yamaharm50-lt/TOMS_062.wav",
+    "yamaharm50-lt/TOMS_063.wav",
+    "yamaharm50-lt/TOMS_066.wav",
+    "yamaharm50-lt/TOMS_067.wav",
+    "yamaharm50-lt/TOMS_071.wav",
+    "yamaharm50-lt/TOMS_075.wav",
+    "yamaharm50-lt/TOMS_079.wav",
+    "yamaharm50-lt/TOMS_082.wav",
+    "yamaharm50-lt/TOMS_083.wav",
+    "yamaharm50-lt/TOMS_084.wav",
+    "yamaharm50-lt/TOMS_087.wav",
+    "yamaharm50-lt/TOMS_088.wav",
+    "yamaharm50-lt/TOMS_092.wav",
+    "yamaharm50-lt/TOMS_094.wav",
+    "yamaharm50-lt/TOMS_095.wav",
+    "yamaharm50-lt/TOMS_096.wav",
+    "yamaharm50-lt/TOMS_099.wav",
+    "yamaharm50-lt/TOMS_100.wav",
+    "yamaharm50-lt/TOMS_103.wav",
+    "yamaharm50-lt/TOMS_104.wav",
+    "yamaharm50-lt/TOMS_105.wav",
+    "yamaharm50-lt/TOMS_106.wav",
+    "yamaharm50-lt/TOMS_107.wav",
+    "yamaharm50-lt/TOMS_108.wav"
+   ],
+   "misc": [
+    "yamaharm50-misc/CYMBAL_062.wav",
+    "yamaharm50-misc/FX_071.wav",
+    "yamaharm50-misc/FX_072.wav",
+    "yamaharm50-misc/FX_074.wav",
+    "yamaharm50-misc/FX_075.wav",
+    "yamaharm50-misc/FX_076.wav",
+    "yamaharm50-misc/FX_079.wav",
+    "yamaharm50-misc/FX_082.wav",
+    "yamaharm50-misc/FX_083.wav",
+    "yamaharm50-misc/FX_085.wav",
+    "yamaharm50-misc/FX_086.wav",
+    "yamaharm50-misc/FX_087.wav",
+    "yamaharm50-misc/FX_088.wav",
+    "yamaharm50-misc/FX_089.wav",
+    "yamaharm50-misc/FX_090.wav",
+    "yamaharm50-misc/FX_091.wav",
+    "yamaharm50-misc/FX_092.wav",
+    "yamaharm50-misc/FX_093.wav",
+    "yamaharm50-misc/FX_094.wav",
+    "yamaharm50-misc/FX_095.wav",
+    "yamaharm50-misc/FX_098.wav",
+    "yamaharm50-misc/FX_122.wav",
+    "yamaharm50-misc/FX_126.wav",
+    "yamaharm50-misc/FX_127.wav",
+    "yamaharm50-misc/FX_128.wav",
+    "yamaharm50-misc/FX_129.wav",
+    "yamaharm50-misc/FX_135.wav",
+    "yamaharm50-misc/FX_139.wav"
+   ],
+   "mt": [
+    "yamaharm50-mt/TOMS_002.wav",
+    "yamaharm50-mt/TOMS_003.wav",
+    "yamaharm50-mt/TOMS_006.wav",
+    "yamaharm50-mt/TOMS_007.wav",
+    "yamaharm50-mt/TOMS_011.wav",
+    "yamaharm50-mt/TOMS_014.wav",
+    "yamaharm50-mt/TOMS_018.wav",
+    "yamaharm50-mt/TOMS_023.wav",
+    "yamaharm50-mt/TOMS_027.wav",
+    "yamaharm50-mt/TOMS_030.wav",
+    "yamaharm50-mt/TOMS_031.wav",
+    "yamaharm50-mt/TOMS_036.wav",
+    "yamaharm50-mt/TOMS_037.wav",
+    "yamaharm50-mt/TOMS_040.wav",
+    "yamaharm50-mt/TOMS_044.wav",
+    "yamaharm50-mt/TOMS_045.wav",
+    "yamaharm50-mt/TOMS_057.wav",
+    "yamaharm50-mt/TOMS_060.wav",
+    "yamaharm50-mt/TOMS_065.wav",
+    "yamaharm50-mt/TOMS_069.wav",
+    "yamaharm50-mt/TOMS_070.wav",
+    "yamaharm50-mt/TOMS_073.wav",
+    "yamaharm50-mt/TOMS_074.wav",
+    "yamaharm50-mt/TOMS_076.wav",
+    "yamaharm50-mt/TOMS_078.wav",
+    "yamaharm50-mt/TOMS_080.wav",
+    "yamaharm50-mt/TOMS_081.wav",
+    "yamaharm50-mt/TOMS_086.wav",
+    "yamaharm50-mt/TOMS_090.wav",
+    "yamaharm50-mt/TOMS_091.wav",
+    "yamaharm50-mt/TOMS_093.wav",
+    "yamaharm50-mt/TOMS_097.wav",
+    "yamaharm50-mt/TOMS_098.wav",
+    "yamaharm50-mt/TOMS_102.wav"
+   ],
+   "oh": [
+    "yamaharm50-oh/CYMBAL_003.wav",
+    "yamaharm50-oh/CYMBAL_004.wav",
+    "yamaharm50-oh/CYMBAL_007.wav",
+    "yamaharm50-oh/CYMBAL_011.wav",
+    "yamaharm50-oh/CYMBAL_012.wav",
+    "yamaharm50-oh/CYMBAL_015.wav",
+    "yamaharm50-oh/CYMBAL_018.wav",
+    "yamaharm50-oh/CYMBAL_022.wav",
+    "yamaharm50-oh/CYMBAL_023.wav",
+    "yamaharm50-oh/CYMBAL_027.wav",
+    "yamaharm50-oh/CYMBAL_029.wav",
+    "yamaharm50-oh/FX_064.wav"
+   ],
+   "perc": [
+    "yamaharm50-perc/FX_003.wav",
+    "yamaharm50-perc/FX_004.wav",
+    "yamaharm50-perc/FX_012.wav",
+    "yamaharm50-perc/FX_013.wav",
+    "yamaharm50-perc/FX_014.wav",
+    "yamaharm50-perc/FX_015.wav",
+    "yamaharm50-perc/FX_016.wav",
+    "yamaharm50-perc/FX_017.wav",
+    "yamaharm50-perc/FX_018.wav",
+    "yamaharm50-perc/FX_019.wav",
+    "yamaharm50-perc/FX_020.wav",
+    "yamaharm50-perc/FX_021.wav",
+    "yamaharm50-perc/FX_022.wav",
+    "yamaharm50-perc/FX_023.wav",
+    "yamaharm50-perc/FX_024.wav",
+    "yamaharm50-perc/FX_033.wav",
+    "yamaharm50-perc/FX_034.wav",
+    "yamaharm50-perc/FX_035.wav",
+    "yamaharm50-perc/FX_036.wav",
+    "yamaharm50-perc/FX_037.wav",
+    "yamaharm50-perc/FX_038.wav",
+    "yamaharm50-perc/FX_039.wav",
+    "yamaharm50-perc/FX_040.wav",
+    "yamaharm50-perc/FX_041.wav",
+    "yamaharm50-perc/FX_042.wav",
+    "yamaharm50-perc/FX_043.wav",
+    "yamaharm50-perc/FX_044.wav",
+    "yamaharm50-perc/FX_045.wav",
+    "yamaharm50-perc/FX_046.wav",
+    "yamaharm50-perc/FX_047.wav",
+    "yamaharm50-perc/FX_048.wav",
+    "yamaharm50-perc/FX_049.wav",
+    "yamaharm50-perc/FX_050.wav",
+    "yamaharm50-perc/FX_051.wav",
+    "yamaharm50-perc/FX_052.wav",
+    "yamaharm50-perc/FX_053.wav",
+    "yamaharm50-perc/FX_054.wav",
+    "yamaharm50-perc/FX_055.wav",
+    "yamaharm50-perc/FX_056.wav",
+    "yamaharm50-perc/FX_057.wav",
+    "yamaharm50-perc/FX_058.wav",
+    "yamaharm50-perc/FX_062.wav",
+    "yamaharm50-perc/FX_063.wav",
+    "yamaharm50-perc/FX_065.wav",
+    "yamaharm50-perc/FX_066.wav",
+    "yamaharm50-perc/FX_067.wav",
+    "yamaharm50-perc/FX_068.wav",
+    "yamaharm50-perc/FX_069.wav",
+    "yamaharm50-perc/FX_070.wav",
+    "yamaharm50-perc/FX_073.wav",
+    "yamaharm50-perc/FX_116.wav",
+    "yamaharm50-perc/FX_119.wav",
+    "yamaharm50-perc/FX_120.wav",
+    "yamaharm50-perc/FX_121.wav",
+    "yamaharm50-perc/FX_125.wav",
+    "yamaharm50-perc/FX_132.wav"
+   ],
+   "rd": [
+    "yamaharm50-rd/CYMBAL_030.wav",
+    "yamaharm50-rd/CYMBAL_031.wav",
+    "yamaharm50-rd/CYMBAL_032.wav",
+    "yamaharm50-rd/CYMBAL_033.wav",
+    "yamaharm50-rd/CYMBAL_034.wav",
+    "yamaharm50-rd/CYMBAL_035.wav",
+    "yamaharm50-rd/CYMBAL_036.wav",
+    "yamaharm50-rd/CYMBAL_037.wav",
+    "yamaharm50-rd/CYMBAL_038.wav",
+    "yamaharm50-rd/CYMBAL_039.wav",
+    "yamaharm50-rd/CYMBAL_040.wav",
+    "yamaharm50-rd/CYMBAL_041.wav",
+    "yamaharm50-rd/CYMBAL_042.wav"
+   ],
+   "sd": [
+    "yamaharm50-sd/SNAREDRUM_001.wav",
+    "yamaharm50-sd/SNAREDRUM_002.wav",
+    "yamaharm50-sd/SNAREDRUM_003.wav",
+    "yamaharm50-sd/SNAREDRUM_004.wav",
+    "yamaharm50-sd/SNAREDRUM_005.wav",
+    "yamaharm50-sd/SNAREDRUM_006.wav",
+    "yamaharm50-sd/SNAREDRUM_007.wav",
+    "yamaharm50-sd/SNAREDRUM_008.wav",
+    "yamaharm50-sd/SNAREDRUM_009.wav",
+    "yamaharm50-sd/SNAREDRUM_010.wav",
+    "yamaharm50-sd/SNAREDRUM_011.wav",
+    "yamaharm50-sd/SNAREDRUM_012.wav",
+    "yamaharm50-sd/SNAREDRUM_013.wav",
+    "yamaharm50-sd/SNAREDRUM_014.wav",
+    "yamaharm50-sd/SNAREDRUM_015.wav",
+    "yamaharm50-sd/SNAREDRUM_016.wav",
+    "yamaharm50-sd/SNAREDRUM_017.wav",
+    "yamaharm50-sd/SNAREDRUM_018.wav",
+    "yamaharm50-sd/SNAREDRUM_019.wav",
+    "yamaharm50-sd/SNAREDRUM_020.wav",
+    "yamaharm50-sd/SNAREDRUM_021.wav",
+    "yamaharm50-sd/SNAREDRUM_022.wav",
+    "yamaharm50-sd/SNAREDRUM_023.wav",
+    "yamaharm50-sd/SNAREDRUM_024.wav",
+    "yamaharm50-sd/SNAREDRUM_025.wav",
+    "yamaharm50-sd/SNAREDRUM_026.wav",
+    "yamaharm50-sd/SNAREDRUM_027.wav",
+    "yamaharm50-sd/SNAREDRUM_028.wav",
+    "yamaharm50-sd/SNAREDRUM_029.wav",
+    "yamaharm50-sd/SNAREDRUM_030.wav",
+    "yamaharm50-sd/SNAREDRUM_031.wav",
+    "yamaharm50-sd/SNAREDRUM_032.wav",
+    "yamaharm50-sd/SNAREDRUM_033.wav",
+    "yamaharm50-sd/SNAREDRUM_034.wav",
+    "yamaharm50-sd/SNAREDRUM_035.wav",
+    "yamaharm50-sd/SNAREDRUM_036.wav",
+    "yamaharm50-sd/SNAREDRUM_037.wav",
+    "yamaharm50-sd/SNAREDRUM_038.wav",
+    "yamaharm50-sd/SNAREDRUM_039.wav",
+    "yamaharm50-sd/SNAREDRUM_040.wav",
+    "yamaharm50-sd/SNAREDRUM_041.wav",
+    "yamaharm50-sd/SNAREDRUM_042.wav",
+    "yamaharm50-sd/SNAREDRUM_043.wav",
+    "yamaharm50-sd/SNAREDRUM_044.wav",
+    "yamaharm50-sd/SNAREDRUM_045.wav",
+    "yamaharm50-sd/SNAREDRUM_046.wav",
+    "yamaharm50-sd/SNAREDRUM_047.wav",
+    "yamaharm50-sd/SNAREDRUM_048.wav",
+    "yamaharm50-sd/SNAREDRUM_049.wav",
+    "yamaharm50-sd/SNAREDRUM_050.wav",
+    "yamaharm50-sd/SNAREDRUM_051.wav",
+    "yamaharm50-sd/SNAREDRUM_052.wav",
+    "yamaharm50-sd/SNAREDRUM_053.wav",
+    "yamaharm50-sd/SNAREDRUM_054.wav",
+    "yamaharm50-sd/SNAREDRUM_055.wav",
+    "yamaharm50-sd/SNAREDRUM_056.wav",
+    "yamaharm50-sd/SNAREDRUM_057.wav",
+    "yamaharm50-sd/SNAREDRUM_058.wav",
+    "yamaharm50-sd/SNAREDRUM_059.wav",
+    "yamaharm50-sd/SNAREDRUM_060.wav",
+    "yamaharm50-sd/SNAREDRUM_061.wav",
+    "yamaharm50-sd/SNAREDRUM_062.wav",
+    "yamaharm50-sd/SNAREDRUM_063.wav",
+    "yamaharm50-sd/SNAREDRUM_064.wav",
+    "yamaharm50-sd/SNAREDRUM_065.wav",
+    "yamaharm50-sd/SNAREDRUM_066.wav",
+    "yamaharm50-sd/SNAREDRUM_067.wav",
+    "yamaharm50-sd/SNAREDRUM_068.wav",
+    "yamaharm50-sd/SNAREDRUM_069.wav",
+    "yamaharm50-sd/SNAREDRUM_070.wav",
+    "yamaharm50-sd/SNAREDRUM_071.wav",
+    "yamaharm50-sd/SNAREDRUM_072.wav",
+    "yamaharm50-sd/SNAREDRUM_073.wav",
+    "yamaharm50-sd/SNAREDRUM_074.wav",
+    "yamaharm50-sd/SNAREDRUM_075.wav",
+    "yamaharm50-sd/SNAREDRUM_076.wav",
+    "yamaharm50-sd/SNAREDRUM_077.wav",
+    "yamaharm50-sd/SNAREDRUM_078.wav",
+    "yamaharm50-sd/SNAREDRUM_079.wav",
+    "yamaharm50-sd/SNAREDRUM_080.wav",
+    "yamaharm50-sd/SNAREDRUM_081.wav",
+    "yamaharm50-sd/SNAREDRUM_082.wav",
+    "yamaharm50-sd/SNAREDRUM_083.wav",
+    "yamaharm50-sd/SNAREDRUM_084.wav",
+    "yamaharm50-sd/SNAREDRUM_085.wav",
+    "yamaharm50-sd/SNAREDRUM_086.wav",
+    "yamaharm50-sd/SNAREDRUM_087.wav",
+    "yamaharm50-sd/SNAREDRUM_088.wav",
+    "yamaharm50-sd/SNAREDRUM_089.wav",
+    "yamaharm50-sd/SNAREDRUM_090.wav",
+    "yamaharm50-sd/SNAREDRUM_091.wav",
+    "yamaharm50-sd/SNAREDRUM_092.wav",
+    "yamaharm50-sd/SNAREDRUM_093.wav",
+    "yamaharm50-sd/SNAREDRUM_094.wav",
+    "yamaharm50-sd/SNAREDRUM_095.wav",
+    "yamaharm50-sd/SNAREDRUM_096.wav",
+    "yamaharm50-sd/SNAREDRUM_097.wav",
+    "yamaharm50-sd/SNAREDRUM_098.wav",
+    "yamaharm50-sd/SNAREDRUM_099.wav",
+    "yamaharm50-sd/SNAREDRUM_100.wav",
+    "yamaharm50-sd/SNAREDRUM_101.wav",
+    "yamaharm50-sd/SNAREDRUM_102.wav",
+    "yamaharm50-sd/SNAREDRUM_103.wav",
+    "yamaharm50-sd/SNAREDRUM_104.wav",
+    "yamaharm50-sd/SNAREDRUM_105.wav",
+    "yamaharm50-sd/SNAREDRUM_106.wav",
+    "yamaharm50-sd/SNAREDRUM_107.wav",
+    "yamaharm50-sd/SNAREDRUM_108.wav"
+   ],
+   "sh": [
+    "yamaharm50-sh/FX_010.wav",
+    "yamaharm50-sh/FX_011.wav",
+    "yamaharm50-sh/FX_028.wav",
+    "yamaharm50-sh/FX_029.wav",
+    "yamaharm50-sh/FX_130.wav",
+    "yamaharm50-sh/FX_131.wav"
+   ],
+   "tb": [
+    "yamaharm50-tb/FX_030.wav",
+    "yamaharm50-tb/FX_031.wav",
+    "yamaharm50-tb/FX_032.wav"
+   ]
+  },
+  "YamahaRX21": {
+   "_path": "YamahaRX21/",
+   "bd": [
+    "yamaharx21-bd/Bassdrum.wav"
+   ],
+   "cp": [
+    "yamaharx21-cp/Clap.wav"
+   ],
+   "cr": [
+    "yamaharx21-cr/Crash.wav"
+   ],
+   "hh": [
+    "yamaharx21-hh/Closed Hat.wav"
+   ],
+   "ht": [
+    "yamaharx21-ht/Tom H.wav"
+   ],
+   "lt": [
+    "yamaharx21-lt/Tom L.wav"
+   ],
+   "mt": [
+    "yamaharx21-mt/Tom M.wav"
+   ],
+   "oh": [
+    "yamaharx21-oh/Open hat.wav"
+   ],
+   "sd": [
+    "yamaharx21-sd/Snaredrum.wav"
+   ]
+  },
+  "YamahaRX5": {
+   "_path": "YamahaRX5/",
+   "bd": [
+    "yamaharx5-bd/Bassdrum-02.wav",
+    "yamaharx5-bd/Bassdrum.wav"
+   ],
+   "cb": [
+    "yamaharx5-cb/Cowbell.wav"
+   ],
+   "fx": [
+    "yamaharx5-fx/SFX.wav"
+   ],
+   "hh": [
+    "yamaharx5-hh/Hat Closed.wav"
+   ],
+   "lt": [
+    "yamaharx5-lt/Tom.wav"
+   ],
+   "oh": [
+    "yamaharx5-oh/Hat Open.wav"
+   ],
+   "rim": [
+    "yamaharx5-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "yamaharx5-sd/Snaredrum-02.wav",
+    "yamaharx5-sd/Snaredrum-03.wav",
+    "yamaharx5-sd/Snaredrum.wav"
+   ],
+   "sh": [
+    "yamaharx5-sh/Shaker.wav"
+   ],
+   "tb": [
+    "yamaharx5-tb/Tambourine.wav"
+   ]
+  },
+  "YamahaRY30": {
+   "_path": "YamahaRY30/",
+   "bd": [
+    "yamahary30-bd/Bassdrum-01.wav",
+    "yamahary30-bd/Bassdrum-02.wav",
+    "yamahary30-bd/Bassdrum-03.wav",
+    "yamahary30-bd/Bassdrum-04.wav",
+    "yamahary30-bd/Bassdrum-05.wav",
+    "yamahary30-bd/Bassdrum-06.wav",
+    "yamahary30-bd/Bassdrum-07.wav",
+    "yamahary30-bd/Bassdrum-08.wav",
+    "yamahary30-bd/Bassdrum-09.wav",
+    "yamahary30-bd/Bassdrum-10.wav",
+    "yamahary30-bd/Bassdrum-11.wav",
+    "yamahary30-bd/Bassdrum-12.wav",
+    "yamahary30-bd/Bassdrum-13.wav"
+   ],
+   "cb": [
+    "yamahary30-cb/Cowbell-01.wav",
+    "yamahary30-cb/Cowbell-02.wav"
+   ],
+   "cp": [
+    "yamahary30-cp/Clap.wav"
+   ],
+   "cr": [
+    "yamahary30-cr/Crash1.wav",
+    "yamahary30-cr/zChina.wav"
+   ],
+   "hh": [
+    "yamahary30-hh/Hat Closed-01.wav",
+    "yamahary30-hh/Hat Closed-02.wav",
+    "yamahary30-hh/Hat Pedal-01.wav",
+    "yamahary30-hh/Hat Pedal-02.wav"
+   ],
+   "ht": [
+    "yamahary30-ht/Tom H-01.wav",
+    "yamahary30-ht/Tom H-02.wav",
+    "yamahary30-ht/Tom H-03.wav"
+   ],
+   "lt": [
+    "yamahary30-lt/Tom L-01.wav",
+    "yamahary30-lt/Toml L-02.wav",
+    "yamahary30-lt/Toml L-03.wav"
+   ],
+   "misc": [
+    "yamahary30-misc/Button.wav",
+    "yamahary30-misc/Knock-01.wav",
+    "yamahary30-misc/Knock-02.wav",
+    "yamahary30-misc/Noise.wav",
+    "yamahary30-misc/Pipe.wav",
+    "yamahary30-misc/Scratch.wav",
+    "yamahary30-misc/Snap.wav",
+    "yamahary30-misc/String.wav"
+   ],
+   "mt": [
+    "yamahary30-mt/Tom M-03.wav",
+    "yamahary30-mt/Tom-04.wav"
+   ],
+   "oh": [
+    "yamahary30-oh/Hat Open-01.wav",
+    "yamahary30-oh/Hat Open-02.wav",
+    "yamahary30-oh/Hat Open-03.wav",
+    "yamahary30-oh/Hat Open-04.wav"
+   ],
+   "perc": [
+    "yamahary30-perc/Bell.wav",
+    "yamahary30-perc/Bongo-01.wav",
+    "yamahary30-perc/Bongo-02.wav",
+    "yamahary30-perc/Conga-01.wav",
+    "yamahary30-perc/Conga-02.wav",
+    "yamahary30-perc/Quid.wav",
+    "yamahary30-perc/Stick.wav",
+    "yamahary30-perc/Timb1.wav",
+    "yamahary30-perc/Timb2.wav",
+    "yamahary30-perc/Triangle.wav",
+    "yamahary30-perc/Trill.wav",
+    "yamahary30-perc/Woodblock-01.wav",
+    "yamahary30-perc/Woodblock-02.wav"
+   ],
+   "rd": [
+    "yamahary30-rd/Ride-01.wav",
+    "yamahary30-rd/Ride-02.wav",
+    "yamahary30-rd/Ride-03.wav"
+   ],
+   "rim": [
+    "yamahary30-rim/Rimshot1.wav",
+    "yamahary30-rim/Rimshot2.wav"
+   ],
+   "sd": [
+    "yamahary30-sd/Snare1.wav",
+    "yamahary30-sd/Snare10.wav",
+    "yamahary30-sd/Snare11.wav",
+    "yamahary30-sd/Snare12.wav",
+    "yamahary30-sd/Snare13.wav",
+    "yamahary30-sd/Snare14.wav",
+    "yamahary30-sd/Snare15.wav",
+    "yamahary30-sd/Snare16.wav",
+    "yamahary30-sd/Snare17.wav",
+    "yamahary30-sd/Snare18.wav",
+    "yamahary30-sd/Snare19.wav",
+    "yamahary30-sd/Snare2.wav",
+    "yamahary30-sd/Snare20.wav",
+    "yamahary30-sd/Snare21.wav",
+    "yamahary30-sd/Snare3.wav",
+    "yamahary30-sd/Snare4.wav",
+    "yamahary30-sd/Snare5.wav",
+    "yamahary30-sd/Snare6.wav",
+    "yamahary30-sd/Snare7.wav",
+    "yamahary30-sd/Snare8.wav",
+    "yamahary30-sd/Snare9.wav"
+   ],
+   "sh": [
+    "yamahary30-sh/Cabasa-01.wav",
+    "yamahary30-sh/Cabasa-02.wav"
+   ],
+   "tb": [
+    "yamahary30-tb/Tamb.wav"
+   ]
+  },
+  "YamahaTG33": {
+   "_path": "YamahaTG33/",
+   "bd": [
+    "yamahatg33-bd/Bassdrum-01.wav",
+    "yamahatg33-bd/Bassdrum-02.wav",
+    "yamahatg33-bd/Bassdrum-03.wav",
+    "yamahatg33-bd/Bassdrum-04.wav"
+   ],
+   "cb": [
+    "yamahatg33-cb/Cowbell H.wav",
+    "yamahatg33-cb/Cowbell L.wav",
+    "yamahatg33-cb/Cowbell.wav"
+   ],
+   "cp": [
+    "yamahatg33-cp/Clap.wav"
+   ],
+   "cr": [
+    "yamahatg33-cr/Crash-01.wav",
+    "yamahatg33-cr/Crash-02.wav",
+    "yamahatg33-cr/zCrash Reverse.wav"
+   ],
+   "fx": [
+    "yamahatg33-fx/SFX-01.wav"
+   ],
+   "ht": [
+    "yamahatg33-ht/Tom-04.wav",
+    "yamahatg33-ht/Tom-06.wav"
+   ],
+   "lt": [
+    "yamahatg33-lt/Tom-01.wav",
+    "yamahatg33-lt/Tom-03.wav"
+   ],
+   "misc": [
+    "yamahatg33-misc/Flute.wav",
+    "yamahatg33-misc/Glass-01.wav",
+    "yamahatg33-misc/Glass-02.wav",
+    "yamahatg33-misc/SFX-02.wav",
+    "yamahatg33-misc/SFX-03.wav",
+    "yamahatg33-misc/SFX-04.wav",
+    "yamahatg33-misc/SFX-05.wav",
+    "yamahatg33-misc/SFX-06.wav",
+    "yamahatg33-misc/SFX-07.wav",
+    "yamahatg33-misc/SFX-08.wav"
+   ],
+   "mt": [
+    "yamahatg33-mt/Tom-07.wav",
+    "yamahatg33-mt/zTom-02.wav"
+   ],
+   "oh": [
+    "yamahatg33-oh/Hat Open.wav"
+   ],
+   "perc": [
+    "yamahatg33-perc/Bongo-01.wav",
+    "yamahatg33-perc/Bongo-02.wav",
+    "yamahatg33-perc/Clave.wav",
+    "yamahatg33-perc/Conga.wav",
+    "yamahatg33-perc/Snap.wav",
+    "yamahatg33-perc/Timbale.wav",
+    "yamahatg33-perc/Triangle-01.wav",
+    "yamahatg33-perc/Triangle-02.wav",
+    "yamahatg33-perc/Unknown.wav",
+    "yamahatg33-perc/Whistle-01.wav",
+    "yamahatg33-perc/Whistle-02.wav",
+    "yamahatg33-perc/Woodblock.wav"
+   ],
+   "rd": [
+    "yamahatg33-rd/Ride-01.wav",
+    "yamahatg33-rd/Ride-02.wav"
+   ],
+   "rim": [
+    "yamahatg33-rim/Rimshot.wav"
+   ],
+   "sd": [
+    "yamahatg33-sd/Snaredrum-01.wav",
+    "yamahatg33-sd/Snaredrum-02.wav",
+    "yamahatg33-sd/Snaredrum-03.wav",
+    "yamahatg33-sd/Snaredrum-04.wav",
+    "yamahatg33-sd/Snaredrum-05.wav"
+   ],
+   "sh": [
+    "yamahatg33-sh/Shaker.wav"
+   ],
+   "tb": [
+    "yamahatg33-tb/Tambourine.wav"
+   ]
+  }
+ }
+}

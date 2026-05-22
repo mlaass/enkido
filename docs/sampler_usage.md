@@ -126,6 +126,24 @@ For the string form, the third argument's syntax is `[bank/]name[:variant]`:
 | `"bd:3"`                            | _default_     | `bd`        | 3       |
 | `"Dirt-Samples/amencutup:0"`        | `Dirt-Samples`| `amencutup` | 0       |
 
+### Built-in drum machines
+
+The 70+ machines of [`geikha/tidal-drum-machines`](https://github.com/geikha/tidal-drum-machines)
+are a **built-in, auto-resolving catalog** — no `samples()` directive needed.
+Name a machine with `.bank()` and its samples stream from GitHub on demand
+(cached afterwards; never bundled into the web deployment):
+
+```akkado
+s"bd sd hh hh".bank("RolandTR808").out()
+s"~ cp ~ cp".bank("LinnDrum").out()
+```
+
+A failed fetch is a soft failure — that voice is silent, the rest keeps
+playing. For offline CLI use, `scripts/download-tdm.sh RolandTR808 …`
+populates a local cache the CLI discovers automatically. See
+[URI Schemes — Built-in drum machines](uri-schemes.md) for the full
+reference and the catalog-refresh workflow.
+
 ## Complete Example
 
 ### C++ Setup
