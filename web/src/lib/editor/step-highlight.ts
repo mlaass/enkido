@@ -10,9 +10,10 @@ import {
 	ViewPlugin
 } from '@codemirror/view';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
-import { StateField, StateEffect, RangeSet } from '@codemirror/state';
+import { StateField, StateEffect, RangeSet, type Text } from '@codemirror/state';
 import { patternHighlightStore } from '$lib/stores/pattern-highlight.svelte';
 import { audioEngine } from '$lib/stores/audio.svelte';
+import { charOffsetFromUtf8Byte } from '$lib/editor/akkado-shape-index';
 
 // Decoration style for active steps
 const activeStepMark = Decoration.mark({
@@ -35,7 +36,7 @@ const stepHighlightField = StateField.define<DecorationSet>({
 	update(decorations, tr) {
 		for (const effect of tr.effects) {
 			if (effect.is(setActiveSteps)) {
-				return buildActiveStepDecorations(effect.value, tr.state.doc.length);
+				return buildActiveStepDecorations(effect.value, tr.state.doc);
 			}
 		}
 		// Map decorations through document changes
@@ -46,33 +47,51 @@ const stepHighlightField = StateField.define<DecorationSet>({
 });
 
 /**
- * Build decorations for active steps
- * @param activeSteps Map of state ID to step position info
- * @param docLength Current document length for bounds checking
+ * Build decorations for active steps.
+ *
+ * The compiler reports `docOffset` / `sourceOffset` / `sourceLength` as UTF-8
+ * byte offsets, but CodeMirror positions are UTF-16 character offsets — they
+ * are converted here against the current document text. Each entry in
+ * `activeSteps` is one running sequence state, so several instances of the
+ * same pattern literal (e.g. `.slow()`/`.fast()` copies, or a literal inside a
+ * function called more than once) each contribute their own highlight.
+ *
+ * @param activeSteps Map of state ID to step position info (byte offsets)
+ * @param doc Current document for byte→char conversion and bounds checking
  */
 function buildActiveStepDecorations(
 	activeSteps: Map<number, { docOffset: number; sourceOffset: number; sourceLength: number }>,
-	docLength: number
+	doc: Text
 ): DecorationSet {
+	if (activeSteps.size === 0) return Decoration.none;
+
+	const text = doc.toString();
+	const docLength = doc.length;
 	const ranges: Array<{ from: number; to: number }> = [];
 
 	for (const [_stateId, step] of activeSteps) {
-		if (step.sourceLength > 0) {
-			const from = step.docOffset + step.sourceOffset;
-			const to = from + step.sourceLength;
-			// Bounds check - skip invalid ranges
-			if (from >= 0 && to <= docLength) {
-				ranges.push({ from, to });
-			}
+		if (step.sourceLength <= 0) continue;
+		const fromByte = step.docOffset + step.sourceOffset;
+		const from = charOffsetFromUtf8Byte(text, fromByte);
+		const to = charOffsetFromUtf8Byte(text, fromByte + step.sourceLength);
+		// Bounds check - skip invalid ranges
+		if (from >= 0 && to <= docLength && to > from) {
+			ranges.push({ from, to });
 		}
 	}
 
-	// Sort by position
-	ranges.sort((a, b) => a.from - b.from);
+	// Total ordering (from, then to) so RangeSet.of accepts the set, then drop
+	// exact duplicates — two instances of one literal landing on the same step
+	// would otherwise stack identical decorations.
+	ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+	const deduped: Array<{ from: number; to: number }> = [];
+	for (const r of ranges) {
+		const last = deduped[deduped.length - 1];
+		if (last && last.from === r.from && last.to === r.to) continue;
+		deduped.push(r);
+	}
 
-	return RangeSet.of(
-		ranges.map((r) => activeStepMark.range(r.from, r.to))
-	);
+	return RangeSet.of(deduped.map((r) => activeStepMark.range(r.from, r.to)));
 }
 
 /**

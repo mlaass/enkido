@@ -119,6 +119,25 @@ export function utf8ByteOffset(text: string, charPos: number): number {
 	return new TextEncoder().encode(text.slice(0, charPos)).length;
 }
 
+/**
+ * Convert a UTF-8 byte offset (as produced by the akkado compiler) to a
+ * CodeMirror / JS character offset (UTF-16 code units) within `text`.
+ * Inverse of utf8ByteOffset(). Offsets that land mid-character snap to the
+ * start of that character; the result is clamped to [0, text.length].
+ */
+export function charOffsetFromUtf8Byte(text: string, bytePos: number): number {
+	if (bytePos <= 0) return 0;
+	let bytes = 0;
+	let charIdx = 0;
+	for (const ch of text) {
+		if (bytes >= bytePos) break;
+		const cp = ch.codePointAt(0) as number;
+		bytes += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+		charIdx += ch.length; // 1 for BMP, 2 for a surrogate pair
+	}
+	return charIdx;
+}
+
 /** FNV-1a 32-bit over UTF-8 — identical to the C++ side
  *  (`shape_index.cpp::hash_source`). */
 export function fnv1a32(s: string): number {

@@ -95,8 +95,13 @@ NodeIndex MiniParser::make_node(NodeType type, SourceLocation loc) {
 // Pattern parsing
 
 NodeIndex MiniParser::parse_pattern() {
-    // Pattern is a sequence of choice expressions
-    NodeIndex root = make_node(NodeType::MiniPattern, current().location);
+    // Pattern is a sequence of choice expressions.
+    // The root MiniPattern node carries the full content span (offset = first
+    // character inside the quotes, length = whole pattern content) rather than
+    // the first token's location. This keeps pattern_location.offset stable
+    // regardless of leading whitespace and makes pattern_location.length
+    // report the entire literal — both relied on by step highlighting.
+    NodeIndex root = make_node(NodeType::MiniPattern, base_location_);
 
     while (!is_at_end()) {
         NodeIndex element = parse_choice();

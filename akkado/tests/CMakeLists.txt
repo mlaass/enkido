@@ -37,6 +37,7 @@ add_executable(akkado_tests
     test_ast_arena.cpp
     test_buffer_allocator.cpp
     test_pattern_debug.cpp
+    test_pattern_highlight_offsets.cpp
     test_pattern_event.cpp
     test_sample_registry.cpp
     test_symbol_table.cpp

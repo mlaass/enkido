@@ -46,6 +46,19 @@ static std::vector<RequiredSample> sample_refs_from_mappings(
     return refs;
 }
 
+// Adjust a string-literal token's SourceLocation so it points at the first
+// character *inside* the quotes (and spans only the content). This mirrors the
+// adjustment the main parser applies in parse_mini_literal(), and must be used
+// by every parse_mini() caller so mini-notation node offsets — and therefore
+// pattern step-highlighting in the IDE — are consistent across all forms.
+static SourceLocation mini_content_location(const SourceLocation& string_tok) {
+    SourceLocation loc = string_tok;
+    loc.offset += 1;
+    loc.column += 1;
+    loc.length = (string_tok.length >= 2) ? string_tok.length - 2 : 0;
+    return loc;
+}
+
 // ============================================================================
 // SequenceCompiler - Converts mini-notation AST to Sequence/Event format
 // ============================================================================
@@ -1757,7 +1770,8 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     // Parse using mini-notation parser with sample_only=false (default)
     // This enables chord symbol recognition (Am, C7, Fmaj7, etc.)
     auto [pattern_root, diags] = parse_mini(chord_str, const_cast<AstArena&>(ast_->arena),
-                                            str_n.location, /*sample_only=*/false);
+                                            mini_content_location(str_n.location),
+                                            /*sample_only=*/false);
 
     // Report any parse errors
     for (const auto& diag : diags) {
@@ -1844,7 +1858,7 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     seq_init.sequence_events = compiler.sequence_events();
     seq_init.total_events = compiler.total_events();
     seq_init.is_sample_pattern = false;
-    seq_init.pattern_location = str_n.location;
+    seq_init.pattern_location = pattern.location;
     seq_init.sequence_sample_mappings = compiler.sample_mappings();
     state_inits_.push_back(std::move(seq_init));
 
@@ -2110,7 +2124,8 @@ static bool compile_pattern_for_transform(
     if (pat_node.type == NodeType::StringLit) {
         std::string pattern_str = pat_node.as_string();
         auto [pattern_root, diags] = parse_mini(pattern_str,
-            const_cast<AstArena&>(ast.arena), pat_node.location, false);
+            const_cast<AstArena&>(ast.arena),
+            mini_content_location(pat_node.location), false);
         if (pattern_root == NULL_NODE) return false;
 
         out_pattern_node = pattern_root;
@@ -2160,7 +2175,7 @@ static bool compile_pattern_for_transform(
             std::string chord_str = str_n.as_string();
             auto [pattern_root, diags] = parse_mini(
                 chord_str, const_cast<AstArena&>(ast.arena),
-                str_n.location, /*sample_only=*/false);
+                mini_content_location(str_n.location), /*sample_only=*/false);
             if (pattern_root == NULL_NODE) return false;
             out_pattern_node = pattern_root;
             const Node& pattern = ast.arena[out_pattern_node];
@@ -2901,7 +2916,8 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
 
     // Parse the string as curve notation
     auto [pattern_root, diags] = parse_mini(curve_str,
-        const_cast<AstArena&>(ast_->arena), value_node.location, false, true);
+        const_cast<AstArena&>(ast_->arena),
+        mini_content_location(value_node.location), false, true);
 
     for (const auto& d : diags) {
         if (d.severity == Severity::Error) {
