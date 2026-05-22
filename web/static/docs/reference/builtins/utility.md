@@ -2,7 +2,7 @@
 title: Utility
 category: builtins
 order: 11
-keywords: [utility, out, output, mtof, midi, frequency, dc, slew, glide, interp, interp_ease_in, interp_ease_out, interp_cos, interpolation, portamento, ease-in, ease-out, cosine, time-based, sah, sample, hold, clock]
+keywords: [utility, out, output, bus, mixer, master, diamond, routing, mtof, midi, frequency, dc, slew, glide, interp, interp_ease_in, interp_ease_out, interp_cos, interpolation, portamento, ease-in, ease-out, cosine, time-based, sah, sample, hold, clock]
 group: tools
 subgroup: audio-plumbing
 icon: Wrench
@@ -39,6 +39,119 @@ osc("sin", 440) |> out(@, osc("sin", 442))
 ```akk
 // Panned signal
 osc("sin", 440) * 0.7 |> out(@, @ * 0.3)
+```
+
+`out` is an alias for `bus(0, …)` — it routes to the master bus. See the
+[Bus Routing](../../concepts/bus-routing.md) concept page for the full
+signal-flow model.
+
+---
+
+## bus
+
+**Route to a numbered bus** - Sum a signal into bus `N`.
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| N     | number | Bus index — a compile-time non-negative integer literal |
+| L     | signal | Left channel |
+| R     | signal | Right channel (optional, defaults to L) |
+
+A **bus** is a stereo summing point. Every `bus(N, …)` writer for the same
+`N` sums together; the bus then feeds the master. Bus 0 *is* the master —
+`out(…)` is exactly `bus(0, …)`. Non-zero buses auto-sum into bus 0 after
+their own [`mixer`](#mixer) chain runs.
+
+The index must be a literal (`E260` otherwise) — the buffer set is fixed at
+compile time. Use a bus to process a group of voices together (a drum bus, a
+reverb-send target) instead of each hit individually.
+
+```akk
+// A drum bus — process the bus, not each hit
+kick  |> bus(1, @)
+snare |> bus(1, @)
+mixer(1, (s) -> s |> comp(@, -8, 6))
+```
+
+---
+
+## mixer
+
+**Per-bus FX** - Attach a processing closure to bus `N`'s summed signal.
+
+| Param   | Type    | Description |
+|---------|---------|-------------|
+| N       | number  | Bus index — a compile-time non-negative integer literal |
+| closure | closure | Runs once per block on the bus's summed signal |
+
+The closure runs after every `bus(N, …)` writer has contributed, and its
+result replaces the bus signal downstream. Two arities are accepted:
+`(s) -> …` (one stereo value) and `(l, r) -> …` (left + right separately).
+A closure may not contain a sink (`out`/`bus`/`mixer`/`master`/`<>`) —
+that is `E261`. A bus with no `mixer` is pure identity.
+
+```akk
+// Glue the drum bus with a compressor
+mixer(1, (s) -> s |> comp(@, -8, 6) |> softclip(@, 0.9))
+```
+
+```akk
+// Per-channel processing
+mixer(2, (l, r) -> stereo(softclip(l, 0.9), softclip(r, 0.9)))
+```
+
+---
+
+## master
+
+**Master-bus FX** - Alias for `mixer(0, closure)`.
+
+| Param   | Type    | Description |
+|---------|---------|-------------|
+| closure | closure | Runs once per block on the master bus |
+
+Bus 0 carries a default soft-clip at 0.9. Supplying a `master(…)` (or
+`mixer(0, …)`) **replaces** that default tone chain. The forced safety
+stage — NaN/Inf guard plus a hard ±1.0 rail — always runs afterward and
+cannot be disabled. To run the master with no tone processing, pass the
+identity closure `master((s) -> s)`.
+
+```akk
+// Glue compressor + soft clip on the master
+master((s) -> s |> comp(@, -12, 4) |> softclip(@, 0.85))
+```
+
+```akk
+// Live-tweakable master drive
+drive = param("master_drive", 0.85, 0.5, 1.0)
+master((s) -> s |> softclip(@, drive))
+```
+
+---
+
+## diamond operator
+
+**`<>` / `<>(N)`** - Statement-trailing sugar for routing to a bus.
+
+| Sugar    | Expands to       | Meaning                  |
+|----------|------------------|--------------------------|
+| `<>`     | `\|> out(@)`     | route to the master bus  |
+| `<>(N)`  | `\|> bus(N, @)`  | route to bus `N`         |
+
+The diamond is a one-token statement terminator. It binds looser than `|>`,
+so it captures the whole pipe chain: `a |> b |> c <>(1)` routes
+`(a |> b |> c)` to bus 1. It is only valid trailing a complete statement —
+elsewhere it is rejected with `E263`. The optional `(N)` is a non-negative
+integer literal; `<>(0)` is identical to bare `<>`.
+
+```akk
+// Route to the master bus
+osc("saw", 220) |> lp(@, 800) <>
+```
+
+```akk
+// Route to bus 2
+n"c4 e4 g4" as e |> osc("saw", e.freq) <>(2)
 ```
 
 ---

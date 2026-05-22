@@ -1,8 +1,8 @@
-> **Status: Phases 1 & 2 SHIPPED (2026-05-22)** — Drafted 2026-05-18; scope
-> expanded 2026-05-20 (numbered buses, per-bus FX, routing operators).
-> Phase 1 (numbered buses + always-safe master) and Phase 2 (per-bus FX:
-> `mixer`/`master`) are implemented and tested. Phase 3 (diamond operator)
-> is not started.
+> **Status: SHIPPED — all three phases complete (2026-05-22)** — Drafted
+> 2026-05-18; scope expanded 2026-05-20 (numbered buses, per-bus FX, routing
+> operators). Phase 1 (numbered buses + always-safe master), Phase 2 (per-bus
+> FX: `mixer`/`master`), and Phase 3 (diamond operator `<>` + docs) are all
+> implemented and tested.
 
 # Bus Routing & Master Bus PRD
 
@@ -112,10 +112,34 @@ Implementation notes / deviations from the draft below:
   symbol table before cloning the body. This also fixes the latent case
   for `poly`/`each`/`fn` bodies written as `(p) -> p |> …`.
 
-### Phase 3 — Diamond operator + docs
+### Phase 3 — Diamond operator + docs *(shipped 2026-05-22)*
 
 - `<>` / `<>(N)` lexer + parser sugar.
 - `web/static/docs/concepts/bus-routing.md`; builtin reference entries.
+- Diagnostic `E_BUS_DIAMOND_POSITION` (`E263`).
+
+Implementation notes / deviations from the draft below:
+
+- **`<>` is a single `Diamond` token** added to `TokenType`. The lexer's
+  `case '<'` matches `>` before `=` — maximal munch makes `<>` one token
+  while a spaced `< 3` stays a `Less` comparison and `<=`/`>=` are
+  untouched.
+- **Lowered in the parser, not codegen.** `parse_statement` consumes a
+  trailing `Diamond` *after* the full expression (so it binds looser than
+  `|>`) and builds the AST `expr |> out(@)` (bare `<>`) or
+  `expr |> bus(N, @)` (`<>(N)`) directly. Because both lower to the same
+  `Call` nodes Phases 1/2 already handle, the bytecode is byte-identical
+  to the hand-written pipe — no codegen change.
+- **Index validation is not duplicated.** The `(N)` expression is wired in
+  verbatim; `handle_bus_call` already rejects a non-literal index with
+  `E260`, so `<>(x)` and `bus(x, @)` produce the identical diagnostic.
+- **`E263` is enforced at a single chokepoint.** The draft anticipated two;
+  in practice one suffices. A `Diamond` reaching `parse_prefix` (an
+  expression was expected) is the misplaced case — and a `<>` left over
+  after a non-expression statement *also* lands there, since it becomes the
+  leading token of the next statement parse. A `<>` buried deeper inside a
+  parenthesized sub-expression falls through to the existing grouping
+  syntax error (acceptable backstop).
 
 §12 tags each acceptance criterion with its phase.
 
@@ -478,10 +502,11 @@ implementation; placeholder names below):
 | `W_BUS_MIXER_OVERRIDDEN` | `W203` | warning | P2 | More than one `mixer(N, …)` (or `master`) targets the same bus `N`. Lists dropped + winning sites. |
 | `W_BUS_MIXER_MONO_RETURN` | `W204` | warning | P2 | A `mixer`/`master` closure returns a mono value. Auto-broadcasts `L = R`. |
 | `W_BUS_NO_WRITERS` | `W205` | warning | P2 | `mixer(N, …)` with `N > 0` targets a bus that has no `bus(N, …)`/`<>(N)` writers — the closure processes silence. |
+| `E_BUS_DIAMOND_POSITION` | `E263` | error | P3 | `<>` used outside statement-trailing position (sub-expression, assignment RHS, closure/fn body, leading position). |
 
 > Phase 1 allocated `E260` and `W202` from the next free codegen slots.
 > Phase 2 allocated `E261`, `E262`, `W203`, `W204`, `W205` from the next
-> consecutive slots.
+> consecutive slots. Phase 3 allocated `E263`.
 
 ---
 
@@ -619,7 +644,7 @@ Each criterion is tagged with its phase (§0).
       programs produce audible output unchanged in character below 0.9
       amplitude.
 - [x] **(P1)** `out(@)` and `bus(0, @)` produce byte-identical bytecode.
-- [ ] **(P3)** `<>` compiles identically to `|> out(@)`; `<>(N)` compiles
+- [x] **(P3)** `<>` compiles identically to `|> out(@)`; `<>(N)` compiles
       identically to `|> bus(N, @)`.
 - [x] **(P1)** A non-zero bus with multiple `bus(N, …)` writers sums all
       contributions and feeds bus 0.
@@ -652,8 +677,10 @@ Each criterion is tagged with its phase (§0).
       the web UI and updates the bus chain without recompile.
       *(Captures resolve through the normal closure path; no dedicated
       web-UI test added yet.)*
-- [ ] **(P3)** The diamond `<>` lexes as a single token and `<>(3)` routes
+- [x] **(P3)** The diamond `<>` lexes as a single token and `<>(3)` routes
       to bus 3; `gain < 3` still lexes as a comparison.
+- [x] **(P3)** A misplaced `<>` (sub-expression / assignment-RHS / leading
+      position) is rejected with `E_BUS_DIAMOND_POSITION` (`E263`).
 
 ---
 

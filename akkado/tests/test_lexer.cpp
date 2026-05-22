@@ -60,6 +60,26 @@ TEST_CASE("Lexer basic tokens", "[lexer]") {
         CHECK(tokens[12].type == TokenType::GreaterEqual);
     }
 
+    SECTION("diamond operator") {
+        // `<>` is one token via maximal munch.
+        auto [tokens, diags] = lex("<>");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);  // Diamond + Eof
+        CHECK(tokens[0].type == TokenType::Diamond);
+        CHECK(tokens[0].lexeme == "<>");
+    }
+
+    SECTION("diamond does not disturb `<` / `<=`") {
+        // A spaced `< 3` stays a comparison; `<=` is unaffected.
+        auto [tokens, diags] = lex("gain < 3 <= 5");
+        REQUIRE(diags.empty());
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[1].type == TokenType::Less);
+        CHECK(tokens[2].type == TokenType::Number);
+        CHECK(tokens[3].type == TokenType::LessEqual);
+        CHECK(tokens[4].type == TokenType::Number);
+    }
+
     SECTION("logical operators") {
         auto [tokens, diags] = lex("&& || !");
         REQUIRE(diags.empty());

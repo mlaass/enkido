@@ -299,3 +299,82 @@ TEST_CASE("bus-routing: bypass_master leaves mixer/master inert",
     // No epilogue: out() writes 0.8 straight to the device, mixer ignored.
     CHECK_THAT(L[0], Catch::Matchers::WithinAbs(0.8f, 1e-3f));
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — the diamond operator `<>` / `<>(N)`.
+// ---------------------------------------------------------------------------
+
+namespace {
+// True if two programs compile to byte-identical bytecode.
+bool bytecode_identical(const char* src_a, const char* src_b) {
+    auto a = akkado::compile(src_a);
+    auto b = akkado::compile(src_b);
+    REQUIRE(a.success);
+    REQUIRE(b.success);
+    REQUIRE(a.bytecode.size() == b.bytecode.size());
+    return std::memcmp(a.bytecode.data(), b.bytecode.data(),
+                       a.bytecode.size()) == 0;
+}
+}  // namespace
+
+TEST_CASE("bus-routing: `<>` is byte-identical to `|> out(@)`", "[bus]") {
+    CHECK(bytecode_identical("0.5 <>", "0.5 |> out(@)"));
+}
+
+TEST_CASE("bus-routing: `<>(N)` is byte-identical to `|> bus(N, @)`", "[bus]") {
+    CHECK(bytecode_identical("0.5 <>(1)", "0.5 |> bus(1, @)"));
+    CHECK(bytecode_identical("0.5 <>(3)", "0.5 |> bus(3, @)"));
+}
+
+TEST_CASE("bus-routing: `<>(0)` equals bare `<>` (and `out`)", "[bus]") {
+    CHECK(bytecode_identical("0.5 <>(0)", "0.5 <>"));
+    CHECK(bytecode_identical("0.5 <>(0)", "0.5 |> out(@)"));
+}
+
+TEST_CASE("bus-routing: `<>` binds looser than `|>` — captures the whole chain",
+          "[bus]") {
+    CHECK(bytecode_identical(
+        "osc(\"saw\", 220) |> lp(@, 800) <>",
+        "osc(\"saw\", 220) |> lp(@, 800) |> out(@)"));
+    CHECK(bytecode_identical(
+        "osc(\"saw\", 220) |> lp(@, 800) <>(2)",
+        "osc(\"saw\", 220) |> lp(@, 800) |> bus(2, @)"));
+}
+
+TEST_CASE("bus-routing: `<> (N)` tolerates whitespace before the paren",
+          "[bus]") {
+    CHECK(bytecode_identical("0.5 <> (1)", "0.5 |> bus(1, @)"));
+    CHECK(bytecode_identical("0.5 <>( 1 )", "0.5 |> bus(1, @)"));
+}
+
+TEST_CASE("bus-routing: `<>(N)` with a non-literal index is rejected (E260)",
+          "[bus][diag]") {
+    auto r = akkado::compile("drive = param(\"d\", 1, 0, 4)\n0.5 <>(drive)");
+    CHECK(!r.success);
+    CHECK(has_code(r, "E260"));
+}
+
+TEST_CASE("bus-routing: a misplaced `<>` is rejected (E263)", "[bus][diag]") {
+    SECTION("assignment RHS") {
+        auto r = akkado::compile("x = 0.5 <>");
+        CHECK(!r.success);
+        CHECK(has_code(r, "E263"));
+    }
+    SECTION("leading position") {
+        auto r = akkado::compile("<> 0.5");
+        CHECK(!r.success);
+        CHECK(has_code(r, "E263"));
+    }
+    SECTION("sub-expression position") {
+        auto r = akkado::compile("out((0.5 <>))");
+        CHECK(!r.success);
+    }
+}
+
+TEST_CASE("bus-routing: `<` still lexes as a comparison, not a diamond",
+          "[bus]") {
+    // `1 < 3` must parse as a comparison — adding the `<>` token must not
+    // disturb a bare `<`.
+    auto r = akkado::compile("out(1 < 3)");
+    REQUIRE(r.success);
+}

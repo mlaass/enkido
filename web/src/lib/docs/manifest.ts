@@ -3,6 +3,7 @@
 
 export const slugToPath: Record<string, string> = {
 	"runtime-controls": "concepts/runtime-controls.md",
+	"bus-routing": "concepts/bus-routing.md",
 	"builtin-variables": "concepts/builtin-variables.md",
 	"record-as-options": "concepts/record-as-options.md",
 	"higher-order-dsl": "concepts/higher-order-dsl.md",
@@ -301,6 +302,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "higher-order-dsl",
 			"title": "Higher-Order DSL — each_voice, each, reduce"
+		},
+		{
+			"slug": "bus-routing",
+			"title": "Bus Routing & the Master Bus"
 		}
 	]
 };
@@ -405,6 +410,70 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "runtime-controls",
 		"category": "concepts",
 		"title": "Runtime Controls"
+	},
+	"bus": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "bus",
+		"anchor": "bus"
+	},
+	"mixer": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "mixer",
+		"anchor": "mixer"
+	},
+	"master": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "master",
+		"anchor": "master"
+	},
+	"out": {
+		"slug": "utility",
+		"category": "builtins",
+		"title": "out",
+		"anchor": "out"
+	},
+	"routing": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"diamond": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"signal-flow": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"multi-bus": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"master-bus": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"soft-clip": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"safety": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
+	},
+	"glue-compressor": {
+		"slug": "bus-routing",
+		"category": "concepts",
+		"title": "Bus Routing & the Master Bus"
 	},
 	"bpm": {
 		"slug": "builtin-variables",
@@ -2031,11 +2100,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Pipes & Holes"
 	},
-	"routing": {
-		"slug": "pipes",
-		"category": "language",
-		"title": "Pipes & Holes"
-	},
 	"array literals": {
 		"slug": "arrays",
 		"category": "language",
@@ -2858,11 +2922,11 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Distortion"
 	},
-	"out": {
+	"diamond operator": {
 		"slug": "utility",
 		"category": "builtins",
-		"title": "out",
-		"anchor": "out"
+		"title": "diamond operator",
+		"anchor": "diamond-operator"
 	},
 	"mtof": {
 		"slug": "utility",
@@ -3772,6 +3836,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 
 export const previews: Record<string, string> = {
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
+	"bus-routing": "Every Akkado patch ends by sending audio somewhere. The bus system is the layer between your per-voice / per-track outputs and the speakers: a set...",
 	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",
 	"record-as-options": "When a builtin needs more parameters than fit comfortably in positional slots, akkado uses a record literal as the last positional argument. Call...",
 	"higher-order-dsl": "Three operators run a lambda once per pattern event. They are the higher-order generalization of : where  takes a fixed 3-argument instrument...",

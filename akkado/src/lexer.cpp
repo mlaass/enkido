@@ -270,6 +270,9 @@ Token Lexer::lex_token() {
             return make_token(TokenType::Question);
 
         case '<':
+            if (match('>')) {
+                return make_token(TokenType::Diamond);  // <> bus-routing terminator
+            }
             if (match('=')) {
                 return make_token(TokenType::LessEqual);
             }

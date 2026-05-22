@@ -46,6 +46,7 @@ enum class TokenType : std::uint8_t {
     Pipe,           // |>
     Equals,         // =
     Arrow,          // ->
+    Diamond,        // <> (bus-routing statement terminator)
 
     // Comparison
     Less,           // <
@@ -120,6 +121,7 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::Pipe:         return "Pipe";
         case TokenType::Equals:       return "Equals";
         case TokenType::Arrow:        return "Arrow";
+        case TokenType::Diamond:      return "Diamond";
         case TokenType::Less:         return "Less";
         case TokenType::Greater:      return "Greater";
         case TokenType::LessEqual:    return "LessEqual";
