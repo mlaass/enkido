@@ -9,8 +9,9 @@
 **Related:**
 - [prd-builtin-variables.md](prd-builtin-variables.md) — defines `bpm`/`sr` as compile-time-known names; this PRD reads them
 - [prd-module-import.md](prd-module-import.md) — `import` statement; this PRD's `$imports()` returns its resolved-import list once that lands
-- [prd-error-handling-recovery.md](prd-error-handling-recovery.md) — diagnostics infrastructure this PRD extends with a sibling channel
+- [prd-error-handling-recovery.md](prd-error-handling-recovery.md) — NOT STARTED. The `Diagnostic`/`SourceLocation` types this PRD reuses already exist; that PRD's *multi-stage error collection* is what the "failed compiles surface `compile_log`" guarantee depends on (see §10.5)
 - [prd-language-extensions.md](prd-language-extensions.md) — broader language roadmap; macros (Phase 2) will live in their own future PRD
+- [prd-runtime-functions-control-flow.md](prd-runtime-functions-control-flow.md) — shipped the sibling `#` annotation sigil (`#inline`); §5.2.1 carves the `#` vs `$` boundary
 
 ---
 
@@ -35,7 +36,7 @@ This PRD is also a **stepping stone**. Reserving the `$`-prefix and defining `Co
 
 ### 1.2 Headline design decisions (locked during PRD intake)
 
-- **`$`-prefix is mandatory** for all compile-time calls. `$print("hi")`, `$samples()`. Plain names (`print`, `samples`) remain available for runtime — neither shadowed nor reserved. Hard split: `$` always means "compile time."
+- **`$`-prefix is mandatory** for all compile-time *calls*. `$print("hi")`, `$samples()`. Plain names (`print`, `samples`) remain available for runtime — neither shadowed nor reserved. The split is grammatical: `$` always introduces a compile-time **invocation** (args, return value, nesting). It is the sibling of — not the same as — the `#` annotation sigil already shipped for `#inline` (see §5.2.1): `#` *annotates a declaration*; `$` *invokes a compile-time function*. Both are compile-time; they are different categories.
 - **`compile_log` is a new field on `CompileResult`**, parallel to (not nested in) `diagnostics`. Each entry carries text + level + source location. Lets hosts render prints separately from errors without conflating severity semantics.
 - **F-string interpolation** uses `{name[:spec]}`. Format specs are limited to a numeric subset: `.Nf` (float precision), `d`, `x`, `s`. No width, alignment, fill, or sign. `{{` / `}}` escape literal braces.
 - **Anything name-resolvable can interpolate.** Constants render as values. Signals render as typed shape: `<signal mono>` / `<chord[3]>` / `<pattern>`. Undefined names render as `<undefined: name>` and emit a Warning diagnostic; compilation continues.
@@ -44,7 +45,7 @@ This PRD is also a **stepping stone**. Reserving the `$`-prefix and defining `Co
 - **`compile()` gains an optional `CompileTimeContext*` parameter.** Hosts construct the context with their `SampleRegistry`, `FileResolver`, and (when recompiling a running patch) a snapshot of the live `cedar::EnvMap`.
 - **Phase-1 query function set:** `$samples()`, `$env(key)`, `$files(glob?)`, `$imports()`. Each list-returning query has `_lines` and `_table` variants for formatting.
 - **Hot-swap-failed compiles still emit prints.** The user sees `$print` output on every successful compile, regardless of whether the bytecode subsequently swapped in. Useful for debugging swap rejection.
-- **Failed compiles still surface their `compile_log`.** When errors short-circuit codegen, any logs emitted before the failure are still shipped to the host. The IDE renders them in the Compile Log tab tagged `(compile failed)`. Useful because logs are often the clue that explains the error.
+- **Failed compiles still surface their `compile_log` — scoped to codegen-stage failures.** When errors short-circuit codegen, any logs emitted before the failure are still shipped to the host. The IDE renders them in the Compile Log tab tagged `(compile failed)`. Useful because logs are often the clue that explains the error. **v1 limitation:** the compile-time pass runs *after* the analyzer, so a compile that fails in lex/parse/analysis produces no AST for the pass and therefore no `compile_log`. Full coverage of pre-codegen failures is blocked on `prd-error-handling-recovery`'s multi-stage error collection (see §10.5).
 - **Multi-arg `$print` is comma-separated quick-logging.** `$print("foo", x, y)` renders as `"foo, <x>, <y>"` — first arg is the template, additional args are stringified and joined with `", "` after the template's rendered text. Mirrors `console.log` ergonomics.
 - **Web IDE log behavior is configurable.** Settings toggle: "Replace on compile" (default, matches diagnostics) or "Append with timestamps." CLI is always stream-as-emitted on stdout.
 
@@ -61,7 +62,7 @@ This PRD is also a **stepping stone**. Reserving the `$`-prefix and defining `Co
 | Verify env / runtime state during recompile | None. Hot-swap is blind: you change code, listen, and infer. |
 | Discover importable / resolvable files | None. `FileResolver` is opaque. |
 | Compile-time expressions | None. Every identifier and call is runtime. `ConstEvaluator` exists but only for folding numeric constants in arithmetic. |
-| `$`-prefix syntax | Not lexed. `$` is currently a syntax error. |
+| `$`-prefix syntax | Not lexed. `$` is currently a syntax error. (The sibling `#` annotation sigil — `Hash` token — *is* already lexed, for `#inline`; see §5.2.1.) |
 | `compile_log` channel | Doesn't exist. The only compile-side output channel is `diagnostics`, which conflates errors, warnings, and info. |
 
 ### 2.2 Proposed state
@@ -216,7 +217,7 @@ These bindings live in a compile-time-only scope. They cannot be referenced insi
 ### 4.7 Reserved-but-unused (Phase 2 hook)
 
 ```akkado
-$double(440)         // error E182: macro '$double' is not defined; user-defined macros are not yet supported
+$double(440)         // error E682: macro '$double' is not defined; user-defined macros are not yet supported
 ```
 
 The `$` lexer token is recognized; the dispatcher rejects unknown `$names` with a clear "future macro syntax" error.
@@ -234,17 +235,17 @@ script.ak:1:1  typo: <undefined: bpmm>
 
 `diagnostics` (warning, not an error):
 ```
-script.ak:1:18  W181  $print: identifier 'bpmm' is not in scope; did you mean 'bpm'?
+script.ak:1:18  W310  $print: identifier 'bpmm' is not in scope; did you mean 'bpm'?
 ```
 
 Hard errors:
 
 ```akkado
-$print(42)              // error E183: $print expects a string literal as first argument
-$print("{}")            // error E184: empty interpolation
-$print("{x:.2z}")       // error E185: unknown format spec '.2z'
-foo(x) = { $print("inside fn") }  // error E186: $print is only allowed at top-level
-osc("sin", $samples())  // error E187: compile-time call '$samples' cannot be used in a runtime expression
+$print(42)              // error E683: $print expects a string literal as first argument
+$print("{}")            // error E684: empty interpolation
+$print("{x:.2z}")       // error E685: unknown format spec '.2z'
+foo(x) = { $print("inside fn") }  // error E686: $print is only allowed at top-level
+osc("sin", $samples())  // error E687: compile-time call '$samples' cannot be used in a runtime expression
 ```
 
 ---
@@ -329,11 +330,45 @@ Allowed positions in the grammar:
 
 Disallowed positions:
 
-- Inside any function body or lambda (analyzer error E186).
-- Inside any runtime expression (e.g., `osc("sin", $samples())`) — analyzer error E187.
-- Inside a pattern, mini-notation string, or chord — same as E187.
+- Inside any function body or lambda (analyzer error E686).
+- Inside any runtime expression (e.g., `osc("sin", $samples())`) — analyzer error E687.
+- Inside a pattern, mini-notation string, or chord — same as E687.
 
 The analyzer enforces these rules in `validate_compile_time_calls()`, which runs as part of the analysis pass before codegen.
+
+#### 5.2.1 Relationship to `#` annotations
+
+Akkado already has a second compile-time-only sigil: `#`, shipped with the
+`#inline` annotation in `prd-runtime-functions-control-flow.md` (L2). The
+lexer's `Hash` token and statement-position annotation parsing are already
+in place. This PRD's `$`-prefix is its **sibling, not its replacement** —
+the two sigils mark two different grammatical categories, and the split is
+deliberate:
+
+| Sigil | Category | Grammar | Examples |
+|---|---|---|---|
+| `#` | **Annotation** — passive metadata attached to the *following declaration* | Bare prefix; no return value; cannot stand alone, be assigned, or nest | `#inline fn fast_mix(a, b) { ... }` |
+| `$` | **Compile-time function** — actively invoked, evaluated, may return a value | Call syntax; statement or expression position; nests; bindable (`names = $samples()`) | `$print("hi")`, `$samples()` |
+
+The one-sentence rule: **`#` annotates a declaration; `$` invokes a
+compile-time function.** Both run at compile time and emit zero bytecode,
+but they are not interchangeable — `#print(...)` and `$inline fn` are both
+ill-formed.
+
+Why two sigils rather than one: unifying them would not simplify the
+language, because the two grammars (bare-prefix vs call-syntax) would still
+have to coexist. A single sigil would only erase the visual cue that tells
+a reader "this modifies the next line" apart from "this runs here." Keeping
+`#`/`$` distinct preserves that cue and matches the precedent of every
+language that carries both — Rust (`#[inline]` attribute vs `macro!()`),
+Nim (`{.inline.}` pragma vs template). `@` is unavailable for either role
+(it is the signal-hole token).
+
+**Annotations that take arguments** (none in v1; a hypothetical
+`#deprecated("use foo")` is the kind of thing §7.3 of the runtime-functions
+PRD anticipates) remain `#`, not `$`: the boundary is "attaches to a
+declaration," not "has parentheses." A future parameterized annotation is
+still an annotation.
 
 ### 5.3 The `compile_log` channel
 
@@ -400,7 +435,7 @@ Format spec rules:
 | `x` | Lowercase hex | Scalar (cast to uint32) |
 | `s` | String coercion | Any value (delegates to `to_string`) |
 
-A format spec applied to a non-scalar (e.g., `{$samples():.2f}`) is an error E185.
+A format spec applied to a non-scalar (e.g., `{$samples():.2f}`) is an error E685.
 
 ### 5.5 Interpolation value rendering
 
@@ -497,7 +532,7 @@ If `compile_ctx == nullptr`, a `DefaultCompileTimeContext` is constructed intern
 
 `$print`'s second-and-later positional args are **stringified and appended to the rendered template**, comma-separated. `$print("debug", x, y, z)` renders as `"debug, <x>, <y>, <z>"`. Each extra arg is rendered using the same `render(TypedValue, default-spec)` path as interpolations. This is a quick-logging affordance modeled on `console.log` — for formatted output, use `{...}` interpolation in the template instead.
 
-The set is **closed** in v1: any `$name` not in this table is an error E182. Adding a builtin requires this PRD's follow-ups (or the macro PRD).
+The set is **closed** in v1: any `$name` not in this table is an error E682. Adding a builtin requires this PRD's follow-ups (or the macro PRD).
 
 ### 5.8 Pipeline placement
 
@@ -512,7 +547,11 @@ parser       ← +CompileTimeCallNode
   │
   ▼
 analyzer     ← +validate $-call placement (top-level only, etc.)
-  │            +populate symbol table; ConstEvaluator pre-fold of bpm/sr-style consts
+  │            +populate symbol table; ConstEvaluator folds numeric consts.
+  │            NOTE: `bpm`/`sr` are NOT folded here — `prd-builtin-variables`
+  │            shipped them as `ENV_GET`-backed builtins. The compile-time pass
+  │            resolves `{bpm}`/`{sr}` via the BUILTIN_VARIABLES registry +
+  │            env snapshot (user `bpm = N` override, else host default).
   │
   ▼
 compile_time pass    ← NEW
@@ -567,7 +606,7 @@ Each `LogEntry.filename` records the originating file so the IDE can route click
 $ akkado-cli compile script.ak
 script.ak:1:1  hello from compile time         ← stdout
 script.ak:5:1  bpm: 140, sr: 48000             ← stdout
-script.ak:7:18  W181  $print: identifier 'bpmm' not in scope  ← stderr
+script.ak:7:18  W310  $print: identifier 'bpmm' not in scope  ← stderr
 ```
 
 ```
@@ -576,7 +615,7 @@ script.ak:1:1  hello from compile time
 script.ak:5:1  bpm: 140, sr: 48000
 
 $ akkado-cli compile script.ak 1>/dev/null
-script.ak:7:18  W181  $print: identifier 'bpmm' not in scope
+script.ak:7:18  W310  $print: identifier 'bpmm' not in scope
 ```
 
 `nkido-cli` follows the same rule when compiling a patch via `--ak`.
@@ -626,7 +665,7 @@ When the host doesn't pass a context (or passes one with no live env, no resolve
 |---|---|
 | `$print("...")` | Works. Constants resolve. Signals show typed shape. Warnings unchanged. |
 | `$samples()` | Returns empty list. Renders as `""` or `<empty>` (TBD §13). |
-| `$env(key)` | Returns `<unset>`. Warning W190 emitted: "no live env; $env returned <unset>". |
+| `$env(key)` | Returns `<unset>`. Warning W314 emitted: "no live env; $env returned <unset>". |
 | `$files(glob)` | Returns empty. Same warning pattern. |
 | `$imports()` | Always empty in v1 (imports not shipped). No warning. |
 
@@ -689,7 +728,7 @@ When the host doesn't pass a context (or passes one with no live env, no resolve
 | `akkado/src/analyzer.cpp` | 1 | New `validate_compile_time_calls()` pass; symbol-table compile-time scope. |
 | `akkado/include/akkado/akkado.hpp` | 1 | Add `compile_log` to `CompileResult`; add `compile_ctx` parameter to `compile(...)`. |
 | `akkado/src/akkado.cpp` | 1 | Wire compile-time pass between analyzer and codegen; populate `compile_log`. |
-| `akkado/include/akkado/diagnostics.hpp` | 1 | Add error codes E180–E190 (see §10). |
+| `akkado/include/akkado/diagnostics.hpp` | 1 | Add error codes E680–E699 (see §10). |
 | `tools/akkado-cli/main.cpp` | 1 | Print `compile_log` entries to stdout. |
 | `tools/nkido-cli/main.cpp` | 1 | Same. Optional: `--live-env <file>` flag (TBD). |
 | `web/wasm/nkido_wasm.cpp` | 2 | Add `akkado_get_compile_log_count()`, `akkado_get_compile_log_entry(i, fields...)`; accept env snapshot via existing `cedar_set_param` calls before compile. |
@@ -727,9 +766,9 @@ Each phase ends with a deployable, demo-able artifact.
    - Top-level binding RHS: `name = $name(args)`.
    - Inside string interpolation argument expression (parsed inside the format string at compile-time pass time, not by the main parser).
 3. Implement analyzer `validate_compile_time_calls()`:
-   - Reject `$`-calls inside function/lambda bodies (E186).
-   - Reject `$`-calls inside runtime expressions (E187).
-   - Resolve `$name` against `BUILTIN_COMPILE_TIME_FUNCTIONS`; emit E182 for unknowns.
+   - Reject `$`-calls inside function/lambda bodies (E686).
+   - Reject `$`-calls inside runtime expressions (E687).
+   - Resolve `$name` against `BUILTIN_COMPILE_TIME_FUNCTIONS`; emit E682 for unknowns.
 4. Create `compile_time.hpp`/`.cpp` with the `CompileTimeContext` interface and `DefaultCompileTimeContext`.
 5. Create `compile_time_builtins.hpp`/`.cpp`:
    - Implement `$print` handler (calls into format.cpp).
@@ -740,7 +779,7 @@ Each phase ends with a deployable, demo-able artifact.
 6. Create `format.cpp` with template parser + interpolation evaluator. Supports `{name}`, `{name:.Nf}`, `{name:d}`, `{name:x}`, `{name:s}`, `{{`, `}}`, nested `$call`.
 7. Add the compile-time pass driver in `compile_time.cpp`. Walks AST in source order, dispatches each `$`-call to the handler table, builds `compile_log`.
 8. Wire into `akkado.cpp::compile()`: run the pass after analyzer, before codegen.
-9. Add error codes E180–E190 to `diagnostics.hpp`.
+9. Add error codes E680–E699 to `diagnostics.hpp`.
 10. Modify `tools/akkado-cli/main.cpp`: route `compile_log` to stdout (line per entry, with `file:line:col  text`).
 11. Modify `tools/nkido-cli/main.cpp`: same.
 
@@ -749,10 +788,10 @@ Each phase ends with a deployable, demo-able artifact.
 - `echo '$print("hi")' | akkado-cli compile -` → stdout has `<input>:1:1  hi`, exit 0.
 - `echo 'bpm = 140 \n $print("bpm: {bpm:.0f}")' | akkado-cli compile -` → stdout has `<input>:2:1  bpm: 140`.
 - `$samples()` → stdout has the registered sample names.
-- `$print("typo: {missing}")` → stdout has `typo: <undefined: missing>`, stderr has W181.
-- `$print(42)` → stderr has E183, exit nonzero.
-- `foo(x) = { $print("nope") }` → stderr has E186.
-- `osc("sin", $samples())` → stderr has E187.
+- `$print("typo: {missing}")` → stdout has `typo: <undefined: missing>`, stderr has W310.
+- `$print(42)` → stderr has E683, exit nonzero.
+- `foo(x) = { $print("nope") }` → stderr has E686.
+- `osc("sin", $samples())` → stderr has E687.
 - All `[compile-time]` and `[format]` Catch2 tests pass.
 
 ### Phase 2 — Web IDE integration
@@ -819,18 +858,18 @@ Each phase ends with a deployable, demo-able artifact.
 - **`$` followed by whitespace:** lexer error: `'$' must be immediately followed by an identifier`.
 - **`$` followed by digit:** lexer error: `'$' must be followed by an identifier (got '0')`.
 - **`$$name`:** lexer error: `'$' must be followed by an identifier (got '$')`. (No `$$` operator in v1.)
-- **`$reserved_keyword` (e.g., `$let`, `$if`):** parse error E182: `unknown compile-time function '$let'`. Keywords are not exempt.
+- **`$reserved_keyword` (e.g., `$let`, `$if`):** parse error E682: `unknown compile-time function '$let'`. Keywords are not exempt.
 - **`$print(` then EOF:** standard parser error: unterminated argument list. Same path as `foo(`.
 
 ### 10.2 Format strings
 
-- **`"a {b"`:** error E184: unterminated interpolation segment.
-- **`"a } b"`:** error E184: stray `}` (not `}}`).
-- **`"a {} b"`:** error E184: empty interpolation.
-- **`"a {b:}"`:** error E184: empty format spec after `:`.
-- **`"a {b:.}"`:** error E185: invalid precision specifier.
-- **`"a {b:.5z}"`:** error E185: unknown format type `'z'`.
-- **`"a {b:.999f}"`:** clamped to `:.20f` (max precision); warning W181 about clamping.
+- **`"a {b"`:** error E684: unterminated interpolation segment.
+- **`"a } b"`:** error E684: stray `}` (not `}}`).
+- **`"a {} b"`:** error E684: empty interpolation.
+- **`"a {b:}"`:** error E684: empty format spec after `:`.
+- **`"a {b:.}"`:** error E685: invalid precision specifier.
+- **`"a {b:.5z}"`:** error E685: unknown format type `'z'`.
+- **`"a {b:.999f}"`:** clamped to `:.20f` (max precision); warning W310 about clamping.
 - **`"a {{not interp}} b"`:** renders as `"a {not interp} b"`.
 - **`"a {bpm:.2f}{sr:.0f}"`:** adjacent interpolations work; no separator inserted.
 - **Interpolation expression contains `}`:** must be escaped or quoted. v1 doesn't allow `}` inside the expr (parser bails at first `}`).
@@ -839,21 +878,21 @@ Each phase ends with a deployable, demo-able artifact.
 ### 10.3 Interpolation values
 
 - **Identifier resolves to a record field:** `{rec.freq}` works if `rec` is a compile-time record literal. If `rec` is a runtime binding, it renders as `<signal mono>` or similar — the field access doesn't drill into runtime values.
-- **Identifier resolves to a function:** renders as `<function: name>` and emits W182 (unusual usage).
+- **Identifier resolves to a function:** renders as `<function: name>` and emits W311 (unusual usage).
 - **Identifier resolves to a builtin (non-`$`):** same as function — `<builtin: osc>`.
 - **Identifier resolves to a chord literal `C4'`:** `<chord[3]>` (size from compile-time chord expansion).
-- **Identifier shadowed by both compile-time and runtime binding:** compile-time wins. Warning W183: shadow note.
-- **Format spec on a non-scalar:** error E185: `'.2f' applied to <signal mono>`.
-- **`$env(key)` with key not in EnvMap:** renders `<unset>`. No warning if the key starts with `__` (Cedar convention for internal); warning W190 otherwise.
+- **Identifier shadowed by both compile-time and runtime binding:** compile-time wins. Warning W312: shadow note.
+- **Format spec on a non-scalar:** error E685: `'.2f' applied to <signal mono>`.
+- **`$env(key)` with key not in EnvMap:** renders `<unset>`. No warning if the key starts with `__` (Cedar convention for internal); warning W314 otherwise.
 
 ### 10.4 Placement
 
-- **`$print` inside a function body:** E186.
-- **`$print` inside a lambda:** E186 (same code).
-- **`$print` inside an `if` arm:** E186 — though if/else doesn't exist as an Akkado runtime construct yet, this is forward-compatible.
-- **`$print` at the end of a chained `|>`:** E187 — the pipe is a runtime expression.
-- **`$samples()` inside `osc("sin", ...)`:** E187.
-- **`names = $samples()` followed by `osc("sin", names)`:** E187 on the `names` reference (typed as compile-time list, not signal).
+- **`$print` inside a function body:** E686.
+- **`$print` inside a lambda:** E686 (same code).
+- **`$print` inside an `if` arm:** E686 — though if/else doesn't exist as an Akkado runtime construct yet, this is forward-compatible.
+- **`$print` at the end of a chained `|>`:** E687 — the pipe is a runtime expression.
+- **`$samples()` inside `osc("sin", ...)`:** E687.
+- **`names = $samples()` followed by `osc("sin", names)`:** E687 on the `names` reference (typed as compile-time list, not signal).
 - **`names = $samples()` followed by `$print("{names}")`:** works.
 - **`x = 1 + 2` (runtime const) then `$print("{x}")`:** works — `ConstEvaluator` folds it; the compile-time pass sees the folded value.
 - **`x = osc("sin", 440)` then `$print("{x}")`:** renders `<signal mono>`; no error.
@@ -863,6 +902,21 @@ Each phase ends with a deployable, demo-able artifact.
 - **Two consecutive identical compiles:** each emits the same `compile_log`. With "Replace" mode, only the latest is shown. With "Append" mode, both appear with timestamps.
 - **Compile succeeds but swap is rejected:** `compile_log` still surfaces. Tab badge updates. Entries tagged `(not running)`.
 - **Compile fails (errors):** `compile_log` is **still surfaced** by hosts. The compile-time pass runs to completion (collecting logs) before short-circuiting on errors. The IDE renders entries with a `(compile failed)` tag at the top of the panel; CLI prints them to stdout normally and the diagnostics to stderr. Logs are often the fastest path to understanding the error.
+
+  > **Dependency note (resolved on review — v1 scope).** This guarantee is
+  > deliverable only for failures **at or after the compile-time pass** —
+  > i.e. codegen-stage errors. The compile-time pass runs *after* the
+  > analyzer, and `prd-error-handling-recovery`'s **multi-stage error
+  > collection** is NOT STARTED: today a lex error blocks parsing and a
+  > parse error blocks semantic analysis, so a compile that fails before
+  > the analyzer completes produces *no AST for the pass to walk* and
+  > therefore no `compile_log`. **v1 decision: scope the guarantee to
+  > codegen-stage failures.** A compile that reaches codegen and fails there
+  > surfaces its logs; a compile that fails earlier surfaces none. Full
+  > coverage of pre-codegen failures is explicitly out of v1 scope and
+  > blocked on `prd-error-handling-recovery` shipping multi-stage
+  > collection. (The alternative — a self-contained partial-AST tweak in
+  > this PRD — was considered and rejected as scope creep for v1.)
 - **Multiple `$print`s in source, second one panics during interpolation:** partial logs preserved; the offending entry is replaced with `<error: rendering failed>` and a corresponding diagnostic.
 - **Recompile spam (every keystroke):** Replace mode keeps tab tidy. Append mode users will see flooded log; they can `Clear`.
 
@@ -871,7 +925,7 @@ Each phase ends with a deployable, demo-able artifact.
 - **Snapshot captured but env is empty:** `$env(key)` returns `<unset>` for everything.
 - **Snapshot captured but specific key missing:** same.
 - **Snapshot capture fails (e.g., worklet → main thread message size cap):** worklet logs to `console.warn`; sends compile request without snapshot; `$env` returns `<unset>` everywhere.
-- **EnvMap size > some cap (256?):** worklet truncates to most-recently-touched 256 keys; warning W191 in `compile_log` (auto-emitted by host, not user-triggered).
+- **EnvMap size > some cap (256?):** worklet truncates to most-recently-touched 256 keys; warning W315 in `compile_log` (auto-emitted by host, not user-triggered).
 - **Race: snapshot captured at t0, compile runs at t1 with t1 > t0 + 100ms:** the snapshot is point-in-time; user sees the t0 value. Acceptable; recompiling will refresh it.
 
 ### 10.7 Multi-file (post-`import`)
@@ -903,22 +957,22 @@ Each phase ends with a deployable, demo-able artifact.
 | `$print("a {bpm:.2f}")` | text == `"a 140.00"` |
 | `$print("a {n:d}")` with `n = 3.7` | text == `"a 3"` |
 | `$print("a {n:x}")` with `n = 255` | text == `"a ff"` |
-| `$print("a {missing}")` | text == `"a <undefined: missing>"`; one Warning W181 |
+| `$print("a {missing}")` | text == `"a <undefined: missing>"`; one Warning W310 |
 | `$print("a {sig}")` with `sig = osc("sin", 440)` | text == `"a <signal mono>"` |
 | `$print("{$samples()}")` with default registry | text contains `"bd, kick, sd, snare, hh, ..."` |
-| `$samples()` (statement form) | not allowed as a statement (no value to do anything with); warning W184 |
+| `$samples()` (statement form) | not allowed as a statement (no value to do anything with); warning W313 |
 | `names = $samples()` then `$print("{names}")` | works; text == joined names |
 | `$env("__bpm")` with snapshot `{"__bpm": 130.0}` | renders `"130"` (default precision) |
 | `$env("missing")` no snapshot | renders `"<unset>"` |
 | `$print("{{literal}}")` | text == `"{literal}"` |
-| `$print(42)` | error E183 (first arg must be a string template) |
+| `$print(42)` | error E683 (first arg must be a string template) |
 | `$print("debug", 5, "x")` | text == `"debug, 5, x"` (comma-append behavior) |
 | `$print("a {b}", 99)` with `b = 1` | text == `"a 1, 99"` (template renders, then append) |
-| `$print("{}")` | error E184 |
-| `$print("{x:.5z}")` | error E185 |
-| `foo(x) = { $print("inside") }` | error E186 |
-| `osc("sin", $samples())` | error E187 |
-| `$nonexistent()` | error E182 |
+| `$print("{}")` | error E684 |
+| `$print("{x:.5z}")` | error E685 |
+| `foo(x) = { $print("inside") }` | error E686 |
+| `osc("sin", $samples())` | error E687 |
+| `$nonexistent()` | error E682 |
 | `$ print("hi")` (whitespace after $) | lexer error |
 | `$print("a") $print("b")` | two log entries in source order |
 | `$print` from imports (when imports land) | preserves depth-first source order |
@@ -976,6 +1030,8 @@ Catch2 `[compile-time][bench]` tag:
 - **[OPEN QUESTION] Positional `{0}`/`{1}` interpolation.** v1's multi-arg behavior is "comma-append after the template." Future PRD may add `{0}`, `{1}` positional refs that pull from those args. Forward-compatible: a template with no `{N}` references keeps today's append behavior; a template that uses `{0}` skips the append for that index.
 - **[OPEN QUESTION] Nested `$call` arity.** `{$env("k")}` is one call. Are deeper nests (`{$env($name())}`) allowed? v1 says yes, parser supports it; tests should cover at least one level. Document the recursion limit (e.g., 8) explicitly.
 - **[OPEN QUESTION] `compile_log` for failed compiles.** §10.5 says hosts discard logs from failed compiles. Should the IDE surface them anyway, tagged `(broken compile)`? Lean toward "hide by default; debug-mode toggle" — defer to a Phase 3 polish PR.
+- **[RESOLVED on review] Failed-compile guarantee scope.** `prd-error-handling-recovery` (multi-stage error collection) is NOT STARTED. v1 scopes the "failed compiles surface `compile_log`" guarantee to **codegen-stage failures only** — the compile-time pass needs a complete AST, so lex/parse/analysis failures surface no log. Full coverage is out of v1 scope and blocked on `prd-error-handling-recovery`. See the §10.5 dependency note.
+- **[RESOLVED on review] Error/warning code ranges.** The PRD originally drafted onto the 180s, which are now fully occupied by shipped features. Rebased on review onto verified-free ranges: errors `E680–E699`, warnings `W310–W319`. All references throughout the PRD were updated in lockstep.
 - **[OPEN QUESTION] Timestamp granularity in Append mode.** HH:MM:SS or HH:MM:SS.mmm? Milliseconds add noise but help diagnose recompile spam. Lean HH:MM:SS for v1.
 - **[OPEN QUESTION] Source-order interleaving in CLI.** When stdout and stderr are merged in a terminal, ordering depends on libc buffering. Should we explicitly flush after each entry? Lean yes — `fflush(stdout)` and `fflush(stderr)` after every emission.
 
@@ -1002,11 +1058,12 @@ Out of v1 scope, but anticipated and worth flagging so v1 doesn't paint future P
 
 | PRD | Status | Dependency |
 |---|---|---|
-| `prd-builtin-variables.md` | DONE | `bpm` and `sr` are interpolated by `$print`. No coordination needed beyond reading their compile-time values. |
-| `prd-module-import.md` | NOT STARTED | `$imports()` returns its resolved-import list when this lands. v1 of this PRD ships an empty stub. |
-| `prd-error-handling-recovery.md` | DONE | Reuses `Diagnostic` infrastructure; adds new error codes E180–E190. |
-| `prd-language-extensions.md` | IN PROGRESS | Macros (Phase 2 of this PRD's lineage) live in a separate future PRD. |
-| `prd-shareable-patches.md` | NOT STARTED | Independent. Compile-time logs should NOT be embedded into shared patches (anonymous shares are source code; the log is host-side runtime). |
+| `prd-builtin-variables.md` | SHIPPED | `bpm`/`sr` shipped as **`ENV_GET`-backed builtin variables** — codegen desugars the identifier to `ENV_GET`, they are *not* plain const-folded identifiers. The compile-time pass must resolve `{bpm}`/`{sr}` interpolations through the `BUILTIN_VARIABLES` registry + env-snapshot path (the same channel `$env` uses): read the user's constant `bpm = N` override when present, the host default otherwise. See §5.8. |
+| `prd-module-import.md` | READY FOR IMPLEMENTATION | Not yet shipped. `$imports()` returns its resolved-import list when this lands; v1 of this PRD ships an empty stub regardless. |
+| `prd-error-handling-recovery.md` | **NOT STARTED** | The basic `Diagnostic` / `SourceLocation` types this PRD reuses already exist independently of that PRD. But its **multi-stage error collection** (lex+parse+semantic errors collected instead of aborting between stages) has *not* shipped — today the pipeline still aborts between stages. This bounds the "failed compiles still surface `compile_log`" guarantee to codegen-stage failures (§1.2, §10.5): see the dependency note in §10.5. Error/warning codes were rebased on review onto verified-free ranges `E680–E699` / `W310–W319` (the 180s were occupied). |
+| `prd-language-extensions.md` | COMPLETE | Macros (Phase 2 of this PRD's lineage) live in a separate future PRD. |
+| `prd-shareable-patches.md` | CODE-COMPLETE | Independent. Compile-time logs should NOT be embedded into shared patches (shares carry source code; the log is host-side, regenerated on recompile). |
+| `prd-runtime-functions-control-flow.md` | L2 SHIPPED | Shipped the sibling `#` annotation sigil (`#inline`) and its `Hash` lexer token. This PRD's `$`-prefix must coexist with it as a distinct category — see §5.2.1. No code coordination needed; the two sigils are lexically independent. |
 
 ---
 
@@ -1015,7 +1072,8 @@ Out of v1 scope, but anticipated and worth flagging so v1 doesn't paint future P
 | Term | Meaning |
 |---|---|
 | **Compile-time function** | A `$`-prefixed builtin evaluated during compilation, not at runtime. Emits zero bytecode. |
-| **`$`-prefix** | Mandatory marker for compile-time calls. `$print(...)`, `$samples()`. Hard split from runtime. |
+| **`$`-prefix** | Mandatory marker for compile-time *calls*. `$print(...)`, `$samples()`. Distinct from runtime, and distinct from the `#` annotation sigil — see §5.2.1. |
+| **`#`-prefix (annotation)** | Compile-time annotation sigil, shipped with `#inline` (`prd-runtime-functions-control-flow.md`). Attaches passive metadata to the following declaration; no call syntax, no return value. Sibling of `$`, not a synonym. |
 | **`compile_log`** | Field on `CompileResult` carrying `LogEntry`s. Independent of `diagnostics`. |
 | **`LogEntry`** | One entry: text + level + source location + filename. |
 | **F-string interpolation** | `{name[:spec]}` syntax inside `$print` templates. Supports `.Nf`, `d`, `x`, `s` format specs. |
