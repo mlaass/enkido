@@ -82,7 +82,12 @@ def normalize(raw: str | None) -> str:
     u = re.sub(r"\s+", " ", raw.upper()).strip()
 
     # Order matters: on-hold and complete take precedence over partial matches.
-    if "ON HOLD" in u or "DESCOPED" in u or "NOT CURRENTLY IMPLEMENTED" in u:
+    if (
+        "ON HOLD" in u
+        or "DEFERRED" in u
+        or "DESCOPED" in u
+        or "NOT CURRENTLY IMPLEMENTED" in u
+    ):
         return "on-hold"
 
     # in-progress markers that should beat the generic "DONE/COMPLETE" check.
@@ -114,6 +119,8 @@ def normalize(raw: str | None) -> str:
         or u.startswith("TODO ")
         or "DRAFT" in u  # covers DRAFT and FIRST DRAFT
         or u == "PROPOSED"
+        or "READY FOR IMPLEMENTATION" in u
+        or u == "READY"
     ):
         return "not-started"
 
