@@ -1,12 +1,12 @@
 # PRD: Module/Import System
 
-> **Status: READY FOR IMPLEMENTATION** — Phase 1a in the
+> **Status: PARTIALLY SHIPPED** — Phase 1a in the
 > [Language Evolution Vision](vision-language-evolution.md). **Phase A
 > (direct injection) and Phase B (namespace imports) have SHIPPED**
-> (commits `c739f4f`, `d9b3d54`). The remaining work — Phase C (URI
-> resolver unification), Phase D (web virtual filesystem + multi-tab
-> editor), and the stdlib migration — is specified below and ready to
-> implement.
+> (commits `c739f4f`, `d9b3d54`) — the `import` statement is live and
+> running. The remaining work — Phase C (URI resolver unification),
+> Phase D (web virtual filesystem + multi-tab editor), and the stdlib
+> migration — is specified below and ready to implement.
 
 ## Status & Shipped Work
 
