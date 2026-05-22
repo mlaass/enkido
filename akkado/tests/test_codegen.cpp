@@ -62,6 +62,36 @@ static akkado::CompileResult compile_raw(std::string_view src) {
                            /*lint_strict=*/false, /*bypass_master=*/true);
 }
 
+// Resolve the float a PUSH_CONST writes into buffer `buf`, or NaN if none.
+static float buffer_const(const std::vector<cedar::Instruction>& insts,
+                          std::uint16_t buf) {
+    for (const auto& inst : insts) {
+        if (inst.opcode == cedar::Opcode::PUSH_CONST && inst.out_buffer == buf)
+            return decode_const_float(inst);
+    }
+    return NAN;
+}
+
+// Find the ExtendedParams StateInitData paired with a DSP opcode's state_id.
+static const akkado::StateInitData* find_ext_params(
+        const akkado::CompileResult& result, std::uint32_t dsp_state_id) {
+    const std::uint32_t want = cedar::ext_params_state_id(dsp_state_id);
+    for (const auto& init : result.state_inits) {
+        if (init.type == akkado::StateInitData::Type::ExtendedParams &&
+            init.state_id == want)
+            return &init;
+    }
+    return nullptr;
+}
+
+// Resolve extended-param slot `i` to its float value — either the constant
+// slot, or traced through the buffer a PUSH_CONST filled.
+static float ext_slot_value(const std::vector<cedar::Instruction>& insts,
+                            const akkado::StateInitData& ext, std::size_t i) {
+    if (ext.ext_buffer_indices[i] == 0xFFFF) return ext.ext_constants[i];
+    return buffer_const(insts, ext.ext_buffer_indices[i]);
+}
+
 // =============================================================================
 // Literal Tests
 // =============================================================================
@@ -10052,40 +10082,176 @@ TEST_CASE("Array literal spread flattens elements", "[codegen][spread][array]") 
 // Phase 6: Spread into builtin / special-handler calls
 // =============================================================================
 
-TEST_CASE("Builtin call accepts ..record spread", "[codegen][spread][builtin]") {
-    SECTION("lp() with record spread fills cut+q by name") {
-        auto result = akkado::compile(
-            "cfg = {cut: 1000, q: 0.7}\n"
-            "lp(osc(\"sin\", 440), ..cfg) |> out(%, %)"
+// A `..record` spread into a builtin must bind its fields BY NAME onto the
+// builtin's parameter slots — including ExtendedParams slots — exactly like
+// non-spread named args. Regression for the bug where spread fields were
+// consumed positionally and silently misbound (chorus/reverb fell silent).
+// Every section asserts emitted-bytecode values, not just compile success.
+TEST_CASE("Builtin call: ..record spread maps fields by name",
+          "[codegen][spread][builtin]") {
+    SECTION("T1: chorus ..{dry,wet} land in their extended-param slots") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.6, 0.7, 18, ..{dry: 0.3, wet: 0.9}) |> out(@)"
         );
         REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* chorus = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+        REQUIRE(chorus != nullptr);
+        const auto* ext = find_ext_params(result, chorus->state_id);
+        REQUIRE(ext != nullptr);
+        REQUIRE(ext->ext_count == 3);
+        // ext slots: 0 = lfo_phase, 1 = dry, 2 = wet.
+        CHECK(ext_slot_value(insts, *ext, 0) == Catch::Approx(0.25f));  // default
+        CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(0.3f));   // ..{dry}
+        CHECK(ext_slot_value(insts, *ext, 2) == Catch::Approx(0.9f));   // ..{wet}
     }
 
-    SECTION("lp() with inline record spread") {
-        auto result = akkado::compile(
-            "lp(osc(\"sin\", 440), ..{cut: 1000, q: 0.7}) |> out(%, %)"
+    SECTION("T2: chorus positional slots intact — dry/wet do not leak") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.6, 0.7, 18, ..{dry: 0.3, wet: 0.9}) |> out(@)"
         );
         REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* chorus = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+        REQUIRE(chorus != nullptr);
+        CHECK(buffer_const(insts, chorus->inputs[1]) == Catch::Approx(0.6f));   // rate
+        CHECK(buffer_const(insts, chorus->inputs[2]) == Catch::Approx(0.7f));   // depth
+        CHECK(buffer_const(insts, chorus->inputs[3]) == Catch::Approx(18.0f));  // base_delay
+        // depth_range was not supplied → gap-filled with its default (10),
+        // NOT the leaked dry value (0.3).
+        CHECK(buffer_const(insts, chorus->inputs[4]) == Catch::Approx(10.0f));
     }
 
-    SECTION("array spread fills positional builtin args") {
-        auto result = akkado::compile(
-            "args = [1000, 0.7]\n"
-            "lp(osc(\"sin\", 440), ..args) |> out(%, %)"
+    SECTION("T3: freeverb ..{dry,wet} reach its extended-param slots") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> freeverb(@, 0.5, 0.4, 0.7, ..{dry: 0.2, wet: 0.8}) |> out(@)"
         );
         REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* rv = find_instruction(insts, cedar::Opcode::REVERB_FREEVERB);
+        REQUIRE(rv != nullptr);
+        const auto* ext = find_ext_params(result, rv->state_id);
+        REQUIRE(ext != nullptr);
+        REQUIRE(ext->ext_count == 2);
+        CHECK(ext_slot_value(insts, *ext, 0) == Catch::Approx(0.2f));  // dry
+        CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(0.8f));  // wet
     }
 
-    SECTION("reusing same spread record across two calls") {
-        // The second call must successfully re-look-up the resolved record
-        // and not crash on stale state.
-        auto result = akkado::compile(
-            "cfg = {cut: 1000, q: 0.7}\n"
-            "a = lp(osc(\"sin\", 440), ..cfg)\n"
-            "b = lp(osc(\"saw\", 220), ..cfg)\n"
-            "(a + b) |> out(%, %)"
+    SECTION("T4: chorus ..{wet} only — skipped slots fall back to defaults") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, ..{wet: 0.8}) |> out(@)"
         );
         REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* chorus = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+        REQUIRE(chorus != nullptr);
+        const auto* ext = find_ext_params(result, chorus->state_id);
+        REQUIRE(ext != nullptr);
+        CHECK(ext_slot_value(insts, *ext, 0) == Catch::Approx(0.25f));  // lfo_phase default
+        CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(1.0f));   // dry default
+        CHECK(ext_slot_value(insts, *ext, 2) == Catch::Approx(0.8f));   // wet supplied
+        CHECK(buffer_const(insts, chorus->inputs[1]) == Catch::Approx(0.5f));   // rate
+        CHECK(buffer_const(insts, chorus->inputs[2]) == Catch::Approx(0.5f));   // depth
+        CHECK(buffer_const(insts, chorus->inputs[3]) == Catch::Approx(20.0f));  // base_delay
+        CHECK(buffer_const(insts, chorus->inputs[4]) == Catch::Approx(10.0f));  // depth_range
+    }
+
+    SECTION("T5: mixed positional + spread-named in one call") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.65, ..{wet: 0.7}) |> out(@)"
+        );
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* chorus = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+        REQUIRE(chorus != nullptr);
+        CHECK(buffer_const(insts, chorus->inputs[1]) == Catch::Approx(0.65f));  // rate positional
+        const auto* ext = find_ext_params(result, chorus->state_id);
+        REQUIRE(ext != nullptr);
+        CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(1.0f));  // dry default
+        CHECK(ext_slot_value(insts, *ext, 2) == Catch::Approx(0.7f));  // wet from spread
+    }
+
+    SECTION("T6: array spread still fills positional slots in order") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> lp(@, ..[800, 0.5]) |> out(@)"
+        );
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* lp = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
+        REQUIRE(lp != nullptr);
+        CHECK(buffer_const(insts, lp->inputs[1]) == Catch::Approx(800.0f));  // cut
+        CHECK(buffer_const(insts, lp->inputs[2]) == Catch::Approx(0.5f));    // q
+    }
+
+    SECTION("T7: a spread record reused across two builtin calls") {
+        auto result = compile_raw(
+            "cfg = {dry: 0.3, wet: 0.9}\n"
+            "a = osc(\"sin\", 440) |> chorus(@, 0.5, 0.5, 20, ..cfg)\n"
+            "b = osc(\"saw\", 220) |> chorus(@, 0.5, 0.5, 20, ..cfg)\n"
+            "(a + b) |> out(@)"
+        );
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        std::size_t n = 0;
+        for (const auto& inst : insts) {
+            if (inst.opcode != cedar::Opcode::EFFECT_CHORUS) continue;
+            const auto* ext = find_ext_params(result, inst.state_id);
+            REQUIRE(ext != nullptr);
+            CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(0.3f));  // dry
+            CHECK(ext_slot_value(insts, *ext, 2) == Catch::Approx(0.9f));  // wet
+            ++n;
+        }
+        CHECK(n == 2);
+    }
+
+    SECTION("T8: unknown spread field warns W160 and is dropped") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.5, 0.5, 20, ..{drry: 0.3, wet: 0.85}) |> out(@)"
+        );
+        REQUIRE(result.success);  // unknown field is non-fatal
+        bool got_w160 = false;
+        for (const auto& d : result.diagnostics)
+            if (d.code == "W160") got_w160 = true;
+        CHECK(got_w160);
+        auto insts = get_instructions(result);
+        const auto* chorus = find_instruction(insts, cedar::Opcode::EFFECT_CHORUS);
+        REQUIRE(chorus != nullptr);
+        const auto* ext = find_ext_params(result, chorus->state_id);
+        REQUIRE(ext != nullptr);
+        CHECK(ext_slot_value(insts, *ext, 1) == Catch::Approx(1.0f));   // dry default (drry dropped)
+        CHECK(ext_slot_value(insts, *ext, 2) == Catch::Approx(0.85f));  // wet still applied
+    }
+
+    SECTION("T9: duplicate field across explicit + spread is E010") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.5, 0.5, 20, wet: 0.4, ..{wet: 0.9}) |> out(@)"
+        );
+        CHECK_FALSE(result.success);
+        bool got_e010 = false;
+        for (const auto& d : result.diagnostics)
+            if (d.code == "E010") got_e010 = true;
+        CHECK(got_e010);
+    }
+
+    SECTION("T10: special-handler (out) downstream of a spread builtin is intact") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> chorus(@, 0.6, 0.7, 18, ..{dry: 0.3, wet: 0.9}) |> out(@)"
+        );
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        CHECK(find_instruction(insts, cedar::Opcode::OUTPUT) != nullptr);
+    }
+
+    SECTION("T11: record spread into regular (non-extended) param slots") {
+        auto result = compile_raw(
+            "osc(\"sin\", 440) |> lp(@, ..{cut: 1200, q: 0.6}) |> out(@)"
+        );
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        const auto* lp = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
+        REQUIRE(lp != nullptr);
+        CHECK(buffer_const(insts, lp->inputs[1]) == Catch::Approx(1200.0f));  // cut
+        CHECK(buffer_const(insts, lp->inputs[2]) == Catch::Approx(0.6f));     // q
     }
 }
 

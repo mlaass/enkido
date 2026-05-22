@@ -560,6 +560,16 @@ private:
     /// Returns nullopt on hard error.
     std::optional<std::vector<ExpandedArg>> expand_call_arguments(NodeIndex call_node);
 
+    /// Reorder a builtin call's argument chain so spread-expanded named fields
+    /// (`..{name: value}`) land in their declared parameter slots, gap-filling
+    /// skipped slots with `_` placeholders. Mirrors
+    /// SemanticAnalyzer::reorder_named_arguments, but runs in codegen because a
+    /// record spread is only resolvable after its value is evaluated — the
+    /// analyzer defers reordering for spread calls. Unknown field names emit
+    /// W160 and are dropped; returns false on a hard error (E009/E010/E012).
+    bool reorder_spread_named_args(NodeIndex call_node, const BuiltinInfo& builtin,
+                                   const std::string& func_name);
+
     /// Handle user-defined function calls - inline expansion, or (PRD L2) a
     /// shared BLOCK_CALL dispatch when the fn is eligible.
     TypedValue handle_user_function_call(NodeIndex node, const Node& n,

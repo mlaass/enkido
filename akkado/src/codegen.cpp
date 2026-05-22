@@ -1287,6 +1287,18 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 return TypedValue::error_val();
             }
 
+            // Spread-expanded builtin calls reach codegen with named Argument
+            // nodes still in the chain — the analyzer defers reordering for
+            // spread calls (a `..record` source is only known after value
+            // evaluation). Map those field names onto the builtin's parameter
+            // slots now, so `chorus(@, .., ..{dry: 1, wet: 0.5})` binds dry/wet
+            // (incl. extended-param slots) by name instead of being consumed
+            // positionally and silently misbinding.
+            if (did_spread_swap &&
+                !reorder_spread_named_args(node, *builtin, func_name)) {
+                return TypedValue::error_val();
+            }
+
             // For stateful functions, push path BEFORE visiting children
             // so nested calls see their parent's context
             bool pushed_path = false;
@@ -3185,6 +3197,147 @@ CodeGenerator::expand_call_arguments(NodeIndex call_node) {
     }
 
     return out;
+}
+
+bool CodeGenerator::reorder_spread_named_args(NodeIndex call_node,
+                                              const BuiltinInfo& builtin,
+                                              const std::string& func_name) {
+    AstArena& arena = const_cast<AstArena&>(ast_->arena);
+
+    struct ArgInfo {
+        NodeIndex node;
+        std::optional<std::string> name;  // none → positional
+        int target_pos;                   // slot index, -1 = dropped/unknown
+    };
+    std::vector<ArgInfo> args;
+    for (NodeIndex arg = arena[call_node].first_child; arg != NULL_NODE;
+         arg = arena[arg].next_sibling) {
+        std::optional<std::string> arg_name;
+        const Node& arg_node = arena[arg];
+        if (arg_node.type == NodeType::Argument &&
+            std::holds_alternative<Node::ArgumentData>(arg_node.data)) {
+            arg_name = arg_node.as_argument().name;
+        }
+        args.push_back({arg, std::move(arg_name), -1});
+    }
+    if (args.empty()) return true;
+
+    // Resolve each argument to a target slot. Positional args fill 0,1,2…;
+    // named args map by find_param() into the unified regular+extended index
+    // space. Unknown field names are warned (W160) and dropped.
+    bool has_named = false;
+    bool seen_named = false;
+    std::set<std::string> used_params;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i].name.has_value()) {
+            has_named = true;
+            seen_named = true;
+            const std::string& name = *args[i].name;
+
+            if (!used_params.insert(name).second) {
+                error("E010", "Duplicate named argument '" + name +
+                      "' in call to '" + func_name + "'",
+                      arena[args[i].node].location);
+                return false;
+            }
+
+            int param_idx = builtin.find_param(name);
+            if (param_idx < 0) {
+                // PRD decision: an unknown spread field is non-fatal — warn
+                // and drop it, matching the user-function spread path.
+                std::string sig;
+                for (std::size_t p = 0; p < MAX_BUILTIN_PARAMS &&
+                         !builtin.param_names[p].empty(); ++p) {
+                    if (!sig.empty()) sig += ", ";
+                    sig += std::string(builtin.param_names[p]);
+                }
+                for (std::size_t p = 0; p < builtin.extended_param_count &&
+                         p < MAX_EXTENDED_PARAMS &&
+                         !builtin.extended_param_names[p].empty(); ++p) {
+                    if (!sig.empty()) sig += ", ";
+                    sig += std::string(builtin.extended_param_names[p]);
+                }
+                warn("W160", "Spread field '" + name +
+                     "' has no matching parameter in " + func_name +
+                     "(" + sig + ")", arena[args[i].node].location);
+                continue;  // target_pos stays -1 → dropped
+            }
+            args[i].target_pos = param_idx;
+        } else {
+            if (seen_named) {
+                error("E009", "Positional argument cannot follow named argument "
+                      "in call to '" + func_name + "'",
+                      arena[args[i].node].location);
+                return false;
+            }
+            args[i].target_pos = static_cast<int>(i);
+        }
+    }
+
+    if (!has_named) return true;  // already positional — nothing to reorder
+
+    // A named arg must not collide with a positional one filling the same slot.
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i].name.has_value()) continue;
+        for (std::size_t j = 0; j < args.size(); ++j) {
+            if (args[j].name.has_value() && args[j].target_pos >= 0 &&
+                args[j].target_pos == static_cast<int>(i)) {
+                error("E012", "Parameter '" + *args[j].name + "' at position " +
+                      std::to_string(i) + " conflicts with positional argument "
+                      "in call to '" + func_name + "'",
+                      arena[args[i].node].location);
+                return false;
+            }
+        }
+    }
+
+    // Build the canonical-order slot vector.
+    int max_pos = -1;
+    for (const auto& a : args) {
+        if (a.target_pos > max_pos) max_pos = a.target_pos;
+    }
+    if (max_pos < 0) {
+        // Every argument was a dropped unknown field — emit an empty call.
+        arena[call_node].first_child = NULL_NODE;
+        return true;
+    }
+    std::vector<NodeIndex> slots(static_cast<std::size_t>(max_pos) + 1, NULL_NODE);
+    for (const auto& a : args) {
+        if (a.target_pos >= 0) slots[static_cast<std::size_t>(a.target_pos)] = a.node;
+    }
+
+    // Names are positional now — clear them so downstream logic ignores them.
+    for (const auto& a : args) {
+        if (a.name.has_value() && a.target_pos >= 0) {
+            Node& an = arena[a.node];
+            if (an.type == NodeType::Argument) {
+                an.data = Node::ArgumentData{std::nullopt, NULL_NODE};
+            }
+        }
+    }
+
+    // Gap-fill skipped slots with bare `_` placeholders — the builtin arg loop
+    // turns each into the parameter's declared default. (alloc may grow the
+    // arena, so no Node& is held across this loop.)
+    const SourceLocation call_loc = arena[call_node].location;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        if (slots[i] != NULL_NODE) continue;
+        NodeIndex underscore = arena.alloc(NodeType::Identifier, call_loc);
+        arena[underscore].data = Node::IdentifierData{"_"};
+        arena[underscore].next_sibling = NULL_NODE;
+        slots[i] = underscore;
+    }
+
+    // Rebuild the call's child chain in canonical slot order.
+    arena[call_node].first_child = NULL_NODE;
+    NodeIndex prev = NULL_NODE;
+    for (NodeIndex idx : slots) {
+        arena[idx].next_sibling = NULL_NODE;
+        if (prev == NULL_NODE) arena[call_node].first_child = idx;
+        else arena[prev].next_sibling = idx;
+        prev = idx;
+    }
+    return true;
 }
 
 // ============================================================================
