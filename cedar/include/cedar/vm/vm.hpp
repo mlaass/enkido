@@ -206,6 +206,17 @@ public:
         state_pool_.init_sequence_iter(state_id, n, dir);
     }
 
+    // Initialize a transform-owned SequenceState for an EVENT_MAP / EVENT_FILTER
+    // opcode (PRD prd-runtime-event-transforms, Phase 1). Allocates only the
+    // OutputEvents buffer — the opcode fills it at runtime from its upstream.
+    void init_event_transform_state(std::uint32_t state_id, float cycle_length,
+                                    bool is_sample_pattern,
+                                    std::uint32_t output_capacity) {
+        state_pool_.init_event_transform(state_id, cycle_length,
+                                         is_sample_pattern, &audio_arena_,
+                                         output_capacity);
+    }
+
     // Initialize ExtendedParams<N> state for an opcode that uses more
     // than 5 input slots. The loader / WASM apply-state-inits path calls
     // this with a runtime-known count; the StatePool helper picks the

@@ -21,6 +21,7 @@
 #include "delays.hpp"
 #include "midi.hpp"
 #include "sequencing.hpp"
+#include "event_transforms.hpp"
 #include "distortion.hpp"
 #include "modulation.hpp"
 #include "dynamics.hpp"

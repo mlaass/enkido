@@ -51,6 +51,7 @@ add_executable(akkado_tests
     test_state.cpp
     test_bus_routing.cpp
     test_pattern_event_arrays.cpp
+    test_event_map.cpp
     test_pattern_scalar.cpp
     test_transport.cpp
     test_sample_emission_golden.cpp

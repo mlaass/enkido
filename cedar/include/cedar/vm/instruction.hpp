@@ -257,6 +257,18 @@ enum class Opcode : std::uint8_t {
     // SEQPAT_QUERY that filled the state.
     SEQPAT_VALUES = 217,
 
+    // Runtime Event-Stream Transforms (218-219) — PRD prd-runtime-event-
+    // transforms. Plain per-block transforms (regular execute() switch cases,
+    // NOT dispatch-loop opcodes). Each reads an upstream event source's
+    // OutputEvents (SequenceState or MidiQueueState, via resolve_output_events)
+    // and publishes its own transformed OutputEvents into a transform-owned
+    // SequenceState. Phase-1 encoding: rate bits 0-3 = field selector, bits
+    // 4-5 = op/comparison; inputs[0] = constant param buffer; inputs[2..3] =
+    // upstream state_id (32 bits split); state_id = downstream SequenceState.
+    // See cedar/opcodes/event_transforms.hpp.
+    EVENT_MAP = 218,         // per-event field rewrite (transpose/velocity)
+    EVENT_FILTER = 219,      // predicate drop on a constant threshold
+
     INVALID = 255
 };
 

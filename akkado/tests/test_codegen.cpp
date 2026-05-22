@@ -11,6 +11,7 @@
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <cedar/dsp/constants.hpp>
 #include <cedar/opcodes/sequence.hpp>  // For MAX_VALUES_PER_EVENT
+#include <cedar/opcodes/event_transform_encoding.hpp>  // EVENT_MAP rate encoding
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -1553,46 +1554,40 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
     }
 }
 
-TEST_CASE("Codegen: transpose() shifts MIDI note fields", "[codegen][pattern][transpose]") {
-    auto find_seq = [](const akkado::CompileResult& r) -> const akkado::StateInitData* {
-        for (const auto& init : r.state_inits) {
-            if (init.type == akkado::StateInitData::Type::SequenceProgram) return &init;
-        }
-        return nullptr;
-    };
-
-    SECTION("single note: midi_note shifts by the semitone count") {
+TEST_CASE("Codegen: transpose() lowers to a runtime EVENT_MAP",
+          "[codegen][pattern][transpose]") {
+    // PRD prd-runtime-event-transforms Phase 1: transpose() is no longer a
+    // compile-time event mutation — it emits an EVENT_MAP (NOTE_COUPLED / ADD
+    // encoding) that shifts pitch at runtime. End-to-end runtime-value
+    // coverage (midi_note 60->72, per-voice chord shift, frequency doubling)
+    // lives in akkado/tests/test_event_map.cpp.
+    SECTION("single note: one EVENT_MAP with NOTE_COUPLED/ADD encoding") {
         auto result = akkado::compile(R"(n"c4" |> transpose(@, 12) |> out(@, @))");
         REQUIRE(result.success);
-        const auto* seq = find_seq(result);
-        REQUIRE(seq != nullptr);
-        REQUIRE(seq->sequence_events.size() >= 1);
-        REQUIRE(seq->sequence_events[0].size() >= 1);
-        // c4 = MIDI 60, transposed up an octave = 72.
-        CHECK(seq->sequence_events[0][0].midi_note ==
-              Catch::Approx(72.0f).margin(0.01f));
+        auto insts = get_instructions(result);
+        REQUIRE(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
+        const auto* em = find_instruction(insts, cedar::Opcode::EVENT_MAP);
+        REQUIRE(em != nullptr);
+        CHECK(em->rate == cedar::event_transform_rate(
+                              cedar::EVENT_FIELD_NOTE_COUPLED,
+                              cedar::EVENT_OP_ADD));
+        // The source pattern stays untransformed at compile time: the
+        // SequenceProgram still carries c4 = MIDI 60.
+        for (const auto& init : result.state_inits) {
+            if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
+            REQUIRE(init.sequence_events.size() >= 1);
+            REQUIRE(init.sequence_events[0].size() >= 1);
+            CHECK(init.sequence_events[0][0].midi_note ==
+                  Catch::Approx(60.0f).margin(0.01f));
+        }
     }
 
-    SECTION("chord: per-voice notes[] all shift by the semitone count") {
+    SECTION("chord: transpose still emits a single EVENT_MAP") {
         auto result = akkado::compile(
             R"(chord("C") |> transpose(@, 12) |> poly(@, ({freq}) -> osc("sin", freq)) |> out(@, @))");
         REQUIRE(result.success);
-        const auto* seq = find_seq(result);
-        REQUIRE(seq != nullptr);
-        const cedar::Event* chord = nullptr;
-        for (const auto& events : seq->sequence_events) {
-            for (const auto& e : events) {
-                if (e.type == cedar::EventType::DATA && e.num_values == 3) {
-                    chord = &e;
-                }
-            }
-        }
-        REQUIRE(chord != nullptr);
-        // C major = MIDI 60,64,67 -> +12 = 72,76,79.
-        CHECK(chord->midi_note == Catch::Approx(72.0f).margin(0.01f));
-        CHECK(chord->notes[0] == Catch::Approx(72.0f).margin(0.01f));
-        CHECK(chord->notes[1] == Catch::Approx(76.0f).margin(0.01f));
-        CHECK(chord->notes[2] == Catch::Approx(79.0f).margin(0.01f));
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
     }
 }
 
@@ -2256,23 +2251,19 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     }
 
     SECTION("transpose(slow(n'…', 2), 12) applies both transforms") {
-        // n"[c4 e4]" base: cycle_length=4 beats
-        // slow(2): cycle_length=8
-        // transpose(12): frequencies doubled (octave up)
+        // slow(2) is still a compile-time transform (Phase 1 migrates only
+        // transpose/velocity): the SequenceProgram carries the slowed
+        // cycle_length. transpose(12) is now a runtime EVENT_MAP layered on
+        // top — verified for runtime correctness in test_event_map.cpp.
         auto result = akkado::compile(R"(transpose(slow(n"[c4 e4]", 2), 12))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        // Cycle length should be doubled from slow
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        CHECK(si.cycle_length == Catch::Approx(2.0f));  // slow doubled it
 
-        // Events should have transposed frequencies
-        REQUIRE_FALSE(si.sequence_events.empty());
-        REQUIRE(si.sequence_events[0].size() >= 2);
-        // C4 = 261.63 Hz, transposed +12 = 523.25 Hz
-        float c4_freq = 261.6256f;
-        CHECK(si.sequence_events[0][0].values[0] == Catch::Approx(c4_freq * 2.0f).margin(1.0f));
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
     }
 
     SECTION("fast(fast(n'…', 2), 3) compounds speed") {
@@ -2890,19 +2881,27 @@ TEST_CASE("velocity-shorthand n\"c4:0.8\" propagates to event.velocity",
 
 TEST_CASE("velocity-shorthand combines with nested velocity() transform",
           "[codegen][patterns][phase2]") {
-    // Nested velocity() applies its multiplier at compile time on event.velocity.
-    // Top-level velocity() emits a runtime MUL on the velocity buffer (so the
-    // compile-time event.velocity reflects only the inner factors). Verify the
-    // recursive multiplication path works with per-atom :0.x velocities.
+    // PRD prd-runtime-event-transforms Phase 1: both velocity() calls now
+    // lower to runtime EVENT_MAP (VEL / MUL) — fully chained. The per-atom
+    // :0.x shorthand stays a compile-time event property; the SequenceProgram
+    // carries those untouched (0.5, 0.8), and the two velocity() multipliers
+    // are applied at runtime. Runtime scaling is verified in test_event_map.cpp.
     auto result = akkado::compile(R"(velocity(velocity(n"[c4:0.5 e4:0.8]", 0.5), 1.0))");
     REQUIRE(result.success);
     const auto& si = result.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
-    // Inner velocity(0.5) multiplies per-atom velocities at compile time:
-    //   c4:0.5 → 0.5 * 0.5 = 0.25
-    //   e4:0.8 → 0.8 * 0.5 = 0.4
-    CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.25f).margin(0.01f));
-    CHECK(si.sequence_events[0][1].velocity == Catch::Approx(0.4f).margin(0.01f));
+    // Per-atom shorthand velocities — NOT multiplied at compile time anymore.
+    CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.5f).margin(0.01f));
+    CHECK(si.sequence_events[0][1].velocity == Catch::Approx(0.8f).margin(0.01f));
+    // Two chained velocity() transforms → two EVENT_MAP opcodes.
+    auto insts = get_instructions(result);
+    CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 2);
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::EVENT_MAP) {
+            CHECK(i.rate == cedar::event_transform_rate(
+                                cedar::EVENT_FIELD_VEL, cedar::EVENT_OP_MUL));
+        }
+    }
 }
 
 // =============================================================================
@@ -3973,22 +3972,22 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
         REQUIRE(result.success);
     }
 
-    SECTION("transpose preserves semitone math when applied to identifier") {
-        // C4 = 261.63 Hz; +12 semitones doubles to 523.25 Hz.
-        // Equivalent to the chained-correctness test at L2081 but with the
-        // pattern bound to a name first.
+    SECTION("transpose on an identifier-bound pattern emits EVENT_MAP") {
+        // PRD prd-runtime-event-transforms Phase 1: transpose() through an
+        // identifier-bound pattern lowers to a runtime EVENT_MAP just like the
+        // literal form. Runtime semitone math is verified in test_event_map.cpp.
         auto result = akkado::compile(R"(
             m = n"[c4 e4]"
             transpose(m, 12)
         )");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
-        REQUIRE_FALSE(si.sequence_events.empty());
-        REQUIRE(si.sequence_events[0].size() >= 1);
-        float c4_freq = 261.6256f;
-        CHECK(si.sequence_events[0][0].values[0]
-              == Catch::Approx(c4_freq * 2.0f).margin(1.0f));
+        auto insts = get_instructions(result);
+        REQUIRE(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
+        const auto* em = find_instruction(insts, cedar::Opcode::EVENT_MAP);
+        REQUIRE(em != nullptr);
+        CHECK(em->rate == cedar::event_transform_rate(
+                              cedar::EVENT_FIELD_NOTE_COUPLED,
+                              cedar::EVENT_OP_ADD));
     }
 
     SECTION("pipe with @ on identifier — exact form from bug report") {
@@ -10415,7 +10414,11 @@ TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]"
         CHECK(sf_count == 3);
     }
 
-    SECTION("transpose(12) doubles every voice frequency, preserving voices") {
+    SECTION("transpose(12) on a chord emits EVENT_MAP, preserving voices") {
+        // PRD prd-runtime-event-transforms Phase 1: transpose() on a chord
+        // lowers to a runtime EVENT_MAP. The source SequenceProgram still
+        // carries the untransposed 3-voice chord; per-voice frequency doubling
+        // is verified at runtime in test_event_map.cpp.
         auto base = akkado::compile(
             R"(c"CM" |> soundfont(@, "gm", 0) |> out(@, @))");
         auto up = akkado::compile(
@@ -10427,10 +10430,12 @@ TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]"
         const auto& bev = base.state_inits[0].sequence_events[0][0];
         const auto& uev = up.state_inits[0].sequence_events[0][0];
         REQUIRE(bev.num_values == 3);
-        REQUIRE(uev.num_values == 3);
-        for (std::uint8_t v = 0; v < 3; ++v) {
-            CHECK(uev.values[v] == Catch::Approx(bev.values[v] * 2.0f).margin(1.0f));
-        }
+        REQUIRE(uev.num_values == 3);  // source chord voices preserved
+        auto insts = get_instructions(up);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) -
+              count_instructions(get_instructions(base), cedar::Opcode::EVENT_MAP)
+              == 1);
     }
 }
 

@@ -137,6 +137,7 @@ function inferStatefulOpcodes(opcodes: Map<string, number>, fromBuiltins: Set<st
     "SAMPLE_",   // Samplers track playback position
     "DYNAMICS_", // Dynamics processors have envelope followers
     "SEQPAT_",   // Sequence pattern opcodes track state
+    "EVENT_",    // Runtime event-stream transforms own a SequenceState
   ];
 
   // Individual opcodes that are stateful but might not match patterns

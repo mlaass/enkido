@@ -334,6 +334,13 @@ void apply_state_inits(cedar::VM& vm,
                                     init.ext_constants.data(),
                                     init.ext_buffer_indices.data(),
                                     init.ext_count);
+        } else if (init.type == akkado::StateInitData::Type::EventTransform) {
+            // PRD prd-runtime-event-transforms Phase 1: transform-owned
+            // SequenceState filled at runtime by an EVENT_MAP / EVENT_FILTER
+            // opcode. total_events sizes the OutputEvents buffer.
+            vm.init_event_transform_state(init.state_id, init.cycle_length,
+                                          init.is_sample_pattern,
+                                          init.total_events);
         } else if (init.type == akkado::StateInitData::Type::Timeline) {
             auto& state = vm.states().get_or_create<cedar::TimelineState>(init.state_id);
             state.num_points = std::min(

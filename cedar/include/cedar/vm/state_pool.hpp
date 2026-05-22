@@ -1004,6 +1004,59 @@ public:
         }
     }
 
+    // Initialize a transform-owned SequenceState for EVENT_MAP / EVENT_FILTER
+    // (PRD prd-runtime-event-transforms, Phase 1). Unlike init_sequence_program
+    // this state has no compiled sequences — only its OutputEvents buffer is
+    // used, filled at runtime by the EVENT_* opcode from an upstream stream.
+    //
+    // `cycle_length` is a placeholder: the opcode copies the upstream's
+    // cycle_length every block. `output_capacity` sizes the OutputEvents
+    // buffer (lazily floored to 32, matching init_sequence_program).
+    void init_event_transform(std::uint32_t state_id, float cycle_length,
+                              bool is_sample_pattern, AudioArena* arena,
+                              std::uint32_t output_capacity) {
+        auto& state = get_or_create<SequenceState>(state_id);
+        state.sequences = nullptr;
+        state.num_sequences = 0;
+        state.seq_capacity = 0;
+        state.cycle_length = cycle_length;
+        state.is_sample_pattern = is_sample_pattern;
+        state.current_index = 0;
+        state.last_beat_pos = -1.0f;
+        state.last_beat_pos_gate = -1.0f;
+        state.last_queried_cycle = -1.0f;
+        state.cycle_index = 0;
+        state.iter_n = 0;
+        state.iter_dir = 0;
+        state.active_source_offset = 0;
+        state.active_source_length = 0;
+
+        std::uint64_t seed = state_id;
+        seed = (seed ^ (seed >> 30)) * 0xBF58476D1CE4E5B9ull;
+        seed = (seed ^ (seed >> 27)) * 0x94D049BB133111EBull;
+        state.pattern_seed = seed ^ (seed >> 31);
+
+        std::uint32_t cap = std::max<std::uint32_t>(32u, output_capacity);
+        state.output.num_events = 0;
+        if (arena) {
+            std::size_t output_bytes = cap * sizeof(OutputEvents::OutputEvent);
+            std::size_t output_floats =
+                (output_bytes + sizeof(float) - 1) / sizeof(float);
+            float* output_mem = arena->allocate(output_floats);
+            if (output_mem) {
+                state.output.events =
+                    reinterpret_cast<OutputEvents::OutputEvent*>(output_mem);
+                state.output.capacity = cap;
+            } else {
+                state.output.events = nullptr;
+                state.output.capacity = 0;
+            }
+        } else {
+            state.output.events = nullptr;
+            state.output.capacity = 0;
+        }
+    }
+
     // Configure iter()/iterBack() rotation on a SequenceState. Called after
     // init_sequence_program. n=0 disables rotation; dir is +1 for iter, -1
     // for iterBack. Does nothing if the state slot is not a SequenceState.

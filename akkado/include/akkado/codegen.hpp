@@ -142,6 +142,11 @@ struct StateInitData {
         ForeachAlloc,     // PRD L3: FOREACH_EVENT instance config (allocator
                           // kind + block_id + event source). VOICE_POOL reuses
                           // the poly_* fields below for voice configuration.
+        EventTransform,   // PRD prd-runtime-event-transforms Phase 1: a
+                          // transform-owned SequenceState for an EVENT_MAP /
+                          // EVENT_FILTER opcode. Reuses cycle_length,
+                          // is_sample_pattern and total_events (output buffer
+                          // capacity); no compiled sequences.
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -703,6 +708,37 @@ private:
 
     /// Handle velocity(pattern, vel) - set velocity on all events
     TypedValue handle_velocity_call(NodeIndex node, const Node& n);
+
+    /// PRD prd-runtime-event-transforms Phase 1: a runtime event source that a
+    /// transpose/velocity chain has emitted only the *state-filling*
+    /// instructions for (the upstream SEQPAT_QUERY + every chained EVENT_MAP),
+    /// not the readout. `state_id` is the final transform's SequenceState.
+    struct PatternQuerySource {
+        bool ok = false;
+        std::uint32_t state_id = 0;
+        float cycle_length = 1.0f;
+        bool is_sample_pattern = false;
+        std::uint8_t max_voices = 1;
+        std::uint32_t total_events = 0;
+        std::vector<RequiredSample> sample_refs;
+        // Custom-property slots (source name -> event prop slot) carried so
+        // the readout can re-emit SEQPAT_PROP against the final state.
+        std::vector<std::pair<std::string, std::uint8_t>> custom_props;
+    };
+
+    /// Compile a pattern argument into a runtime event source, emitting only
+    /// the state-filling instructions. A transpose/velocity call recurses and
+    /// emits an EVENT_MAP; any other pattern node is the base case — emits a
+    /// SEQPAT_QUERY + SequenceProgram init. No readout (SEQPAT_STEP / fields /
+    /// sample chain) is emitted, so chained transforms leave no dead opcodes.
+    PatternQuerySource compile_pattern_query_only(NodeIndex arg);
+
+    /// Emit the readout (per-voice SEQPAT_STEP, extended field buffers,
+    /// custom-property SEQPAT_PROP, sample chain) for a finished
+    /// PatternQuerySource and return the pattern TypedValue cached on `node`.
+    TypedValue emit_pattern_readout(NodeIndex node,
+                                    const PatternQuerySource& src,
+                                    SourceLocation loc);
 
     /// Phase 2.1 PRD §11.2: Handle bend(pattern, value) — set bend property
     /// on all events. Surfaced as `e.bend` after pipe-binding.

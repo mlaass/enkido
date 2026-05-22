@@ -11,6 +11,7 @@
 #include "akkado/tuning.hpp"
 #include "akkado/voicing.hpp"
 #include <cedar/opcodes/sequence.hpp>
+#include <cedar/opcodes/event_transform_encoding.hpp>
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -3176,150 +3177,127 @@ TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
     return result_tv;
 }
 
-TypedValue CodeGenerator::handle_transpose_call(NodeIndex node, const Node& n) {
-    // transpose(pattern, semitones) - shift all pitches by semitones
-    // Converts frequency to MIDI, adds semitones, converts back to frequency
+// PRD prd-runtime-event-transforms Phase 1. compile_pattern_query_only emits
+// the state-filling instructions for a transpose/velocity chain — the upstream
+// SEQPAT_QUERY plus one EVENT_MAP per transform — and returns the final
+// SequenceState. emit_pattern_readout then emits the readout once. Splitting
+// the two keeps a chain of N transforms free of dead readout instructions.
+// See the declarations in codegen.hpp for the contract.
+CodeGenerator::PatternQuerySource
+CodeGenerator::compile_pattern_query_only(NodeIndex arg) {
+    PatternQuerySource src;
+    if (arg == NULL_NODE) return src;
 
-    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto semitones = get_number_arg(*ast_, n, 1);
+    const Node& an = ast_->arena[arg];
 
-    if (pattern_arg == NULL_NODE) {
-        error("E130", "transpose() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
+    // --- transpose / velocity call: recurse, then emit one EVENT_MAP --------
+    if (an.type == NodeType::Call) {
+        const std::string& fn = an.as_identifier();
+        const bool is_transpose = (fn == "transpose");
+        const bool is_velocity  = (fn == "velocity");
+        if (is_transpose || is_velocity) {
+            NodeIndex inner = get_pattern_arg(*ast_, an, 0);
+            auto param = get_number_arg(*ast_, an, 1);
+            if (inner == NULL_NODE || !param.has_value()) return src;
+            if (is_velocity && (*param < 0.0f || *param > 1.0f)) return src;
 
-    if (!semitones.has_value()) {
-        error("E131", "transpose() requires a number as second argument", n.location);
-        return TypedValue::void_val();
-    }
+            PatternQuerySource up = compile_pattern_query_only(inner);
+            if (!up.ok) return src;
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
-        error("E133", "transpose() first argument must be a pattern", n.location);
-        return TypedValue::void_val();
-    }
+            // transpose is a pitch operation — a no-op on sample patterns,
+            // matching the pre-Phase-1 behavior.
+            if (is_transpose && up.is_sample_pattern) return up;
 
-    // Compile the pattern (may include inner transforms applied recursively)
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
+            const std::uint8_t field = is_transpose
+                ? cedar::EVENT_FIELD_NOTE_COUPLED : cedar::EVENT_FIELD_VEL;
+            const std::uint8_t op = is_transpose
+                ? cedar::EVENT_OP_ADD : cedar::EVENT_OP_MUL;
+            const std::string tag = is_transpose ? "transpose" : "velocity";
 
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "transpose() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
+            std::uint32_t tag_count = call_counters_[tag]++;
+            push_path(tag + "#" + std::to_string(tag_count));
+            const std::uint32_t state_id = compute_state_id();
+            pop_path();
 
-    // Set up state ID
-    std::uint32_t transpose_count = call_counters_["transpose"]++;
-    push_path("transpose#" + std::to_string(transpose_count));
-    std::uint32_t state_id = compute_state_id();
+            // PUSH_CONST the constant transform parameter.
+            std::uint16_t param_buf = buffers_.allocate();
+            if (param_buf == BufferAllocator::BUFFER_UNUSED) return src;
+            cedar::Instruction const_inst{};
+            const_inst.opcode = cedar::Opcode::PUSH_CONST;
+            const_inst.out_buffer = param_buf;
+            const_inst.inputs[0] = 0xFFFF;
+            const_inst.inputs[1] = 0xFFFF;
+            const_inst.inputs[2] = 0xFFFF;
+            const_inst.inputs[3] = 0xFFFF;
+            const_inst.inputs[4] = 0xFFFF;
+            encode_const_value(const_inst, *param);
+            emit(const_inst);
 
-    // Apply transpose transformation on top of any inner transforms
-    float semitones_value = *semitones;
-    float transpose_ratio = std::pow(2.0f, semitones_value / 12.0f);
+            // EVENT_MAP: read the upstream OutputEvents, publish the
+            // transformed stream into this transform's own SequenceState.
+            cedar::Instruction map_inst{};
+            map_inst.opcode = cedar::Opcode::EVENT_MAP;
+            map_inst.rate = cedar::event_transform_rate(field, op);
+            map_inst.out_buffer = 0xFFFF;
+            map_inst.inputs[0] = param_buf;
+            map_inst.inputs[1] = 0xFFFF;
+            map_inst.inputs[2] =
+                static_cast<std::uint16_t>(up.state_id & 0xFFFF);
+            map_inst.inputs[3] =
+                static_cast<std::uint16_t>((up.state_id >> 16) & 0xFFFF);
+            map_inst.inputs[4] = 0xFFFF;
+            map_inst.state_id = state_id;
+            emit(map_inst);
 
-    if (!compiler.is_sample_pattern()) {
-        for (auto& seq_events : sequence_events) {
-            for (auto& event : seq_events) {
-                // Shift frequencies *and* the MIDI note fields so %.note /
-                // per-voice .note track the transposition.
-                if (event.type == cedar::EventType::DATA &&
-                    event.num_values > 0) {
-                    for (std::uint8_t i = 0; i < event.num_values; ++i) {
-                        event.values[i] *= transpose_ratio;
-                        event.notes[i] += semitones_value;
-                    }
-                    event.midi_note += semitones_value;
-                }
-            }
+            // The upstream is consumed here — clear its E410 polyphony entry.
+            // The pre-Phase-1 transpose/velocity path never re-registered its
+            // result, so a transformed chord reaching no poly()/soundfont
+            // consumer stays a non-error exactly as before.
+            consume_polyphonic_pattern(up.state_id);
+
+            // EventTransform StateInitData — allocates the OutputEvents buffer.
+            StateInitData et_init;
+            et_init.state_id = state_id;
+            et_init.type = StateInitData::Type::EventTransform;
+            et_init.cycle_length = up.cycle_length;
+            et_init.is_sample_pattern = up.is_sample_pattern;
+            et_init.total_events = up.total_events;
+            state_inits_.push_back(std::move(et_init));
+
+            src.ok = true;
+            src.state_id = state_id;
+            src.cycle_length = up.cycle_length;
+            src.is_sample_pattern = up.is_sample_pattern;
+            src.max_voices = up.max_voices;
+            src.total_events = up.total_events;
+            src.sample_refs = std::move(up.sample_refs);
+            src.custom_props = std::move(up.custom_props);
+            return src;
         }
     }
 
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-
-    return result_tv;
-}
-
-TypedValue CodeGenerator::handle_velocity_call(NodeIndex node, const Node& n) {
-    // velocity(pattern, vel) — multiply velocities on all events.
-    // Implementation: compile inner pattern, then emit a runtime MUL on the
-    // velocity buffer with the supplied scalar (Phase D0: comment updated to
-    // reflect the actual behavior; the recursive case in
-    // compile_pattern_for_transform also pre-multiplies event.velocity for
-    // nested calls).
-
-    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto vel = get_number_arg(*ast_, n, 1);
-
-    if (pattern_arg == NULL_NODE) {
-        error("E130", "velocity() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!vel.has_value() || *vel < 0 || *vel > 1) {
-        error("E131", "velocity() requires a number between 0 and 1 as second argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
-        error("E133", "velocity() first argument must be a pattern", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Compile the pattern (may include inner transforms applied recursively)
+    // --- base case: compile to a SEQPAT_QUERY pattern ----------------------
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "velocity() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
+    if (!compile_pattern_for_transform(*this, *ast_, arg, sample_registry_,
+                                       compiler, pattern_node, num_elements,
+                                       sequence_events, cycle_length)) {
+        return src;  // ok stays false
     }
 
-    // Set up state ID
-    std::uint32_t velocity_count = call_counters_["velocity"]++;
-    push_path("velocity#" + std::to_string(velocity_count));
-    std::uint32_t state_id = compute_state_id();
+    // Mirror handle_mini_literal's "pat#N" path so a transform's source
+    // pattern hashes the same way a standalone literal would.
+    std::uint32_t pat_count = call_counters_["pat"]++;
+    push_path("pat#" + std::to_string(pat_count));
+    const std::uint32_t state_id = compute_state_id();
+    pop_path();
 
-    float velocity_value = *vel;
-
-    // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    bool is_sample_pattern = compiler.is_sample_pattern();
-
-    // Allocate buffers for outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
-
-    if (value_buf == BufferAllocator::BUFFER_UNUSED ||
-        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Emit SEQPAT_QUERY instruction
+    // SEQPAT_QUERY fills the SequenceState's OutputEvents each block.
     cedar::Instruction query_inst{};
     query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
     query_inst.out_buffer = 0xFFFF;
@@ -3331,52 +3309,15 @@ TypedValue CodeGenerator::handle_velocity_call(NodeIndex node, const Node& n) {
     query_inst.state_id = state_id;
     emit(query_inst);
 
-    // Emit SEQPAT_STEP
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;
-    step_inst.inputs[0] = velocity_buf;
-    step_inst.inputs[1] = trigger_buf;
-    step_inst.inputs[2] = 0;
-    step_inst.inputs[3] = 0xFFFF;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
-
-    // Now multiply the velocity buffer by the velocity value
-    std::uint16_t vel_const_buf = buffers_.allocate();
-    std::uint16_t scaled_velocity_buf = buffers_.allocate();
-
-    if (vel_const_buf == BufferAllocator::BUFFER_UNUSED ||
-        scaled_velocity_buf == BufferAllocator::BUFFER_UNUSED) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
-        return TypedValue::void_val();
+    // max_voices from the (possibly voicing-expanded) local events — mirrors
+    // emit_pattern_with_state rather than trusting compiler.max_voices().
+    std::uint8_t max_voices = 1;
+    for (const auto& seq : sequence_events) {
+        for (const auto& e : seq) {
+            if (e.num_values > max_voices) max_voices = e.num_values;
+        }
     }
 
-    // Push the velocity constant
-    cedar::Instruction vel_const{};
-    vel_const.opcode = cedar::Opcode::PUSH_CONST;
-    vel_const.out_buffer = vel_const_buf;
-    vel_const.inputs[0] = 0xFFFF;
-    vel_const.inputs[1] = 0xFFFF;
-    vel_const.inputs[2] = 0xFFFF;
-    vel_const.inputs[3] = 0xFFFF;
-    codegen::encode_const_value(vel_const, velocity_value);
-    emit(vel_const);
-
-    // Multiply velocity by constant
-    cedar::Instruction mul_inst{};
-    mul_inst.opcode = cedar::Opcode::MUL;
-    mul_inst.out_buffer = scaled_velocity_buf;
-    mul_inst.inputs[0] = velocity_buf;
-    mul_inst.inputs[1] = vel_const_buf;
-    mul_inst.inputs[2] = 0xFFFF;
-    mul_inst.inputs[3] = 0xFFFF;
-    mul_inst.inputs[4] = 0xFFFF;
-    emit(mul_inst);
-
-    // Store sequence program initialization data
     StateInitData seq_init;
     seq_init.state_id = state_id;
     seq_init.type = StateInitData::Type::SequenceProgram;
@@ -3384,65 +3325,186 @@ TypedValue CodeGenerator::handle_velocity_call(NodeIndex node, const Node& n) {
     seq_init.sequences = compiler.sequences();
     seq_init.sequence_events = std::move(sequence_events);
     seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = is_sample_pattern;
-    const Node& pattern = ast_->arena[pattern_node];
-    seq_init.pattern_location = pattern.location;
+    seq_init.is_sample_pattern = compiler.is_sample_pattern();
+    if (pattern_node != NULL_NODE) {
+        seq_init.pattern_location = ast_->arena[pattern_node].location;
+    }
     seq_init.sequence_sample_mappings = compiler.sample_mappings();
     state_inits_.push_back(std::move(seq_init));
 
-    // Wire up SAMPLE_PLAY for sample patterns. Use scaled_velocity_buf so
-    // velocity(s"...", 0.5) actually halves the sampler output amplitude;
-    // without this, sample patterns would ignore the user's velocity()
-    // multiplier.
+    src.ok = true;
+    src.state_id = state_id;
+    src.cycle_length = cycle_length;
+    src.is_sample_pattern = compiler.is_sample_pattern();
+    src.max_voices = max_voices;
+    src.total_events = compiler.total_events();
+    src.sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
+    for (const auto& [key, slot] : compiler.custom_property_slots()) {
+        src.custom_props.emplace_back(key, slot);
+    }
+    return src;
+}
+
+TypedValue CodeGenerator::emit_pattern_readout(NodeIndex node,
+                                               const PatternQuerySource& src,
+                                               SourceLocation loc) {
+    const std::uint8_t max_voices = (src.max_voices < 1) ? 1 : src.max_voices;
+
+    std::uint16_t value_buf = buffers_.allocate();
+    std::uint16_t velocity_buf = buffers_.allocate();
+    std::uint16_t trigger_buf = buffers_.allocate();
+    if (value_buf == BufferAllocator::BUFFER_UNUSED ||
+        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
+        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", loc);
+        return TypedValue::void_val();
+    }
+
+    // Per-voice SEQPAT_STEP reading the final transform's SequenceState.
+    std::vector<std::uint16_t> voice_buffers;
+    for (std::uint8_t voice = 0; voice < max_voices; ++voice) {
+        std::uint16_t voice_value_buf =
+            (voice == 0) ? value_buf : buffers_.allocate();
+        if (voice_value_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", loc);
+            return TypedValue::void_val();
+        }
+        cedar::Instruction step_inst{};
+        step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
+        step_inst.out_buffer = voice_value_buf;
+        step_inst.inputs[0] = (voice == 0) ? velocity_buf : 0xFFFF;
+        step_inst.inputs[1] = (voice == 0) ? trigger_buf : 0xFFFF;
+        step_inst.inputs[2] = voice;
+        step_inst.inputs[3] = 0xFFFF;
+        step_inst.inputs[4] = 0xFFFF;
+        step_inst.state_id = src.state_id;
+        emit(step_inst);
+        voice_buffers.push_back(voice_value_buf);
+    }
+
+    auto payload = std::make_shared<PatternPayload>();
+    payload->fields[PatternPayload::FREQ] = value_buf;
+    payload->fields[PatternPayload::VEL] = velocity_buf;
+    payload->fields[PatternPayload::TRIG] = trigger_buf;
+    payload->state_id = src.state_id;
+    payload->cycle_length = src.cycle_length;
+    payload->is_sample_pattern = src.is_sample_pattern;
+    payload->max_voices = max_voices;
+    if (max_voices > 1 && !src.is_sample_pattern) {
+        payload->voice_freqs = std::move(voice_buffers);
+    }
+
     std::uint16_t result_buf = value_buf;
-    if (is_sample_pattern) {
+    if (src.is_sample_pattern) {
         SamplePatternEmitCtx ctx;
         ctx.kind = SamplePatternEmitCtx::Kind::Pattern;
-        ctx.seq_state_id = state_id;
+        ctx.seq_state_id = src.state_id;
         ctx.value_buf = value_buf;
         ctx.trigger_buf = trigger_buf;
-        ctx.velocity_buf = scaled_velocity_buf;
-        ctx.loc = n.location;
+        ctx.velocity_buf = velocity_buf;  // EVENT_MAP already scaled velocity
+        ctx.loc = loc;
         std::uint16_t output_buf = emit_sample_chain(
             buffers_, [this](const cedar::Instruction& i){ emit(i); }, ctx);
         if (output_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            pop_path();
+            error("E101", "Buffer pool exhausted", loc);
             return TypedValue::void_val();
         }
         result_buf = output_buf;
     }
 
-    // Build PatternPayload with scaled velocity
-    auto payload = std::make_shared<PatternPayload>();
-    payload->fields[PatternPayload::FREQ] = value_buf;
-    payload->fields[PatternPayload::VEL] = scaled_velocity_buf;  // Use scaled velocity
-    payload->fields[PatternPayload::TRIG] = trigger_buf;
-    payload->state_id = state_id;
-    payload->cycle_length = cycle_length;
-    payload->is_sample_pattern = is_sample_pattern;
-    payload->max_voices = compiler.max_voices();
-
-    // Records-and-field-access PRD §3: populate gate/type/note/dur/chance/
-    // time/phase/sample_id so %.field works on scaled-velocity patterns.
-    if (!emit_extended_field_buffers(*payload, state_id, n.location)) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
+    // Extended field buffers (gate/type/note/dur/chance/time/phase/sample_id).
+    if (!emit_extended_field_buffers(*payload, src.state_id, loc)) {
+        error("E101", "Buffer pool exhausted", loc);
         return TypedValue::void_val();
     }
 
-    // Phase 2.1 PRD §11: emit per-key SEQPAT_PROP buffers for custom properties.
-    if (!emit_custom_property_buffers(compiler, *payload, state_id)) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
-        return TypedValue::void_val();
+    // SEQPAT_PROP buffers for custom properties carried across the chain.
+    // EVENT_MAP copies prop_vals/prop_set_mask through unchanged, so the slot
+    // indices match the upstream pattern.
+    for (const auto& [key, slot] : src.custom_props) {
+        std::uint16_t buf = buffers_.allocate();
+        if (buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", loc);
+            return TypedValue::void_val();
+        }
+        cedar::Instruction prop_inst{};
+        prop_inst.opcode = cedar::Opcode::SEQPAT_PROP;
+        prop_inst.out_buffer = buf;
+        prop_inst.rate = slot;
+        prop_inst.inputs[0] = 0;       // voice 0
+        prop_inst.inputs[1] = 0xFFFF;  // internal clock
+        prop_inst.inputs[2] = 0xFFFF;
+        prop_inst.inputs[3] = 0xFFFF;
+        prop_inst.inputs[4] = 0xFFFF;
+        prop_inst.state_id = src.state_id;
+        emit(prop_inst);
+        payload->custom_fields[key] = buf;
+        payload->custom_field_slots[key] = slot;
     }
 
-    payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
+    payload->sample_refs = src.sample_refs;
     publish_sample_refs(payload->sample_refs);
 
-    pop_path();
     return cache_and_return(node, TypedValue::make_pattern(payload, result_buf));
+}
+
+TypedValue CodeGenerator::handle_transpose_call(NodeIndex node, const Node& n) {
+    // transpose(pattern, semitones) — shift all pitches by `semitones`.
+    // PRD prd-runtime-event-transforms Phase 1: lowers to a runtime EVENT_MAP
+    // (NOTE_COUPLED) instead of a compile-time event mutation.
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto semitones = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "transpose() requires a pattern as first argument", n.location);
+        return TypedValue::void_val();
+    }
+    if (!semitones.has_value()) {
+        error("E131", "transpose() requires a number as second argument", n.location);
+        return TypedValue::void_val();
+    }
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+        error("E133", "transpose() first argument must be a pattern", n.location);
+        return TypedValue::void_val();
+    }
+
+    // Emit the upstream pattern + chained EVENT_MAPs (no readout yet).
+    PatternQuerySource src = compile_pattern_query_only(node);
+    if (!src.ok) {
+        error("E130", "transpose() failed to compile pattern argument", n.location);
+        return TypedValue::void_val();
+    }
+    return emit_pattern_readout(node, src, n.location);
+}
+
+TypedValue CodeGenerator::handle_velocity_call(NodeIndex node, const Node& n) {
+    // velocity(pattern, vel) — multiply velocities on all events.
+    // PRD prd-runtime-event-transforms Phase 1: lowers to a runtime EVENT_MAP
+    // (VEL field, MUL op) instead of a downstream MUL on the velocity buffer.
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto vel = get_number_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "velocity() requires a pattern as first argument", n.location);
+        return TypedValue::void_val();
+    }
+    if (!vel.has_value() || *vel < 0 || *vel > 1) {
+        error("E131", "velocity() requires a number between 0 and 1 as second argument", n.location);
+        return TypedValue::void_val();
+    }
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+        error("E133", "velocity() first argument must be a pattern", n.location);
+        return TypedValue::void_val();
+    }
+
+    PatternQuerySource src = compile_pattern_query_only(node);
+    if (!src.ok) {
+        error("E130", "velocity() failed to compile pattern argument", n.location);
+        return TypedValue::void_val();
+    }
+    return emit_pattern_readout(node, src, n.location);
 }
 
 // Phase 2.1 PRD §11.2: standalone bend()/aftertouch() — set a custom-property

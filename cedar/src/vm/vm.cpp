@@ -1380,6 +1380,15 @@ void VM::execute(const Instruction& inst) {
             op_seqpat_values(ctx_, inst);
             break;
 
+        // === Runtime Event-Stream Transforms ===
+        case Opcode::EVENT_MAP:
+            op_event_map(ctx_, inst);
+            break;
+
+        case Opcode::EVENT_FILTER:
+            op_event_filter(ctx_, inst);
+            break;
+
         // === Envelopes ===
         case Opcode::ENV_ADSR:
             op_env_adsr(ctx_, inst);

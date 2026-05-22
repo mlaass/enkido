@@ -1238,6 +1238,14 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             state.loop_length = init.timeline_loop_length;
             count++;
         }
+        else if (init.type == akkado::StateInitData::Type::EventTransform) {
+            // PRD prd-runtime-event-transforms Phase 1: transform-owned
+            // SequenceState filled at runtime by EVENT_MAP / EVENT_FILTER.
+            g_vm->init_event_transform_state(init.state_id, init.cycle_length,
+                                             init.is_sample_pattern,
+                                             init.total_events);
+            count++;
+        }
     }
     return count;
 }

@@ -159,6 +159,8 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::FOREACH_EVENT: return "FOREACH_EVENT";
         case Opcode::BLOCK_BIND: return "BLOCK_BIND";
         case Opcode::SEQPAT_VALUES: return "SEQPAT_VALUES";
+        case Opcode::EVENT_MAP: return "EVENT_MAP";
+        case Opcode::EVENT_FILTER: return "EVENT_FILTER";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }
@@ -243,6 +245,8 @@ inline bool opcode_is_stateful(Opcode op) {
         case Opcode::FFT_PROBE:
         case Opcode::OSC_WAVETABLE:
         case Opcode::SEQPAT_VALUES:
+        case Opcode::EVENT_MAP:
+        case Opcode::EVENT_FILTER:
             return true;
         default:
             return false;
