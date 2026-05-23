@@ -155,12 +155,15 @@ TEST_CASE("Golden: G4 polyrhythm with {vel} on one voice",
     CHECK(events[0].velocities[1] == Catch::Approx(0.25f).margin(0.001f));
 }
 
-// G5 — handle_velocity_call site. velocity() wraps the pattern and scales
-// velocity_buf via its own MUL chain; the tail still terminates in a MUL.
+// G5 — stdlib velocity() over event_map (Phase 2b). The pattern's own
+// SAMPLE_PLAY chain (from the inner SequenceProgram) plus the transform's
+// readout SAMPLE_PLAY → 2 SAMPLE_PLAYs total. Pre-Phase 2b the C++ handler
+// shared the readout via compile_pattern_query_only → 1 SAMPLE_PLAY.
 TEST_CASE("Golden: G5 velocity() wrapper",
           "[golden][sample][emission]") {
     auto r = akkado::compile(R"(velocity(s"bd ~ ~ ~", 0.5))");
-    check_pattern_tail(r);
+    check_pattern_tail(r, /*expect_velocity_mul=*/true,
+                       /*expected_sample_play_count=*/2);
 }
 
 // G6 — handle_bank_call site.

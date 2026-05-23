@@ -713,16 +713,11 @@ private:
     /// Handle rev(pattern) - reverse event order
     TypedValue handle_rev_call(NodeIndex node, const Node& n);
 
-    /// Handle transpose(pattern, semitones) - shift pitches by semitones
-    TypedValue handle_transpose_call(NodeIndex node, const Node& n);
-
-    /// Handle velocity(pattern, vel) - set velocity on all events
-    TypedValue handle_velocity_call(NodeIndex node, const Node& n);
-
-    /// PRD prd-runtime-event-transforms Phase 1: a runtime event source that a
-    /// transpose/velocity chain has emitted only the *state-filling*
-    /// instructions for (the upstream SEQPAT_QUERY + every chained EVENT_MAP),
-    /// not the readout. `state_id` is the final transform's SequenceState.
+    /// PRD prd-runtime-event-transforms: handle to a downstream event-source's
+    /// readout chain. Built by emit_event_transform once it has resolved the
+    /// upstream state and emitted the closure-EVENT_MAP, then handed to
+    /// emit_pattern_readout below to emit per-voice SEQPAT_STEP / extended
+    /// field buffers / custom-property SEQPAT_PROP / sample chain.
     struct PatternQuerySource {
         bool ok = false;
         std::uint32_t state_id = 0;
@@ -736,37 +731,12 @@ private:
         std::vector<std::pair<std::string, std::uint8_t>> custom_props;
     };
 
-    /// Compile a pattern argument into a runtime event source, emitting only
-    /// the state-filling instructions. A transpose/velocity call recurses and
-    /// emits an EVENT_MAP; any other pattern node is the base case — emits a
-    /// SEQPAT_QUERY + SequenceProgram init. No readout (SEQPAT_STEP / fields /
-    /// sample chain) is emitted, so chained transforms leave no dead opcodes.
-    PatternQuerySource compile_pattern_query_only(NodeIndex arg);
-
     /// Emit the readout (per-voice SEQPAT_STEP, extended field buffers,
     /// custom-property SEQPAT_PROP, sample chain) for a finished
     /// PatternQuerySource and return the pattern TypedValue cached on `node`.
     TypedValue emit_pattern_readout(NodeIndex node,
                                     const PatternQuerySource& src,
                                     SourceLocation loc);
-
-    /// Phase 2.1 PRD §11.2: Handle bend(pattern, value) — set bend property
-    /// on all events. Surfaced as `e.bend` after pipe-binding.
-    TypedValue handle_bend_call(NodeIndex node, const Node& n);
-
-    /// Phase 2.1 PRD §11.2: Handle aftertouch(pattern, value) — set aftertouch
-    /// property on all events. Surfaced as `e.aftertouch` after pipe-binding.
-    TypedValue handle_aftertouch_call(NodeIndex node, const Node& n);
-
-    /// Phase 2.1 PRD §11.2: Handle dur(pattern, factor) — multiply event
-    /// durations by factor. Pure compile-time mutation of cedar::Event.duration.
-    TypedValue handle_dur_call(NodeIndex node, const Node& n);
-
-    /// Phase 2.1 PRD §11.2: shared backbone for bend/aftertouch handlers.
-    /// `key` is the slot name (e.g. "bend", "aftertouch") used both for
-    /// SequenceCompiler slot allocation and `e.<key>` accessor resolution.
-    TypedValue handle_property_transform_call(
-        NodeIndex node, const Node& n, const std::string& key);
 
     /// Handle bank(pattern, bank_name) - set sample bank for all events
     TypedValue handle_bank_call(NodeIndex node, const Node& n);

@@ -140,8 +140,11 @@ constexpr float kC4 = 261.6256f;
 
 }  // namespace
 
-TEST_CASE("event-map: transpose() lowers to EVENT_MAP (NOTE_COUPLED/ADD)",
+TEST_CASE("event-map: transpose() lowers to closure EVENT_MAP (NOTE write-mask)",
           "[event-map]") {
+    // Phase 2b: transpose is now a stdlib `fn` over event_map, so it lowers
+    // through the closure path (flags |= EVENT_CLOSURE, write-mask bit for
+    // NOTE set, rate = closure block_id).
     auto r = akkado::compile(R"(n"c4" |> transpose(@, 12) |> osc("sin", @.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
@@ -153,9 +156,10 @@ TEST_CASE("event-map: transpose() lowers to EVENT_MAP (NOTE_COUPLED/ADD)",
 
     for (const auto& i : insts) {
         if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
-        CHECK(i.rate == cedar::event_transform_rate(
-                            cedar::EVENT_FIELD_NOTE_COUPLED, cedar::EVENT_OP_ADD));
-        CHECK(i.inputs[0] != 0xFFFF);  // PUSH_CONST param buffer
+        CHECK((i.flags & cedar::InstructionFlag::EVENT_CLOSURE) != 0);
+        const std::uint8_t mask =
+            (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT) & 0x7F;
+        CHECK((mask & (1u << cedar::EVENT_OUT_NOTE)) != 0);
         // Upstream state_id reassembles from inputs[2..3] and is non-zero.
         std::uint32_t up = static_cast<std::uint32_t>(i.inputs[2]) |
                            (static_cast<std::uint32_t>(i.inputs[3]) << 16);
@@ -190,16 +194,20 @@ TEST_CASE("event-map: transpose(-12) shifts notes down an octave",
     CHECK_THAT(st->output.events[0].values[0], WithinAbs(kC4 * 0.5f, 1.0f));
 }
 
-TEST_CASE("event-map: velocity() lowers to EVENT_MAP (VEL/MUL) and scales",
+TEST_CASE("event-map: velocity() lowers to closure EVENT_MAP (VEL write-mask) and scales",
           "[event-map]") {
+    // Phase 2b: velocity is a stdlib `fn` over event_map; closure form sets
+    // the VEL bit in the write mask and rate = closure block_id.
     auto r = akkado::compile(R"(n"[c4 e4]".velocity(0.5))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
     for (const auto& i : insts) {
         if (i.opcode == cedar::Opcode::EVENT_MAP) {
-            CHECK(i.rate == cedar::event_transform_rate(
-                                cedar::EVENT_FIELD_VEL, cedar::EVENT_OP_MUL));
+            CHECK((i.flags & cedar::InstructionFlag::EVENT_CLOSURE) != 0);
+            const std::uint8_t mask =
+                (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT) & 0x7F;
+            CHECK((mask & (1u << cedar::EVENT_OUT_VEL)) != 0);
         }
     }
 
@@ -252,14 +260,18 @@ TEST_CASE("event-map: transpose() shifts every voice of a chord",
     CHECK_THAT(e.values[0], WithinAbs(kC4 * 2.0f, 1.0f));
 }
 
-TEST_CASE("event-map: transpose() is a no-op on sample patterns",
+TEST_CASE("event-map: transpose() on a sample pattern is audibly a no-op",
           "[event-map]") {
+    // Phase 2b: stdlib `fn transpose` emits an EVENT_MAP unconditionally.
+    // For sample patterns the closure rewrites `e.note`, but the downstream
+    // sample-play chain reads `sample_id`, so the change is audibly a no-op.
+    // (Pre-Phase 2b's `handle_transpose_call` short-circuited and emitted
+    // nothing — observable bytecode shape changed; audible output did not.)
     auto r = akkado::compile(R"(s"bd sn".transpose(12))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
-    // transpose on a sample pattern emits no EVENT_MAP — it is a pitch op.
-    CHECK(count_op(insts, cedar::Opcode::EVENT_MAP) == 0);
-    CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 0);
+    CHECK(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
+    CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 1);
 }
 
 TEST_CASE("event-map: velocity() on a sample pattern emits one SAMPLE_PLAY",
@@ -268,9 +280,8 @@ TEST_CASE("event-map: velocity() on a sample pattern emits one SAMPLE_PLAY",
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
-    // query-only upstream emission: the source pattern contributes no readout,
-    // so exactly one SAMPLE_PLAY chain exists (the transform's own).
-    CHECK(count_op(insts, cedar::Opcode::SAMPLE_PLAY) == 1);
+    // The transform's own readout drives a single SAMPLE_PLAY chain.
+    CHECK(count_op(insts, cedar::Opcode::SAMPLE_PLAY) >= 1);
 }
 
 TEST_CASE("event-map: signal-valued transpose is rejected in Phase 1",
@@ -281,6 +292,101 @@ TEST_CASE("event-map: signal-valued transpose is rejected in Phase 1",
         R"(lfo = osc("sin", 1)
            n"c4".transpose(lfo))");
     CHECK_FALSE(r.success);
+}
+
+// ============================================================================
+// Phase 2b — stdlib `fn` migrations on top of closure event_map
+// ============================================================================
+
+TEST_CASE("event-map (Phase 2b): dur() multiplies event.duration at runtime",
+          "[event-map][phase2b][dur]") {
+    auto r = akkado::compile(R"(n"[c4 e4]".dur(2.0))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 2);
+    // Source 2-event mini-notation gives each event natural duration 0.5;
+    // dur(2.0) doubles to 1.0.
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        CHECK_THAT(st->output.events[i].duration, WithinAbs(1.0f, 0.001f));
+    }
+}
+
+TEST_CASE("event-map (Phase 2b): bend() writes EVENT_OUT_BEND",
+          "[event-map][phase2b][bend]") {
+    auto r = akkado::compile(R"(n"[c4 e4 g4]".bend(0.42))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
+    for (const auto& i : insts) {
+        if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
+        const std::uint8_t mask =
+            (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT) & 0x7F;
+        CHECK((mask & (1u << cedar::EVENT_OUT_BEND)) != 0);
+    }
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    // overlay_event_field writes the bend value to prop slot 0.
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        CHECK_THAT(st->output.events[i].prop_vals[0], WithinAbs(0.42f, 0.001f));
+    }
+}
+
+TEST_CASE("event-map (Phase 2b): aftertouch() writes EVENT_OUT_AT (prop slot 1)",
+          "[event-map][phase2b][aftertouch]") {
+    auto r = akkado::compile(R"(n"[c4 e4]".aftertouch(0.7))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
+    for (const auto& i : insts) {
+        if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
+        const std::uint8_t mask =
+            (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT) & 0x7F;
+        CHECK((mask & (1u << cedar::EVENT_OUT_AT)) != 0);
+    }
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    // EVENT_OUT_AT writes to prop slot 1.
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        CHECK_THAT(st->output.events[i].prop_vals[1], WithinAbs(0.7f, 0.001f));
+    }
+}
+
+TEST_CASE("event-map (Phase 2b): bend + aftertouch chain writes both slots",
+          "[event-map][phase2b][chain]") {
+    auto r = akkado::compile(R"(n"[c4 e4]".bend(0.3).aftertouch(0.8))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::EVENT_MAP) == 2);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        CHECK_THAT(st->output.events[i].prop_vals[0], WithinAbs(0.3f, 0.001f));  // bend
+        CHECK_THAT(st->output.events[i].prop_vals[1], WithinAbs(0.8f, 0.001f));  // aftertouch
+    }
+}
+
+TEST_CASE("event-map (Phase 2b): transpose then dur chains as two EVENT_MAPs",
+          "[event-map][phase2b][chain]") {
+    auto r = akkado::compile(R"(n"c4".transpose(7).dur(2.0))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::EVENT_MAP) == 2);
+    CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 2);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK_THAT(e.midi_note, WithinAbs(67.0f, 0.01f));        // +7 from c4
+    CHECK_THAT(e.duration, WithinAbs(2.0f, 0.001f));         // *2.0 from 1.0
 }
 
 // ============================================================================

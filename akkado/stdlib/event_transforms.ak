@@ -9,4 +9,16 @@
 //
 // Migration tracker: docs/prd-runtime-event-transforms.md §9 Phase 2b.
 
-// (Definitions added per migration commit — see prd-runtime-event-transforms.md §9.)
+// ----------------------------------------------------------------------------
+// Property modifiers — shallow-overlay rewrites on a single event field.
+// ----------------------------------------------------------------------------
+// NOTE writes are coupled: the runtime opcode rewrites `midi_note` AND every
+// chord voice's `notes[]`/`values[]`, so `transpose(7)` lifts an entire chord
+// stack. VEL / DUR / BEND / AT are scalar-per-event fields with no chord-voice
+// fanout.
+
+fn transpose(events: stream, n)  -> { event_map(events, (e) -> {note: e.note + n}) }
+fn velocity(events: stream, v)   -> { event_map(events, (e) -> {vel:  e.vel * v}) }
+fn dur(events: stream, d)        -> { event_map(events, (e) -> {dur:  e.dur * d}) }
+fn bend(events: stream, b)       -> { event_map(events, (e) -> {bend: b}) }
+fn aftertouch(events: stream, a) -> { event_map(events, (e) -> {at:   a}) }

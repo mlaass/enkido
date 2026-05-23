@@ -2273,9 +2273,12 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
     }
 
     SECTION("transpose rejects array argument") {
+        // Phase 2b: transpose is now a stdlib `fn` annotated `events: stream`.
+        // An Array argument fails the stream-annotation type check (E184),
+        // replacing the old C++ handler's pattern-typecheck E133.
         auto result = akkado::compile("transpose([440, 880], 5)");
         REQUIRE_FALSE(result.success);
-        CHECK(has_diagnostic_code(result.diagnostics, "E133"));
+        CHECK(has_diagnostic_code(result.diagnostics, "E184"));
     }
 
     SECTION("rev rejects number") {

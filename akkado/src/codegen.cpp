@@ -1104,15 +1104,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"slow",      &CodeGenerator::handle_slow_call},
                 {"fast",      &CodeGenerator::handle_fast_call},
                 {"rev",       &CodeGenerator::handle_rev_call},
-                {"transpose", &CodeGenerator::handle_transpose_call},
-                {"velocity",  &CodeGenerator::handle_velocity_call},
-                // Runtime event-stream transforms (closure builtins)
+                // Runtime event-stream transforms (closure builtins).
+                // transpose/velocity/dur/bend/aftertouch are now stdlib `fn`s
+                // defined in akkado/stdlib/event_transforms.ak — see
+                // prd-runtime-event-transforms.md §9 Phase 2b.
                 {"event_map",    &CodeGenerator::handle_event_map_call},
                 {"event_filter", &CodeGenerator::handle_event_filter_call},
-                // Phase 2.1 PRD §11.2: standalone note-property transforms
-                {"bend",        &CodeGenerator::handle_bend_call},
-                {"aftertouch",  &CodeGenerator::handle_aftertouch_call},
-                {"dur",         &CodeGenerator::handle_dur_call},
                 {"bank",      &CodeGenerator::handle_bank_call},
                 {"variant",   &CodeGenerator::handle_variant_call},
                 {"transport", &CodeGenerator::handle_transport_call},

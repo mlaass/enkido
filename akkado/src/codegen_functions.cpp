@@ -550,6 +550,17 @@ TypedValue CodeGenerator::handle_user_function_call(
                     if (expected == ParamValueType::Stream) {
                         // PRD §4.2 row "Stream / Pattern" + "Stream / EventSource":
                         // pass-through. Other types fire E184.
+                        //
+                        // Bare-identifier args (`m = n"…"; xp(m, 7)`) don't get
+                        // their Pattern/EventSource TypedValue recorded in
+                        // `node_types_` by visit() automatically, so the param-
+                        // binding pass at line ~757 would fall through to
+                        // `define_variable` and lose the Pattern handle. Pin it
+                        // here so the binding pass picks it up.
+                        if (arg_tv.type == ValueType::Pattern ||
+                            arg_tv.type == ValueType::EventSource) {
+                            node_types_[args[i]] = arg_tv;
+                        }
                         if (arg_tv.type != ValueType::Pattern &&
                             arg_tv.type != ValueType::EventSource) {
                             std::string msg = "parameter '" + func.params[i].name +
