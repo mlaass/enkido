@@ -238,3 +238,75 @@ TEST_CASE(": stream-annotated param exposes Pattern field access in the body",
     // diagnostic would surface from the field-access machinery.
     CHECK_FALSE(has_diagnostic(r, "E136"));
 }
+
+// =============================================================================
+// PRD prd-parameter-type-annotations §10.3: end-to-end verification examples.
+// The acceptance check is "compiles clean and the resulting WAV has the right
+// peaks." This file ships the compile-only half (Catch2); the render-and-peak
+// half is run out of band against ./build/tools/nkido-cli/nkido-cli render
+// (see the commit message for the render result).
+//
+// These programs unblock prd-runtime-event-transforms.md Phase 2b — once they
+// compile, the stdlib `event_transforms.ak` migration (transpose / velocity /
+// etc. as one-liners over event_map) becomes syntactically expressible.
+// =============================================================================
+
+// Note: the PRD §10.3 examples use `fn name(...) = body` syntax, but akkado
+// uses `fn name(...) -> body`. The tests below adapt the §10.3 programs to
+// the actual grammar while preserving their semantics (the user-defined
+// `xp` fn delegates straight to event_map, exactly as the PRD's `transpose`
+// stdlib migration target does).
+//
+// We pick `xp` rather than `transpose` because `transpose` is already a
+// builtin in this build (prd-runtime-event-transforms Phase 1) — shadowing
+// it from userspace conflicts with the existing definition.
+
+TEST_CASE("e2e §10.3: xp(events: stream, n) compiles for mono Pattern",
+          "[type-annotation][e2e]") {
+    auto r = akkado::compile(R"(
+        fn xp(events: stream, n) ->
+            event_map(events, (e) -> {note: e.note + n})
+
+        n"c4 e4 g4".xp(7) |> osc("sin", @.freq) |> out(@)
+    )");
+    CHECK_FALSE(has_diagnostic(r, "E160"));
+    CHECK_FALSE(has_diagnostic(r, "E184"));
+    CHECK_FALSE(has_diagnostic(r, "E136"));
+}
+
+TEST_CASE("e2e §10.3: xp(events: stream, n) compiles for chord-stack pattern",
+          "[type-annotation][e2e]") {
+    // PRD §10.3 second program (adapted). The point is that the user fn's
+    // `events: stream` param accepts a chord-stack pattern without an
+    // E160 / E184 boundary diagnostic.
+    auto r = akkado::compile(R"(
+        fn xp(events: stream, n) ->
+            event_map(events, (e) -> {note: e.note + n})
+
+        n"[c4,e4,g4]".xp(7)
+          |> poly(@, (f, g, v) -> osc("sin", f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3)
+          |> out(@)
+    )");
+    CHECK_FALSE(has_diagnostic(r, "E160"));
+    CHECK_FALSE(has_diagnostic(r, "E184"));
+    CHECK_FALSE(has_diagnostic(r, "E136"));
+}
+
+TEST_CASE("e2e §10.3: xp(events: stream, n) accepts true polyphonic chord pattern",
+          "[type-annotation][e2e]") {
+    // Sharper version of the chord-stack test: c"Am" is a true polyphonic
+    // chord (max_voices=3), so this is the exact scenario the un-annotated
+    // handle_user_function_call rejects with E160. With the `: stream`
+    // annotation, the bypass is the headline behavior — this test ships as a
+    // regression guard.
+    auto r = akkado::compile(R"(
+        fn xp(events: stream, n) ->
+            event_map(events, (e) -> {note: e.note + n})
+
+        c"Am".xp(7)
+          |> poly(@, (f, g, v) -> osc("sin", f) * v, 3)
+          |> out(@)
+    )");
+    CHECK_FALSE(has_diagnostic(r, "E160"));
+    CHECK_FALSE(has_diagnostic(r, "E184"));
+}
