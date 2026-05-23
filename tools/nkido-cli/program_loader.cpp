@@ -304,9 +304,9 @@ void apply_state_inits(cedar::VM& vm,
             vm.init_sequence_program_state(
                 init.state_id, stored.data(), stored.size(),
                 init.cycle_length, init.is_sample_pattern, init.total_events);
-            if (init.iter_n > 0) {
-                vm.init_sequence_iter_state(init.state_id, init.iter_n, init.iter_dir);
-            }
+            // PRD prd-runtime-event-transforms Phase 4 Commit C: iter()/
+            // iterBack() now lower to EVENT_REORDER(ITER); no per-SequenceState
+            // iter init call.
         } else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
             vm.init_poly_state(init.state_id, init.poly_seq_state_id,
                                init.poly_max_voices, init.poly_mode,
@@ -334,10 +334,14 @@ void apply_state_inits(cedar::VM& vm,
                                     init.ext_constants.data(),
                                     init.ext_buffer_indices.data(),
                                     init.ext_count);
-        } else if (init.type == akkado::StateInitData::Type::EventTransform) {
-            // PRD prd-runtime-event-transforms Phase 1: transform-owned
-            // SequenceState filled at runtime by an EVENT_MAP / EVENT_FILTER
-            // opcode. total_events sizes the OutputEvents buffer.
+        } else if (init.type == akkado::StateInitData::Type::EventTransform ||
+                   init.type == akkado::StateInitData::Type::Reorder ||
+                   init.type == akkado::StateInitData::Type::Fanout) {
+            // PRD prd-runtime-event-transforms Phase 1/4: transform-owned
+            // SequenceState filled at runtime by an EVENT_MAP / EVENT_FILTER /
+            // EVENT_REORDER / EVENT_FANOUT opcode. total_events sizes the
+            // OutputEvents buffer (caller pre-scales by fanout factor where
+            // needed: PALINDROME=2x, PLY=Nx, SEGMENT=max(N, upstream)).
             vm.init_event_transform_state(init.state_id, init.cycle_length,
                                           init.is_sample_pattern,
                                           init.total_events);

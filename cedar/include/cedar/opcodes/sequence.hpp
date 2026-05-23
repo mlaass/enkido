@@ -239,13 +239,25 @@ struct SequenceState {
     // any-active state without a retrigger drop.
     float last_beat_pos_gate = -1.0f;
 
-    // iter()/iterBack() rotation state. Set via state_pool.init_sequence_iter().
-    // When iter_n > 0, SEQPAT_QUERY rotates query results by
-    // -iter_dir * (cycle_index mod iter_n) / iter_n of the cycle each cycle.
-    // Default values disable rotation.
+    // Cycle index for the current playback cycle. Set per block from
+    // (global_sample_counter / spc / cycle_length); used by EVENT_REORDER(ITER)
+    // and by the legacy iter rotation (REMOVED in Phase 4 Commit C; field
+    // stays because it's still computed in SEQPAT_QUERY for diagnostic /
+    // hot-swap continuity purposes).
     std::uint32_t cycle_index = 0;
-    std::uint8_t iter_n = 0;     // 0 = no rotation
-    std::int8_t iter_dir = 0;    // +1 for iter, -1 for iterBack, 0 for none
+
+    // Phase 4 (prd-runtime-event-transforms) — EVENT_REORDER / EVENT_FANOUT
+    // transform state. EVENT_MAP / EVENT_FILTER reuse SequenceState as their
+    // output holder; EVENT_REORDER / EVENT_FANOUT do the same and additionally
+    // need these fields:
+    //   - last_reorder_cycle: ITER cache invalidation (rebuild rotation when
+    //     cycle index advances).
+    //   - reorder_original_cycle_length / reorder_captured: first-block capture
+    //     of the upstream cycle_length so ITER's rotation math and LINGER's
+    //     downstream cycle_length scaling have a stable basis.
+    std::uint32_t last_reorder_cycle = static_cast<std::uint32_t>(-1);
+    float reorder_original_cycle_length = 0.0f;
+    bool  reorder_captured = false;
 
     // Active event for UI highlighting
     std::uint16_t active_source_offset = 0;

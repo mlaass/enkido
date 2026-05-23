@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 1 + 2a + 2b + 3 shipped.**
+> **Status: IN PROGRESS — Phases 1 + 2a + 2b + 3 + 4 shipped.**
 >
 > - **Phase 1** (substrate: packed `EVENT_MAP` / `EVENT_FILTER` opcodes +
 >   runtime `transpose` / `velocity`) — shipped 2026-05-22, commit `79b4b24`.
@@ -32,7 +32,39 @@
 >   sets `cycle_length < 1`. Fixed by scaling the threshold to
 >   `cycle_length * 0.5f` (`sequencing.hpp:492`); regression test in
 >   `akkado/tests/test_fast_slow.cpp [regression]`.
-> - **Phases 4 – 5** (structural transforms, quantize + `TypedValue`
+> - **Phase 4** (structural transforms: `EVENT_REORDER` + `EVENT_FANOUT`
+>   opcodes; runtime `rev` / `palindrome` / `zoom` / `compress` / `ply` /
+>   `linger` / `segment` / `iter` / `iterBack`) — shipped 2026-05-23.
+>   `EVENT_REORDER` (kind selector REV/PALINDROME/ITER/ITER_BACK/ZOOM/COMPRESS
+>   in `inst.rate` low nibble) and `EVENT_FANOUT` (PLY/LINGER/SEGMENT) both
+>   reuse `SequenceState` as their downstream-OutputEvents holder, mirroring
+>   the EVENT_MAP / EVENT_FILTER substrate. Continuous parameters (zoom/
+>   compress endpoints, linger frac) are signal-rate; integer-cardinality
+>   parameters (`ply n`, `segment n`, `iter n`) stay compile-time constants.
+>   `iter` / `iterBack` migrated fully into `EVENT_REORDER(ITER)`: the
+>   `iter_n` / `iter_dir` fields on `SequenceState` and `StateInitData`,
+>   `init_sequence_iter_state` on the VM, and the SEQPAT_QUERY rotation
+>   block (`sequencing.hpp`) are deleted. The 3 legacy `[vm][sequence][iter]`
+>   tests in `cedar/tests/test_vm.cpp` were removed; coverage is preserved
+>   end-to-end via `cedar/tests/test_event_reorder.cpp` (10 cases) and
+>   `akkado/tests/test_reorder.cpp` (32 cases including composition with
+>   EVENT_MAP / EVENT_RATE_SCALE / EVENT_FANOUT chains). Composition with
+>   upstream runtime EVENT_MAP (e.g. `n"…".transpose(5).palindrome()`)
+>   works for free because `EVENT_REORDER`/`EVENT_FANOUT` read the
+>   upstream's `OutputEvents` each block via `resolve_output_events`.
+>   `compile_pattern_for_transform`'s recursive compile-time fold is kept
+>   (matches Phase 3 fast/slow precedent): nested constant-only chains
+>   `rev(fast(p, 2))` fold the inner `fast` into the inner SequenceProgram's
+>   `cycle_length` and emit only the outer `EVENT_REORDER`. `bend`/runtime-
+>   EVENT_MAP composition under structural transforms now works end-to-end
+>   (the Phase 2b regression note about `slow(bend(p, 0.3), 2)` is
+>   superseded by Phase 3 + 4 shipping; the runtime EVENT_MAP is preserved
+>   through all chains). A new helper, `emit_pattern_query_only`, factors
+>   out the inner SEQPAT_QUERY emission so the 7 Phase-4 handlers skip the
+>   wasted SEQPAT_STEP/extended-field/SEQPAT_PROP chain that
+>   `emit_pattern_with_state` would otherwise emit for the inner state.
+> - **Phase 5** (`EVENT_QUANTIZE` for scale/key snap + chord expansion /
+>   voicing / inversion via `EVENT_FANOUT` + TypedValue `EventStreamPayload`
 >   cleanup) — not started.
 >
 > The one hard external dependency — runtime closure / first-class fn
@@ -447,7 +479,7 @@ here so users can recognize and report them:
 | **2a** | `event_map` / `event_filter` builtins taking closures; Cedar `EVENT_MAP`/`EVENT_FILTER` opcode closure rework. **✅ SHIPPED 2026-05-23** (`694eb84`).                                                  | `cedar/tests/test_event_map.cpp`, `akkado/tests/test_event_map.cpp` for closure plumbing     |
 | **2b** | Migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers. **✅ SHIPPED 2026-05-23** (`582a28a` → `b485c3f`). Migrated `transpose`, `velocity`, `dur`, `bend`, `aftertouch`, `early`, `late`, `swing`, `swingBy`. `tune` deferred (different semantics). | `akkado/tests/test_event_map.cpp [phase2b]` (11 tests); existing `[event-map]` tests updated for closure-form encoding |
 | **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input. `early`/`late`/`swing` already migrated in Phase 2b — Phase 3 picks up the rate-scaling and structural composition gap. | Rate-scaled WAV experiments                                                                 |
-| **4** | `EVENT_FANOUT` + `EVENT_REORDER`: migrate `rev`, `palindrome`, `ply`, `linger`, `iter`, `iterBack`, `zoom`, `segment`, `compress`                                                            | Structural-transform experiments                                                            |
+| **4** | `EVENT_FANOUT` + `EVENT_REORDER`: migrate `rev`, `palindrome`, `ply`, `linger`, `iter`, `iterBack`, `zoom`, `segment`, `compress`. **✅ SHIPPED 2026-05-23**. Reuses `SequenceState` as downstream holder (no new `DSPState` variant); kind selector packs into `inst.rate` low nibble; ITER direction in bit 4. iter/iterBack legacy fields (`iter_n`/`iter_dir` on SequenceState + StateInitData) deleted. | `cedar/tests/test_event_reorder.cpp` (10 cases), `cedar/tests/test_event_fanout.cpp` (7 cases), `akkado/tests/test_reorder.cpp` (32 cases) |
 | **5** | `EVENT_QUANTIZE` (scale/key snap) + chord expansion / voicing / inversion via `EVENT_FANOUT`; `TypedValue` cleanup (Phase B)                                                                | Scale-quantize WAV; chord-expansion polyphony tests                                         |
 
 Each phase ships Catch2 tests + ≥300 s rendered-WAV experiments per CLAUDE.md.

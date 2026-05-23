@@ -74,4 +74,44 @@ enum : std::uint8_t {
     EVENT_OUT_COUNT  = 7,
 };
 
+// ----------------------------------------------------------------------------
+// Phase 4 — EVENT_REORDER / EVENT_FANOUT kind selectors
+// ----------------------------------------------------------------------------
+//
+// Each opcode body switches on `inst.rate & 0x0F`. Bits 4-7 are per-kind flags
+// (ITER direction; reserved otherwise). Param-slot encoding per kind is
+// documented in cedar/vm/instruction.hpp on the opcode declarations.
+
+// EVENT_REORDER kinds (rate bits 0-3).
+enum : std::uint8_t {
+    EVENT_REORDER_REV        = 0,
+    EVENT_REORDER_PALINDROME = 1,
+    EVENT_REORDER_ITER       = 2,  // rate bit 4 = dir (0 = +1).
+                                   // inputs[0]: const buf holding n (>= 1).
+    EVENT_REORDER_ITER_BACK  = 3,  // dispatch shares code with ITER keyed on
+                                   // dir; alias for diagnostic clarity.
+    EVENT_REORDER_ZOOM       = 4,  // inputs[0]=start, inputs[1]=end (signal ok).
+    EVENT_REORDER_COMPRESS   = 5,  // inputs[0]=start, inputs[1]=end (signal ok).
+};
+
+// EVENT_FANOUT kinds (rate bits 0-3).
+enum : std::uint8_t {
+    EVENT_FANOUT_PLY     = 0,  // inputs[0] = const buf holding n (>= 1).
+    EVENT_FANOUT_LINGER  = 1,  // inputs[0] = frac (signal ok); clamped to (0,1].
+    EVENT_FANOUT_SEGMENT = 2,  // inputs[0] = const buf holding n (>= 1).
+};
+
+// ITER direction packed into the rate-byte high nibble for EVENT_REORDER.
+// bit 4 = 0 -> dir = +1 (iter forward); bit 4 = 1 -> dir = -1 (iterBack).
+constexpr std::uint8_t EVENT_REORDER_ITER_DIR_BACK = 1u << 0;
+
+// Pack/unpack helpers. Mirrors event_transform_rate() above.
+[[nodiscard]] constexpr std::uint8_t event_reorder_rate(std::uint8_t kind,
+                                                        std::uint8_t flags = 0) noexcept {
+    return static_cast<std::uint8_t>((kind & 0x0F) | ((flags & 0x0F) << 4));
+}
+[[nodiscard]] constexpr std::uint8_t event_fanout_rate(std::uint8_t kind) noexcept {
+    return static_cast<std::uint8_t>(kind & 0x0F);
+}
+
 }  // namespace cedar

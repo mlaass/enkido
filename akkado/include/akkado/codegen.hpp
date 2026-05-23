@@ -150,6 +150,17 @@ struct StateInitData {
         RateScale,        // PRD prd-runtime-event-transforms Phase 3: a
                           // RateScaleState (beat-position integrator) for an
                           // EVENT_RATE_SCALE opcode. No extra payload fields.
+        Reorder,          // PRD prd-runtime-event-transforms Phase 4: a
+                          // transform-owned SequenceState for an EVENT_REORDER
+                          // opcode (rev/palindrome/iter/iterBack/zoom/compress).
+                          // Reuses cycle_length, is_sample_pattern, total_events.
+                          // Loaded via the same init_event_transform path as
+                          // EventTransform — no compiled sequences.
+        Fanout,           // PRD prd-runtime-event-transforms Phase 4: a
+                          // transform-owned SequenceState for an EVENT_FANOUT
+                          // opcode (ply/linger/segment). Same payload shape as
+                          // Reorder / EventTransform; total_events is the
+                          // capacity required after fanout (n x upstream).
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -205,12 +216,9 @@ struct StateInitData {
     std::uint32_t sf_seq_state_id = 0;
     int           sf_preset_idx   = 0;
 
-    // For SequenceProgram: iter()/iterBack() rotation configuration.
-    // iter_n=0 disables rotation. iter_dir is +1 for iter, -1 for iterBack.
-    // Hosts should call vm.init_sequence_iter_state() after
-    // init_sequence_program_state() when iter_n > 0.
-    std::uint8_t iter_n = 0;
-    std::int8_t iter_dir = 0;
+    // PRD prd-runtime-event-transforms Phase 4 Commit C: iter()/iterBack()
+    // rotation moved into EVENT_REORDER(ITER); the legacy iter_n / iter_dir
+    // payload fields on this struct were removed.
 
     // For ForeachAlloc (PRD L3): FOREACH_EVENT instance configuration.
     // allocator_kind: 0=VOICE_POOL, 1=PER_ITERATION, 2=SHARED. block_id is the
@@ -747,6 +755,60 @@ private:
     TypedValue emit_pattern_readout(NodeIndex node,
                                     const PatternQuerySource& src,
                                     SourceLocation loc);
+
+    /// PRD prd-runtime-event-transforms Phase 4 — shared implementation for
+    /// the structural transforms (rev/palindrome/zoom/compress, and later
+    /// iter/iterBack). Recompiles the inner pattern, emits SEQPAT_QUERY for
+    /// the inner SequenceState, emits EVENT_REORDER with the supplied kind +
+    /// flag bits + param buffers, then emits the downstream readout against
+    /// the transform's own SequenceState. `cycle_length_factor` lets the
+    /// caller stamp the downstream cycle_length (e.g. PALINDROME = 2.0,
+    /// everything else = 1.0). `capacity_factor` scales the OutputEvents
+    /// buffer size for kinds that fan out events (PALINDROME = 2).
+    TypedValue emit_reorder_call(NodeIndex node, const Node& n,
+                                 const char* fn_name,
+                                 std::uint8_t kind, std::uint8_t flags,
+                                 std::uint16_t param0_buf,
+                                 std::uint16_t param1_buf,
+                                 float cycle_length_factor,
+                                 std::uint32_t capacity_factor);
+
+    /// PRD prd-runtime-event-transforms Phase 4 — shared implementation for
+    /// EVENT_FANOUT (ply / linger / segment). Same shape as emit_reorder_call
+    /// but emits an EVENT_FANOUT opcode and uses the FANOUT init type.
+    /// `cycle_length_factor` is typically 1.0; LINGER passes a runtime-resolved
+    /// factor (the compile-time PatternPayload stays at upstream cycle_length
+    /// — runtime mutation on the SequenceState is the authoritative path).
+    TypedValue emit_fanout_call(NodeIndex node, const Node& n,
+                                const char* fn_name,
+                                std::uint8_t kind,
+                                std::uint16_t param0_buf,
+                                float cycle_length_factor,
+                                std::uint32_t capacity_factor);
+
+    /// PRD prd-runtime-event-transforms Phase 4 — resolve a numeric-or-signal
+    /// arg at position `idx` (after the pattern arg) to a buffer index. If the
+    /// arg is a numeric literal it folds to a PUSH_CONST; otherwise visit()s
+    /// it and requires a Signal/Number-typed result. Returns BUFFER_UNUSED on
+    /// failure (after raising `err_code`/`err_msg` at the call site).
+    std::uint16_t resolve_scalar_or_signal_arg(
+        const Node& call, std::size_t idx,
+        const char* err_code, const char* err_msg);
+
+    /// PRD prd-runtime-event-transforms Phase 4 — emit ONLY the SEQPAT_QUERY
+    /// + StateInitData::SequenceProgram for an inner pattern that will be
+    /// wrapped by a runtime EVENT_REORDER / EVENT_FANOUT. Skips SEQPAT_STEP /
+    /// extended fields / SAMPLE_PLAY / SEQPAT_PROP — those are emitted by
+    /// emit_pattern_readout against the downstream transform state_id.
+    /// Returns a PatternQuerySource with the inner state's metadata; the
+    /// caller typically rewrites state_id (and cycle_length when the transform
+    /// scales it) before passing to emit_pattern_readout.
+    PatternQuerySource emit_pattern_query_only(
+        std::uint32_t state_id,
+        float cycle_length,
+        const SequenceCompiler& compiler,
+        std::vector<std::vector<cedar::Event>>& sequence_events,
+        const SourceLocation& pattern_loc);
 
     /// Handle bank(pattern, bank_name) - set sample bank for all events
     TypedValue handle_bank_call(NodeIndex node, const Node& n);

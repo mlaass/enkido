@@ -2817,6 +2817,64 @@ static TypedValue emit_pattern_with_state(
     return tv;
 }
 
+CodeGenerator::PatternQuerySource CodeGenerator::emit_pattern_query_only(
+    std::uint32_t state_id,
+    float cycle_length,
+    const SequenceCompiler& compiler,
+    std::vector<std::vector<cedar::Event>>& sequence_events,
+    const SourceLocation& pattern_loc) {
+
+    PatternQuerySource src;
+    compiler.collect_samples(required_samples_);
+
+    // Compute max_voices from the local (possibly post-voicing) events.
+    std::uint8_t max_voices = 1;
+    for (const auto& seq : sequence_events) {
+        for (const auto& e : seq) {
+            if (e.num_values > max_voices) max_voices = e.num_values;
+        }
+    }
+
+    // Emit SEQPAT_QUERY. SEQPAT_STEP / extended fields are emitted by the
+    // downstream readout against the transform state_id.
+    cedar::Instruction query_inst{};
+    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
+    query_inst.out_buffer = 0xFFFF;
+    query_inst.inputs[0] = 0xFFFF;
+    query_inst.inputs[1] = 0xFFFF;
+    query_inst.inputs[2] = 0xFFFF;
+    query_inst.inputs[3] = 0xFFFF;
+    query_inst.inputs[4] = 0xFFFF;
+    query_inst.state_id = state_id;
+    emit_stream().push_back(query_inst);
+
+    // Store sequence program initialization data for the inner SequenceState.
+    StateInitData seq_init;
+    seq_init.state_id = state_id;
+    seq_init.type = StateInitData::Type::SequenceProgram;
+    seq_init.cycle_length = cycle_length;
+    seq_init.sequences = compiler.sequences();
+    seq_init.sequence_events = std::move(sequence_events);
+    seq_init.total_events = compiler.total_events();
+    seq_init.is_sample_pattern = compiler.is_sample_pattern();
+    seq_init.pattern_location = pattern_loc;
+    seq_init.sequence_sample_mappings = compiler.sample_mappings();
+    state_inits_.push_back(std::move(seq_init));
+
+    src.ok = true;
+    src.state_id = state_id;
+    src.cycle_length = cycle_length;
+    src.is_sample_pattern = compiler.is_sample_pattern();
+    src.max_voices = max_voices;
+    src.total_events = compiler.total_events();
+    src.sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
+    publish_sample_refs(src.sample_refs);
+    for (const auto& [key, slot] : compiler.custom_property_slots()) {
+        src.custom_props.emplace_back(key, slot);
+    }
+    return src;
+}
+
 // ============================================================================
 // Timeline curve literal codegen
 // ============================================================================
@@ -3219,64 +3277,198 @@ TypedValue CodeGenerator::handle_fast_call(NodeIndex node, const Node& n) {
     return emit_rate_scale_call(node, n, /*is_fast=*/true);
 }
 
-TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
-    // rev(pattern) - reverse event order in pattern
-    // Reverses the start times: new_time = cycle_duration - old_time - old_duration
+// ============================================================================
+// EVENT_REORDER — rev / palindrome / zoom / compress (PRD Phase 4)
+// ============================================================================
+//
+// Shared shape for the 4 structural transforms shipped in Commit A:
+//   1. compile_pattern_for_transform → fresh sequence_events + cycle_length
+//      (recursive compile-time fold remains the legacy fallback for nested
+//      const-only chains like fast(rev(p), 2)).
+//   2. Allocate inner state_id under "<fn>#N" path; emit SEQPAT_QUERY +
+//      StateInitData::SequenceProgram via emit_pattern_query_only.
+//   3. Allocate transform state_id under "<fn>#N/reorder" path.
+//   4. Emit EVENT_REORDER opcode with kind/flags packed in rate byte and
+//      params in inputs[0..1]; inputs[2..3] carry the upstream (inner) state.
+//   5. Push StateInitData::Reorder with downstream cycle_length + capacity.
+//   6. Re-target the PatternQuerySource to the transform state and call
+//      emit_pattern_readout to emit SEQPAT_STEP / extended fields / SAMPLE_PLAY
+//      / SEQPAT_PROP against the transform state.
+//
+// Composes naturally with upstream runtime EVENT_MAP / EVENT_FILTER /
+// EVENT_RATE_SCALE — the inner SequenceState's OutputEvents are read each
+// block by EVENT_REORDER and the rewritten events feed downstream readout.
 
-    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+TypedValue CodeGenerator::emit_reorder_call(
+    NodeIndex node, const Node& n, const char* fn_name,
+    std::uint8_t kind, std::uint8_t flags,
+    std::uint16_t param0_buf, std::uint16_t param1_buf,
+    float cycle_length_factor, std::uint32_t capacity_factor) {
 
-    if (pattern_arg == NULL_NODE) {
-        error("E130", "rev() requires a pattern as argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
-        error("E133", "rev() argument must be a pattern", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Compile the pattern (may include inner transforms applied recursively)
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "rev() failed to compile pattern argument", n.location);
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    if (pattern_arg == NULL_NODE ||
+        !compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
+                                       compiler, pattern_node, num_elements,
+                                       sequence_events, cycle_length)) {
+        error("E130", std::string(fn_name) +
+                  "() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
     }
 
-    // Set up state ID
-    std::uint32_t rev_count = call_counters_["rev"]++;
-    push_path("rev#" + std::to_string(rev_count));
-    std::uint32_t state_id = compute_state_id();
-
-    // Apply reverse transformation on top of any inner transforms
-    for (auto& seq_events : sequence_events) {
-        for (auto& event : seq_events) {
-            float new_time = 1.0f - event.time - event.duration;
-            if (new_time < 0.0f) new_time = 0.0f;
-            event.time = new_time;
-        }
-    }
+    std::uint32_t call_count = call_counters_[fn_name]++;
+    push_path(std::string(fn_name) + "#" + std::to_string(call_count));
+    std::uint32_t inner_state_id = compute_state_id();
 
     const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
+    PatternQuerySource src = emit_pattern_query_only(
+        inner_state_id, cycle_length, compiler, sequence_events, pattern.location);
+    if (!src.ok) {
+        pop_path();
         error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
     }
 
-    return result_tv;
+    push_path("reorder");
+    std::uint32_t transform_state_id = compute_state_id();
+    pop_path();
+
+    cedar::Instruction op{};
+    op.opcode = cedar::Opcode::EVENT_REORDER;
+    op.rate = cedar::event_reorder_rate(kind, flags);
+    op.out_buffer = 0xFFFF;
+    op.inputs[0] = param0_buf;
+    op.inputs[1] = param1_buf;
+    op.inputs[2] = static_cast<std::uint16_t>(inner_state_id & 0xFFFF);
+    op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
+    op.inputs[4] = 0xFFFF;
+    op.state_id = transform_state_id;
+    emit_stream().push_back(op);
+
+    // Downstream transform state: holds the rewritten OutputEvents that the
+    // readout reads via SEQPAT_STEP / SEQPAT_FIELD etc.
+    StateInitData rd_init{};
+    rd_init.state_id = transform_state_id;
+    rd_init.type = StateInitData::Type::Reorder;
+    rd_init.cycle_length = cycle_length * cycle_length_factor;
+    rd_init.is_sample_pattern = compiler.is_sample_pattern();
+    // OutputEvents capacity: max(upstream * fanout_factor, 32). The state
+    // pool clamps to a 32-floor and rounds up internally.
+    rd_init.total_events = compiler.total_events() * capacity_factor;
+    rd_init.pattern_location = pattern.location;
+    state_inits_.push_back(std::move(rd_init));
+
+    pop_path();  // out of "<fn>#N"
+
+    // Re-target the readout to the transform state, with the kind-scaled
+    // downstream cycle_length stamped on the PatternPayload.
+    src.state_id = transform_state_id;
+    src.cycle_length = cycle_length * cycle_length_factor;
+    return emit_pattern_readout(node, src, n.location);
+}
+
+TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
+    // rev(pattern) — reverse event order. PRD Phase 4 runtime form: each
+    // block, EVENT_REORDER(REV) reads upstream OutputEvents and re-times each
+    // event with `new_time = cycle_length - t - dur` (clamp >= 0). Composes
+    // with upstream EVENT_MAP (e.g. transpose); composition was broken under
+    // the pre-Phase-4 compile-time path because compile_pattern_for_transform
+    // didn't see runtime EVENT_MAP transforms.
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "rev() requires a pattern as argument", n.location);
+        return TypedValue::void_val();
+    }
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+        error("E133", "rev() argument must be a pattern", n.location);
+        return TypedValue::void_val();
+    }
+    return emit_reorder_call(node, n, "rev",
+                             cedar::EVENT_REORDER_REV, /*flags=*/0,
+                             /*param0=*/0xFFFF, /*param1=*/0xFFFF,
+                             /*cycle_length_factor=*/1.0f,
+                             /*capacity_factor=*/1u);
+}
+
+// ============================================================================
+// EVENT_FANOUT — ply / linger / segment (PRD Phase 4 Commit B)
+// ============================================================================
+//
+// Same structure as emit_reorder_call: compile inner pattern, emit inner
+// SEQPAT_QUERY + StateInitData::SequenceProgram via emit_pattern_query_only,
+// allocate transform state_id, emit EVENT_FANOUT instruction + Fanout init,
+// re-target the readout. Differs from emit_reorder_call only in the opcode
+// emitted and the StateInitData type tag.
+
+TypedValue CodeGenerator::emit_fanout_call(
+    NodeIndex node, const Node& n, const char* fn_name,
+    std::uint8_t kind, std::uint16_t param0_buf,
+    float cycle_length_factor, std::uint32_t capacity_factor) {
+
+    SequenceCompiler compiler(ast_->arena, sample_registry_);
+    NodeIndex pattern_node = NULL_NODE;
+    std::uint32_t num_elements = 1;
+    std::vector<std::vector<cedar::Event>> sequence_events;
+    float cycle_length = 1.0f;
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    if (pattern_arg == NULL_NODE ||
+        !compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
+                                       compiler, pattern_node, num_elements,
+                                       sequence_events, cycle_length)) {
+        error("E130", std::string(fn_name) +
+                  "() failed to compile pattern argument", n.location);
+        return TypedValue::void_val();
+    }
+
+    std::uint32_t call_count = call_counters_[fn_name]++;
+    push_path(std::string(fn_name) + "#" + std::to_string(call_count));
+    std::uint32_t inner_state_id = compute_state_id();
+
+    const Node& pattern = ast_->arena[pattern_node];
+    PatternQuerySource src = emit_pattern_query_only(
+        inner_state_id, cycle_length, compiler, sequence_events, pattern.location);
+    if (!src.ok) {
+        pop_path();
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+
+    push_path("fanout");
+    std::uint32_t transform_state_id = compute_state_id();
+    pop_path();
+
+    cedar::Instruction op{};
+    op.opcode = cedar::Opcode::EVENT_FANOUT;
+    op.rate = cedar::event_fanout_rate(kind);
+    op.out_buffer = 0xFFFF;
+    op.inputs[0] = param0_buf;
+    op.inputs[1] = 0xFFFF;
+    op.inputs[2] = static_cast<std::uint16_t>(inner_state_id & 0xFFFF);
+    op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
+    op.inputs[4] = 0xFFFF;
+    op.state_id = transform_state_id;
+    emit_stream().push_back(op);
+
+    StateInitData fn_init{};
+    fn_init.state_id = transform_state_id;
+    fn_init.type = StateInitData::Type::Fanout;
+    fn_init.cycle_length = cycle_length * cycle_length_factor;
+    fn_init.is_sample_pattern = compiler.is_sample_pattern();
+    fn_init.total_events = compiler.total_events() * capacity_factor;
+    fn_init.pattern_location = pattern.location;
+    state_inits_.push_back(std::move(fn_init));
+
+    pop_path();  // out of "<fn>#N"
+
+    src.state_id = transform_state_id;
+    src.cycle_length = cycle_length * cycle_length_factor;
+    return emit_pattern_readout(node, src, n.location);
 }
 
 
@@ -4022,8 +4214,11 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
 
 
 TypedValue CodeGenerator::handle_palindrome_call(NodeIndex node, const Node& n) {
+    // palindrome(pattern) — PRD Phase 4. Each block, EVENT_REORDER(PALINDROME)
+    // emits each upstream event twice: forward at (0.5*t, 0.5*dur), reverse at
+    // (1 - 0.5*t - 0.5*dur, 0.5*dur). Downstream cycle_length is 2x upstream.
+    // OutputEvents capacity is 2x upstream to fit the fanout.
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "palindrome() requires a pattern as argument", n.location);
         return TypedValue::void_val();
@@ -4032,136 +4227,54 @@ TypedValue CodeGenerator::handle_palindrome_call(NodeIndex node, const Node& n) 
         error("E133", "palindrome() argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "palindrome() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    std::uint32_t pal_count = call_counters_["palindrome"]++;
-    push_path("palindrome#" + std::to_string(pal_count));
-    std::uint32_t state_id = compute_state_id();
-
-    for (auto& seq_events : sequence_events) {
-        std::vector<cedar::Event> doubled;
-        doubled.reserve(seq_events.size() * 2);
-        for (const auto& event : seq_events) {
-            cedar::Event e = event;
-            e.time = event.time * 0.5f;
-            e.duration = event.duration * 0.5f;
-            doubled.push_back(e);
-        }
-        for (const auto& event : seq_events) {
-            cedar::Event e = event;
-            e.time = 1.0f - 0.5f * event.time - 0.5f * event.duration;
-            e.duration = event.duration * 0.5f;
-            if (e.time < 0.0f) e.time = 0.0f;
-            doubled.push_back(e);
-        }
-        std::sort(doubled.begin(), doubled.end(),
-            [](const cedar::Event& x, const cedar::Event& y) {
-                return x.time < y.time;
-            });
-        seq_events = std::move(doubled);
-    }
-    cycle_length *= 2.0f;
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_reorder_call(node, n, "palindrome",
+                             cedar::EVENT_REORDER_PALINDROME, /*flags=*/0,
+                             /*param0=*/0xFFFF, /*param1=*/0xFFFF,
+                             /*cycle_length_factor=*/2.0f,
+                             /*capacity_factor=*/2u);
 }
 
 TypedValue CodeGenerator::handle_ply_call(NodeIndex node, const Node& n) {
+    // ply(pattern, n) — PRD Phase 4 runtime form: EVENT_FANOUT(PLY) emits N
+    // sub-events per upstream event, each with duration d/N. `n` is a
+    // compile-time constant (it directly determines OutputEvents capacity).
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     auto n_arg = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "ply() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
     if (!n_arg.has_value() || *n_arg < 1) {
-        error("E131", "ply() requires a positive integer (>= 1) as second argument", n.location);
+        error("E131", "ply() requires a positive integer (>= 1) as second argument",
+              n.location);
         return TypedValue::void_val();
     }
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
         error("E133", "ply() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "ply() failed to compile pattern argument", n.location);
+    std::uint32_t n_int = static_cast<std::uint32_t>(*n_arg);
+    std::uint16_t n_buf = codegen::emit_push_const(
+        buffers_, emit_stream(), static_cast<float>(n_int));
+    if (n_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    std::uint32_t ply_count = call_counters_["ply"]++;
-    push_path("ply#" + std::to_string(ply_count));
-    std::uint32_t state_id = compute_state_id();
-
-    int n_int = static_cast<int>(*n_arg);
-    for (auto& seq_events : sequence_events) {
-        std::vector<cedar::Event> plied;
-        plied.reserve(seq_events.size() * static_cast<std::size_t>(n_int));
-        for (const auto& ev : seq_events) {
-            float sub_d = ev.duration / static_cast<float>(n_int);
-            for (int i = 0; i < n_int; ++i) {
-                cedar::Event pe = ev;
-                pe.duration = sub_d;
-                pe.time = ev.time + static_cast<float>(i) * sub_d;
-                plied.push_back(pe);
-            }
-        }
-        seq_events = std::move(plied);
-    }
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_fanout_call(node, n, "ply",
+                            cedar::EVENT_FANOUT_PLY, n_buf,
+                            /*cycle_length_factor=*/1.0f,
+                            /*capacity_factor=*/n_int);
 }
 
 TypedValue CodeGenerator::handle_linger_call(NodeIndex node, const Node& n) {
+    // linger(pattern, frac) — PRD Phase 4 runtime form: EVENT_FANOUT(LINGER)
+    // drops events with t >= frac and rescales survivors to [0, 1). The
+    // downstream cycle_length is upstream * frac, so the truncated segment
+    // loops 1/frac times per upstream cycle (preserves legacy compile-time
+    // semantics). frac is signal-rate ok; clamped to (0, 1] at runtime.
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto frac_arg = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "linger() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-    if (!frac_arg.has_value() || *frac_arg <= 0) {
-        error("E131", "linger() requires a positive number as second argument", n.location);
         return TypedValue::void_val();
     }
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
@@ -4169,75 +4282,85 @@ TypedValue CodeGenerator::handle_linger_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "linger() failed to compile pattern argument", n.location);
+    auto frac_const = get_number_arg(*ast_, n, 1);
+    if (frac_const.has_value() && *frac_const <= 0.0f) {
+        error("E131", "linger() requires a positive frac (signal or constant)",
+              n.location);
         return TypedValue::void_val();
     }
 
-    std::uint32_t linger_count = call_counters_["linger"]++;
-    push_path("linger#" + std::to_string(linger_count));
-    std::uint32_t state_id = compute_state_id();
+    std::uint16_t frac_buf = resolve_scalar_or_signal_arg(
+        n, 1, "E131",
+        "linger() requires a number or signal as second argument (frac)");
+    if (frac_buf == BufferAllocator::BUFFER_UNUSED) return TypedValue::void_val();
 
-    float frac = *frac_arg;
-    if (frac < 1.0f) {
-        for (auto& seq_events : sequence_events) {
-            std::vector<cedar::Event> kept;
-            for (const auto& ev : seq_events) {
-                if (ev.time < frac) {
-                    cedar::Event ke = ev;
-                    ke.time = ev.time / frac;
-                    ke.duration = ev.duration / frac;
-                    if (ke.time >= 1.0f) continue;
-                    if (ke.time + ke.duration > 1.0f) {
-                        ke.duration = 1.0f - ke.time;
-                    }
-                    kept.push_back(ke);
-                }
-            }
-            seq_events = std::move(kept);
+    // For constants, fold the cycle_length factor at compile time so the
+    // PatternPayload reports the correct cycle. For signals, leave the
+    // compile-time factor at 1.0 (runtime mutates the SequenceState's
+    // cycle_length each block per the LINGER body). This matches the
+    // Phase 3 fast/slow precedent.
+    const float clf = frac_const.has_value()
+                          ? std::min(1.0f, static_cast<float>(*frac_const))
+                          : 1.0f;
+    return emit_fanout_call(node, n, "linger",
+                            cedar::EVENT_FANOUT_LINGER, frac_buf,
+                            clf,
+                            /*capacity_factor=*/1u);
+}
+
+std::uint16_t CodeGenerator::resolve_scalar_or_signal_arg(
+    const Node& call, std::size_t idx,
+    const char* err_code, const char* err_msg) {
+
+    // Locate the raw AST node at position `idx`.
+    NodeIndex arg = call.first_child;
+    std::size_t i = 0;
+    while (arg != NULL_NODE && i < idx) {
+        arg = ast_->arena[arg].next_sibling;
+        i++;
+    }
+    if (arg == NULL_NODE) {
+        error(err_code, err_msg, call.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    const Node& arg_node = ast_->arena[arg];
+    NodeIndex value_node = (arg_node.type == NodeType::Argument)
+                              ? arg_node.first_child : arg;
+
+    // Constant: fold via PUSH_CONST.
+    auto const_val = get_number_arg(*ast_, call, idx);
+    if (const_val.has_value()) {
+        std::uint16_t buf = codegen::emit_push_const(
+            buffers_, emit_stream(), static_cast<float>(*const_val));
+        if (buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", call.location);
         }
-        cycle_length *= frac;
+        return buf;
     }
 
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
+    // Signal: visit and require a Number/Signal-typed buffer.
+    TypedValue tv = visit(value_node);
+    if (tv.error) {
+        return BufferAllocator::BUFFER_UNUSED;
     }
-    return result_tv;
+    if (tv.type != ValueType::Signal && tv.type != ValueType::Number) {
+        error(err_code, err_msg, call.location);
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    if (tv.buffer == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", call.location);
+    }
+    return tv.buffer;
 }
 
 TypedValue CodeGenerator::handle_zoom_call(NodeIndex node, const Node& n) {
+    // zoom(pattern, start, end) — PRD Phase 4 runtime form: EVENT_REORDER(ZOOM)
+    // reads upstream OutputEvents, drops events outside [s, e) and rescales
+    // survivors to [0, 1). Both start and end may be signal-rate (sampled at
+    // sample 0 each block); degenerate end <= start at runtime → empty output.
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto start_arg = get_number_arg(*ast_, n, 1);
-    auto end_arg = get_number_arg(*ast_, n, 2);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "zoom() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-    if (!start_arg.has_value() || !end_arg.has_value()) {
-        error("E131", "zoom() requires two numbers (start, end) after the pattern", n.location);
-        return TypedValue::void_val();
-    }
-    float s = *start_arg;
-    float e_val = *end_arg;
-    if (e_val <= s) {
-        error("E132", "zoom() end must be greater than start", n.location);
         return TypedValue::void_val();
     }
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
@@ -4245,144 +4368,83 @@ TypedValue CodeGenerator::handle_zoom_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "zoom() failed to compile pattern argument", n.location);
+    // Compile-time validation when both are constants — surfaces E132 early.
+    auto start_const = get_number_arg(*ast_, n, 1);
+    auto end_const = get_number_arg(*ast_, n, 2);
+    if (start_const.has_value() && end_const.has_value() &&
+        *end_const <= *start_const) {
+        error("E132", "zoom() end must be greater than start", n.location);
         return TypedValue::void_val();
     }
 
-    std::uint32_t zoom_count = call_counters_["zoom"]++;
-    push_path("zoom#" + std::to_string(zoom_count));
-    std::uint32_t state_id = compute_state_id();
+    std::uint16_t start_buf = resolve_scalar_or_signal_arg(
+        n, 1, "E131",
+        "zoom() requires a number or signal as second argument (start)");
+    if (start_buf == BufferAllocator::BUFFER_UNUSED) return TypedValue::void_val();
+    std::uint16_t end_buf = resolve_scalar_or_signal_arg(
+        n, 2, "E131",
+        "zoom() requires a number or signal as third argument (end)");
+    if (end_buf == BufferAllocator::BUFFER_UNUSED) return TypedValue::void_val();
 
-    float width = e_val - s;
-    for (auto& seq_events : sequence_events) {
-        std::vector<cedar::Event> kept;
-        for (const auto& ev : seq_events) {
-            float event_end = ev.time + ev.duration;
-            if (event_end <= s || ev.time >= e_val) continue;
-            cedar::Event ke = ev;
-            float clipped_start = std::max(ev.time, s);
-            float clipped_end = std::min(event_end, e_val);
-            ke.time = (clipped_start - s) / width;
-            ke.duration = (clipped_end - clipped_start) / width;
-            kept.push_back(ke);
-        }
-        seq_events = std::move(kept);
-    }
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_reorder_call(node, n, "zoom",
+                             cedar::EVENT_REORDER_ZOOM, /*flags=*/0,
+                             start_buf, end_buf,
+                             /*cycle_length_factor=*/1.0f,
+                             /*capacity_factor=*/1u);
 }
 
 TypedValue CodeGenerator::handle_segment_call(NodeIndex node, const Node& n) {
+    // segment(pattern, n) — PRD Phase 4 runtime form: EVENT_FANOUT(SEGMENT)
+    // samples N evenly-spaced grid points across the cycle and emits one
+    // event per grid point, holding the active upstream event at that time
+    // (or the latest preceding event). `n` is a compile-time constant —
+    // it determines the OutputEvents capacity.
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     auto n_arg = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "segment() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
     if (!n_arg.has_value() || *n_arg < 1) {
-        error("E131", "segment() requires a positive integer (>= 1) as second argument", n.location);
+        error("E131",
+              "segment() requires a positive integer (>= 1) as second argument",
+              n.location);
         return TypedValue::void_val();
     }
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
         error("E133", "segment() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "segment() failed to compile pattern argument", n.location);
+    std::uint32_t n_int = static_cast<std::uint32_t>(*n_arg);
+    std::uint16_t n_buf = codegen::emit_push_const(
+        buffers_, emit_stream(), static_cast<float>(n_int));
+    if (n_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    std::uint32_t seg_count = call_counters_["segment"]++;
-    push_path("segment#" + std::to_string(seg_count));
-    std::uint32_t state_id = compute_state_id();
-
-    int n_int = static_cast<int>(*n_arg);
-    float step = 1.0f / static_cast<float>(n_int);
-    for (auto& seq_events : sequence_events) {
-        if (seq_events.empty()) continue;
-        std::sort(seq_events.begin(), seq_events.end(),
-            [](const cedar::Event& x, const cedar::Event& y) {
-                return x.time < y.time;
-            });
-        std::vector<cedar::Event> sampled;
-        sampled.reserve(static_cast<std::size_t>(n_int));
-        for (int i = 0; i < n_int; ++i) {
-            float st = static_cast<float>(i) * step;
-            const cedar::Event* active = nullptr;
-            for (const auto& ev : seq_events) {
-                if (ev.time <= st && (ev.time + ev.duration) > st) {
-                    active = &ev;
-                }
-            }
-            if (active == nullptr) {
-                for (const auto& ev : seq_events) {
-                    if (ev.time <= st) active = &ev;
-                }
-                if (active == nullptr) active = &seq_events.front();
-            }
-            cedar::Event se = *active;
-            se.time = st;
-            se.duration = step;
-            sampled.push_back(se);
-        }
-        seq_events = std::move(sampled);
-    }
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_fanout_call(node, n, "segment",
+                            cedar::EVENT_FANOUT_SEGMENT, n_buf,
+                            /*cycle_length_factor=*/1.0f,
+                            /*capacity_factor=*/n_int);
 }
 
+// iter / iterBack — PRD Phase 4 Commit C runtime form. Both lower to
+// EVENT_REORDER with kind=ITER and the direction flag packed into the rate
+// byte's high nibble. The runtime opcode reads ctx.global_sample_counter to
+// derive cycle_index and rotates upstream events by -dir * (cycle%n)/n.
+// `n` is a compile-time integer constant in [1, 255] (caps at a const
+// buffer; n is the rotation period, not a continuous parameter).
+
 TypedValue CodeGenerator::handle_iter_call(NodeIndex node, const Node& n) {
-    // iter(pat, n): rotate pattern start by 1/n per cycle (forward, dir=+1).
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     auto n_arg = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "iter() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
     if (!n_arg.has_value() || *n_arg < 1) {
-        error("E131", "iter() requires a positive integer (>= 1) as second argument", n.location);
+        error("E131", "iter() requires a positive integer (>= 1) as second argument",
+              n.location);
         return TypedValue::void_val();
     }
     int n_int = static_cast<int>(*n_arg);
@@ -4394,56 +4456,30 @@ TypedValue CodeGenerator::handle_iter_call(NodeIndex node, const Node& n) {
         error("E133", "iter() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "iter() failed to compile pattern argument", n.location);
+    std::uint16_t n_buf = codegen::emit_push_const(
+        buffers_, emit_stream(), static_cast<float>(n_int));
+    if (n_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    std::uint32_t cnt = call_counters_["iter"]++;
-    push_path("iter#" + std::to_string(cnt));
-    std::uint32_t state_id = compute_state_id();
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    if (!state_inits_.empty() &&
-        state_inits_.back().state_id == state_id &&
-        state_inits_.back().type == StateInitData::Type::SequenceProgram) {
-        state_inits_.back().iter_n = static_cast<std::uint8_t>(n_int);
-        state_inits_.back().iter_dir = +1;
-    }
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_reorder_call(node, n, "iter",
+                             cedar::EVENT_REORDER_ITER, /*flags=*/0,
+                             n_buf, /*param1=*/0xFFFF,
+                             /*cycle_length_factor=*/1.0f,
+                             /*capacity_factor=*/1u);
 }
 
 TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
-    // iterBack(pat, n): rotate pattern start by 1/n per cycle (backward, dir=-1).
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     auto n_arg = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "iterBack() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
     if (!n_arg.has_value() || *n_arg < 1) {
-        error("E131", "iterBack() requires a positive integer (>= 1) as second argument", n.location);
+        error("E131",
+              "iterBack() requires a positive integer (>= 1) as second argument",
+              n.location);
         return TypedValue::void_val();
     }
     int n_int = static_cast<int>(*n_arg);
@@ -4455,43 +4491,18 @@ TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
         error("E133", "iterBack() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "iterBack() failed to compile pattern argument", n.location);
+    std::uint16_t n_buf = codegen::emit_push_const(
+        buffers_, emit_stream(), static_cast<float>(n_int));
+    if (n_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    std::uint32_t cnt = call_counters_["iterBack"]++;
-    push_path("iterBack#" + std::to_string(cnt));
-    std::uint32_t state_id = compute_state_id();
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    if (!state_inits_.empty() &&
-        state_inits_.back().state_id == state_id &&
-        state_inits_.back().type == StateInitData::Type::SequenceProgram) {
-        state_inits_.back().iter_n = static_cast<std::uint8_t>(n_int);
-        state_inits_.back().iter_dir = -1;
-    }
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_reorder_call(node, n, "iterBack",
+                             cedar::EVENT_REORDER_ITER_BACK,
+                             /*flags=*/cedar::EVENT_REORDER_ITER_DIR_BACK,
+                             n_buf, /*param1=*/0xFFFF,
+                             /*cycle_length_factor=*/1.0f,
+                             /*capacity_factor=*/1u);
 }
 
 // ============================================================================
@@ -4891,22 +4902,13 @@ TypedValue CodeGenerator::handle_add_voicings_call(NodeIndex node, const Node& n
 
 
 TypedValue CodeGenerator::handle_compress_call(NodeIndex node, const Node& n) {
+    // compress(pattern, start, end) — PRD Phase 4 runtime form: EVENT_REORDER
+    // (COMPRESS) reads upstream OutputEvents and rescales each event's time
+    // (and duration) from [0, 1) into [s, e). Both endpoints may be
+    // signal-rate; degenerate end <= start → empty output.
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto start_arg = get_number_arg(*ast_, n, 1);
-    auto end_arg = get_number_arg(*ast_, n, 2);
-
     if (pattern_arg == NULL_NODE) {
         error("E130", "compress() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-    if (!start_arg.has_value() || !end_arg.has_value()) {
-        error("E131", "compress() requires two numbers (start, end) after the pattern", n.location);
-        return TypedValue::void_val();
-    }
-    float s = *start_arg;
-    float e_val = *end_arg;
-    if (e_val <= s) {
-        error("E132", "compress() end must be greater than start", n.location);
         return TypedValue::void_val();
     }
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
@@ -4914,43 +4916,28 @@ TypedValue CodeGenerator::handle_compress_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "compress() failed to compile pattern argument", n.location);
+    auto start_const = get_number_arg(*ast_, n, 1);
+    auto end_const = get_number_arg(*ast_, n, 2);
+    if (start_const.has_value() && end_const.has_value() &&
+        *end_const <= *start_const) {
+        error("E132", "compress() end must be greater than start", n.location);
         return TypedValue::void_val();
     }
 
-    std::uint32_t comp_count = call_counters_["compress"]++;
-    push_path("compress#" + std::to_string(comp_count));
-    std::uint32_t state_id = compute_state_id();
+    std::uint16_t start_buf = resolve_scalar_or_signal_arg(
+        n, 1, "E131",
+        "compress() requires a number or signal as second argument (start)");
+    if (start_buf == BufferAllocator::BUFFER_UNUSED) return TypedValue::void_val();
+    std::uint16_t end_buf = resolve_scalar_or_signal_arg(
+        n, 2, "E131",
+        "compress() requires a number or signal as third argument (end)");
+    if (end_buf == BufferAllocator::BUFFER_UNUSED) return TypedValue::void_val();
 
-    float width = e_val - s;
-    for (auto& seq_events : sequence_events) {
-        for (auto& event : seq_events) {
-            event.time = s + event.time * width;
-            event.duration *= width;
-        }
-    }
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    return emit_reorder_call(node, n, "compress",
+                             cedar::EVENT_REORDER_COMPRESS, /*flags=*/0,
+                             start_buf, end_buf,
+                             /*cycle_length_factor=*/1.0f,
+                             /*capacity_factor=*/1u);
 }
 
 TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {

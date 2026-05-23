@@ -1369,6 +1369,14 @@ void VM::execute(const Instruction& inst) {
             op_event_rate_scale(ctx_, inst);
             break;
 
+        case Opcode::EVENT_REORDER:
+            op_event_reorder(ctx_, inst);
+            break;
+
+        case Opcode::EVENT_FANOUT:
+            op_event_fanout(ctx_, inst);
+            break;
+
         // === Trigonometric Math ===
         case Opcode::MATH_SIN:
             op_math_sin(ctx_, inst);

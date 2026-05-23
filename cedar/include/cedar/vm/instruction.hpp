@@ -286,6 +286,28 @@ enum class Opcode : std::uint8_t {
     //   state_id: RateScaleState
     EVENT_RATE_SCALE = 221,
 
+    // Runtime Event-Stream Transforms — structural reorder / fanout (PRD
+    // prd-runtime-event-transforms Phase 4). Plain per-block opcodes (regular
+    // execute() switch cases). Both read upstream OutputEvents via
+    // resolve_output_events, publish their own transformed OutputEvents into a
+    // transform-owned SequenceState, dispatch per-kind via a low-nibble rate
+    // selector.
+    //   rate (u8): bits 0-3 = kind selector (see event_transform_encoding.hpp:
+    //              EVENT_REORDER_* and EVENT_FANOUT_*)
+    //              bits 4-7 = per-kind flags (ITER direction, reserved otherwise)
+    //   inputs[0]: kind-dependent param a (const buf with `n` for ply/segment/
+    //              iter; start for zoom/compress; frac for linger). 0xFFFF if
+    //              the kind takes no param.
+    //   inputs[1]: kind-dependent param b (end for zoom/compress; 0xFFFF
+    //              otherwise).
+    //   inputs[2..3]: upstream state_id (low/high 16 bits) — same packing as
+    //                 EVENT_MAP / EVENT_FILTER / EVENT_RATE_SCALE.
+    //   inputs[4]: 0xFFFF.  out_buffer: 0xFFFF.  state_id: transform-owned
+    //              SequenceState.
+    // See cedar/opcodes/event_transforms.hpp op_event_reorder / op_event_fanout.
+    EVENT_REORDER = 222,     // rev / palindrome / iter / iter_back / zoom / compress
+    EVENT_FANOUT  = 223,     // ply / linger / segment
+
     INVALID = 255
 };
 

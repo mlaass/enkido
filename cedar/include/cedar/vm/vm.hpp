@@ -199,12 +199,12 @@ public:
                                           &audio_arena_, total_events);
     }
 
-    // Configure iter()/iterBack() rotation on an existing SequenceState.
-    // Called after init_sequence_program_state when iter_n > 0.
-    void init_sequence_iter_state(std::uint32_t state_id,
-                                  std::uint8_t n, std::int8_t dir) {
-        state_pool_.init_sequence_iter(state_id, n, dir);
-    }
+    // PRD prd-runtime-event-transforms Phase 4 Commit C: legacy
+    // init_sequence_iter_state was removed alongside SequenceState's
+    // iter_n / iter_dir fields. iter() / iterBack() now lower to
+    // EVENT_REORDER(ITER) and use the standard init_event_transform_state
+    // path. Hosts must not call init_sequence_iter_state — the symbol no
+    // longer exists.
 
     // Initialize a transform-owned SequenceState for an EVENT_MAP / EVENT_FILTER
     // opcode (PRD prd-runtime-event-transforms, Phase 1). Allocates only the

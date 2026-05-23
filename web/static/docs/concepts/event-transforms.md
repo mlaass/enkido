@@ -2,7 +2,7 @@
 title: Event Transforms
 category: concepts
 order: 12
-keywords: [event-transforms, event_map, event_filter, transpose, velocity, dur, bend, aftertouch, early, late, swing, swingBy, fast, slow, rate, EVENT_RATE_SCALE, stdlib, stream, modifier, pattern-transform]
+keywords: [event-transforms, event_map, event_filter, transpose, velocity, dur, bend, aftertouch, early, late, swing, swingBy, fast, slow, rev, palindrome, ply, linger, zoom, segment, compress, iter, iterBack, rate, EVENT_RATE_SCALE, EVENT_REORDER, EVENT_FANOUT, stdlib, stream, modifier, pattern-transform, structural-transform]
 ---
 
 # Event Transforms
@@ -69,7 +69,7 @@ The `events: stream` annotation is part of [parameter type annotations](paramete
 | `swing(events, grid=8)` | `time` | 1/3-amount swing on `grid`-slice grid |
 | `swingBy(events, amount, grid=8)` | `time` | `amount` swing on `grid`-slice grid |
 
-Structural transforms (`rev`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `compress`, `iter`, `iterBack`) remain C++ builtins — they don't fit the per-event-record-rewrite shape. The PRD `prd-runtime-event-transforms.md` Phases 4–5 migrate them too.
+Structural transforms (`rev`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `compress`, `iter`, `iterBack`) are C++ builtins that lower to two runtime opcodes — `EVENT_REORDER` (rev / palindrome / iter / iter_back / zoom / compress) and `EVENT_FANOUT` (ply / linger / segment). Each reads upstream `OutputEvents` and publishes its own, so structural transforms compose freely with `event_map` / `event_filter` / `fast` / `slow` chains. See "Structural transforms" below.
 
 ## Rate scaling — `fast` / `slow`
 
@@ -117,6 +117,46 @@ n"c4 e4 g4 b4".late(0.25)  // shifts every event +0.25 cycles; the b4 wraps to t
 ```
 
 For cross-cycle reasoning, `e.cycle` exposes the absolute cycle count.
+
+## Structural transforms
+
+The structural family rewrites *event timing and count*, not just per-field values. Each lowers to one of two runtime opcodes that read upstream `OutputEvents` and publish their own.
+
+```akkado
+n"c4 e4 g4 a4".rev()                       // EVENT_REORDER(REV) — time-reverse
+n"[c4 e4]".palindrome()                    // EVENT_REORDER(PALINDROME) — forward + backward, 2× cycle
+n"c4 e4 g4 a4".iter(4)                     // EVENT_REORDER(ITER) — rotate by 1/n per cycle
+n"c4 e4 g4 a4".iterBack(4)                 // ITER with reversed direction
+n"c4 e4 g4 a4".zoom(0.25, 0.75)            // EVENT_REORDER(ZOOM) — window + rescale
+n"c4 e4 g4 a4".compress(0.0, 0.5)          // EVENT_REORDER(COMPRESS) — squash into [s, e)
+n"[c4 e4]".ply(3)                          // EVENT_FANOUT(PLY) — each event → N sub-events
+n"c4 e4 g4 a4".linger(0.5)                 // EVENT_FANOUT(LINGER) — keep first frac, loop
+n"c4 e4".segment(8)                        // EVENT_FANOUT(SEGMENT) — N grid-point samples
+```
+
+| Transform | Opcode | Output cardinality | Continuous param? |
+|---|---|---|---|
+| `rev(p)` | EVENT_REORDER(REV) | same | n/a |
+| `palindrome(p)` | EVENT_REORDER(PALINDROME) | ×2 | n/a |
+| `iter(p, n)` / `iterBack(p, n)` | EVENT_REORDER(ITER) | same | `n` is const int in `[1, 255]` |
+| `zoom(p, s, e)` | EVENT_REORDER(ZOOM) | ≤ same | `s` / `e` may be signals |
+| `compress(p, s, e)` | EVENT_REORDER(COMPRESS) | same | `s` / `e` may be signals |
+| `ply(p, n)` | EVENT_FANOUT(PLY) | ×n | `n` is const int |
+| `linger(p, frac)` | EVENT_FANOUT(LINGER) | ≤ same; cycle_length × frac | `frac` may be a signal |
+| `segment(p, n)` | EVENT_FANOUT(SEGMENT) | n | `n` is const int |
+
+**Composition works at runtime.** Because every structural transform reads upstream `OutputEvents` via the same `resolve_output_events` boundary as `event_map` / `event_filter`, any chain composes:
+
+```akkado
+n"[c4 e4]".transpose(5).palindrome()           // EVENT_MAP feeds EVENT_REORDER
+n"[c4 e4]".rev().velocity(0.5)                 // EVENT_REORDER feeds EVENT_MAP
+n"[c4 e4]".fast(2).bend(0.3).rev()             // ERS → EVENT_MAP → EVENT_REORDER
+ply(rev(n"[c4 e4]"), 3)                        // FANOUT on top of REORDER
+```
+
+**Compile-time fold for nested constants.** Mirroring Phase 3 fast/slow, `compile_pattern_for_transform` still applies any inner structural transform at compile time when nested inside another transform. So `rev(fast(p, 2))` collapses the inner fast into the inner `SequenceProgram`'s `cycle_length` and emits only the outer `EVENT_REORDER`. Mixed chains where the inner is a runtime `event_map` (e.g., `rev(bend(p, 0.3))`) go through the full runtime path; no behavior is lost.
+
+**iter cycle counter.** `iter(p, n)` / `iterBack(p, n)` derive the current cycle index from `ctx.global_sample_counter / (samples_per_cycle × upstream_cycle_length)` and rotate by `-dir × (cycle_index mod n) / n` of the cycle. This replaces the legacy `iter_n` / `iter_dir` fields on `SequenceState`, which were deleted in Phase 4 Commit C alongside the SEQPAT_QUERY rotation block.
 
 ## Composing with MIDI
 

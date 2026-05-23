@@ -960,10 +960,10 @@ public:
         state.current_index = 0;
         state.last_beat_pos = -1.0f;
         state.last_queried_cycle = -1.0f;
-        // iter rotation cleared on init; set via init_sequence_iter() below.
         state.cycle_index = 0;
-        state.iter_n = 0;
-        state.iter_dir = 0;
+        state.last_reorder_cycle = static_cast<std::uint32_t>(-1);
+        state.reorder_original_cycle_length = 0.0f;
+        state.reorder_captured = false;
 
         // Hot-swap continuity: when a state with this state_id already
         // existed and the new program has the same number of sequences,
@@ -1026,8 +1026,9 @@ public:
         state.last_beat_pos_gate = -1.0f;
         state.last_queried_cycle = -1.0f;
         state.cycle_index = 0;
-        state.iter_n = 0;
-        state.iter_dir = 0;
+        state.last_reorder_cycle = static_cast<std::uint32_t>(-1);
+        state.reorder_original_cycle_length = 0.0f;
+        state.reorder_captured = false;
         state.active_source_offset = 0;
         state.active_source_length = 0;
 
@@ -1069,15 +1070,10 @@ public:
         state.initialized = false;
     }
 
-    // Configure iter()/iterBack() rotation on a SequenceState. Called after
-    // init_sequence_program. n=0 disables rotation; dir is +1 for iter, -1
-    // for iterBack. Does nothing if the state slot is not a SequenceState.
-    void init_sequence_iter(std::uint32_t state_id,
-                            std::uint8_t n, std::int8_t dir) {
-        auto& state = get_or_create<SequenceState>(state_id);
-        state.iter_n = n;
-        state.iter_dir = dir;
-    }
+    // PRD prd-runtime-event-transforms Phase 4 Commit C: init_sequence_iter
+    // was removed alongside SequenceState's iter_n / iter_dir fields. iter() /
+    // iterBack() now lower to EVENT_REORDER(ITER) and use the standard
+    // init_event_transform path.
 
 private:
     static constexpr std::size_t INVALID_SLOT = ~std::size_t{0};

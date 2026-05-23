@@ -436,12 +436,67 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Event Transforms"
 	},
+	"rev": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"palindrome": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"ply": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"linger": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"zoom": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"segment": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"compress": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"iter": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"iterback": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
 	"rate": {
 		"slug": "event-transforms",
 		"category": "concepts",
 		"title": "Event Transforms"
 	},
 	"event_rate_scale": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"event_reorder": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"event_fanout": {
 		"slug": "event-transforms",
 		"category": "concepts",
 		"title": "Event Transforms"
@@ -462,6 +517,11 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Event Transforms"
 	},
 	"pattern-transform": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"structural-transform": {
 		"slug": "event-transforms",
 		"category": "concepts",
 		"title": "Event Transforms"
@@ -2692,46 +2752,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Sequencing & Timing"
 	},
 	"timing": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"palindrome": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"compress": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"ply": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"linger": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"zoom": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"segment": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"iter": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"iterback": {
 		"slug": "sequencing",
 		"category": "builtins",
 		"title": "Sequencing & Timing"

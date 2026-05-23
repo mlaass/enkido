@@ -3159,19 +3159,28 @@ TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
         REQUIRE_FALSE(result.success);
     }
     SECTION("palindrome doubles cycle_length and event count") {
+        // PRD prd-runtime-event-transforms Phase 4: palindrome is now a
+        // runtime EVENT_REORDER opcode. The inner SequenceProgram still
+        // carries the original 2 events; the Reorder StateInitData stamps
+        // cycle_length = upstream * 2. Event-count doubling happens at
+        // runtime — see test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(palindrome(n"[c4 e4]"))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
-        // pat: canonical cycle_length = 4 beats; palindrome doubles -> 8
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
-        // 2 forward + 2 reverse = 4 events
-        REQUIRE(si.sequence_events[0].size() == 4);
-        // All events in [0, 1)
-        for (const auto& e : si.sequence_events[0]) {
-            CHECK(e.time >= 0.0f);
-            CHECK(e.time < 1.0f);
+        // Inner pattern: 2 events, original cycle_length=1.
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
+        REQUIRE(inner.sequence_events[0].size() == 2);
+        // Reorder transform: cycle_length doubles.
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) {
+                found_reorder = true;
+                CHECK(si.cycle_length == Catch::Approx(2.0f));
+                break;
+            }
         }
+        CHECK(found_reorder);
     }
     SECTION("palindrome via dot-call") {
         auto dot = akkado::compile(R"(n"[c4 e4 g4]".palindrome())");
@@ -3203,29 +3212,38 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.5, 0.5))");
         REQUIRE_FALSE(result.success);
     }
-    SECTION("compress(pat, 0.25, 0.75) maps events into [0.25, 0.75)") {
+    SECTION("compress(pat, 0.25, 0.75) emits EVENT_REORDER(COMPRESS)") {
+        // PRD prd-runtime-event-transforms Phase 4: compress is now a runtime
+        // EVENT_REORDER opcode. The inner SequenceProgram still carries the
+        // original 2 events at times 0.0, 0.5 — the [s,e) remap happens per
+        // block in op_event_reorder. Runtime-event tests are in
+        // test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.25, 0.75))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
-        // Original times 0.0, 0.5 -> 0.25 + 0.0*0.5 = 0.25, 0.25 + 0.5*0.5 = 0.5
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
+        for (const auto& e : inner.sequence_events[0]) times.push_back(e.time);
         std::sort(times.begin(), times.end());
         REQUIRE(times.size() == 2);
-        CHECK(times[0] == Catch::Approx(0.25f).margin(0.001f));
-        CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
-        // Durations halved (width = 0.5)
-        for (const auto& e : si.sequence_events[0]) {
-            CHECK(e.duration == Catch::Approx(0.25f).margin(0.001f));
+        CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));   // original
+        CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));   // original
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
         }
+        CHECK(found_reorder);
     }
-    SECTION("compress(pat, 0, 1) is identity") {
+    SECTION("compress(pat, 0, 1) is runtime identity") {
         auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.0, 1.0))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        // Inner pattern carries the original events; the EVENT_REORDER opcode
+        // resolves the identity mapping at runtime.
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
+        for (const auto& e : inner.sequence_events[0]) times.push_back(e.time);
         std::sort(times.begin(), times.end());
         CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));
         CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
@@ -3247,30 +3265,31 @@ TEST_CASE("Pattern transform: ply()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(ply(n"[c4 e4]", 0))");
         REQUIRE_FALSE(result.success);
     }
-    SECTION("ply(pat, 3) triples event count") {
+    SECTION("ply(pat, 3) emits EVENT_FANOUT(PLY)") {
+        // PRD prd-runtime-event-transforms Phase 4: ply is a runtime
+        // EVENT_FANOUT opcode; event count tripling happens per block. The
+        // inner SequenceProgram carries the original 2 events. Runtime-event
+        // tests live in test_event_fanout.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(ply(n"[c4 e4]", 3))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
-        // n"[c4 e4]" produces 2 events, ply(3) -> 6
-        REQUIRE(si.sequence_events[0].size() == 6);
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
+        REQUIRE(inner.sequence_events[0].size() == 2);
+        bool found_fanout = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Fanout) found_fanout = true;
+        }
+        CHECK(found_fanout);
     }
-    SECTION("ply(pat, 2) produces correct sub-times") {
+    SECTION("ply(pat, 2) emits EVENT_FANOUT with 2x capacity") {
         auto result = akkado::compile(R"(ply(n"[c4 e4]", 2))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        // Original: events at 0.0 (dur 0.5), 0.5 (dur 0.5)
-        // After ply(2): events at 0.0, 0.25, 0.5, 0.75 (dur 0.25 each)
-        std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
-        std::sort(times.begin(), times.end());
-        REQUIRE(times.size() == 4);
-        CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));
-        CHECK(times[1] == Catch::Approx(0.25f).margin(0.001f));
-        CHECK(times[2] == Catch::Approx(0.5f).margin(0.001f));
-        CHECK(times[3] == Catch::Approx(0.75f).margin(0.001f));
-        for (const auto& e : si.sequence_events[0]) {
-            CHECK(e.duration == Catch::Approx(0.25f).margin(0.001f));
+        // The Fanout init capacity is sized for 2x upstream events.
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Fanout) {
+                CHECK(si.total_events == 4);  // 2 upstream * 2
+            }
         }
     }
     SECTION("ply via dot-call") {
@@ -3291,21 +3310,21 @@ TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 2);
     }
-    SECTION("linger(pat, 0.5) keeps first half, halves cycle_length") {
-        // n"[c4 e4 g4 b4]": events at 0.0, 0.25, 0.5, 0.75; canonical cycle=4 beats.
-        // Keep events with time < 0.5: {c4@0.0, e4@0.25}
-        // Scale by 1/0.5=2: c4@0.0, e4@0.5; durations also scaled.
-        // cycle_length *= 0.5 -> 2.
+    SECTION("linger(pat, 0.5) emits EVENT_FANOUT(LINGER) with 0.5x cycle_length") {
+        // PRD prd-runtime-event-transforms Phase 4: linger is a runtime
+        // EVENT_FANOUT opcode. The inner SequenceProgram still carries the
+        // original 4 events; per-block runtime keeps t < frac and rescales.
+        // The Fanout StateInitData stamps cycle_length = upstream * frac.
         auto result = akkado::compile(R"(linger(n"[c4 e4 g4 b4]", 0.5))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(0.5f));
-        REQUIRE(si.sequence_events[0].size() == 2);
-        std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
-        std::sort(times.begin(), times.end());
-        CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));
-        CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
+        bool found_fanout = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Fanout) {
+                found_fanout = true;
+                CHECK(si.cycle_length == Catch::Approx(0.5f));
+            }
+        }
+        CHECK(found_fanout);
     }
     SECTION("linger via dot-call") {
         auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".linger(0.5))");
@@ -3322,19 +3341,22 @@ TEST_CASE("Pattern transform: zoom()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(zoom(n"[c4 e4]", 0.5, 0.5))");
         REQUIRE_FALSE(result.success);
     }
-    SECTION("zoom(pat, 0.25, 0.75) keeps middle 50% remapped to [0,1)") {
-        // n"[c4 e4 g4 b4]": events at 0.0, 0.25, 0.5, 0.75 (dur 0.25 each).
-        // Window [0.25, 0.75): events e4(0.25-0.5), g4(0.5-0.75) overlap fully.
-        // Remap: e4 -> t=0.0 dur 0.5, g4 -> t=0.5 dur 0.5.
+    SECTION("zoom(pat, 0.25, 0.75) emits EVENT_REORDER(ZOOM)") {
+        // PRD prd-runtime-event-transforms Phase 4: zoom is now a runtime
+        // EVENT_REORDER opcode. The inner SequenceProgram still holds the
+        // original 4 events; window filtering + remapping happens per block
+        // in op_event_reorder. Runtime-event tests live in
+        // test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(zoom(n"[c4 e4 g4 b4]", 0.25, 0.75))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        REQUIRE(si.sequence_events[0].size() == 2);
-        std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
-        std::sort(times.begin(), times.end());
-        CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));
-        CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
+        REQUIRE(inner.sequence_events[0].size() == 4);
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
+        }
+        CHECK(found_reorder);
     }
     SECTION("zoom via dot-call") {
         auto dot = akkado::compile(R"(n"[c4 e4 g4 b4]".zoom(0.0, 0.5))");
@@ -3347,28 +3369,30 @@ TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(segment(n"[c4 e4]", 0))");
         REQUIRE_FALSE(result.success);
     }
-    SECTION("segment(pat, 8) emits 8 events with duration 1/8") {
+    SECTION("segment(pat, 8) emits EVENT_FANOUT(SEGMENT) sized for 8 events") {
+        // PRD prd-runtime-event-transforms Phase 4: segment is a runtime
+        // EVENT_FANOUT opcode. The inner SequenceProgram is untouched;
+        // grid-point sampling happens per block. Capacity = N × upstream.
         auto result = akkado::compile(R"(segment(n"[c4 e4]", 8))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        REQUIRE(si.sequence_events[0].size() == 8);
-        for (const auto& e : si.sequence_events[0]) {
-            CHECK(e.duration == Catch::Approx(0.125f).margin(0.001f));
+        bool found_fanout = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Fanout) {
+                found_fanout = true;
+                // 8 (n) * 2 (upstream events) = 16 capacity.
+                CHECK(si.total_events >= 8);
+            }
         }
-        std::vector<float> times;
-        for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
-        std::sort(times.begin(), times.end());
-        for (std::size_t i = 0; i < times.size(); ++i) {
-            CHECK(times[i] == Catch::Approx(static_cast<float>(i) * 0.125f).margin(0.001f));
-        }
+        CHECK(found_fanout);
     }
-    SECTION("segment(pat, 1) emits single full-cycle event") {
+    SECTION("segment(pat, 1) compiles") {
         auto result = akkado::compile(R"(segment(n"[c4 e4]", 1))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        REQUIRE(si.sequence_events[0].size() == 1);
-        CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f).margin(0.001f));
-        CHECK(si.sequence_events[0][0].duration == Catch::Approx(1.0f).margin(0.001f));
+        bool found_fanout = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Fanout) found_fanout = true;
+        }
+        CHECK(found_fanout);
     }
     SECTION("segment via dot-call") {
         auto dot = akkado::compile(R"(n"[c4 e4 g4]".segment(8))");
@@ -3435,22 +3459,30 @@ TEST_CASE("Pattern transform: iter()/iterBack()", "[codegen][patterns][phase2]")
         auto result = akkado::compile(R"(iter(n"[c4 e4 g4 b4]", 0))");
         REQUIRE_FALSE(result.success);
     }
-    SECTION("iter sets iter_n=4 and iter_dir=+1 on StateInitData") {
+    SECTION("iter emits EVENT_REORDER(ITER) + Reorder init") {
+        // PRD prd-runtime-event-transforms Phase 4 Commit C: iter() lowers
+        // to EVENT_REORDER(ITER); the legacy iter_n / iter_dir StateInitData
+        // payload fields and SequenceState rotation were removed.
         auto result = akkado::compile(R"(iter(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
-        CHECK(si.iter_n == 4);
-        CHECK(si.iter_dir == 1);
-        // Events themselves are not rewritten — runtime applies rotation.
-        REQUIRE(si.sequence_events[0].size() == 4);
+        const auto& inner = result.state_inits[0];
+        REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
+        REQUIRE(inner.sequence_events[0].size() == 4);
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
+        }
+        CHECK(found_reorder);
     }
-    SECTION("iterBack sets iter_n=4 and iter_dir=-1") {
+    SECTION("iterBack emits EVENT_REORDER(ITER_BACK)") {
         auto result = akkado::compile(R"(iterBack(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        CHECK(si.iter_n == 4);
-        CHECK(si.iter_dir == -1);
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
+        }
+        CHECK(found_reorder);
     }
     SECTION("iter n must be in [1, 255]") {
         auto result = akkado::compile(R"(iter(n"[c4 e4]", 256))");
@@ -3877,11 +3909,21 @@ TEST_CASE("Phase 2 transforms compose with existing transforms", "[codegen][patt
         CHECK(result.success);
     }
     SECTION("palindrome(slow(...)) doubles slow cycle_length again") {
+        // PRD prd-runtime-event-transforms Phase 4: palindrome is runtime,
+        // slow is runtime (Phase 3). Both rate-affecting steps live in their
+        // own opcodes. The inner pattern's compile-time cycle_length picks up
+        // slow via compile_pattern_for_transform's recursive fold (slow(2) ->
+        // 2.0); palindrome doubles in the Reorder state init (2.0 -> 4.0).
         auto result = akkado::compile(R"(palindrome(slow(n"[c4 e4]", 2)))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
-        // pat: cycle=4 (canonical); slow(2): cycle=8; palindrome: cycle=16
-        CHECK(si.cycle_length == Catch::Approx(4.0f));
+        bool found_reorder = false;
+        for (const auto& si : result.state_inits) {
+            if (si.type == akkado::StateInitData::Type::Reorder) {
+                CHECK(si.cycle_length == Catch::Approx(4.0f));
+                found_reorder = true;
+            }
+        }
+        CHECK(found_reorder);
     }
     SECTION("compress + early chain") {
         auto result = akkado::compile(R"(early(compress(n"[c4 e4 g4 b4]", 0.0, 0.5), 0.1))");

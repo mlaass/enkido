@@ -1175,9 +1175,9 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                 init.is_sample_pattern,
                 init.total_events
             );
-            if (init.iter_n > 0) {
-                g_vm->init_sequence_iter_state(init.state_id, init.iter_n, init.iter_dir);
-            }
+            // PRD prd-runtime-event-transforms Phase 4 Commit C: iter()/
+            // iterBack() lower to EVENT_REORDER(ITER); no per-SequenceState
+            // iter init call.
             count++;
         }
         else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
@@ -1238,9 +1238,12 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
             state.loop_length = init.timeline_loop_length;
             count++;
         }
-        else if (init.type == akkado::StateInitData::Type::EventTransform) {
-            // PRD prd-runtime-event-transforms Phase 1: transform-owned
-            // SequenceState filled at runtime by EVENT_MAP / EVENT_FILTER.
+        else if (init.type == akkado::StateInitData::Type::EventTransform ||
+                 init.type == akkado::StateInitData::Type::Reorder ||
+                 init.type == akkado::StateInitData::Type::Fanout) {
+            // PRD prd-runtime-event-transforms Phase 1/4: transform-owned
+            // SequenceState filled at runtime by EVENT_MAP / EVENT_FILTER /
+            // EVENT_REORDER / EVENT_FANOUT.
             g_vm->init_event_transform_state(init.state_id, init.cycle_length,
                                              init.is_sample_pattern,
                                              init.total_events);

@@ -163,6 +163,8 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::EVENT_FILTER: return "EVENT_FILTER";
         case Opcode::FMOD: return "FMOD";
         case Opcode::EVENT_RATE_SCALE: return "EVENT_RATE_SCALE";
+        case Opcode::EVENT_REORDER: return "EVENT_REORDER";
+        case Opcode::EVENT_FANOUT: return "EVENT_FANOUT";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }
@@ -250,6 +252,8 @@ inline bool opcode_is_stateful(Opcode op) {
         case Opcode::EVENT_MAP:
         case Opcode::EVENT_FILTER:
         case Opcode::EVENT_RATE_SCALE:
+        case Opcode::EVENT_REORDER:
+        case Opcode::EVENT_FANOUT:
             return true;
         default:
             return false;
