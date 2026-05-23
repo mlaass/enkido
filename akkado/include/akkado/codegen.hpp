@@ -750,11 +750,8 @@ private:
     /// Handle tune(tuning_name, pattern) - apply microtonal tuning to pattern
     TypedValue handle_tune_call(NodeIndex node, const Node& n);
 
-    /// Handle early(pattern, amount) - shift events earlier (wraps within cycle)
-    TypedValue handle_early_call(NodeIndex node, const Node& n);
-
-    /// Handle late(pattern, amount) - shift events later (wraps within cycle)
-    TypedValue handle_late_call(NodeIndex node, const Node& n);
+    // early / late are stdlib `fn`s in akkado/stdlib/event_transforms.ak
+    // (prd-runtime-event-transforms Phase 2b). No C++ handler.
 
     /// Handle palindrome(pattern) - forward then reversed (doubles cycle length)
     TypedValue handle_palindrome_call(NodeIndex node, const Node& n);

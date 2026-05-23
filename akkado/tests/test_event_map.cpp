@@ -373,6 +373,69 @@ TEST_CASE("event-map (Phase 2b): bend + aftertouch chain writes both slots",
     }
 }
 
+TEST_CASE("event-map (Phase 2b): late() shifts e.time by +t mod 1",
+          "[event-map][phase2b][late]") {
+    auto r = akkado::compile(R"(n"[c4 e4 g4 b4]".late(0.25))");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
+    for (const auto& i : insts) {
+        if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
+        const std::uint8_t mask =
+            (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT) & 0x7F;
+        CHECK((mask & (1u << cedar::EVENT_OUT_TIME)) != 0);
+    }
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 4);
+    // Source times 0, 0.25, 0.5, 0.75 + 0.25 → 0.25, 0.5, 0.75, 0.0 (wraps).
+    // The runtime sort re-orders by time, so post-sort: 0, 0.25, 0.5, 0.75.
+    std::vector<float> times;
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i)
+        times.push_back(st->output.events[i].time);
+    REQUIRE(times.size() == 4);
+    CHECK_THAT(times[0], WithinAbs(0.0f, 0.001f));
+    CHECK_THAT(times[1], WithinAbs(0.25f, 0.001f));
+    CHECK_THAT(times[2], WithinAbs(0.5f, 0.001f));
+    CHECK_THAT(times[3], WithinAbs(0.75f, 0.001f));
+}
+
+TEST_CASE("event-map (Phase 2b): early() shifts e.time by -t with wrap",
+          "[event-map][phase2b][early]") {
+    // Source times 0, 0.25, 0.5, 0.75 - 0.25 → -0.25, 0, 0.25, 0.5. The
+    // stdlib early() adds +1.0 inside fmod to keep the wrap non-negative,
+    // landing the wrapped event at 0.75 instead of -0.25.
+    auto r = akkado::compile(R"(n"[c4 e4 g4 b4]".early(0.25))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 4);
+    std::vector<float> times;
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i)
+        times.push_back(st->output.events[i].time);
+    CHECK_THAT(times[0], WithinAbs(0.0f, 0.001f));
+    CHECK_THAT(times[1], WithinAbs(0.25f, 0.001f));
+    CHECK_THAT(times[2], WithinAbs(0.5f, 0.001f));
+    CHECK_THAT(times[3], WithinAbs(0.75f, 0.001f));
+}
+
+TEST_CASE("event-map (Phase 2b): late() with t > 1 wraps to the same position",
+          "[event-map][phase2b][late]") {
+    auto r = akkado::compile(R"(n"[c4 e4 g4 b4]".late(1.25))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 4);
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+        const float t = st->output.events[i].time;
+        CHECK(t >= 0.0f);
+        CHECK(t < 1.0f);
+    }
+}
+
 TEST_CASE("event-map (Phase 2b): transpose then dur chains as two EVENT_MAPs",
           "[event-map][phase2b][chain]") {
     auto r = akkado::compile(R"(n"c4".transpose(7).dur(2.0))");

@@ -1418,14 +1418,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
 
     // Phase 2 PRD: time & structure modifiers (Strudel-compatible).
     // All compile-time event-list rewrites; opcode is NOP.
-    {"early",      {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "amount", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Shift events earlier by amount cycles (wraps)."}},
-    {"late",       {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "amount", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Shift events later by amount cycles (wraps)."}},
+    // early / late live in akkado/stdlib/event_transforms.ak (Phase 2b).
     {"palindrome", {cedar::Opcode::NOP, 1, 0, false,
                     {"pattern", "", "", "", "", ""},
                     {NAN, NAN, NAN},

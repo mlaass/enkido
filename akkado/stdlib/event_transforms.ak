@@ -22,3 +22,15 @@ fn velocity(events: stream, v)   -> { event_map(events, (e) -> {vel:  e.vel * v}
 fn dur(events: stream, d)        -> { event_map(events, (e) -> {dur:  e.dur * d}) }
 fn bend(events: stream, b)       -> { event_map(events, (e) -> {bend: b}) }
 fn aftertouch(events: stream, a) -> { event_map(events, (e) -> {at:   a}) }
+
+// ----------------------------------------------------------------------------
+// Time-shift modifiers — overlay e.time with a phase-wrapped offset.
+// ----------------------------------------------------------------------------
+// The EVENT_MAP closure runtime resorts the output by time when the TIME
+// write-mask bit is set (event_transforms.hpp:186-188), so events that wrap
+// past the cycle boundary land in the correct block position. `fmod` keeps
+// the result inside [0, 1); for negative results we add 1.0 first because C's
+// fmod preserves the sign of the dividend (fmod(-0.25, 1.0) = -0.25).
+
+fn early(events: stream, t) -> { event_map(events, (e) -> {time: fmod(e.time - t + 1.0, 1.0)}) }
+fn late(events: stream, t)  -> { event_map(events, (e) -> {time: fmod(e.time + t, 1.0)}) }
