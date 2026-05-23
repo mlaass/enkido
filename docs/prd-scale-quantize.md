@@ -1,14 +1,18 @@
-> **Status: NOT STARTED** — Draft for review (2026-05-22). Standalone sibling
-> of [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md),
-> which reserves the `EVENT_QUANTIZE` opcode for exactly this work (its §3.1,
-> §5 migration table, §9 Phase 5). That parent PRD's event-transform substrate
-> — `OutputEvents` resolution, the `state_id` packing convention, the
-> `EVENT_*` opcode family — is a **hard dependency**: at least its Phase 1
-> scaffolding must land before Phase 2 here. **Stdlib-module loading
-> infrastructure** (`akkado/stdlib/`, also introduced by the parent PRD) is a
-> second hard dependency for Phase 2 — the scale catalog ships only as a
-> stdlib file (§4.2, §11.9). This PRD owns all `scale` / `key` semantics; the
-> parent's Phase 5 line should cross-reference it.
+> **Status: IN PROGRESS** — corrected scope as of 2026-05-24. Standalone sibling
+> of [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
+> The original draft (2026-05-22) specced `scale` / `key` as a new
+> `EVENT_QUANTIZE` opcode. **That framing has been dropped.** Under the
+> parent PRD's foundational principle ("opcodes are for primitive operations
+> and DSP work, not for language constructs"), `scale` and `key` are
+> **stdlib akkado on top of `event_map`** — exactly like Phase 2b's
+> `transpose` / `velocity` / `dur` / `bend` migration. No new opcode is
+> introduced; the parent PRD's §3.1 substrate is unchanged
+> (`EVENT_MAP` + `EVENT_FILTER`). This PRD owns all `scale` / `key`
+> semantics and the generated `akkado/stdlib/scales.ak` catalog.
+>
+> **Hard dependencies:**
+> - Parent PRD's `EVENT_MAP` closure substrate (Phase 2a, SHIPPED) — `scale` / `key` lower to `event_map` calls.
+> - Stdlib-module loading (SHIPPED — `akkado/stdlib/event_transforms.ak` already loads). Phase 2 here additionally requires **top-level constant bindings** to load (e.g. `minor = [0,2,3,5,7,8,10]`); a precondition spike verifies this in Commit B of `/home/moritz/.claude/plans/phase-4-fully-unified-snowglobe.md`.
 
 # PRD: Scale & Key — Note Quantization and Degree Mapping
 
@@ -32,6 +36,11 @@ runtime event-transform substrate.
 
 **Key design decisions (locked — see §11):**
 
+- **Stdlib akkado, not a new opcode.** `scale` and `key` lower to
+  `event_map` closure calls on top of the parent PRD's substrate. No
+  `EVENT_QUANTIZE` opcode is introduced — that was the original framing
+  and was dropped 2026-05-24 in alignment with the parent PRD's
+  foundational principle.
 - **Two builtins, not one.** `scale` = degree mapping (octave-aware); `key` =
   quantization (octave-agnostic). This is a deliberate divergence from
   Strudel's single overloaded `scale`.
@@ -44,8 +53,8 @@ runtime event-transform substrate.
 - **12-TET only for v1.** Quantization is defined in 12 equal semitones;
   interaction with non-12-EDO tunings (JI, Bohlen-Pierce) is a future PRD.
 - **The scale/key argument is patternable** — `key("<C:major A:minor>")`
-  alternates per cycle.
-- **Phased delivery in 5 phases** (§9), each independently testable.
+  alternates per cycle. **Deferred** to the follow-up PRD `prd-pattern-array-transforms.md`, since per-cycle alternation is naturally an array-of-events concept.
+- **Phased delivery** — see §9, each phase independently testable.
 
 ---
 
@@ -61,8 +70,8 @@ runtime event-transform substrate.
 | Chord-symbol parsing (`Am`, `Fmaj7`) | Exists | `akkado/src/chord_parser.cpp`, `music_theory.hpp` |
 | Pitch-class arithmetic (`semitone % 12`) | Implicit | scattered |
 | Tuning system (12-EDO / JI / Bohlen-Pierce) | Exists | `akkado/include/akkado/tuning.hpp` |
-| `EVENT_QUANTIZE` opcode | **Reserved, unimplemented** | parent PRD §3.1, Phase 5 |
-| `scale` / `key` builtins | **Reserved, unspecified** | parent PRD §5 migration table |
+| `scale` / `key` builtins | **Specified, unimplemented** | parent PRD §5 migration table; this PRD §4 |
+| `event_map` closure substrate | **Shipped** (Phase 2a, 2026-05-23) | `cedar/include/cedar/opcodes/event_transforms.hpp`; this PRD lowers `scale`/`key` to `event_map` calls |
 | Named musical scales (major, minor, modes…) | **None** | — |
 | Scale-quantize / degree-mapping transform | **None** | — |
 
@@ -285,28 +294,39 @@ state. A non-patterned string is the degenerate single-element case.
 Implementation is staged: Phases 2–4 ship the constant-argument form; Phase 5
 adds the patternable form (§9).
 
-### 4.8 Opcode: `EVENT_QUANTIZE`
+### 4.8 Lowering: stdlib `event_map` (no new opcode)
 
-One new Cedar opcode serves both builtins, on the parent PRD's substrate
-(§3.1 there): it reads upstream `OutputEvents` via
-`StatePool::resolve_output_events`, rewrites each event's pitch, and publishes
-its own `OutputEvents`.
+`scale` and `key` are stdlib akkado functions, defined in
+`akkado/stdlib/event_transforms.ak` (or a new
+`akkado/stdlib/scale_quantize.ak`):
 
+```akkado
+fn scale(events, name) = event_map(events, (e) -> {
+    note: degree_to_note(e.note, parse_scale_root(name), parse_scale_intervals(name))
+})
+
+fn key(events, name) = event_map(events, (e) -> {
+    note: snap_to_scale(e.note, parse_scale_root(name), parse_scale_intervals(name))
+})
+
+fn snap_to_scale(note, root_pc, intervals) = ...  // §4.5 algorithm
+fn degree_to_note(d, root_midi, intervals)  = ...  // §4.4 algorithm
+fn parse_scale_root(name)     = ...                // "d:minor"  → 50 (D3 default); "d2:minor" → 38
+fn parse_scale_intervals(name) = ...               // "d:minor" → minor from scales.ak
 ```
-EVENT_QUANTIZE
-  rate (u8):   bit 0 = mode  (0 = key/quantize, 1 = scale/degree-map)
-  inputs[2]/inputs[3]: low/high 16 bits of the upstream state_id
-  inputs[0..1], inputs[4], out_buffer: 0xFFFF (writes no signal buffer)
-  state_id:    transform-owned downstream SequenceState
-  StateInitData: resolved scale table — root pitch class, root octave,
-                 interval list; for the patternable form, the per-cycle
-                 sequence of these.
-```
 
-`scale`/`key` handlers live in `akkado/src/codegen_patterns.cpp` (or a new
-`codegen_scale_quantize.cpp`), following the `handle_transpose_call` pattern:
-compile the upstream pattern via `compile_pattern_query_only()`, emit
-`EVENT_QUANTIZE`, return the downstream state via `emit_pattern_readout()`.
+The `parse_*` helpers compile-time-evaluate when `name` is a string
+literal — Akkado already constant-folds string parsing in similar paths
+(see `parse_pitch_to_midi`). When `name` is itself a signal (the
+patternable scale-name case), this PRD's Phase 4 (formerly Phase 5) is
+deferred to the follow-up PRD `prd-pattern-array-transforms.md`, since
+per-cycle alternation is an array-of-events concept.
+
+There is **no `EVENT_QUANTIZE` opcode**. The Cedar substrate is
+unchanged — the parent PRD's `EVENT_MAP` opcode handles the per-event
+pitch rewrite for both `scale` and `key`. Codegen needs no new handler:
+once stdlib `fn scale` / `fn key` are registered, the existing
+user-fn-call path lowers them through `event_map` automatically.
 
 ---
 
@@ -314,17 +334,17 @@ compile the upstream pattern via `compile_pattern_query_only()`, emit
 
 | Component | Status | Notes |
 |---|---|---|
-| Parent event-transform substrate (`EVENT_MAP`, `OutputEvents`, `state_id` packing) | **Stays** | Hard dependency; consumed unchanged |
-| `cedar/include/cedar/vm/instruction.hpp` Opcode enum | **Modified** | Add `EVENT_QUANTIZE` |
-| Cedar VM dispatch | **Modified** | Add `EVENT_QUANTIZE` case |
-| `akkado/include/akkado/builtins.hpp` | **Modified** | Register `scale`, `key` |
-| `akkado/src/codegen_patterns.cpp` | **Modified** | Add `scale`/`key` handlers |
+| Parent event-transform substrate (`EVENT_MAP`, `OutputEvents`, `state_id` packing) | **Stays** | Hard dependency; `scale`/`key` lower to `event_map` calls |
+| `cedar/include/cedar/vm/instruction.hpp` Opcode enum | **Unchanged** | No new opcode |
+| Cedar VM dispatch | **Unchanged** | No new opcode |
+| `akkado/include/akkado/builtins.hpp` | **Modified** | Register `scale`, `key` as stdlib-resolved names (NOP opcode entries) |
+| `akkado/src/codegen_patterns.cpp` | **Unchanged** | No new C++ handler — stdlib `fn` lowering reuses the existing user-fn-call path |
 | `mini_lexer.cpp` note parsing | **Stays** | Reused for tonic parsing |
 | `tuning.hpp` | **Stays** | Reused for Hz re-derivation; not extended (12-TET v1) |
 | `chord_parser.cpp` | **Stays** | Unaffected |
-| `akkado/stdlib/scales.ak` | **New** | Generated scale catalog |
+| `akkado/stdlib/scales.ak` | **New, generated** | Scale catalog (interval lists) |
+| `akkado/stdlib/event_transforms.ak` (or `scale_quantize.ak`) | **Modified** | Add `fn scale`, `fn key`, helpers (`snap_to_scale`, `degree_to_note`, `parse_scale_root`, `parse_scale_intervals`) |
 | `web/scripts/generate-scales.ts` | **New** | tonal.js → catalog generator |
-| `cedar/include/cedar/opcodes/event_quantize.hpp` | **New** | `op_event_quantize()` |
 
 ---
 
@@ -332,12 +352,11 @@ compile the upstream pattern via `compile_pattern_query_only()`, emit
 
 | File | Change |
 |---|---|
-| `cedar/include/cedar/vm/instruction.hpp` | New `EVENT_QUANTIZE` opcode enum value |
-| `cedar/include/cedar/opcodes/event_quantize.hpp` | **New** — `op_event_quantize()`: degree-map + snap modes |
-| `cedar/src/vm/vm.cpp` | Dispatch case for `EVENT_QUANTIZE` |
-| `akkado/include/akkado/builtins.hpp` | **New** `scale`, `key` `BuiltinInfo` entries |
-| `akkado/src/codegen_patterns.cpp` | **New** `handle_scale_call`, `handle_key_call`; `parse_scale_name()` |
-| `akkado/include/akkado/codegen.hpp` | Declarations for the two handlers |
+| `cedar/include/cedar/vm/instruction.hpp` | **Unchanged** — no new opcode |
+| `cedar/src/vm/vm.cpp` | **Unchanged** — no new dispatch case |
+| `akkado/include/akkado/builtins.hpp` | **New** `scale`, `key` `BuiltinInfo` entries (NOP opcode; stdlib resolution) |
+| `akkado/src/codegen_patterns.cpp` | **Unchanged** — no new handlers; stdlib `fn` lowering via existing user-fn-call path |
+| `akkado/stdlib/event_transforms.ak` (or `scale_quantize.ak`) | **Modified** — add `fn scale`, `fn key`, helpers (`snap_to_scale`, `degree_to_note`, `parse_scale_root`, `parse_scale_intervals`) |
 | `akkado/stdlib/scales.ak` | **New, generated** — named scale interval lists |
 | `web/scripts/generate-scales.ts` | **New** — converts tonal.js `scale-type` data to `scales.ak` |
 | `web/static/docs/reference/` | **New** doc page for `scale` / `key` |
@@ -354,10 +373,9 @@ compile the upstream pattern via `compile_pattern_query_only()`, emit
 | `E185` | `scale`/`key` codegen | Malformed scale/key name string (bad tonic or empty type) |
 | `E186` | `scale`/`key` codegen | Invalid user-defined interval list (non-ascending, not 0-based, out of `0..11`, empty, or non-constant) |
 
-> The parent PRD §6 reserved **`E182`** for "Unknown scale or key name", but
-> `E182` is already in use in `akkado/src`. Final codes are assigned at
-> implementation; `E184`–`E186` are free in `src` today. **[OPEN QUESTION
-> §12.2]**
+> The parent PRD's `E182` reservation was tied to the now-dropped
+> `EVENT_QUANTIZE` opcode and is no longer reserved. `E184`–`E186` are free
+> in `akkado/src` today and confirmed as the assigned codes for this PRD.
 
 ---
 
@@ -390,10 +408,10 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
 | Phase | Deliverable | Tests |
 |---|---|---|
 | **1** | `web/scripts/generate-scales.ts` + generated `akkado/stdlib/scales.ak`; interval-quality → semitone conversion | Generator unit test; spot-check ~10 scales vs tonal.js |
-| **2** | `EVENT_QUANTIZE` opcode (snap mode) + `key` builtin, constant name string. **Blocks on stdlib-module loading** (§4.2, §11.9) — `scale`/`key` resolve names against `scales.ak` | `cedar/tests` opcode tests; codegen tests; quantize WAV |
-| **3** | `EVENT_QUANTIZE` degree-map mode + `scale` builtin, constant name string | Degree-map codegen tests; `scale` WAV (incl. negative degrees via `v"…"`) |
+| **2** | Stdlib `fn key` + helpers (`snap_to_scale`, `parse_scale_root`, `parse_scale_intervals`) in `akkado/stdlib/event_transforms.ak` (or `scale_quantize.ak`). Constant name string. Requires the stdlib loader to expose top-level constant bindings from `scales.ak`. | Codegen tests; quantize WAV (≥300 s) |
+| **3** | Stdlib `fn scale` + `degree_to_note` helper. Constant name string. | Degree-map codegen tests; `scale` WAV (incl. negative degrees via `v"…"`) |
 | **4** | User-defined `(root, intervals)` form for both builtins; `E186` validation | Custom-scale codegen + error tests |
-| **5** | Patternable scale/key argument (per-cycle alternation) | Per-cycle alternation test; long-render WAV (§10) |
+| **5** | **Deferred** — patternable scale/key argument (per-cycle alternation) is naturally an array-of-events concept and ships once `prd-pattern-array-transforms.md` lands the array substrate. | Per-cycle alternation test; long-render WAV (§10) |
 
 ---
 
@@ -419,7 +437,6 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
 - **Build / run**:
   ```bash
   cmake --build build
-  ./build/cedar/tests/cedar_tests "*EVENT_QUANTIZE*"
   ./build/akkado/tests/akkado_tests "[scale]" "[key]"
   bun web/scripts/generate-scales.ts   # regenerate catalog
   ```
@@ -442,12 +459,16 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
 - **11.6 — 12-TET only.** Quantization defined in 12 equal semitones for v1.
 - **11.7 — Catalog is generated** from tonal.js into an Akkado stdlib file;
   not hand-maintained.
-- **11.8 — Patternable argument** is in scope, delivered in Phase 5.
+- **11.8 — Patternable argument** is **deferred** to `prd-pattern-array-transforms.md` — per-cycle alternation is an array-of-events concept that needs the array substrate.
 - **11.9 — Catalog ships only as the stdlib file.** No generated C++ header,
   no interim. `scale`/`key` resolve names by loading `akkado/stdlib/scales.ak`
   through the stdlib module system, which makes the catalog userspace-visible
   and extensible. Consequence: Phase 2 has a hard dependency on stdlib-module
-  loading infrastructure landing first.
+  loading supporting top-level constant bindings (verified as a precondition spike in Commit B of `/home/moritz/.claude/plans/phase-4-fully-unified-snowglobe.md`).
+- **11.10 — No `EVENT_QUANTIZE` opcode (2026-05-24).** Original draft specced
+  `scale`/`key` as a new Cedar opcode. Dropped in alignment with the parent
+  PRD's principle ("opcodes are primitives, not language constructs").
+  `scale`/`key` are stdlib akkado on top of `event_map`.
 
 ---
 

@@ -63,9 +63,29 @@
 >   out the inner SEQPAT_QUERY emission so the 7 Phase-4 handlers skip the
 >   wasted SEQPAT_STEP/extended-field/SEQPAT_PROP chain that
 >   `emit_pattern_with_state` would otherwise emit for the inner state.
-> - **Phase 5** (`EVENT_QUANTIZE` for scale/key snap + chord expansion /
->   voicing / inversion via `EVENT_FANOUT` + TypedValue `EventStreamPayload`
->   cleanup) — not started.
+> - **Phase 5 (corrected scope, 2026-05-24)** — chord-array support
+>   inside `event_map` closures (`e.notes` / `e.freqs` read + write) +
+>   stdlib `scale` / `key` / `voice` / `invert` on top of `event_map`
+>   (no new opcodes) + `scales.ak` generator + `TypedValue` Phase B
+>   cleanup. The original Phase 5 framing ("`EVENT_QUANTIZE` opcode +
+>   chord expansion via `EVENT_FANOUT`") is **dropped** — under the
+>   foundational principle that opcodes are for primitive operations
+>   and DSP work, not language constructs, scale/key/voice/invert
+>   belong in stdlib akkado just like Phase 2b's `transpose` /
+>   `velocity` / `dur` / `bend` migration.
+>
+> The Phase 3 (`EVENT_RATE_SCALE`) and Phase 4 (`EVENT_REORDER` /
+> `EVENT_FANOUT`) opcodes that shipped are architecturally a partial
+> regression against the same principle: each is a kind-dispatched
+> mega-opcode with hardcoded C++ per named transform (REV / PALINDROME /
+> ITER / ZOOM / COMPRESS, PLY / LINGER / SEGMENT, fast/slow factor
+> scaling). They are functionally working stopgaps. Their correct
+> redesign — closures over `Array<Event>` returning `Array<Event>`, with
+> rev/palindrome/ply/etc. as stdlib akkado on top — is a substantial
+> separate design captured in
+> [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md)
+> and is **explicitly out of scope for Phase 5**. Phase 5 leaves the
+> Phase 3+4 opcodes untouched.
 >
 > The one hard external dependency — runtime closure / first-class fn
 > infrastructure (§0,
@@ -83,16 +103,19 @@
 
 Today, every Akkado pattern modifier (`transpose`, `tune`, `fast`, `slow`, `early`, `late`, `rev`, `ply`, `swing`, `velocity`, `dur`, `bend`, `palindrome`, `zoom`, `segment`, `compress`, `iter`, `iterBack`, `linger`, `swingBy`, `bank`, `variant`, `aftertouch`, ~30 total) is a **compile-time AST transform**: the handler in `akkado/src/codegen_patterns.cpp` mutates a `std::vector<cedar::Event>` during codegen and emits `Opcode::NOP`. This forces every parameter to collapse to a constant, blocks parity with live MIDI streams, duplicates event-list-walk logic across 30+ handlers, and prevents any composability with user signals.
 
-This PRD specifies a **rework into runtime event-stream transforms**: every modifier becomes a Cedar opcode that operates on `OutputEvents` — the existing runtime boundary already shared by `SequenceState` and `MidiQueueState`. The substrate is **six new Cedar opcodes** (`EVENT_MAP`, `EVENT_FILTER`, `EVENT_FANOUT`, `EVENT_REORDER`, `EVENT_RATE_SCALE`, `EVENT_QUANTIZE`). On top sits **one closure-taking builtin** (`event_map(events, (e) -> {...})`); most property modifiers (`transpose`, `velocity`, `dur`, `bend`, etc.) are rewritten as 1-line `akkado/stdlib/event_transforms.ak` definitions on top of `event_map`. Structural ops (`rev`, `ply`, `palindrome`, voicing) and the rate-scaling ops (`fast`, `slow`) lower directly to the appropriate primitive opcode.
+This PRD specifies a **rework into runtime event-stream transforms**: per-event modifiers become stdlib akkado functions on top of two generic closure-taking primitive opcodes that operate on `OutputEvents` — the existing runtime boundary already shared by `SequenceState` and `MidiQueueState`. The substrate is **two generic closure-taking opcodes** — `EVENT_MAP` (per-event field rewrite) and `EVENT_FILTER` (per-event drop). Every property modifier (`transpose`, `velocity`, `dur`, `bend`, `swing`, `early`, `late`, `scale`, `key`, `voice`, `invert`, `degrade`, `mask`, …) is a 1-line `akkado/stdlib/event_transforms.ak` definition on top of these.
+
+Whole-pattern transforms (`rev`, `palindrome`, `ply`, `linger`, `segment`, `zoom`, `compress`, `iter`, `iterBack`, `fast`, `slow`) are categorically different — they need to see the full array of events at once and cannot be expressed per-event. Phases 3 and 4 shipped `EVENT_RATE_SCALE`, `EVENT_REORDER`, `EVENT_FANOUT` as kind-dispatched stopgap opcodes for these. The correct redesign — closures over `Array<Event>` returning `Array<Event>`, with these transforms as stdlib akkado — is the subject of the follow-up PRD [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md). The kind-dispatched opcodes stay in place until that follow-up lands.
 
 **Key design decisions (locked — see §11 for resolved open questions):**
 
+- **Opcodes are primitives, not language constructs.** Any transform expressible from generic per-event closure primitives belongs in stdlib akkado, not as a dedicated opcode. The Phase 3+4 opcodes for whole-pattern transforms are a temporary exception until the follow-up PRD lands a proper array-of-events substrate.
 - **Replace, don't coexist.** Compile-time modifier handlers are deleted, not deprecated. Constants and signals lower to the same runtime path. (Migration story per §8.)
-- **Six-opcode substrate** split by *event-stream shape* (per-event rewrite / predicate filter / fanout / reorder / rate-scale / quantize) — not one mega-opcode and not one per modifier.
+- **Two-opcode closure substrate** for per-event transforms: `EVENT_MAP` and `EVENT_FILTER`. Both take a closure handle; both produce a new `OutputEvents` stream. Everything else built on these is stdlib.
 - **Closure-taking `event_map`** as the high-level surface; existing closures-as-compile-time-AST are insufficient and the design depends on the runtime closure PRD (§0).
 - **Signal sampling at event onset.** When a closure body references an external buffer (`e.note + lfo`), the buffer is indexed at the event's emission sample, not block-start and not re-sampled mid-event.
-- **`fast`/`slow` become continuous rate scalers.** Signal-rate multiplier on the phase feeding upstream `SEQPAT_QUERY`, sample-accurate.
-- **Scope includes** core modifiers + scale quantize (snap to scale/key) + voicing/chord expansion/inversion + filter/predicate ops (`degrade`, `mask`).
+- **`fast`/`slow` are whole-pattern operations.** Phases 3+4 shipped them as the `EVENT_RATE_SCALE` opcode; the follow-up PRD will migrate them to stdlib on top of the array-of-events substrate.
+- **Scope includes** core modifiers + scale quantize (snap to scale/key) + voicing/chord expansion/inversion + filter/predicate ops (`degrade`, `mask`) — **all delivered as stdlib akkado on top of `event_map` / `event_filter`**, not as new opcodes.
 - **Phased delivery in 5 phases** (see §9), each independently testable.
 - **Assumes the cycles-pure clock model has landed** (it has — the "1 cycle = 1 beat" headline shipped with the 2026-05-19 parser revert, commit `9d99490`). Every `e.time` reference and the `fast`/`slow` phase rescaler are written in cycles-pure terms. This is **not** a hard dependency on `prd-cycle-length-cleanup.md`; per §0.5 the `cycle_length` field is live and stays.
 
@@ -217,14 +240,15 @@ Examples (file:line refs in `akkado/src/codegen_patterns.cpp`):
 
 ### 2.1 Goals
 
-1. Introduce **6 new Cedar opcodes** (`EVENT_MAP`, `EVENT_FILTER`, `EVENT_FANOUT`, `EVENT_REORDER`, `EVENT_RATE_SCALE`, `EVENT_QUANTIZE`) operating on `OutputEvents`.
+1. Introduce **two generic closure-taking Cedar opcodes** — `EVENT_MAP` (per-event field rewrite) and `EVENT_FILTER` (per-event drop) — operating on `OutputEvents`.
 2. Introduce **`event_map` and `event_filter`** closure-taking Akkado builtins.
-3. **Rewrite ~all property modifiers as 1-line stdlib akkado** (`akkado/stdlib/event_transforms.ak`) on top of `event_map`. Delete the corresponding C++ handlers.
-4. **Migrate structural modifiers** (`rev`, `ply`, `palindrome`, `linger`, `zoom`, `segment`, `compress`, `iter`, `iterBack`) to `EVENT_FANOUT` / `EVENT_REORDER`.
-5. **Migrate `fast`/`slow`** to `EVENT_RATE_SCALE` with continuous-signal support.
-6. **Achieve uniform pattern/MIDI parity.** Every transform works identically on patterns, MIDI streams, and any future event source.
-7. **Add new capabilities**: `scale`/`key` (pitch quantize), chord expansion / voicing / inversion via `EVENT_FANOUT`, `degrade`/`mask`/`filter_events` via `EVENT_FILTER`.
-8. **Ship docs and examples** covering the new model end-to-end.
+3. **Rewrite ~all per-event property modifiers as 1-line stdlib akkado** (`akkado/stdlib/event_transforms.ak`) on top of `event_map` / `event_filter`. Delete the corresponding C++ handlers.
+4. **Achieve uniform pattern/MIDI parity** for per-event transforms. Every per-event transform works identically on patterns, MIDI streams, and any future event source.
+5. **Add new per-event capabilities as stdlib**: `scale`/`key` (pitch quantize), `voice`/`invert` (chord-array expansion/reflection), `degrade`/`mask` (probabilistic / pattern-gated filter).
+6. **Ship the closure substrate extensions** needed for chord-array transforms: `e.notes` / `e.freqs` read inside `event_map` closures + DynArray-typed return fields (`notes` / `freqs`) for write-back.
+7. **Ship docs and examples** covering the new model end-to-end.
+
+**Out of scope (deferred to [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md)):** whole-pattern transforms that need the full event array — `rev`, `palindrome`, `ply`, `linger`, `segment`, `zoom`, `compress`, `iter`, `iterBack`, `fast`, `slow`. Phases 3+4 shipped these as kind-dispatched `EVENT_RATE_SCALE` / `EVENT_REORDER` / `EVENT_FANOUT` opcodes; that follow-up PRD will migrate them to stdlib on top of an array-of-events substrate.
 
 ### 2.2 Non-Goals (deferred)
 
@@ -238,20 +262,28 @@ Examples (file:line refs in `akkado/src/codegen_patterns.cpp`):
 
 ## 3. Design
 
-### 3.1 Runtime substrate — six new Cedar opcodes
+### 3.1 Runtime substrate — two generic closure-taking Cedar opcodes
 
-Split by *event-stream shape*, not by modifier name. Each opcode reads upstream `OutputEvents` via `StatePool::resolve_output_events` (which already handles `SequenceState` + `MidiQueueState` uniformly — `cedar/include/cedar/opcodes/state_pool.hpp:128`) and publishes its own `OutputEvents`:
+Per-event transforms split by *closure shape*, not by modifier name. Each opcode reads upstream `OutputEvents` via `StatePool::resolve_output_events` (which already handles `SequenceState` + `MidiQueueState` uniformly — `cedar/include/cedar/opcodes/state_pool.hpp:128`) and publishes its own `OutputEvents`:
 
 | Opcode             | Shape                                                  | Used by                                                                       |
 |--------------------|--------------------------------------------------------|-------------------------------------------------------------------------------|
-| `EVENT_MAP`        | per-event field rewrite via closure                    | `event_map`, `transpose`, `velocity`, `dur`, `bend`, `tune`, `aftertouch`, `early`, `late`, `swing`, `swingBy` |
-| `EVENT_FILTER`     | predicate drop via closure                             | `degrade`, `mask`, `filter_events`                                            |
-| `EVENT_FANOUT`     | output count > input count                             | `ply`, `linger`, `segment`, `voice` (chord expansion)                         |
-| `EVENT_REORDER`    | permute / re-time                                      | `rev`, `palindrome`, `iter`, `iterBack`, `zoom`, `compress`                   |
-| `EVENT_RATE_SCALE` | rewires phase feeding upstream `SEQPAT_QUERY`          | `fast`, `slow` (continuous-signal variant)                                    |
-| `EVENT_QUANTIZE`   | snap pitch to scale/key                                | `scale`, `key`                                                                |
+| `EVENT_MAP`        | per-event field rewrite via closure                    | `event_map`, `transpose`, `velocity`, `dur`, `bend`, `tune`, `aftertouch`, `early`, `late`, `swing`, `swingBy`, **`scale`, `key`, `voice`, `invert`** |
+| `EVENT_FILTER`     | predicate drop via closure                             | `event_filter`, **`degrade`, `mask`, `filter_events`**                       |
 
-Common conventions:
+That's the entire per-event closure substrate. Every transform in the "Used by" column is stdlib akkado on top of one of these two opcodes — no per-transform C++ handler, no per-transform opcode.
+
+**Phase 3+4 stopgap opcodes — deferred to follow-up PRD.** Phases 3 and 4 shipped three additional kind-dispatched opcodes for whole-pattern transforms that don't fit the per-event closure shape:
+
+| Opcode (stopgap)   | Kinds                                                  | Used by                                                                       |
+|--------------------|--------------------------------------------------------|-------------------------------------------------------------------------------|
+| `EVENT_RATE_SCALE` | (no kinds; takes a factor signal)                      | `fast`, `slow`                                                                |
+| `EVENT_REORDER`    | REV / PALINDROME / ITER / ITER_BACK / ZOOM / COMPRESS  | `rev`, `palindrome`, `iter`, `iterBack`, `zoom`, `compress`                   |
+| `EVENT_FANOUT`     | PLY / LINGER / SEGMENT                                  | `ply`, `linger`, `segment`                                                    |
+
+These three opcodes are functionally working but architecturally a regression against the foundational principle — each is a kind-switch over hardcoded named transforms with per-transform C++ bodies. The correct redesign uses closures over `Array<Event>` returning `Array<Event>`, with rev / ply / fast / etc. as stdlib akkado on top. See [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md). Until that PRD lands, the three opcodes stay in place untouched.
+
+Common conventions (apply to all of `EVENT_MAP` / `EVENT_FILTER` and the stopgap opcodes):
 
 - **State**: each instance owns a `SequenceState` (reuses the existing struct — no new `DSPState` variant). `OutputEvents` is the wire format.
 - **Upstream `state_id`**: packed across `inputs[2]+inputs[3]` (32 bits in two 16-bit slots). Leaves `inputs[0..1]` for the two most-common signal parameters; 3+-param transforms use `ExtendedParams<N>` per `docs/extended-params-mechanism.md`.
@@ -307,7 +339,22 @@ fn swing(events, amount, grid = 8) =
   event_map(events, (e) -> {time: e.time + swing_offset(e.time * grid, amount)})
 ```
 
-Structural transforms (`rev`, `ply`, `palindrome`, etc.) stay builtins because they don't fit the per-event-record-rewrite shape — they lower directly to `EVENT_FANOUT` / `EVENT_REORDER`. `fast`/`slow` stay builtins for the same reason — they lower to `EVENT_RATE_SCALE`. `bank`/`variant` keep their compile-time sample-resolution path (sample-ref propagation is unchanged) but stamp `type_id` at runtime through `EVENT_MAP` with a small `BANK_SET` helper. See §11 OQ-3.
+Phase 5 (2026-05-24) adds chord-array-aware per-event transforms on the same stdlib substrate, enabled by extending the closure machinery to read `e.notes` / `e.freqs` (DynArray views onto chord arrays) and to write back DynArray-typed `notes` / `freqs` fields:
+
+```akkado
+fn scale(events, name)     = event_map(events, (e) -> {note: degree_to_note(e.note, parse_scale_root(name), parse_scale_intervals(name))})
+fn key(events, name)       = event_map(events, (e) -> {note: snap_to_scale(e.note, parse_scale_root(name), parse_scale_intervals(name))})
+fn voice(events, intervals) = event_map(events, (e) -> {notes: map(intervals, (i) -> e.note + i)})
+fn invert(events, axis)    = event_map(events, (e) -> {notes: map(e.notes, (n) -> 2 * axis - n)})
+fn degrade(events, p)      = event_filter(events, (e) -> random() > p)
+fn mask(events, pattern)   = event_filter(events, (e) -> pattern_active_at(pattern, e.time))
+```
+
+`scale` / `key` resolve their interval list against `akkado/stdlib/scales.ak` — a generated catalog of named scale interval lists produced by `web/scripts/generate-scales.ts` from the tonal.js scale-type table. See sibling PRD [`prd-scale-quantize.md`](prd-scale-quantize.md) for the full scale/key semantics.
+
+Whole-pattern transforms (`rev`, `palindrome`, `ply`, `linger`, `segment`, `zoom`, `compress`, `iter`, `iterBack`, `fast`, `slow`) currently lower to the Phase 3+4 stopgap opcodes (§3.1). The follow-up PRD [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md) will migrate them to stdlib akkado on top of an array-of-events substrate.
+
+`bank`/`variant` keep their compile-time sample-resolution path (sample-ref propagation is unchanged) but stamp `type_id` at runtime through `EVENT_MAP` with a small `BANK_SET` helper. See §11 OQ-3.
 
 ### 3.4 TypedValue evolution (two phases)
 
@@ -380,19 +427,19 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 | `aftertouch`           | (delegates to property_transform)        | stdlib `event_map`                                                                                |
 | `early` / `late`       | `handle_early_call:4367` / `:4430`       | stdlib `event_map` on `time` field                                                                |
 | `swing` / `swingBy`    | `handle_swing_call:5380` / `:5431`       | stdlib `event_map` (helper: `swing_offset(grid_pos, amount)`)                                     |
-| `fast` / `slow`        | `handle_fast_call:3117` / `:3056`        | builtin → `EVENT_RATE_SCALE`                                                                      |
-| `rev`                  | `handle_rev_call:3178`                   | builtin → `EVENT_REORDER`                                                                         |
-| `palindrome`           | `handle_palindrome_call:4493`            | builtin → `EVENT_REORDER`                                                                         |
-| `ply`                  | `handle_ply_call:4560`                   | builtin → `EVENT_FANOUT`                                                                          |
-| `linger`               | `handle_linger_call:4624`                | builtin → `EVENT_FANOUT`                                                                          |
-| `zoom`                 | `handle_zoom_call:4693`                  | builtin → `EVENT_REORDER`                                                                         |
-| `segment`              | `handle_segment_call:4764`               | builtin → `EVENT_FANOUT`                                                                          |
-| `compress`             | `handle_compress_call:5487`              | builtin → `EVENT_REORDER`                                                                         |
-| `iter` / `iterBack`    | `handle_iter_call:4844` / `:4905`        | builtin → `EVENT_REORDER` (rotation by cycle index)                                               |
+| `fast` / `slow`        | `handle_fast_call:3117` / `:3056`        | **stopgap builtin → `EVENT_RATE_SCALE`** — deferred to [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md) for stdlib redesign |
+| `rev`                  | `handle_rev_call:3178`                   | **stopgap builtin → `EVENT_REORDER`** — deferred to follow-up PRD                                 |
+| `palindrome`           | `handle_palindrome_call:4493`            | **stopgap builtin → `EVENT_REORDER`** — deferred to follow-up PRD                                 |
+| `ply`                  | `handle_ply_call:4560`                   | **stopgap builtin → `EVENT_FANOUT`** — deferred to follow-up PRD                                  |
+| `linger`               | `handle_linger_call:4624`                | **stopgap builtin → `EVENT_FANOUT`** — deferred to follow-up PRD                                  |
+| `zoom`                 | `handle_zoom_call:4693`                  | **stopgap builtin → `EVENT_REORDER`** — deferred to follow-up PRD                                 |
+| `segment`              | `handle_segment_call:4764`               | **stopgap builtin → `EVENT_FANOUT`** — deferred to follow-up PRD                                  |
+| `compress`             | `handle_compress_call:5487`              | **stopgap builtin → `EVENT_REORDER`** — deferred to follow-up PRD                                 |
+| `iter` / `iterBack`    | `handle_iter_call:4844` / `:4905`        | **stopgap builtin → `EVENT_REORDER`** (rotation by cycle index) — deferred to follow-up PRD       |
 | `bank` / `variant`     | `handle_bank_call:3738` / `:3899`        | hybrid: keep compile-time sample-ref propagation; `type_id` stamped at runtime via `EVENT_MAP`    |
-| `degrade` / `mask`     | (new)                                    | builtin → `EVENT_FILTER`                                                                          |
-| `scale` / `key`        | (new)                                    | builtin → `EVENT_QUANTIZE`                                                                        |
-| `voice` / `invert`     | (new)                                    | builtin → `EVENT_FANOUT` (chord/voicing expansion)                                                |
+| `degrade` / `mask`     | (new)                                    | **stdlib `event_filter`** (Phase 5)                                                               |
+| `scale` / `key`        | (new)                                    | **stdlib `event_map`** on top of `akkado/stdlib/scales.ak` catalog (Phase 5)                      |
+| `voice` / `invert`     | (new)                                    | **stdlib `event_map`** with chord-array (`notes`) DynArray return field (Phase 5)                 |
 
 ---
 
@@ -404,9 +451,11 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 | `E171` | …                                              | Closure body touches a state cell (`state` / `get` / `set`)                            |
 | `E172` | …                                              | Reserved (was: nested `event_map`); nested is allowed, code reserved for future        |
 | `E173` | …                                              | Closure body calls `out()` or any sink                                                 |
+| `E174` | `event_map` closure return validation           | Closure body returns a non-record value, or returns a record with a field name not in the allowed slot set (`note`/`vel`/`dur`/`bend`/`at`/`time`/`chance`/`notes`/`freqs`/...) |
 | `E180` | event-transform chain                           | **Reserved, not emitted.** §11 OQ-4 resolved to no hard chain-length cap; code held for a future budget guard. |
 | `E181` | `EVENT_FANOUT`                                  | Output event count exceeds allocated capacity                                          |
-| `E182` | `EVENT_QUANTIZE`                                | Unknown scale or key name                                                              |
+
+Scale-quantize error codes (`E184`–`E186`) are owned by the sibling PRD [`prd-scale-quantize.md`](prd-scale-quantize.md). `E182` is no longer reserved by this PRD — the `EVENT_QUANTIZE` opcode it was reserved for has been dropped from the substrate.
 
 ---
 
@@ -415,10 +464,10 @@ Userland-defined modifier in 1 line, working on patterns or MIDI.
 > The cycles-pure headline (`spb`/`* 4` math) already shipped with the 2026-05-19 revert, so the files below are written in cycles-pure terms. `cycle_length` plumbing is **live and stays** (per §0.5) — none of the work below removes it. The remaining `prd-cycle-length-cleanup.md` work (MIDI `streaming` flag, clock-phase collapse) is orthogonal and may land in either order.
 
 **Cedar (engine):**
-- `cedar/include/cedar/vm/instruction.hpp` — new `Opcode` enum entries.
-- `cedar/include/cedar/opcodes/sequence.hpp` — `OutputEvents` struct (existing); add `op_event_map`, `op_event_filter`, `op_event_fanout`, `op_event_reorder`, `op_event_rate_scale`, `op_event_quantize`.
-- `cedar/include/cedar/opcodes/state_pool.hpp:128` — `resolve_output_events` (existing — verify it covers transform-owned `SequenceState`s).
-- `cedar/include/cedar/dsp_state.hpp:1405` — `DSPState` variant (reuse existing `SequenceState`; no new variant).
+- `cedar/include/cedar/vm/instruction.hpp` — `EVENT_MAP` (218), `EVENT_FILTER` (219), and the stopgap `EVENT_RATE_SCALE` (221), `EVENT_REORDER` (222), `EVENT_FANOUT` (223) shipped. No new opcodes for Phase 5.
+- `cedar/include/cedar/opcodes/event_transforms.hpp` — `op_event_map`, `op_event_filter` (shipped); Phase 5 extends `op_event_map`'s prologue/epilogue to populate `e.notes` / `e.freqs` DynArray views and apply chord-array overlays.
+- `cedar/include/cedar/opcodes/state_pool.hpp:128` — `resolve_output_events` (existing — covers transform-owned `SequenceState`s).
+- `cedar/include/cedar/dsp_state.hpp` — `DSPState` variant (reuses existing `SequenceState`; no new variant).
 
 **Akkado (compiler):**
 - `akkado/include/akkado/builtins.hpp:1291-1383` — replace handler bindings for all listed modifiers.
@@ -478,9 +527,9 @@ here so users can recognize and report them:
 | **1** | Substrate: `EVENT_MAP` + `EVENT_FILTER` opcodes; manually-wired `transpose` and `velocity` in C++ codegen (no closures yet, constants only)                                                | `cedar/tests/test_event_map.cpp`, `experiments/test_op_event_map.py` (≥300 s)               |
 | **2a** | `event_map` / `event_filter` builtins taking closures; Cedar `EVENT_MAP`/`EVENT_FILTER` opcode closure rework. **✅ SHIPPED 2026-05-23** (`694eb84`).                                                  | `cedar/tests/test_event_map.cpp`, `akkado/tests/test_event_map.cpp` for closure plumbing     |
 | **2b** | Migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers. **✅ SHIPPED 2026-05-23** (`582a28a` → `b485c3f`). Migrated `transpose`, `velocity`, `dur`, `bend`, `aftertouch`, `early`, `late`, `swing`, `swingBy`. `tune` deferred (different semantics). | `akkado/tests/test_event_map.cpp [phase2b]` (11 tests); existing `[event-map]` tests updated for closure-form encoding |
-| **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input. `early`/`late`/`swing` already migrated in Phase 2b — Phase 3 picks up the rate-scaling and structural composition gap. | Rate-scaled WAV experiments                                                                 |
-| **4** | `EVENT_FANOUT` + `EVENT_REORDER`: migrate `rev`, `palindrome`, `ply`, `linger`, `iter`, `iterBack`, `zoom`, `segment`, `compress`. **✅ SHIPPED 2026-05-23**. Reuses `SequenceState` as downstream holder (no new `DSPState` variant); kind selector packs into `inst.rate` low nibble; ITER direction in bit 4. iter/iterBack legacy fields (`iter_n`/`iter_dir` on SequenceState + StateInitData) deleted. | `cedar/tests/test_event_reorder.cpp` (10 cases), `cedar/tests/test_event_fanout.cpp` (7 cases), `akkado/tests/test_reorder.cpp` (32 cases) |
-| **5** | `EVENT_QUANTIZE` (scale/key snap) + chord expansion / voicing / inversion via `EVENT_FANOUT`; `TypedValue` cleanup (Phase B)                                                                | Scale-quantize WAV; chord-expansion polyphony tests                                         |
+| **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input. **✅ SHIPPED 2026-05-23.** **Architecturally a stopgap** — kind-dispatched mega-opcode that the follow-up PRD will migrate to stdlib on top of an array-of-events substrate. | Rate-scaled WAV experiments                                                                 |
+| **4** | `EVENT_FANOUT` + `EVENT_REORDER`: migrate `rev`, `palindrome`, `ply`, `linger`, `iter`, `iterBack`, `zoom`, `segment`, `compress`. **✅ SHIPPED 2026-05-23**. **Architecturally a stopgap** like Phase 3 — kind-dispatched mega-opcodes deferred to follow-up PRD for proper stdlib redesign. Reuses `SequenceState` as downstream holder (no new `DSPState` variant); kind selector packs into `inst.rate` low nibble; ITER direction in bit 4. iter/iterBack legacy fields (`iter_n`/`iter_dir` on SequenceState + StateInitData) deleted. | `cedar/tests/test_event_reorder.cpp` (10 cases), `cedar/tests/test_event_fanout.cpp` (7 cases), `akkado/tests/test_reorder.cpp` (32 cases) |
+| **5 (corrected, 2026-05-24)** | Chord-array support inside `event_map` closures (`e.notes` / `e.freqs` read + DynArray-typed return fields for write-back); stdlib `scale` / `key` / `voice` / `invert` on top of `event_map` (no new opcodes); `web/scripts/generate-scales.ts` → `akkado/stdlib/scales.ak`; stdlib `degrade` / `mask` if `random()` and pattern-active-at-time are available; `TypedValue` Phase B cleanup (unify `EventSourcePayload` → `EventStreamPayload`). The Phase 3+4 stopgap opcodes are **not** refactored — that's [`prd-pattern-array-transforms.md`](prd-pattern-array-transforms.md). | `cedar/tests/test_event_map.cpp [chord-notes-read][chord-notes-write]`; `akkado/tests/test_scale_quantize.cpp`; scale/key/voice WAV experiments; full-suite green after `TypedValue` cleanup |
 
 Each phase ships Catch2 tests + ≥300 s rendered-WAV experiments per CLAUDE.md.
 
@@ -490,11 +539,12 @@ Each phase ships Catch2 tests + ≥300 s rendered-WAV experiments per CLAUDE.md.
 
 End-to-end checks once Phase 5 lands:
 
-- `cmake --build build && ./build/cedar/tests/cedar_tests "[event-transform]" && ./build/akkado/tests/akkado_tests "[event-map]"` — all unit tests pass.
-- `cd experiments && ./run_all.sh` — every `test_op_event_*.py` produces a clean WAV and a green pass.
+- `cmake --build build && ./build/cedar/tests/cedar_tests "[event-transform]" && ./build/akkado/tests/akkado_tests "[event-map]" "[scale]" "[key]"` — all unit tests pass.
+- `cd experiments && ./run_all.sh` — every `test_op_event_*.py` produces a clean WAV and a green pass; new ≥300 s renders for `scale`/`key`/`voice`/`invert`.
 - **Manual** (web dev server): paste `n"c4 e4 g4".transpose(7).velocity(0.8) |> osc("sin", @.freq) * @.vel |> out(@)`, verify transposed playback.
 - **Manual MIDI parity**: `midi("ctrl1").transpose(12) |> poly(@, instr, 8)` — confirms MIDI parity.
-- **Manual signal scaling**: `n"c d e".fast(lfo("sin", 0.2) * 1.5 + 2) |> ...` — confirms continuous rate-scaling works.
+- **Manual scale quantize**: `n"c4 c#4 d4 d#4 e4 f4 f#4 g4" |> key("d:minor") |> osc("sin", @.freq) |> out(@)` — confirms quantization.
+- **Manual chord voicing**: `n"c4 e4 g4" |> voice([0, 3, 7]) |> poly(@, instr, 8)` — confirms chord-array write from `event_map` closure.
 - **Manual composability**: a user-defined akkado modifier (`fn arp_up(events, steps) = ...`) compiles, runs on patterns AND MIDI.
 
 ---
@@ -550,11 +600,23 @@ None of this depends on `prd-cycle-length-cleanup.md`; that PRD's remaining work
 
 ## 12. Next Step
 
-Both design-blocking prerequisites are cleared:
+Phases 1, 2a, 2b, 3, 4 are shipped. Phase 5 (corrected scope, 2026-05-24) is **in progress**:
 
 1. ✅ **`prd-runtime-functions-control-flow.md`** (§0) — L1→L3 + §4.2 `BLOCK_BIND` SHIPPED.
 2. ✅ **§11 open questions** — all 11 resolved (2026-05-21); decisions locked inline in §11.
-3. **`prd-pattern-event-arrays.md`** (§0.6) — NOT STARTED; soft dependency, must land before **Phase 2** (chord-wide closures). Phase 1 is unblocked without it.
+3. ✅ **`prd-pattern-event-arrays.md`** (§0.6) — SHIPPED 2026-05-21; provides the `DynArray` value type that Phase 5's chord-array closure extension builds on.
 4. **`prd-cycle-length-cleanup.md`** (§0.5) — not a hard prerequisite; may land in any order.
+5. **`prd-pattern-array-transforms.md`** — NEW follow-up PRD owning the redesign of the Phase 3+4 stopgap opcodes. Not started; not blocking Phase 5.
 
-**Implementation may begin now at Phase 1** of §9 (`EVENT_MAP` + `EVENT_FILTER` opcodes, constant-arg `transpose` / `velocity`). Each subsequent phase is reviewed and merged independently.
+**Implementation order for Phase 5** (see `/home/moritz/.claude/plans/phase-4-fully-unified-snowglobe.md` for the full commit-level plan):
+- Commit A: PRD rewrites + follow-up PRD stub
+- Commit B: verify stdlib loader handles top-level constants
+- Commit C: `scales.ak` generator + catalog
+- Commit D: chord-array read inside `event_map` closures (`e.notes` / `e.freqs`)
+- Commit E: chord-array write from `event_map` closures (DynArray-typed return fields)
+- Commit F: stdlib `key` and `scale`
+- Commit G: stdlib `voice` and `invert`
+- Commit H: stdlib `degrade` and `mask` (optional, gated on `random()` / pattern-active-at-time availability)
+- Commit I: `TypedValue` Phase B cleanup
+
+Once Phase 5 ships, the next workstream is the follow-up PRD's array-of-events substrate to retire the Phase 3+4 stopgap opcodes.
