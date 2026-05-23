@@ -436,6 +436,75 @@ TEST_CASE("event-map (Phase 2b): late() with t > 1 wraps to the same position",
     }
 }
 
+TEST_CASE("event-map (Phase 2b): swingBy shifts off-beat events forward",
+          "[event-map][phase2b][swing]") {
+    // 8 events at times 0, 0.125, 0.25, ..., 0.875 with grid=4 (slice_w = 0.25).
+    // slice_pos = time * 4; frac >= 0.5 picks the off-beats at
+    // time = 0.125, 0.375, 0.625, 0.875. Each shifts by amount*0.5/grid =
+    // 0.5*0.5/4 = 0.0625. After shift (and fmod): the on-beats stay; the
+    // off-beats land at 0.1875, 0.4375, 0.6875, 0.9375.
+    auto r = akkado::compile(R"(n"[a b c d e f g h]".swingBy(0.5, 4))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 8);
+    std::vector<float> times;
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i)
+        times.push_back(st->output.events[i].time);
+    REQUIRE(times.size() == 8);
+    CHECK_THAT(times[0], WithinAbs(0.0f, 0.001f));
+    CHECK_THAT(times[1], WithinAbs(0.1875f, 0.001f));
+    CHECK_THAT(times[2], WithinAbs(0.25f, 0.001f));
+    CHECK_THAT(times[3], WithinAbs(0.4375f, 0.001f));
+    CHECK_THAT(times[4], WithinAbs(0.5f, 0.001f));
+    CHECK_THAT(times[5], WithinAbs(0.6875f, 0.001f));
+    CHECK_THAT(times[6], WithinAbs(0.75f, 0.001f));
+    CHECK_THAT(times[7], WithinAbs(0.9375f, 0.001f));
+}
+
+TEST_CASE("event-map (Phase 2b): swingBy(amount=0) is identity",
+          "[event-map][phase2b][swing]") {
+    auto r = akkado::compile(R"(n"[c4 e4 g4 b4]".swingBy(0.0, 4))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 4);
+    std::vector<float> times;
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i)
+        times.push_back(st->output.events[i].time);
+    CHECK_THAT(times[0], WithinAbs(0.0f, 0.001f));
+    CHECK_THAT(times[1], WithinAbs(0.25f, 0.001f));
+    CHECK_THAT(times[2], WithinAbs(0.5f, 0.001f));
+    CHECK_THAT(times[3], WithinAbs(0.75f, 0.001f));
+}
+
+TEST_CASE("event-map (Phase 2b): swing(grid=4) uses 1/3 amount preset",
+          "[event-map][phase2b][swing]") {
+    // swing() with explicit grid=4 hardcodes amount = 1/3. Off-beats shift by
+    // (1/3)*0.5/4 = 1/24 ≈ 0.04167. Source 0, 0.125, 0.25, …, 0.875 with
+    // grid=4: off-beats are 0.125, 0.375, 0.625, 0.875; each lands at
+    // ≈ 0.1667, 0.4167, 0.6667, 0.9167.
+    auto r = akkado::compile(R"(n"[a b c d e f g h]".swing(4))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 8);
+    std::vector<float> times;
+    for (std::uint32_t i = 0; i < st->output.num_events; ++i)
+        times.push_back(st->output.events[i].time);
+    CHECK_THAT(times[0], WithinAbs(0.0f, 0.002f));
+    CHECK_THAT(times[1], WithinAbs(0.1667f, 0.002f));
+    CHECK_THAT(times[2], WithinAbs(0.25f, 0.002f));
+    CHECK_THAT(times[3], WithinAbs(0.4167f, 0.002f));
+    CHECK_THAT(times[4], WithinAbs(0.5f, 0.002f));
+    CHECK_THAT(times[5], WithinAbs(0.6667f, 0.002f));
+    CHECK_THAT(times[6], WithinAbs(0.75f, 0.002f));
+    CHECK_THAT(times[7], WithinAbs(0.9167f, 0.002f));
+}
+
 TEST_CASE("event-map (Phase 2b): transpose then dur chains as two EVENT_MAPs",
           "[event-map][phase2b][chain]") {
     auto r = akkado::compile(R"(n"c4".transpose(7).dur(2.0))");

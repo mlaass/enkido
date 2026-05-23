@@ -771,11 +771,8 @@ private:
     /// Handle segment(pattern, n) - sample at n evenly-spaced points
     TypedValue handle_segment_call(NodeIndex node, const Node& n);
 
-    /// Handle swing(pattern, n=4) - 1/3 swing on n-slice grid
-    TypedValue handle_swing_call(NodeIndex node, const Node& n);
-
-    /// Handle swingBy(pattern, amount, n=4) - custom-amount swing on n-slice grid
-    TypedValue handle_swing_by_call(NodeIndex node, const Node& n);
+    // swing / swingBy are stdlib `fn`s in akkado/stdlib/event_transforms.ak
+    // (prd-runtime-event-transforms Phase 2b). No C++ handler.
 
     /// Handle iter(pattern, n) - rotate pattern start by 1/n per cycle (forward)
     TypedValue handle_iter_call(NodeIndex node, const Node& n);

@@ -1122,8 +1122,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"linger",     &CodeGenerator::handle_linger_call},
                 {"zoom",       &CodeGenerator::handle_zoom_call},
                 {"segment",    &CodeGenerator::handle_segment_call},
-                {"swing",      &CodeGenerator::handle_swing_call},
-                {"swingBy",    &CodeGenerator::handle_swing_by_call},
+                // swing / swingBy are stdlib `fn`s in event_transforms.ak.
                 {"iter",       &CodeGenerator::handle_iter_call},
                 {"iterBack",   &CodeGenerator::handle_iter_back_call},
                 // Phase 2 PRD generators

@@ -34,3 +34,24 @@ fn aftertouch(events: stream, a) -> { event_map(events, (e) -> {at:   a}) }
 
 fn early(events: stream, t) -> { event_map(events, (e) -> {time: fmod(e.time - t + 1.0, 1.0)}) }
 fn late(events: stream, t)  -> { event_map(events, (e) -> {time: fmod(e.time + t, 1.0)}) }
+
+// ----------------------------------------------------------------------------
+// Swing — delay the off-beats of an N-slice grid by `amount * slice_width / 2`.
+// ----------------------------------------------------------------------------
+// Matches the pre-Phase-2b `apply_swing` math in codegen_patterns.cpp: split
+// the cycle into `grid` equal slices; for every event whose position within
+// its slice is past the halfway mark, add a forward time shift.
+//
+// API change from pre-Phase-2b: default `grid` is now 8 (PRD §11 OQ-10),
+// up from the legacy default of 4. Pass `grid: 4` explicitly to restore the
+// old grid resolution.
+
+fn swing_offset(time, amount, grid) -> {
+    select(gte(time * grid - floor(time * grid), 0.5), amount * 0.5 / grid, 0)
+}
+
+fn swingBy(events: stream, amount, grid = 8) -> {
+    event_map(events, (e) -> {time: fmod(e.time + swing_offset(e.time, amount, grid), 1.0)})
+}
+
+fn swing(events: stream, grid = 8) -> { swingBy(events, 1.0 / 3.0, grid) }
