@@ -39,7 +39,7 @@ sourcing):**
   (`events.freq`, `as e |> osc(@, e.freq)`) work unchanged.
 - **Coerce-don't-fail.** Per Akkado's live-coding philosophy, the
   default is to coerce toward the target type when a defensible
-  coercion exists; only emit a hard error (new code `E190`) for the
+  coercion exists; only emit a hard error (new code `E184`) for the
   no-defensible-path cases. Diagnostics for lossy-but-doable coercions
   default to W-class warnings.
 - **Un-annotated params are unchanged.** Existing `E160` still applies
@@ -121,7 +121,7 @@ Phase 2b's `akkado/stdlib/event_transforms.ak` migration needs an
 5. Extend `handle_user_function_call` so `: stream`-annotated params
    preserve the caller's `TypedValue` and bypass the eager `E160`
    reject (mirroring the existing DynArray branch).
-6. Allocate **error code `E190`** for genuinely incompatible arg types
+6. Allocate **error code `E184`** for genuinely incompatible arg types
    passed to an annotated param (e.g. Number passed where `: stream`
    was expected). Use poison-value recovery per the existing pattern.
 7. Unblock [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md)
@@ -190,7 +190,7 @@ type_name  ::= 'stream' | 'signal'                   // Phase 1 keywords; Phase 
 fn transpose(events: stream, n) = event_map(events, (e) -> {note: e.note + n})
 
 transpose(440, 7)
-// E190: parameter 'events' of fn 'transpose' expects Stream, got Number —
+// E184: parameter 'events' of fn 'transpose' expects Stream, got Number —
 //       no coercion path
 //   --> at call site, arg 0
 ```
@@ -249,16 +249,26 @@ the caller's actual `TypedValue`** (Pattern or EventSource), so existing
 field-access paths (`events.freq`, `as e |> osc(@, e.freq)`) compose
 without changes.
 
+**MIDI-as-Pattern parity.** `midi(...)` produces an `EventSource`
+TypedValue; but a MIDI-driven payload that has already been routed
+through pattern transforms also surfaces as a `Pattern` TypedValue
+carrying `is_runtime_event_source = true`
+(`typed_value.hpp:97-105`). The `: stream` check is a pure tag check —
+both forms pass without inspecting `is_runtime_event_source`. The
+field is consulted only by downstream poly()/voice-allocating
+builtins, not by the param-boundary check introduced here.
+
 ### 4.2 Compatibility table (Phase 1)
 
 | Annotation | Actual ValueType | Behavior |
 |---|---|---|
-| `: stream` | `Pattern` | Pass-through. Bind param symbol with full `TypedValue`. Bypass `E160`. |
+| `: stream` | `Pattern` (incl. `is_runtime_event_source` MIDI-pattern) | Pass-through. Bind param symbol with full `TypedValue`. Bypass `E160`. |
 | `: stream` | `EventSource` | Pass-through. Bind param symbol with full `TypedValue`. |
-| `: stream` | `Signal`, `Number`, `Record`, `Array`, `DynArray`, `String`, `Function`, `StateCell`, `Void` | **E190** (no defensible coercion path). Poison. |
+| `: stream` | `DynArray` | **E184** (no defensible coercion path). A `DynArray` is a runtime-varying numeric array (e.g. `notes(e)`); semantically unrelated to event streams. The implementer must add a guard *before* the catch-all so the diagnostic clearly cites DynArray. Poison. |
+| `: stream` | `Signal`, `Number`, `Record`, `Array`, `String`, `Function`, `StateCell`, `Void` | **E184** (no defensible coercion path). Poison. |
 | `: signal` | `Signal`, `Number`, monophonic `Pattern` | Today's voice-0 coerce. Unchanged. |
 | `: signal` | polyphonic non-sample `Pattern` | **E160** (preserved from today). |
-| `: signal` | `EventSource`, `Record`, `Array`, `DynArray`, `String`, `Function`, `StateCell`, `Void` | **E190** (no defensible coercion path). Poison. |
+| `: signal` | `EventSource`, `Record`, `Array`, `DynArray`, `String`, `Function`, `StateCell`, `Void` | **E184** (no defensible coercion path). Poison. |
 | *(un-annotated)* | *(any)* | Today's behavior. Unchanged. `E160` for polyphonic non-sample Pattern; voice-0 coerce for the rest. |
 
 The compatibility entry for `ParamValueType::Stream` in
@@ -285,7 +295,7 @@ if (expected == ParamValueType::Stream) {
     // Preserve the caller's TypedValue across the boundary; bypass E160.
     if (arg_tv.type != ValueType::Pattern &&
         arg_tv.type != ValueType::EventSource) {
-        error("E190",
+        error("E184",
               "parameter '" + func.params[i].name +
               "' of fn '" + func.name +
               "' expects Stream, got " + value_type_name(arg_tv.type) +
@@ -300,13 +310,13 @@ if (expected == ParamValueType::Stream) {
     // Today's behavior. The existing E160 check applies for polyphonic
     // non-sample patterns; mono Pattern silently voice-0; Signal/Number
     // pass through.
-    // (Additional E190 for genuinely incompatible types — Record,
+    // (Additional E184 for genuinely incompatible types — Record,
     // Array, EventSource, etc.)
     if (arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
         arg_tv.pattern->max_voices > 1 && !arg_tv.pattern->is_sample_pattern) {
         error("E160", /* unchanged */);
     }
-    // ... E190 cases ...
+    // ... E184 cases ...
 
 } else {
     // Un-annotated — exactly today's branch. No changes.
@@ -342,13 +352,21 @@ nested-call type propagation working unchanged.
   `akkado/src/lexer.cpp`): `stream` and `signal` become reserved
   keywords. (No current Akkado stdlib uses these as identifiers; user
   patches that do will see a parse error and need to rename.)
-- **AST** (`akkado/include/akkado/ast.hpp`,
-  `akkado/src/parser.cpp`): `FunctionParam` gains
+- **Parameter structs** (`akkado/include/akkado/parser.hpp` —
+  `ParsedParam`; `akkado/include/akkado/symbol_table.hpp` —
+  `FunctionParamInfo`; `akkado/src/parser.cpp` — `parse_param_list()`):
+  both `ParsedParam` and `FunctionParamInfo` gain
   `ParamValueType annotated_type = ParamValueType::Any;`. The parser
-  accepts `identifier (':' type_name)? ('=' default_expr)?` in
-  `parse_param_list()`.
-- **Analyzer** (`akkado/src/analyzer.cpp`): propagates `annotated_type`
-  to the `FunctionDef`'s param array. No body-side checking.
+  sets it on `ParsedParam`; the analyzer copies it onto
+  `FunctionParamInfo` so the codegen pass can read it via
+  `func.params[i].annotated_type`. The grammar accepts
+  `identifier (':' type_name)? ('=' default_expr)?` in
+  `parse_param_list()`. (The AST itself stores params as Identifier
+  child nodes of `FunctionDef`; the annotation lives on the parameter
+  *info* structs, not on a per-node AST struct.)
+- **Analyzer** (`akkado/src/analyzer.cpp`): in the loop that builds
+  `FunctionParamInfo` from `ParsedParam` (analyzer.cpp:~370/494/etc.),
+  copy `annotated_type` over. No body-side checking.
 
 ### 4.5 Compile-time vs runtime
 
@@ -382,17 +400,17 @@ tags.
 
 | File | Change |
 |---|---|
-| `akkado/include/akkado/lexer.hpp` | Add `Keyword::Stream`, `Keyword::Signal` to the keyword set |
-| `akkado/src/lexer.cpp` | Recognize the new keyword tokens |
-| `akkado/include/akkado/ast.hpp` | `FunctionParam::annotated_type: ParamValueType` |
+| `akkado/include/akkado/lexer.hpp` | Add `TokenType::Stream`, `TokenType::Signal` to the `TokenType` enum (existing convention; see `TokenType::True`/`Match`/etc.) |
+| `akkado/src/lexer.cpp` | Add `{"stream", TokenType::Stream}` and `{"signal", TokenType::Signal}` to the `keywords` lookup table (lexer.cpp:11-20) |
+| `akkado/include/akkado/parser.hpp` | `ParsedParam::annotated_type: ParamValueType` (parser-side intermediate, parser.hpp:29-40) |
+| `akkado/include/akkado/symbol_table.hpp` | `FunctionParamInfo::annotated_type: ParamValueType` (analyzer/codegen-side resolved info, symbol_table.hpp:17-29) |
 | `akkado/include/akkado/typed_value.hpp` | Add `ValueType::Stream`; update `value_type_name()` |
 | `akkado/include/akkado/builtins.hpp` | Add `ParamValueType::Stream`; update `param_value_type_name()`; extend `type_compatible()` |
 | `akkado/src/parser.cpp` | Parse `name: type = default` in `parse_param_list()`; reject annotation on destructure/rest with `E104` |
 | `akkado/src/analyzer.cpp` | Propagate `annotated_type` into `FunctionDef.params` |
-| `akkado/src/codegen_functions.cpp` | `Stream`/`Signal` branches in `handle_user_function_call` (line 539-568) — preserve TypedValue for `: stream`, emit `E190` for incompatible types, keep `E160` for un-annotated and `: signal` polyphonic-pattern |
-| `akkado/include/akkado/diagnostics.hpp` | Register `E190` (annotation mismatch); optional `E191` (unknown type name) — both routed via existing diagnostic emitter |
+| `akkado/src/codegen_functions.cpp` | `Stream`/`Signal` branches in `handle_user_function_call` (line 539-568) — preserve TypedValue for `: stream`, emit `E184` for incompatible types, keep `E160` for un-annotated and `: signal` polyphonic-pattern |
 | `akkado/tests/test_parser.cpp` | Parse-level tests for the new grammar (see §10.1) |
-| `akkado/tests/test_codegen_functions.cpp` | Codegen tests for stream/signal binding (see §10.2) |
+| `akkado/tests/test_fn_annotations.cpp` | Codegen tests for stream/signal binding (see §10.2) |
 | `web/static/docs/concepts/parameter-type-annotations.md` | NEW concept doc — annotation surface, lattice, error codes, examples |
 | `web/src/lib/docs/lookup-index.ts` | Rebuilt via `bun run build:docs` after the concept doc lands |
 | `web/src/lib/components/Editor/` | (Optional, polish) syntax-highlight `: stream` / `: signal` in param position |
@@ -412,10 +430,10 @@ No changes required in:
 |---|---|---|
 | `E104` (existing) | `parse_param_list()` | Annotation not allowed on destructure or rest param (Phase 1 restriction) |
 | `E160` (existing, **unchanged**) | `handle_user_function_call` un-annotated and `: signal` paths | User function parameter cannot accept a polyphonic non-sample pattern as scalar |
-| `E190` (**NEW**) | `handle_user_function_call` annotated paths | Argument type incompatible with parameter annotation — no defensible coercion path |
-| `E191` (**NEW**) | `parse_param_list()` | Unknown type name in annotation (e.g. `: bogustype`). Distinct from `E190` so IDE/autocomplete can offer a "did you mean stream/signal?" suggestion. |
+| `E184` (**NEW**) | `handle_user_function_call` annotated paths | Argument type incompatible with parameter annotation — no defensible coercion path |
+| `E185` (**NEW**) | `parse_param_list()` | Unknown type name in annotation (e.g. `: bogustype`). Distinct from `E184` so IDE/autocomplete can offer a "did you mean stream/signal?" suggestion. |
 
-**`E190` recovery:** emit the diagnostic at the arg's source location,
+**`E184` recovery:** emit the diagnostic at the arg's source location,
 substitute a poison `TypedValue` (`type = expected, error = true`), and
 let downstream codegen short-circuit per the existing poison-value
 pattern. No cascading errors.
@@ -468,9 +486,10 @@ scope.
 
 ### 8.5 Hot-swap: annotation changes between revisions
 
-`annotated_type` is a static field on the AST `FunctionParam`. Hot-swap
-rebuilds the AST from the new source; the new annotation simply
-applies. No special path-hash logic.
+`annotated_type` is a static field on `ParsedParam` /
+`FunctionParamInfo`. Hot-swap rebuilds the AST and re-runs the analyzer
+from the new source; the new annotation simply applies. No special
+path-hash logic.
 
 ### 8.6 Polymorphic call: same fn called with Pattern and EventSource
 
@@ -501,6 +520,35 @@ this PRD's `: stream` annotation without modification.
 
 Pass-through. Both boundary checks succeed. No special case.
 
+### 8.9 Default value taken for an annotated param
+
+When the caller omits a positional argument for an annotated param and
+its declared default kicks in, the default-value branches at
+`codegen_functions.cpp:571-644` (numeric default, string default,
+expression default) emit a synthesized buffer **without** consulting
+`annotated_type`. This is intentional:
+
+- For `: signal` params, the existing numeric / expression default
+  paths already produce a Signal-shaped buffer — exactly what the
+  annotation requires.
+- For `: stream` params, no source-level expression evaluates to a
+  Pattern/EventSource at compile time (per §8.1), so a non-trivial
+  default already fires `E105` before the annotation branch sees it.
+  Numeric defaults like `events: stream = 0` would emit a Signal-shaped
+  buffer that the annotation wants to reject — but reaching that state
+  requires the user to explicitly write a number-shaped default after
+  `: stream`, which the parser does accept syntactically.
+
+**Resolution for Phase 1:** the default-value branches do not run the
+new `: stream` / `: signal` type-check branches; they emit the default
+buffer and bind the param verbatim. A `: stream = 0` mis-write
+therefore compiles but binds the param to a Signal buffer, which any
+downstream stream-shaped use will diagnose via the existing
+`param_types` mechanism. If demand emerges, Phase 2 can add a
+parse-time check ("annotated `: stream`/`: signal` param cannot have
+a numeric default") at `parse_param_list()` — but this PRD leaves it
+implicit.
+
 ---
 
 ## 9. Phasing
@@ -512,9 +560,9 @@ Pass-through. Both boundary checks succeed. No special case.
 | 1.1 | Lexer keywords `stream`, `signal` | `test_lexer.cpp` keyword cases |
 | 1.2 | `ValueType::Stream`, `ParamValueType::Stream`, `type_compatible` extension | unit test on `type_compatible` |
 | 1.3 | Grammar `name: type = default` in `parse_param_list()` | `test_parser.cpp` annotation grammar |
-| 1.4 | `FunctionParam.annotated_type` propagation through analyzer | analyzer round-trip test |
-| 1.5 | `handle_user_function_call` branching: `: stream` preserves TypedValue, bypasses `E160`; `: signal` keeps today's behavior; `E190` for incompatible types | `test_codegen_functions.cpp` (see §10.2) |
-| 1.6 | E190 diagnostic + poison-value recovery | mismatch test cases |
+| 1.4 | `ParsedParam.annotated_type` → `FunctionParamInfo.annotated_type` propagation through analyzer | analyzer round-trip test |
+| 1.5 | `handle_user_function_call` branching: `: stream` preserves TypedValue, bypasses `E160`; `: signal` keeps today's behavior; `E184` for incompatible types | `test_fn_annotations.cpp` (see §10.2) |
+| 1.6 | E184 diagnostic + poison-value recovery | mismatch test cases |
 | 1.7 | End-to-end verification example | see §10.3 |
 | 1.8 | Web concept doc | `parameter-type-annotations.md` |
 
@@ -538,25 +586,27 @@ follow-up PRD authored once Phase 1 ships.
 | `fn f(events: stream = ???)` | parses (annotation precedes default); compile-time default-eval will error later via existing `E105` |
 | `fn f({x, y}: record) = x + y` | `E104` — annotation on destructure |
 | `fn f(...args: signal) = sum(args)` | `E104` — annotation on rest |
-| `fn f(events: bogustype) = events` | `E191` — unknown type name (with "did you mean stream/signal?" hint) |
-| `let stream = 5` (existing user-code style) | parse error — `stream` is now a reserved keyword |
+| `fn f(events: bogustype) = events` | `E185` — unknown type name (with "did you mean stream/signal?" hint) |
+| `stream = 5` (Akkado top-level assignment using the now-reserved name) | parse error — `stream` is now a reserved keyword |
 
-### 10.2 Codegen tests (`akkado/tests/test_codegen_functions.cpp`)
+### 10.2 Codegen tests (`akkado/tests/test_fn_annotations.cpp`)
 
 | Case | Expectation |
 |---|---|
 | `fn id(e: stream) = e` called with `n"c4 e4 g4"` (monophonic Pattern) | no `E160`; body's `e` resolves to a Pattern TypedValue; downstream `e.freq` access works |
 | `fn id(e: stream) = e` called with `n"[c4,e4,g4]"` (polyphonic Pattern) | no `E160` (the bypass); body sees the full polyphonic Pattern with `voice_freqs[]` populated |
 | `fn id(e: stream) = e` called with `midi("ctrl1")` | no `E160`; body's `e` resolves to an EventSource TypedValue |
-| `fn id(e: stream) = e` called with `440` (Number) | `E190` at the call site; poison `TypedValue{Stream, error=true}` propagated |
-| `fn id(e: stream) = e` called with `"text"` (String) | `E190` |
+| `fn id(e: stream) = e` called with `440` (Number) | `E184` at the call site; poison `TypedValue{Stream, error=true}` propagated |
+| `fn id(e: stream) = e` called with `"text"` (String) | `E184` |
 | `fn id(p) = p` (un-annotated) called with `n"[c4,e4,g4]"` (polyphonic) | `E160` (unchanged) |
 | `fn id(p) = p` called with `n"c4 e4"` (monophonic) | no error, voice-0 coerce (unchanged) |
 | `fn w(rate: signal) = osc("sin", rate)` called with `220` (Number) | no error, behaves like today's un-annotated default |
 | `fn w(rate: signal) = osc("sin", rate)` called with `n"[c4,e4]"` (polyphonic) | `E160` (preserved) |
-| `fn w(rate: signal) = osc("sin", rate)` called with `midi("ctrl1")` (EventSource) | `E190` — no coercion path Signal ← EventSource |
+| `fn w(rate: signal) = osc("sin", rate)` called with `midi("ctrl1")` (EventSource) | `E184` — no coercion path Signal ← EventSource |
 
-### 10.3 End-to-end verification example
+### 10.3 End-to-end verification examples
+
+**Happy path (monophonic Pattern):**
 
 ```akkado
 fn transpose(events: stream, n) =
@@ -567,7 +617,7 @@ n"c4 e4 g4".transpose(7) |> osc("sin", @.freq) |> out(@)
 
 Acceptance:
 
-1. Compiles with no `E160`, no `E190`, no warnings.
+1. Compiles with no `E160`, no `E184`, no warnings.
 2. `cmake --build build && ./build/akkado/tests/akkado_tests` passes.
 3. Renders via `nkido-cli render` and the resulting WAV contains three
    notes at the transposed frequencies (c4+7 = g4, e4+7 = b4, g4+7 = d5)
@@ -575,7 +625,27 @@ Acceptance:
 4. Manual paste in `bun run dev` web IDE: green compile, audible
    transposed playback.
 
-This validates the integration end-to-end without performing the
+**Counter-example (polyphonic Pattern — the E160 bypass):**
+
+```akkado
+fn transpose(events: stream, n) =
+    event_map(events, (e) -> {note: e.note + n})
+
+n"[c4,e4,g4]".transpose(7) |> poly(@, (f, g, v) -> osc("sin", f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3) |> out(@)
+```
+
+Acceptance:
+
+1. Compiles with no `E160` (this is the headline behavior — without
+   the `: stream` annotation today's compiler rejects the call).
+2. The `transpose` body sees a Pattern `TypedValue` with
+   `max_voices = 3` and `voice_freqs[0..2]` populated; `event_map`
+   transforms each note in the chord.
+3. Rendering produces a transposed major chord (G4 / B4 / D5) playing
+   simultaneously per onset.
+
+This pair validates the integration end-to-end (happy path + the
+specific case the un-annotated path rejects), without performing the
 [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md)
 Phase 2b stdlib migration itself.
 
@@ -615,7 +685,7 @@ with `Stream`. It does NOT sweep the builtin `param_types` coverage gap
 (that's Phase 4 of the type-system PRD, orthogonal).
 
 **R1-Q3. Mismatch behavior. → RESOLVED: hard error + poison.**
-Genuinely incompatible types emit `E190` and substitute a poisoned
+Genuinely incompatible types emit `E184` and substitute a poisoned
 TypedValue. Lossy-but-coercible cases (mono Pattern → Signal) coerce
 silently, per the live-coding philosophy.
 
@@ -634,8 +704,8 @@ Phase 1 supports `name: type = default` (annotation precedes default).
 Destructure (`{x,y}: type`) and rest (`...args: type`) are rejected
 with `E104` in Phase 1.
 
-**R2-Q3. Error-code allocation. → RESOLVED: new E190 + narrow E160.**
-`E190` is new and covers annotated-param type mismatch. `E160` stays
+**R2-Q3. Error-code allocation. → RESOLVED: new E184 + narrow E160.**
+`E184` is new and covers annotated-param type mismatch. `E160` stays
 exactly as today (un-annotated polyphonic-pattern guard, also fires
 for `: signal` polyphonic-pattern).
 
@@ -661,18 +731,18 @@ a non-blocking future PRD if demand emerges.
 **R3-Q4. Phasing. → RESOLVED: Phase 1 = stream + signal; Phase 2 = rest.**
 See §9.
 
-**R4-Q2. Reserved keyword vs context-only. → RESOLVED: reserved keywords, hard cutover.**
+**R4-Q1. Reserved keyword vs context-only. → RESOLVED: reserved keywords, hard cutover.**
 `stream` and `signal` become reserved everywhere the moment Phase 1
 lands. No deprecation period. Breakage surface checked: no current
 stdlib usage; user-patch breakage surfaces as a parse error.
 
-**R4-Q3. Coordination with event-transforms Phase 2b. → RESOLVED: independent + verification example.**
+**R4-Q2. Coordination with event-transforms Phase 2b. → RESOLVED: independent + verification example.**
 This PRD ships standalone; the verification example (§10.3) proves the
 unblock without performing the stdlib migration itself. The actual
 `akkado/stdlib/event_transforms.ak` migration remains owned by
 [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
 
-**R4-Q4. Phase 1 test bar. → RESOLVED: parser + codegen + E190 + e2e.**
+**R4-Q3. Phase 1 test bar. → RESOLVED: parser + codegen + E184 + e2e.**
 All four bullets adopted. See §10.
 
 **R5-Q1. `: signal` + Pattern. → RESOLVED: mono coerce; poly keeps E160.**
@@ -684,15 +754,15 @@ behavior as un-annotated, but explicit at the call site.
 **R5-Q2. `: stream` + Signal/Number. → RESOLVED: reject.**
 No defensible coercion path. Signals are continuous samples; wrapping
 them as one-event-per-block streams is contrived. Number → constant
-stream is similarly contrived. Both emit `E190`. Per the
+stream is similarly contrived. Both emit `E184`. Per the
 coerce-don't-fail philosophy, "coerce when defensible" does NOT mean
 "force-coerce regardless".
 
-**R5-Q3. E190 scope. → RESOLVED: only for genuinely incompatible types.**
-E190 fires when no defensible coercion exists (String → Signal,
+**R5-Q3. E184 scope. → RESOLVED: only for genuinely incompatible types.**
+E184 fires when no defensible coercion exists (String → Signal,
 Number → Stream, etc.). For coercible cases (mono Pattern → Signal,
 Number → Signal) the system coerces silently. The Phase 1 inventory of
-E190-triggering cases is the §4.2 "no defensible coercion path" rows.
+E184-triggering cases is the §4.2 "no defensible coercion path" rows.
 
 ---
 
@@ -700,7 +770,7 @@ E190-triggering cases is the §4.2 "no defensible coercion path" rows.
 
 Both design-blocking prerequisites are cleared:
 
-1. ✅ All twelve interview-round questions resolved (§11).
+1. ✅ All eighteen interview-round questions resolved (§11).
 2. ✅ `ValueType` / `ParamValueType` / `type_compatible` mechanism
    already exists (from
    [`prd-compiler-type-system.md`](prd-compiler-type-system.md)
