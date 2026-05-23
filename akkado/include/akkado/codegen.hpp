@@ -147,6 +147,9 @@ struct StateInitData {
                           // EVENT_FILTER opcode. Reuses cycle_length,
                           // is_sample_pattern and total_events (output buffer
                           // capacity); no compiled sequences.
+        RateScale,        // PRD prd-runtime-event-transforms Phase 3: a
+                          // RateScaleState (beat-position integrator) for an
+                          // EVENT_RATE_SCALE opcode. No extra payload fields.
     } type;
 
     // Cycle length in beats (used by SequenceProgram)
@@ -709,6 +712,13 @@ private:
 
     /// Handle fast(pattern, factor) - compress pattern by factor
     TypedValue handle_fast_call(NodeIndex node, const Node& n);
+
+    /// PRD prd-runtime-event-transforms Phase 3 — shared implementation for
+    /// `fast` and `slow`. Emits an EVENT_RATE_SCALE opcode and patches the
+    /// upstream SEQPAT_QUERY's external-clock input. `is_fast=true` uses the
+    /// factor as-is; `is_fast=false` (slow) takes the reciprocal (constant-
+    /// folded for numeric factors, runtime DIV for signal factors).
+    TypedValue emit_rate_scale_call(NodeIndex node, const Node& n, bool is_fast);
 
     /// Handle rev(pattern) - reverse event order
     TypedValue handle_rev_call(NodeIndex node, const Node& n);

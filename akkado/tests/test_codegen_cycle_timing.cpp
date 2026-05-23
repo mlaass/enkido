@@ -129,30 +129,48 @@ TEST_CASE("cycle_timing: <...> is a synonym of top-level alternation",
     }
 }
 
-TEST_CASE("cycle_timing: slow(2) doubles cycle length",
+TEST_CASE("cycle_timing: slow(2) emits RateScale, SequenceProgram untouched",
           "[codegen][patterns][cycle_timing]") {
+    // PRD prd-runtime-event-transforms Phase 3: slow/fast no longer mutate
+    // SequenceProgram cycle_length. The runtime EVENT_RATE_SCALE opcode
+    // adjusts SequenceState.cycle_length per block to (original / rate),
+    // where slow emits rate = 1/factor. SequenceProgram init stays at 1.0.
     auto result = akkado::compile(R"(n"c4 e4".slow(2))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(2.0f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
     REQUIRE(si->sequence_events.size() >= 2);
     REQUIRE(si->sequence_events[0].size() == 1);
     CHECK(si->sequence_events[1].size() == 2);
+
+    bool has_rate_scale_init = false;
+    for (const auto& s : result.state_inits) {
+        if (s.type == akkado::StateInitData::Type::RateScale)
+            has_rate_scale_init = true;
+    }
+    CHECK(has_rate_scale_init);
 }
 
-TEST_CASE("cycle_timing: fast(2) halves cycle length",
+TEST_CASE("cycle_timing: fast(2) emits RateScale, SequenceProgram untouched",
           "[codegen][patterns][cycle_timing]") {
     auto result = akkado::compile(R"(n"c4 d4 e4 f4".fast(2))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);
 
-    CHECK(si->cycle_length == Catch::Approx(0.5f));
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
     REQUIRE(si->sequence_events.size() >= 2);
     REQUIRE(si->sequence_events[0].size() == 1);
     CHECK(si->sequence_events[1].size() == 4);
+
+    bool has_rate_scale_init = false;
+    for (const auto& s : result.state_inits) {
+        if (s.type == akkado::StateInitData::Type::RateScale)
+            has_rate_scale_init = true;
+    }
+    CHECK(has_rate_scale_init);
 }
 
 TEST_CASE("cycle_timing: subdivision inside [...] supports weights",

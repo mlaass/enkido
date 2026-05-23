@@ -1551,6 +1551,7 @@ using DSPState = std::variant<
     TimelineState,
     SequenceState,      // Lazy queryable patterns (sequence system)
     MidiQueueState,     // Runtime MIDI event source (MIDI_QUERY opcode)
+    RateScaleState,     // EVENT_RATE_SCALE (PRD prd-runtime-event-transforms Phase 3)
     // Filter states
     MoogState,
     DiodeState,

@@ -1381,16 +1381,23 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"pattern", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Cast a note/value/chord pattern to its primary value buffer as a Signal."}},
-    // Pattern transformation builtins (handled specially by codegen)
-    // These transform pattern events at compile time
+    // Pattern transformation builtins (handled specially by codegen).
+    // Phase 3 (prd-runtime-event-transforms): fast/slow lower to a runtime
+    // EVENT_RATE_SCALE opcode that feeds the upstream SEQPAT_QUERY's
+    // external-clock input. Factor accepts constants OR signal-rate
+    // buffers (e.g. `n"c d e".fast(osc("sin", 0.2) + 2)`).
     {"slow",    {cedar::Opcode::NOP, 2, 0, false,
                  {"pattern", "factor", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Slow down pattern by factor (stretch time)."}},
+                 "Slow down pattern by factor (stretch time). Factor may be a "
+                 "constant or a signal; for live MIDI streams this is a "
+                 "warned no-op."}},
     {"fast",    {cedar::Opcode::NOP, 2, 0, false,
                  {"pattern", "factor", "", "", "", ""},
                  {NAN, NAN, NAN},
-                 "Speed up pattern by factor (compress time)."}},
+                 "Speed up pattern by factor (compress time). Factor may be a "
+                 "constant or a signal; for live MIDI streams this is a "
+                 "warned no-op."}},
     {"rev",     {cedar::Opcode::NOP, 1, 0, false,
                  {"pattern", "", "", "", "", ""},
                  {NAN, NAN, NAN},

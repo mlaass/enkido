@@ -265,6 +265,32 @@ struct SequenceState {
 static_assert(sizeof(SequenceState) < 256, "SequenceState too large");
 
 // ============================================================================
+// RateScaleState — EVENT_RATE_SCALE per-block cycle_length modulator
+// ============================================================================
+//
+// PRD prd-runtime-event-transforms Phase 3. Lives in sequence.hpp so the
+// dsp_state.hpp DSPState variant can reference it without pulling in
+// event_transforms.hpp (which depends on dsp_state.hpp). Op body lives in
+// event_transforms.hpp::op_event_rate_scale.
+//
+// The opcode mutates an upstream SequenceState's `cycle_length` field each
+// block: `upstream.cycle_length = original_cycle_length / rate`. Every SEQPAT_*
+// opcode reads cycle_length when computing cycle_pos / event scaling, so a
+// single-field write covers QUERY, STEP, GATE, FIELD, PHASE, TYPE, PROP, and
+// VALUES uniformly — no need to patch each opcode's external-clock slot or
+// feed a phase signal.
+//
+// `original_cycle_length` is captured on the first block (after the program
+// loader has initialised the upstream SequenceState from its
+// SequenceProgram StateInitData, which is the authoritative source for the
+// pattern's compiled cycle_length, including any compile-time slow/fast
+// mutations inside compile_pattern_for_transform's recursive path).
+struct RateScaleState {
+    float original_cycle_length = 1.0f;  // captured on first block
+    bool  initialized = false;
+};
+
+// ============================================================================
 // Deterministic Randomness
 // ============================================================================
 

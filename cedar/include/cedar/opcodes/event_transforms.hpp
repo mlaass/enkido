@@ -192,6 +192,57 @@ inline void op_event_map(ExecutionContext& ctx, const Instruction& inst) {
 }
 
 // ============================================================================
+// EVENT_RATE_SCALE — per-block cycle_length modulator for fast / slow
+// ============================================================================
+//
+// PRD prd-runtime-event-transforms.md, Phase 3. Unlike EVENT_MAP / EVENT_FILTER
+// (which iterate events), this opcode mutates a SequenceState in place: each
+// block it sets `upstream.cycle_length = original_cycle_length / rate`. A
+// single-field write covers every SEQPAT_* opcode (QUERY/STEP/GATE/FIELD/
+// PHASE/TYPE/PROP/VALUES) — they all consult `state.cycle_length` for cycle
+// position and event scaling — so no external-clock plumbing is needed.
+//
+//   inputs[0]: BUFFER_UNUSED.
+//   inputs[1]: rate factor — constant buffer or signal-rate. Clamped to
+//              >= 0.001 to avoid frozen / reversed playback. For `slow`,
+//              codegen emits the reciprocal (factor → 1/factor) so the
+//              opcode itself only knows about `rate`.
+//   inputs[2..3]: upstream SequenceState state_id (packed low/high 16 bits,
+//                same encoding as EVENT_MAP / EVENT_FILTER).
+//   inputs[4]: BUFFER_UNUSED.
+//   out_buffer: BUFFER_UNUSED (no signal output).
+//   state_id: RateScaleState.
+//
+// Composition: compile-time fast/slow nesting accumulates the original
+// cycle_length via compile_pattern_for_transform's recursive path. ERS
+// captures that compile-time-accumulated cycle_length on first block and
+// applies the OUTER factor on top each block. Nested signal-rate is not
+// supported in Phase 3 (compile_pattern_for_transform rejects non-constant
+// nested factors).
+
+[[gnu::always_inline]]
+inline void op_event_rate_scale(ExecutionContext& ctx, const Instruction& inst) {
+    auto& state = ctx.states->get_or_create<RateScaleState>(inst.state_id);
+
+    const std::uint32_t upstream_id = event_transform_upstream_id(inst);
+    auto* upstream = ctx.states->get_if<SequenceState>(upstream_id);
+    if (!upstream) return;  // upstream not yet realised; SEQPAT_QUERY guards
+
+    if (!state.initialized) {
+        state.original_cycle_length = upstream->cycle_length;
+        state.initialized = true;
+    }
+
+    float rate = 1.0f;
+    if (inst.inputs[1] != BUFFER_UNUSED) {
+        rate = ctx.buffers->get(inst.inputs[1])[0];
+    }
+    if (!(rate >= 0.001f)) rate = 0.001f;  // NaN-safe; avoids frozen/reversed playback
+
+    upstream->cycle_length = state.original_cycle_length / rate;
+}
+
+// ============================================================================
 // EVENT_FILTER — predicate drop
 // ============================================================================
 [[gnu::always_inline]]

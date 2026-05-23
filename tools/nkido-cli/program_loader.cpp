@@ -341,6 +341,10 @@ void apply_state_inits(cedar::VM& vm,
             vm.init_event_transform_state(init.state_id, init.cycle_length,
                                           init.is_sample_pattern,
                                           init.total_events);
+        } else if (init.type == akkado::StateInitData::Type::RateScale) {
+            // PRD prd-runtime-event-transforms Phase 3: EVENT_RATE_SCALE
+            // beat-position integrator. No payload — just allocate + reset.
+            vm.init_event_rate_scale_state(init.state_id);
         } else if (init.type == akkado::StateInitData::Type::Timeline) {
             auto& state = vm.states().get_or_create<cedar::TimelineState>(init.state_id);
             state.num_points = std::min(

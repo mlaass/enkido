@@ -1365,6 +1365,10 @@ void VM::execute(const Instruction& inst) {
             op_fmod(ctx_, inst);
             break;
 
+        case Opcode::EVENT_RATE_SCALE:
+            op_event_rate_scale(ctx_, inst);
+            break;
+
         // === Trigonometric Math ===
         case Opcode::MATH_SIN:
             op_math_sin(ctx_, inst);

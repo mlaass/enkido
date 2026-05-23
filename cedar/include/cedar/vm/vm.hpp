@@ -217,6 +217,13 @@ public:
                                          output_capacity);
     }
 
+    // Initialize a RateScaleState for an EVENT_RATE_SCALE opcode (PRD
+    // prd-runtime-event-transforms Phase 3). No buffers — the integrator
+    // state is the entire payload. Resets accumulated beat_pos to 0.
+    void init_event_rate_scale_state(std::uint32_t state_id) {
+        state_pool_.init_event_rate_scale(state_id);
+    }
+
     // Initialize ExtendedParams<N> state for an opcode that uses more
     // than 5 input slots. The loader / WASM apply-state-inits path calls
     // this with a runtime-known count; the StatePool helper picks the

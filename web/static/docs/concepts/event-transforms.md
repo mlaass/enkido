@@ -2,7 +2,7 @@
 title: Event Transforms
 category: concepts
 order: 12
-keywords: [event-transforms, event_map, event_filter, transpose, velocity, dur, bend, aftertouch, early, late, swing, swingBy, stdlib, stream, modifier, pattern-transform]
+keywords: [event-transforms, event_map, event_filter, transpose, velocity, dur, bend, aftertouch, early, late, swing, swingBy, fast, slow, rate, EVENT_RATE_SCALE, stdlib, stream, modifier, pattern-transform]
 ---
 
 # Event Transforms
@@ -69,7 +69,28 @@ The `events: stream` annotation is part of [parameter type annotations](paramete
 | `swing(events, grid=8)` | `time` | 1/3-amount swing on `grid`-slice grid |
 | `swingBy(events, amount, grid=8)` | `time` | `amount` swing on `grid`-slice grid |
 
-Structural transforms (`rev`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `compress`, `iter`, `iterBack`) and rate scalers (`fast`, `slow`) remain C++ builtins — they don't fit the per-event-record-rewrite shape. The PRD `prd-runtime-event-transforms.md` Phases 3–5 migrate them too.
+Structural transforms (`rev`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, `compress`, `iter`, `iterBack`) remain C++ builtins — they don't fit the per-event-record-rewrite shape. The PRD `prd-runtime-event-transforms.md` Phases 4–5 migrate them too.
+
+## Rate scaling — `fast` / `slow`
+
+`fast(p, x)` and `slow(p, x)` time-warp a pattern. Phase 3 makes them runtime: the factor may now be a constant **or a signal**.
+
+```akkado
+n"c d e f".fast(2)                              // constant — 2x speed
+n"c d e f".fast(osc("sin", 0.1) * 1.5 + 2)      // signal — speed wobbles with LFO
+n"c d e f".slow(osc("sin", 0.2) + 2)            // signal slow — wobble-stretched
+```
+
+**How it works.** Each `fast`/`slow` call recompiles its inner pattern into its own `SequenceState` (so two transforms applied to the same pattern stay independent) and emits an `EVENT_RATE_SCALE` opcode. Each block the opcode writes `cycle_length = original / rate` into the upstream `SequenceState`; every `SEQPAT_*` opcode reads `cycle_length` when scaling event times, so a single-field write covers the entire downstream pipeline.
+
+**Composition.** `fast(slow(p, 2), 3)` chains naturally: the inner `slow(2)` is applied via the legacy compile-time path (`cycle_length` → 2), then the outer `fast(3)`'s `EVENT_RATE_SCALE` adjusts at runtime (cycle_length → 2/3 ≈ 0.667 — net 1.5× speed).
+
+**Limits in Phase 3.**
+
+- The rate is sampled at block boundaries — events still snap to the 128-sample block grid when the factor is a signal. Sub-block sample accuracy is a follow-up.
+- Nested signal-rate scaling (`fast(slow(p, lfo), other_lfo)`) is not supported: the inner signal-rate slow would need its own `EVENT_RATE_SCALE`, but the outer fast's compile-time path can't see through a runtime factor. Use a single signal-rate fast/slow per chain.
+- `fast(p, 0)` or `fast(p, -1)` is rejected at compile time with `E185`. A signal that dips below zero is clamped to `0.001` at runtime to keep playback monotonic.
+- `fast`/`slow` on a live MIDI stream is currently rejected with the same `E133` as other non-pattern arguments; a no-op pass-through with a warning is a planned follow-up.
 
 ## Shadowing built-in modifiers
 

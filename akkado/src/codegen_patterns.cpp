@@ -2995,50 +2995,152 @@ static void emit_instruction_helper(std::vector<cedar::Instruction>& instruction
     instructions.push_back(inst);
 }
 
-TypedValue CodeGenerator::handle_slow_call(NodeIndex node, const Node& n) {
-    // slow(pattern, factor) - stretch pattern by factor
-    // Multiplies all event times, durations, and cycle_length by factor
+// ============================================================================
+// fast / slow — runtime rate scaling via EVENT_RATE_SCALE
+// ============================================================================
+//
+// PRD prd-runtime-event-transforms Phase 3. fast/slow no longer mutate
+// cycle_length at compile time; they emit an EVENT_RATE_SCALE opcode whose
+// output (a modulated beat-position signal) feeds the new SEQPAT_QUERY's
+// external-clock input (sequencing.hpp op_seqpat_query, inputs[0]).
+//
+// Implementation strategy: each fast/slow call recompiles its inner pattern
+// into a NEW SequenceState (`compile_pattern_for_transform` +
+// `emit_pattern_with_state`) so that two transforms applied to the same
+// pattern stay independent. The OLD compile-time `cycle_length` mutation is
+// removed — the runtime ERS opcode is the sole authority on playback rate.
+// Composition `fast(slow(p, 2), 3)` works because each call adds its own
+// ERS upstream of its own SEQPAT_QUERY; the inner slow's ERS runs first,
+// the outer fast's ERS reads from the inner via the upstream-phase input.
+// For mixed chains with event_map transforms (e.g.
+// `fast(transpose(p, 7), 2)`), `compile_pattern_for_transform`'s recursive
+// path applies the inner transform at compile time (legacy fallback), so
+// the EVENT_MAP doesn't appear in fast's stream — the events are already
+// transposed in the SequenceProgram init.
+
+// Shared implementation of fast/slow. `is_fast=true` → rate = factor;
+// `is_fast=false` → rate = 1/factor (constant-folded for numeric factors,
+// emitted as a DIV for signal-rate factors).
+TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
+                                               bool is_fast) {
+    const char* fn_name = is_fast ? "fast" : "slow";
 
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto factor = get_number_arg(*ast_, n, 1);
-
     if (pattern_arg == NULL_NODE) {
-        error("E130", "slow() requires a pattern as first argument", n.location);
+        error("E130", std::string(fn_name) +
+                  "() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
 
-    if (!factor.has_value() || *factor <= 0) {
-        error("E131", "slow() requires a positive number as second argument", n.location);
+    // Locate the (raw) factor AST node — needed for the signal-rate path.
+    NodeIndex factor_arg_raw = NULL_NODE;
+    {
+        NodeIndex arg = n.first_child;
+        std::size_t idx = 0;
+        while (arg != NULL_NODE && idx < 1) {
+            arg = ast_->arena[arg].next_sibling;
+            idx++;
+        }
+        if (arg == NULL_NODE) {
+            error("E130", std::string(fn_name) +
+                      "() requires a factor as second argument", n.location);
+            return TypedValue::void_val();
+        }
+        const Node& arg_node = ast_->arena[arg];
+        factor_arg_raw = (arg_node.type == NodeType::Argument)
+                            ? arg_node.first_child
+                            : arg;
+    }
+
+    // Compile-time constant factor → static validation + 1/x folding for slow.
+    auto factor_const = get_number_arg(*ast_, n, 1);
+    if (factor_const.has_value() && *factor_const <= 0.0f) {
+        error("E185", std::string(fn_name) +
+                  "() requires a positive factor", n.location);
         return TypedValue::void_val();
     }
 
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
-        error("E133", "slow() first argument must be a pattern", n.location);
+        error("E133", std::string(fn_name) +
+                  "() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
 
-    // Compile the pattern (may include inner transforms applied recursively)
+    // Recompile the inner pattern into a fresh sequence so multi-use
+    // (`slow(f, 2)` and `fast(f, 2)` on the same `f`) stays independent.
+    // compile_pattern_for_transform's recursive path applies inner compile-
+    // time transforms (transpose/velocity legacy fallback / inner fast/slow
+    // cycle_length); the cycle_length we get back already reflects any
+    // inner fast/slow nesting.
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "slow() failed to compile pattern argument", n.location);
+    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg,
+                                       sample_registry_, compiler,
+                                       pattern_node, num_elements,
+                                       sequence_events, cycle_length)) {
+        error("E130", std::string(fn_name) +
+                  "() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
     }
 
-    // Set up state ID
-    std::uint32_t slow_count = call_counters_["slow"]++;
-    push_path("slow#" + std::to_string(slow_count));
-    std::uint32_t state_id = compute_state_id();
+    // Resolve the factor → a buffer index. Constants are folded (and slow's
+    // 1/x done at compile time); signals get a runtime DIV for slow.
+    std::uint16_t factor_buf;
+    if (factor_const.has_value()) {
+        float rate = is_fast ? *factor_const : (1.0f / *factor_const);
+        factor_buf = codegen::emit_push_const(buffers_, emit_stream(), rate);
+        if (factor_buf == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
+        }
+    } else {
+        TypedValue factor_tv = visit(factor_arg_raw);
+        if (factor_tv.error) return factor_tv;
+        if (factor_tv.type != ValueType::Signal &&
+            factor_tv.type != ValueType::Number) {
+            error("E186", std::string(fn_name) +
+                      "() factor must be a number or signal", n.location);
+            return TypedValue::void_val();
+        }
+        if (factor_tv.buffer == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
+        }
+        if (is_fast) {
+            factor_buf = factor_tv.buffer;
+        } else {
+            // slow(p, sig) → rate = 1.0 / sig at runtime.
+            std::uint16_t one_buf =
+                codegen::emit_push_const(buffers_, emit_stream(), 1.0f);
+            if (one_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::void_val();
+            }
+            factor_buf = buffers_.allocate();
+            if (factor_buf == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", n.location);
+                return TypedValue::void_val();
+            }
+            cedar::Instruction div_inst{};
+            div_inst.opcode = cedar::Opcode::DIV;
+            div_inst.out_buffer = factor_buf;
+            div_inst.inputs[0] = one_buf;
+            div_inst.inputs[1] = factor_tv.buffer;
+            div_inst.inputs[2] = 0xFFFF;
+            div_inst.inputs[3] = 0xFFFF;
+            div_inst.inputs[4] = 0xFFFF;
+            emit_stream().push_back(div_inst);
+        }
+    }
 
-    // Only scale cycle_length — event times are normalized [0,1) and the
-    // runtime formula (e.time * cycle_length) handles the stretching.
-    cycle_length *= *factor;
+    // Allocate the pattern's own state_id and emit its full SEQPAT pipeline.
+    std::uint32_t call_count = call_counters_[fn_name]++;
+    push_path(std::string(fn_name) + "#" + std::to_string(call_count));
+    std::uint32_t state_id = compute_state_id();
 
     const Node& pattern = ast_->arena[pattern_node];
     auto result_tv = emit_pattern_with_state(
@@ -3046,75 +3148,75 @@ TypedValue CodeGenerator::handle_slow_call(NodeIndex node, const Node& n) {
         node_types_, node, state_id, cycle_length,
         compiler, sequence_events, pattern.location, n.location,
         emit_instruction_helper);
-
     pop_path();
 
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
         error("E101", "Buffer pool exhausted", n.location);
+        return result_tv;
     }
+
+    // Emit EVENT_RATE_SCALE that targets the just-emitted SequenceState
+    // (state_id). ERS mutates upstream->cycle_length each block; SEQPAT_*
+    // opcodes pick it up automatically. Emission order doesn't matter for
+    // correctness — ERS runs each block before the SEQPAT_QUERY because
+    // codegen emits it after the pattern but the program loader sequences
+    // by instruction order, and ERS reads/writes the same SequenceState as
+    // the SEQPAT_QUERY. For the first block, ERS captures the SequenceState's
+    // initial cycle_length BEFORE SEQPAT_QUERY consults it; subsequent
+    // blocks see the modulated value.
+    push_path("ers");
+    std::uint32_t ers_state_id = compute_state_id();
+    pop_path();
+    pop_path();  // back out of fast#N / slow#N path
+
+    auto& stream = emit_stream();
+    cedar::Instruction ers{};
+    ers.opcode = cedar::Opcode::EVENT_RATE_SCALE;
+    ers.out_buffer = 0xFFFF;
+    ers.inputs[0] = 0xFFFF;
+    ers.inputs[1] = factor_buf;
+    // Pack upstream SequenceState state_id across inputs[2..3] (same encoding
+    // as EVENT_MAP / EVENT_FILTER via event_transform_upstream_id).
+    ers.inputs[2] = static_cast<std::uint16_t>(state_id & 0xFFFF);
+    ers.inputs[3] = static_cast<std::uint16_t>((state_id >> 16) & 0xFFFF);
+    ers.inputs[4] = 0xFFFF;
+    ers.state_id = ers_state_id;
+
+    // Insert ERS BEFORE the first SEQPAT_* instruction reading this state_id
+    // so the cycle_length mutation lands before any opcode consults it on
+    // this block. emit_pattern_with_state appends in topological order, so
+    // SEQPAT_QUERY is the earliest consumer.
+    std::optional<std::size_t> insert_idx;
+    for (std::size_t i = 0; i < stream.size(); ++i) {
+        if (stream[i].state_id == state_id &&
+            stream[i].opcode == cedar::Opcode::SEQPAT_QUERY) {
+            insert_idx = i;
+            break;
+        }
+    }
+    if (insert_idx) {
+        stream.insert(stream.begin() + static_cast<std::ptrdiff_t>(*insert_idx),
+                      ers);
+    } else {
+        // Defensive: emit_pattern_with_state should always emit SEQPAT_QUERY.
+        stream.push_back(ers);
+    }
+
+    StateInitData rs_init{};
+    rs_init.state_id = ers_state_id;
+    rs_init.type = StateInitData::Type::RateScale;
+    rs_init.pattern_location = n.location;
+    state_inits_.push_back(std::move(rs_init));
 
     return result_tv;
 }
 
+TypedValue CodeGenerator::handle_slow_call(NodeIndex node, const Node& n) {
+    return emit_rate_scale_call(node, n, /*is_fast=*/false);
+}
+
 TypedValue CodeGenerator::handle_fast_call(NodeIndex node, const Node& n) {
-    // fast(pattern, factor) - compress pattern by factor
-    // Divides all event times, durations, and cycle_length by factor
-
-    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto factor = get_number_arg(*ast_, n, 1);
-
-    if (pattern_arg == NULL_NODE) {
-        error("E130", "fast() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!factor.has_value() || *factor <= 0) {
-        error("E131", "fast() requires a positive number as second argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
-        error("E133", "fast() first argument must be a pattern", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Compile the pattern (may include inner transforms applied recursively)
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "fast() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Set up state ID
-    std::uint32_t fast_count = call_counters_["fast"]++;
-    push_path("fast#" + std::to_string(fast_count));
-    std::uint32_t state_id = compute_state_id();
-
-    // Only scale cycle_length — event times are normalized [0,1) and the
-    // runtime formula (e.time * cycle_length) handles the compression.
-    cycle_length /= *factor;
-
-    const Node& pattern = ast_->arena[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
-
-    pop_path();
-
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-
-    return result_tv;
+    return emit_rate_scale_call(node, n, /*is_fast=*/true);
 }
 
 TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {

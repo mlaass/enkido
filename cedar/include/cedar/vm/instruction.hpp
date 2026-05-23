@@ -271,6 +271,21 @@ enum class Opcode : std::uint8_t {
 
     FMOD = 220,              // out = fmod(in0, in1) — C-style float remainder, sign of dividend
 
+    // Runtime Event-Stream Transforms — fast/slow (PRD prd-runtime-event-
+    // transforms Phase 3). Signal-rate beat-position modulator. Reads an
+    // optional upstream phase buffer (BUFFER_UNUSED → derive from
+    // ctx.global_sample_counter/spb) plus a rate-factor buffer, and writes a
+    // beat-position scalar to out_buffer[0] that downstream SEQPAT_QUERY
+    // consumes via its existing external-clock path (sequencing.hpp
+    // op_seqpat_query, inputs[0]). Plain per-block opcode — no closure
+    // dispatch, no event iteration. State carries the upstream-delta
+    // integrator. See cedar/opcodes/event_transforms.hpp op_event_rate_scale.
+    //   inputs[0]: upstream phase buffer (0xFFFF = no upstream, derive)
+    //   inputs[1]: rate factor (constant buffer or signal-rate)
+    //   out_buffer: beat-position output (sample 0 = block-start beat)
+    //   state_id: RateScaleState
+    EVENT_RATE_SCALE = 221,
+
     INVALID = 255
 };
 

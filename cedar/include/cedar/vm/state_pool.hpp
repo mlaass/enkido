@@ -1057,6 +1057,18 @@ public:
         }
     }
 
+    // Initialize a RateScaleState for an EVENT_RATE_SCALE opcode (PRD
+    // prd-runtime-event-transforms Phase 3). No buffers — the integrator
+    // state is the entire payload; the call exists for symmetry with the
+    // other init_* helpers and so the program loader has an explicit hook
+    // to reset state on program reload (init_event_rate_scale_state in
+    // VM mirrors this).
+    void init_event_rate_scale(std::uint32_t state_id) {
+        auto& state = get_or_create<RateScaleState>(state_id);
+        state.original_cycle_length = 1.0f;
+        state.initialized = false;
+    }
+
     // Configure iter()/iterBack() rotation on a SequenceState. Called after
     // init_sequence_program. n=0 disables rotation; dir is +1 for iter, -1
     // for iterBack. Does nothing if the state slot is not a SequenceState.

@@ -2252,79 +2252,99 @@ TEST_CASE("Pattern transform chaining compiles", "[codegen][patterns]") {
 }
 
 TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][patterns]") {
-    SECTION("slow(n'…', 2) doubles cycle length, event times unchanged") {
-        // n"[c4 e4]" base: cycle_length = 4 beats (Strudel canonical, regardless of element count)
-        // slow(2) -> cycle_length = 8 beats, event times stay normalized
-        // Runtime formula (e.time * cycle_length) handles the scaling
+    // PRD prd-runtime-event-transforms Phase 3: top-level fast/slow no longer
+    // mutate the SequenceProgram init's cycle_length. They emit an
+    // EVENT_RATE_SCALE opcode + a RateScale state init that adjusts the
+    // SequenceState's cycle_length each block. Inner (nested) fast/slow seen
+    // by compile_pattern_for_transform's recursive path still accumulate at
+    // compile time, so the SequenceProgram init carries the inner-only
+    // product (raw pattern → 1.0; fast(p,2) as INNER of slow(_,2) → 0.5).
+    SECTION("slow(n'…', 2) — SequenceProgram cycle_length stays 1.0; RateScale init emitted") {
         auto result = akkado::compile(R"(slow(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
+
+        bool has_rate_scale_init = false;
+        for (const auto& s : result.state_inits) {
+            if (s.type == akkado::StateInitData::Type::RateScale)
+                has_rate_scale_init = true;
+        }
+        CHECK(has_rate_scale_init);
+
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 
-    SECTION("slow(fast(n'…', 2), 2) is identity") {
-        // n"[c4 e4]" base: cycle_length=4, times at 0, 0.5
-        // fast(2): cycle_length=2, times unchanged
-        // slow(2): cycle_length=4, times unchanged -> identity
+    SECTION("slow(fast(n'…', 2), 2) is identity — inner fast accumulates compile-time, outer slow runs ERS") {
+        // Inner fast(2) via compile_pattern_for_transform: cycle_length 1 → 0.5
+        // Outer slow's ERS at runtime: 0.5 / 0.5 = 1.0 (identity).
         auto result = akkado::compile(R"(slow(fast(n"[c4 e4]", 2), 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(1.0f));
+        CHECK(si.cycle_length == Catch::Approx(0.5f));  // inner fast accumulated
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
+
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 
-    SECTION("transpose(slow(n'…', 2), 12) applies both transforms") {
-        // slow(2) is still a compile-time transform (Phase 1 migrates only
-        // transpose/velocity): the SequenceProgram carries the slowed
-        // cycle_length. transpose(12) is now a runtime EVENT_MAP layered on
-        // top — verified for runtime correctness in test_event_map.cpp.
+    SECTION("transpose(slow(n'…', 2), 12) — slow is runtime ERS, transpose is runtime EVENT_MAP") {
+        // Top-level transpose (Phase 2b stdlib) wraps an inner slow.
+        // handle_slow_call recompiles its argument (the raw pattern); the
+        // SequenceProgram init's cycle_length is 1.0. The slow's ERS handles
+        // runtime scaling; transpose's EVENT_MAP overlays on top.
         auto result = akkado::compile(R"(transpose(slow(n"[c4 e4]", 2), 12))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(2.0f));  // slow doubled it
+        CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
 
         auto insts = get_instructions(result);
         CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 
-    SECTION("fast(fast(n'…', 2), 3) compounds speed") {
-        // n"[c4 e4]" base: cycle_length=4 beats
-        // fast(2): cycle_length=2
-        // fast(3): cycle_length=2/3
+    SECTION("fast(fast(n'…', 2), 3) compounds — inner fast accumulates, outer fast runs ERS") {
+        // Inner fast(2) via compile_pattern_for_transform: cycle_length 1 → 0.5
+        // Outer fast's ERS at runtime: 0.5 / 3 ≈ 0.167 (net 6x speed).
         auto result = akkado::compile(R"(fast(fast(n"[c4 e4]", 2), 3))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(1.0f / 6.0f));
+        CHECK(si.cycle_length == Catch::Approx(0.5f));  // inner fast accumulated
+
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 
-    SECTION("fast(n'…', 2) halves cycle length, event times unchanged") {
-        // n"[c4 e4]" base: cycle_length = 4 beats (Strudel canonical)
-        // fast(2) -> cycle_length = 2, event times stay normalized
+    SECTION("fast(n'…', 2) — SequenceProgram cycle_length stays 1.0; ERS handles 2x speed") {
         auto result = akkado::compile(R"(fast(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
 
         const auto& si = result.state_inits[0];
-        CHECK(si.cycle_length == Catch::Approx(0.5f));
+        CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f));
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
+
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 
     SECTION("rev(n'…') reverses event positions within [0,1)") {
@@ -3490,8 +3510,11 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile("slow(run(4), 2)");
         REQUIRE(result.success);
         const auto& si = result.state_inits[0];
-        // canonical cycle_length = 4; slow(2) doubles -> 8
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        // Phase 3: slow's factor lives in a RateScale init + EVENT_RATE_SCALE
+        // instruction, not in the SequenceProgram init's cycle_length.
+        CHECK(si.cycle_length == Catch::Approx(1.0f));
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
         REQUIRE(si.sequence_events[0].size() == 4);
     }
     SECTION("run dot-call composes with transforms") {
@@ -3888,12 +3911,18 @@ TEST_CASE("Pattern transform: velocity in chain", "[codegen][patterns]") {
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        // slow(2) doubles canonical cycle_length: 4 * 2 = 8
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
-        // velocity(0.5) sets velocity to 0.5
+        // Phase 3: slow's factor → RateScale init + EVENT_RATE_SCALE; the
+        // SequenceProgram init's cycle_length stays 1.0. INNER velocity is
+        // still applied compile-time via compile_pattern_for_transform's
+        // legacy fallback (Phase 2b's stdlib runtime velocity only triggers
+        // for top-level calls; nested inside another compile-time-recursive
+        // transform like slow, the legacy path applies).
+        CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 1);
         CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.5f));
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
 }
 
@@ -3934,8 +3963,11 @@ TEST_CASE("Pattern transform: string literal as pattern", "[codegen][patterns]")
         REQUIRE(result.success);
         REQUIRE_FALSE(result.state_inits.empty());
         const auto& si = result.state_inits[0];
-        // canonical cycle_length = 4 beats; slow(2) -> 8
-        CHECK(si.cycle_length == Catch::Approx(2.0f));
+        // Phase 3: slow's factor lives in a RateScale init + EVENT_RATE_SCALE
+        // instruction, not in the SequenceProgram init's cycle_length.
+        CHECK(si.cycle_length == Catch::Approx(1.0f));
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
     }
     SECTION("chained transform on string literal") {
         auto result = akkado::compile(R"(transpose(slow("c4 e4", 2), 12))");

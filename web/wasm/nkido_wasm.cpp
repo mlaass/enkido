@@ -1246,6 +1246,12 @@ WASM_EXPORT uint32_t cedar_apply_state_inits() {
                                              init.total_events);
             count++;
         }
+        else if (init.type == akkado::StateInitData::Type::RateScale) {
+            // PRD prd-runtime-event-transforms Phase 3: EVENT_RATE_SCALE
+            // beat-position integrator. No payload — just allocate + reset.
+            g_vm->init_event_rate_scale_state(init.state_id);
+            count++;
+        }
     }
     return count;
 }

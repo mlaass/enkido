@@ -46,6 +46,7 @@ add_executable(cedar_tests
     test_seqpat_gate.cpp
     test_seqpat_step.cpp
     test_event_map.cpp
+    test_event_rate_scale.cpp
     test_soundfont_registry.cpp
     test_audit_inst_rate.cpp
     test_subprogram_table.cpp

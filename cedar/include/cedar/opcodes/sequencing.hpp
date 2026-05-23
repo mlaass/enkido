@@ -480,8 +480,18 @@ inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
             );
         }
 
-        // Detect cycle wrap (or external clock direction change)
-        bool wrapped = (state.last_beat_pos >= 0.0f && beat_pos < state.last_beat_pos - 0.5f);
+        // Detect cycle wrap (or external clock direction change). The
+        // heuristic asks "did beat_pos jump backward by more than half a
+        // cycle?" — that's the signature of a wrap. The 0.5 constant was
+        // hardcoded under the assumption cycle_length=1.0; with `fast`/`slow`
+        // (PRD prd-runtime-event-transforms Phase 3) cycle_length scales
+        // arbitrarily, so the wrap threshold must scale with it. Without
+        // this, fast(N) for N>1 (cycle_length<1) silently drops every
+        // wrap-triggered onset and the pattern fires at ~1 trigger / (2 beats)
+        // instead of the expected N×.
+        const float wrap_threshold = state.cycle_length * 0.5f;
+        bool wrapped = (state.last_beat_pos >= 0.0f &&
+                        beat_pos < state.last_beat_pos - wrap_threshold);
         if (wrapped) {
             state.current_index = 0;
         }

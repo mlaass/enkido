@@ -426,6 +426,26 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Event Transforms"
 	},
+	"fast": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"slow": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"rate": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"event_rate_scale": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
 	"stdlib": {
 		"slug": "event-transforms",
 		"category": "concepts",
@@ -1829,11 +1849,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "speed",
 		"anchor": "speed"
 	},
-	"slow": {
-		"slug": "basics",
-		"category": "mini-notation",
-		"title": "Mini-Notation Basics"
-	},
 	"repeat": {
 		"slug": "arrays",
 		"category": "language",
@@ -3076,11 +3091,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "envelopes",
 		"category": "builtins",
 		"title": "Envelopes"
-	},
-	"rate": {
-		"slug": "modulation",
-		"category": "builtins",
-		"title": "Modulation Effects"
 	},
 	"depth": {
 		"slug": "modulation",

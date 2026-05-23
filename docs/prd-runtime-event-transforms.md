@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 1 + 2a + 2b shipped.**
+> **Status: IN PROGRESS — Phases 1 + 2a + 2b + 3 shipped.**
 >
 > - **Phase 1** (substrate: packed `EVENT_MAP` / `EVENT_FILTER` opcodes +
 >   runtime `transpose` / `velocity`) — shipped 2026-05-22, commit `79b4b24`.
@@ -10,8 +10,30 @@
 >   `bend`, `aftertouch`, `early`, `late`, `swing`, `swingBy`. `tune`
 >   deferred (its `tune("31edo", pattern)` semantics don't fit the
 >   `event_map` shape; needs a separate `EVENT_OUT_MICRO` slot).
-> - **Phases 3 – 5** (rate scaling, structural transforms, quantize +
->   `TypedValue` cleanup) — not started.
+> - **Phase 3** (rate scaling: `EVENT_RATE_SCALE` opcode + runtime
+>   `fast` / `slow`) — shipped 2026-05-23. The opcode mutates the upstream
+>   `SequenceState.cycle_length` each block to `original / rate`; every
+>   `SEQPAT_*` opcode reads `cycle_length` for cycle scaling so a single-
+>   field write covers QUERY / STEP / GATE / FIELD / PHASE / TYPE / PROP /
+>   VALUES uniformly — no external-clock plumbing. Signal-rate factors are
+>   now supported (`fast(p, lfo)`). Constant factors fold the reciprocal
+>   for `slow` at compile time; signal-rate `slow` emits a runtime `DIV`.
+>   Multi-use stays independent: each `fast`/`slow` call recompiles its
+>   inner pattern into a fresh SequenceState via
+>   `compile_pattern_for_transform`, so `slow(f, 2)` and `fast(f, 2)` on
+>   the same `f` don't interfere. Composition `fast(slow(p, 2), 3)` lands
+>   at the expected 1.5× speed: inner `slow`'s compile-time `cycle_length`
+>   accumulation feeds the outer `fast`'s ERS, which captures the
+>   compile-time-accumulated value on first block. **Bug fix shipped with
+>   Phase 3**: SEQPAT_STEP's wrap-detect heuristic was hardcoded to
+>   `last_beat_pos - 0.5f`, assuming `cycle_length = 1.0`. With
+>   `cycle_length < 1` (any `fast(N)` for N>1), wraps were never detected
+>   — silently exposing a pre-existing bug now that runtime `fast` actually
+>   sets `cycle_length < 1`. Fixed by scaling the threshold to
+>   `cycle_length * 0.5f` (`sequencing.hpp:492`); regression test in
+>   `akkado/tests/test_fast_slow.cpp [regression]`.
+> - **Phases 4 – 5** (structural transforms, quantize + `TypedValue`
+>   cleanup) — not started.
 >
 > The one hard external dependency — runtime closure / first-class fn
 > infrastructure (§0,
