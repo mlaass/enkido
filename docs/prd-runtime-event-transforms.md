@@ -1,13 +1,26 @@
-> **Status: READY FOR IMPLEMENTATION** (promoted 2026-05-21). The one hard
-> external dependency — runtime closure / first-class fn infrastructure
-> (§0, [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md))
+> **Status: IN PROGRESS — Phase 1 + Phase 2a shipped.**
+>
+> - **Phase 1** (substrate: packed `EVENT_MAP` / `EVENT_FILTER` opcodes +
+>   runtime `transpose` / `velocity`) — shipped 2026-05-22, commit `79b4b24`.
+> - **Phase 2a** (closure-taking `event_map` / `event_filter` builtins +
+>   Cedar opcode closure rework) — shipped 2026-05-23, commit `694eb84`.
+> - **Phase 2b** (stdlib `akkado/stdlib/event_transforms.ak` modifier
+>   migration + delete C++ handlers) — **deferred**: blocked on
+>   [`prd-parameter-type-annotations.md`](prd-parameter-type-annotations.md).
+>   The stdlib one-liners need `events: stream`-annotated `fn` params (user
+>   `fn`s cannot carry a Pattern / EventSource param today).
+> - **Phases 3 – 5** (rate scaling, structural transforms, quantize +
+>   `TypedValue` cleanup) — not started.
+>
+> The one hard external dependency — runtime closure / first-class fn
+> infrastructure (§0,
+> [`prd-runtime-functions-control-flow.md`](prd-runtime-functions-control-flow.md))
 > — shipped its L1→L3 phases plus §4.2 `BLOCK_BIND` (commits `41bb96c`,
-> `9776ded`, `16b166c`, `ad6aed6`, `5b7746b`, `21f73ef`, `9690a6a`, `7a31d9d`).
-> All §11 open questions are resolved; decisions are recorded inline in §11.
-> `prd-cycle-length-cleanup.md` (§0.5) is **not** a hard prerequisite and may
-> land in either order. `prd-pattern-event-arrays.md` (§0.6) is a soft
-> dependency that gates chord-wide closures only — it must land before this
-> PRD's **Phase 2**, not Phase 1. Implementation may begin at Phase 1 (§9).
+> `9776ded`, `16b166c`, `ad6aed6`, `5b7746b`, `21f73ef`, `9690a6a`,
+> `7a31d9d`). All §11 open questions are resolved; decisions are recorded
+> inline in §11. `prd-cycle-length-cleanup.md` (§0.5) is **not** a hard
+> prerequisite and may land in any order. `prd-pattern-event-arrays.md`
+> (§0.6) was a soft dependency for chord-wide closures and is complete.
 
 # PRD: Runtime Event-Stream Transforms (Pattern-Modifier Rework)
 
