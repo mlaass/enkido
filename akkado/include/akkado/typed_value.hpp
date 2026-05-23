@@ -30,6 +30,25 @@ enum class ValueType : std::uint8_t {
     Void         // No value (statements, directives)
 };
 
+/// Parameter type annotation for builtin / user-fn parameters.
+/// Used both for builtin `param_types` checking (generic builtin call path) and
+/// for user-defined `fn` parameter annotations (PRD prd-parameter-type-annotations).
+/// Default `Any` means no checking — opt-in.
+///
+/// Defined here (rather than alongside the `type_compatible()` helper in
+/// builtins.hpp) so AST node payloads can reference it without pulling in the
+/// heavy builtin-metadata header.
+enum class ParamValueType : std::uint8_t {
+    Any = 0,     // No checking (default)
+    Signal,      // Signal or Number (Number auto-promotes to constant buffer)
+    Pattern,     // Pattern only
+    String,      // Compile-time string only
+    Function,    // Function/closure reference
+    Array,       // Array type
+    Record,      // Record or Pattern (Pattern is subtype of Record)
+    Stream,      // Abstract supertype: Pattern or EventSource (PRD prd-parameter-type-annotations §4.1)
+};
+
 /// Channel count for signal values. When Stereo, `right_buffer` holds the
 /// right channel and must equal `buffer + 1` (adjacent-buffer invariant).
 /// `Match` is only valid on `BuiltinInfo::output_channels`; it means "follow

@@ -23,19 +23,10 @@ constexpr std::size_t MAX_BUILTIN_DEFAULTS = 7;
 /// Maximum number of extended parameters (stored in StatePool)
 constexpr std::size_t MAX_EXTENDED_PARAMS = 8;
 
-/// Parameter type annotation for builtin functions.
-/// Used for type checking arguments in the generic builtin call path.
-/// Default `Any` means no checking — opt-in annotation.
-enum class ParamValueType : std::uint8_t {
-    Any = 0,     // No checking (default)
-    Signal,      // Signal or Number (Number auto-promotes to constant buffer)
-    Pattern,     // Pattern only
-    String,      // Compile-time string only
-    Function,    // Function/closure reference
-    Array,       // Array type
-    Record,      // Record or Pattern (Pattern is subtype of Record)
-    Stream,      // Abstract supertype: Pattern or EventSource (PRD prd-parameter-type-annotations §4.1)
-};
+// `ParamValueType` is defined in typed_value.hpp (alongside `ValueType`) so the
+// AST and parser headers can reference it without pulling in the heavy builtin-
+// metadata header. The helpers below (`param_value_type_name`, `type_compatible`)
+// live here because they are only consumed by the builtin / codegen layers.
 
 /// Human-readable name for a ParamValueType (for error messages)
 constexpr const char* param_value_type_name(ParamValueType type) {

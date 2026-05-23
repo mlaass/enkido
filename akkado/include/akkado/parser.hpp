@@ -37,6 +37,11 @@ struct ParsedParam {
     // `destructure_fields` carries the actual field-binding spec.
     bool is_destructure = false;
     std::vector<DestructureField> destructure_fields;
+    // PRD prd-parameter-type-annotations §4.4: parser-side intermediate for
+    // `name: stream` / `name: signal` annotations on `fn` parameters.
+    // Defaults to Any (un-annotated). Destructure and rest params reject
+    // annotations with E104 in Phase 1, so this field stays Any for those.
+    ParamValueType annotated_type = ParamValueType::Any;
 };
 
 /// Parser for the Akkado language

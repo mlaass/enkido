@@ -6,6 +6,7 @@
 #include <variant>
 #include <optional>
 #include "diagnostics.hpp"
+#include "typed_value.hpp"  // for ParamValueType (used in ClosureParamData)
 
 namespace akkado {
 
@@ -193,6 +194,12 @@ struct Node {
         std::optional<double> default_value;
         std::optional<std::string> default_string;  // String default for match dispatch
         bool is_rest = false;  // true for ...param (variadic rest parameter)
+        // PRD prd-parameter-type-annotations §4.4: parameter type annotation
+        // (`name: stream` / `name: signal`). Defaults to Any (un-annotated).
+        // Carried on closure params so it survives the parser → analyzer →
+        // codegen pipeline; closures themselves don't enforce annotations
+        // (they inline), but fn-defs share the same AST node shape.
+        ParamValueType annotated_type = ParamValueType::Any;
     };  // Closure param with optional default
 
     // Mini-notation atom types

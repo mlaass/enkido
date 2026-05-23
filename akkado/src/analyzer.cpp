@@ -381,6 +381,12 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                         param.default_value = cp.default_value;
                         param.default_string = cp.default_string;
                         param.is_rest = cp.is_rest;
+                        // PRD prd-parameter-type-annotations §4.4: carry the
+                        // annotation through the closure-assignment path so
+                        // `name = (e: stream) -> …` future-proofs the AST,
+                        // even though closures themselves don't enforce it
+                        // in Phase 1.
+                        param.annotated_type = cp.annotated_type;
                         // Expression/numeric default is stored as child of param
                         // node (string defaults are carried in ClosureParamData).
                         if (child_node.first_child != NULL_NODE &&
@@ -522,6 +528,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                                     param.default_value = cp.default_value;
                                     param.default_string = cp.default_string;
                                     param.is_rest = cp.is_rest;
+                                    param.annotated_type = cp.annotated_type;
                                     // Expression default is stored as child of param node
                                     if (child_node.first_child != NULL_NODE &&
                                         !cp.default_value.has_value() && !cp.default_string.has_value()) {
@@ -775,6 +782,11 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 param.default_value = cp.default_value;
                 param.default_string = cp.default_string;
                 param.is_rest = cp.is_rest;
+                // PRD prd-parameter-type-annotations §4.4: propagate the
+                // resolved annotation into FunctionParamInfo so the codegen
+                // pass at handle_user_function_call can branch on `: stream` /
+                // `: signal`.
+                param.annotated_type = cp.annotated_type;
                 // Expression/numeric default is stored as child of param node
                 // (string defaults are carried in ClosureParamData).
                 if (child_node.first_child != NULL_NODE &&

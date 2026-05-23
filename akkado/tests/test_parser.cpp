@@ -1367,6 +1367,151 @@ TEST_CASE("Parser function definitions", "[parser]") {
     }
 }
 
+// =============================================================================
+// PRD prd-parameter-type-annotations §3.1: `name: type` annotation grammar on
+// fn parameter lists. Phase 1 ships `stream` and `signal` keywords. Tests in
+// this section cover the parser/AST surface (grammar, AST-node promotion,
+// E104/E185 diagnostics). Codegen-side behavior (E184 + symbol-binding) is
+// covered in test_param_type_annotations.cpp.
+// =============================================================================
+
+TEST_CASE("Parser fn parameter type annotations: grammar",
+          "[parser][type-annotation]") {
+    SECTION("simple : stream annotation parses and promotes to ClosureParamData") {
+        auto ast = parse_ok("fn transpose(events: stream, n) -> events");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(ast.arena[p0].type == NodeType::Identifier);
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        const auto& cp0 = ast.arena[p0].as_closure_param();
+        CHECK(cp0.name == "events");
+        CHECK(cp0.annotated_type == ParamValueType::Stream);
+        CHECK_FALSE(cp0.default_value.has_value());
+
+        NodeIndex p1 = ast.arena[p0].next_sibling;
+        REQUIRE(ast.arena[p1].type == NodeType::Identifier);
+        // Second param is unannotated and stays IdentifierData (cheap path).
+        REQUIRE(std::holds_alternative<Node::IdentifierData>(ast.arena[p1].data));
+        CHECK(ast.arena[p1].as_identifier() == "n");
+    }
+
+    SECTION(": signal annotation also parses") {
+        auto ast = parse_ok("fn wobble(rate: signal, depth) -> depth");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Signal);
+    }
+
+    SECTION("annotation precedes default value") {
+        auto ast = parse_ok("fn f(rate: signal = 220) -> rate");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        const auto& cp = ast.arena[p0].as_closure_param();
+        CHECK(cp.annotated_type == ParamValueType::Signal);
+        REQUIRE(cp.default_value.has_value());
+        CHECK_THAT(*cp.default_value, WithinRel(220.0));
+    }
+
+    SECTION("annotation accepted before numeric default (eval errors deferred)") {
+        // The parser accepts the grammar `name : type = default`. A `: stream`
+        // default of `0` is semantically meaningless (PRD §8.9) but the
+        // parser doesn't reject it — that's deferred to body-side usage
+        // diagnostics. Verifies the token order `: type =`.
+        auto ast = parse_ok("fn t(events: stream = 0) -> events");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        const auto& cp = ast.arena[p0].as_closure_param();
+        CHECK(cp.annotated_type == ParamValueType::Stream);
+        REQUIRE(cp.default_value.has_value());
+    }
+
+    SECTION("multiple annotated params") {
+        auto ast = parse_ok("fn f(e: stream, r: signal) -> r");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        NodeIndex p1 = ast.arena[p0].next_sibling;
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Stream);
+        CHECK(ast.arena[p1].as_closure_param().annotated_type == ParamValueType::Signal);
+    }
+
+    SECTION("unannotated params keep IdentifierData (no promotion)") {
+        auto ast = parse_ok("fn f(x, y) -> x + y");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        NodeIndex p1 = ast.arena[p0].next_sibling;
+        // Regression: zero overhead for un-annotated params.
+        CHECK(std::holds_alternative<Node::IdentifierData>(ast.arena[p0].data));
+        CHECK(std::holds_alternative<Node::IdentifierData>(ast.arena[p1].data));
+    }
+}
+
+TEST_CASE("Parser fn parameter type annotations: E185 unknown type name",
+          "[parser][type-annotation]") {
+    SECTION("E185 fires on unknown annotation keyword") {
+        auto [tokens, lex_diags] = lex("fn f(events: bogustype) -> events");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        REQUIRE_FALSE(parse_diags.empty());
+        bool has_e185 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E185") {
+                has_e185 = true;
+                // Diagnostic should mention `stream` or `signal` as the hint.
+                CHECK(d.message.find("stream") != std::string::npos);
+            }
+        }
+        CHECK(has_e185);
+    }
+}
+
+TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
+          "[parser][type-annotation]") {
+    SECTION("E104 fires on destructure param annotation") {
+        auto [tokens, lex_diags] = lex("fn f({x, y}: stream) -> x + y");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        REQUIRE_FALSE(parse_diags.empty());
+        bool has_e104 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E104") has_e104 = true;
+        }
+        CHECK(has_e104);
+    }
+
+    SECTION("E104 fires on rest param annotation") {
+        auto [tokens, lex_diags] = lex("fn f(...args: signal) -> args");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        REQUIRE_FALSE(parse_diags.empty());
+        bool has_e104 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E104") has_e104 = true;
+        }
+        CHECK(has_e104);
+    }
+}
+
+TEST_CASE("Parser: stream/signal are reserved keywords",
+          "[parser][type-annotation]") {
+    SECTION("top-level `stream = …` no longer parses as an identifier binding") {
+        // PRD §6: stream/signal become reserved on Phase 1 landing. Any code
+        // that bound them as identifiers will error here; the test asserts the
+        // breaking-change surface.
+        auto [tokens, lex_diags] = lex("stream = 5");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        // No assertion on the specific code — just that *some* parse error
+        // surfaces (the `stream` token is no longer a valid statement-start
+        // identifier).
+        CHECK_FALSE(parse_diags.empty());
+    }
+}
+
 TEST_CASE("Parser fn arrow body does not swallow the next line",
           "[parser][fn]") {
     // The grammar is newline-insensitive and has no statement terminator.

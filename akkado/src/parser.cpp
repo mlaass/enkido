@@ -1159,11 +1159,17 @@ NodeIndex Parser::parse_closure() {
             } else {
                 param_node = arena_.alloc(NodeType::Identifier, start_tok.location);
 
+                // PRD prd-parameter-type-annotations: an annotation alone
+                // (without default / rest) also forces ClosureParamData so the
+                // annotated_type survives into the AST.
                 if (param.default_value.has_value() || param.default_string.has_value() ||
-                    param.is_rest || param.default_node != NULL_NODE) {
-                    // Parameter with default value, string default, rest flag, or expression default
+                    param.is_rest || param.default_node != NULL_NODE ||
+                    param.annotated_type != ParamValueType::Any) {
+                    // Parameter with default value, string default, rest flag,
+                    // expression default, or type annotation.
                     arena_[param_node].data = Node::ClosureParamData{
-                        param.name, param.default_value, param.default_string, param.is_rest};
+                        param.name, param.default_value, param.default_string,
+                        param.is_rest, param.annotated_type};
                 } else {
                     // Simple parameter - use IdentifierData
                     arena_[param_node].data = Node::IdentifierData{param.name};
@@ -1207,6 +1213,34 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     bool seen_default = false;
     std::size_t destr_param_idx = 0;
 
+    // PRD prd-parameter-type-annotations §3.1: parse the optional
+    // `: stream` / `: signal` annotation after a parameter name. Returns Any
+    // when no annotation is present. Emits E185 for an unknown type name
+    // (e.g. `: bogustype`) and recovers by skipping one token.
+    auto parse_optional_annotation = [&]() -> ParamValueType {
+        if (!match(TokenType::Colon)) {
+            return ParamValueType::Any;
+        }
+        Token tok = advance();
+        if (tok.type == TokenType::Stream) return ParamValueType::Stream;
+        if (tok.type == TokenType::Signal) return ParamValueType::Signal;
+        error_with_code(tok, "E185",
+            "Unknown type name '" + std::string(tok.lexeme) +
+            "' in parameter annotation; expected `stream` or `signal`.");
+        return ParamValueType::Any;
+    };
+
+    // Consume the tokens of an annotation that we are *rejecting* (destructure
+    // / rest contexts). Keeps the parser from cascading "Expected ',' or ')'"
+    // errors after E104. The caller has already verified `check(TokenType::Colon)`.
+    auto skip_rejected_annotation = [&]() {
+        advance();  // consume ':'
+        if (check(TokenType::Stream) || check(TokenType::Signal) ||
+            check(TokenType::Identifier)) {
+            advance();
+        }
+    };
+
     do {
         // Phase 3b: function-parameter destructure `fn f({x, y [= default]})`.
         // Only enabled in fn-def context (allow_destructure=true). Closures
@@ -1222,6 +1256,15 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
             dp.name = "__destr_param_" + std::to_string(destr_param_idx++);
             dp.is_destructure = true;
             dp.destructure_fields = std::move(fields);
+            // PRD §8.2: annotations on destructure params are out of scope
+            // in Phase 1. Reject with E104, consume the tokens to avoid
+            // cascading "Expected ',' or ')'" errors.
+            if (check(TokenType::Colon)) {
+                error_with_code(current(), "E104",
+                    "Parameter type annotations are not allowed on destructure "
+                    "params in Phase 1 of prd-parameter-type-annotations.");
+                skip_rejected_annotation();
+            }
             params.push_back(std::move(dp));
             continue;
         }
@@ -1244,10 +1287,23 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
             if (seen_default) {
                 // Rest after default is OK - rest collects remaining args
             }
-            params.push_back(ParsedParam{std::move(name), std::nullopt, std::nullopt, NULL_NODE, true});
+            // PRD §8.2: annotations on rest params are out of scope in Phase 1.
+            if (check(TokenType::Colon)) {
+                error_with_code(current(), "E104",
+                    "Parameter type annotations are not allowed on rest params "
+                    "(`...name`) in Phase 1 of prd-parameter-type-annotations.");
+                skip_rejected_annotation();
+            }
+            ParsedParam rp;
+            rp.name = std::move(name);
+            rp.is_rest = true;
+            params.push_back(std::move(rp));
             // Rest param must be last - break out of loop
             break;
         }
+
+        // PRD §3.1: parse optional `name: type` annotation before the default.
+        ParamValueType annotated = parse_optional_annotation();
 
         NodeIndex default_node_idx = NULL_NODE;
         if (match(TokenType::Equals)) {
@@ -1291,7 +1347,14 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
             break;
         }
 
-        params.push_back(ParsedParam{std::move(name), default_value, default_string, default_node_idx, false});
+        ParsedParam pp;
+        pp.name = std::move(name);
+        pp.default_value = default_value;
+        pp.default_string = default_string;
+        pp.default_node = default_node_idx;
+        pp.is_rest = false;
+        pp.annotated_type = annotated;
+        params.push_back(std::move(pp));
     } while (match(TokenType::Comma));
 
     return params;
@@ -1879,10 +1942,15 @@ NodeIndex Parser::parse_fn_def(bool is_const, bool is_inline) {
 
         NodeIndex param_node = arena_.alloc(NodeType::Identifier, name_tok.location);
 
+        // PRD prd-parameter-type-annotations: promote to ClosureParamData so
+        // annotated_type survives into the AST even for simple `name: stream`
+        // parameters that have no default / rest flag.
         if (param.default_value.has_value() || param.default_string.has_value() ||
-            param.is_rest || param.default_node != NULL_NODE) {
+            param.is_rest || param.default_node != NULL_NODE ||
+            param.annotated_type != ParamValueType::Any) {
             arena_[param_node].data = Node::ClosureParamData{
-                param.name, param.default_value, param.default_string, param.is_rest};
+                param.name, param.default_value, param.default_string,
+                param.is_rest, param.annotated_type};
         } else {
             arena_[param_node].data = Node::IdentifierData{param.name};
         }

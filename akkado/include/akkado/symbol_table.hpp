@@ -26,6 +26,10 @@ struct FunctionParamInfo {
     // AST node is `DestructureParam`, not `Identifier`.
     bool is_destructure = false;
     std::vector<DestructureField> destructure_fields;
+    // PRD prd-parameter-type-annotations §4.4: resolved type annotation on
+    // user-fn parameters. Defaults to Any (un-annotated). Read by
+    // handle_user_function_call to branch on `: stream` / `: signal`.
+    ParamValueType annotated_type = ParamValueType::Any;
 };
 
 /// Information about a user-defined function
