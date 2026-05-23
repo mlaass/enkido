@@ -10,6 +10,7 @@ export const slugToPath: Record<string, string> = {
 	"functions-and-inline": "concepts/functions-and-inline.md",
 	"effect-parameters": "concepts/effect-parameters.md",
 	"glide-and-interpolation": "concepts/glide-and-interpolation.md",
+	"parameter-type-annotations": "concepts/parameter-type-annotations.md",
 	"signals": "concepts/signals.md",
 	"05-testing-progression": "tutorials/05-testing-progression.md",
 	"03-synthesis": "tutorials/03-synthesis.md",
@@ -306,6 +307,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "bus-routing",
 			"title": "Bus Routing & the Master Bus"
+		},
+		{
+			"slug": "parameter-type-annotations",
+			"title": "Parameter Type Annotations"
 		}
 	]
 };
@@ -796,6 +801,71 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Glide & Interpolation"
 	},
+	"type": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"stream": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"signal": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"parameter": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"event_map": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"pattern": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"eventsource": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"e160": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"e184": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"e185": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"e104": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"transpose": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"event-transform": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
 	"mono": {
 		"slug": "polyphony",
 		"category": "builtins",
@@ -1068,11 +1138,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "voice",
 		"anchor": "voice"
-	},
-	"pattern": {
-		"slug": "06-pattern-modulation",
-		"category": "tutorials",
-		"title": "Pattern Modulation"
 	},
 	"modulation": {
 		"slug": "06-pattern-modulation",
@@ -3609,11 +3674,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Timelines"
 	},
-	"parameter": {
-		"slug": "timelines",
-		"category": "builtins",
-		"title": "Timelines"
-	},
 	"waterfall": {
 		"slug": "visualizations",
 		"category": "builtins",
@@ -3843,6 +3903,7 @@ export const previews: Record<string, string> = {
 	"functions-and-inline": "A user  groups a reusable chunk of signal graph behind a name:",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
+	"parameter-type-annotations": "User  parameters can carry an optional type annotation: . Today the language ships two annotation keywords — * and  — and one new error code, ,...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Channel count isn't a runtime property — it's a type...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
 	"03-synthesis": "Oscillators and filters give you tone. Envelopes give you notes — they decide when the sound starts and when it dies away.",
