@@ -198,12 +198,15 @@ n"c4 e4 g4 b4".palindrome()
 
 ### swing / swingBy
 
-`swing(pattern, n=4)` applies a 1/3 swing on an `n`-slice grid (default 4). `swingBy(pattern, amount, n=4)` lets you set the swing amount explicitly.
+`swing(pattern, grid=8)` applies a 1/3 swing on a `grid`-slice grid. `swingBy(pattern, amount, grid=8)` lets you set the swing amount explicitly.
 
 ```akk
-s"bd hh sd hh".swing()           // default 1/3 on 4 slices
+s"bd hh sd hh".swing()           // default 1/3 on 8 slices
 s"bd hh sd hh".swingBy(0.5, 8)   // half-amount on 8 slices
+s"bd hh sd hh".swing(4)          // grid=4 for the pre-Phase-2b default
 ```
+
+> **Phase 2b note.** The default `grid` is now `8` (was `4` in pre-Phase-2b releases). Pass an explicit `grid: 4` to restore the legacy behavior.
 
 ### iter / iterBack
 

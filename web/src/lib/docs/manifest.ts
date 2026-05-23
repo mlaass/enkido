@@ -2,6 +2,7 @@
 // Do not edit manually - run: bun run build:docs
 
 export const slugToPath: Record<string, string> = {
+	"event-transforms": "concepts/event-transforms.md",
 	"runtime-controls": "concepts/runtime-controls.md",
 	"bus-routing": "concepts/bus-routing.md",
 	"builtin-variables": "concepts/builtin-variables.md",
@@ -311,6 +312,10 @@ export const navigation: Record<string, Array<{ slug: string; title: string }>> 
 		{
 			"slug": "parameter-type-annotations",
 			"title": "Parameter Type Annotations"
+		},
+		{
+			"slug": "event-transforms",
+			"title": "Event Transforms"
 		}
 	]
 };
@@ -360,6 +365,86 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"slug": "samplers",
 		"category": "builtins",
 		"title": "Samplers"
+	},
+	"event-transforms": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"event_map": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"event_filter": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"transpose": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"velocity": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"dur": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"bend": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"aftertouch": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"early": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"late": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"swing": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"swingby": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"stdlib": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"stream": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"modifier": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
+	},
+	"pattern-transform": {
+		"slug": "event-transforms",
+		"category": "concepts",
+		"title": "Event Transforms"
 	},
 	"param": {
 		"slug": "runtime-controls",
@@ -806,22 +891,12 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
 	},
-	"stream": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
 	"signal": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
 	},
 	"parameter": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"event_map": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
@@ -852,11 +927,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Parameter Type Annotations"
 	},
 	"e104": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"transpose": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
@@ -1150,21 +1220,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Pattern Modulation"
 	},
 	"v\"…\"": {
-		"slug": "06-pattern-modulation",
-		"category": "tutorials",
-		"title": "Pattern Modulation"
-	},
-	"bend": {
-		"slug": "06-pattern-modulation",
-		"category": "tutorials",
-		"title": "Pattern Modulation"
-	},
-	"aftertouch": {
-		"slug": "06-pattern-modulation",
-		"category": "tutorials",
-		"title": "Pattern Modulation"
-	},
-	"dur": {
 		"slug": "06-pattern-modulation",
 		"category": "tutorials",
 		"title": "Pattern Modulation"
@@ -1764,11 +1819,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Mini-Notation Basics"
 	},
 	"strudel": {
-		"slug": "basics",
-		"category": "mini-notation",
-		"title": "Mini-Notation Basics"
-	},
-	"modifier": {
 		"slug": "basics",
 		"category": "mini-notation",
 		"title": "Mini-Notation Basics"
@@ -2631,16 +2681,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "Sequencing & Timing"
 	},
-	"early": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"late": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
 	"palindrome": {
 		"slug": "sequencing",
 		"category": "builtins",
@@ -2667,16 +2707,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "Sequencing & Timing"
 	},
 	"segment": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"swing": {
-		"slug": "sequencing",
-		"category": "builtins",
-		"title": "Sequencing & Timing"
-	},
-	"swingby": {
 		"slug": "sequencing",
 		"category": "builtins",
 		"title": "Sequencing & Timing"
@@ -3842,11 +3872,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "builtins",
 		"title": "MIDI Input"
 	},
-	"velocity": {
-		"slug": "midi",
-		"category": "builtins",
-		"title": "MIDI Input"
-	},
 	"freq": {
 		"slug": "midi",
 		"category": "builtins",
@@ -3895,6 +3920,7 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 };
 
 export const previews: Record<string, string> = {
+	"event-transforms": "A pattern modifier in Akkado is a function that takes an event stream — a  or a MIDI  — and returns a new one with per-event fields rewritten....",
 	"runtime-controls": "Akkado patches can declare named UI controls that the web IDE turns into live inputs — sliders, momentary buttons, toggles, and dropdowns. Move...",
 	"bus-routing": "Every Akkado patch ends by sending audio somewhere. The bus system is the layer between your per-voice / per-track outputs and the speakers: a set...",
 	"builtin-variables": "A few identifiers in Akkado are not ordinary variables — they are builtin variables, backed directly by the synth engine's runtime state. You read...",

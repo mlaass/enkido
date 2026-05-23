@@ -1,14 +1,15 @@
-> **Status: IN PROGRESS — Phase 1 + Phase 2a shipped.**
+> **Status: IN PROGRESS — Phases 1 + 2a + 2b shipped.**
 >
 > - **Phase 1** (substrate: packed `EVENT_MAP` / `EVENT_FILTER` opcodes +
 >   runtime `transpose` / `velocity`) — shipped 2026-05-22, commit `79b4b24`.
 > - **Phase 2a** (closure-taking `event_map` / `event_filter` builtins +
 >   Cedar opcode closure rework) — shipped 2026-05-23, commit `694eb84`.
 > - **Phase 2b** (stdlib `akkado/stdlib/event_transforms.ak` modifier
->   migration + delete C++ handlers) — **deferred**: blocked on
->   [`prd-parameter-type-annotations.md`](prd-parameter-type-annotations.md).
->   The stdlib one-liners need `events: stream`-annotated `fn` params (user
->   `fn`s cannot carry a Pattern / EventSource param today).
+>   migration + delete C++ handlers) — shipped 2026-05-23, commits
+>   `582a28a` → `b485c3f`. Migrated: `transpose`, `velocity`, `dur`,
+>   `bend`, `aftertouch`, `early`, `late`, `swing`, `swingBy`. `tune`
+>   deferred (its `tune("31edo", pattern)` semantics don't fit the
+>   `event_map` shape; needs a separate `EVENT_OUT_MICRO` slot).
 > - **Phases 3 – 5** (rate scaling, structural transforms, quantize +
 >   `TypedValue` cleanup) — not started.
 >
@@ -396,6 +397,22 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 
 **Migration approach** — **hard cutover** (§11 OQ-5, resolved). One PR per phase; old compile-time modifier handlers are deleted, not deprecated. No `--legacy-modifiers` flag. Documentation tells users that any behavioral regression from the old compile-time path is a bug to file.
 
+**Phase 2b shipped regressions** (2026-05-23). The stdlib `fn` form removed
+compile-time validation surfaces that the C++ handlers carried. Documented
+here so users can recognize and report them:
+
+| Pre-Phase 2b | Phase 2b behavior |
+|---|---|
+| `velocity(p, 1.5)` → E131 (out of [0,1]) | compiles; stdlib fn is a passthrough |
+| `transpose([…], 5)` → E133 | E184 (stream annotation rejects Array) |
+| `transpose(x, 5)` for Signal-bound `x` → E133 | E184 |
+| `transpose("c4 e4", 12)` → coerced to pattern | E184 (no auto-coercion) |
+| `bend(p, s"bd sd")` → E160 | compiles silently |
+| `transpose(s"…", 12)` → no-op | emits EVENT_MAP (audibly still a no-op since SAMPLE_PLAY reads sample_id, not note) |
+| `slow(bend(p, 0.3), 2)` → bend preserved | bend silently lost (slow is still compile-time; resolves in Phase 4) |
+| `swing(p)` → grid=4 default | grid=8 default (per §11 OQ-10); pass `grid: 4` to restore |
+| `swingBy(p, a)` → grid=4 default | grid=8 default; same workaround |
+
 ---
 
 ## 9. Phasing
@@ -405,9 +422,9 @@ Every existing example, demo patch, test, and doc using a modifier in §5 will r
 | **0a** | ~~External PRD: `cycle_length` plumbing cleanup~~ — **not a hard prerequisite** (§0.5); may land in any order, no longer gates Phase 1                                                     | Owned by `prd-cycle-length-cleanup.md`                                                      |
 | **0b** | **External PRD: runtime closure / first-class fn infrastructure — ✅ SHIPPED** (L1→L3 + §4.2 `BLOCK_BIND`)                                                                                  | Shipped by `prd-runtime-functions-control-flow.md`                                          |
 | **1** | Substrate: `EVENT_MAP` + `EVENT_FILTER` opcodes; manually-wired `transpose` and `velocity` in C++ codegen (no closures yet, constants only)                                                | `cedar/tests/test_event_map.cpp`, `experiments/test_op_event_map.py` (≥300 s)               |
-| **2a** | `event_map` / `event_filter` builtins taking closures; Cedar `EVENT_MAP`/`EVENT_FILTER` opcode closure rework. **Unblocked — in progress.**                                                  | `cedar/tests/test_event_map.cpp`, `akkado/tests/test_event_map.cpp` for closure plumbing     |
-| **2b** | Migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers. **DEFERRED — blocked on [`prd-parameter-type-annotations.md`](prd-parameter-type-annotations.md)**: the stdlib one-liners need `events: stream`-annotated fn params (user fns cannot carry a Pattern/EventSource param today). | `akkado/tests/test_event_map.cpp` |
-| **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input; `early`/`late`/`swing` via `event_map`                                                                                       | Rate-scaled WAV experiments                                                                 |
+| **2a** | `event_map` / `event_filter` builtins taking closures; Cedar `EVENT_MAP`/`EVENT_FILTER` opcode closure rework. **✅ SHIPPED 2026-05-23** (`694eb84`).                                                  | `cedar/tests/test_event_map.cpp`, `akkado/tests/test_event_map.cpp` for closure plumbing     |
+| **2b** | Migrate property modifiers to `akkado/stdlib/event_transforms.ak`; delete corresponding C++ handlers. **✅ SHIPPED 2026-05-23** (`582a28a` → `b485c3f`). Migrated `transpose`, `velocity`, `dur`, `bend`, `aftertouch`, `early`, `late`, `swing`, `swingBy`. `tune` deferred (different semantics). | `akkado/tests/test_event_map.cpp [phase2b]` (11 tests); existing `[event-map]` tests updated for closure-form encoding |
+| **3** | `EVENT_RATE_SCALE` opcode for `fast`/`slow` with signal input. `early`/`late`/`swing` already migrated in Phase 2b — Phase 3 picks up the rate-scaling and structural composition gap. | Rate-scaled WAV experiments                                                                 |
 | **4** | `EVENT_FANOUT` + `EVENT_REORDER`: migrate `rev`, `palindrome`, `ply`, `linger`, `iter`, `iterBack`, `zoom`, `segment`, `compress`                                                            | Structural-transform experiments                                                            |
 | **5** | `EVENT_QUANTIZE` (scale/key snap) + chord expansion / voicing / inversion via `EVENT_FANOUT`; `TypedValue` cleanup (Phase B)                                                                | Scale-quantize WAV; chord-expansion polyphony tests                                         |
 
