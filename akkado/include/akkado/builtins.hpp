@@ -34,6 +34,7 @@ enum class ParamValueType : std::uint8_t {
     Function,    // Function/closure reference
     Array,       // Array type
     Record,      // Record or Pattern (Pattern is subtype of Record)
+    Stream,      // Abstract supertype: Pattern or EventSource (PRD prd-parameter-type-annotations §4.1)
 };
 
 /// Human-readable name for a ParamValueType (for error messages)
@@ -46,6 +47,7 @@ constexpr const char* param_value_type_name(ParamValueType type) {
         case ParamValueType::Function: return "Function";
         case ParamValueType::Array:    return "Array";
         case ParamValueType::Record:   return "Record";
+        case ParamValueType::Stream:   return "Stream";
     }
     return "Unknown";
 }
@@ -59,6 +61,7 @@ constexpr const char* param_value_type_name(ParamValueType type) {
 ///   Function  — accepts Function only
 ///   Array     — accepts Array only
 ///   Record    — accepts Record or Pattern (Pattern is structurally a record)
+///   Stream    — accepts Pattern or EventSource (abstract supertype; never a runtime TypedValue)
 inline bool type_compatible(ValueType actual, ParamValueType expected) {
     switch (expected) {
         case ParamValueType::Any:      return true;
@@ -68,6 +71,7 @@ inline bool type_compatible(ValueType actual, ParamValueType expected) {
         case ParamValueType::Function: return actual == ValueType::Function;
         case ParamValueType::Array:    return actual == ValueType::Array;
         case ParamValueType::Record:   return actual == ValueType::Record || actual == ValueType::Pattern;
+        case ParamValueType::Stream:   return actual == ValueType::Pattern || actual == ValueType::EventSource;
     }
     return false;
 }

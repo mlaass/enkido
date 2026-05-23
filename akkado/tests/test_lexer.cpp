@@ -476,6 +476,28 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         CHECK(tokens[1].type == TokenType::Identifier);
         CHECK(tokens[2].type == TokenType::Identifier);
     }
+
+    // PRD prd-parameter-type-annotations §6: `stream` and `signal` become
+    // reserved keywords used in `fn` parameter annotations (`name: stream`,
+    // `name: signal`).
+    SECTION("stream and signal are reserved keywords") {
+        auto [tokens, diags] = lex("stream signal");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        CHECK(tokens[0].type == TokenType::Stream);
+        CHECK(tokens[1].type == TokenType::Signal);
+    }
+
+    SECTION("stream/signal case sensitivity") {
+        auto [tokens, diags] = lex("Stream SIGNAL StReAm");
+        REQUIRE(diags.empty());
+
+        // Case-mismatched forms remain identifiers.
+        CHECK(tokens[0].type == TokenType::Identifier);
+        CHECK(tokens[1].type == TokenType::Identifier);
+        CHECK(tokens[2].type == TokenType::Identifier);
+    }
 }
 
 TEST_CASE("Lexer comments", "[lexer]") {

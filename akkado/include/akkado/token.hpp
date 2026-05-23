@@ -28,6 +28,8 @@ enum class TokenType : std::uint8_t {
     As,             // as (pipe binding)
     Const,          // const
     Import,         // import
+    Stream,         // stream (parameter type annotation; PRD prd-parameter-type-annotations)
+    Signal,         // signal (parameter type annotation; PRD prd-parameter-type-annotations)
 
     // Pattern types (used with mini-notation)
     Timeline,       // t"..." (timeline curve notation)
@@ -107,6 +109,8 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::As:           return "As";
         case TokenType::Const:        return "Const";
         case TokenType::Import:       return "Import";
+        case TokenType::Stream:       return "Stream";
+        case TokenType::Signal:       return "Signal";
         case TokenType::Timeline:     return "Timeline";
         case TokenType::ValuePat:     return "ValuePat";
         case TokenType::NotePat:      return "NotePat";

@@ -23,6 +23,10 @@ enum class ValueType : std::uint8_t {
     StateCell,   // Handle to a CellState slot (state(init) in userspace)
     EventSource, // External event stream (midi()); carries a state_id read by poly()
     DynArray,    // Runtime-varying-length array (chord notes from pattern events)
+    Stream,      // Abstract supertype for `: stream` annotations: Pattern ⊆ Stream,
+                 // EventSource ⊆ Stream. Never constructed as a TypedValue at runtime —
+                 // only used by the annotation surface and type_compatible() lookup.
+                 // (PRD prd-parameter-type-annotations §4.1)
     Void         // No value (statements, directives)
 };
 
@@ -338,6 +342,7 @@ constexpr const char* value_type_name(ValueType type) {
         case ValueType::StateCell:   return "StateCell";
         case ValueType::EventSource: return "EventSource";
         case ValueType::DynArray:    return "DynArray";
+        case ValueType::Stream:      return "Stream";
         case ValueType::Void:        return "Void";
     }
     return "Unknown";
