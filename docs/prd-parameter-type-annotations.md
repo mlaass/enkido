@@ -780,5 +780,6 @@ Phase 1 is shipped (see header). Follow-ups:
    can be authored with `events: stream` parameters and the eager
    `E160` no longer rejects polyphonic patterns at the boundary.
 2. **Phase 2** (full ValueType coverage: `number`, `record`, `array`,
-   `string`, `function`) is owned by a separate follow-up PRD, to be
-   authored when concrete stdlib demand emerges.
+   `string`, `function`) is specified in
+   [`prd-parameter-type-annotations-phase-2.md`](prd-parameter-type-annotations-phase-2.md)
+   and is READY FOR IMPLEMENTATION.
