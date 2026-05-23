@@ -12,10 +12,35 @@
 // the same tag.
 
 #include <catch2/catch_test_macros.hpp>
+#include "akkado/akkado.hpp"
 #include "akkado/builtins.hpp"
 #include "akkado/typed_value.hpp"
+#include <string>
+#include <string_view>
 
 using namespace akkado;
+
+namespace {
+
+bool has_diagnostic(const akkado::CompileResult& r, std::string_view code) {
+    for (const auto& d : r.diagnostics) {
+        if (d.code == code) return true;
+    }
+    return false;
+}
+
+bool has_diagnostic_for_param(const akkado::CompileResult& r,
+                               std::string_view code,
+                               std::string_view param_name) {
+    for (const auto& d : r.diagnostics) {
+        if (d.code == code && d.message.find(param_name) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 TEST_CASE("type_compatible: ParamValueType::Stream accepts only Pattern and EventSource",
           "[type-annotation][type-compat]") {
@@ -67,4 +92,149 @@ TEST_CASE("value_type_name and param_value_type_name include Stream",
     // messages can say "expects Stream" / "got Stream".
     CHECK(std::string(value_type_name(ValueType::Stream))     == "Stream");
     CHECK(std::string(param_value_type_name(ParamValueType::Stream)) == "Stream");
+}
+
+// =============================================================================
+// PRD prd-parameter-type-annotations §10.2: codegen-side tests for the new
+// `: stream` / `: signal` branches in handle_user_function_call. Verifies that
+// the boundary check fires E184 / preserves E160 / bypasses E160 as designed
+// in §4.2.
+// =============================================================================
+
+TEST_CASE(": stream accepts Pattern arguments (mono and polyphonic)",
+          "[type-annotation][codegen]") {
+    SECTION("mono Pattern passes through without E160") {
+        auto r = akkado::compile(R"(
+            fn id(e: stream) -> e.freq
+            n"c4 e4 g4" |> id(@) |> osc("sin", @) |> out(@)
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+        CHECK_FALSE(has_diagnostic(r, "E184"));
+    }
+
+    SECTION("polyphonic Pattern (chord) passes through — E160 bypass") {
+        // Headline behavior: without the `: stream` annotation, the same call
+        // would fire E160 (and indeed does in the un-annotated test below).
+        // `c"Am"` is the canonical chord-pattern source — max_voices=3.
+        auto r = akkado::compile(R"(
+            fn id(e: stream) -> e
+            id(c"Am")
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+        CHECK_FALSE(has_diagnostic(r, "E184"));
+    }
+}
+
+TEST_CASE(": stream rejects non-Pattern / non-EventSource args with E184",
+          "[type-annotation][codegen]") {
+    SECTION("Number → E184") {
+        auto r = akkado::compile(R"(
+            fn id(e: stream) -> e
+            id(440)
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+    }
+
+    SECTION("String → E184") {
+        auto r = akkado::compile(R"(
+            fn id(e: stream) -> e
+            id("text")
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
+    }
+
+    SECTION("Signal → E184") {
+        auto r = akkado::compile(R"(
+            fn id(e: stream) -> e
+            id(osc("sin", 440))
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
+    }
+}
+
+TEST_CASE("un-annotated user-fn params keep existing E160 / coerce behavior",
+          "[type-annotation][codegen]") {
+    SECTION("polyphonic Pattern still rejected with E160 (no annotation)") {
+        // Regression guard: the PRD §11 R2-Q4 contract — un-annotated params
+        // keep bit-for-bit behavior. c"Am" is a polyphonic chord pattern.
+        auto r = akkado::compile(R"(
+            fn id(p) -> p
+            id(c"Am")
+        )");
+        CHECK(has_diagnostic_for_param(r, "E160", "'p'"));
+    }
+
+    SECTION("mono Pattern silently voice-0 coerces (no annotation)") {
+        auto r = akkado::compile(R"(
+            fn id(p) -> p
+            id(n"c4 e4")
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+        CHECK_FALSE(has_diagnostic(r, "E184"));
+    }
+}
+
+TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
+          "[type-annotation][codegen]") {
+    SECTION("Number arg accepted (today's behavior, made explicit)") {
+        auto r = akkado::compile(R"(
+            fn w(rate: signal) -> osc("sin", rate)
+            w(220) |> out(@)
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+        CHECK_FALSE(has_diagnostic(r, "E184"));
+    }
+
+    SECTION("mono Pattern arg silently voice-0 coerces") {
+        auto r = akkado::compile(R"(
+            fn w(rate: signal) -> osc("sin", rate)
+            w(n"c4 e4") |> out(@)
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+        CHECK_FALSE(has_diagnostic(r, "E184"));
+    }
+
+    SECTION("polyphonic Pattern fires E160 (preserved reject from PRD §4.2)") {
+        auto r = akkado::compile(R"(
+            fn w(rate: signal) -> osc("sin", rate)
+            w(c"Am")
+        )");
+        CHECK(has_diagnostic_for_param(r, "E160", "'rate'"));
+    }
+
+    SECTION("String arg fires E184 (no coercion path)") {
+        // String → Signal has no defensible coerce path per PRD §4.2.
+        auto r = akkado::compile(R"(
+            fn w(rate: signal) -> osc("sin", rate)
+            w("text")
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'rate'"));
+    }
+
+    // NOTE: a true EventSource at the user-fn boundary cannot be produced by
+    // Akkado source today — `midi(...)` returns a Pattern with
+    // is_runtime_event_source=true (MIDI-as-Pattern parity, PRD §4.1), not
+    // a TypedValue{EventSource}. The EventSource → E184 row of the §4.2
+    // compatibility matrix is covered by the type_compatible() unit test
+    // above; the codegen-side test would never fire today because there is
+    // no callable producer.
+}
+
+TEST_CASE(": stream-annotated param exposes Pattern field access in the body",
+          "[type-annotation][codegen]") {
+    // PRD §4.3: the Stream-annotated param preserves the caller's TypedValue
+    // across the boundary so `events.freq` works inside the body — this is
+    // the DynArray-template binding path (codegen_functions.cpp Loop 2). The
+    // pre-PRD behavior collapsed Pattern → voice-0 scalar and lost the
+    // field-accessor map.
+    auto r = akkado::compile(R"(
+        fn carrier(events: stream) -> osc("sin", events.freq)
+        n"c4 e4 g4" |> carrier(@) |> out(@)
+    )");
+    CHECK_FALSE(has_diagnostic(r, "E160"));
+    CHECK_FALSE(has_diagnostic(r, "E184"));
+    // Body-side field lookup ("freq") must resolve — if it doesn't, an E13x
+    // diagnostic would surface from the field-access machinery.
+    CHECK_FALSE(has_diagnostic(r, "E136"));
 }

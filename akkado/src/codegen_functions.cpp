@@ -539,19 +539,76 @@ TypedValue CodeGenerator::handle_user_function_call(
                     TypedValue arg_tv = visit(args[i]);
                     param_buf = arg_tv.buffer;
 
-                    // PRD prd-patterns-as-scalar-values §5.3 / §9.5: user-fn
-                    // params get default Signal coerce. Polyphonic non-sample
-                    // patterns would silently pass voice-0 — reject E160 so
-                    // the user picks a voice or wraps with poly().
-                    if (arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
-                        arg_tv.pattern->max_voices > 1 &&
-                        !arg_tv.pattern->is_sample_pattern) {
-                        error("E160",
-                              "user function parameter '" + func.params[i].name +
-                              "' cannot accept a polyphonic pattern as scalar; "
-                              "use poly() to consume it, or pick a voice/field "
-                              "explicitly (e.g. p.freq)",
-                              ast_->arena[args[i]].location);
+                    // PRD prd-parameter-type-annotations §4.2: branch on the
+                    // resolved annotation. Un-annotated params keep today's
+                    // E160-only behavior; `: stream` bypasses E160 entirely
+                    // and emits E184 for incompatible types; `: signal` keeps
+                    // E160 for polyphonic non-sample patterns and adds E184
+                    // for fundamentally incompatible types.
+                    const ParamValueType expected = func.params[i].annotated_type;
+
+                    if (expected == ParamValueType::Stream) {
+                        // PRD §4.2 row "Stream / Pattern" + "Stream / EventSource":
+                        // pass-through. Other types fire E184.
+                        if (arg_tv.type != ValueType::Pattern &&
+                            arg_tv.type != ValueType::EventSource) {
+                            std::string msg = "parameter '" + func.params[i].name +
+                                              "' of fn '" + func.name +
+                                              "' expects Stream, got " +
+                                              std::string(value_type_name(arg_tv.type)) +
+                                              " — no coercion path";
+                            if (arg_tv.type == ValueType::DynArray) {
+                                msg += " (DynArray is a runtime-varying numeric "
+                                       "array, not an event stream — pass the "
+                                       "Pattern/EventSource that produced it instead)";
+                            }
+                            error("E184", msg, ast_->arena[args[i]].location);
+                        }
+                    } else if (expected == ParamValueType::Signal) {
+                        // PRD §4.2 row "Signal / polyphonic Pattern" preserves
+                        // the existing E160 reject; row "Signal / EventSource…
+                        // / Void" emits E184.
+                        if (arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
+                            arg_tv.pattern->max_voices > 1 &&
+                            !arg_tv.pattern->is_sample_pattern) {
+                            error("E160",
+                                  "user function parameter '" + func.params[i].name +
+                                  "' cannot accept a polyphonic pattern as scalar; "
+                                  "use poly() to consume it, or pick a voice/field "
+                                  "explicitly (e.g. p.freq)",
+                                  ast_->arena[args[i]].location);
+                        } else if (arg_tv.type == ValueType::EventSource ||
+                                   arg_tv.type == ValueType::Record ||
+                                   arg_tv.type == ValueType::Array ||
+                                   arg_tv.type == ValueType::DynArray ||
+                                   arg_tv.type == ValueType::String ||
+                                   arg_tv.type == ValueType::Function ||
+                                   arg_tv.type == ValueType::StateCell ||
+                                   arg_tv.type == ValueType::Void) {
+                            error("E184",
+                                  "parameter '" + func.params[i].name +
+                                  "' of fn '" + func.name +
+                                  "' expects Signal, got " +
+                                  std::string(value_type_name(arg_tv.type)) +
+                                  " — no coercion path",
+                                  ast_->arena[args[i]].location);
+                        }
+                        // Signal, Number, mono Pattern → silent voice-0
+                        // coerce (today's implicit behavior).
+                    } else {
+                        // ParamValueType::Any — un-annotated. Today's behavior,
+                        // bit-for-bit: only the polyphonic-pattern guard fires.
+                        // PRD prd-patterns-as-scalar-values §5.3 / §9.5.
+                        if (arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
+                            arg_tv.pattern->max_voices > 1 &&
+                            !arg_tv.pattern->is_sample_pattern) {
+                            error("E160",
+                                  "user function parameter '" + func.params[i].name +
+                                  "' cannot accept a polyphonic pattern as scalar; "
+                                  "use poly() to consume it, or pick a voice/field "
+                                  "explicitly (e.g. p.freq)",
+                                  ast_->arena[args[i]].location);
+                        }
                     }
 
                     // Track multi-buffer arguments for polyphonic propagation
@@ -691,7 +748,24 @@ TypedValue CodeGenerator::handle_user_function_call(
             } else if (i < args.size()) {
                 // Check if the argument produced a record
                 auto type_it = node_types_.find(args[i]);
-                if (type_it != node_types_.end() && type_it->second.type == ValueType::Record) {
+                // PRD prd-parameter-type-annotations §4.3: a `: stream`-
+                // annotated param preserves the caller's Pattern / EventSource
+                // TypedValue across the call boundary, so field access
+                // (`events.freq`) and EventSource consumers (poly()) work
+                // inside the body. Architectural template: the DynArray
+                // branch below.
+                if (func.params[i].annotated_type == ParamValueType::Stream &&
+                    type_it != node_types_.end() &&
+                    (type_it->second.type == ValueType::Pattern ||
+                     type_it->second.type == ValueType::EventSource)) {
+                    Symbol sym{};
+                    sym.kind = SymbolKind::Variable;
+                    sym.name_hash = fnv1a_hash(func.params[i].name);
+                    sym.name = func.params[i].name;
+                    sym.buffer_index = param_bufs[i];
+                    sym.typed_value = type_it->second;
+                    symbols_->define(sym);
+                } else if (type_it != node_types_.end() && type_it->second.type == ValueType::Record) {
                     auto record_type = std::make_shared<RecordTypeInfo>();
                     record_type->source_node = args[i];
                     if (type_it->second.record) {
