@@ -161,6 +161,7 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::SEQPAT_VALUES: return "SEQPAT_VALUES";
         case Opcode::EVENT_MAP: return "EVENT_MAP";
         case Opcode::EVENT_FILTER: return "EVENT_FILTER";
+        case Opcode::FMOD: return "FMOD";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }

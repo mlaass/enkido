@@ -1,7 +1,30 @@
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/builtins.hpp"
+#include "akkado/stdlib.hpp"
 
 using namespace akkado;
+
+TEST_CASE("fmod builtin is registered", "[builtins][fmod]") {
+    const auto* fmod_b = lookup_builtin("fmod");
+    REQUIRE(fmod_b != nullptr);
+    CHECK(fmod_b->total_params() == 2);
+    CHECK(fmod_b->find_param("a") == 0);
+    CHECK(fmod_b->find_param("b") == 1);
+    CHECK(fmod_b->requires_state == false);
+}
+
+TEST_CASE("stdlib embed mechanism wires event_transforms.ak", "[stdlib][embed]") {
+    // The CMake step embeds every `akkado/stdlib/*.ak` into STDLIB_EMBEDDED_FILES.
+    // Phase 2b ships event_transforms.ak; confirm it's reachable from C++.
+    bool found_event_transforms = false;
+    for (const auto& f : STDLIB_EMBEDDED_FILES) {
+        if (f.name == "<stdlib/event_transforms.ak>") {
+            found_event_transforms = true;
+            CHECK_FALSE(f.source.empty());
+        }
+    }
+    CHECK(found_event_transforms);
+}
 
 TEST_CASE("BuiltinInfo methods", "[builtins]") {
     SECTION("total_params for saw") {

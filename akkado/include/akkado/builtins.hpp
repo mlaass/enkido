@@ -850,6 +850,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"x", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Round up to integer"}},
+    {"fmod",    {cedar::Opcode::FMOD,  2, 0, false,
+                 {"a", "b", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "C-style float remainder: fmod(a,b); sign follows a"}},
 
     // Math - Trigonometric (radians)
     // NOTE: sin(x) is the mathematical sine function, NOT a sine oscillator!

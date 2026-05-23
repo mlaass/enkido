@@ -269,6 +269,8 @@ enum class Opcode : std::uint8_t {
     EVENT_MAP = 218,         // per-event field rewrite (transpose/velocity)
     EVENT_FILTER = 219,      // predicate drop on a constant threshold
 
+    FMOD = 220,              // out = fmod(in0, in1) — C-style float remainder, sign of dividend
+
     INVALID = 255
 };
 

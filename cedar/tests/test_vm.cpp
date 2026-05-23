@@ -2334,6 +2334,45 @@ TEST_CASE("VM CMP_* opcodes produce 0.0 or 1.0", "[opcodes][logic]") {
     }
 }
 
+TEST_CASE("VM FMOD opcode", "[opcodes][math]") {
+    VM vm;
+
+    auto run_fmod = [&](float a, float b) -> float {
+        std::array<Instruction, 3> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, a),
+            make_const_instruction(Opcode::PUSH_CONST, 1, b),
+            Instruction::make_binary(Opcode::FMOD, 2, 0, 1),
+        };
+        vm.load_program_immediate(program);
+        std::array<float, BLOCK_SIZE> left{}, right{};
+        vm.process_block(left.data(), right.data());
+        return vm.buffers().get(2)[0];
+    };
+
+    SECTION("positive dividend") {
+        CHECK_THAT(run_fmod(5.5f, 2.0f), WithinAbs(1.5f, 1e-6f));
+        CHECK_THAT(run_fmod(7.0f, 3.0f), WithinAbs(1.0f, 1e-6f));
+        CHECK_THAT(run_fmod(0.75f, 1.0f), WithinAbs(0.75f, 1e-6f));
+    }
+
+    SECTION("negative dividend — sign follows dividend") {
+        // std::fmod(-0.25, 1.0) = -0.25, not 0.75. The stdlib `early()`
+        // one-liner accounts for this by adding `+ 1.0` before fmod.
+        CHECK_THAT(run_fmod(-0.25f, 1.0f), WithinAbs(-0.25f, 1e-6f));
+        CHECK_THAT(run_fmod(-5.5f, 2.0f), WithinAbs(-1.5f, 1e-6f));
+    }
+
+    SECTION("divisor of zero returns zero, not NaN") {
+        CHECK_THAT(run_fmod(5.0f, 0.0f), WithinAbs(0.0f, 1e-6f));
+        CHECK_THAT(run_fmod(0.0f, 0.0f), WithinAbs(0.0f, 1e-6f));
+    }
+
+    SECTION("exact-multiple boundary") {
+        CHECK_THAT(run_fmod(4.0f, 2.0f), WithinAbs(0.0f, 1e-6f));
+        CHECK_THAT(run_fmod(1.0f, 1.0f), WithinAbs(0.0f, 1e-6f));
+    }
+}
+
 TEST_CASE("VM CMP_EQ uses LOGIC_EPSILON", "[opcodes][logic]") {
     VM vm;
 

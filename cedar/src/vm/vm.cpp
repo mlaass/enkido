@@ -1361,6 +1361,10 @@ void VM::execute(const Instruction& inst) {
             op_ceil(ctx_, inst);
             break;
 
+        case Opcode::FMOD:
+            op_fmod(ctx_, inst);
+            break;
+
         // === Trigonometric Math ===
         case Opcode::MATH_SIN:
             op_math_sin(ctx_, inst);

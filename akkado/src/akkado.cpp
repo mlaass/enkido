@@ -93,12 +93,15 @@ CompileResult compile(std::string_view source, std::string_view filename,
     SourceMap source_map;
 
     std::size_t total_size = STDLIB_SOURCE.size() + 1 + user_source.size();
+    for (const auto& embedded : STDLIB_EMBEDDED_FILES) {
+        total_size += embedded.source.size() + 1;
+    }
     for (const auto& mod : resolved_modules) {
         total_size += mod.source.size() + 1;
     }
     combined_source.reserve(total_size);
 
-    // Region 0: stdlib
+    // Region 0: hand-written stdlib (osc dispatcher, multiband3fx, interp, ...)
     combined_source.append(STDLIB_SOURCE);
     combined_source.push_back('\n');
     const std::size_t stdlib_byte_length = STDLIB_SOURCE.size() + 1;
@@ -107,7 +110,19 @@ CompileResult compile(std::string_view source, std::string_view filename,
     std::size_t offset = stdlib_byte_length;
     std::size_t cumulative_lines = STDLIB_LINE_COUNT;
 
-    // Regions 1..N-1: resolved modules (topo order, dependencies first)
+    // Regions 1..K: embedded stdlib files from `akkado/stdlib/*.ak`. Each
+    // becomes its own source region so diagnostics carry the right filename.
+    for (const auto& embedded : STDLIB_EMBEDDED_FILES) {
+        combined_source.append(embedded.source);
+        combined_source.push_back('\n');
+        std::size_t embedded_byte_length = embedded.source.size() + 1;
+        source_map.add_region(std::string(embedded.name), offset,
+                              embedded_byte_length, cumulative_lines);
+        cumulative_lines += count_lines(embedded.source);
+        offset += embedded_byte_length;
+    }
+
+    // Regions K+1..N-1: resolved user modules (topo order, dependencies first)
     for (const auto& mod : resolved_modules) {
         combined_source.append(mod.source);
         combined_source.push_back('\n');

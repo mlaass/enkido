@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <string_view>
 
+#include "akkado/generated/stdlib_files.hpp"
+
 namespace akkado {
 
 /// Standard library source code, prepended to all user programs.

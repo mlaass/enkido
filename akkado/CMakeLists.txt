@@ -41,6 +41,70 @@ else()
     set(AKKADO_BUILD_TESTS ${NKIDO_BUILD_TESTS})
 endif()
 
+# --------------------------------------------------------------------------
+# Stdlib file embedding — see prd-runtime-event-transforms.md §9 Phase 2b.
+# Reads `akkado/stdlib/*.ak` and emits a generated header that exposes each
+# file as a constexpr std::string_view + a STDLIB_EMBEDDED_FILES table.
+# Re-runs at configure time; CONFIGURE_DEPENDS makes CMake re-glob on change.
+# --------------------------------------------------------------------------
+set(_akkado_stdlib_src_dir "${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
+set(_akkado_stdlib_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/akkado/generated")
+set(_akkado_stdlib_gen_header "${_akkado_stdlib_gen_dir}/stdlib_files.hpp")
+file(MAKE_DIRECTORY ${_akkado_stdlib_gen_dir})
+
+file(GLOB _akkado_stdlib_files CONFIGURE_DEPENDS "${_akkado_stdlib_src_dir}/*.ak")
+list(SORT _akkado_stdlib_files)
+
+# Write the header in pieces using file(WRITE)/(APPEND) so CMake's list-separator
+# handling doesn't eat the semicolons in the generated C++ source.
+file(WRITE ${_akkado_stdlib_gen_header}
+[==[// AUTO-GENERATED — DO NOT EDIT.
+//
+// Generated from akkado/stdlib/*.ak by akkado/CMakeLists.txt at configure time.
+// To add a new stdlib file: drop `name.ak` into akkado/stdlib/ and re-run cmake.
+
+#pragma once
+
+#include <array>
+#include <string_view>
+
+namespace akkado {
+
+struct StdlibFile {
+    std::string_view name;
+    std::string_view source;
+};
+
+]==])
+
+set(_count 0)
+foreach(_ak ${_akkado_stdlib_files})
+    get_filename_component(_name ${_ak} NAME_WE)
+    file(READ ${_ak} _content)
+    file(APPEND ${_akkado_stdlib_gen_header}
+         "constexpr std::string_view STDLIB_${_name}_SOURCE = R\"akstdlib(\n")
+    file(APPEND ${_akkado_stdlib_gen_header} "${_content}")
+    file(APPEND ${_akkado_stdlib_gen_header} ")akstdlib\"")
+    file(APPEND ${_akkado_stdlib_gen_header} [==[;
+
+]==])
+    math(EXPR _count "${_count} + 1")
+endforeach()
+
+file(APPEND ${_akkado_stdlib_gen_header}
+     "constexpr std::array<StdlibFile, ${_count}> STDLIB_EMBEDDED_FILES = {{\n")
+foreach(_ak ${_akkado_stdlib_files})
+    get_filename_component(_name ${_ak} NAME_WE)
+    file(APPEND ${_akkado_stdlib_gen_header}
+         "    StdlibFile{\"<stdlib/${_name}.ak>\", STDLIB_${_name}_SOURCE},\n")
+endforeach()
+file(APPEND ${_akkado_stdlib_gen_header}
+[==[}};
+
+}  // namespace akkado
+]==])
+unset(_count)
+
 # Akkado library
 add_library(akkado STATIC
     src/akkado.cpp
@@ -79,6 +143,7 @@ add_library(akkado STATIC
 target_include_directories(akkado
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
         $<INSTALL_INTERFACE:include>
 )
 

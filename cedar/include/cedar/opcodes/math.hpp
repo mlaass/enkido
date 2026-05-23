@@ -131,6 +131,20 @@ inline void op_ceil(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// FMOD: out = fmod(in0, in1) — IEEE float remainder; sign follows the dividend.
+// out[i] = 0 when in1[i] == 0 (avoid std::fmod's NaN-on-zero-divisor result so
+// closures using fmod-for-phase-wrap don't poison the output).
+[[gnu::always_inline]]
+inline void op_fmod(ExecutionContext& ctx, const Instruction& inst) {
+    float* out = ctx.buffers->get(inst.out_buffer);
+    const float* a = ctx.buffers->get(inst.inputs[0]);
+    const float* b = ctx.buffers->get(inst.inputs[1]);
+
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        out[i] = (b[i] != 0.0f) ? std::fmod(a[i], b[i]) : 0.0f;
+    }
+}
+
 // ============================================================================
 // Trigonometric Functions (radians)
 // ============================================================================
