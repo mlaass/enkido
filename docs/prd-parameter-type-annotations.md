@@ -1,7 +1,12 @@
-> **Status: READY FOR IMPLEMENTATION** (promoted 2026-05-23 from earlier
-> draft stub). All interview-round design decisions are locked; Phase 1
-> (`stream` + `signal` annotations) is unblocked. Phase 2 (full ValueType
-> coverage) is deferred to a follow-up PRD.
+> **Status: SHIPPED (2026-05-23)** — Phase 1 (`stream` + `signal`
+> annotations) landed via Commits A–E (599a692 → 4c2ca4c). All eight
+> §9 sub-steps (1.1–1.8) are complete: Stream/Signal lexer keywords +
+> type lattice (599a692, A), `name: type` parser grammar + analyzer
+> propagation (d579c3c, B), `handle_user_function_call` dispatch +
+> `E184` (4e9b618, C), end-to-end §10.3 verification examples
+> (ecbd317, D), and the web concept doc (4c2ca4c, E). Phase 2 (full
+> ValueType coverage: `number`, `record`, `array`, `string`,
+> `function`) remains deferred to a follow-up PRD.
 
 # PRD: Akkado Parameter Type Annotations
 
@@ -768,20 +773,12 @@ E184-triggering cases is the §4.2 "no defensible coercion path" rows.
 
 ## 12. Next Step
 
-Both design-blocking prerequisites are cleared:
+Phase 1 is shipped (see header). Follow-ups:
 
-1. ✅ All eighteen interview-round questions resolved (§11).
-2. ✅ `ValueType` / `ParamValueType` / `type_compatible` mechanism
-   already exists (from
-   [`prd-compiler-type-system.md`](prd-compiler-type-system.md)
-   Phase 1+2) — this PRD extends the enum and the lookup, not redesign.
-3. ✅ DynArray-style symbol-table binding
-   (`akkado/src/codegen_functions.cpp:707-719`) provides the
-   architectural template for `: stream` binding.
-
-**Implementation may begin at Phase 1 step 1.1** (lexer keywords),
-proceeding through the steps in §9. Each step is independently
-testable; the §10.3 end-to-end example is the final acceptance check
-that unblocks
-[`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md)
-Phase 2b.
+1. **`prd-runtime-event-transforms.md` Phase 2b** is now unblocked —
+   stdlib modifier one-liners (`.transpose(n)`, `.velocity(v)`, etc.)
+   can be authored with `events: stream` parameters and the eager
+   `E160` no longer rejects polyphonic patterns at the boundary.
+2. **Phase 2** (full ValueType coverage: `number`, `record`, `array`,
+   `string`, `function`) is owned by a separate follow-up PRD, to be
+   authored when concrete stdlib demand emerges.
