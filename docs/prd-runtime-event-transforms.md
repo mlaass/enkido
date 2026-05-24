@@ -73,6 +73,24 @@
 >   and DSP work, not language constructs, scale/key/voice/invert
 >   belong in stdlib akkado just like Phase 2b's `transpose` /
 >   `velocity` / `dur` / `bend` migration.
+> - **Phase 5 followup (2026-05-24)** — two latent bugs surfaced during
+>   Phase 5 and worked around at the time are now fixed at the root:
+>   (1) the closure-literal body walker mis-classified bare-identifier
+>   bodies (`(h) -> h`) as a phantom param across 6 codegen walkers —
+>   commit `e457b7c` consolidates them onto one canonical
+>   `closure_body()` helper using the parser's structural "body is last
+>   child" guarantee; (2) `BLOCK_CALL` / `BLOCK_BIND` / `SKIP_IF_*` /
+>   `LOOP_STATIC` dispatched only from `execute_program`'s main loop,
+>   silently no-op'ing inside every other subprogram-body runner —
+>   commit `d95aa8b` extracts a `VM::execute_step()` helper and threads
+>   it through `run_voice_pool`, `run_foreach_per_iteration`,
+>   `run_foreach_shared`, `run_event_map_closure`,
+>   `run_event_filter_closure`, and `execute_block_call`'s own body
+>   loop. With (2) closed, the Commit F "inline `floor(n+0.5)` /
+>   `fmod(fmod(n,12)+12,12)` per branch because BLOCK_CALL doesn't
+>   dispatch" workaround is retired: commit `405be8f` regenerates
+>   `scale_quantize.ak` using shared `fn snap` / `fn pc12` helpers,
+>   shrinking the file ~13%.
 >
 > The Phase 3 (`EVENT_RATE_SCALE`) and Phase 4 (`EVENT_REORDER` /
 > `EVENT_FANOUT`) opcodes that shipped are architecturally a partial
@@ -616,7 +634,10 @@ Phases 1, 2a, 2b, 3, 4 are shipped. Phase 5 (corrected scope, 2026-05-24) is **i
 - Commit E: chord-array write from `event_map` closures (DynArray-typed return fields)
 - Commit F: stdlib `key` and `scale`
 - Commit G: stdlib `voice` and `invert`
-- Commit H: stdlib `degrade` and `mask` (optional, gated on `random()` / pattern-active-at-time availability)
+- Commit H: stdlib `degrade` and `mask` (deferred — needs per-event `random()` + `pattern_active_at_time` primitives from the follow-up PRD)
 - Commit I: `TypedValue` Phase B cleanup
+- Commit J (followup, `e457b7c`): canonical closure-body recovery — 6 broken walkers migrated onto one structural helper, fixes the bare-identifier-body silent-failure that Commit E worked around.
+- Commit K (followup, `d95aa8b`): `VM::execute_step` unifies subprogram-body dispatch so BLOCK_CALL / BLOCK_BIND / SKIP_IF / LOOP_STATIC dispatch from inside every body context, not just `execute_program`'s main loop.
+- Commit L (followup, `405be8f`): `scale_quantize.ak` regenerated using shared `fn snap` / `fn pc12` helpers — Commit F's inline-math workaround retired.
 
 Once Phase 5 ships, the next workstream is the follow-up PRD's array-of-events substrate to retire the Phase 3+4 stopgap opcodes.
