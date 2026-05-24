@@ -260,6 +260,88 @@ TEST_CASE("event-map: transpose() shifts every voice of a chord",
     CHECK_THAT(e.values[0], WithinAbs(kC4 * 2.0f, 1.0f));
 }
 
+// ============================================================================
+// Phase 5 Commit D — chord-array READ inside event_map closures
+// ============================================================================
+//
+// `build_event_record` now exposes `e.notes` and `e.freqs` as DynArrays
+// pointing at the event-record bank's chord slots (notes_data at +7,
+// freqs_data at +8, num_values broadcast at +9). The closure body can
+// index the arrays and call `len()` on them; the values come from
+// `fill_event_record_bank`'s per-event copy of `evt.notes[]`/`evt.values[]`.
+
+TEST_CASE("event-map (Phase 5 D): e.notes[k] reads the k-th chord voice's MIDI",
+          "[event-map][chord-notes-read]") {
+    // c"CM" is a 3-voice chord (MIDI 60,64,67). The closure reads voice 2
+    // (G4 = 67) from `e.notes` and writes it to the `note` slot. The runtime
+    // overlay shifts every voice by `delta = 67 - 60 = 7` semitones.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {note: e.notes[2]}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.midi_note, WithinAbs(67.0f, 0.01f));
+    // Every voice shifted by +7 (coupled NOTE overlay).
+    CHECK_THAT(e.notes[0], WithinAbs(67.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(71.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(74.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 D): len(e.notes) returns num_values",
+          "[event-map][chord-notes-read]") {
+    // 3-voice chord — len(e.notes) is 3. Written to `note` so we can read
+    // it back from the output event.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {note: len(e.notes)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(3.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 D): e.freqs[0] reads the primary voice's Hz",
+          "[event-map][chord-notes-read]") {
+    // C4 single-note event — `e.freqs[0]` is C4's Hz (~261.6256).
+    auto r = akkado::compile(
+        R"(n"c4" |> event_map(@, (e) -> {note: e.freqs[0]}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    // The closure writes Hz into the `note` slot. After overlay the event's
+    // midi_note equals what the closure wrote.
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(kC4, 1.0f));
+}
+
+TEST_CASE("event-map (Phase 5 D): len(e.notes) on a single-note event is 1",
+          "[event-map][chord-notes-read]") {
+    // Mono pattern emits num_values=1 events.
+    auto r = akkado::compile(
+        R"(n"c4" |> event_map(@, (e) -> {note: len(e.notes)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(1.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 D): chord-array unknown field still errors",
+          "[event-map][chord-notes-read]") {
+    // E408 must still fire for fields that aren't part of the event record
+    // — the chord-array extension only adds `notes` and `freqs`.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {note: e.amplitudes[0]}))");
+    CHECK_FALSE(r.success);
+}
+
 TEST_CASE("event-map: transpose() on a sample pattern is audibly a no-op",
           "[event-map]") {
     // Phase 2b: stdlib `fn transpose` emits an EVENT_MAP unconditionally.

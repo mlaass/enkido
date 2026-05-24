@@ -74,6 +74,25 @@ enum : std::uint8_t {
     EVENT_OUT_COUNT  = 7,
 };
 
+// Input event-record bank layout for closure EVENT_MAP / EVENT_FILTER /
+// FOREACH_EVENT (per `inst.inputs[1]`). Slots 0..6 are scalar fields populated
+// by `fill_event_record_bank` (vel/dur/note/chance/time/gate/trig). Phase 5
+// Commit D adds chord-array slots 7..9 so closure bodies can read
+// `e.notes` / `e.freqs` as DynArrays.
+enum : std::uint8_t {
+    EVENT_BANK_VEL          = 0,
+    EVENT_BANK_DUR          = 1,
+    EVENT_BANK_NOTE         = 2,
+    EVENT_BANK_CHANCE       = 3,
+    EVENT_BANK_TIME         = 4,
+    EVENT_BANK_GATE         = 5,
+    EVENT_BANK_TRIG         = 6,
+    EVENT_BANK_NOTES_DATA   = 7,  // chord notes[k] (MIDI) packed in samples 0..num_values-1
+    EVENT_BANK_FREQS_DATA   = 8,  // chord values[k] (Hz)  packed in samples 0..num_values-1
+    EVENT_BANK_NUM_VALUES   = 9,  // num_values broadcast across the block
+    EVENT_BANK_COUNT        = 10,
+};
+
 // ----------------------------------------------------------------------------
 // Phase 4 — EVENT_REORDER / EVENT_FANOUT kind selectors
 // ----------------------------------------------------------------------------

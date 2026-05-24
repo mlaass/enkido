@@ -55,9 +55,10 @@ void collect_param_fields(const AstArena& arena, NodeIndex root,
 }
 
 // Map an event-record field alias to a slot. Return value:
-//   -1  primary freq slot
-//   0..6  record-bank offset (vel/dur/note/chance/time/gate/trig)
+//   -3  chord-array field (notes/freqs) — needs bank with chord-array slots
 //   -2  not a valid event-record field
+//   -1  primary freq slot
+//   0..6  scalar record-bank offset (vel/dur/note/chance/time/gate/trig)
 int field_slot(const std::string& name) {
     if (name == "freq" || name == "frequency" || name == "pitch" ||
         name == "f" || name == "p")                       return -1;
@@ -68,6 +69,9 @@ int field_slot(const std::string& name) {
     if (name == "time" || name == "t0" || name == "start")   return 4;
     if (name == "gate" || name == "g")                       return 5;
     if (name == "trig" || name == "trigger")                 return 6;
+    // Phase 5 Commit D: chord-array reads. The closure body sees
+    // `e.notes` and `e.freqs` as DynArrays — wired in build_event_record.
+    if (name == "notes" || name == "freqs")                  return -3;
     return -2;
 }
 
@@ -85,7 +89,10 @@ int event_map_out_slot(const std::string& name) {
 }
 
 // Build the event-record TypedValue. `freq_buf` is the primary slot; when
-// `bank_buf` is allocated the seven derived fields are wired to the bank.
+// `bank_buf` is allocated the scalar fields (slots 0..6) and the chord-array
+// DynArrays (notes/freqs, slots 7..9) are all wired to the bank. The bank
+// always carries every slot — the runtime always fills all of EVENT_BANK_COUNT
+// per event, so unreferenced fields cost a fill but no codegen.
 TypedValue build_event_record(std::uint16_t freq_buf, std::uint16_t bank_buf) {
     std::unordered_map<std::string, TypedValue> fields;
     auto add = [&](std::initializer_list<const char*> aliases,
@@ -94,13 +101,21 @@ TypedValue build_event_record(std::uint16_t freq_buf, std::uint16_t bank_buf) {
     };
     add({"freq", "frequency", "pitch", "f", "p"}, freq_buf);
     if (bank_buf != BufferAllocator::BUFFER_UNUSED) {
-        add({"vel", "velocity", "v"},      bank_buf + 0);
-        add({"dur", "duration"},           bank_buf + 1);
-        add({"note", "midi", "n"},         bank_buf + 2);
-        add({"chance"},                    bank_buf + 3);
-        add({"time", "t0", "start"},       bank_buf + 4);
-        add({"gate", "g"},                 bank_buf + 5);
-        add({"trig", "trigger"},           bank_buf + 6);
+        add({"vel", "velocity", "v"},      bank_buf + cedar::EVENT_BANK_VEL);
+        add({"dur", "duration"},           bank_buf + cedar::EVENT_BANK_DUR);
+        add({"note", "midi", "n"},         bank_buf + cedar::EVENT_BANK_NOTE);
+        add({"chance"},                    bank_buf + cedar::EVENT_BANK_CHANCE);
+        add({"time", "t0", "start"},       bank_buf + cedar::EVENT_BANK_TIME);
+        add({"gate", "g"},                 bank_buf + cedar::EVENT_BANK_GATE);
+        add({"trig", "trigger"},           bank_buf + cedar::EVENT_BANK_TRIG);
+        // Phase 5 Commit D: chord-array fields. Both DynArrays share a single
+        // length buffer (num_values is identical for notes/freqs of the same
+        // event).
+        const std::uint16_t notes_data = bank_buf + cedar::EVENT_BANK_NOTES_DATA;
+        const std::uint16_t freqs_data = bank_buf + cedar::EVENT_BANK_FREQS_DATA;
+        const std::uint16_t num_values = bank_buf + cedar::EVENT_BANK_NUM_VALUES;
+        fields.emplace("notes", TypedValue::make_dyn_array(notes_data, num_values));
+        fields.emplace("freqs", TypedValue::make_dyn_array(freqs_data, num_values));
     }
     return TypedValue::make_record(std::move(fields), freq_buf);
 }
@@ -197,11 +212,14 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
                   "time, gate, trig", n.location);
             return TypedValue::void_val();
         }
-        if (slot >= 0) need_bank = true;
+        // -3 is the chord-array sentinel (notes/freqs) — its data lives in
+        // the bank's slots 7..9, so we need the bank too.
+        if (slot >= 0 || slot == -3) need_bank = true;
     }
 
     // Convention-slot buffers. freq is the primary slot; the record bank is a
-    // contiguous 7-buffer run, allocated only when a non-freq field is used.
+    // contiguous EVENT_BANK_COUNT-buffer run (10 slots — 7 scalar + 3 chord),
+    // allocated only when a non-freq field is used.
     std::uint16_t freq_buf = buffers_.allocate();
     if (freq_buf == UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
@@ -212,7 +230,7 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
         bank_buf = buffers_.allocate();
         bool ok = (bank_buf != UNUSED);
         std::uint16_t prev = bank_buf;
-        for (int i = 1; i < 7 && ok; ++i) {
+        for (int i = 1; i < cedar::EVENT_BANK_COUNT && ok; ++i) {
             std::uint16_t b = buffers_.allocate();
             if (b == UNUSED || b != prev + 1) ok = false;
             prev = b;
@@ -498,10 +516,12 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         if (slot == -2) {
             error("E408", "field '" + f + "' is not available on an event "
                   "record — available fields: freq, vel, dur, note, chance, "
-                  "time, gate, trig", n.location);
+                  "time, gate, trig, notes, freqs", n.location);
             return TypedValue::void_val();
         }
-        if (slot >= 0) need_bank = true;
+        // -3 is the chord-array sentinel; its DynArray data lives in the
+        // bank's slots 7..9, so we need the bank too.
+        if (slot >= 0 || slot == -3) need_bank = true;
     }
 
     // --- Allocate the closure's input convention buffers -------------------
@@ -515,7 +535,7 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         bank_buf = buffers_.allocate();
         bool ok = (bank_buf != UNUSED);
         std::uint16_t prev = bank_buf;
-        for (int i = 1; i < 7 && ok; ++i) {
+        for (int i = 1; i < cedar::EVENT_BANK_COUNT && ok; ++i) {
             std::uint16_t b = buffers_.allocate();
             if (b == UNUSED || b != prev + 1) ok = false;
             prev = b;

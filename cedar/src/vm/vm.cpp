@@ -903,19 +903,19 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
 void VM::fill_event_record_bank(std::uint16_t bank_buf,
                                 const OutputEvents::OutputEvent& evt,
                                 const BlockCycleTiming& timing) {
-    std::fill_n(buffer_pool_.get(bank_buf + 0), BLOCK_SIZE, evt.velocity);
-    std::fill_n(buffer_pool_.get(bank_buf + 1), BLOCK_SIZE, evt.duration);
-    std::fill_n(buffer_pool_.get(bank_buf + 2), BLOCK_SIZE, evt.midi_note);
-    std::fill_n(buffer_pool_.get(bank_buf + 3), BLOCK_SIZE, evt.chance);
-    std::fill_n(buffer_pool_.get(bank_buf + 4), BLOCK_SIZE, evt.time);
+    std::fill_n(buffer_pool_.get(bank_buf + EVENT_BANK_VEL),    BLOCK_SIZE, evt.velocity);
+    std::fill_n(buffer_pool_.get(bank_buf + EVENT_BANK_DUR),    BLOCK_SIZE, evt.duration);
+    std::fill_n(buffer_pool_.get(bank_buf + EVENT_BANK_NOTE),   BLOCK_SIZE, evt.midi_note);
+    std::fill_n(buffer_pool_.get(bank_buf + EVENT_BANK_CHANCE), BLOCK_SIZE, evt.chance);
+    std::fill_n(buffer_pool_.get(bank_buf + EVENT_BANK_TIME),   BLOCK_SIZE, evt.time);
 
     // Synthesize gate (held high across the event window) and trig (1-sample
     // pulse at onset) from the event's cycle-relative time/duration. The
     // event time is cycle-relative (range [0, cycle_length)); rel_* are sample
     // offsets from this block's start. Cross-cycle-boundary wrap is not
     // modelled here — the gate edge appears in the block the onset lands in.
-    float* gate_b = buffer_pool_.get(bank_buf + 5);
-    float* trig_b = buffer_pool_.get(bank_buf + 6);
+    float* gate_b = buffer_pool_.get(bank_buf + EVENT_BANK_GATE);
+    float* trig_b = buffer_pool_.get(bank_buf + EVENT_BANK_TRIG);
     const float rel_start = (evt.time - timing.cycle_pos) * timing.spb;
     const float rel_end =
         (evt.time + evt.duration - timing.cycle_pos) * timing.spb;
@@ -931,6 +931,27 @@ void VM::fill_event_record_bank(std::uint16_t bank_buf,
     if (on_sample >= 0 && on_sample < block) {
         trig_b[on_sample] = 1.0f;
     }
+
+    // Phase 5 Commit D: chord-array slots. The closure body reads `e.notes`
+    // (DynArray onto evt.notes[]) and `e.freqs` (DynArray onto evt.values[])
+    // as data buffers packed in samples 0..num_values-1, with num_values
+    // broadcast on the shared length buffer.
+    float* notes_data = buffer_pool_.get(bank_buf + EVENT_BANK_NOTES_DATA);
+    float* freqs_data = buffer_pool_.get(bank_buf + EVENT_BANK_FREQS_DATA);
+    float* num_vals   = buffer_pool_.get(bank_buf + EVENT_BANK_NUM_VALUES);
+    const std::uint8_t nv = evt.num_values;
+    const std::uint8_t copy_n = std::min<std::uint8_t>(nv, MAX_VALUES_PER_EVENT);
+    for (std::uint8_t k = 0; k < copy_n; ++k) {
+        notes_data[k] = evt.notes[k];
+        freqs_data[k] = evt.values[k];
+    }
+    // Zero the unused tail of the packed data buffers so an off-by-one
+    // ARRAY_INDEX read returns 0 rather than stale data from a prior event.
+    for (std::size_t k = copy_n; k < BLOCK_SIZE; ++k) {
+        notes_data[k] = 0.0f;
+        freqs_data[k] = 0.0f;
+    }
+    std::fill_n(num_vals, BLOCK_SIZE, static_cast<float>(nv));
 }
 
 // PER_ITERATION — every upstream event maps to one iteration in this block.
