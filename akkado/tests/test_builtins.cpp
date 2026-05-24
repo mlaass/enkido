@@ -42,13 +42,53 @@ TEST_CASE("stdlib embed mechanism wires scales.ak (Phase 5 Commit B)",
     CHECK(found_scales);
 }
 
-TEST_CASE("scales.ak fn resolves through the loader (Phase 5 Commit B)",
+TEST_CASE("scales.ak dispatchers resolve through the loader",
           "[scale][stdlib-wiring]") {
-    // End-to-end: load + parse + analyze + reference a fn defined in
-    // scales.ak. If anything in the loader→parser→analyzer chain rejected
-    // the new stdlib file this fails to compile.
-    auto r = akkado::compile("scales_smoke()");
-    REQUIRE(r.success);
+    // End-to-end: load + parse + analyze + reference scale_intervals /
+    // scale_length defined in scales.ak. If anything in the
+    // loader → parser → analyzer chain rejected the generated dispatchers
+    // this fails to compile.
+    //
+    // Constraint (shared by osc/glide and all match-based dispatchers):
+    // the scrutinee must be a string literal at the call site so codegen
+    // can constant-fold to one branch. Calling these dispatchers with a
+    // runtime-valued name (e.g. a fn parameter or let-binding) makes
+    // codegen materialize buffers for every branch and exhausts the pool.
+    SECTION("scale_intervals returns the array literal of the selected branch") {
+        auto r = akkado::compile(R"(
+            x = scale_intervals("minor")[2]
+            y = scale_intervals("major_pentatonic")[3]
+            z = scale_intervals("chromatic")[7]
+        )");
+        REQUIRE(r.success);
+    }
+    SECTION("scale_length returns the branch's pitch count as a scalar") {
+        auto r = akkado::compile(R"(
+            k = scale_length("chromatic")
+            m = scale_length("minor")
+            p = scale_length("major_pentatonic")
+        )");
+        REQUIRE(r.success);
+    }
+    SECTION("default branch matches major for unknown scale names") {
+        auto r = akkado::compile(R"(
+            x = scale_intervals("not_a_real_scale")[2]
+            y = scale_length("not_a_real_scale")
+        )");
+        REQUIRE(r.success);
+    }
+    SECTION("non-literal scrutinee exhausts the buffer pool (documented constraint)") {
+        // The dispatcher is intentionally literal-only — match codegen
+        // can't fold the branches when `name` is a runtime binding, so
+        // every branch's array literal would need a buffer. Commit F
+        // routes around this by making `key`/`scale` themselves the
+        // outer match, so the literal lives at the user's call site.
+        auto r = akkado::compile(R"(
+            name = "minor"
+            x = scale_intervals(name)[2]
+        )");
+        REQUIRE_FALSE(r.success);
+    }
 }
 
 TEST_CASE("BuiltinInfo methods", "[builtins]") {
