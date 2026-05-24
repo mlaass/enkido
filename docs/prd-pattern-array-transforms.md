@@ -94,6 +94,7 @@ Once the substrate above lands:
 - **Q3.** Should `fast`/`slow` accept a closure as the factor (e.g. per-cycle pattern of factors), or only a signal/scalar? Today's `EVENT_RATE_SCALE` accepts a signal.
 - **Q4.** Patternable `scale("<c:major a:minor>")` — sibling PRD `prd-scale-quantize.md` Phase 5 (deferred there too) — sits on this PRD's array substrate. Confirm.
 - **Q5.** Naming: `event_retime` vs `event_rate` vs `event_clock_scale`?
+- **Q6.** `degrade` + `mask` stdlib fns (parent PRD Phase 5 Commit H, deferred 2026-05-24). Both need primitives that aren't currently reachable from an `event_map` / `event_filter` closure body: a per-event-onset scalar `random()` and a `pattern_active_at_time(p, t)` lookup. Today's akkado `random(n)` returns an array (PRD prd-pattern-event-arrays) — not a fresh scalar per event onset; and there's no `pattern_active_at_time` primitive at all. Land these alongside the array substrate so `degrade(events, p) = event_filter(events, (e) -> random() > p)` and `mask(events, p) = event_filter(events, (e) -> pattern_active_at_time(p, e.time) > 0)` become one-liners.
 
 ## 6. Why deferred from parent PRD Phase 5
 
