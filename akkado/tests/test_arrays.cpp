@@ -181,9 +181,9 @@ TEST_CASE("Indexing: out-of-bounds wraps modulo length", "[arrays][indexing]") {
 TEST_CASE("Indexing: runtime index emits ARRAY_INDEX", "[arrays][indexing]") {
     // A non-literal index forces runtime indexing via ARRAY_PACK + ARRAY_INDEX.
     auto result = must_compile(
-        "arr = [220, 440, 880]\n"
+        "xs = [220, 440, 880]\n"
         "idx = lfo(0.5)\n"
-        "arr[idx] |> out(%, %)");
+        "xs[idx] |> out(%, %)");
 
     auto insts = get_instructions(result);
     bool has_pack = count_instructions(insts, cedar::Opcode::ARRAY_PACK) > 0;
@@ -231,7 +231,7 @@ TEST_CASE("map: applies function to each element", "[arrays][map]") {
             "map([1.5, 2.5, 3.5], (h) -> h) |> reduce(@, (a, b) -> a + b, 0)");
         auto insts = get_instructions(result);
         CHECK(count_instructions(insts, cedar::Opcode::PUSH_CONST) >= 3);
-        // 3 elements -> 3 ADDs through reduce (init+arr[0], result+arr[1], …).
+        // 3 elements -> 3 ADDs through reduce (init+xs[0], result+xs[1], …).
         CHECK(count_instructions(insts, cedar::Opcode::ADD) == 3);
     }
 
@@ -280,7 +280,7 @@ TEST_CASE("reduce: reduces array with binary function", "[arrays][reduce]") {
     SECTION("sum via reduce") {
         auto result = must_compile("reduce([1, 2, 3, 4], (acc, x) -> acc + x, 0)");
         auto insts = get_instructions(result);
-        // 4 elements → 4 ADDs (init+arr[0], result+arr[1], ...)
+        // 4 elements → 4 ADDs (init+xs[0], result+xs[1], ...)
         CHECK(count_instructions(insts, cedar::Opcode::ADD) >= 4);
     }
 
@@ -448,7 +448,7 @@ TEST_CASE("sum: reduces array with addition", "[arrays][sum]") {
 // product via reduce(*, 1)
 // =============================================================================
 // There is no dedicated 'product' builtin — express it as
-//   reduce(arr, (a, b) -> a * b, 1)
+//   reduce(xs, (a, b) -> a * b, 1)
 // which is the canonical multiplicative-fold form.
 
 TEST_CASE("reduce as product: multiply via fold", "[arrays][reduce]") {

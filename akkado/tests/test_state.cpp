@@ -243,22 +243,22 @@ TEST_CASE("State: closure invoked at two sites has independent slots per site",
 }
 
 // PRD Goal 1: all four `step` variants must be implementable. The simplest
-// (`step(arr, trig)`) and `step_dir(arr, trig, dir)` are exercised by the
+// (`step(xs, trig)`) and `step_dir(xs, trig, dir)` are exercised by the
 // stepper-demo integration test. This test pins the two reset variants —
-// `step(arr, trig, reset)` and `step(arr, trig, reset, start)`.
+// `step(xs, trig, reset)` and `step(xs, trig, reset, start)`.
 //
-// Note: PRD §4.4 shows these variants composing `wrap(..., 0, len(arr))`,
-// but `len(arr)` is a compile-time builtin that requires the array's length
-// at codegen time, which is not available when `arr` is a closure parameter
+// Note: PRD §4.4 shows these variants composing `wrap(..., 0, len(xs))`,
+// but `len(xs)` is a compile-time builtin that requires the array's length
+// at codegen time, which is not available when `xs` is a closure parameter
 // bound dynamically by the call site. The PRD itself observes (§4.4 note)
 // that ARRAY_INDEX already wraps by default — so the bare
-// `arr[counter(trig, reset, ...)]` form is sufficient and is what we test.
+// `xs[counter(trig, reset, ...)]` form is sufficient and is what we test.
 // The `len`-inside-closure limitation is a deliberate non-goal of this PRD
 // (state cells were the persistence story, not generic compile-time
 // reflection on closure parameters); it is captured in the audit report.
 TEST_CASE("State: step variant with reset compiles", "[state][step][step_reset]") {
     auto r = compile_raw(
-        "step = (arr, trig, reset) -> arr[counter(trig, reset)]\n"
+        "step = (xs, trig, reset) -> xs[counter(trig, reset)]\n"
         "freq = [220, 330, 440, 550].step(trigger(4), trigger(1))\n"
         "sine(freq) * 0.2 |> out(%, %)\n"
     );
@@ -272,7 +272,7 @@ TEST_CASE("State: step variant with reset compiles", "[state][step][step_reset]"
 TEST_CASE("State: step variant with reset and start compiles",
           "[state][step][step_reset_start]") {
     auto r = compile_raw(
-        "step = (arr, trig, reset, start) -> arr[counter(trig, reset, start)]\n"
+        "step = (xs, trig, reset, start) -> xs[counter(trig, reset, start)]\n"
         "freq = [220, 330, 440, 550].step(trigger(4), trigger(1), 1)\n"
         "sine(freq) * 0.2 |> out(%, %)\n"
     );
@@ -297,7 +297,7 @@ TEST_CASE("State: step variant with reset and start compiles",
 TEST_CASE("State: empty array stepper produces silence not a crash",
           "[state][step][edge_case]") {
     auto r = compile_raw(
-        "step = (arr, trig) -> arr[counter(trig)]\n"
+        "step = (xs, trig) -> xs[counter(trig)]\n"
         "[].step(trigger(4)) |> sine(%) |> out(%, %)\n"
     );
     // The compile may succeed (degenerate but safe) or fail with a clear
@@ -604,9 +604,9 @@ TEST_CASE("State record: signal-valued field accepted in init and set",
     // (audio-rate) as well as Number — CellState stores the last sample.
     auto r = compile_raw(
         "carrier = osc(\"sin\", 440)\n"
-        "s = state({sig: carrier, level: 0.5})\n"
-        "set(s, {sig: carrier, level: 0.7})\n"
-        "out(get(s).sig * get(s).level, get(s).sig * get(s).level)\n"
+        "s = state({sg: carrier, level: 0.5})\n"
+        "set(s, {sg: carrier, level: 0.7})\n"
+        "out(get(s).sg * get(s).level, get(s).sg * get(s).level)\n"
     );
     REQUIRE(r.success);
 

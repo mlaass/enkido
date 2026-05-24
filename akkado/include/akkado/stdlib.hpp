@@ -37,8 +37,8 @@ fn osc(type, freq, pwm = 0.5, phase = 0.0, trig = 0.0) -> match(type) {
     _: sine(freq, phase, trig)
 }
 
-fn multiband3fx(sig, f1, f2, fx_lo, fx_mid, fx_hi) -> {
-    fx_lo(lp(lp(sig, f1), f1)) + fx_mid(lp(lp(hp(hp(sig, f1), f1), f2), f2)) + fx_hi(hp(hp(sig, f2), f2))
+fn multiband3fx(s, f1, f2, fx_lo, fx_mid, fx_hi) -> {
+    fx_lo(lp(lp(s, f1), f1)) + fx_mid(lp(lp(hp(hp(s, f1), f1), f2), f2)) + fx_hi(hp(hp(s, f2), f2))
 }
 
 fn beat(n) -> {trigger(1/n)}
@@ -85,7 +85,7 @@ fn unison(freq, gate, vel, instrument,
     }
 }
 
-// glide(sig, time, curve, space) — time-based interpolation with optional
+// glide(s, time, curve, space) — time-based interpolation with optional
 // curve shape and value-space conversion.
 //
 //   curve: "linear" (default) | "ease_in" | "ease_out" | "cosine" / "cos"
@@ -97,22 +97,22 @@ fn unison(freq, gate, vel, instrument,
 // time = 0.05 (50 ms) gives `glide(@freq)` a subtle baseline portamento
 // without forcing users to pick a number. 1.4426950408889634 = 1/ln(2)
 // converts natural log (the `log` builtin) to log₂.
-fn glide(sig, time = 0.05, curve = "linear", space = "linear") -> match(space) {
+fn glide(s, time = 0.05, curve = "linear", space = "linear") -> match(space) {
     "log": match(curve) {
-        "linear":   pow(2, interp(log(sig) * 1.4426950408889634, time))
-        "ease_in":  pow(2, interp_ease_in(log(sig) * 1.4426950408889634, time))
-        "ease_out": pow(2, interp_ease_out(log(sig) * 1.4426950408889634, time))
-        "cosine":   pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
-        "cos":      pow(2, interp_cos(log(sig) * 1.4426950408889634, time))
-        _:          pow(2, interp(log(sig) * 1.4426950408889634, time))
+        "linear":   pow(2, interp(log(s) * 1.4426950408889634, time))
+        "ease_in":  pow(2, interp_ease_in(log(s) * 1.4426950408889634, time))
+        "ease_out": pow(2, interp_ease_out(log(s) * 1.4426950408889634, time))
+        "cosine":   pow(2, interp_cos(log(s) * 1.4426950408889634, time))
+        "cos":      pow(2, interp_cos(log(s) * 1.4426950408889634, time))
+        _:          pow(2, interp(log(s) * 1.4426950408889634, time))
     }
     _: match(curve) {
-        "linear":   interp(sig, time)
-        "ease_in":  interp_ease_in(sig, time)
-        "ease_out": interp_ease_out(sig, time)
-        "cosine":   interp_cos(sig, time)
-        "cos":      interp_cos(sig, time)
-        _:          interp(sig, time)
+        "linear":   interp(s, time)
+        "ease_in":  interp_ease_in(s, time)
+        "ease_out": interp_ease_out(s, time)
+        "cosine":   interp_cos(s, time)
+        "cos":      interp_cos(s, time)
+        _:          interp(s, time)
     }
 }
 

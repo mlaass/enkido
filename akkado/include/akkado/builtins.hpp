@@ -39,6 +39,7 @@ constexpr const char* param_value_type_name(ParamValueType type) {
         case ParamValueType::Array:    return "Array";
         case ParamValueType::Record:   return "Record";
         case ParamValueType::Stream:   return "Stream";
+        case ParamValueType::Number:   return "Number";
     }
     return "Unknown";
 }
@@ -52,7 +53,8 @@ constexpr const char* param_value_type_name(ParamValueType type) {
 ///   Function  — accepts Function only
 ///   Array     — accepts Array only
 ///   Record    — accepts Record or Pattern (Pattern is structurally a record)
-///   Stream    — accepts Pattern or EventSource (abstract supertype; never a runtime TypedValue)
+///   Stream    — accepts Pattern (post-Phase-5-Commit-I covers runtime event sources via PatternPayload::is_runtime_event_source)
+///   Number    — accepts Number only (strict compile-time constant; PRD prd-parameter-type-annotations-phase-2 §4.2)
 inline bool type_compatible(ValueType actual, ParamValueType expected) {
     switch (expected) {
         case ParamValueType::Any:      return true;
@@ -63,6 +65,7 @@ inline bool type_compatible(ValueType actual, ParamValueType expected) {
         case ParamValueType::Array:    return actual == ValueType::Array;
         case ParamValueType::Record:   return actual == ValueType::Record || actual == ValueType::Pattern;
         case ParamValueType::Stream:   return actual == ValueType::Pattern;
+        case ParamValueType::Number:   return actual == ValueType::Number;
     }
     return false;
 }

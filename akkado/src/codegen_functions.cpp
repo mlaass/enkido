@@ -606,6 +606,80 @@ TypedValue CodeGenerator::handle_user_function_call(
                         }
                         // Signal, Number, mono Pattern → silent voice-0
                         // coerce (today's implicit behavior).
+                    } else if (expected == ParamValueType::Number) {
+                        // PRD prd-parameter-type-annotations-phase-2 §4.2:
+                        // strict — Number only. Signal does not coerce.
+                        if (arg_tv.type != ValueType::Number) {
+                            error("E184",
+                                  "parameter '" + func.params[i].name +
+                                  "' of fn '" + func.name +
+                                  "' expects Number, got " +
+                                  std::string(value_type_name(arg_tv.type)) +
+                                  " — no coercion path",
+                                  ast_->arena[args[i]].location);
+                        }
+                    } else if (expected == ParamValueType::Record) {
+                        // PRD prd-parameter-type-annotations-phase-2 §4.2 + §8.6:
+                        // Record accepts Record OR Pattern (Pattern is
+                        // structurally a record). Pin Pattern args into
+                        // node_types_ so the binding-selection block at
+                        // line ~768 picks up the Pattern TypedValue (mirror
+                        // of the Stream branch above) — required for body
+                        // field-access like `r.freq` to resolve.
+                        if (arg_tv.type == ValueType::Pattern) {
+                            node_types_[args[i]] = arg_tv;
+                        }
+                        if (arg_tv.type != ValueType::Record &&
+                            arg_tv.type != ValueType::Pattern) {
+                            error("E184",
+                                  "parameter '" + func.params[i].name +
+                                  "' of fn '" + func.name +
+                                  "' expects Record, got " +
+                                  std::string(value_type_name(arg_tv.type)) +
+                                  " — no coercion path",
+                                  ast_->arena[args[i]].location);
+                        }
+                    } else if (expected == ParamValueType::Array) {
+                        // PRD prd-parameter-type-annotations-phase-2 §4.2:
+                        // compile-time Array only; DynArray rejected (mirrors
+                        // the Stream/DynArray reject above).
+                        if (arg_tv.type != ValueType::Array) {
+                            std::string msg = "parameter '" + func.params[i].name +
+                                              "' of fn '" + func.name +
+                                              "' expects Array, got " +
+                                              std::string(value_type_name(arg_tv.type)) +
+                                              " — no coercion path";
+                            if (arg_tv.type == ValueType::DynArray) {
+                                msg += " (DynArray is a runtime-varying numeric "
+                                       "array — use the un-annotated path or "
+                                       "pass an unrolled array literal)";
+                            }
+                            error("E184", msg, ast_->arena[args[i]].location);
+                        }
+                    } else if (expected == ParamValueType::String) {
+                        // PRD prd-parameter-type-annotations-phase-2 §4.2:
+                        // compile-time String only.
+                        if (arg_tv.type != ValueType::String) {
+                            error("E184",
+                                  "parameter '" + func.params[i].name +
+                                  "' of fn '" + func.name +
+                                  "' expects String, got " +
+                                  std::string(value_type_name(arg_tv.type)) +
+                                  " — no coercion path",
+                                  ast_->arena[args[i]].location);
+                        }
+                    } else if (expected == ParamValueType::Function) {
+                        // PRD prd-parameter-type-annotations-phase-2 §4.2:
+                        // Function references only.
+                        if (arg_tv.type != ValueType::Function) {
+                            error("E184",
+                                  "parameter '" + func.params[i].name +
+                                  "' of fn '" + func.name +
+                                  "' expects Function, got " +
+                                  std::string(value_type_name(arg_tv.type)) +
+                                  " — no coercion path",
+                                  ast_->arena[args[i]].location);
+                        }
                     } else {
                         // ParamValueType::Any — un-annotated. Today's behavior,
                         // bit-for-bit: only the polyphonic-pattern guard fires.
@@ -759,13 +833,15 @@ TypedValue CodeGenerator::handle_user_function_call(
             } else if (i < args.size()) {
                 // Check if the argument produced a record
                 auto type_it = node_types_.find(args[i]);
-                // PRD prd-parameter-type-annotations §4.3: a `: stream`-
-                // annotated param preserves the caller's Pattern / EventSource
-                // TypedValue across the call boundary, so field access
-                // (`events.freq`) and EventSource consumers (poly()) work
+                // PRD prd-parameter-type-annotations §4.3: a `: stream`/`: evs`
+                // -annotated param (and a `: rec`-annotated param receiving a
+                // Pattern; PRD prd-parameter-type-annotations-phase-2 §8.6)
+                // preserves the caller's Pattern TypedValue across the call
+                // boundary, so field access (`events.freq` / `r.freq`) works
                 // inside the body. Architectural template: the DynArray
                 // branch below.
-                if (func.params[i].annotated_type == ParamValueType::Stream &&
+                if ((func.params[i].annotated_type == ParamValueType::Stream ||
+                     func.params[i].annotated_type == ParamValueType::Record) &&
                     type_it != node_types_.end() &&
                     type_it->second.type == ValueType::Pattern) {
                     Symbol sym{};

@@ -17,11 +17,11 @@
 // stack. VEL / DUR / BEND / AT are scalar-per-event fields with no chord-voice
 // fanout.
 
-fn transpose(events: stream, n)  -> { event_map(events, (e) -> {note: e.note + n}) }
-fn velocity(events: stream, v)   -> { event_map(events, (e) -> {vel:  e.vel * v}) }
-fn dur(events: stream, d)        -> { event_map(events, (e) -> {dur:  e.dur * d}) }
-fn bend(events: stream, b)       -> { event_map(events, (e) -> {bend: b}) }
-fn aftertouch(events: stream, a) -> { event_map(events, (e) -> {at:   a}) }
+fn transpose(events: evs, n)  -> { event_map(events, (e) -> {note: e.note + n}) }
+fn velocity(events: evs, v)   -> { event_map(events, (e) -> {vel:  e.vel * v}) }
+fn dur(events: evs, d)        -> { event_map(events, (e) -> {dur:  e.dur * d}) }
+fn bend(events: evs, b)       -> { event_map(events, (e) -> {bend: b}) }
+fn aftertouch(events: evs, a) -> { event_map(events, (e) -> {at:   a}) }
 
 // ----------------------------------------------------------------------------
 // Time-shift modifiers — overlay e.time with a phase-wrapped offset.
@@ -32,8 +32,8 @@ fn aftertouch(events: stream, a) -> { event_map(events, (e) -> {at:   a}) }
 // the result inside [0, 1); for negative results we add 1.0 first because C's
 // fmod preserves the sign of the dividend (fmod(-0.25, 1.0) = -0.25).
 
-fn early(events: stream, t) -> { event_map(events, (e) -> {time: fmod(e.time - t + 1.0, 1.0)}) }
-fn late(events: stream, t)  -> { event_map(events, (e) -> {time: fmod(e.time + t, 1.0)}) }
+fn early(events: evs, t) -> { event_map(events, (e) -> {time: fmod(e.time - t + 1.0, 1.0)}) }
+fn late(events: evs, t)  -> { event_map(events, (e) -> {time: fmod(e.time + t, 1.0)}) }
 
 // ----------------------------------------------------------------------------
 // Swing — delay the off-beats of an N-slice grid by `amount * slice_width / 2`.
@@ -50,11 +50,11 @@ fn swing_offset(time, amount, grid) -> {
     select(gte(time * grid - floor(time * grid), 0.5), amount * 0.5 / grid, 0)
 }
 
-fn swingBy(events: stream, amount, grid = 8) -> {
+fn swingBy(events: evs, amount, grid = 8) -> {
     event_map(events, (e) -> {time: fmod(e.time + swing_offset(e.time, amount, grid), 1.0)})
 }
 
-fn swing(events: stream, grid = 8) -> { swingBy(events, 1.0 / 3.0, grid) }
+fn swing(events: evs, grid = 8) -> { swingBy(events, 1.0 / 3.0, grid) }
 
 // ----------------------------------------------------------------------------
 // Chord-array transforms — Phase 5 Commits E + G (chord WRITE substrate).
@@ -68,10 +68,10 @@ fn swing(events: stream, grid = 8) -> { swingBy(events, 1.0 / 3.0, grid) }
 // shipped in Commit E. The runtime overlay derives `e.values[]` (Hz) from the
 // new `e.notes[]` (MIDI) via mtof so downstream voicing reads stay consistent.
 
-fn voice(events: stream, intervals) -> {
+fn voice(events: evs, intervals) -> {
     event_map(events, (e) -> {notes: map(intervals, (i) -> e.note + i)})
 }
 
-fn invert(events: stream, axis) -> {
+fn invert(events: evs, axis) -> {
     event_map(events, (e) -> {notes: map(e.notes, (n) -> 2 * axis - n)})
 }

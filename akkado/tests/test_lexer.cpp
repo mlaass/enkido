@@ -477,20 +477,71 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         CHECK(tokens[2].type == TokenType::Identifier);
     }
 
-    // PRD prd-parameter-type-annotations §6: `stream` and `signal` become
-    // reserved keywords used in `fn` parameter annotations (`name: stream`,
-    // `name: signal`).
-    SECTION("stream and signal are reserved keywords") {
-        auto [tokens, diags] = lex("stream signal");
+    // PRD prd-parameter-type-annotations + Phase 2 §6: `evs`, `sig`, `signal`,
+    // `num`, `rec`, `arr`, `str` are reserved keywords used in `fn` parameter
+    // annotations. `fn` was already reserved as the declaration keyword.
+    SECTION("evs and sig are reserved keywords") {
+        auto [tokens, diags] = lex("evs sig");
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 3);
 
-        CHECK(tokens[0].type == TokenType::Stream);
+        CHECK(tokens[0].type == TokenType::Evs);
         CHECK(tokens[1].type == TokenType::Signal);
     }
 
-    SECTION("stream/signal case sensitivity") {
-        auto [tokens, diags] = lex("Stream SIGNAL StReAm");
+    SECTION("signal still tokenises (long-form alias of sig)") {
+        auto [tokens, diags] = lex("signal");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::Signal);
+    }
+
+    SECTION("rec and arr lex to Record/Array tokens") {
+        auto [tokens, diags] = lex("rec arr");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+
+        CHECK(tokens[0].type == TokenType::Record);
+        CHECK(tokens[1].type == TokenType::Array);
+    }
+
+    SECTION("num keyword lexes to Number-typed token with empty value variant") {
+        auto [tokens, diags] = lex("num");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::Number);
+        CHECK(tokens[0].lexeme == "num");
+        // The lexer keyword path does not populate the value variant — the
+        // parser disambiguates `num` (keyword) vs literal `42` (NumericValue)
+        // by inspecting tok.lexeme. Verify the variant is monostate.
+        CHECK(std::holds_alternative<std::monostate>(tokens[0].value));
+    }
+
+    SECTION("str keyword lexes to String-typed token with empty value variant") {
+        auto [tokens, diags] = lex("str");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        CHECK(tokens[0].type == TokenType::String);
+        CHECK(tokens[0].lexeme == "str");
+        CHECK(std::holds_alternative<std::monostate>(tokens[0].value));
+    }
+
+    SECTION("stream no longer lexes as a keyword (PRD Phase 2 rename)") {
+        auto [tokens, diags] = lex("stream");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 2);
+
+        // After the Phase 2 rename, `stream` is no longer in the keyword
+        // table — it lexes as a plain identifier (and would surface as
+        // E185 / parse error if used in annotation position).
+        CHECK(tokens[0].type == TokenType::Identifier);
+    }
+
+    SECTION("evs/sig case sensitivity") {
+        auto [tokens, diags] = lex("Evs SIG StReAm");
         REQUIRE(diags.empty());
 
         // Case-mismatched forms remain identifiers.

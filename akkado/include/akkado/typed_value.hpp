@@ -49,7 +49,8 @@ enum class ParamValueType : std::uint8_t {
     Function,    // Function/closure reference
     Array,       // Array type
     Record,      // Record or Pattern (Pattern is subtype of Record)
-    Stream,      // Abstract supertype: Pattern or EventSource (PRD prd-parameter-type-annotations §4.1)
+    Stream,      // Abstract supertype: Pattern (post-Phase-5-Commit-I covers runtime event sources via PatternPayload::is_runtime_event_source). Source keyword: `evs`.
+    Number,      // Strict compile-time-constant numeric (PRD prd-parameter-type-annotations-phase-2 §4.1)
 };
 
 /// Channel count for signal values. When Stereo, `right_buffer` holds the

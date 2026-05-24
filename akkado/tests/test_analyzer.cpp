@@ -27,7 +27,8 @@ TEST_CASE("Analyzer: Variable reassignment errors", "[analyzer][errors]") {
     }
 
     SECTION("reassign array - E150") {
-        auto result = compile("arr = [1, 2]\narr = [3, 4]");
+        // `arr` is now reserved (Phase 2). Use `xs` instead.
+        auto result = compile("xs = [1, 2]\nxs = [3, 4]");
         REQUIRE_FALSE(result.success);
         CHECK(has_error(result.diagnostics, "E150"));
     }
@@ -113,20 +114,21 @@ TEST_CASE("Analyzer: Function errors", "[analyzer][errors]") {
 // =============================================================================
 
 TEST_CASE("Analyzer: Field access errors", "[analyzer][errors]") {
+    // `rec` / `num` / `arr` are now reserved (Phase 2). Use neutral names.
     SECTION("unknown field on record - E060") {
-        auto result = compile("rec = {a: 1, b: 2}\nrec.nonexistent");
+        auto result = compile("r = {a: 1, b: 2}\nr.nonexistent");
         REQUIRE_FALSE(result.success);
         CHECK(has_error(result.diagnostics, "E060"));
     }
 
     SECTION("field access on scalar - E061") {
-        auto result = compile("num = 42\nnum.field");
+        auto result = compile("n = 42\nn.field");
         REQUIRE_FALSE(result.success);
         CHECK(has_error(result.diagnostics, "E061"));
     }
 
     SECTION("field access on array - E061") {
-        auto result = compile("arr = [1, 2, 3]\narr.length");
+        auto result = compile("xs = [1, 2, 3]\nxs.length");
         REQUIRE_FALSE(result.success);
         CHECK(has_error(result.diagnostics, "E061"));
     }
@@ -182,7 +184,7 @@ TEST_CASE("Analyzer: Scope resolution", "[analyzer]") {
     }
 
     SECTION("array variable succeeds") {
-        auto result = compile("arr = [1, 2, 3]\nsum(arr)");
+        auto result = compile("xs = [1, 2, 3]\nsum(xs)");
         CHECK(result.success);
     }
 
@@ -231,7 +233,7 @@ TEST_CASE("Analyzer: Pipe transformations", "[analyzer]") {
     }
 
     SECTION("pipe binding with as") {
-        auto result = compile("osc(\"sin\", 440) as sig |> out(sig, sig)");
+        auto result = compile("osc(\"sin\", 440) as s |> out(s, s)");
         CHECK(result.success);
     }
 

@@ -239,8 +239,10 @@ NodeIndex Parser::parse_import_decl() {
     Token import_tok = previous();  // Import token already consumed by match()
     NodeIndex node = make_node(NodeType::ImportDecl, import_tok);
 
-    // Expect string literal (path)
-    if (!check(TokenType::String)) {
+    // Expect string literal (path). Guard against the `str` keyword token
+    // (which shares TokenType::String per PRD prd-parameter-type-annotations-phase-2 §4.4).
+    if (!check(TokenType::String) ||
+        !std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
         error("Expected module path string after 'import'");
         return node;
     }
@@ -729,7 +731,12 @@ NodeIndex Parser::parse_prefix() {
             return node;
         }
         default:
+            // Pre-Phase-2 latent bug: the default case must advance to make
+            // progress, otherwise parse_program's `while (!is_at_end())` loop
+            // spins forever on any unhandled token (e.g. a reserved type-name
+            // keyword like `sig` / `arr` reached in expression position).
             error("Expected expression");
+            advance();
             return NULL_NODE;
     }
 }
@@ -764,6 +771,19 @@ NodeIndex Parser::parse_number() {
     Token tok = advance();
     NodeIndex node = make_node(NodeType::NumberLit, tok);
 
+    // PRD prd-parameter-type-annotations-phase-2 §4.4: the lexer maps the
+    // `num` keyword to TokenType::Number with an empty value variant (so
+    // parse_optional_annotation can disambiguate by lexeme). If such a
+    // keyword-token leaks into expression position, emit a clean E185
+    // instead of crashing on std::bad_variant_access below.
+    if (!std::holds_alternative<NumericValue>(tok.value)) {
+        error_with_code(tok, "E185",
+            "Reserved type-name keyword '" + std::string(tok.lexeme) +
+            "' cannot appear in expression position.");
+        arena_[node].data = Node::NumberData{0.0, true};
+        return node;
+    }
+
     auto& num_val = std::get<NumericValue>(tok.value);
     arena_[node].data = Node::NumberData{num_val.value, num_val.is_integer};
 
@@ -787,6 +807,19 @@ NodeIndex Parser::parse_bool() {
 NodeIndex Parser::parse_string() {
     Token tok = advance();
     NodeIndex node = make_node(NodeType::StringLit, tok);
+
+    // PRD prd-parameter-type-annotations-phase-2 §4.4: the lexer maps the
+    // `str` keyword to TokenType::String with an empty value variant. If
+    // such a keyword-token leaks into expression position, emit a clean
+    // E185 instead of crashing on std::bad_variant_access in as_string().
+    if (!std::holds_alternative<std::string>(tok.value)) {
+        error_with_code(tok, "E185",
+            "Reserved type-name keyword '" + std::string(tok.lexeme) +
+            "' cannot appear in expression position.");
+        arena_[node].data = Node::StringData{""};
+        return node;
+    }
+
     arena_[node].data = Node::StringData{tok.as_string()};
     return node;
 }
@@ -1213,20 +1246,34 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     bool seen_default = false;
     std::size_t destr_param_idx = 0;
 
-    // PRD prd-parameter-type-annotations §3.1: parse the optional
-    // `: stream` / `: signal` annotation after a parameter name. Returns Any
-    // when no annotation is present. Emits E185 for an unknown type name
-    // (e.g. `: bogustype`) and recovers by skipping one token.
+    // PRD prd-parameter-type-annotations-phase-2 §3.1: parse the optional
+    // annotation after a parameter name. Returns Any when no annotation is
+    // present. Emits E185 for an unknown type name (e.g. `: bogustype`) and
+    // recovers by skipping one token.
+    //
+    // Token strategy (P2-Q12): `num`/`str` reuse TokenType::Number/String
+    // (literal token types). The lexer keyword path produces these tokens
+    // with `tok.value == std::monostate{}` and `tok.lexeme == "num"`/`"str"`,
+    // so we disambiguate via the lexeme. `fn` reuses TokenType::Fn (the
+    // declaration keyword) — contexts are disjoint, no conflict.
     auto parse_optional_annotation = [&]() -> ParamValueType {
         if (!match(TokenType::Colon)) {
             return ParamValueType::Any;
         }
         Token tok = advance();
-        if (tok.type == TokenType::Stream) return ParamValueType::Stream;
+        if (tok.type == TokenType::Evs)    return ParamValueType::Stream;
         if (tok.type == TokenType::Signal) return ParamValueType::Signal;
+        if (tok.type == TokenType::Record) return ParamValueType::Record;
+        if (tok.type == TokenType::Array)  return ParamValueType::Array;
+        if (tok.type == TokenType::Fn)     return ParamValueType::Function;
+        if (tok.type == TokenType::Number && tok.lexeme == "num")
+                                           return ParamValueType::Number;
+        if (tok.type == TokenType::String && tok.lexeme == "str")
+                                           return ParamValueType::String;
         error_with_code(tok, "E185",
             "Unknown type name '" + std::string(tok.lexeme) +
-            "' in parameter annotation; expected `stream` or `signal`.");
+            "' in parameter annotation; expected `evs`, `sig`/`signal`, "
+            "`num`, `rec`, `arr`, `str`, or `fn`.");
         return ParamValueType::Any;
     };
 
@@ -1235,7 +1282,10 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     // errors after E104. The caller has already verified `check(TokenType::Colon)`.
     auto skip_rejected_annotation = [&]() {
         advance();  // consume ':'
-        if (check(TokenType::Stream) || check(TokenType::Signal) ||
+        if (check(TokenType::Evs) || check(TokenType::Signal) ||
+            check(TokenType::Record) || check(TokenType::Array) ||
+            check(TokenType::Fn) ||
+            check(TokenType::Number) || check(TokenType::String) ||
             check(TokenType::Identifier)) {
             advance();
         }
@@ -1308,8 +1358,13 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
         NodeIndex default_node_idx = NULL_NODE;
         if (match(TokenType::Equals)) {
             // Fast path: simple number literal (not followed by an operator)
-            // Uses advance() instead of parse_expression() to avoid orphaning arena nodes
+            // Uses advance() instead of parse_expression() to avoid orphaning arena nodes.
+            // The std::holds_alternative guard rejects the `num` keyword token
+            // (PRD prd-parameter-type-annotations-phase-2 §4.4); such a token
+            // falls through to the expression-default path where parse_number()
+            // surfaces a clean E185.
             if (check(TokenType::Number) &&
+                std::holds_alternative<NumericValue>(tokens_[current_idx_].value) &&
                 current_idx_ + 1 < tokens_.size() &&
                 (tokens_[current_idx_ + 1].type == TokenType::Comma ||
                  tokens_[current_idx_ + 1].type == TokenType::RParen)) {
@@ -1325,8 +1380,10 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
                 arena_[default_node_idx].data =
                     Node::NumberData{num_val.value, num_val.is_integer};
             }
-            // Fast path: simple string literal (not followed by an operator)
+            // Fast path: simple string literal (not followed by an operator).
+            // Same guard as above for the `str` keyword token.
             else if (check(TokenType::String) &&
+                     std::holds_alternative<std::string>(tokens_[current_idx_].value) &&
                      current_idx_ + 1 < tokens_.size() &&
                      (tokens_[current_idx_ + 1].type == TokenType::Comma ||
                       tokens_[current_idx_ + 1].type == TokenType::RParen)) {
@@ -1658,8 +1715,10 @@ NodeIndex Parser::parse_mini_literal() {
 
     NodeIndex node = make_node(NodeType::MiniLiteral, kw_tok);
 
-    // First argument: the mini-notation string
-    if (!check(TokenType::String)) {
+    // First argument: the mini-notation string. Guard against the `str` keyword
+    // token (PRD prd-parameter-type-annotations-phase-2 §4.4).
+    if (!check(TokenType::String) ||
+        !std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
         error("Expected string for mini-notation pattern");
         return node;
     }
@@ -1754,10 +1813,14 @@ NodeIndex Parser::parse_match_expr() {
                 // Create a placeholder pattern node
                 pattern = make_node(NodeType::Identifier, arm_tok);
                 arena_[pattern].data = Node::IdentifierData{"_destructure"};
-            } else if (check(TokenType::String)) {
+            } else if (check(TokenType::String) &&
+                       std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
                 pattern = parse_string();
-            } else if (check(TokenType::Number) || check(TokenType::Minus)) {
-                // Parse optionally-negative number literal
+            } else if ((check(TokenType::Number) &&
+                        std::holds_alternative<NumericValue>(tokens_[current_idx_].value)) ||
+                       check(TokenType::Minus)) {
+                // Parse optionally-negative number literal. The holds_alternative
+                // guard rejects the `num` keyword token (PRD prd-parameter-type-annotations-phase-2 §4.4).
                 bool neg = check(TokenType::Minus);
                 if (neg) advance();  // consume '-'
                 double num_val = current().as_number();

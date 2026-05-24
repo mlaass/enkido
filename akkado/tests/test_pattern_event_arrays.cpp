@@ -202,7 +202,7 @@ TEST_CASE("event-arrays: notes(pattern-literal) accepts a literal directly",
 TEST_CASE("event-arrays: e.notes UFCS method call composes with step",
           "[pattern_event_arrays]") {
     auto r = compile_raw(
-        "fn step (arr, trig) -> arr[counter(trig)]\n"
+        "fn step (xs, trig) -> xs[counter(trig)]\n"
         "n\"[c4,e4,g4] g3\" as e\n"
         "e.notes.step(trigger(8)) |> mtof(@) |> osc(\"sin\", @) |> out(@, @)\n");
     REQUIRE(r.success);
@@ -226,7 +226,7 @@ TEST_CASE("event-arrays: map() over a dynamic array stays dynamic",
     // map(e.notes, (v) -> v + 7) transposes every chord note; the result is
     // still a DynArray, indexable through step().
     auto r = compile_raw(
-        "fn step (arr, trig) -> arr[counter(trig)]\n"
+        "fn step (xs, trig) -> xs[counter(trig)]\n"
         "n\"[c4,e4,g4] g3\" as e\n"
         "map(e.notes, (v) -> v + 7).step(trigger(8))\n"
         "  |> mtof(@) |> osc(\"sin\", @) |> out(@, @)\n");

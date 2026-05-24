@@ -35,7 +35,7 @@ fn pc12(n) -> fmod(fmod(n, 12) + 12, 12)
 // `keyDeltaTable`).
 // ----------------------------------------------------------------------------
 
-fn key(events: stream, name) -> match(name) {
+fn key(events: evs, name) -> match(name) {
     "c:major": event_map(events, (e) -> {note: snap(e.note) + [0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0][pc12(snap(e.note))]})
     "c:ionian": event_map(events, (e) -> {note: snap(e.note) + [0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0][pc12(snap(e.note))]})
     "c:minor": event_map(events, (e) -> {note: snap(e.note) + [0, -1, 0, 0, -1, 0, -1, 0, 0, -1, 0, -1][pc12(snap(e.note))]})
@@ -165,7 +165,7 @@ fn key(events: stream, name) -> match(name) {
 // and "d3:minor" land on root MIDI 50.
 // ----------------------------------------------------------------------------
 
-fn scale(events: stream, name) -> match(name) {
+fn scale(events: evs, name) -> match(name) {
     "c:major": event_map(events, (e) -> {note: 48 + floor(snap(e.note) / 7) * 12 + [0, 2, 4, 5, 7, 9, 11][snap(e.note) - floor(snap(e.note) / 7) * 7]})
     "c2:major": event_map(events, (e) -> {note: 36 + floor(snap(e.note) / 7) * 12 + [0, 2, 4, 5, 7, 9, 11][snap(e.note) - floor(snap(e.note) / 7) * 7]})
     "c3:major": event_map(events, (e) -> {note: 48 + floor(snap(e.note) / 7) * 12 + [0, 2, 4, 5, 7, 9, 11][snap(e.note) - floor(snap(e.note) / 7) * 7]})

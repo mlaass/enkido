@@ -174,7 +174,7 @@ TEST_CASE("resolve_imports module not found", "[import_scanner]") {
 
 TEST_CASE("resolve_imports populates namespaced_imports", "[import_scanner][namespace]") {
     akkado::VirtualResolver resolver;
-    resolver.register_module("filters", "fn lp(sig, freq) -> sig");
+    resolver.register_module("filters", "fn lp(sg, freq) -> sg");
     resolver.register_module("utils", "fn helper() -> 42");
 
     SECTION("as alias populates namespaced_imports") {

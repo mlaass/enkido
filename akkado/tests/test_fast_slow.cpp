@@ -180,7 +180,7 @@ TEST_CASE("fast with signal-rate factor compiles + emits ERS",
 
 TEST_CASE("slow with signal-rate factor compiles + emits ERS + DIV",
           "[fast-slow][phase3]") {
-    // slow(p, sig) → rate = 1.0 / sig at runtime → codegen emits a DIV.
+    // slow(p, sg) → rate = 1.0 / sg at runtime → codegen emits a DIV.
     auto r = akkado::compile(R"(
         rate = osc("sin", 0.2) + 2
         n"c4 e4".slow(rate) |> osc("sin", @.freq) |> out(@)
@@ -189,7 +189,7 @@ TEST_CASE("slow with signal-rate factor compiles + emits ERS + DIV",
 
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_RATE_SCALE) == 1);
-    // slow inserts a runtime 1/sig DIV for the rate input.
+    // slow inserts a runtime 1/sg DIV for the rate input.
     CHECK(count_op(insts, cedar::Opcode::DIV) >= 1);
 }
 

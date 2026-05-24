@@ -1988,11 +1988,11 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call on user-defined function") {
         auto dot = akkado::compile(R"(
-            fn gain(sig, amt) -> sig * amt
+            fn gain(sg, amt) -> sg * amt
             osc("sin", 440).gain(0.5) |> out(%, %)
         )");
         auto direct = akkado::compile(R"(
-            fn gain(sig, amt) -> sig * amt
+            fn gain(sg, amt) -> sg * amt
             gain(osc("sin", 440), 0.5) |> out(%, %)
         )");
         REQUIRE(dot.success);
@@ -2408,11 +2408,11 @@ TEST_CASE("Mini-notation record suffix: positional :vel and {vel} resolve compat
     // Both forms should produce identical velocities (the record-suffix `vel`
     // overrides the :0.x shorthand when both are present per §9.4 last-wins).
     auto pos = akkado::compile(R"(n"c4:0.5")");
-    auto rec = akkado::compile(R"(n"c4{vel:0.5}")");
+    auto rcd = akkado::compile(R"(n"c4{vel:0.5}")");
     REQUIRE(pos.success);
-    REQUIRE(rec.success);
+    REQUIRE(rcd.success);
     CHECK(pos.state_inits[0].sequence_events[0][0].velocity ==
-          Catch::Approx(rec.state_inits[0].sequence_events[0][0].velocity).margin(0.001f));
+          Catch::Approx(rcd.state_inits[0].sequence_events[0][0].velocity).margin(0.001f));
 }
 
 TEST_CASE("Mini-notation record suffix: backwards compat with polymeter `{a b}%n`",
@@ -4475,12 +4475,12 @@ TEST_CASE("Codegen: Record error paths", "[codegen][errors]") {
 
 TEST_CASE("Codegen: Record handling", "[codegen]") {
     SECTION("simple record literal") {
-        auto result = akkado::compile("rec = {freq: 440, vel: 0.8}");
+        auto result = akkado::compile("rcd = {freq: 440, vel: 0.8}");
         CHECK(result.success);
     }
 
     SECTION("record field access") {
-        auto result = akkado::compile("rec = {freq: 440, vel: 0.8}\nrec.freq");
+        auto result = akkado::compile("rcd = {freq: 440, vel: 0.8}\nrcd.freq");
         CHECK(result.success);
     }
 
@@ -4565,7 +4565,7 @@ TEST_CASE("Codegen: Lambda and function values", "[codegen]") {
     }
 
     SECTION("lambda in map") {
-        auto result = akkado::compile("arr = [1, 2, 3]\nmap(arr, (x) -> x * 2)");
+        auto result = akkado::compile("xs = [1, 2, 3]\nmap(xs, (x) -> x * 2)");
         CHECK(result.success);
     }
 
@@ -4575,7 +4575,7 @@ TEST_CASE("Codegen: Lambda and function values", "[codegen]") {
     }
 
     SECTION("lambda variable in map") {
-        auto result = akkado::compile("double = (x) -> x * 2\narr = [1, 2, 3]\nmap(arr, double)");
+        auto result = akkado::compile("double = (x) -> x * 2\nxs = [1, 2, 3]\nmap(xs, double)");
         CHECK(result.success);
     }
 }
@@ -4849,8 +4849,8 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
     SECTION("destructure with all defaults — caller passes empty record") {
         auto result = akkado::compile(R"(
             fn synth({freq = 440, q = 0.7}) -> osc("sin", freq) * q
-            sig = synth({})
-            out(sig, sig)
+            sg = synth({})
+            out(sg, sg)
         )");
         CHECK(result.success);
     }
@@ -4858,8 +4858,8 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
     SECTION("destructure mixed with regular params") {
         auto result = akkado::compile(R"(
             fn lp_voice(freq, {cutoff = 1000, q = 0.7}) -> osc("saw", freq)
-            sig = lp_voice(220, {cutoff: 500})
-            out(sig, sig)
+            sg = lp_voice(220, {cutoff: 500})
+            out(sg, sg)
         )");
         CHECK(result.success);
     }
@@ -4916,8 +4916,8 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
         auto result = akkado::compile(R"(
             fn synth({freq, wave}) -> osc(wave, freq)
             preset = {freq: 440, wave: "saw"}
-            sig = synth(..preset)
-            out(sig, sig)
+            sg = synth(..preset)
+            out(sg, sg)
         )");
         bool got_e105 = false;
         for (const auto& d : result.diagnostics) {
@@ -5064,7 +5064,7 @@ TEST_CASE("Codegen: Array HOF success paths", "[codegen]") {
     }
 
     SECTION("len") {
-        auto result = akkado::compile("arr = [1, 2, 3]\nlen(arr)");
+        auto result = akkado::compile("xs = [1, 2, 3]\nlen(xs)");
         CHECK(result.success);
     }
 }
@@ -5085,7 +5085,7 @@ TEST_CASE("Codegen: Pipe expressions", "[codegen]") {
     }
 
     SECTION("pipe binding with as") {
-        auto result = akkado::compile("osc(\"sin\", 440) as sig |> out(sig, sig)");
+        auto result = akkado::compile("osc(\"sin\", 440) as sg |> out(sg, sg)");
         CHECK(result.success);
     }
 
@@ -6405,7 +6405,7 @@ TEST_CASE("Codegen: Array reductions", "[codegen][arrays]") {
 
 TEST_CASE("Codegen: Array indexing", "[codegen][arrays]") {
     SECTION("constant index returns the indexed element, not first") {
-        auto result = akkado::compile("arr = [10, 20, 30]\narr[1]");
+        auto result = akkado::compile("xs = [10, 20, 30]\nxs[1]");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         bool found_20 = false;
@@ -6420,7 +6420,7 @@ TEST_CASE("Codegen: Array indexing", "[codegen][arrays]") {
     }
 
     SECTION("last element accessible via constant index") {
-        auto result = akkado::compile("arr = [10, 20, 30]\narr[2]");
+        auto result = akkado::compile("xs = [10, 20, 30]\nxs[2]");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         bool found_30 = false;
@@ -6435,7 +6435,7 @@ TEST_CASE("Codegen: Array indexing", "[codegen][arrays]") {
     }
 
     SECTION("index 0 returns first element") {
-        auto result = akkado::compile("arr = [10, 20, 30]\narr[0]");
+        auto result = akkado::compile("xs = [10, 20, 30]\nxs[0]");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         bool found_10 = false;
@@ -6452,8 +6452,8 @@ TEST_CASE("Codegen: Array indexing", "[codegen][arrays]") {
     SECTION("dynamic index emits ARRAY_INDEX opcode") {
         auto result = akkado::compile(
             "freq = param(\"idx\", 0, 0, 2)\n"
-            "arr = [100, 200, 300]\n"
-            "arr[freq]"
+            "xs = [100, 200, 300]\n"
+            "xs[freq]"
         );
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -8435,7 +8435,7 @@ TEST_CASE("Codegen: Expression default interactions", "[codegen][fn]") {
     SECTION("expression default + as-binding") {
         auto result = akkado::compile(R"(
             fn amp(x, gain = 2 * 0.25) -> x * gain
-            osc("sin", 440) as sig |> amp(sig) |> out(%, %)
+            osc("sin", 440) as sg |> amp(sg) |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8454,7 +8454,7 @@ TEST_CASE("Codegen: Expression default interactions", "[codegen][fn]") {
 
     SECTION("expression default + dot-call") {
         auto result = akkado::compile(R"(
-            fn amp(sig, gain = 1 + 1) -> sig * gain
+            fn amp(sg, gain = 1 + 1) -> sg * gain
             osc("sin", 440).amp() |> out(%, %)
         )");
         CHECK(result.success);
@@ -10031,8 +10031,8 @@ TEST_CASE("User fn array spread: positional binding", "[codegen][spread]") {
     SECTION("array elements fill all params positionally") {
         auto result = akkado::compile(
             "fn add3(a, b, c) -> a + b + c\n"
-            "arr = [1, 2, 3]\n"
-            "add3(..arr) |> out(%, %)"
+            "xs = [1, 2, 3]\n"
+            "add3(..xs) |> out(%, %)"
         );
         REQUIRE(result.success);
     }
@@ -10049,8 +10049,8 @@ TEST_CASE("User fn array spread: positional binding", "[codegen][spread]") {
     SECTION("too many array elements emits E107") {
         auto result = akkado::compile(
             "fn f(a, b) -> a + b\n"
-            "arr = [1, 2, 3]\n"
-            "f(..arr) |> out(%, %)"
+            "xs = [1, 2, 3]\n"
+            "f(..xs) |> out(%, %)"
         );
         REQUIRE_FALSE(result.success);
         bool got_e107 = false;
@@ -10063,8 +10063,8 @@ TEST_CASE("Mixed record + array spread emits E180", "[codegen][spread]") {
     auto result = akkado::compile(
         "fn f(a, b, c) -> a + b + c\n"
         "r = {a: 1}\n"
-        "arr = [2, 3]\n"
-        "f(..r, ..arr) |> out(%, %)"
+        "xs = [2, 3]\n"
+        "f(..r, ..xs) |> out(%, %)"
     );
     REQUIRE_FALSE(result.success);
     bool got_e180 = false;
@@ -10073,11 +10073,11 @@ TEST_CASE("Mixed record + array spread emits E180", "[codegen][spread]") {
 }
 
 // =============================================================================
-// Phase 5: Array literal spread (..arr inside [..])
+// Phase 5: Array literal spread (..xs inside [..])
 // =============================================================================
 
 TEST_CASE("Array literal spread flattens elements", "[codegen][spread][array]") {
-    SECTION("simple ..arr at front") {
+    SECTION("simple ..xs at front") {
         auto result = akkado::compile(
             "a = [1, 2]\n"
             "b = [..a, 3]\n"
@@ -10354,8 +10354,8 @@ TEST_CASE("Spread integration: closure call with spread", "[codegen][spread][int
     SECTION("array spread into closure") {
         auto result = akkado::compile(
             "g = (x, y) -> x + y\n"
-            "arr = [1, 2]\n"
-            "g(..arr) |> out(%, %)"
+            "xs = [1, 2]\n"
+            "g(..xs) |> out(%, %)"
         );
         REQUIRE(result.success);
     }

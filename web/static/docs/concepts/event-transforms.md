@@ -43,17 +43,17 @@ n"c4 d4 e4 f4 g4".event_filter((e) -> e.vel - 0.3)  // keep only events with vel
 
 ## Writing your own modifier
 
-Any `fn` annotated with `events: stream` accepts a Pattern or EventSource and can plug into a pipe chain via UFCS.
+Any `fn` annotated with `events: evs` accepts a Pattern or EventSource and can plug into a pipe chain via UFCS.
 
 ```akkado
-fn arp_up(events: stream, steps) -> {
+fn arp_up(events: evs, steps) -> {
     event_map(events, (e) -> {note: e.note + (cycle_count() mod steps) * 12})
 }
 
 n"c4 g4".arp_up(3) |> osc("saw", @.freq) |> out(@)
 ```
 
-The `events: stream` annotation is part of [parameter type annotations](parameter-type-annotations). Without it, a user `fn` parameter that receives a polyphonic Pattern would error with `E160`; the annotation tells the analyzer this fn is an event-stream consumer.
+The `events: evs` annotation is part of [parameter type annotations](parameter-type-annotations). Without it, a user `fn` parameter that receives a polyphonic Pattern would error with `E160`; the annotation tells the analyzer this fn is an event-stream consumer.
 
 ## What ships in stdlib
 
@@ -99,7 +99,7 @@ User `fn`s shadow stdlib ones. To redefine `transpose` with a different conventi
 ```akkado
 scale = [0, 2, 4, 5, 7, 9, 11]  // major scale steps
 
-fn transpose(events: stream, deg) -> {
+fn transpose(events: evs, deg) -> {
     event_map(events, (e) -> {note: e.note + scale[deg]})
 }
 
@@ -168,6 +168,6 @@ midi("ctrl1").transpose(12).velocity(0.7) |> poly(@, instr, 8)
 
 ## See also
 
-- [Parameter Type Annotations](parameter-type-annotations) — the `events: stream` annotation that makes user-fn modifiers possible
+- [Parameter Type Annotations](parameter-type-annotations) — the `events: evs` annotation that makes user-fn modifiers possible
 - [Higher-Order DSL](higher-order-dsl) — `each_voice`, `each`, `reduce` for per-event instrument and accumulation patterns
 - [PRD prd-runtime-event-transforms](https://github.com/) — the full design including the deferred rate-scaling and structural-transform migrations

@@ -483,8 +483,8 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         auto result = akkado::compile(R"(
             fn synth({freq = 440, wave = "saw", q = 0.7}) ->
                 osc(wave, freq) * q
-            sig = synth({freq: 220})
-            sig |> out(%, %)
+            sg = synth({freq: 220})
+            sg |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -493,8 +493,8 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         auto result = akkado::compile(R"(
             fn lp_voice(freq, {cutoff = 1000, q = 0.7}) ->
                 osc("saw", freq)
-            sig = lp_voice(330, {cutoff: 800})
-            sig |> out(%, %)
+            sg = lp_voice(330, {cutoff: 800})
+            sg |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -1200,8 +1200,8 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
 TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
     SECTION("len() on array variable") {
         auto result = akkado::compile(R"(
-            arr = [1, 2, 3, 4]
-            len(arr)
+            xs = [1, 2, 3, 4]
+            len(xs)
         )");
 
         REQUIRE(result.success);
@@ -1271,8 +1271,8 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
 
     SECTION("array variable reassignment produces error") {
         auto result = akkado::compile(R"(
-            arr = [1, 2, 3]
-            arr = [4, 5, 6]
+            xs = [1, 2, 3]
+            xs = [4, 5, 6]
         )");
 
         REQUIRE_FALSE(result.success);
@@ -1394,7 +1394,7 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
 
     SECTION("longer pipe chain in function body") {
         auto result = akkado::compile(R"(
-            fn fx_chain(sig) -> sig |> lp(%, 2000, 0.5) |> tube(%, 0.3) |> hp(%, 100, 0.7)
+            fn fx_chain(sg) -> sg |> lp(%, 2000, 0.5) |> tube(%, 0.3) |> hp(%, 100, 0.7)
             saw(220) |> fx_chain(%) |> out(%, %)
         )");
 
@@ -1549,9 +1549,9 @@ TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
 
 TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]") {
     SECTION("simple closure parameter") {
-        // fn apply(sig, fx) -> fx(sig) with inline closure
+        // fn apply(sg, fx) -> fx(sg) with inline closure
         auto result = akkado::compile(R"(
-            fn apply(sig, fx) -> fx(sig)
+            fn apply(sg, fx) -> fx(sg)
             apply(saw(440), (x) -> x * 0.5)
         )");
 
@@ -1561,9 +1561,9 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
     }
 
     SECTION("multiple closure parameters") {
-        // fn dual(sig, fx1, fx2) -> fx1(sig) + fx2(sig)
+        // fn dual(sg, fx1, fx2) -> fx1(sg) + fx2(sg)
         auto result = akkado::compile(R"(
-            fn dual(sig, fx1, fx2) -> fx1(sig) + fx2(sig)
+            fn dual(sg, fx1, fx2) -> fx1(sg) + fx2(sg)
             dual(saw(440), (x) -> x * 0.5, (x) -> x * 0.3)
         )");
 
@@ -1574,7 +1574,7 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
 
     SECTION("mixed scalar and closure parameters") {
         auto result = akkado::compile(R"(
-            fn process(sig, amount, fx) -> fx(sig) * amount
+            fn process(sg, amount, fx) -> fx(sg) * amount
             process(saw(440), 0.7, (x) -> x * 2)
         )");
 
@@ -1586,7 +1586,7 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
     SECTION("named function as closure parameter") {
         auto result = akkado::compile(R"(
             fn my_gain(x) -> x * 0.5
-            fn apply(sig, fx) -> fx(sig)
+            fn apply(sg, fx) -> fx(sg)
             apply(saw(440), my_gain)
         )");
 
@@ -1597,8 +1597,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
 
     SECTION("closure passthrough through nested function") {
         auto result = akkado::compile(R"(
-            fn inner(sig, fx) -> fx(sig)
-            fn outer(sig, fx) -> inner(sig, fx)
+            fn inner(sg, fx) -> fx(sg)
+            fn outer(sg, fx) -> inner(sg, fx)
             outer(saw(440), (x) -> x * 0.5)
         )");
 
@@ -1610,7 +1610,7 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
     SECTION("closure with stateful builtin") {
         // Closure that calls a stateful builtin (lp filter)
         auto result = akkado::compile(R"(
-            fn apply(sig, fx) -> fx(sig)
+            fn apply(sg, fx) -> fx(sg)
             apply(saw(440), (x) -> lp(x, 1000))
         )");
 
@@ -1622,7 +1622,7 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
     SECTION("multiple closures with stateful builtins get independent state IDs") {
         // Each closure should have a distinct semantic path
         auto result = akkado::compile(R"(
-            fn dual(sig, fx1, fx2) -> fx1(sig) + fx2(sig)
+            fn dual(sg, fx1, fx2) -> fx1(sg) + fx2(sg)
             dual(saw(440), (x) -> lp(x, 500), (x) -> lp(x, 2000))
         )");
 
@@ -1685,7 +1685,7 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
             }
         }
         // 4 band-splitting lp() + 3 effect lp() = 7 total
-        // But multiband3fx uses lp(lp(sig,f1),f1) for lo and lp(lp(...),f2) for mid = 4 splitting lp
+        // But multiband3fx uses lp(lp(sg,f1),f1) for lo and lp(lp(...),f2) for mid = 4 splitting lp
         // Plus 3 effect lp calls = 7
         REQUIRE(lp_state_ids.size() == 7);
 
@@ -1785,7 +1785,7 @@ TEST_CASE("Named arguments for user functions", "[akkado][fn][named-args]") {
 TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
     SECTION("function returning closure") {
         auto result = akkado::compile(R"(
-            fn make_gain(amt) -> (sig) -> sig * amt
+            fn make_gain(amt) -> (sg) -> sg * amt
             g = make_gain(0.5)
             g(saw(440))
         )");
@@ -1797,7 +1797,7 @@ TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
 
     SECTION("closure return captures multiple params") {
         auto result = akkado::compile(R"(
-            fn make_filter(cut, q) -> (sig) -> lp(sig, cut, q)
+            fn make_filter(cut, q) -> (sg) -> lp(sg, cut, q)
             f = make_filter(1000, 0.7)
             f(saw(440))
         )");
@@ -1809,7 +1809,7 @@ TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
 
     SECTION("closure return used inline in pipe") {
         auto result = akkado::compile(R"(
-            fn make_gain(amt) -> (sig) -> sig * amt
+            fn make_gain(amt) -> (sg) -> sg * amt
             half = make_gain(0.5)
             saw(440) |> half(%) |> out(%, %)
         )");
@@ -1842,11 +1842,11 @@ TEST_CASE("Variadic rest parameters", "[akkado][fn][variadic]") {
         REQUIRE(result.success);
         // len(items) should be compile-time constant 3
         cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        std::size_t num = result.bytecode.size() / sizeof(cedar::Instruction);
+        std::size_t nm = result.bytecode.size() / sizeof(cedar::Instruction);
 
         // Should have a PUSH_CONST(3) somewhere
         bool found_three = false;
-        for (std::size_t i = 0; i < num; ++i) {
+        for (std::size_t i = 0; i < nm; ++i) {
             if (insts[i].opcode == cedar::Opcode::PUSH_CONST &&
                 decode_const_float(insts[i]) == 3.0f) {
                 found_three = true;
@@ -2233,7 +2233,7 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
     SECTION("array pipe binding then map") {
         auto result = akkado::compile(R"(
             freqs = [440, 880]
-            freqs as arr |> map(arr, (f) -> saw(f)) |> sum(%) |> out(%, %)
+            freqs as xs |> map(xs, (f) -> saw(f)) |> sum(%) |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -2243,7 +2243,7 @@ TEST_CASE("TypedValue integration", "[akkado][types][integration]") {
     SECTION("closure captures record and accesses field") {
         auto result = akkado::compile(R"(
             r = {cutoff: 1000}
-            fn process(sig) -> lp(sig, r.cutoff)
+            fn process(sg) -> lp(sg, r.cutoff)
             saw(440) |> process(%) |> out(%, %)
         )");
         REQUIRE(result.success);

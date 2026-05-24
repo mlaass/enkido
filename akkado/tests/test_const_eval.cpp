@@ -587,7 +587,7 @@ TEST_CASE("Const: sum/len/mean of array", "[const]") {
 
 TEST_CASE("Const: map with closure", "[const]") {
     auto result = akkado::compile(R"(
-        const fn scale_arr(arr, f) -> map(arr, (x) -> x * f)
+        const fn scale_arr(xs, f) -> map(xs, (x) -> x * f)
         const v = scale_arr([1, 2, 3], 100)
     )");
     REQUIRE(result.success);

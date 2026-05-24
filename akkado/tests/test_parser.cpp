@@ -359,7 +359,8 @@ TEST_CASE("Parser assignments", "[parser]") {
     }
 
     SECTION("assignment with pipe") {
-        auto ast = parse_ok("sig = saw(440) |> lp(%, 1000)");
+        // `sig` is now reserved (Phase 2). Use `s` as variable name instead.
+        auto ast = parse_ok("s = saw(440) |> lp(%, 1000)");
         NodeIndex assign = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[assign].type == NodeType::Assignment);
 
@@ -1147,10 +1148,11 @@ TEST_CASE("Parser arrays", "[parser][array]") {
     }
 
     SECTION("array assignment") {
-        auto ast = parse_ok("arr = [1, 2, 3]");
+        // `arr` is now reserved (Phase 2). Use `xs` as variable name instead.
+        auto ast = parse_ok("xs = [1, 2, 3]");
         NodeIndex assign = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[assign].type == NodeType::Assignment);
-        CHECK(ast.arena[assign].as_identifier() == "arr");
+        CHECK(ast.arena[assign].as_identifier() == "xs");
 
         NodeIndex value = ast.arena[assign].first_child;
         REQUIRE(ast.arena[value].type == NodeType::ArrayLit);
@@ -1178,7 +1180,8 @@ TEST_CASE("Parser arrays", "[parser][array]") {
     }
 
     SECTION("array indexing with number") {
-        auto ast = parse_ok("arr[0]");
+        // `arr` is now reserved (Phase 2). Use `xs` as variable name instead.
+        auto ast = parse_ok("xs[0]");
         NodeIndex index = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[index].type == NodeType::Index);
         CHECK(ast.arena.child_count(index) == 2);
@@ -1187,14 +1190,14 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         NodeIndex idx_expr = ast.arena[arr].next_sibling;
 
         REQUIRE(ast.arena[arr].type == NodeType::Identifier);
-        CHECK(ast.arena[arr].as_identifier() == "arr");
+        CHECK(ast.arena[arr].as_identifier() == "xs");
 
         REQUIRE(ast.arena[idx_expr].type == NodeType::NumberLit);
         CHECK_THAT(ast.arena[idx_expr].as_number(), WithinRel(0.0));
     }
 
     SECTION("array indexing with variable") {
-        auto ast = parse_ok("arr[i]");
+        auto ast = parse_ok("xs[i]");
         NodeIndex index = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[index].type == NodeType::Index);
 
@@ -1206,7 +1209,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
     }
 
     SECTION("array indexing with expression") {
-        auto ast = parse_ok("arr[i + 1]");
+        auto ast = parse_ok("xs[i + 1]");
         NodeIndex index = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[index].type == NodeType::Index);
 
@@ -1218,7 +1221,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
     }
 
     SECTION("chained indexing") {
-        auto ast = parse_ok("arr[0][1]");
+        auto ast = parse_ok("xs[0][1]");
         NodeIndex outer = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[outer].type == NodeType::Index);
 
@@ -1246,7 +1249,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
     }
 
     SECTION("method call on indexed value") {
-        auto ast = parse_ok("arr[0].foo()");
+        auto ast = parse_ok("xs[0].foo()");
         NodeIndex method = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[method].type == NodeType::MethodCall);
         CHECK(ast.arena[method].as_identifier() == "foo");
@@ -1368,17 +1371,18 @@ TEST_CASE("Parser function definitions", "[parser]") {
 }
 
 // =============================================================================
-// PRD prd-parameter-type-annotations §3.1: `name: type` annotation grammar on
-// fn parameter lists. Phase 1 ships `stream` and `signal` keywords. Tests in
-// this section cover the parser/AST surface (grammar, AST-node promotion,
-// E104/E185 diagnostics). Codegen-side behavior (E184 + symbol-binding) is
-// covered in test_param_type_annotations.cpp.
+// PRD prd-parameter-type-annotations + Phase 2 §3.1: `name: type` annotation
+// grammar on fn parameter lists. Phase 2 ships `evs` (renamed from Phase 1
+// `stream`), `sig` (alias of `signal`), `num`, `rec`, `arr`, `str`, and `fn`.
+// Tests in this section cover the parser/AST surface (grammar, AST-node
+// promotion, E104/E185 diagnostics). Codegen-side behavior (E184 +
+// symbol-binding) is covered in test_param_type_annotations.cpp.
 // =============================================================================
 
 TEST_CASE("Parser fn parameter type annotations: grammar",
           "[parser][type-annotation]") {
-    SECTION("simple : stream annotation parses and promotes to ClosureParamData") {
-        auto ast = parse_ok("fn transpose(events: stream, n) -> events");
+    SECTION("simple : evs annotation parses and promotes to ClosureParamData") {
+        auto ast = parse_ok("fn transpose(events: evs, n) -> events");
         NodeIndex fn = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
 
@@ -1397,12 +1401,60 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         CHECK(ast.arena[p1].as_identifier() == "n");
     }
 
-    SECTION(": signal annotation also parses") {
+    SECTION(": signal annotation also parses (long-form alias)") {
         auto ast = parse_ok("fn wobble(rate: signal, depth) -> depth");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Signal);
+    }
+
+    SECTION(": sig alias parses to same ParamValueType::Signal") {
+        auto ast = parse_ok("fn wobble(rate: sig, depth) -> depth");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Signal);
+    }
+
+    SECTION(": num annotation parses to ParamValueType::Number") {
+        auto ast = parse_ok("fn unison(freq, voices: num) -> freq");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p1 = ast.arena[ast.arena[fn].first_child].next_sibling;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p1].data));
+        CHECK(ast.arena[p1].as_closure_param().annotated_type == ParamValueType::Number);
+    }
+
+    SECTION(": rec annotation parses to ParamValueType::Record") {
+        auto ast = parse_ok("fn arpinst(e: rec) -> e");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Record);
+    }
+
+    SECTION(": arr annotation parses to ParamValueType::Array") {
+        auto ast = parse_ok("fn mixer(channels: arr, gain) -> gain");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Array);
+    }
+
+    SECTION(": str annotation parses to ParamValueType::String") {
+        auto ast = parse_ok("fn osctype(kind: str, freq) -> freq");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::String);
+    }
+
+    SECTION(": fn annotation parses to ParamValueType::Function") {
+        auto ast = parse_ok("fn each_voice(voices, cb: fn) -> voices");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p1 = ast.arena[ast.arena[fn].first_child].next_sibling;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p1].data));
+        CHECK(ast.arena[p1].as_closure_param().annotated_type == ParamValueType::Function);
     }
 
     SECTION("annotation precedes default value") {
@@ -1416,12 +1468,23 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         CHECK_THAT(*cp.default_value, WithinRel(220.0));
     }
 
+    SECTION(": num + numeric default compose") {
+        auto ast = parse_ok("fn f(voices: num = 4) -> voices");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
+        const auto& cp = ast.arena[p0].as_closure_param();
+        CHECK(cp.annotated_type == ParamValueType::Number);
+        REQUIRE(cp.default_value.has_value());
+        CHECK_THAT(*cp.default_value, WithinRel(4.0));
+    }
+
     SECTION("annotation accepted before numeric default (eval errors deferred)") {
-        // The parser accepts the grammar `name : type = default`. A `: stream`
+        // The parser accepts the grammar `name : type = default`. A `: evs`
         // default of `0` is semantically meaningless (PRD §8.9) but the
         // parser doesn't reject it — that's deferred to body-side usage
         // diagnostics. Verifies the token order `: type =`.
-        auto ast = parse_ok("fn t(events: stream = 0) -> events");
+        auto ast = parse_ok("fn t(events: evs = 0) -> events");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
@@ -1430,13 +1493,19 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         REQUIRE(cp.default_value.has_value());
     }
 
-    SECTION("multiple annotated params") {
-        auto ast = parse_ok("fn f(e: stream, r: signal) -> r");
+    SECTION("multiple annotated params (Phase 1 + Phase 2 mix)") {
+        auto ast = parse_ok("fn f(e: evs, r: sig, n: num, k: str, cb: fn) -> n");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         NodeIndex p1 = ast.arena[p0].next_sibling;
+        NodeIndex p2 = ast.arena[p1].next_sibling;
+        NodeIndex p3 = ast.arena[p2].next_sibling;
+        NodeIndex p4 = ast.arena[p3].next_sibling;
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Stream);
         CHECK(ast.arena[p1].as_closure_param().annotated_type == ParamValueType::Signal);
+        CHECK(ast.arena[p2].as_closure_param().annotated_type == ParamValueType::Number);
+        CHECK(ast.arena[p3].as_closure_param().annotated_type == ParamValueType::String);
+        CHECK(ast.arena[p4].as_closure_param().annotated_type == ParamValueType::Function);
     }
 
     SECTION("unannotated params keep IdentifierData (no promotion)") {
@@ -1461,9 +1530,24 @@ TEST_CASE("Parser fn parameter type annotations: E185 unknown type name",
         for (const auto& d : parse_diags) {
             if (d.code == "E185") {
                 has_e185 = true;
-                // Diagnostic should mention `stream` or `signal` as the hint.
-                CHECK(d.message.find("stream") != std::string::npos);
+                // Diagnostic should enumerate the valid keywords as a hint.
+                CHECK(d.message.find("evs") != std::string::npos);
             }
+        }
+        CHECK(has_e185);
+    }
+
+    SECTION("E185 fires on the renamed `: stream` keyword (no longer valid)") {
+        // Phase 2 §3.1: `: stream` no longer parses. `stream` lexes as an
+        // Identifier, which falls through to the E185 path in the annotation
+        // lambda.
+        auto [tokens, lex_diags] = lex("fn f(events: stream) -> events");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        REQUIRE_FALSE(parse_diags.empty());
+        bool has_e185 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E185") has_e185 = true;
         }
         CHECK(has_e185);
     }
@@ -1472,7 +1556,7 @@ TEST_CASE("Parser fn parameter type annotations: E185 unknown type name",
 TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
           "[parser][type-annotation]") {
     SECTION("E104 fires on destructure param annotation") {
-        auto [tokens, lex_diags] = lex("fn f({x, y}: stream) -> x + y");
+        auto [tokens, lex_diags] = lex("fn f({x, y}: rec) -> x + y");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
         REQUIRE_FALSE(parse_diags.empty());
@@ -1484,7 +1568,7 @@ TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
     }
 
     SECTION("E104 fires on rest param annotation") {
-        auto [tokens, lex_diags] = lex("fn f(...args: signal) -> args");
+        auto [tokens, lex_diags] = lex("fn f(...args: arr) -> args");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
         REQUIRE_FALSE(parse_diags.empty());
@@ -1496,18 +1580,65 @@ TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
     }
 }
 
-TEST_CASE("Parser: stream/signal are reserved keywords",
+TEST_CASE("Parser: Phase 2 type-name keywords are reserved",
           "[parser][type-annotation]") {
-    SECTION("top-level `stream = …` no longer parses as an identifier binding") {
-        // PRD §6: stream/signal become reserved on Phase 1 landing. Any code
-        // that bound them as identifiers will error here; the test asserts the
-        // breaking-change surface.
+    SECTION("top-level `stream = …` falls through to identifier path (post-rename)") {
+        // Phase 2 rename: `stream` is no longer a reserved keyword — it lexes
+        // as a plain Identifier. The expression-statement path may then accept
+        // or reject; the test just verifies no crash.
         auto [tokens, lex_diags] = lex("stream = 5");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        // No assertion on the specific code — just that *some* parse error
-        // surfaces (the `stream` token is no longer a valid statement-start
-        // identifier).
+        (void)ast;
+        (void)parse_diags;
+        // Either parses (Identifier `stream`) or fails — both are acceptable.
+        // The critical bit is no std::bad_variant_access.
+        SUCCEED();
+    }
+
+    SECTION("top-level `num = 5` surfaces a clean parse error (no crash)") {
+        // PRD prd-parameter-type-annotations-phase-2 §4.4: `num` reuses
+        // TokenType::Number with empty value variant. parse_number()'s
+        // defensive guard emits E185 instead of crashing on
+        // std::bad_variant_access.
+        auto [tokens, lex_diags] = lex("num = 5");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        (void)ast;
+        CHECK_FALSE(parse_diags.empty());
+        bool has_e185 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E185") has_e185 = true;
+        }
+        CHECK(has_e185);
+    }
+
+    SECTION("top-level `str` as expression surfaces a clean parse error") {
+        auto [tokens, lex_diags] = lex("str");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        (void)ast;
+        CHECK_FALSE(parse_diags.empty());
+        bool has_e185 = false;
+        for (const auto& d : parse_diags) {
+            if (d.code == "E185") has_e185 = true;
+        }
+        CHECK(has_e185);
+    }
+
+    SECTION("`fn arr(...)` rejects the reserved name as fn-name") {
+        auto [tokens, lex_diags] = lex("fn arr(x) -> x");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        (void)ast;
+        CHECK_FALSE(parse_diags.empty());
+    }
+
+    SECTION("`fn f(arr) -> arr` rejects the reserved name as param-name") {
+        auto [tokens, lex_diags] = lex("fn f(arr) -> arr");
+        REQUIRE(lex_diags.empty());
+        auto [ast, parse_diags] = parse(std::move(tokens), "src");
+        (void)ast;
         CHECK_FALSE(parse_diags.empty());
     }
 }
@@ -2061,7 +2192,8 @@ TEST_CASE("Parser hole-field dotless shorthand", "[parser][hole-shorthand]") {
 
 TEST_CASE("Parser pipe binding", "[parser][records]") {
     SECTION("simple as binding") {
-        auto ast = parse_ok("osc(\"sin\", 440) as sig |> lp(%, 1000)");
+        // `sig` is now reserved (Phase 2). Use `s` as binding name instead.
+        auto ast = parse_ok("osc(\"sin\", 440) as s |> lp(%, 1000)");
         NodeIndex root = ast.root;
         NodeIndex pipe = ast.arena[root].first_child;
         REQUIRE(ast.arena[pipe].type == NodeType::Pipe);
@@ -2069,7 +2201,7 @@ TEST_CASE("Parser pipe binding", "[parser][records]") {
         // LHS should be a PipeBinding
         NodeIndex lhs = ast.arena[pipe].first_child;
         REQUIRE(ast.arena[lhs].type == NodeType::PipeBinding);
-        CHECK(ast.arena[lhs].as_pipe_binding().binding_name == "sig");
+        CHECK(ast.arena[lhs].as_pipe_binding().binding_name == "s");
 
         // First child of PipeBinding is the bound expression
         NodeIndex expr = ast.arena[lhs].first_child;
@@ -2189,9 +2321,10 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
     }
 
     SECTION("array-style spread arg in call") {
+        // `arr` is now reserved (Phase 2). Use `xs` as variable name instead.
         auto ast = parse_ok(R"(
-            arr = [1, 2, 3]
-            f(..arr)
+            xs = [1, 2, 3]
+            f(..xs)
         )");
         NodeIndex root = ast.root;
         NodeIndex stmt1 = ast.arena[root].first_child;
