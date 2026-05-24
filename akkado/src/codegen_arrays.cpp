@@ -16,6 +16,7 @@ using codegen::emit_zero;
 using codegen::emit_push_const;
 using codegen::extract_call_args;
 using codegen::get_input_buffers;
+using codegen::closure_body;
 
 // Try to resolve an AST node to a compile-time scalar constant.
 // Accepts NumberLit directly, or Identifier referencing a const variable.
@@ -79,39 +80,20 @@ std::uint16_t CodeGenerator::apply_lambda(NodeIndex lambda_node, std::uint16_t a
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    std::vector<std::string> param_names;
-    NodeIndex child = lambda.first_child;
-    NodeIndex body = NULL_NODE;
-
-    while (child != NULL_NODE) {
-        const Node& child_node = ast_->arena[child];
-        if (child_node.type == NodeType::Identifier) {
-            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
-                param_names.push_back(child_node.as_closure_param().name);
-            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                param_names.push_back(child_node.as_identifier());
-            } else {
-                body = child;
-                break;
-            }
-        } else {
-            body = child;
-            break;
-        }
-        child = ast_->arena[child].next_sibling;
-    }
+    auto info = codegen::extract_closure_info(ast_->arena, lambda_node);
+    NodeIndex body = info.body;
 
     if (body == NULL_NODE) {
         error("E131", "Lambda has no body", lambda.location);
         return BufferAllocator::BUFFER_UNUSED;
     }
-    if (param_names.empty()) {
+    if (info.params.empty()) {
         error("E132", "Lambda must have at least one parameter", lambda.location);
         return BufferAllocator::BUFFER_UNUSED;
     }
 
     symbols_->push_scope();
-    symbols_->define_variable(param_names[0], arg_buf);
+    symbols_->define_variable(info.params[0], arg_buf);
 
     auto saved_node_types = std::move(node_types_);
     node_types_.clear();
@@ -236,21 +218,7 @@ std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref,
     if (ref.is_user_function) {
         if (ref.closure_node != NULL_NODE) result = visit(ref.closure_node).buffer;
     } else {
-        const Node& closure = ast_->arena[ref.closure_node];
-        NodeIndex child = closure.first_child;
-        NodeIndex body = NULL_NODE;
-
-        while (child != NULL_NODE) {
-            const Node& child_node = ast_->arena[child];
-            if (child_node.type == NodeType::Identifier &&
-                (std::holds_alternative<Node::ClosureParamData>(child_node.data) ||
-                 std::holds_alternative<Node::IdentifierData>(child_node.data))) {
-                child = child_node.next_sibling;
-                continue;
-            }
-            body = child;
-            break;
-        }
+        NodeIndex body = closure_body(ast_->arena, ref.closure_node);
         if (body != NULL_NODE) result = visit(body).buffer;
     }
 

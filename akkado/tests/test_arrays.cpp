@@ -220,16 +220,39 @@ TEST_CASE("len: returns compile-time array length", "[arrays][len]") {
 // =============================================================================
 
 TEST_CASE("map: applies function to each element", "[arrays][map]") {
-    SECTION("identity preserves count") {
-        auto result = must_compile("map([1, 2, 3], (x) -> x)");
+    SECTION("identity closure routes input through unchanged") {
+        // Regression for the bare-identifier closure body bug: the broken
+        // walker mis-classified `h` as a phantom param, leaving body =
+        // NULL_NODE and apply_function_ref returning BUFFER_UNUSED. PUSH_CONST
+        // count alone (3) cannot catch the silent failure — pipe the result
+        // through reduce() so the sum's MUL/ADD chain materializes only when
+        // the closure body actually returns its argument.
+        auto result = must_compile(
+            "map([1.5, 2.5, 3.5], (h) -> h) |> reduce(@, (a, b) -> a + b, 0)");
         auto insts = get_instructions(result);
-        CHECK(count_instructions(insts, cedar::Opcode::PUSH_CONST) == 3);
+        CHECK(count_instructions(insts, cedar::Opcode::PUSH_CONST) >= 3);
+        // 3 elements -> 3 ADDs through reduce (init+arr[0], result+arr[1], …).
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 3);
     }
 
     SECTION("multiplication broadcasts to each element") {
         auto result = must_compile("map([1, 2, 3], (x) -> x * 2)");
         auto insts = get_instructions(result);
         CHECK(count_instructions(insts, cedar::Opcode::MUL) == 3);
+    }
+
+    SECTION("user fn with bare-identifier body round-trips") {
+        // `fn id(x) -> x` is the user-fn variant of the identity closure;
+        // its body is a bare Identifier. Exercises handle_closure /
+        // user-fn-inline-expansion walkers (codegen_functions.cpp:~1555,
+        // ~1620), distinct from apply_function_ref in codegen_arrays.cpp.
+        // Call-form, not pipe-form: a bare `[…]` on a new line after `id`
+        // would parse as `id[…]` index-into-fn (P001).
+        auto result = must_compile(
+            "fn id(x) -> x\n"
+            "map([1.5, 2.5, 3.5], id) |> reduce(@, (a, b) -> a + b, 0)");
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 3);
     }
 
     SECTION("each voice gets a unique state_id when stateful") {

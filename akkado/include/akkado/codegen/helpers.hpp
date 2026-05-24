@@ -85,9 +85,27 @@ struct ClosureInfo {
     NodeIndex body;
 };
 
-/// Extract closure parameters and body from a Closure node.
-/// Parameters are stored as Identifier nodes with ClosureParamData or IdentifierData.
-/// The body is the last child that is not an identifier.
+/// Return the body node of a Closure: structurally the LAST child.
+/// The parser guarantees `Closure` children are laid out as
+/// `[param₀, param₁, …, body]`, so the body is always the final child
+/// regardless of its node type. (Earlier "skip Identifier children"
+/// recovery silently consumed bare-identifier bodies like `(h) -> h`.)
+[[gnu::always_inline]]
+inline NodeIndex closure_body(const AstArena& arena, NodeIndex closure_node) {
+    if (closure_node == NULL_NODE) return NULL_NODE;
+    NodeIndex last = NULL_NODE;
+    for (NodeIndex c = arena[closure_node].first_child; c != NULL_NODE;
+         c = arena[c].next_sibling) {
+        last = c;
+    }
+    return last;
+}
+
+/// Extract closure parameters and body from a Closure node. The body is the
+/// last child (per `closure_body`); params are every preceding child that
+/// is an `Identifier` (with either `ClosureParamData` or `IdentifierData`).
+/// DestructureParam children are not returned here — callers that need them
+/// walk children themselves with the same `child != body` bound.
 [[gnu::always_inline]]
 inline ClosureInfo extract_closure_info(const AstArena& arena, NodeIndex closure_node) {
     ClosureInfo info{};
@@ -97,27 +115,19 @@ inline ClosureInfo extract_closure_info(const AstArena& arena, NodeIndex closure
     const Node& closure = arena[closure_node];
     if (closure.type != NodeType::Closure) return info;
 
-    NodeIndex child = closure.first_child;
-    while (child != NULL_NODE) {
-        const Node& child_node = arena[child];
-        if (child_node.type == NodeType::Identifier) {
-            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
-                info.params.push_back(child_node.as_closure_param().name);
-            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                info.params.push_back(child_node.as_identifier());
-            } else {
-                // Not a parameter, must be body
-                info.body = child;
-                break;
-            }
-        } else {
-            // Non-identifier child is the body
-            info.body = child;
-            break;
-        }
-        child = child_node.next_sibling;
-    }
+    info.body = closure_body(arena, closure_node);
+    if (info.body == NULL_NODE) return info;
 
+    for (NodeIndex c = closure.first_child; c != info.body;
+         c = arena[c].next_sibling) {
+        const Node& cn = arena[c];
+        if (cn.type != NodeType::Identifier) continue;
+        if (std::holds_alternative<Node::ClosureParamData>(cn.data)) {
+            info.params.push_back(cn.as_closure_param().name);
+        } else if (std::holds_alternative<Node::IdentifierData>(cn.data)) {
+            info.params.push_back(cn.as_identifier());
+        }
+    }
     return info;
 }
 

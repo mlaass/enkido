@@ -10,6 +10,7 @@ namespace akkado {
 
 using codegen::encode_const_value;
 using codegen::emit_push_const;
+using codegen::closure_body;
 
 // Maximum parameter count for a shareable `fn` (PRD §4.2). Params 0..4 travel
 // in the BLOCK_CALL instruction's inputs[0..4]; params 5..N-1 travel in a run
@@ -1550,25 +1551,10 @@ TypedValue CodeGenerator::handle_function_value_call(
         result_tv = TypedValue::signal(result);
     } else {
         // Normal function value call
-        // Find the body node
-        NodeIndex body = NULL_NODE;
-        if (func.is_user_function) {
-            body = func.closure_node;
-        } else {
-            const Node& closure_node = ast_->arena[func.closure_node];
-            NodeIndex child = closure_node.first_child;
-            while (child != NULL_NODE) {
-                const Node& child_node = ast_->arena[child];
-                if (child_node.type == NodeType::Identifier ||
-                    child_node.type == NodeType::DestructureParam) {
-                    // parameter — skip
-                } else {
-                    body = child;
-                    break;
-                }
-                child = ast_->arena[child].next_sibling;
-            }
-        }
+        // Find the body node (structurally the last child of the Closure).
+        NodeIndex body = func.is_user_function
+            ? func.closure_node
+            : closure_body(ast_->arena, func.closure_node);
 
         // Visit closure body (inline expansion)
         if (body != NULL_NODE) {
@@ -1633,42 +1619,30 @@ TypedValue CodeGenerator::handle_compose_call(NodeIndex node, const Node& n) {
 
 // Handle Closure nodes - allocate buffers for parameters and generate body
 TypedValue CodeGenerator::handle_closure(NodeIndex node, const Node& n) {
-    // For simple closures: allocate buffers for parameters, then generate body
-    // Find parameters and body
-    // Parameters may be stored as IdentifierData or ClosureParamData
-    std::vector<std::string> param_names;
-    NodeIndex child = n.first_child;
-    NodeIndex body = NULL_NODE;
+    // Body is the last child; preceding children are parameters (Identifier
+    // with ClosureParamData/IdentifierData, or DestructureParam).
+    NodeIndex body = closure_body(ast_->arena, node);
+    if (body == NULL_NODE) {
+        error("E112", "Closure has no body", n.location);
+        return TypedValue::void_val();
+    }
 
-    while (child != NULL_NODE) {
+    std::vector<std::string> param_names;
+    for (NodeIndex child = n.first_child; child != body;
+         child = ast_->arena[child].next_sibling) {
         const Node& child_node = ast_->arena[child];
         if (child_node.type == NodeType::DestructureParam) {
             // Destructure param `({x, y}) -> …`: each field becomes a local.
-            // Allocated a free buffer below, just like a positional param —
-            // the caller (or poly's own param classification) fills them.
             for (const auto& f : child_node.as_destructure_param().fields) {
                 param_names.push_back(f.name);
             }
         } else if (child_node.type == NodeType::Identifier) {
-            // Check if it's IdentifierData or ClosureParamData
             if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 param_names.push_back(child_node.as_closure_param().name);
             } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
                 param_names.push_back(child_node.as_identifier());
-            } else {
-                body = child;
-                break;
             }
-        } else {
-            body = child;
-            break;
         }
-        child = ast_->arena[child].next_sibling;
-    }
-
-    if (body == NULL_NODE) {
-        error("E112", "Closure has no body", n.location);
-        return TypedValue::void_val();
     }
 
     // Allocate input buffers for parameters and bind them
@@ -2277,40 +2251,29 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
     }
 
     // Extract closure parameter (must have exactly 1 parameter)
-    std::string param_name;
-    NodeIndex closure_body = NULL_NODE;
-    NodeIndex child = processor_node.first_child;
-    int param_count = 0;
+    NodeIndex body_node = closure_body(ast_->arena, args[3]);
+    if (body_node == NULL_NODE) {
+        error("E304", "tap_delay() processor closure has no body", n.location);
+        return TypedValue::void_val();
+    }
 
-    while (child != NULL_NODE) {
+    std::string param_name;
+    int param_count = 0;
+    for (NodeIndex child = processor_node.first_child; child != body_node;
+         child = ast_->arena[child].next_sibling) {
         const Node& child_node = ast_->arena[child];
-        if (child_node.type == NodeType::Identifier) {
-            if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
-                param_name = child_node.as_closure_param().name;
-                param_count++;
-            } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                param_name = child_node.as_identifier();
-                param_count++;
-            } else {
-                // Not a parameter - this is the body
-                closure_body = child;
-                break;
-            }
-        } else {
-            // Body node
-            closure_body = child;
-            break;
+        if (child_node.type != NodeType::Identifier) continue;
+        if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
+            param_name = child_node.as_closure_param().name;
+            param_count++;
+        } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
+            param_name = child_node.as_identifier();
+            param_count++;
         }
-        child = ast_->arena[child].next_sibling;
     }
 
     if (param_count != 1) {
         error("E303", "tap_delay() processor closure must have exactly 1 parameter", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (closure_body == NULL_NODE) {
-        error("E304", "tap_delay() processor closure has no body", n.location);
         return TypedValue::void_val();
     }
 
@@ -2396,7 +2359,7 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
 
     // Compile the closure body (feedback chain) — returns stereo when the
     // body chains through any stereo-native opcode (filters/distortion/etc.).
-    TypedValue processed_tv = visit(closure_body);
+    TypedValue processed_tv = visit(body_node);
     std::uint16_t processed_l = processed_tv.buffer;
     std::uint16_t processed_r = processed_tv.is_stereo() && processed_tv.right_buffer != 0xFFFF
         ? processed_tv.right_buffer
@@ -2893,14 +2856,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             // User function: body is directly the body_node
             body_tv = visit(func_ref->closure_node);
         } else {
-            // Closure: the body is the last child (all preceding children are
-            // parameters — Identifier *or* DestructureParam nodes).
-            const Node& closure_node = ast_->arena[func_ref->closure_node];
-            NodeIndex body = NULL_NODE;
-            for (NodeIndex child = closure_node.first_child; child != NULL_NODE;
-                 child = ast_->arena[child].next_sibling) {
-                body = child;
-            }
+            NodeIndex body = closure_body(ast_->arena, func_ref->closure_node);
             if (body != NULL_NODE) {
                 body_tv = visit(body);
             }

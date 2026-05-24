@@ -447,6 +447,28 @@ TEST_CASE("event-map (Phase 5 E): {freqs: ...} populates values[] and derives no
     CHECK_THAT(e.notes[1], WithinAbs(64.0f, 0.05f));
 }
 
+TEST_CASE("event-map (Phase 5 E): {freqs: map(e.freqs, (h) -> h)} identity round-trip",
+          "[event-map][chord-notes-write]") {
+    // Natural-shape version of the freqs write test (Commit E originally
+    // worked around the bare-identifier walker bug by writing a literal
+    // array). With the canonical closure-body recovery, the identity
+    // closure `(h) -> h` returns its parameter buffer; the chord-array
+    // overlay copies upstream freqs through unchanged. CM has voices
+    // C4/E4/G4 ≈ 261.63 / 329.63 / 392.00 Hz.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {freqs: map(e.freqs, (h) -> h)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.values[0], WithinAbs(261.63f, 1.0f));
+    CHECK_THAT(e.values[1], WithinAbs(329.63f, 1.0f));
+    CHECK_THAT(e.values[2], WithinAbs(392.00f, 1.0f));
+}
+
 TEST_CASE("event-map (Phase 5 E): notes wins precedence over note when both are returned",
           "[event-map][chord-notes-write]") {
     // {note: 80, notes: e.notes} — `note` would shift every voice by
