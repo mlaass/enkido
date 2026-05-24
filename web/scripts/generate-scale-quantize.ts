@@ -201,22 +201,17 @@ function emitScaleQuantizeAk(): string {
   lines.push("// to octave 3 per PRD §4.3.");
   lines.push("");
   lines.push("// ----------------------------------------------------------------------------");
-  lines.push("// Closure-body math (inlined per branch)");
+  lines.push("// Helper fns — factored arithmetic shared across branches");
   lines.push("// ----------------------------------------------------------------------------");
   lines.push("//");
-  lines.push("// The key/scale closures inline `floor(note + 0.5)` (round-half-up) and");
-  lines.push("// `fmod(fmod(note, 12) + 12, 12)` (mod-12 that handles negative inputs)");
-  lines.push("// directly, rather than calling user-fn helpers. Reason: user-fn calls");
-  lines.push("// that materialize more than once in a closure body lower to BLOCK_CALL,");
-  lines.push("// and `run_event_map_closure` in the VM does not currently dispatch");
-  lines.push("// BLOCK_CALL from within a subprogram body (it would silently no-op).");
-  lines.push("// The inlined form uses only builtins (`floor`, `fmod`, `+`, `*`,");
-  lines.push("// `ARRAY_INDEX`), all of which `execute()` handles correctly.");
-  lines.push("//");
-  lines.push("// This duplicates the `floor(note + 0.5)` subexpression a few times per");
-  lines.push("// branch — the akkado codegen doesn't CSE buffers, so the cost is a");
-  lines.push("// handful of extra arithmetic instructions per event. Negligible at");
-  lines.push("// audio rates.");
+  lines.push("// `snap` round-halves-up a (possibly fractional) MIDI note to the nearest");
+  lines.push("// integer. `pc12` reduces a (possibly negative) MIDI note to its pitch");
+  lines.push("// class 0..11, two `fmod`s to handle negative inputs symmetrically.");
+  lines.push("// These are called from every match-branch closure body and lower to a");
+  lines.push("// single shared `fn` body via BLOCK_CALL.");
+  lines.push("");
+  lines.push("fn snap(n) -> floor(n + 0.5)");
+  lines.push("fn pc12(n) -> fmod(fmod(n, 12) + 12, 12)");
   lines.push("");
 
   // -------- `fn key` --------
@@ -228,15 +223,11 @@ function emitScaleQuantizeAk(): string {
   lines.push("");
   lines.push("fn key(events: stream, name) -> match(name) {");
 
-  // Inlined `key_snap(note, delta_table)` per branch:
-  //   floor(note + 0.5) + delta_table[ fmod(fmod(floor(note + 0.5), 12) + 12, 12) ]
-  // `floor(note + 0.5)` recurs twice; codegen emits two FLOOR sequences. Cheap.
+  // Each branch:
+  //   snap(e.note) + delta_table[ pc12(snap(e.note)) ]
+  // `snap` is shared via fn — lowers to BLOCK_CALL when called from >=2 sites.
   function keySnapBody(deltaArr: string): string {
-    return (
-      "floor(e.note + 0.5) + " +
-      deltaArr +
-      "[fmod(fmod(floor(e.note + 0.5), 12) + 12, 12)]"
-    );
+    return "snap(e.note) + " + deltaArr + "[pc12(snap(e.note))]";
   }
 
   const keyBranches: string[] = [];
@@ -270,17 +261,17 @@ function emitScaleQuantizeAk(): string {
   lines.push("");
   lines.push("fn scale(events: stream, name) -> match(name) {");
 
-  // Inlined `scale_step(d, root_midi, intervals, k)` per branch:
+  // Per-branch:
   //   root_midi
-  //     + floor(floor(d + 0.5) / k) * 12
-  //     + intervals[ floor(d + 0.5) - floor(floor(d + 0.5) / k) * k ]
-  // `floor(d + 0.5)` recurs four times; codegen emits four FLOOR sequences.
+  //     + floor(snap(e.note) / k) * 12
+  //     + intervals[ snap(e.note) - floor(snap(e.note) / k) * k ]
+  // `snap` is shared via fn — calls lower to BLOCK_CALL.
   function scaleStepBody(rm: number, intervalsLit: string, k: number): string {
     return (
       rm +
-      " + floor(floor(e.note + 0.5) / " + k + ") * 12 + " +
+      " + floor(snap(e.note) / " + k + ") * 12 + " +
       intervalsLit +
-      "[floor(e.note + 0.5) - floor(floor(e.note + 0.5) / " + k + ") * " + k + "]"
+      "[snap(e.note) - floor(snap(e.note) / " + k + ") * " + k + "]"
     );
   }
 
