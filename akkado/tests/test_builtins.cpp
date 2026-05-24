@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "akkado/akkado.hpp"
 #include "akkado/builtins.hpp"
 #include "akkado/stdlib.hpp"
 
@@ -24,6 +25,30 @@ TEST_CASE("stdlib embed mechanism wires event_transforms.ak", "[stdlib][embed]")
         }
     }
     CHECK(found_event_transforms);
+}
+
+TEST_CASE("stdlib embed mechanism wires scales.ak (Phase 5 Commit B)",
+          "[stdlib][embed][scale][stdlib-wiring]") {
+    // Phase 5 Commit B: scales.ak is the placeholder for the dispatcher
+    // catalog landing in Commit C. Confirm the new file is glob-picked up
+    // and reachable as STDLIB_EMBEDDED_FILES content.
+    bool found_scales = false;
+    for (const auto& f : STDLIB_EMBEDDED_FILES) {
+        if (f.name == "<stdlib/scales.ak>") {
+            found_scales = true;
+            CHECK_FALSE(f.source.empty());
+        }
+    }
+    CHECK(found_scales);
+}
+
+TEST_CASE("scales.ak fn resolves through the loader (Phase 5 Commit B)",
+          "[scale][stdlib-wiring]") {
+    // End-to-end: load + parse + analyze + reference a fn defined in
+    // scales.ak. If anything in the loader→parser→analyzer chain rejected
+    // the new stdlib file this fails to compile.
+    auto r = akkado::compile("scales_smoke()");
+    REQUIRE(r.success);
 }
 
 TEST_CASE("BuiltinInfo methods", "[builtins]") {
