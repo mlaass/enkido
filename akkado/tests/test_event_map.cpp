@@ -509,6 +509,77 @@ TEST_CASE("event-map (Phase 5 E): closure reads e.notes and writes notes in the 
     CHECK_THAT(e.notes[2], WithinAbs(79.0f, 0.01f));
 }
 
+// ============================================================================
+// Phase 5 Commit G — stdlib `voice` + `invert` (chord-array WRITE payload)
+// ============================================================================
+
+TEST_CASE("voice(intervals): synthesizes a chord from a single-note event",
+          "[event-map][voice][chord-notes-write]") {
+    // n"c4" -> single-note event (MIDI 60). voice([0, 3, 7]) builds a
+    // minor triad: [60, 63, 67]. Closure body: `(e) -> {notes: map([0,3,7],
+    // (i) -> e.note + i)}`. The Array result is packed via ARRAY_PACK and
+    // overlayed by the runtime chord-write path.
+    auto r = akkado::compile(R"(n"c4" |> voice(@, [0, 3, 7]))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(63.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+}
+
+TEST_CASE("voice(intervals): preserves the source octave under transposition",
+          "[event-map][voice][chord-notes-write]") {
+    // n"c5" (MIDI 72) -> voice([0, 4, 7]) -> [72, 76, 79] (C major above).
+    auto r = akkado::compile(R"(n"c5" |> voice(@, [0, 4, 7]))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(72.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(76.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(79.0f, 0.01f));
+}
+
+TEST_CASE("invert(axis): reflects every chord voice around the axis",
+          "[event-map][invert][chord-notes-write]") {
+    // c"CM" -> [60, 64, 67]. invert(67) -> [74, 70, 67] (reflected around G4).
+    auto r = akkado::compile(R"(c"CM" |> invert(@, 67))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(74.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(70.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+}
+
+TEST_CASE("invert(axis): single-note event inverts as a 1-voice chord",
+          "[event-map][invert][chord-notes-write]") {
+    // n"c4" (MIDI 60). Single note -> map(e.notes, ...) sees a 1-element
+    // DynArray. invert(60) (= reflect around C4) leaves it at 60.
+    // invert(72) reflects 60 -> 84.
+    auto r = akkado::compile(R"(n"c4" |> invert(@, 72))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK(e.num_values == 1);
+    CHECK_THAT(e.notes[0], WithinAbs(84.0f, 0.01f));
+}
+
 TEST_CASE("event-map: transpose() on a sample pattern is audibly a no-op",
           "[event-map]") {
     // Phase 2b: stdlib `fn transpose` emits an EVENT_MAP unconditionally.

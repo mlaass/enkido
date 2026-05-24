@@ -435,6 +435,11 @@ private:
             // user wrote (with microtonal offset). 0 for non-pitch events.
             e.midi_note = static_cast<float>(atom_data.midi_note) +
                           atom_data.micro_offset;
+            // Set the per-voice notes[0] so an event_map closure that reads
+            // `e.notes[0]` (DynArray view) sees the same MIDI the user wrote.
+            // process_event copies this through verbatim; without it the
+            // chord-array view would see the default-initialised `0.0f`.
+            e.notes[0] = e.midi_note;
         } else if (atom_data.kind == Node::MiniAtomKind::Chord) {
             // Chord symbol: expand intervals to frequencies
             // Root MIDI is at octave 4 by default

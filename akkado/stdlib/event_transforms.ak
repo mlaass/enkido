@@ -55,3 +55,23 @@ fn swingBy(events: stream, amount, grid = 8) -> {
 }
 
 fn swing(events: stream, grid = 8) -> { swingBy(events, 1.0 / 3.0, grid) }
+
+// ----------------------------------------------------------------------------
+// Chord-array transforms — Phase 5 Commits E + G (chord WRITE substrate).
+// ----------------------------------------------------------------------------
+// `voice` synthesizes a chord per event by mapping a literal interval array
+// over `e.note` — `voice([0, 3, 7])` builds a minor triad on every input note.
+// `invert` reflects each chord voice around an axis MIDI pitch — useful for
+// chord inversion / mirroring effects.
+//
+// Both rely on the closure-side chord-array WRITE substrate (`{notes: <arr>}`)
+// shipped in Commit E. The runtime overlay derives `e.values[]` (Hz) from the
+// new `e.notes[]` (MIDI) via mtof so downstream voicing reads stay consistent.
+
+fn voice(events: stream, intervals) -> {
+    event_map(events, (e) -> {notes: map(intervals, (i) -> e.note + i)})
+}
+
+fn invert(events: stream, axis) -> {
+    event_map(events, (e) -> {notes: map(e.notes, (n) -> 2 * axis - n)})
+}
