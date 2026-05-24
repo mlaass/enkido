@@ -1029,3 +1029,92 @@ TEST_CASE("event-map: event_map on a non-pattern argument is rejected",
         R"(event_map(osc("sin", 440), (e) -> {note: e.note}))");
     CHECK_FALSE(r.success);  // E242 — first argument must be an event source
 }
+
+// ============================================================================
+// BLOCK_CALL inside subprogram bodies (regression: execute_step unification)
+// ============================================================================
+//
+// Before the execute_step unification, `run_event_map_closure` (and the other
+// subprogram-body runners) drove instructions through `VM::execute()`, whose
+// switch has no case for BLOCK_CALL / BLOCK_BIND. A user-`fn` invoked from
+// inside an event_map closure body silently no-op'd — its effect was lost.
+// scale_quantize.ak worked around this by inlining `floor(n+0.5)` and
+// `fmod(fmod(n,12)+12,12)` into every match-branch closure body. These tests
+// pin the dispatch by using a shared `fn` and verifying its transform applied.
+
+TEST_CASE("event-map: BLOCK_CALL from an event_map closure dispatches",
+          "[event-map][block_call][subprogram-dispatch]") {
+    // `snap` is called from two sites (forcing shared-block lowering to a
+    // BLOCK_CALL opcode), one of which is inside the event_map closure body.
+    // Expected: e.note 60 → 60 + 1 = 61 from the closure, post-snap'd. If
+    // BLOCK_CALL silently no-op'd inside the subprogram body, the snap call
+    // would yield 0 (default acc), and the note would be 0+1=1 (or otherwise
+    // far from 61).
+    const char* src = R"(
+fn snap(n) -> floor(n + 0.5)
+snap(0.5) + (n"c4"
+  |> event_map(@, (e) -> {note: snap(e.note + 0.5)})
+  |> osc("sin", @.freq)) |> out(@)
+)";
+    auto r = akkado::compile(src);
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    // Shared-block lowering must have triggered (>=2 BLOCK_CALL sites).
+    CHECK(count_op(insts, cedar::Opcode::BLOCK_CALL) >= 2);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 1);
+    // 60 + 0.5 → snap → 61.
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(61.0f, 0.01f));
+}
+
+TEST_CASE("event-map: BLOCK_CALL from an event_filter closure dispatches",
+          "[event-map][block_call][subprogram-dispatch]") {
+    // `pos` is shared between two filter sites. Each filter drops events with
+    // pos(e.note) == 0, i.e. notes <= 0. With c4=60 and a-1="A-1"=21 (still
+    // positive), nothing is dropped — but the test fails if pos silently
+    // returns 0 from inside the filter closure (no events would survive).
+    const char* src = R"(
+fn pos(n) -> n + 1
+pos(0) + (n"[c4 e4]"
+  |> event_filter(@, (e) -> pos(e.note))
+  |> osc("sin", @.freq)) |> out(@)
+)";
+    auto r = akkado::compile(src);
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    CHECK(count_op(insts, cedar::Opcode::BLOCK_CALL) >= 2);
+    auto h = render(r, 1);
+    const auto* st = final_event_state(*h);
+    REQUIRE(st != nullptr);
+    // Both events survive (pos returns 60+1=61 and 64+1=65, both truthy).
+    CHECK(st->output.num_events == 2);
+}
+
+TEST_CASE("event-map: nested BLOCK_CALL inside an event_map closure",
+          "[event-map][block_call][subprogram-dispatch]") {
+    // `outer` calls `inner`; both are shared (each from >=2 sites). The
+    // event_map closure invokes `outer`, which itself BLOCK_CALLs `inner`.
+    // This pins the XOR-composition path: a BLOCK_CALL inside another
+    // BLOCK_CALL inside an event_map per-event isolation envelope must
+    // restore the XOR mask cleanly on the way out.
+    const char* src = R"(
+fn inner(n) -> n + 1
+fn outer(n) -> inner(n) + inner(0)
+inner(0) + outer(0) + (n"c4"
+  |> event_map(@, (e) -> {note: outer(e.note)})
+  |> osc("sin", @.freq)) |> out(@)
+)";
+    auto r = akkado::compile(src);
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    // Both inner and outer share — expect >=4 BLOCK_CALL sites total.
+    CHECK(count_op(insts, cedar::Opcode::BLOCK_CALL) >= 4);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 1);
+    // outer(60) = inner(60) + inner(0) = 61 + 1 = 62.
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(62.0f, 0.01f));
+}

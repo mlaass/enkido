@@ -587,10 +587,22 @@ private:
     // Execute single instruction
     void execute(const Instruction& inst);
 
+    // Execute one step of an instruction stream at `body[ip]`, returning the
+    // next ip. Handles the meta-opcodes that need access to the surrounding
+    // stream (BLOCK_CALL, BLOCK_BIND run, SKIP_IF_*, LOOP_STATIC, RET-as-end)
+    // and falls through to `execute()` for all other opcodes. Drives both the
+    // main `execute_program` loop and every subprogram-body runner so any
+    // future meta-opcode lands in one place.
+    std::size_t execute_step(const ProgramSlot* slot,
+                             std::span<const Instruction> body,
+                             std::size_t ip);
+
     // Execute a legacy POLY block (POLY_BEGIN/POLY_END inline body) — iterates
     // voices, sets XOR isolation, accumulates mix. Returns the instruction
     // pointer past POLY_END. Retained for the --legacy-poly compat window.
-    std::size_t execute_poly_block(std::span<const Instruction> program, std::size_t ip);
+    std::size_t execute_poly_block(const ProgramSlot* slot,
+                                   std::span<const Instruction> program,
+                                   std::size_t ip);
 
     // Execute a FOREACH_EVENT opcode (PRD prd-runtime-functions-control-flow L3).
     // Dispatches the subprogram body from slot->blocks[] once per event/voice
@@ -639,7 +651,12 @@ private:
     // execute_poly_block (inline body) and execute_foreach_event (table body).
     // bank_base is the first of 11 contiguous per-voice field buffers (indexed
     // by PatternPayload field id); voice_out_buf is the body's stereo L sink.
-    void run_voice_pool(PolyAllocState& poly_state,
+    // `slot` is threaded so the per-voice body can dispatch BLOCK_CALL etc.
+    // through execute_step (may be nullptr in legacy POLY tests that build a
+    // program span without a ProgramSlot — those bodies must not contain
+    // BLOCK_CALL).
+    void run_voice_pool(const ProgramSlot* slot,
+                        PolyAllocState& poly_state,
                         std::uint16_t mix_buf,
                         std::uint16_t bank_base,
                         std::uint16_t voice_out_buf,
@@ -647,11 +664,14 @@ private:
 
     // PER_ITERATION allocator: one body run per upstream event, per-iteration
     // XOR isolation, outputs mixed. SHARED allocator: fold accumulator threaded
-    // through the body once per event.
-    void run_foreach_per_iteration(ForeachIterState& iter_state,
+    // through the body once per event. `slot` threaded so the body can
+    // dispatch BLOCK_CALL via execute_step.
+    void run_foreach_per_iteration(const ProgramSlot* slot,
+                                   ForeachIterState& iter_state,
                                    const Instruction& inst,
                                    std::span<const Instruction> body);
-    void run_foreach_shared(ForeachSharedState& shared_state,
+    void run_foreach_shared(const ProgramSlot* slot,
+                            ForeachSharedState& shared_state,
                             const Instruction& inst,
                             std::span<const Instruction> body);
 

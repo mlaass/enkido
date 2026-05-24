@@ -356,6 +356,84 @@ void VM::rebind_states([[maybe_unused]] const ProgramSlot* old_slot,
     // (handled by gc_sweep() called from hot_swap_end())
 }
 
+// Single-step dispatch of one instruction at body[ip], returning next ip.
+// Owns the meta-opcodes that need access to the surrounding instruction
+// stream — BLOCK_CALL, the BLOCK_BIND run that precedes a >5-param BLOCK_CALL,
+// SKIP_IF_*, LOOP_STATIC — and RET-as-natural-end-of-body. Every other
+// opcode falls through to VM::execute(). Driven by both `execute_program`
+// (main stream) and every subprogram-body runner (`run_event_map_closure`,
+// `run_event_filter_closure`, `run_voice_pool`, `run_foreach_*`,
+// `execute_block_call`), so future meta-opcodes land in one place and are
+// automatically available inside every body context.
+std::size_t VM::execute_step(const ProgramSlot* slot,
+                             std::span<const Instruction> body,
+                             std::size_t ip) {
+    const Instruction& inst = body[ip];
+    switch (inst.opcode) {
+      case Opcode::SKIP_IF_ZERO:
+      case Opcode::SKIP_IF_NONZERO: {
+        // Forward control flow: sample the predicate once per block at
+        // sample [0] and skip ahead. Handled here, not via execute().
+        const float* predicate = ctx_.buffers->get(inst.inputs[0]);
+        return skip_if_next_ip(inst, predicate[0], ip);
+      }
+      case Opcode::LOOP_STATIC: {
+        // Static loop: re-run the next body_len instructions `count` times.
+        // body_len=rate, count=out_buffer. State is shared across passes.
+        // Inner dispatch goes back through execute_step so nested meta-ops
+        // (BLOCK_CALL etc.) inside the LOOP_STATIC body work too.
+        const std::size_t body_len = inst.rate;
+        const std::uint16_t iterations = inst.out_buffer;
+        for (std::uint16_t it = 0; it < iterations; ++it) {
+            std::size_t inner = ip + 1;
+            const std::size_t inner_end = ip + 1 + body_len;
+            while (inner < inner_end) {
+                inner = execute_step(slot, body, inner);
+            }
+        }
+        return ip + body_len + 1;
+      }
+      case Opcode::BLOCK_CALL:
+        // L2: dispatch a shared user-`fn` body from the subprogram table.
+        // The body is not inline — advance by one. `slot` must be non-null
+        // for BLOCK_CALL to resolve; nullptr means the body came from a
+        // legacy non-slot codepath and codegen guarantees no BLOCK_CALL.
+        if (slot != nullptr) {
+            execute_block_call(slot, body, ip);
+        }
+        return ip + 1;
+      case Opcode::BLOCK_BIND: {
+        // L2 >5-param call: a contiguous run of BLOCK_BIND carries the
+        // logical param slots >=5 for the BLOCK_CALL that terminates the
+        // run. Scan the run, then dispatch the BLOCK_CALL with the binds.
+        const std::size_t bind_start = ip;
+        const std::size_t end = body.size();
+        std::size_t scan = ip;
+        while (scan < end && body[scan].opcode == Opcode::BLOCK_BIND) {
+            ++scan;
+        }
+        assert(scan < end && body[scan].opcode == Opcode::BLOCK_CALL &&
+               "BLOCK_BIND run not terminated by BLOCK_CALL");
+        if (slot != nullptr && scan < end &&
+            body[scan].opcode == Opcode::BLOCK_CALL) {
+            execute_block_call(slot, body, scan,
+                               body.subspan(bind_start, scan - bind_start));
+        }
+        return scan + 1;
+      }
+      case Opcode::RET:
+        // RET terminates a subprogram body. Body runners bound themselves
+        // by body.size(), so reaching the final instruction naturally is
+        // the normal exit — a mid-body RET means codegen emitted stray
+        // control flow. In release, advancing to body.size() ends the loop.
+        assert(ip + 1 == body.size() && "stray RET inside body");
+        return body.size();
+      default:
+        execute(inst);
+        return ip + 1;
+    }
+}
+
 void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_right) {
     // Set output buffer pointers
     ctx_.output_left = out_left;
@@ -367,7 +445,7 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
     // Execute all instructions (index-based for POLY block jumping).
     // The program span covers [ main | subprogram bodies ]; the main dispatch
     // loop runs only the main region — block bodies are reached via
-    // FOREACH_EVENT dispatch, never fallen into.
+    // FOREACH_EVENT / BLOCK_CALL dispatch, never fallen into.
     auto program = slot->program();
     // With no subprogram table the whole span is main program (back-compat,
     // including ProgramSlots constructed without load()). With a table, the
@@ -375,11 +453,12 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
     const std::size_t main_end = (slot->block_count == 0)
                                      ? program.size()
                                      : static_cast<std::size_t>(slot->main_count);
+    auto main_span = program.subspan(0, main_end);
     std::size_t ip = 0;
     while (ip < main_end) {
-        const Instruction& inst = program[ip];
+        const Instruction& inst = main_span[ip];
         if (inst.opcode == Opcode::POLY_BEGIN) {
-            ip = execute_poly_block(program, ip);
+            ip = execute_poly_block(slot, program, ip);
         } else if (inst.opcode == Opcode::FOREACH_EVENT) {
             // L3 dispatch-loop opcode: run the subprogram body from the
             // table. The body is not inline — advance by exactly one.
@@ -401,64 +480,22 @@ void VM::execute_program(const ProgramSlot* slot, float* out_left, float* out_ri
                 op_event_filter(ctx_, inst);
             }
             ++ip;
-        } else if (inst.opcode == Opcode::SKIP_IF_ZERO ||
-                   inst.opcode == Opcode::SKIP_IF_NONZERO) {
-            // Forward control flow: sample the predicate once per block at
-            // sample [0] and skip ahead. Handled here, not via execute().
-            const float* predicate = ctx_.buffers->get(inst.inputs[0]);
-            ip = skip_if_next_ip(inst, predicate[0], ip);
-        } else if (inst.opcode == Opcode::LOOP_STATIC) {
-            // Static loop: re-run the next body_len instructions `count` times.
-            // body_len=rate, count=out_buffer. State is shared across passes.
-            const std::size_t body_len = inst.rate;
-            const std::uint16_t iterations = inst.out_buffer;
-            for (std::uint16_t it = 0; it < iterations; ++it) {
-                for (std::size_t bi = 0; bi < body_len; ++bi) {
-                    execute(program[ip + 1 + bi]);
-                }
-            }
-            ip += body_len + 1;
-        } else if (inst.opcode == Opcode::BLOCK_CALL) {
-            // L2: dispatch a shared user-`fn` body from the subprogram table.
-            // The body is not inline — advance by exactly one.
-            execute_block_call(slot, program, ip);
-            ++ip;
-        } else if (inst.opcode == Opcode::BLOCK_BIND) {
-            // L2 >5-param call: a contiguous run of BLOCK_BIND carries the
-            // logical param slots >=5 for the BLOCK_CALL that terminates the
-            // run. Scan the run, then dispatch the BLOCK_CALL with the binds.
-            const std::size_t bind_start = ip;
-            while (ip < main_end && program[ip].opcode == Opcode::BLOCK_BIND) {
-                ++ip;
-            }
-            assert(ip < main_end && program[ip].opcode == Opcode::BLOCK_CALL &&
-                   "BLOCK_BIND run not terminated by BLOCK_CALL");
-            if (ip < main_end && program[ip].opcode == Opcode::BLOCK_CALL) {
-                execute_block_call(slot, program, ip,
-                                   program.subspan(bind_start, ip - bind_start));
-            }
-            ++ip;
-        } else if (inst.opcode == Opcode::RET) {
-            // RET terminates a subprogram body and is consumed by the body
-            // runner (which bounds itself to BlockEntry::length) — it must
-            // never appear in the main stream. Reaching one here means
-            // codegen emitted a stray RET.
-            assert(false && "RET reached the main dispatch loop");
-            ++ip;
         } else {
-            execute(program[ip]);
-            ++ip;
+            ip = execute_step(slot, main_span, ip);
         }
     }
 }
 
-std::size_t VM::execute_poly_block(std::span<const Instruction> program, std::size_t ip) {
+std::size_t VM::execute_poly_block(const ProgramSlot* slot,
+                                   std::span<const Instruction> program,
+                                   std::size_t ip) {
     const auto& poly_inst = program[ip];
     const std::uint8_t body_length = poly_inst.rate;
 
     // Legacy POLY_BEGIN: body is inline at program[ip+1 .. ip+body_length].
     auto& poly_state = state_pool_.get_or_create<PolyAllocState>(poly_inst.state_id);
-    run_voice_pool(poly_state,
+    run_voice_pool(slot,
+                   poly_state,
                    poly_inst.out_buffer,
                    poly_inst.inputs[0], poly_inst.inputs[4],
                    program.subspan(ip + 1, body_length));
@@ -482,7 +519,8 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
         // VOICE_POOL — bit-exact with legacy POLY: identical run_voice_pool,
         // identical convention slots; only the body location differs.
         const auto body = slot->block_body(poly_state->block_id);
-        run_voice_pool(*poly_state,
+        run_voice_pool(slot,
+                       *poly_state,
                        inst.out_buffer,
                        inst.inputs[0], inst.inputs[4],
                        body);
@@ -490,12 +528,12 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
     }
     if (auto* iter_state = state_pool_.get_if<ForeachIterState>(inst.state_id)) {
         const auto body = slot->block_body(iter_state->block_id);
-        run_foreach_per_iteration(*iter_state, inst, body);
+        run_foreach_per_iteration(slot, *iter_state, inst, body);
         return;
     }
     if (auto* shared_state = state_pool_.get_if<ForeachSharedState>(inst.state_id)) {
         const auto body = slot->block_body(shared_state->block_id);
-        run_foreach_shared(*shared_state, inst, body);
+        run_foreach_shared(slot, *shared_state, inst, body);
         return;
     }
     // No state — uninitialized FOREACH_EVENT (init_foreach_state did not run).
@@ -552,8 +590,12 @@ void VM::execute_block_call(const ProgramSlot* slot,
     // with a plain set/reset.
     const std::uint32_t prev_xor = state_pool_.state_id_xor();
     state_pool_.set_state_id_xor(prev_xor ^ (inst.state_id * 0x9E3779B9u + 1));
-    for (std::size_t bi = 0; bi < body.size(); ++bi) {
-        execute(body[bi]);
+    // Drive the body through execute_step so a nested BLOCK_CALL / BLOCK_BIND
+    // run / SKIP_IF / LOOP_STATIC dispatches correctly (mutual recursion,
+    // chained shared fns).
+    std::size_t bi = 0;
+    while (bi < body.size()) {
+        bi = execute_step(slot, body, bi);
     }
     state_pool_.set_state_id_xor(prev_xor);
 
@@ -625,7 +667,8 @@ VM::BlockCycleTiming VM::compute_block_timing(float cycle_length) const {
     return t;
 }
 
-void VM::run_voice_pool(PolyAllocState& poly_state,
+void VM::run_voice_pool(const ProgramSlot* slot,
+                        PolyAllocState& poly_state,
                         std::uint16_t mix_buf,
                         std::uint16_t bank_base,
                         std::uint16_t voice_out_buf,
@@ -863,9 +906,11 @@ void VM::run_voice_pool(PolyAllocState& poly_state,
         state_pool_.set_state_id_xor(
             static_cast<std::uint32_t>(v) * 0x9E3779B9u + 1);
 
-        // Execute body instructions
-        for (std::size_t bi = 0; bi < body.size(); ++bi) {
-            execute(body[bi]);
+        // Execute body instructions through execute_step so BLOCK_CALL,
+        // BLOCK_BIND runs, SKIP_IF, LOOP_STATIC inside a voice body dispatch.
+        std::size_t bi = 0;
+        while (bi < body.size()) {
+            bi = execute_step(slot, body, bi);
         }
 
         // Accumulate voice output into the stereo mix, gated by the (mono)
@@ -960,7 +1005,8 @@ void VM::fill_event_record_bank(std::uint16_t bank_buf,
 // inputs[1]=record bank base (or UNUSED), inputs[4]=voice_out L. When
 // out_buffer is UNUSED the body is a side-effecting sink (`each()`): the
 // body's own out() calls accumulate into the global bus, no mixing here.
-void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
+void VM::run_foreach_per_iteration(const ProgramSlot* slot,
+                                   ForeachIterState& iter_state,
                                    const Instruction& inst,
                                    std::span<const Instruction> body) {
     const std::uint16_t freq_buf = inst.inputs[0];
@@ -1008,8 +1054,9 @@ void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
 
         // Per-iteration state isolation — same XOR scheme as run_voice_pool.
         state_pool_.set_state_id_xor(e * 0x9E3779B9u + 1);
-        for (std::size_t bi = 0; bi < body.size(); ++bi) {
-            execute(body[bi]);
+        std::size_t bi = 0;
+        while (bi < body.size()) {
+            bi = execute_step(slot, body, bi);
         }
 
         if (mixed && voice_out_buf != BUFFER_UNUSED) {
@@ -1031,7 +1078,8 @@ void VM::run_foreach_per_iteration(ForeachIterState& iter_state,
 // inputs[2]=freq (primary), inputs[3]=record bank base (or UNUSED). The
 // accumulator is re-seeded from the seed signal every block, so fold is a
 // per-block reduction starting from the seed's current value.
-void VM::run_foreach_shared(ForeachSharedState& shared_state,
+void VM::run_foreach_shared(const ProgramSlot* slot,
+                            ForeachSharedState& shared_state,
                             const Instruction& inst,
                             std::span<const Instruction> body) {
     const std::uint16_t acc_buf  = inst.inputs[0];
@@ -1067,8 +1115,9 @@ void VM::run_foreach_shared(ForeachSharedState& shared_state,
             if (bank_buf != BUFFER_UNUSED) {
                 fill_event_record_bank(bank_buf, evt, timing);
             }
-            for (std::size_t bi = 0; bi < body.size(); ++bi) {
-                execute(body[bi]);
+            std::size_t bi = 0;
+            while (bi < body.size()) {
+                bi = execute_step(slot, body, bi);
             }
             acc = buffer_pool_.get(out_buf)[0];
         }
@@ -1126,8 +1175,9 @@ void VM::run_event_map_closure(const ProgramSlot* slot, const Instruction& inst)
         }
 
         state_pool_.set_state_id_xor(prev_xor ^ (i * 0x9E3779B9u + 1));
-        for (std::size_t bi = 0; bi < body.size(); ++bi) {
-            execute(body[bi]);
+        std::size_t bi = 0;
+        while (bi < body.size()) {
+            bi = execute_step(slot, body, bi);
         }
 
         if (out_bank != BUFFER_UNUSED) {
@@ -1245,8 +1295,9 @@ void VM::run_event_filter_closure(const ProgramSlot* slot, const Instruction& in
         }
 
         state_pool_.set_state_id_xor(prev_xor ^ (i * 0x9E3779B9u + 1));
-        for (std::size_t bi = 0; bi < body.size(); ++bi) {
-            execute(body[bi]);
+        std::size_t bi = 0;
+        while (bi < body.size()) {
+            bi = execute_step(slot, body, bi);
         }
 
         const bool keep = (pred_buf != BUFFER_UNUSED) &&
