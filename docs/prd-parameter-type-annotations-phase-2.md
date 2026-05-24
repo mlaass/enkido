@@ -8,6 +8,20 @@
 > scope because Phase 1 hasn't shipped externally and the
 > abbreviation policy resolved in P2-Q13 applies to the entire
 > annotation surface.
+>
+> **Caveat — Phase 5 Commit I (2026-05-22, `00a8d34`) collapsed
+> `ValueType::EventSource` into `ValueType::Pattern`.** Runtime
+> event streams (`midi(...)`, etc.) are now represented as a
+> `Pattern` `TypedValue` whose `PatternPayload::is_runtime_event_source`
+> flag is set, rather than a separate discriminator. Wherever this
+> PRD says "Pattern or EventSource" (notably §1.1, §3.1, §4.2),
+> read it as "Pattern (possibly with the runtime-event-source
+> flag)". The annotation surface is unaffected — `: evs` /
+> `ParamValueType::Stream` accepts `Pattern`, which now covers both
+> the mini-notation and runtime-event-stream cases. The rejected-
+> actuals row for `: num`/`: rec`/`: arr`/`: str`/`: fn` in §4.2
+> can drop `EventSource` from its enumeration (it is no longer a
+> distinct ValueType to reject); the row is otherwise unchanged.
 
 # PRD: Akkado Parameter Type Annotations — Phase 2 (Full ValueType Set, Abbreviated)
 
@@ -85,12 +99,12 @@ The user-`fn` param-binding path
 (`akkado/src/codegen_functions.cpp:539-623`) branches on the param's
 `annotated_type`:
 
-- `: stream` — preserves Pattern/EventSource `TypedValue` across the
-  boundary; bypasses `E160`; fires `E184` on incompatible actuals.
+- `: stream` — preserves Pattern `TypedValue` across the boundary
+  (including the runtime-event-source flag, pre-Phase-5-Commit-I
+  EventSource); bypasses `E160`; fires `E184` on incompatible actuals.
 - `: signal` — keeps today's voice-0 coerce for Signal/Number/mono
   Pattern; keeps `E160` for polyphonic non-sample Pattern; fires
-  `E184` on EventSource/Record/Array/DynArray/String/Function/
-  StateCell/Void.
+  `E184` on Record/Array/DynArray/String/Function/StateCell/Void.
 - *(un-annotated)* — exactly today's behavior, bit-for-bit. Only the
   polyphonic-pattern `E160` guard fires.
 
@@ -244,7 +258,7 @@ fn transpose(events: evs, n) =
     event_map(events, (e) -> {note: e.note + n})
 
 n"c4 e4 g4".transpose(7)             // Pattern argument — OK
-midi("ctrl1").transpose(12)          // EventSource argument — OK
+midi("ctrl1").transpose(12)          // Pattern (runtime-event-source flag) — OK
 ```
 
 Grammar (unchanged from Phase 1; only the token set widens):
@@ -321,12 +335,21 @@ only the source-level keyword surface changes. This keeps the rename
 small (lexer + parser + concept doc + tests) rather than touching
 every C++ site that references `ParamValueType::Stream`.
 
+**Note on `EventSource` (post Phase 5 Commit I).** Phase 5 collapsed
+`ValueType::EventSource` into `ValueType::Pattern` with a
+`PatternPayload::is_runtime_event_source` flag. Runtime event
+streams (`midi(...)`, etc.) are `ValueType::Pattern` `TypedValue`s.
+The annotation surface is unaffected: `: evs` (== `ParamValueType::Stream`)
+accepts `Pattern`, which covers both the mini-notation and
+runtime-event-source cases. `type_compatible(Stream, Pattern) = true`
+remains the load-bearing rule.
+
 ### 4.2 Compatibility table (Phase 2)
 
 | Annotation | Actual ValueType                                        | Behavior                                                                                                |
 |------------|---------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | `: num`    | `Number`                                                | Pass-through; bind buffer via existing default-case binding (`codegen_functions.cpp:811-813`).          |
-| `: num`    | `Signal`, `Pattern`, `EventSource`, `Record`, `Array`, `DynArray`, `String`, `Function`, `StateCell`, `Stream`, `Void` | **E184** — no defensible coercion path.                                                                 |
+| `: num`    | `Signal`, `Pattern`, `Record`, `Array`, `DynArray`, `String`, `Function`, `StateCell`, `Stream`, `Void` | **E184** — no defensible coercion path. (Phase 5 Commit I collapsed `EventSource` into `Pattern`; the `Pattern` row covers both cases.) |
 | `: rec`    | `Record`                                                | Field extraction via existing path (`codegen_functions.cpp:779-791`).                                   |
 | `: rec`    | `Pattern`                                               | Bind via existing default-case path. Matches `type_compatible(Record, Pattern) = true` precedent.       |
 | `: rec`    | other                                                   | **E184**.                                                                                               |
