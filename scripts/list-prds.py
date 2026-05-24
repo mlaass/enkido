@@ -47,6 +47,7 @@ class PrdEntry:
     bucket: str
     raw: str | None  # original status text, None if no header parsed
     mtime: float  # file modification time (epoch seconds)
+    lines: int  # total line count of the PRD file
 
 
 def format_mtime(mtime: float, now: datetime | None = None) -> str:
@@ -132,20 +133,33 @@ def scan() -> list[PrdEntry]:
     for path in sorted(PRD_DIR.glob(PRD_GLOB)):
         try:
             with path.open("r", encoding="utf-8", errors="replace") as fh:
-                lines = [next(fh, "") for _ in range(HEADER_SCAN_LINES)]
+                all_lines = fh.readlines()
+            header_lines = all_lines[:HEADER_SCAN_LINES]
+            line_count = len(all_lines)
             mtime = path.stat().st_mtime
         except OSError as e:
             print(f"warning: could not read {path}: {e}", file=sys.stderr)
             continue
-        raw = extract_raw_status(lines)
-        entries.append(PrdEntry(path=path, bucket=normalize(raw), raw=raw, mtime=mtime))
+        raw = extract_raw_status(header_lines)
+        entries.append(
+            PrdEntry(
+                path=path,
+                bucket=normalize(raw),
+                raw=raw,
+                mtime=mtime,
+                lines=line_count,
+            )
+        )
     return entries
 
 
-def format_line(entry: PrdEntry, name_width: int, now: datetime) -> str:
+def format_line(
+    entry: PrdEntry, name_width: int, lines_width: int, now: datetime
+) -> str:
     status_col = entry.bucket.upper().replace("-", "_").ljust(12)
     date_col = format_mtime(entry.mtime, now).ljust(12)
     name_col = entry.path.name.ljust(name_width)
+    lines_col = f"{entry.lines:>{lines_width}}"
     if entry.raw is None:
         raw_col = "<none>"
     else:
@@ -153,7 +167,7 @@ def format_line(entry: PrdEntry, name_width: int, now: datetime) -> str:
         if len(snippet) > 60:
             snippet = snippet[:57] + "..."
         raw_col = f'"{snippet}"'
-    return f"{status_col}  {date_col}  {name_col}  [raw: {raw_col}]"
+    return f"{status_col}  {date_col}  {name_col}  {lines_col}  [raw: {raw_col}]"
 
 
 def main(argv: list[str]) -> int:
@@ -193,10 +207,11 @@ def main(argv: list[str]) -> int:
     # Latest mtime first, like `ls -lt`. Tiebreak on filename for determinism.
     visible.sort(key=lambda e: (-e.mtime, e.path.name))
     name_width = max((len(e.path.name) for e in visible), default=0)
+    lines_width = max((len(str(e.lines)) for e in visible), default=1)
     now = datetime.now()
 
     for entry in visible:
-        print(format_line(entry, name_width, now))
+        print(format_line(entry, name_width, lines_width, now))
 
     counts = {b: sum(1 for e in entries if e.bucket == b) for b in BUCKETS}
     total = len(entries)
