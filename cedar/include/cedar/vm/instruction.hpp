@@ -343,9 +343,11 @@ namespace InstructionFlag {
     // EVENT_CLOSURE (prd-runtime-event-transforms Phase 2): on an EVENT_MAP /
     // EVENT_FILTER instruction, the transform is a closure subprogram block
     // (`rate` = block_id) rather than the Phase-1 packed field+op `rate`.
-    // Bits 4..10 of `flags` then carry the EVENT_MAP output-field write mask
-    // (which of the 7 EVENT_OUT_* slots the closure assigns); see
-    // event_transform_encoding.hpp.
+    // Bits 4..13 of `flags` then carry the EVENT_MAP output-field write mask
+    // (which of the EVENT_OUT_COUNT (= 10) EVENT_OUT_* slots the closure
+    // assigns — see event_transform_encoding.hpp). Phase 5 Commit E widened
+    // from 7 to 10 slots to carry chord-array writes (NOTES_DATA, FREQS_DATA,
+    // NUM_VALUES). Bits 14-15 are free.
     constexpr std::uint16_t EVENT_CLOSURE = 1u << 3;
     constexpr int           EVENT_MASK_SHIFT = 4;
 }

@@ -342,6 +342,154 @@ TEST_CASE("event-map (Phase 5 D): chord-array unknown field still errors",
     CHECK_FALSE(r.success);
 }
 
+// ============================================================================
+// Phase 5 Commit E — chord-array WRITE from event_map closures
+// ============================================================================
+//
+// The closure may return `{notes: <DynArray>}` or `{freqs: <DynArray>}`; the
+// runtime overlay copies the array into `e.notes[]` / `e.values[]` and updates
+// `num_values`. When only one of notes/freqs is written, the runtime derives
+// the other via mtof / ftom so paired arrays stay consistent. Precedence: if
+// both `note` (scalar) and `notes` (array) are returned, `notes` wins.
+// Overflow past MAX_VALUES_PER_EVENT (16) clamps silently.
+
+TEST_CASE("event-map (Phase 5 E): {notes: e.notes} round-trips a chord",
+          "[event-map][chord-notes-write]") {
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {notes: e.notes}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(64.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+    // Derived frequencies stay coherent (notes-only write -> mtof).
+    CHECK_THAT(e.values[0], WithinAbs(kC4, 1.0f));
+}
+
+TEST_CASE("event-map (Phase 5 E): voice-shape synthesis from a mono note",
+          "[event-map][chord-notes-write]") {
+    // (e) -> {notes: map([0,3,7], (i) -> e.note + i)} — three-voice minor
+    // chord built on a single C4 input. After overlay: voices [60, 63, 67].
+    auto r = akkado::compile(
+        R"(n"c4" |> event_map(@, (e) -> {notes: map([0, 3, 7], (i) -> e.note + i)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(63.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 E): invert reflects every voice around an axis",
+          "[event-map][chord-notes-write]") {
+    // (e) -> {notes: map(e.notes, (n) -> 2*67 - n)} — reflect each chord voice
+    // around MIDI 67. CM (60,64,67) -> (74,70,67).
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {notes: map(e.notes, (n) -> 2 * 67 - n)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(74.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(70.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 E): {freqs: ...} populates values[] and derives notes[]",
+          "[event-map][chord-notes-write]") {
+    // Closure writes Hz directly into the freqs slot. The runtime overlay
+    // derives notes[] via ftom so downstream voicing sees consistent pairs.
+    // Two voices: C4 (261.63 Hz, MIDI 60) and E4 (329.63 Hz, MIDI 64).
+    auto r = akkado::compile(
+        R"(n"c4" |> event_map(@, (e) -> {freqs: [261.63, 329.63]}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 2);
+    CHECK_THAT(e.values[0], WithinAbs(261.63f, 0.1f));
+    CHECK_THAT(e.values[1], WithinAbs(329.63f, 0.1f));
+    // ftom derivation: 261.63 Hz -> ~60.0 MIDI; 329.63 Hz -> ~64.0 MIDI.
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.05f));
+    CHECK_THAT(e.notes[1], WithinAbs(64.0f, 0.05f));
+}
+
+TEST_CASE("event-map (Phase 5 E): notes wins precedence over note when both are returned",
+          "[event-map][chord-notes-write]") {
+    // {note: 80, notes: e.notes} — `note` would shift every voice by
+    // delta = 80 - 60 = +20 (coupled NOTE overlay). With the chord array
+    // present, the scalar is dropped and the original CM voices come through.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {note: 80, notes: e.notes}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    // Voices match the input chord exactly — no +20 shift from the dropped
+    // scalar `note`. Primary midi_note tracks notes[0] (= 60), not 80.
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+    CHECK_THAT(e.midi_note, WithinAbs(60.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 E): chord-array overflow clamps to MAX_VALUES_PER_EVENT",
+          "[event-map][chord-notes-write]") {
+    // Closure returns a 20-element array; runtime overlay silently clamps to
+    // MAX_VALUES_PER_EVENT (16). No crash, no error — matches the
+    // 'live-coding types coerce, don't fail' design rule.
+    auto r = akkado::compile(
+        R"(n"c4" |> event_map(@, (e) -> {notes: map(
+              [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19],
+              (i) -> e.note + i)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    CHECK(e.num_values == cedar::MAX_VALUES_PER_EVENT);
+    // First 16 voices are 60..75 (clamp keeps the head of the array).
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[15], WithinAbs(75.0f, 0.01f));
+}
+
+TEST_CASE("event-map (Phase 5 E): closure reads e.notes and writes notes in the same pass",
+          "[event-map][chord-notes-write]") {
+    // Identity-shaped READ+WRITE: shift every chord voice up an octave by
+    // mapping over `e.notes` and returning the result. Verifies the bank's
+    // chord-array READ slots and the output bank's chord-array WRITE slots
+    // can coexist without unsafe aliasing.
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {notes: map(e.notes, (n) -> n + 12)}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(72.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(76.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(79.0f, 0.01f));
+}
+
 TEST_CASE("event-map: transpose() on a sample pattern is audibly a no-op",
           "[event-map]") {
     // Phase 2b: stdlib `fn transpose` emits an EVENT_MAP unconditionally.

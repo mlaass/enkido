@@ -1099,9 +1099,17 @@ void VM::run_event_map_closure(const ProgramSlot* slot, const Instruction& inst)
     const std::uint16_t freq_buf = inst.inputs[0];
     const std::uint16_t bank_buf = inst.inputs[1];
     const std::uint16_t out_bank = inst.inputs[4];
-    const std::uint8_t  mask =
-        static_cast<std::uint8_t>((inst.flags >> InstructionFlag::EVENT_MASK_SHIFT)
-                                  & ((1u << EVENT_OUT_COUNT) - 1u));
+    // Mask widened to 16 bits in Phase 5 Commit E: EVENT_OUT_COUNT == 10
+    // means slots 0..9 occupy mask bits 0..9 (instruction-flag bits 4..13).
+    const std::uint16_t mask =
+        static_cast<std::uint16_t>((inst.flags >> InstructionFlag::EVENT_MASK_SHIFT)
+                                   & ((1u << EVENT_OUT_COUNT) - 1u));
+
+    // Chord-array overlay decoded from the mask once per block (constant
+    // across all events; the closure's write shape doesn't depend on event).
+    const bool write_notes  = (mask & (1u << EVENT_OUT_NOTES_DATA)) != 0;
+    const bool write_freqs  = (mask & (1u << EVENT_OUT_FREQS_DATA)) != 0;
+    const bool write_chord  = write_notes || write_freqs;
 
     dst.output.clear();
     const std::uint32_t n = std::min(src.events->num_events, dst.output.capacity);
@@ -1123,9 +1131,71 @@ void VM::run_event_map_closure(const ProgramSlot* slot, const Instruction& inst)
         }
 
         if (out_bank != BUFFER_UNUSED) {
-            for (std::uint8_t s = 0; s < EVENT_OUT_COUNT; ++s) {
+            // Scalar slots first (NOTE..AT). Codegen drops the NOTE COPY when
+            // a chord array is also written (notes/freqs wins precedence —
+            // PRD prd-runtime-event-transforms.md Phase 5 Commit E), so this
+            // loop is naturally safe to run before the chord overlay.
+            for (std::uint8_t s = 0; s < EVENT_OUT_NOTES_DATA; ++s) {
                 if (!((mask >> s) & 1u)) continue;
                 overlay_event_field(e, s, buffer_pool_.get(out_bank + s)[0]);
+            }
+            // Chord-array overlay. Read the shared length and clamp to the
+            // per-event capacity; oversize arrays clamp silently (live-coding
+            // coerces, doesn't fail).
+            if (write_chord) {
+                const float nv_f =
+                    buffer_pool_.get(out_bank + EVENT_OUT_NUM_VALUES)[0];
+                std::uint8_t nv = (nv_f >= 1.0f)
+                    ? static_cast<std::uint8_t>(nv_f) : std::uint8_t{0};
+                if (nv > MAX_VALUES_PER_EVENT) {
+                    nv = static_cast<std::uint8_t>(MAX_VALUES_PER_EVENT);
+                }
+                const float* notes_buf = write_notes
+                    ? buffer_pool_.get(out_bank + EVENT_OUT_NOTES_DATA)
+                    : nullptr;
+                const float* freqs_buf = write_freqs
+                    ? buffer_pool_.get(out_bank + EVENT_OUT_FREQS_DATA)
+                    : nullptr;
+                if (write_notes && write_freqs) {
+                    // Both written — copy each through verbatim. Closure
+                    // author is responsible for keeping them consistent.
+                    for (std::uint8_t k = 0; k < nv; ++k) {
+                        e.notes[k]  = notes_buf[k];
+                        e.values[k] = freqs_buf[k];
+                    }
+                } else if (write_notes) {
+                    // Notes-only: derive Hz frequencies via mtof so downstream
+                    // voicing reads stay consistent.
+                    for (std::uint8_t k = 0; k < nv; ++k) {
+                        const float midi = notes_buf[k];
+                        e.notes[k]  = midi;
+                        e.values[k] = 440.0f *
+                            std::pow(2.0f, (midi - 69.0f) / 12.0f);
+                    }
+                } else {
+                    // Freqs-only: derive MIDI from Hz via ftom (log2-based).
+                    for (std::uint8_t k = 0; k < nv; ++k) {
+                        const float hz = freqs_buf[k];
+                        e.values[k] = hz;
+                        e.notes[k]  = (hz > 0.0f)
+                            ? 69.0f + 12.0f * std::log2(hz / 440.0f)
+                            : 0.0f;
+                    }
+                }
+                // Clear the stale tail when the new chord is shorter than
+                // the upstream copy-through. Without this a shrinking
+                // closure would leave old voices visible downstream.
+                for (std::uint8_t k = nv; k < e.num_values; ++k) {
+                    e.notes[k]  = 0.0f;
+                    e.values[k] = 0.0f;
+                }
+                e.num_values = nv;
+                if (nv > 0) {
+                    // Keep the primary scalar in sync with notes[0] / values[0]
+                    // so downstream reads of `e.note` / `e.freq` (scalar)
+                    // reflect the chord's lead voice.
+                    e.midi_note = e.notes[0];
+                }
             }
         }
         dst.output.events[i] = e;

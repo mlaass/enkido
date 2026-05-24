@@ -50,10 +50,12 @@ enum : std::uint8_t {
 //   rate:       closure subprogram block_id
 //   inputs[0]:  primary (freq) input buffer for the closure's event record
 //   inputs[1]:  input event-record bank base (vel,dur,note,chance,time,gate,
-//               trig — the FOREACH bank layout), or 0xFFFF if unused
+//               trig + chord-array slots — the FOREACH bank layout), or
+//               0xFFFF if unused
 //   inputs[2/3]:low / high 16 bits of the upstream state_id
-//   inputs[4]:  EVENT_MAP — output field-bank base (7 contiguous buffers,
-//               EVENT_OUT_* layout); EVENT_FILTER — predicate result buffer
+//   inputs[4]:  EVENT_MAP — output field-bank base (EVENT_OUT_COUNT
+//               contiguous buffers, EVENT_OUT_* layout); EVENT_FILTER —
+//               predicate result buffer
 //   out_buffer: 0xFFFF
 //   state_id:   the transform-owned downstream SequenceState
 //
@@ -63,15 +65,25 @@ enum : std::uint8_t {
 // Output field-bank slots for a closure EVENT_MAP. The closure's returned
 // record maps each field name to one of these; the write mask records which
 // slots were assigned so unset fields pass through unchanged (shallow overlay).
+//
+// Phase 5 Commit E adds chord-array write slots (NOTES_DATA / FREQS_DATA /
+// NUM_VALUES). NOTES_DATA + FREQS_DATA carry the closure-returned DynArray's
+// packed data buffer (samples 0..nv-1); NUM_VALUES carries the shared length
+// (broadcast across the block, last-write-wins when both arrays are written).
+// Codegen emits paired COPYs (data + num_values) and sets both mask bits so
+// the runtime overlay knows the array length without further state.
 enum : std::uint8_t {
-    EVENT_OUT_NOTE   = 0,  // absolute MIDI note; coupled rewrite of notes[]/values[]
-    EVENT_OUT_VEL    = 1,
-    EVENT_OUT_DUR    = 2,
-    EVENT_OUT_TIME   = 3,
-    EVENT_OUT_CHANCE = 4,
-    EVENT_OUT_BEND   = 5,  // custom prop slot 0
-    EVENT_OUT_AT     = 6,  // custom prop slot 1
-    EVENT_OUT_COUNT  = 7,
+    EVENT_OUT_NOTE        = 0,  // absolute MIDI note; coupled rewrite of notes[]/values[]
+    EVENT_OUT_VEL         = 1,
+    EVENT_OUT_DUR         = 2,
+    EVENT_OUT_TIME        = 3,
+    EVENT_OUT_CHANCE      = 4,
+    EVENT_OUT_BEND        = 5,  // custom prop slot 0
+    EVENT_OUT_AT          = 6,  // custom prop slot 1
+    EVENT_OUT_NOTES_DATA  = 7,  // chord notes[k] (MIDI) packed in samples 0..nv-1
+    EVENT_OUT_FREQS_DATA  = 8,  // chord values[k] (Hz)  packed in samples 0..nv-1
+    EVENT_OUT_NUM_VALUES  = 9,  // num_values broadcast across the block (shared)
+    EVENT_OUT_COUNT       = 10,
 };
 
 // Input event-record bank layout for closure EVENT_MAP / EVENT_FILTER /

@@ -76,7 +76,9 @@ int field_slot(const std::string& name) {
 }
 
 // Map a closure-returned record field name to a writable EVENT_OUT_* slot.
-// Returns -1 for a name that is not a writable event field.
+// Returns -1 for a name that is not a writable event field. Phase 5 Commit E
+// adds the chord-array slots: `notes` -> NOTES_DATA, `freqs` -> FREQS_DATA;
+// both also drive a paired write to NUM_VALUES carrying the array length.
 int event_map_out_slot(const std::string& name) {
     if (name == "note" || name == "midi" || name == "n")    return cedar::EVENT_OUT_NOTE;
     if (name == "vel" || name == "velocity" || name == "v") return cedar::EVENT_OUT_VEL;
@@ -85,6 +87,8 @@ int event_map_out_slot(const std::string& name) {
     if (name == "chance")                                   return cedar::EVENT_OUT_CHANCE;
     if (name == "bend")                                     return cedar::EVENT_OUT_BEND;
     if (name == "at" || name == "aftertouch")               return cedar::EVENT_OUT_AT;
+    if (name == "notes")                                    return cedar::EVENT_OUT_NOTES_DATA;
+    if (name == "freqs")                                    return cedar::EVENT_OUT_FREQS_DATA;
     return -1;
 }
 
@@ -614,7 +618,9 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     }
 
     // Wire the closure result into the transform's output buffers.
-    std::uint8_t write_mask = 0;
+    // Mask widened to 16 bits in Phase 5 Commit E (EVENT_OUT_COUNT = 10 now;
+    // slots NOTES_DATA/FREQS_DATA/NUM_VALUES bump the high bit past 7).
+    std::uint16_t write_mask = 0;
     if (is_filter) {
         if (body_tv.buffer == UNUSED) {
             error("E174", "event_filter() closure must return a numeric "
@@ -628,12 +634,122 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
             error("E174", "event_map() closure must return a record literal, "
                   "e.g. (e) -> {note: e.note + 7}", n.location);
         } else {
+            // Phase 5 Commit E precedence rule: if the closure returns both
+            // `note` (scalar) and `notes`/`freqs` (chord array), the array
+            // wins and the scalar `note` is dropped. The scalar would
+            // otherwise apply BEFORE the array overlay and silently shift
+            // the primary voice — surprising. Detect dual-write up front.
+            const bool has_chord_array =
+                body_tv.record->fields.count("notes") ||
+                body_tv.record->fields.count("freqs");
+
             for (const auto& [fname, fval] : body_tv.record->fields) {
                 int slot = event_map_out_slot(fname);
                 if (slot < 0) {
                     error("E408", "event_map() closure returned field '" +
                           fname + "' — writable event fields are note, vel, "
-                          "dur, time, chance, bend, at", n.location);
+                          "dur, time, chance, bend, at, notes, freqs",
+                          n.location);
+                    continue;
+                }
+                const bool is_chord_array =
+                    (slot == cedar::EVENT_OUT_NOTES_DATA ||
+                     slot == cedar::EVENT_OUT_FREQS_DATA);
+                if (is_chord_array) {
+                    // Resolve the chord-array data + length buffers. DynArray
+                    // (from `e.notes` or `map(e.notes, …)`) passes through;
+                    // a multi-buffer Array (from `map([literal], …)`) is
+                    // packed via ARRAY_PACK + ARRAY_PUSH into a DynArray-
+                    // shaped (data, len) pair before the COPY emit. Same
+                    // packing shape as the dynamic-index Array path in
+                    // codegen.cpp:509-557.
+                    std::uint16_t data_buf = UNUSED;
+                    std::uint16_t len_buf  = UNUSED;
+                    if (fval.type == ValueType::DynArray && fval.dyn) {
+                        data_buf = fval.dyn->data_buffer;
+                        len_buf  = fval.dyn->len_buffer;
+                    } else if (fval.type == ValueType::Array && fval.array) {
+                        const auto buffers = buffers_of(fval);
+                        if (buffers.empty()) {
+                            error("E174", "event_map() field '" + fname +
+                                  "' is an empty array", n.location);
+                            continue;
+                        }
+                        const std::uint8_t arr_len =
+                            static_cast<std::uint8_t>(buffers.size());
+                        std::uint16_t packed = buffers_.allocate();
+                        if (packed == UNUSED) {
+                            error("E101", "Buffer pool exhausted", n.location);
+                            continue;
+                        }
+                        cedar::Instruction pack{};
+                        pack.opcode = cedar::Opcode::ARRAY_PACK;
+                        pack.out_buffer = packed;
+                        const std::uint8_t pack_count =
+                            std::min<std::uint8_t>(arr_len, 5);
+                        pack.rate = pack_count;
+                        for (std::uint8_t k = 0; k < 5; ++k) {
+                            pack.inputs[k] = (k < pack_count)
+                                ? buffers[k] : UNUSED;
+                        }
+                        pack.state_id = 0;
+                        emit(pack);
+                        for (std::uint8_t k = 5; k < arr_len; ++k) {
+                            std::uint16_t next = buffers_.allocate();
+                            if (next == UNUSED) {
+                                error("E101", "Buffer pool exhausted",
+                                      n.location);
+                                break;
+                            }
+                            cedar::Instruction push{};
+                            push.opcode = cedar::Opcode::ARRAY_PUSH;
+                            push.out_buffer = next;
+                            push.inputs[0] = packed;
+                            push.inputs[1] = buffers[k];
+                            push.inputs[2] = UNUSED;
+                            push.inputs[3] = UNUSED;
+                            push.inputs[4] = UNUSED;
+                            push.rate = k;
+                            push.state_id = 0;
+                            emit(push);
+                            packed = next;
+                        }
+                        data_buf = packed;
+                        len_buf = codegen::emit_push_const(
+                            buffers_, emit_stream(),
+                            static_cast<float>(arr_len));
+                    } else {
+                        error("E174", "event_map() field '" + fname +
+                              "' must be a chord array (e.g. e.notes or "
+                              "map(intervals, (i) -> e.note + i)); got a "
+                              "scalar", n.location);
+                        continue;
+                    }
+                    if (data_buf == UNUSED || len_buf == UNUSED) continue;
+
+                    // COPY the array's data buffer into the bank's data slot
+                    // and the array's length signal into the shared NUM_VALUES
+                    // slot. Both mask bits are set so the runtime knows to
+                    // apply the chord-array overlay.
+                    emit(cedar::Instruction::make_unary(
+                        cedar::Opcode::COPY,
+                        static_cast<std::uint16_t>(out_bank + slot),
+                        data_buf));
+                    emit(cedar::Instruction::make_unary(
+                        cedar::Opcode::COPY,
+                        static_cast<std::uint16_t>(out_bank +
+                            cedar::EVENT_OUT_NUM_VALUES),
+                        len_buf));
+                    write_mask = static_cast<std::uint16_t>(write_mask |
+                        (1u << slot) |
+                        (1u << cedar::EVENT_OUT_NUM_VALUES));
+                    continue;
+                }
+                // Scalar slot — skip the `note` COPY when a chord array is
+                // also present (the array overlay rewrites all voices,
+                // including the primary; an extra coupled shift would
+                // double-apply).
+                if (slot == cedar::EVENT_OUT_NOTE && has_chord_array) {
                     continue;
                 }
                 if (fval.buffer == UNUSED) {
@@ -644,7 +760,7 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
                 emit(cedar::Instruction::make_unary(
                     cedar::Opcode::COPY,
                     static_cast<std::uint16_t>(out_bank + slot), fval.buffer));
-                write_mask = static_cast<std::uint8_t>(write_mask | (1u << slot));
+                write_mask = static_cast<std::uint16_t>(write_mask | (1u << slot));
             }
         }
     }
