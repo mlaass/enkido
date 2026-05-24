@@ -52,6 +52,7 @@ add_executable(akkado_tests
     test_bus_routing.cpp
     test_pattern_event_arrays.cpp
     test_event_map.cpp
+    test_scale_quantize.cpp
     test_fast_slow.cpp
     test_reorder.cpp
     test_param_type_annotations.cpp

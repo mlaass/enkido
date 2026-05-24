@@ -353,6 +353,25 @@ TEST_CASE("event-map (Phase 5 D): chord-array unknown field still errors",
 // both `note` (scalar) and `notes` (array) are returned, `notes` wins.
 // Overflow past MAX_VALUES_PER_EVENT (16) clamps silently.
 
+TEST_CASE("event-map (regression): {note: e.note} identity preserves chord voices",
+          "[event-map][chord-notes-write]") {
+    // Regression guard for the path Commit E touches: a closure that
+    // returns `{note: e.note}` should be a pure pass-through, leaving the
+    // chord's e.notes[] intact (delta = 0, NOTE_COUPLED loop is a no-op).
+    auto r = akkado::compile(
+        R"(c"CM" |> event_map(@, (e) -> {note: e.note}))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 1);
+    const auto& e = st->output.events[0];
+    REQUIRE(e.num_values == 3);
+    CHECK_THAT(e.notes[0], WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(e.notes[1], WithinAbs(64.0f, 0.01f));
+    CHECK_THAT(e.notes[2], WithinAbs(67.0f, 0.01f));
+}
+
 TEST_CASE("event-map (Phase 5 E): {notes: e.notes} round-trips a chord",
           "[event-map][chord-notes-write]") {
     auto r = akkado::compile(
