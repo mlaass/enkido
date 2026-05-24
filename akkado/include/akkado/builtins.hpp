@@ -62,7 +62,7 @@ inline bool type_compatible(ValueType actual, ParamValueType expected) {
         case ParamValueType::Function: return actual == ValueType::Function;
         case ParamValueType::Array:    return actual == ValueType::Array;
         case ParamValueType::Record:   return actual == ValueType::Record || actual == ValueType::Pattern;
-        case ParamValueType::Stream:   return actual == ValueType::Pattern || actual == ValueType::EventSource;
+        case ParamValueType::Stream:   return actual == ValueType::Pattern;
     }
     return false;
 }

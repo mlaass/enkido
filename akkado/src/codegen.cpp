@@ -3646,7 +3646,6 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
 
         case ValueType::Function:
         case ValueType::String:
-        case ValueType::EventSource:
         case ValueType::DynArray:
         case ValueType::Void:
             error("E135", "Cannot access field '" + field_name + "' on " +

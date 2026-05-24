@@ -155,8 +155,6 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
         auto in_tv = visit(input_arg);
         if (in_tv.pattern) {
             seq_state_id = in_tv.pattern->state_id;
-        } else if (in_tv.type == ValueType::EventSource && in_tv.event_source) {
-            seq_state_id = in_tv.event_source->state_id;
         } else {
             error("E242", "each_voice/each/reduce operand must be a pattern, "
                           "MIDI input, or array literal", n.location);
@@ -476,9 +474,6 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
             for (const auto& [key, slot] : p.custom_field_slots) {
                 custom_props.emplace_back(key, slot);
             }
-        } else if (in_tv.type == ValueType::EventSource && in_tv.event_source) {
-            upstream_state_id = in_tv.event_source->state_id;
-            cycle_length      = in_tv.event_source->cycle_length;
         } else {
             error("E242", std::string(name) + "() first argument must be a "
                   "pattern or MIDI event source", n.location);

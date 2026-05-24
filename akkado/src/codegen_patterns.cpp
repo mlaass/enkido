@@ -4984,18 +4984,15 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // PRD prd-midi-input §7.1: detect runtime event source upstream
-    // (today: midi(); future: anything else that sets is_runtime_event_source
-    // on PatternPayload). EventSourcePayload is also accepted to keep the
-    // EventSource v1 surface working in case any caller still produces it.
+    // PRD prd-midi-input §7.1: detect runtime event source upstream (today:
+    // midi(); future: anything else that sets is_runtime_event_source on
+    // PatternPayload). Phase 5 Commit I removed the legacy EventSourcePayload
+    // path — every runtime event stream now rides on PatternPayload with the
+    // flag set.
     const bool upstream_is_event_source =
-        (pattern_tv.pattern && pattern_tv.pattern->is_runtime_event_source) ||
-        (pattern_tv.type == ValueType::EventSource && pattern_tv.event_source);
+        pattern_tv.pattern && pattern_tv.pattern->is_runtime_event_source;
     const std::uint32_t upstream_seq_state_id = upstream_is_event_source
-        ? (pattern_tv.pattern
-              ? pattern_tv.pattern->state_id
-              : pattern_tv.event_source->state_id)
-        : 0u;
+        ? pattern_tv.pattern->state_id : 0u;
 
     // Get pattern's fields (gate, freq, vel) from PatternPayload — only the
     // legacy buffer-driven path needs them.

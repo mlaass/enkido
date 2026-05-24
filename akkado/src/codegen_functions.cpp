@@ -552,17 +552,17 @@ TypedValue CodeGenerator::handle_user_function_call(
                         // pass-through. Other types fire E184.
                         //
                         // Bare-identifier args (`m = n"…"; xp(m, 7)`) don't get
-                        // their Pattern/EventSource TypedValue recorded in
-                        // `node_types_` by visit() automatically, so the param-
-                        // binding pass at line ~757 would fall through to
-                        // `define_variable` and lose the Pattern handle. Pin it
-                        // here so the binding pass picks it up.
-                        if (arg_tv.type == ValueType::Pattern ||
-                            arg_tv.type == ValueType::EventSource) {
+                        // their Pattern TypedValue recorded in `node_types_`
+                        // by visit() automatically, so the param-binding pass
+                        // at line ~757 would fall through to `define_variable`
+                        // and lose the Pattern handle. Pin it here so the
+                        // binding pass picks it up. Runtime event streams
+                        // (midi()) ride on the Pattern type with the
+                        // `is_runtime_event_source` flag set.
+                        if (arg_tv.type == ValueType::Pattern) {
                             node_types_[args[i]] = arg_tv;
                         }
-                        if (arg_tv.type != ValueType::Pattern &&
-                            arg_tv.type != ValueType::EventSource) {
+                        if (arg_tv.type != ValueType::Pattern) {
                             std::string msg = "parameter '" + func.params[i].name +
                                               "' of fn '" + func.name +
                                               "' expects Stream, got " +
@@ -571,7 +571,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                             if (arg_tv.type == ValueType::DynArray) {
                                 msg += " (DynArray is a runtime-varying numeric "
                                        "array, not an event stream — pass the "
-                                       "Pattern/EventSource that produced it instead)";
+                                       "Pattern that produced it instead)";
                             }
                             error("E184", msg, ast_->arena[args[i]].location);
                         }
@@ -588,8 +588,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                                   "use poly() to consume it, or pick a voice/field "
                                   "explicitly (e.g. p.freq)",
                                   ast_->arena[args[i]].location);
-                        } else if (arg_tv.type == ValueType::EventSource ||
-                                   arg_tv.type == ValueType::Record ||
+                        } else if (arg_tv.type == ValueType::Record ||
                                    arg_tv.type == ValueType::Array ||
                                    arg_tv.type == ValueType::DynArray ||
                                    arg_tv.type == ValueType::String ||
@@ -767,8 +766,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                 // branch below.
                 if (func.params[i].annotated_type == ParamValueType::Stream &&
                     type_it != node_types_.end() &&
-                    (type_it->second.type == ValueType::Pattern ||
-                     type_it->second.type == ValueType::EventSource)) {
+                    type_it->second.type == ValueType::Pattern) {
                     Symbol sym{};
                     sym.kind = SymbolKind::Variable;
                     sym.name_hash = fnv1a_hash(func.params[i].name);
@@ -2569,11 +2567,8 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         if (pat_tv.pattern) {
             seq_state_id = pat_tv.pattern->state_id;
             poly_pattern = pat_tv.pattern;
-        } else if (pat_tv.type == ValueType::EventSource && pat_tv.event_source) {
-            seq_state_id = pat_tv.event_source->state_id;
         }
         // Consume polyphonic tracking — poly() handles voice allocation at runtime.
-        // No-op for EventSource upstreams since they were never registered.
         polyphonic_pattern_nodes_.erase(pattern_arg);
     }
 

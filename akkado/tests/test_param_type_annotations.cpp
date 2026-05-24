@@ -42,11 +42,12 @@ bool has_diagnostic_for_param(const akkado::CompileResult& r,
 
 } // namespace
 
-TEST_CASE("type_compatible: ParamValueType::Stream accepts only Pattern and EventSource",
+TEST_CASE("type_compatible: ParamValueType::Stream accepts only Pattern",
           "[type-annotation][type-compat]") {
-    // §4.2 row: `: stream` accepts Pattern (mono + poly, MIDI-pattern) and EventSource.
-    CHECK(type_compatible(ValueType::Pattern,     ParamValueType::Stream));
-    CHECK(type_compatible(ValueType::EventSource, ParamValueType::Stream));
+    // §4.2 row: `: stream` accepts Pattern (mono + poly, MIDI-pattern, and
+    // runtime event streams via `is_runtime_event_source`). Phase 5 Commit I
+    // collapsed the standalone EventSource discriminator into PatternPayload.
+    CHECK(type_compatible(ValueType::Pattern, ParamValueType::Stream));
 
     // Every other ValueType is rejected. The codegen branch turns these
     // rejections into E184 diagnostics; the lookup itself is pure.
@@ -81,9 +82,9 @@ TEST_CASE("type_compatible: existing ParamValueType rows unchanged after Stream 
     CHECK(type_compatible(ValueType::String,  ParamValueType::String));
     CHECK(type_compatible(ValueType::Function, ParamValueType::Function));
 
-    CHECK_FALSE(type_compatible(ValueType::EventSource, ParamValueType::Signal));
-    CHECK_FALSE(type_compatible(ValueType::Pattern,     ParamValueType::Function));
-    CHECK_FALSE(type_compatible(ValueType::Record,      ParamValueType::Array));
+    CHECK_FALSE(type_compatible(ValueType::DynArray, ParamValueType::Signal));
+    CHECK_FALSE(type_compatible(ValueType::Pattern,  ParamValueType::Function));
+    CHECK_FALSE(type_compatible(ValueType::Record,   ParamValueType::Array));
 }
 
 TEST_CASE("value_type_name and param_value_type_name include Stream",
@@ -212,13 +213,11 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
         CHECK(has_diagnostic_for_param(r, "E184", "'rate'"));
     }
 
-    // NOTE: a true EventSource at the user-fn boundary cannot be produced by
-    // Akkado source today — `midi(...)` returns a Pattern with
-    // is_runtime_event_source=true (MIDI-as-Pattern parity, PRD §4.1), not
-    // a TypedValue{EventSource}. The EventSource → E184 row of the §4.2
-    // compatibility matrix is covered by the type_compatible() unit test
-    // above; the codegen-side test would never fire today because there is
-    // no callable producer.
+    // NOTE: `midi(...)` returns a Pattern with is_runtime_event_source=true
+    // (MIDI-as-Pattern parity, PRD §4.1). Phase 5 Commit I removed the
+    // standalone TypedValue{EventSource} discriminator — all event streams
+    // now ride on Pattern with the flag set, so there is no longer a
+    // separate codegen path to exercise here.
 }
 
 TEST_CASE(": stream-annotated param exposes Pattern field access in the body",

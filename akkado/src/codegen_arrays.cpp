@@ -562,8 +562,7 @@ TypedValue CodeGenerator::handle_reduce_call(NodeIndex node, const Node& n) {
     // FOREACH_EVENT(SHARED); an array reduces by compile-time unrolling below.
     {
         TypedValue operand = visit(args.nodes[0]);
-        if (operand.pattern ||
-            (operand.type == ValueType::EventSource && operand.event_source)) {
+        if (operand.pattern) {
             return emit_foreach(node, n, 2);
         }
     }

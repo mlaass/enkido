@@ -15,17 +15,20 @@ namespace akkado {
 enum class ValueType : std::uint8_t {
     Signal,      // Audio-rate buffer (oscillator, filter output, etc.)
     Number,      // Compile-time known numeric constant (still has buffer)
-    Pattern,     // Mini-notation pattern with field buffers
+    Pattern,     // Mini-notation pattern with field buffers — also represents
+                 // runtime event streams (midi() sets PatternPayload's
+                 // `is_runtime_event_source` flag). Phase 5 Commit I removed
+                 // the standalone ValueType::EventSource discriminator: every
+                 // event stream is now a Pattern, distinguished by the flag.
     Record,      // Named field collection
     Array,       // Multi-element collection (compile-time unrolled)
     String,      // Compile-time string (no runtime buffer)
     Function,    // Function reference (no runtime buffer)
     StateCell,   // Handle to a CellState slot (state(init) in userspace)
-    EventSource, // External event stream (midi()); carries a state_id read by poly()
     DynArray,    // Runtime-varying-length array (chord notes from pattern events)
-    Stream,      // Abstract supertype for `: stream` annotations: Pattern ⊆ Stream,
-                 // EventSource ⊆ Stream. Never constructed as a TypedValue at runtime —
-                 // only used by the annotation surface and type_compatible() lookup.
+    Stream,      // Abstract supertype for `: stream` annotations: Pattern ⊆ Stream.
+                 // Never constructed as a TypedValue at runtime — only used by
+                 // the annotation surface and type_compatible() lookup.
                  // (PRD prd-parameter-type-annotations §4.1)
     Void         // No value (statements, directives)
 };
@@ -198,18 +201,6 @@ struct DynArrayPayload {
     std::uint16_t len_buffer  = 0xFFFF;  // Per-block length signal (num_values)
 };
 
-/// EventSource payload (PRD prd-midi-input §4.7): an external runtime event
-/// stream produced by `midi()`. The `state_id` points at a MidiQueueState
-/// in the state pool; `poly()` reads it through
-/// `StatePool::resolve_output_events`, the same path that handles
-/// `SequenceState`. Carried as a separate payload (not Pattern) so the
-/// type system stays honest — MIDI streams have no compile-time event
-/// schedule and don't support pattern transforms.
-struct EventSourcePayload {
-    std::uint32_t state_id = 0;
-    float         cycle_length = 1.0f;
-};
-
 /// A typed value produced by the code generator.
 /// Wraps a buffer index with type information and optional compound payloads.
 struct TypedValue {
@@ -226,11 +217,12 @@ struct TypedValue {
     /// `buffer + 1` (adjacent-buffer invariant enforced by BufferAllocator).
     std::uint16_t right_buffer = 0xFFFF;
 
-    // Compound type payloads (shared_ptr for cheap copies)
+    // Compound type payloads (shared_ptr for cheap copies). Phase 5 Commit I
+    // removed `event_source` — every runtime event stream (midi(),
+    // sequence-source) lives in `pattern` with `is_runtime_event_source=true`.
     std::shared_ptr<PatternPayload> pattern;
     std::shared_ptr<RecordPayload> record;
     std::shared_ptr<ArrayPayload> array;
-    std::shared_ptr<EventSourcePayload> event_source;
     std::shared_ptr<DynArrayPayload> dyn;  // populated when type == DynArray
 
     // String ID (FNV-1a hash) for ValueType::String
@@ -338,14 +330,6 @@ struct TypedValue {
         return tv;
     }
 
-    static TypedValue make_event_source(std::shared_ptr<EventSourcePayload> p,
-                                         std::uint16_t primary_buf = 0xFFFF) {
-        TypedValue tv;
-        tv.type = ValueType::EventSource;
-        tv.buffer = primary_buf;
-        tv.event_source = std::move(p);
-        return tv;
-    }
 };
 
 /// Human-readable name for a ValueType (for error messages)
@@ -359,7 +343,6 @@ constexpr const char* value_type_name(ValueType type) {
         case ValueType::String:      return "String";
         case ValueType::Function:    return "Function";
         case ValueType::StateCell:   return "StateCell";
-        case ValueType::EventSource: return "EventSource";
         case ValueType::DynArray:    return "DynArray";
         case ValueType::Stream:      return "Stream";
         case ValueType::Void:        return "Void";
