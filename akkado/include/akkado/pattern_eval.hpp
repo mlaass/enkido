@@ -18,6 +18,11 @@ public:
     /// Construct an evaluator with a reference to the AST arena
     explicit PatternEvaluator(const AstArena& arena);
 
+    /// PRD Phase 1b: rebind arena before evaluating a pattern that lives in a
+    /// sub-arena (e.g. MiniLiteralData::mini_arena). Self-contained mini-AST
+    /// traversal stays inside the rebound arena.
+    void set_arena(const AstArena& arena) { arena_ = &arena; }
+
     /// Enable chord mode - Sample tokens are interpreted as chord symbols
     void set_chord_mode(bool enabled) { chord_mode_ = enabled; }
 
@@ -104,7 +109,7 @@ private:
     void eval_node_unwrap(NodeIndex node, const PatternEvalContext& ctx,
                           PatternEventStream& stream);
 
-    const AstArena& arena_;
+    const AstArena* arena_ = nullptr;
     std::uint32_t current_cycle_ = 0;
     std::mt19937 rng_;  // For choice operator
     bool chord_mode_ = false;  // When true, interpret Sample atoms as chord symbols

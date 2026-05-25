@@ -1,5 +1,5 @@
-> **Status: IN PROGRESS — Phases 0 + 1a SHIPPED, 4 phases remaining (F7
-> withdrawn).** Filed 2026-05-25 as the correctness follow-up to
+> **Status: IN PROGRESS — Phases 0 + 1a + 1b SHIPPED, 3 phases remaining
+> (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Phases land independently; the audit's complexity-sink findings are
 > deferred to separate PRDs.
@@ -12,6 +12,52 @@
 >   The bytecode-disassembly formatter was extracted into a
 >   `nkido_bytecode_dump` static library so tests can link it without
 >   pulling in the CLI. See §8 *Snapshot harness*.
+> - **Phase 1b (mini-notation parse-at-parse-time + F3 tail) — SHIPPED
+>   2026-05-25** (commit `<PHASE_1B_COMMIT>`). The four
+>   `codegen_patterns.cpp` `const_cast<AstArena&>` re-parses are gone;
+>   `grep -rn 'const_cast<AstArena' akkado/src/` now returns zero code
+>   hits. `Node::data` gained a `MiniLiteralData` variant arm that
+>   carries `mode_marker` + a `shared_ptr<AstArena>` sub-arena +
+>   `mini_root` + pre-collected diagnostics; `Parser::parse_mini_literal`
+>   parses into the sub-arena at parse time and stops stitching mini
+>   nodes as main-arena children. Codegen's prefix-form path
+>   (`handle_mini_literal`, `handle_pattern_reference`,
+>   `handle_timeline_literal`, `compile_pattern_for_transform`'s
+>   MiniLiteral case) reads `as_mini_literal().mini_arena`. The
+>   call-form path (`chord("…")`, `timeline("…")`, transform with a
+>   string-literal pattern arg) parses into a per-call codegen scratch
+>   arena owned by `CodeGenerator::codegen_mini_arenas_`. `SequenceCompiler`
+>   and `PatternEvaluator` hold the arena via a settable pointer (added
+>   `set_arena(const AstArena&)`) so a single instance can compile a
+>   sub-arena leaf while transform recursion walks the main arena.
+>   `compile_pattern_for_transform` gained an `out_arena` outparam so
+>   callers know which arena `out_pattern_node` lives in; the existing
+>   `ast_->arena[pattern_node]` reads in transform handlers now go
+>   through `(*pattern_arena)[pattern_node]`. F3 tail: the mini-parser's
+>   `parse_sample_atom` now calls `parse_chord_symbol(sample.name)`
+>   opportunistically and caches the result onto `MiniAtomData`'s
+>   `chord_root` / `chord_quality` / `chord_intervals` / `chord_root_midi`
+>   fields; `PatternEvaluator::eval_atom`'s chord-mode branch reads the
+>   cached fields (empty `chord_root` ⇒ Rest, matching the legacy
+>   parse-failure path) and the `akkado/chord_parser.hpp` include is
+>   removed from `pattern_eval.cpp`. **Caveat / scope note:** the PRD's
+>   strict "`grep parse_mini( akkado/src/` only hits parser-stage files"
+>   criterion is not met for the Call-form / StringLit-pattern paths,
+>   because those legitimately receive an arbitrary string-literal at
+>   codegen time (the parser never sees them as a MiniLiteral). They
+>   now parse into a codegen-owned scratch arena instead of mutating
+>   `ast_->arena`, which fulfils F1's headline goal even though the
+>   strict parse-once-store-once tally still has codegen-time parses.
+>   Five `[F1b]` + three `[F3]` regression tests in
+>   `akkado/tests/test_codegen.cpp` assert arena hash unchanged across
+>   `generate()` for the chord prefix / chord call / timeline call /
+>   transform-with-chord shapes, that the parser populates
+>   `MiniLiteralData::mini_arena`, that Sample-kind atoms cache chord
+>   fields for chord-shaped names and leave them empty for non-chord
+>   names, and that `pattern_eval.cpp` no longer references
+>   `parse_chord_symbol(`. Full akkado suite remains green (1072 cases,
+>   141 958 assertions); snapshot harness reports byte-identical
+>   bytecode across every fixture. See §4 Phase 1b.
 > - **Phase 1a (drop `NodeType::PreResolved` + read-only spread-arg
 >   reorder) — SHIPPED 2026-05-25** (commit `deda0c6`).
 >   `NodeType::PreResolved` removed entirely; spread-resolved

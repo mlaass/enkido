@@ -77,7 +77,12 @@ static SourceLocation mini_content_location(const SourceLocation& string_tok) {
 class SequenceCompiler {
 public:
     explicit SequenceCompiler(const AstArena& arena, SampleRegistry* sample_registry = nullptr)
-        : arena_(arena), sample_registry_(sample_registry) {}
+        : arena_(&arena), sample_registry_(sample_registry) {}
+
+    // PRD Phase 1b: rebind the arena before compiling a mini-AST that lives in
+    // a sub-arena (MiniLiteralData::mini_arena or a codegen scratch arena).
+    // The sub-AST is self-contained so the traversal stays inside it.
+    void set_arena(const AstArena& a) { arena_ = &a; }
 
     /// Set the tuning context for microtonal Hz resolution
     void set_tuning(const TuningContext& tuning) { tuning_ = tuning; }
@@ -242,7 +247,7 @@ public:
     // This determines cycle_length: pattern "a <b c> d" has 3 top-level elements
     std::uint32_t count_top_level_elements(NodeIndex node) {
         if (node == NULL_NODE) return 1;
-        const Node& n = arena_[node];
+        const Node& n = (*arena_)[node];
 
         // For MiniPattern, count children (with repeat expansion)
         if (n.type == NodeType::MiniPattern) {
@@ -250,7 +255,7 @@ public:
             NodeIndex child = n.first_child;
             while (child != NULL_NODE) {
                 count += static_cast<std::uint32_t>(get_node_repeat(child));
-                child = arena_[child].next_sibling;
+                child = (*arena_)[child].next_sibling;
             }
             return count > 0 ? count : 1;
         }
@@ -290,7 +295,7 @@ private:
     // Such nodes need to be wrapped in a sub-sequence when added to ALTERNATE/RANDOM
     bool is_compound_node(NodeIndex idx) const {
         if (idx == NULL_NODE) return false;
-        const Node& n = arena_[idx];
+        const Node& n = (*arena_)[idx];
         // Unwrap modifiers to check the underlying node
         if (n.type == NodeType::MiniModified) {
             return is_compound_node(n.first_child);
@@ -343,7 +348,7 @@ private:
                                 float time_offset, float time_span) {
         if (ast_idx == NULL_NODE) return;
 
-        const Node& n = arena_[ast_idx];
+        const Node& n = (*arena_)[ast_idx];
 
         switch (n.type) {
             case NodeType::MiniPattern:
@@ -523,7 +528,7 @@ private:
                 weights.push_back(weight);
                 total_weight += weight;
             }
-            child = arena_[child].next_sibling;
+            child = (*arena_)[child].next_sibling;
         }
 
         if (children.empty()) return;
@@ -561,7 +566,7 @@ private:
         // byte-identical and pattern transforms like late()/early() don't
         // double-shift through a needless sub-sequence wrapper.
         if (n.first_child != NULL_NODE &&
-            arena_[n.first_child].next_sibling == NULL_NODE &&
+            (*arena_)[n.first_child].next_sibling == NULL_NODE &&
             get_node_repeat(n.first_child) == 1) {
             compile_into_sequence(n.first_child, parent_seq_idx, time_offset, time_span);
             return;
@@ -580,7 +585,7 @@ private:
             for (int i = 0; i < repeat; ++i) {
                 compile_alternate_child(child, new_seq_idx);
             }
-            child = arena_[child].next_sibling;
+            child = (*arena_)[child].next_sibling;
         }
 
         if (sequence_events_[new_seq_idx].empty()) return;
@@ -601,7 +606,7 @@ private:
         // Single-option choice is degenerate (always picks the same option).
         // Inline directly so transforms don't double-shift through the wrapper.
         if (n.first_child != NULL_NODE &&
-            arena_[n.first_child].next_sibling == NULL_NODE &&
+            (*arena_)[n.first_child].next_sibling == NULL_NODE &&
             get_node_repeat(n.first_child) == 1) {
             compile_into_sequence(n.first_child, parent_seq_idx, time_offset, time_span);
             return;
@@ -620,7 +625,7 @@ private:
             for (int i = 0; i < repeat; ++i) {
                 compile_alternate_child(child, new_seq_idx);
             }
-            child = arena_[child].next_sibling;
+            child = (*arena_)[child].next_sibling;
         }
 
         if (sequence_events_[new_seq_idx].empty()) return;
@@ -722,7 +727,7 @@ private:
     // dynamic modifiers all break flattening.
     bool is_flattenable_sample_subtree(NodeIndex idx) const {
         if (idx == NULL_NODE) return true;
-        const Node& n = arena_[idx];
+        const Node& n = (*arena_)[idx];
         switch (n.type) {
             case NodeType::MiniAtom: {
                 const auto& ad = n.as_mini_atom();
@@ -735,7 +740,7 @@ private:
             case NodeType::MiniPolymeter:
             case NodeType::MiniEuclidean: {
                 for (NodeIndex c = n.first_child; c != NULL_NODE;
-                     c = arena_[c].next_sibling) {
+                     c = (*arena_)[c].next_sibling) {
                     if (!is_flattenable_sample_subtree(c)) return false;
                 }
                 return true;
@@ -758,13 +763,13 @@ private:
     std::vector<BranchTimeline> flatten_to_timelines(
             NodeIndex idx, float t_offset, float t_span) {
         if (idx == NULL_NODE) return { BranchTimeline{} };
-        const Node& n = arena_[idx];
+        const Node& n = (*arena_)[idx];
 
         switch (n.type) {
             case NodeType::MiniPolyrhythm: {
                 std::vector<BranchTimeline> all;
                 for (NodeIndex c = n.first_child; c != NULL_NODE;
-                     c = arena_[c].next_sibling) {
+                     c = (*arena_)[c].next_sibling) {
                     auto child_tls = flatten_to_timelines(c, t_offset, t_span);
                     for (auto& tl : child_tls) all.push_back(std::move(tl));
                 }
@@ -779,7 +784,7 @@ private:
                 std::vector<float> weights;
                 float total_weight = 0.0f;
                 for (NodeIndex c = n.first_child; c != NULL_NODE;
-                     c = arena_[c].next_sibling) {
+                     c = (*arena_)[c].next_sibling) {
                     float w = get_node_weight(c);
                     int repeat = get_node_repeat(c);
                     for (int i = 0; i < repeat; ++i) {
@@ -900,7 +905,7 @@ private:
                                     float time_offset, float time_span) {
         bool flattenable = true;
         for (NodeIndex c = n.first_child; c != NULL_NODE;
-             c = arena_[c].next_sibling) {
+             c = (*arena_)[c].next_sibling) {
             if (!is_flattenable_sample_subtree(c)) { flattenable = false; break; }
         }
         if (!flattenable) {
@@ -908,7 +913,7 @@ private:
             // The single-stream runtime collapses overlaps to last-event-wins
             // here, but that matches prior behavior for pitched polyrhythms.
             for (NodeIndex c = n.first_child; c != NULL_NODE;
-                 c = arena_[c].next_sibling) {
+                 c = (*arena_)[c].next_sibling) {
                 compile_into_sequence(c, seq_idx, time_offset, time_span);
             }
             return;
@@ -916,7 +921,7 @@ private:
 
         std::vector<BranchTimeline> branches;
         for (NodeIndex c = n.first_child; c != NULL_NODE;
-             c = arena_[c].next_sibling) {
+             c = (*arena_)[c].next_sibling) {
             auto child_tls = flatten_to_timelines(c, time_offset, time_span);
             for (auto& tl : child_tls) branches.push_back(std::move(tl));
         }
@@ -1096,7 +1101,7 @@ private:
                 if (count <= 0) count = 1;
 
                 // Check if child is MiniSequence (alternate)
-                const Node& child_node = arena_[child];
+                const Node& child_node = (*arena_)[child];
                 if (child_node.type == NodeType::MiniSequence) {
                     // <a b c>*8 -> 8 SUB_SEQ events pointing to ALTERNATE sequence
                     std::uint16_t new_seq_idx = create_sub_sequence(cedar::SequenceMode::ALTERNATE);
@@ -1111,7 +1116,7 @@ private:
                         for (int i = 0; i < repeat; ++i) {
                             compile_alternate_child(alt_child, new_seq_idx);
                         }
-                        alt_child = arena_[alt_child].next_sibling;
+                        alt_child = (*arena_)[alt_child].next_sibling;
                     }
 
                     current_seq_idx_ = saved_seq_idx;
@@ -1196,7 +1201,7 @@ private:
 
     // Get the weight (@N) of a node (default 1.0)
     float get_node_weight(NodeIndex node_idx) {
-        const Node& n = arena_[node_idx];
+        const Node& n = (*arena_)[node_idx];
         if (n.type == NodeType::MiniModified) {
             const auto& mod = n.as_mini_modifier();
             if (mod.modifier_type == Node::MiniModifierType::Weight) {
@@ -1208,7 +1213,7 @@ private:
 
     // Get the repeat count (!N) of a node (default 1)
     int get_node_repeat(NodeIndex node_idx) {
-        const Node& n = arena_[node_idx];
+        const Node& n = (*arena_)[node_idx];
         if (n.type == NodeType::MiniModified) {
             const auto& mod = n.as_mini_modifier();
             if (mod.modifier_type == Node::MiniModifierType::Repeat) {
@@ -1230,7 +1235,7 @@ private:
         return type_id;
     }
 
-    const AstArena& arena_;
+    const AstArena* arena_ = nullptr;
     SampleRegistry* sample_registry_ = nullptr;
     TuningContext tuning_;  // Microtonal tuning context (default: 12-EDO)
     std::vector<cedar::Sequence> sequences_;
@@ -1274,18 +1279,20 @@ private:
 
 // Handle MiniLiteral (pattern) nodes
 TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
-    // Check for timeline curve notation
-    const auto* str_data = std::get_if<Node::StringData>(&n.data);
-    if (str_data && str_data->value == "timeline") {
+    // PRD Phase 1b: MiniLiteralData replaces the legacy StringData(mode) +
+    // first-child layout. The parsed mini-AST lives in a per-literal
+    // sub-arena referenced via `mini_arena`.
+    const auto& lit_data = n.as_mini_literal();
+    if (lit_data.mode_marker == "timeline") {
         return handle_timeline_literal(node, n);
     }
 
-    NodeIndex pattern_node = n.first_child;
-
-    if (pattern_node == NULL_NODE) {
+    if (!lit_data.mini_arena || lit_data.mini_root == NULL_NODE) {
         error("E114", "Pattern has no parsed content", n.location);
         return TypedValue::void_val();
     }
+    const AstArena& mini_arena = *lit_data.mini_arena;
+    NodeIndex pattern_node = lit_data.mini_root;
 
     // PRD prd-remove-pat-builtin §6.3: keep "pat" path segments unchanged
     // to preserve hot-swap semantic-ID hashes across the migration.
@@ -1294,9 +1301,9 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
 
     // Use the SequenceCompiler for lazy queryable patterns
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
+    SequenceCompiler compiler(mini_arena, sample_registry_);
     // Set base offset so event source_offset values are pattern-relative
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = mini_arena[pattern_node];
     compiler.set_pattern_base_offset(pattern.location.offset);
     if (!compiler.compile(pattern_node)) {
         // Empty pattern - emit zero
@@ -1376,7 +1383,7 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     seq_init.is_sample_pattern = is_sample_pattern;
     seq_init.pattern_location = pattern.location;  // Store pattern content location for UI
     seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
-    seq_init.ast_json = serialize_mini_ast_json(pattern_node, ast_->arena);  // Serialize AST for debug UI
+    seq_init.ast_json = serialize_mini_ast_json(pattern_node, mini_arena);  // Serialize AST for debug UI
     state_inits_.push_back(std::move(seq_init));
 
     pattern_payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
@@ -1632,15 +1639,18 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     push_path(name);
     std::uint32_t state_id = compute_state_id();
 
-    NodeIndex mini_pattern = pattern_n.first_child;
-    if (mini_pattern == NULL_NODE) {
+    // PRD Phase 1b: the parsed mini-AST lives in MiniLiteralData's sub-arena.
+    const auto& lit_data = pattern_n.as_mini_literal();
+    if (!lit_data.mini_arena || lit_data.mini_root == NULL_NODE) {
         error("E114", "Pattern has no parsed content", loc);
         pop_path();
         return TypedValue::void_val();
     }
+    const AstArena& mini_arena = *lit_data.mini_arena;
+    NodeIndex mini_pattern = lit_data.mini_root;
 
     // Use the SequenceCompiler
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
+    SequenceCompiler compiler(mini_arena, sample_registry_);
     if (!compiler.compile(mini_pattern)) {
         // Empty pattern - emit zero
         std::uint16_t out = emit_zero(buffers_, emit_stream());
@@ -1773,11 +1783,14 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
 
     std::string chord_str = str_n.as_string();
 
-    // Parse using mini-notation parser with sample_only=false (default)
-    // This enables chord symbol recognition (Am, C7, Fmaj7, etc.)
-    auto [pattern_root, diags] = parse_mini(chord_str, const_cast<AstArena&>(ast_->arena),
+    // PRD Phase 1b: parse into a codegen-owned scratch arena instead of
+    // mutating ast_->arena via const_cast. The scratch arena lives until
+    // CodeGenerator is destroyed, anchoring SequenceCompiler's traversal.
+    auto scratch = std::make_shared<AstArena>();
+    auto [pattern_root, diags] = parse_mini(chord_str, *scratch,
                                             mini_content_location(str_n.location),
                                             /*sample_only=*/false);
+    codegen_mini_arenas_.push_back(scratch);
 
     // Report any parse errors
     for (const auto& diag : diags) {
@@ -1796,8 +1809,8 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     push_path("chord#" + std::to_string(chord_count));
     std::uint32_t state_id = compute_state_id();
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    const Node& pattern = ast_->arena[pattern_root];
+    SequenceCompiler compiler(*scratch, sample_registry_);
+    const Node& pattern = (*scratch)[pattern_root];
     compiler.set_pattern_base_offset(pattern.location.offset);
 
     if (!compiler.compile(pattern_root)) {
@@ -2093,6 +2106,10 @@ static int compute_binary_bits(std::uint32_t n) {
 // Helper: Compile a pattern and return the compiled data
 // Returns true on success. On success, populates out_* parameters.
 // out_events and out_cycle_length carry already-transformed events from inner transforms.
+// PRD Phase 1b: `out_arena` reports which AST arena `out_pattern_node` lives
+// in — MiniLiteral leaves come from a sub-arena (MiniLiteralData::mini_arena),
+// codegen-time re-parses from a codegen scratch arena, and transform/generator
+// branches still point into the main analyzer AST arena.
 static bool compile_pattern_for_transform(
     CodeGenerator& gen,
     const Ast& ast,
@@ -2100,6 +2117,7 @@ static bool compile_pattern_for_transform(
     SampleRegistry* sample_registry,
     SequenceCompiler& compiler,
     NodeIndex& out_pattern_node,
+    const AstArena*& out_arena,
     std::uint32_t& out_num_elements,
     std::vector<std::vector<cedar::Event>>& out_events,
     float& out_cycle_length) {
@@ -2108,12 +2126,18 @@ static bool compile_pattern_for_transform(
 
     // Case 1: MiniLiteral (base case)
     if (pat_node.type == NodeType::MiniLiteral) {
-        out_pattern_node = pat_node.first_child;
-        if (out_pattern_node == NULL_NODE) {
+        // PRD Phase 1b: the parsed mini-AST lives in MiniLiteralData's
+        // sub-arena, not as a first-child of the MiniLiteral node.
+        const auto& lit_data = pat_node.as_mini_literal();
+        if (!lit_data.mini_arena || lit_data.mini_root == NULL_NODE) {
             return false;
         }
+        const AstArena& mini_arena = *lit_data.mini_arena;
+        out_pattern_node = lit_data.mini_root;
+        out_arena = &mini_arena;
 
-        const Node& pattern = ast.arena[out_pattern_node];
+        const Node& pattern = mini_arena[out_pattern_node];
+        compiler.set_arena(mini_arena);
         compiler.set_pattern_base_offset(pattern.location.offset);
 
         if (!compiler.compile(out_pattern_node)) {
@@ -2126,16 +2150,19 @@ static bool compile_pattern_for_transform(
         return true;
     }
 
-    // Case 1b: StringLit — parse as mini-notation
+    // Case 1b: StringLit — parse as mini-notation into a codegen scratch arena.
+    // PRD Phase 1b: replaces the legacy const_cast<AstArena&>(ast.arena).
     if (pat_node.type == NodeType::StringLit) {
         std::string pattern_str = pat_node.as_string();
-        auto [pattern_root, diags] = parse_mini(pattern_str,
-            const_cast<AstArena&>(ast.arena),
+        AstArena& scratch = gen.acquire_mini_scratch_arena();
+        auto [pattern_root, diags] = parse_mini(pattern_str, scratch,
             mini_content_location(pat_node.location), false);
         if (pattern_root == NULL_NODE) return false;
 
         out_pattern_node = pattern_root;
-        const Node& pattern = ast.arena[out_pattern_node];
+        out_arena = &scratch;
+        const Node& pattern = scratch[out_pattern_node];
+        compiler.set_arena(scratch);
         compiler.set_pattern_base_offset(pattern.location.offset);
 
         if (!compiler.compile(out_pattern_node)) return false;
@@ -2159,7 +2186,8 @@ static bool compile_pattern_for_transform(
         NodeIndex bound = sym->pattern.pattern_node;
         if (bound == NULL_NODE || bound == pattern_arg) return false;
         return compile_pattern_for_transform(gen, ast, bound, sample_registry,
-                                             compiler, out_pattern_node, out_num_elements,
+                                             compiler, out_pattern_node, out_arena,
+                                             out_num_elements,
                                              out_events, out_cycle_length);
     }
 
@@ -2169,6 +2197,7 @@ static bool compile_pattern_for_transform(
 
         // Case 2.4: chord(...) base case — parse chord string and compile
         // through the same mini-notation pipeline used by handle_chord_call.
+        // PRD Phase 1b: parse into a codegen scratch arena.
         if (func_name == "chord") {
             NodeIndex first_arg = pat_node.first_child;
             if (first_arg == NULL_NODE) return false;
@@ -2179,12 +2208,14 @@ static bool compile_pattern_for_transform(
             const Node& str_n = ast.arena[str_node];
             if (str_n.type != NodeType::StringLit) return false;
             std::string chord_str = str_n.as_string();
-            auto [pattern_root, diags] = parse_mini(
-                chord_str, const_cast<AstArena&>(ast.arena),
+            AstArena& scratch = gen.acquire_mini_scratch_arena();
+            auto [pattern_root, diags] = parse_mini(chord_str, scratch,
                 mini_content_location(str_n.location), /*sample_only=*/false);
             if (pattern_root == NULL_NODE) return false;
             out_pattern_node = pattern_root;
-            const Node& pattern = ast.arena[out_pattern_node];
+            out_arena = &scratch;
+            const Node& pattern = scratch[out_pattern_node];
+            compiler.set_arena(scratch);
             compiler.set_pattern_base_offset(pattern.location.offset);
             if (!compiler.compile(out_pattern_node)) return false;
             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
@@ -2202,6 +2233,7 @@ static bool compile_pattern_for_transform(
             auto events = synth_run_events(n_int);
             compiler.populate_synthetic(std::move(events));
             out_pattern_node = pat_node.first_child;
+            out_arena = &ast.arena;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, n_int));
             out_events = compiler.sequence_events();
             out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
@@ -2215,6 +2247,7 @@ static bool compile_pattern_for_transform(
             auto events = synth_binary_events(n_val, bits);
             compiler.populate_synthetic(std::move(events));
             out_pattern_node = pat_node.first_child;
+            out_arena = &ast.arena;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
             out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
@@ -2235,6 +2268,7 @@ static bool compile_pattern_for_transform(
             auto events = synth_binary_events(n_val, bits);
             compiler.populate_synthetic(std::move(events));
             out_pattern_node = pat_node.first_child;
+            out_arena = &ast.arena;
             out_num_elements = static_cast<std::uint32_t>(std::max(1, bits));
             out_events = compiler.sequence_events();
             out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
@@ -2272,7 +2306,8 @@ static bool compile_pattern_for_transform(
 
                 compiler.set_tuning(*tuning);
                 return compile_pattern_for_transform(gen, ast, inner_arg, sample_registry,
-                                                      compiler, out_pattern_node, out_num_elements,
+                                                      compiler, out_pattern_node, out_arena,
+                                                      out_num_elements,
                                                       out_events, out_cycle_length);
             }
 
@@ -2282,7 +2317,8 @@ static bool compile_pattern_for_transform(
 
             // Recursively compile the inner pattern
             if (!compile_pattern_for_transform(gen, ast, inner_arg, sample_registry,
-                                                compiler, out_pattern_node, out_num_elements,
+                                                compiler, out_pattern_node, out_arena,
+                                                out_num_elements,
                                                 out_events, out_cycle_length)) {
                 return false;
             }
@@ -2644,9 +2680,14 @@ static bool compile_pattern_for_transform(
             if (actual_arg != NULL_NODE) {
                 const Node& actual_node = ast.arena[actual_arg];
                 if (actual_node.type == NodeType::MiniLiteral) {
-                    out_pattern_node = actual_node.first_child;
-                    if (out_pattern_node != NULL_NODE) {
-                        const Node& pattern = ast.arena[out_pattern_node];
+                    // PRD Phase 1b: mini-AST lives in MiniLiteralData's sub-arena.
+                    const auto& lit_data = actual_node.as_mini_literal();
+                    if (lit_data.mini_arena && lit_data.mini_root != NULL_NODE) {
+                        const AstArena& mini_arena = *lit_data.mini_arena;
+                        out_pattern_node = lit_data.mini_root;
+                        out_arena = &mini_arena;
+                        const Node& pattern = mini_arena[out_pattern_node];
+                        compiler.set_arena(mini_arena);
                         compiler.set_pattern_base_offset(pattern.location.offset);
 
                         if (compiler.compile(out_pattern_node)) {
@@ -2885,14 +2926,17 @@ CodeGenerator::PatternQuerySource CodeGenerator::emit_pattern_query_only(
 // ============================================================================
 
 TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n) {
-    NodeIndex pattern_node = n.first_child;
-    if (pattern_node == NULL_NODE) {
+    // PRD Phase 1b: curve pattern lives in MiniLiteralData's sub-arena.
+    const auto& lit_data = n.as_mini_literal();
+    if (!lit_data.mini_arena || lit_data.mini_root == NULL_NODE) {
         error("E114", "Timeline curve has no parsed content", n.location);
         return TypedValue::void_val();
     }
+    const AstArena& mini_arena = *lit_data.mini_arena;
+    NodeIndex pattern_node = lit_data.mini_root;
 
     // Evaluate the curve pattern to events
-    PatternEvaluator evaluator(ast_->arena);
+    PatternEvaluator evaluator(mini_arena);
     PatternEventStream stream = evaluator.evaluate(pattern_node, 0);
 
     // Convert events to breakpoints
@@ -2978,9 +3022,10 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
 
     std::string curve_str = value_node.as_string();
 
-    // Parse the string as curve notation
-    auto [pattern_root, diags] = parse_mini(curve_str,
-        const_cast<AstArena&>(ast_->arena),
+    // PRD Phase 1b: parse into a codegen scratch arena instead of mutating
+    // ast_->arena via const_cast.
+    AstArena& scratch = acquire_mini_scratch_arena();
+    auto [pattern_root, diags] = parse_mini(curve_str, scratch,
         mini_content_location(value_node.location), false, true);
 
     for (const auto& d : diags) {
@@ -2997,7 +3042,7 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
     }
 
     // Evaluate the curve pattern to events
-    PatternEvaluator evaluator(ast_->arena);
+    PatternEvaluator evaluator(scratch);
     PatternEventStream stream = evaluator.evaluate(pattern_root, 0);
 
     // Convert events to breakpoints
@@ -3137,13 +3182,14 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     // inner fast/slow nesting.
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg,
                                        sample_registry_, compiler,
-                                       pattern_node, num_elements,
+                                       pattern_node, pattern_arena, num_elements,
                                        sequence_events, cycle_length)) {
         error("E130", std::string(fn_name) +
                   "() failed to compile pattern argument", n.location);
@@ -3205,7 +3251,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     push_path(std::string(fn_name) + "#" + std::to_string(call_count));
     std::uint32_t state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
@@ -3312,6 +3358,7 @@ TypedValue CodeGenerator::emit_reorder_call(
 
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
@@ -3319,7 +3366,7 @@ TypedValue CodeGenerator::emit_reorder_call(
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     if (pattern_arg == NULL_NODE ||
         !compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                       compiler, pattern_node, num_elements,
+                                       compiler, pattern_node, pattern_arena, num_elements,
                                        sequence_events, cycle_length)) {
         error("E130", std::string(fn_name) +
                   "() failed to compile pattern argument", n.location);
@@ -3330,7 +3377,7 @@ TypedValue CodeGenerator::emit_reorder_call(
     push_path(std::string(fn_name) + "#" + std::to_string(call_count));
     std::uint32_t inner_state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     PatternQuerySource src = emit_pattern_query_only(
         inner_state_id, cycle_length, compiler, sequence_events, pattern.location);
     if (!src.ok) {
@@ -3417,6 +3464,7 @@ TypedValue CodeGenerator::emit_fanout_call(
 
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
@@ -3424,7 +3472,7 @@ TypedValue CodeGenerator::emit_fanout_call(
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     if (pattern_arg == NULL_NODE ||
         !compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                       compiler, pattern_node, num_elements,
+                                       compiler, pattern_node, pattern_arena, num_elements,
                                        sequence_events, cycle_length)) {
         error("E130", std::string(fn_name) +
                   "() failed to compile pattern argument", n.location);
@@ -3435,7 +3483,7 @@ TypedValue CodeGenerator::emit_fanout_call(
     push_path(std::string(fn_name) + "#" + std::to_string(call_count));
     std::uint32_t inner_state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     PatternQuerySource src = emit_pattern_query_only(
         inner_state_id, cycle_length, compiler, sequence_events, pattern.location);
     if (!src.ok) {
@@ -3605,12 +3653,13 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
     // Compile the pattern (may include inner transforms applied recursively)
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "bank() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -3679,7 +3728,7 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
     seq_init.sequence_events = std::move(sequence_events);
     seq_init.total_events = compiler.total_events();
     seq_init.is_sample_pattern = is_sample_pattern;
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     seq_init.pattern_location = pattern.location;
     seq_init.sequence_sample_mappings = std::move(sample_mappings);  // Use updated mappings
     state_inits_.push_back(std::move(seq_init));
@@ -3784,12 +3833,13 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
     // Compile the main pattern (may include inner transforms applied recursively)
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "variant() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -3812,12 +3862,13 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
         // Compile the variant pattern to get its events
         SequenceCompiler variant_compiler(ast_->arena, sample_registry_);
         NodeIndex variant_pattern_node = NULL_NODE;
+        const AstArena* variant_pattern_arena = nullptr;
         std::uint32_t variant_num_elements = 1;
         std::vector<std::vector<cedar::Event>> variant_events;
         float variant_cycle_length = 1.0f;
 
         if (compile_pattern_for_transform(*this, *ast_, variant_arg, sample_registry_,
-                                          variant_compiler, variant_pattern_node, variant_num_elements,
+                                          variant_compiler, variant_pattern_node, variant_pattern_arena, variant_num_elements,
                                           variant_events, variant_cycle_length)) {
 
             // Match events: for each sample event in the main pattern,
@@ -3894,7 +3945,7 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
     seq_init.sequence_events = std::move(sequence_events);
     seq_init.total_events = compiler.total_events();
     seq_init.is_sample_pattern = is_sample_pattern;
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     seq_init.pattern_location = pattern.location;
     seq_init.sequence_sample_mappings = std::move(sample_mappings);  // Use updated mappings
     state_inits_.push_back(std::move(seq_init));
@@ -3985,12 +4036,13 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     // Compile the pattern (may include inner transforms applied recursively)
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "transport() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -4112,7 +4164,7 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     seq_init.sequence_events = std::move(sequence_events);
     seq_init.total_events = compiler.total_events();
     seq_init.is_sample_pattern = is_sample_pattern;
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     seq_init.pattern_location = pattern.location;
     seq_init.sequence_sample_mappings = compiler.sample_mappings();
     state_inits_.push_back(std::move(seq_init));
@@ -4181,12 +4233,13 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
     compiler.set_tuning(*tuning);
 
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
 
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "tune() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -4197,7 +4250,7 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
     push_path("tune#" + std::to_string(tune_count));
     std::uint32_t state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
@@ -4704,11 +4757,12 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
 
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "anchor() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -4721,7 +4775,7 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
     push_path("anchor#" + std::to_string(cnt));
     std::uint32_t state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
@@ -4758,11 +4812,12 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
 
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "mode() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -4775,7 +4830,7 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
     push_path("mode#" + std::to_string(cnt));
     std::uint32_t state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
@@ -4811,11 +4866,12 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
 
     SequenceCompiler compiler(ast_->arena, sample_registry_);
     NodeIndex pattern_node = NULL_NODE;
+    const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
     std::vector<std::vector<cedar::Event>> sequence_events;
     float cycle_length = 1.0f;
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, num_elements,
+                                        compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
         error("E130", "voicing() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
@@ -4828,7 +4884,7 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
     push_path("voicing#" + std::to_string(cnt));
     std::uint32_t state_id = compute_state_id();
 
-    const Node& pattern = ast_->arena[pattern_node];
+    const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
         *this, buffers_, emit_stream(), state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,

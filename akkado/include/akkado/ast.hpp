@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <variant>
@@ -9,6 +10,8 @@
 #include "typed_value.hpp"  // for ParamValueType (used in ClosureParamData)
 
 namespace akkado {
+
+class AstArena;  // forward declaration for MiniLiteralData
 
 /// Index into the AST arena (0xFFFFFFFF = null/invalid)
 using NodeIndex = std::uint32_t;
@@ -260,6 +263,21 @@ struct Node {
         std::uint8_t step_count;  // 0 means use child count
     };
 
+    // Data attached to a top-level MiniLiteral node (pat/seq/note/sample/chord
+    // /timeline). The parsed mini-notation AST lives in a sub-arena referenced
+    // by this node (Phase 1b: parse-at-parse-time). Diagnostics buffered here
+    // are merged into the main parser's diagnostic list when the surrounding
+    // Parser::parse() returns. Shared-ownership pointer so analyzer node
+    // clones (analyzer.cpp clone_node copies the data variant) share the
+    // sub-arena without a deep-copy path; the sub-arena is read-only after
+    // parsing.
+    struct MiniLiteralData {
+        std::string mode_marker;                    // "pat"/"seq"/"note"/"sample"/"chord"/"timeline"/"value"
+        std::shared_ptr<AstArena> mini_arena;       // shared sub-AST owner (nullptr if parse failed)
+        NodeIndex mini_root = NULL_NODE;            // root index inside *mini_arena
+        std::vector<Diagnostic> mini_diagnostics;   // pre-collected by parser
+    };
+
     // Data for function definitions (fn name(params) -> body)
     struct FunctionDefData {
         std::string name;
@@ -359,6 +377,7 @@ struct Node {
         MiniEuclideanData,
         MiniModifierData,
         MiniPolymeterData,
+        MiniLiteralData,
         FunctionDefData,
         MatchArmData,
         MatchExprData,
@@ -425,6 +444,14 @@ struct Node {
 
     [[nodiscard]] const MiniPolymeterData& as_mini_polymeter() const {
         return std::get<MiniPolymeterData>(data);
+    }
+
+    [[nodiscard]] const MiniLiteralData& as_mini_literal() const {
+        return std::get<MiniLiteralData>(data);
+    }
+
+    [[nodiscard]] MiniLiteralData& as_mini_literal() {
+        return std::get<MiniLiteralData>(data);
     }
 
     [[nodiscard]] const FunctionDefData& as_function_def() const {

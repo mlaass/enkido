@@ -1,5 +1,6 @@
 #include "akkado/mini_parser.hpp"
 #include "akkado/mini_lexer.hpp"
+#include "akkado/chord_parser.hpp"
 
 namespace akkado {
 
@@ -310,6 +311,23 @@ NodeIndex MiniParser::parse_sample_atom(const MiniToken& token) {
     NodeIndex node = make_node(NodeType::MiniAtom, token);
     const MiniSampleData& sample = token.as_sample();
 
+    // PRD Phase 1b (F3 tail): opportunistically resolve the sample name as a
+    // chord symbol at parse time so chord-mode pattern_eval can read cached
+    // fields instead of re-parsing. parse_chord_symbol returns nullopt cheaply
+    // for non-chord-shaped names (e.g. "kick", "snare"); the cost is paid
+    // once at parse time, never per cycle at evaluation time.
+    std::string chord_root;
+    std::string chord_quality;
+    std::uint8_t chord_root_midi = 0;
+    std::vector<std::int8_t> chord_intervals;
+    if (auto chord_info = parse_chord_symbol(sample.name); chord_info.has_value()) {
+        chord_root = chord_info->root;
+        chord_quality = chord_info->quality;
+        chord_root_midi = static_cast<std::uint8_t>(chord_info->root_midi);
+        chord_intervals.assign(chord_info->intervals.begin(),
+                               chord_info->intervals.end());
+    }
+
     arena_[node].data = Node::MiniAtomData{
         .kind = Node::MiniAtomKind::Sample,
         .midi_note = 0,
@@ -317,10 +335,10 @@ NodeIndex MiniParser::parse_sample_atom(const MiniToken& token) {
         .sample_name = sample.name,
         .sample_variant = sample.variant,
         .sample_bank = sample.bank,
-        .chord_root = "",
-        .chord_quality = "",
-        .chord_root_midi = 0,
-        .chord_intervals = {},
+        .chord_root = std::move(chord_root),
+        .chord_quality = std::move(chord_quality),
+        .chord_root_midi = chord_root_midi,
+        .chord_intervals = std::move(chord_intervals),
         .curve_value = 0.0f,
         .curve_smooth = false,
         .properties = sample.properties

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <fstream>
 #include <vector>
 
 // Helper to decode float from PUSH_CONST instruction
@@ -11490,4 +11491,135 @@ TEST_CASE("F1a: arena_structural_hash distinguishes structurally-different arena
     // Each program: codegen-stable.
     CHECK(before_a.hash == after_a.hash);
     CHECK(before_b.hash == after_b.hash);
+}
+
+// PRD prd-parser-codegen-correctness.md Phase 1b — codegen no longer re-parses
+// chord / timeline / pattern strings into ast_->arena via const_cast. The four
+// codegen_patterns.cpp const_casts are gone, so the AST arena size + structural
+// hash stay identical across generate().
+
+TEST_CASE("F1b: chord pattern does not mutate the AST arena", "[F1b][chord]") {
+    // chord prefix form (`c"…"`) parses into MiniLiteralData's sub-arena at
+    // parse time, codegen reads from that sub-arena — main arena untouched.
+    constexpr std::string_view src =
+        "c\"Am C F G\" |> poly(@, ({freq}) -> osc(\"sin\", freq)) |> out(@, @)\n";
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1b: chord() call form does not mutate the AST arena", "[F1b][chord]") {
+    // chord(string) Call form previously called parse_mini(..., const_cast<>).
+    // Phase 1b parses into a codegen scratch arena instead.
+    constexpr std::string_view src =
+        "chord(\"Am C F G\") |> poly(@, ({freq}) -> osc(\"sin\", freq)) |> out(@, @)\n";
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1b: timeline() call form does not mutate the AST arena", "[F1b][timeline]") {
+    // timeline(string) Call form previously re-parsed via const_cast.
+    constexpr std::string_view src = "timeline(\"__/''__\") |> out(@)\n";
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1b: chord pattern inside a transform does not mutate the AST arena",
+          "[F1b][chord][transform]") {
+    // The transpose(chord("…"), …) path in compile_pattern_for_transform also
+    // used to re-parse via const_cast.
+    constexpr std::string_view src =
+        "transpose(chord(\"Am C F G\"), 12) |> poly(@, ({freq}) -> osc(\"sin\", freq)) |> out(@, @)\n";
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1b: MiniLiteralData carries parsed sub-arena", "[F1b][parser]") {
+    // Phase 1b moved the parsed mini-AST into MiniLiteralData::mini_arena.
+    // Round-trip: pat literal → AST → check sub-arena is populated.
+    auto [tokens, lex_diags] = akkado::lex("s\"bd sd hh cp\"", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(lex_diags));
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), "s\"bd sd hh cp\"", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(parse_diags));
+
+    // Walk: Program → ExprStmt → MiniLiteral
+    akkado::NodeIndex mini = ast.arena[ast.root].first_child;
+    REQUIRE(ast.arena[mini].type == akkado::NodeType::MiniLiteral);
+    const auto& lit = ast.arena[mini].as_mini_literal();
+    REQUIRE(lit.mode_marker == "sample");
+    REQUIRE(lit.mini_arena);
+    REQUIRE(lit.mini_root != akkado::NULL_NODE);
+    const akkado::AstArena& mini_arena = *lit.mini_arena;
+    REQUIRE(mini_arena[lit.mini_root].type == akkado::NodeType::MiniPattern);
+    CHECK(mini_arena.child_count(lit.mini_root) == 4);
+    // MiniLiteral has no children in the main arena (parse stopped stitching).
+    CHECK(ast.arena[mini].first_child == akkado::NULL_NODE);
+}
+
+TEST_CASE("F3: Sample-kind atoms cache parse_chord_symbol at parse time",
+          "[F3][chord-cache]") {
+    // Phase 1b folds F3's 5th re-parse site: mini_parser populates chord_*
+    // fields on Sample atoms whose names happen to be valid chord symbols,
+    // so PatternEvaluator can read cached fields without re-parsing.
+    auto [tokens, lex_diags] = akkado::lex(R"(s"C E Am G")", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(lex_diags));
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"C E Am G")", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(parse_diags));
+
+    akkado::NodeIndex mini = ast.arena[ast.root].first_child;
+    const auto& lit = ast.arena[mini].as_mini_literal();
+    const akkado::AstArena& mini_arena = *lit.mini_arena;
+    akkado::NodeIndex pattern = lit.mini_root;
+    // Walk the four atom children; each should be a Sample-kind MiniAtom with
+    // chord fields populated.
+    std::vector<std::string> roots;
+    for (akkado::NodeIndex child = mini_arena[pattern].first_child;
+         child != akkado::NULL_NODE; child = mini_arena[child].next_sibling) {
+        REQUIRE(mini_arena[child].type == akkado::NodeType::MiniAtom);
+        const auto& atom = mini_arena[child].as_mini_atom();
+        REQUIRE(atom.kind == akkado::Node::MiniAtomKind::Sample);
+        roots.push_back(atom.chord_root);
+    }
+    CHECK(roots == std::vector<std::string>{"C", "E", "A", "G"});
+}
+
+TEST_CASE("F3: non-chord sample names leave chord fields empty",
+          "[F3][chord-cache]") {
+    // parse_chord_symbol returns nullopt for non-chord-shaped names like
+    // "kick" / "snare" / "hh". The cached fields stay empty — that's the
+    // signal pattern_eval reads as "treat as Rest in chord mode".
+    auto [tokens, lex_diags] = akkado::lex(R"(s"kick snare hh")", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(lex_diags));
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"kick snare hh")", "<input>");
+    REQUIRE_FALSE(akkado::has_errors(parse_diags));
+
+    akkado::NodeIndex mini = ast.arena[ast.root].first_child;
+    const auto& lit = ast.arena[mini].as_mini_literal();
+    const akkado::AstArena& mini_arena = *lit.mini_arena;
+    akkado::NodeIndex pattern = lit.mini_root;
+    for (akkado::NodeIndex child = mini_arena[pattern].first_child;
+         child != akkado::NULL_NODE; child = mini_arena[child].next_sibling) {
+        const auto& atom = mini_arena[child].as_mini_atom();
+        REQUIRE(atom.kind == akkado::Node::MiniAtomKind::Sample);
+        CHECK(atom.chord_root.empty());
+    }
+}
+
+TEST_CASE("F3: pattern_eval no longer invokes parse_chord_symbol",
+          "[F3][source-invariant]") {
+    // Phase 1b drops the parse_chord_symbol call inside
+    // PatternEvaluator::eval_atom — chord-mode now reads cached MiniAtomData
+    // fields. This static-source check fails the moment a future change adds
+    // the call back. We probe for the call-form `parse_chord_symbol(`, not
+    // the bare name, so post-Phase-1b comments referencing the symbol stay OK.
+    std::ifstream f("akkado/src/pattern_eval.cpp");
+    REQUIRE(f.good());
+    std::string contents((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+    CHECK(contents.find("parse_chord_symbol(") == std::string::npos);
+    // And the corresponding header include should be gone too.
+    CHECK(contents.find("akkado/chord_parser.hpp") == std::string::npos);
 }

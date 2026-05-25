@@ -1,5 +1,4 @@
 #include "akkado/pattern_eval.hpp"
-#include "akkado/chord_parser.hpp"
 #include <cedar/opcodes/dsp_state.hpp>
 #include <algorithm>
 
@@ -45,7 +44,7 @@ void PatternEventStream::offset_time(float offset) {
 // PatternEvaluator implementation
 
 PatternEvaluator::PatternEvaluator(const AstArena& arena)
-    : arena_(arena)
+    : arena_(&arena)
     , rng_(std::random_device{}())
 {}
 
@@ -107,7 +106,7 @@ void PatternEvaluator::eval_node(NodeIndex node, const PatternEvalContext& ctx,
                                   PatternEventStream& stream) {
     if (node == NULL_NODE) return;
 
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
 
     switch (n.type) {
         case NodeType::MiniPattern:
@@ -150,18 +149,18 @@ void PatternEvaluator::eval_pattern(NodeIndex node, const PatternEvalContext& ct
 
     // First pass: calculate total weight (accounting for repeat counts)
     float total_weight = 0.0f;
-    NodeIndex child = arena_[node].first_child;
+    NodeIndex child = (*arena_)[node].first_child;
     while (child != NULL_NODE) {
         auto [weight, count] = get_child_weight_and_count(child);
         total_weight += weight * static_cast<float>(count);
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
     }
 
     if (total_weight <= 0.0f) return;
 
     // Second pass: evaluate with weighted time allocation
     float accumulated = 0.0f;
-    child = arena_[node].first_child;
+    child = (*arena_)[node].first_child;
     while (child != NULL_NODE) {
         auto [weight, count] = get_child_weight_and_count(child);
 
@@ -171,13 +170,13 @@ void PatternEvaluator::eval_pattern(NodeIndex node, const PatternEvalContext& ct
             eval_node_unwrap(child, child_ctx, stream);
             accumulated += weight;
         }
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
     }
 }
 
 void PatternEvaluator::eval_atom(NodeIndex node, const PatternEvalContext& ctx,
                                   PatternEventStream& stream) {
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
     const auto& atom_data = n.as_mini_atom();
 
     PatternEvent event;
@@ -201,16 +200,20 @@ void PatternEvaluator::eval_atom(NodeIndex node, const PatternEvalContext& ctx,
             event.micro_offset = atom_data.micro_offset;
             break;
         case Node::MiniAtomKind::Sample:
-            // In chord mode, try to parse sample name as chord symbol
+            // In chord mode, read the chord fields that the mini-parser already
+            // resolved opportunistically via parse_chord_symbol (PRD Phase 1b /
+            // F3 tail). Empty chord_root => the sample name was not a valid
+            // chord symbol => emit Rest, matching the legacy re-parse-failure
+            // path.
             if (chord_mode_) {
-                auto chord = parse_chord_symbol(atom_data.sample_name);
-                if (chord.has_value()) {
+                if (!atom_data.chord_root.empty()) {
                     event.type = PatternEventType::Chord;
                     event.chord_data = ChordEventData{
-                        .root = chord->root,
-                        .quality = chord->quality,
-                        .intervals = chord->intervals,
-                        .root_midi = chord->root_midi
+                        .root = atom_data.chord_root,
+                        .quality = atom_data.chord_quality,
+                        .intervals = std::vector<int>(atom_data.chord_intervals.begin(),
+                                                       atom_data.chord_intervals.end()),
+                        .root_midi = static_cast<int>(atom_data.chord_root_midi)
                     };
                 } else {
                     // Invalid chord symbol - treat as rest
@@ -264,18 +267,18 @@ void PatternEvaluator::eval_group(NodeIndex node, const PatternEvalContext& ctx,
 
     // First pass: calculate total weight (accounting for repeat counts)
     float total_weight = 0.0f;
-    NodeIndex child = arena_[node].first_child;
+    NodeIndex child = (*arena_)[node].first_child;
     while (child != NULL_NODE) {
         auto [weight, count] = get_child_weight_and_count(child);
         total_weight += weight * static_cast<float>(count);
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
     }
 
     if (total_weight <= 0.0f) return;
 
     // Second pass: evaluate with weighted time allocation
     float accumulated = 0.0f;
-    child = arena_[node].first_child;
+    child = (*arena_)[node].first_child;
     while (child != NULL_NODE) {
         auto [weight, count] = get_child_weight_and_count(child);
 
@@ -285,7 +288,7 @@ void PatternEvaluator::eval_group(NodeIndex node, const PatternEvalContext& ctx,
             eval_node_unwrap(child, child_ctx, stream);
             accumulated += weight;
         }
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
     }
 }
 
@@ -306,10 +309,10 @@ void PatternEvaluator::eval_sequence(NodeIndex node, const PatternEvalContext& c
 void PatternEvaluator::eval_polyrhythm(NodeIndex node, const PatternEvalContext& ctx,
                                         PatternEventStream& stream) {
     // MiniPolyrhythm plays all children simultaneously
-    NodeIndex child = arena_[node].first_child;
+    NodeIndex child = (*arena_)[node].first_child;
     while (child != NULL_NODE) {
         eval_node(child, ctx.inherit(), stream);
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
     }
 }
 
@@ -319,7 +322,7 @@ void PatternEvaluator::eval_polymeter(NodeIndex node, const PatternEvalContext& 
     // Unlike subdivision ([a b c]) which fits children into the parent duration,
     // polymeter plays each child at a step position, cycling through children
     // if step_count > child_count
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
     const auto& poly_data = n.as_mini_polymeter();
 
     std::size_t child_count = count_children(node);
@@ -368,7 +371,7 @@ void PatternEvaluator::eval_choice(NodeIndex node, const PatternEvalContext& ctx
 
 void PatternEvaluator::eval_euclidean(NodeIndex node, const PatternEvalContext& ctx,
                                        PatternEventStream& stream) {
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
     const auto& euclid_data = n.as_mini_euclidean();
 
     // Get the atom child
@@ -397,7 +400,7 @@ void PatternEvaluator::eval_euclidean(NodeIndex node, const PatternEvalContext& 
 
 void PatternEvaluator::eval_modified(NodeIndex node, const PatternEvalContext& ctx,
                                       PatternEventStream& stream) {
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
     const auto& mod_data = n.as_mini_modifier();
 
     // Get the child being modified
@@ -492,14 +495,14 @@ std::vector<bool> PatternEvaluator::generate_euclidean(std::uint8_t hits,
 }
 
 std::size_t PatternEvaluator::count_children(NodeIndex node) const {
-    return arena_.child_count(node);
+    return (*arena_).child_count(node);
 }
 
 NodeIndex PatternEvaluator::get_child(NodeIndex node, std::size_t index) const {
-    NodeIndex child = arena_[node].first_child;
+    NodeIndex child = (*arena_)[node].first_child;
     std::size_t i = 0;
     while (child != NULL_NODE && i < index) {
-        child = arena_[child].next_sibling;
+        child = (*arena_)[child].next_sibling;
         i++;
     }
     return child;
@@ -513,14 +516,14 @@ std::pair<float, int> PatternEvaluator::get_child_weight_and_count(NodeIndex chi
 
     // Walk through modifier chain to find Weight and Repeat
     NodeIndex current = child;
-    while (arena_[current].type == NodeType::MiniModified) {
-        const auto& mod = arena_[current].as_mini_modifier();
+    while ((*arena_)[current].type == NodeType::MiniModified) {
+        const auto& mod = (*arena_)[current].as_mini_modifier();
         if (mod.modifier_type == Node::MiniModifierType::Repeat) {
             count = static_cast<int>(mod.value);
         } else if (mod.modifier_type == Node::MiniModifierType::Weight) {
             weight = mod.value;
         }
-        current = arena_[current].first_child;
+        current = (*arena_)[current].first_child;
         if (current == NULL_NODE) break;
     }
 
@@ -536,12 +539,12 @@ void PatternEvaluator::eval_node_unwrap(NodeIndex node, const PatternEvalContext
     NodeIndex current = node;
     PatternEvalContext current_ctx = ctx;
 
-    while (arena_[current].type == NodeType::MiniModified) {
-        const auto& mod = arena_[current].as_mini_modifier();
+    while ((*arena_)[current].type == NodeType::MiniModified) {
+        const auto& mod = (*arena_)[current].as_mini_modifier();
         if (mod.modifier_type == Node::MiniModifierType::Weight ||
             mod.modifier_type == Node::MiniModifierType::Repeat) {
             // Skip this modifier - parent handled it
-            current = arena_[current].first_child;
+            current = (*arena_)[current].first_child;
             if (current == NULL_NODE) return;
         } else {
             // Other modifier - let eval_node handle it
@@ -555,7 +558,7 @@ void PatternEvaluator::eval_node_unwrap(NodeIndex node, const PatternEvalContext
 std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
     if (node == NULL_NODE) return 1;
 
-    const Node& n = arena_[node];
+    const Node& n = (*arena_)[node];
 
     switch (n.type) {
         case NodeType::MiniPattern: {
@@ -564,7 +567,7 @@ std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
             NodeIndex child = n.first_child;
             while (child != NULL_NODE) {
                 max_cycles = std::max(max_cycles, count_cycles(child));
-                child = arena_[child].next_sibling;
+                child = (*arena_)[child].next_sibling;
             }
             return max_cycles;
         }
@@ -580,7 +583,7 @@ std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
             NodeIndex child = n.first_child;
             while (child != NULL_NODE) {
                 child_max = std::max(child_max, count_cycles(child));
-                child = arena_[child].next_sibling;
+                child = (*arena_)[child].next_sibling;
             }
 
             // Total cycles = number of elements * max child cycles
@@ -595,7 +598,7 @@ std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
             NodeIndex child = n.first_child;
             while (child != NULL_NODE) {
                 max_cycles = std::max(max_cycles, count_cycles(child));
-                child = arena_[child].next_sibling;
+                child = (*arena_)[child].next_sibling;
             }
             return max_cycles;
         }
@@ -617,7 +620,7 @@ std::uint32_t PatternEvaluator::count_cycles(NodeIndex node) const {
             NodeIndex child = n.first_child;
             while (child != NULL_NODE) {
                 max_cycles = std::max(max_cycles, count_cycles(child));
-                child = arena_[child].next_sibling;
+                child = (*arena_)[child].next_sibling;
             }
             return max_cycles;
         }

@@ -1741,22 +1741,30 @@ NodeIndex Parser::parse_mini_literal() {
     content_loc.column += 1;
     content_loc.length = pattern_str.length();  // Content length without quotes
 
-    auto [pattern_ast, mini_diags] = parse_mini(pattern_str, arena_, content_loc, mode);
+    // PRD Phase 1b: parse the mini-notation pattern into a per-literal sub-arena.
+    // The sub-arena is owned by MiniLiteralData on this node; codegen +
+    // pattern_eval read it through `as_mini_literal()` rather than re-parsing.
+    auto mini_arena = std::make_shared<AstArena>();
+    auto [pattern_ast, mini_diags] = parse_mini(pattern_str, *mini_arena, content_loc, mode);
 
-    // Add mini-notation diagnostics to our diagnostics
+    // Tag filename and push into the parser's diagnostic list immediately so
+    // ordering relative to surrounding source diagnostics is preserved.
+    // A copy is also retained on MiniLiteralData for downstream readers.
+    std::vector<Diagnostic> mini_diags_for_node = mini_diags;
     for (auto& diag : mini_diags) {
         diag.filename = filename_;
         diagnostics_.push_back(std::move(diag));
     }
-
-    // Add the parsed pattern as a child
-    if (pattern_ast != NULL_NODE) {
-        arena_.add_child(node, pattern_ast);
+    for (auto& diag : mini_diags_for_node) {
+        diag.filename = filename_;
     }
 
-    // Tag the MiniLiteral so codegen knows the parse mode. Every remaining
-    // token type has an explicit mode marker.
-    arena_[node].data = Node::StringData{.value = mode_marker};
+    arena_[node].data = Node::MiniLiteralData{
+        .mode_marker = mode_marker,
+        .mini_arena = std::move(mini_arena),
+        .mini_root = pattern_ast,
+        .mini_diagnostics = std::move(mini_diags_for_node)
+    };
 
     return node;
 }

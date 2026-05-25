@@ -375,11 +375,15 @@ TEST_CASE("Parser mini-notation", "[parser]") {
         NodeIndex mini = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[mini].type == NodeType::MiniLiteral);
 
-        // First child is the parsed MiniPattern (not StringLit anymore)
-        NodeIndex pattern = ast.arena[mini].first_child;
-        REQUIRE(ast.arena[pattern].type == NodeType::MiniPattern);
+        // PRD Phase 1b: the parsed MiniPattern lives in MiniLiteralData's
+        // sub-arena, not as a first-child of the MiniLiteral node.
+        const auto& lit_data = ast.arena[mini].as_mini_literal();
+        REQUIRE(lit_data.mini_arena);
+        REQUIRE(lit_data.mini_root != NULL_NODE);
+        const AstArena& mini_arena = *lit_data.mini_arena;
+        REQUIRE(mini_arena[lit_data.mini_root].type == NodeType::MiniPattern);
         // MiniPattern should have 2 sample atoms: "bd" and "sd"
-        CHECK(ast.arena.child_count(pattern) == 2);
+        CHECK(mini_arena.child_count(lit_data.mini_root) == 2);
     }
 
     // PRD prd-remove-pat-builtin: the `pat("…", closure)` form is gone.

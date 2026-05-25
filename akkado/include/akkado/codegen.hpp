@@ -709,6 +709,16 @@ public:
     /// identifier-bound patterns through PatternInfo.pattern_node).
     const SymbolTable& symbols() const { return *symbols_; }
 
+    /// PRD Phase 1b: anchor a codegen-time mini-AST sub-arena to this
+    /// CodeGenerator's lifetime. Used by helpers (handle_chord_call,
+    /// compile_pattern_for_transform, handle_timeline_call) when the user
+    /// passes a string-literal pattern arg and we must parse the contents
+    /// without mutating the analyzer's read-only AST arena.
+    AstArena& acquire_mini_scratch_arena() {
+        codegen_mini_arenas_.push_back(std::make_shared<AstArena>());
+        return *codegen_mini_arenas_.back();
+    }
+
     /// Publish a Pattern's `sample_refs` to the global
     /// `required_samples_extended_` ledger, deduplicated by `RequiredSample::key()`.
     /// Single source of registration: every Pattern producer calls this after
@@ -1143,6 +1153,16 @@ private:
     std::vector<ParamDecl> param_decls_;      // Declared parameters
     std::vector<VisualizationDecl> viz_decls_;  // Declared visualizations
     std::vector<BuiltinVarOverride> builtin_var_overrides_;  // Builtin var overrides
+
+    // PRD prd-parser-codegen-correctness.md Phase 1b: codegen-time mini-AST
+    // sub-arenas. Used when the user supplies a string literal to a call-form
+    // pattern builtin (chord("…"), timeline("…"), or a string-literal pattern
+    // arg to a transform). Each call owns its own AstArena; codegen keeps
+    // them in this vector to anchor their lifetime — the SequenceCompiler /
+    // PatternEvaluator hold references into them. Prefix-form mini literals
+    // (n"…", c"…", t"…", …) parse into their MiniLiteralData sub-arena at
+    // parse time and bypass this list.
+    std::vector<std::shared_ptr<AstArena>> codegen_mini_arenas_;
     std::string filename_;
     SourceLocation current_source_loc_;  // Current source location for emitted instructions
 
