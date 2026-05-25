@@ -2681,13 +2681,43 @@ void CodeGenerator::inline_mixer_closure(const MixerCall& mc,
     // mono-only, so a stereo result needs two COPYs; a mono result is
     // broadcast L = R with a W204 warning (prd-bus-routing §3.3).
     if (stereo) {
-        if (rl != bus_l) {
+        // The closure parameter is bound directly to bus_l (and bus_r is
+        // tracked as its stereo pair), so rl/rr may alias the destination
+        // bus buffers. Patterns like `stereo(0, left(sg))` yield
+        // rr == bus_l, and `stereo(right(sg), left(sg))` yields a full
+        // L/R swap. A naive `bus_l ← rl; bus_r ← rr` clobbers bus_l
+        // before bus_r reads it. Reorder or use a temp to break the
+        // read-after-write hazard.
+        const bool swap = (rl == bus_r && rr == bus_l);
+        const bool right_reads_bus_l = (rr == bus_l && rl != bus_r);
+        if (swap) {
+            std::uint16_t tmp = buffers_.allocate();
+            if (tmp == BufferAllocator::BUFFER_UNUSED) {
+                error("E101", "Buffer pool exhausted", mc.call_loc);
+                return;
+            }
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, tmp,
+                                                bus_l));
             emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_l,
-                                                rl));
-        }
-        if (rr != bus_r) {
+                                                bus_r));
+            emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_r,
+                                                tmp));
+        } else if (right_reads_bus_l) {
             emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, bus_r,
                                                 rr));
+            if (rl != bus_l) {
+                emit(cedar::Instruction::make_unary(cedar::Opcode::COPY,
+                                                    bus_l, rl));
+            }
+        } else {
+            if (rl != bus_l) {
+                emit(cedar::Instruction::make_unary(cedar::Opcode::COPY,
+                                                    bus_l, rl));
+            }
+            if (rr != bus_r) {
+                emit(cedar::Instruction::make_unary(cedar::Opcode::COPY,
+                                                    bus_r, rr));
+            }
         }
     } else {
         warn("W204",

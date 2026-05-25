@@ -412,3 +412,169 @@ TEST_CASE("bus-routing: `<` still lexes as a comparison, not a diamond",
     auto r = akkado::compile("out(1 < 3)");
     REQUIRE(r.success);
 }
+
+// ---------------------------------------------------------------------------
+// Regression: mixer-closure stereo copy-back must not clobber bus_l before
+// bus_r reads it. The closure parameter is bound directly to bus_l (and
+// bus_r is its stereo pair), so `left(sg)` / `right(sg)` references inside
+// the closure body alias the destination bus buffers. The naive
+// `bus_l ← rl; bus_r ← rr` ordering creates a read-after-write hazard.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Find bus 0's L/R buffer indices from the prologue clears. The prologue
+// emits exactly two `COPY <bus> ← BUFFER_ZERO` instructions for bus 0 — the
+// first targets bus_0_l, the second bus_0_r.
+struct BusPair { std::uint16_t l = 0xFFFF, r = 0xFFFF; };
+BusPair find_bus0(const std::vector<cedar::Instruction>& insts) {
+    BusPair p;
+    int seen = 0;
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::COPY &&
+            i.inputs[0] == cedar::BUFFER_ZERO) {
+            if (seen == 0) p.l = i.out_buffer;
+            else if (seen == 1) p.r = i.out_buffer;
+            if (++seen == 2) break;
+        }
+    }
+    return p;
+}
+}  // namespace
+
+TEST_CASE("mixer-closure: stereo(0, left(sg)) puts signal on R, silence on L",
+          "[bus][mixer][regression]") {
+    // The reported bug: this exact closure produced silence on both channels
+    // because the copy-back order was `bus_l ← 0; bus_r ← bus_l`, clobbering
+    // bus_l (containing the original signal) before bus_r could read it.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(0, left(sg)))\nout(stereo(0.4, 0.6))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
+    // sg has L=0.4; left(sg) returns the L channel; goes to R output.
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.4f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: stereo(right(sg), 0) symmetric case — silence on R",
+          "[bus][mixer][regression]") {
+    // Symmetric to the reported pattern. rl = bus_r (an unrelated alias —
+    // current order is already safe), rr = const_0 (no alias). The naive
+    // order works here, but we keep the test to lock the symmetric variant.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(right(sg), 0))\nout(stereo(0.4, 0.6))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.6f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: stereo(right(sg), left(sg)) swaps channels",
+          "[bus][mixer][regression]") {
+    // Full swap: rl = bus_r, rr = bus_l. The naive two-COPY order leaves
+    // both channels holding the original right value. The fix uses a temp
+    // buffer to break the cycle.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(right(sg), left(sg)))\n"
+        "out(stereo(0.3, 0.7))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.7f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: stereo(left(sg), right(sg)) identity is preserved",
+          "[bus][mixer][regression]") {
+    // Identity rebuild. rl == bus_l, rr == bus_r — both COPYs are skipped.
+    // Behavior must match `master((s) -> s)`.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(left(sg), right(sg)))\n"
+        "out(stereo(0.3, 0.7))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.7f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: stereo(left(sg) * 2, left(sg)) computed + aliased",
+          "[bus][mixer][regression]") {
+    // rl is a fresh buffer (left(sg) * 2 allocates), rr aliases bus_l.
+    // Same conflict class as `stereo(0, left(sg))`.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(left(sg) * 2, left(sg)))\nout(0.3)");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.6f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: swap closure uses a scratch buffer for the temp",
+          "[bus][mixer][regression]") {
+    // Codegen-level precise check: the swap case (rl=bus_r, rr=bus_l) must
+    // emit three COPYs at the copy-back site — one to a scratch buffer that
+    // is NEITHER bus_l nor bus_r — not a direct bus_r ← bus_l (which would
+    // be the buggy direct read).
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(right(sg), left(sg)))\nout(0.5)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    auto bus = find_bus0(insts);
+    REQUIRE(bus.l != 0xFFFF);
+    REQUIRE(bus.r != 0xFFFF);
+
+    // The fix emits: COPY tmp ← bus_l; COPY bus_l ← bus_r; COPY bus_r ← tmp.
+    // The buggy order would have been: COPY bus_l ← bus_r; COPY bus_r ← bus_l.
+    // Precise contract: no COPY exists with dst==bus_r and src==bus_l.
+    bool has_direct_swap = false;
+    for (const auto& i : insts) {
+        if (i.opcode == cedar::Opcode::COPY &&
+            i.out_buffer == bus.r && i.inputs[0] == bus.l) {
+            has_direct_swap = true;
+            break;
+        }
+    }
+    CHECK_FALSE(has_direct_swap);
+}
+
+TEST_CASE("mixer-closure: conflict case emits bus_r write before bus_l write",
+          "[bus][mixer][regression]") {
+    // Codegen-level precise check for the reorder case. The fix moves the
+    // `bus_r ← bus_l` COPY ahead of the `bus_l ← <zero>` COPY so bus_l is
+    // read before being overwritten.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(0, left(sg)))\nout(0.5)");
+    REQUIRE(r.success);
+    auto insts = get_instructions(r);
+    auto bus = find_bus0(insts);
+    REQUIRE(bus.l != 0xFFFF);
+    REQUIRE(bus.r != 0xFFFF);
+
+    // Find the closure-emitted COPYs into bus_l and bus_r. Both prologue
+    // clears (src == BUFFER_ZERO) come first and are skipped here. We look
+    // for the first non-prologue COPY into each bus buffer.
+    auto find_first_post_prologue_copy_to = [&](std::uint16_t dst) -> int {
+        int prologue_seen = 0;
+        for (int idx = 0; idx < static_cast<int>(insts.size()); ++idx) {
+            const auto& i = insts[idx];
+            if (i.opcode == cedar::Opcode::COPY &&
+                i.inputs[0] == cedar::BUFFER_ZERO &&
+                prologue_seen < 2) {
+                ++prologue_seen;
+                continue;
+            }
+            if (i.opcode == cedar::Opcode::COPY && i.out_buffer == dst) {
+                return idx;
+            }
+        }
+        return -1;
+    };
+    int idx_l = find_first_post_prologue_copy_to(bus.l);
+    int idx_r = find_first_post_prologue_copy_to(bus.r);
+    REQUIRE(idx_l >= 0);
+    REQUIRE(idx_r >= 0);
+    // The COPY that reads bus_l (writing into bus_r) must come before the
+    // COPY that overwrites bus_l with the zero constant.
+    CHECK(idx_r < idx_l);
+    // And the bus_r COPY's source must still be bus_l (not the clobbered
+    // value via some indirection).
+    CHECK(insts[idx_r].inputs[0] == bus.l);
+}
