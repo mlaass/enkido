@@ -2,12 +2,29 @@
 
 find_package(SDL2 REQUIRED)
 
+# Bytecode disassembly formatter. Lifted into its own static library so
+# akkado/tests/test_bytecode_snapshot.cpp can link the formatter without
+# pulling in the rest of the CLI binary.
+add_library(nkido_bytecode_dump STATIC
+    bytecode_dump.cpp
+)
+
+target_include_directories(nkido_bytecode_dump
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(nkido_bytecode_dump
+    PUBLIC
+        cedar
+    PRIVATE
+        nkido_compiler_options
+)
+
 add_executable(nkido-cli
     main.cpp
     audio_engine.cpp
     asset_loader.cpp
     bytecode_loader.cpp
-    bytecode_dump.cpp
     midi_input.cpp
     program_loader.cpp
     serve_mode.cpp
@@ -22,6 +39,7 @@ target_link_libraries(nkido-cli
         cedar
         SDL2::SDL2
         rtmidi
+        nkido_bytecode_dump
         nkido_compiler_options
 )
 

@@ -70,4 +70,17 @@ target_link_libraries(akkado_tests
         Catch2::Catch2WithMain
 )
 
+# Phase 0 of prd-parser-codegen-correctness.md: bytecode-disassembly
+# snapshot harness. Reuses the formatter from tools/nkido-cli, so the
+# test only builds when tools are enabled (default ON).
+if(NKIDO_BUILD_TOOLS)
+    target_sources(akkado_tests PRIVATE test_bytecode_snapshot.cpp)
+    target_link_libraries(akkado_tests PRIVATE nkido_bytecode_dump)
+    target_compile_definitions(akkado_tests
+        PRIVATE
+            AKKADO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+            AKKADO_TEST_SNAPSHOTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/snapshots"
+    )
+endif()
+
 catch_discover_tests(akkado_tests)

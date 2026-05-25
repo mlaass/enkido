@@ -1,0 +1,26 @@
+# fixture: 04_spread_args.ak
+# main: 20, blocks: 0, total: 20
+
+Cedar Bytecode - 20 instructions
+============================================================
+0000: COPY          buf[11 ] <- buf[255]
+0001: COPY          buf[12 ] <- buf[255]
+0002: PUSH_CONST    buf[0  ] = 800.000
+0003: PUSH_CONST    buf[1  ] = 0.500
+0004: PUSH_CONST    buf[2  ] = 440.000
+0005: PUSH_CONST    buf[3  ] = 0.500
+0006: PUSH_CONST    buf[4  ] = 0.000
+0007: PUSH_CONST    buf[5  ] = 0.000
+0008: OSC_SIN       buf[6  ] freq=buf[2]  state: 0x57a9f609
+0009: PUSH_CONST    buf[7  ] = 0.000
+0010: PUSH_CONST    buf[8  ] = 1.000
+0011: FILTER_SVF_LP buf[9  ] in=buf[6] freq=buf[0] q=buf[1]  state: 0x1e331bc2
+0012: OUTPUT        buf[11 ] <- buf[9]
+0013: PUSH_CONST    buf[13 ] = 0.900
+0014: DISTORT_SOFT  buf[11 ] in0=buf[11] in1=buf[13]
+0015: PUSH_CONST    buf[13 ] = -1.000
+0016: PUSH_CONST    buf[14 ] = 1.000
+0017: CLAMP         buf[11 ] <- buf[11], buf[13], buf[14]
+0018: CLAMP         buf[12 ] <- buf[12], buf[13], buf[14]
+0019: OUTPUT        buf[65535] <- buf[11]
+============================================================

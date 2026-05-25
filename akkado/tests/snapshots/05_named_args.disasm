@@ -1,0 +1,19 @@
+# fixture: 05_named_args.ak
+# main: 13, blocks: 0, total: 13
+
+Cedar Bytecode - 13 instructions
+============================================================
+0000: COPY          buf[3  ] <- buf[255]
+0001: COPY          buf[4  ] <- buf[255]
+0002: PUSH_CONST    buf[0  ] = 1.000
+0003: PUSH_CONST    buf[1  ] = 99.000
+0004: ADD           buf[2  ] <- buf[0], buf[1]
+0005: OUTPUT        buf[3  ] <- buf[2]
+0006: PUSH_CONST    buf[5  ] = 0.900
+0007: DISTORT_SOFT  buf[3  ] in0=buf[3] in1=buf[5]
+0008: PUSH_CONST    buf[5  ] = -1.000
+0009: PUSH_CONST    buf[6  ] = 1.000
+0010: CLAMP         buf[3  ] <- buf[3], buf[5], buf[6]
+0011: CLAMP         buf[4  ] <- buf[4], buf[5], buf[6]
+0012: OUTPUT        buf[65535] <- buf[3]
+============================================================

@@ -1,7 +1,22 @@
-> **Status: NOT STARTED** — Filed 2026-05-25 as the correctness follow-up
-> to [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
+> **Status: IN PROGRESS — Phase 0 SHIPPED, 6 phases remaining.** Filed
+> 2026-05-25 as the correctness follow-up to
+> [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Phases land independently after Phase 1a; the audit's complexity-sink
 > findings are deferred to separate PRDs.
+>
+> - **Phase 0 (snapshot harness) — SHIPPED 2026-05-25.** Per-fixture
+>   bytecode-disassembly snapshot test at
+>   `akkado/tests/test_bytecode_snapshot.cpp`, fixtures under
+>   `akkado/tests/fixtures/`, baselines under `akkado/tests/snapshots/`.
+>   Regen with `NKIDO_UPDATE_SNAPSHOTS=1 ./build/akkado/tests/akkado_tests "[snapshot]"`.
+>   The bytecode-disassembly formatter was extracted into a
+>   `nkido_bytecode_dump` static library so tests can link it without
+>   pulling in the CLI. See §8 *Snapshot harness*. **Note for Phase 2
+>   implementer:** the F7 fixture `06_power_op.ak` already snapshots
+>   `2^3^2 → 512` (right-assoc) on master. Pratt math says the existing
+>   no-op cast at `parser.cpp:1455` is actually correct because the
+>   left-assoc branch passes `p+1`; F7's premise should be re-validated
+>   before Phase 2 work begins.
 >
 > **Per-phase documentation protocol (mandatory).** On completion of
 > each phase, the implementing PR must also (a) update this PRD's

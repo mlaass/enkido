@@ -1,0 +1,31 @@
+# fixture: 02_pattern_mini.ak
+# main: 25, blocks: 0, total: 25
+
+Cedar Bytecode - 25 instructions
+============================================================
+0000: COPY          buf[16 ] <- buf[255]
+0001: COPY          buf[17 ] <- buf[255]
+0002: SEQPAT_QUERY  buf[65535]  state: 0x8c250310
+0003: SEQPAT_STEP   buf[0  ] in0=buf[1] in1=buf[2] in2=buf[0]  state: 0x8c250310
+0004: SEQPAT_GATE   buf[3  ] in0=buf[0]  state: 0x8c250310
+0005: SEQPAT_TYPE   buf[4  ] in0=buf[0]  state: 0x8c250310
+0006: SEQPAT_FIELD  buf[6  ] in0=buf[0]  state: 0x8c250310
+0007: SEQPAT_FIELD  buf[7  ] in0=buf[0]  state: 0x8c250310
+0008: SEQPAT_FIELD  buf[8  ] in0=buf[0]  state: 0x8c250310
+0009: SEQPAT_FIELD  buf[5  ] in0=buf[0]  state: 0x8c250310
+0010: SEQPAT_FIELD  buf[10 ] in0=buf[0]  state: 0x8c250310
+0011: SEQPAT_PHASE  buf[9  ] in0=buf[0]  state: 0x8c250310
+0012: PUSH_CONST    buf[11 ] = 0.500
+0013: PUSH_CONST    buf[12 ] = 0.000
+0014: PUSH_CONST    buf[13 ] = 0.000
+0015: OSC_SIN       buf[14 ] freq=buf[0]  state: 0x46deb883
+0016: MUL           buf[15 ] <- buf[14], buf[1]
+0017: OUTPUT        buf[16 ] <- buf[15]
+0018: PUSH_CONST    buf[18 ] = 0.900
+0019: DISTORT_SOFT  buf[16 ] in0=buf[16] in1=buf[18]
+0020: PUSH_CONST    buf[18 ] = -1.000
+0021: PUSH_CONST    buf[19 ] = 1.000
+0022: CLAMP         buf[16 ] <- buf[16], buf[18], buf[19]
+0023: CLAMP         buf[17 ] <- buf[17], buf[18], buf[19]
+0024: OUTPUT        buf[65535] <- buf[16]
+============================================================
