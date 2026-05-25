@@ -1,13 +1,18 @@
-> **Status: READY FOR IMPLEMENTATION.** Phase 1 of
-> [`prd-parameter-type-annotations.md`](prd-parameter-type-annotations.md)
-> landed on `master` 2026-05-23 (commits `599a692`, `d579c3c`,
-> `4e9b618`, `ecbd317`, `4c2ca4c`) — local only, not released. This
-> PRD is the deferred follow-up named in Phase 1 §9, **plus a small
-> Phase 1 retrofit**: it renames the `: stream` keyword to `: evs`
-> and adds a `: sig` alias for `: signal`. Both retrofits are in
-> scope because Phase 1 hasn't shipped externally and the
-> abbreviation policy resolved in P2-Q13 applies to the entire
-> annotation surface.
+> **Status: SHIPPED (2026-05-25)** — Phase 2 landed as a single
+> commit `1b7b317` (`feat(akkado): param-type annotations Phase 2
+> (evs/sig/num/rec/arr/str/fn)`). All seven annotation keywords are
+> live: the Phase 1 retrofit (`stream`→`evs` rename, `sig` alias
+> for `signal`) plus the five new keywords (`num`, `rec`, `arr`,
+> `str`, `fn`). Mechanism mirrors Phase 1: lexer keyword → parser
+> annotation dispatch → `ParamValueType` → codegen precondition
+> (`E184` on mismatch). Only one new `ParamValueType` variant
+> (`Number`); the other four already existed for builtin use.
+> Codegen gained five else-if branches in `handle_user_function_call`
+> plus one new binding branch (`:rec` receiving `Pattern` preserves
+> the `Pattern` `TypedValue` so `r.freq` resolves in the body).
+> Tests: 30 type-annotation cases (192 assertions). The original
+> design-blocking-prerequisites checklist in §12 is retained below
+> for historical reference.
 >
 > **Caveat — Phase 5 Commit I (2026-05-22, `00a8d34`) collapsed
 > `ValueType::EventSource` into `ValueType::Pattern`.** Runtime
@@ -993,18 +998,20 @@ L2) and is not used here.
 
 ## 12. Next Step
 
-All design-blocking prerequisites are cleared:
+Phase 2 is shipped (`1b7b317`, 2026-05-25). All seven annotation
+keywords (`evs`, `sig`/`signal`, `num`, `rec`, `arr`, `str`, `fn`)
+are live and tested.
 
-1. ✅ Phase 1 of `prd-parameter-type-annotations.md` landed locally
-   (`stream`/`signal` annotations, `ParamValueType::Stream`,
-   dispatch, tests, doc) — not released externally.
-2. ✅ All fourteen Phase 2 design decisions resolved (§11).
-3. ✅ In-tree breakage check clean (§8.5).
-4. ✅ Existing builtin `type_compatible()` already covers the four
-   non-Number types — only the Number case is new.
+Beyond-PRD work landed in the same commit:
 
-**Implementation may begin at Phase 2 step 2.1** (Phase 1 retrofit:
-rename `stream`→`evs`, add `sig` alias, update Phase 1 tests +
-stdlib + concept doc), proceeding through the steps in §9. Each
-step is independently testable; the §10.3 end-to-end examples are
-the final acceptance check.
+- Fixed a pre-existing `parse_prefix` infinite-loop bug (default
+  case didn't advance), unmasked when the new reserved keywords
+  reach expression position.
+- Renamed identifier uses across 13 test files (PRD §8.5 only
+  checked `.ak` files, missed C++ `R"(...)"` strings).
+- Defensive `std::holds_alternative` guards in `parse_number` /
+  `parse_string` and 3 other literal-token consumers to surface
+  `E185` instead of crashing on `std::bad_variant_access` if the
+  `num` / `str` keywords leak into expression position.
+
+No follow-up PRD is queued for the annotation surface itself.
