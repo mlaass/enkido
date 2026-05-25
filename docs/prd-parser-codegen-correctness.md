@@ -23,7 +23,14 @@ complexity-sink findings (codegen sprawl, dispatcher fragmentation,
 pattern-transform boilerplate) are explicitly **out of scope** here and
 covered by separate PRDs.
 
-The six findings:
+One adjacent **High**-severity finding (**F3** — mini-notation re-parsed
+up to 5×) shares its mechanism with F1: 4 of F3's 5 re-parse sites are
+the same `const_cast<AstArena&>` re-parses Phase 1b removes. The 5th
+site (`pattern_eval.cpp:206`, chord-symbol re-parse at evaluation time)
+is folded into Phase 1b's scope so the audit's "parse-once-store-once"
+headline lands in one phase rather than leaving a one-day tail.
+
+The findings:
 
 | # | Finding | Severity | Phase |
 |---|---|---|---|
@@ -33,6 +40,7 @@ The six findings:
 | F8 | Mini-lexer never bumps `line_` across `\n` | Critical | 2 |
 | F14 | `voicing_registry` leaks state across compiles | Critical | 4 |
 | F12 | Lexers don't intern strings (16× rehash per compile) | Critical | 5 |
+| F3 | Mini-notation re-parsed up to 5× per string | High (tail) | 1b |
 
 **Key Design Decisions** (locked — see §10 for sourcing):
 
@@ -60,6 +68,17 @@ The six findings:
   `const_cast<AstArena&>` codegen-time re-parses are deleted. Sub-arena
   destroyed with the literal; thread-local during future parallel
   mini-parse.
+- **Sample-atom chord caching at parse time (F3 tail).** Phase 1b also
+  closes F3's 5th re-parse site (`pattern_eval.cpp:206`). When the
+  mini-parser builds a `Sample`-kind atom, it opportunistically calls
+  `parse_chord_symbol(sample.name)` and, on success, writes the result
+  into the atom's existing `chord_root` / `chord_quality` /
+  `chord_intervals` / `chord_root_midi` fields. `PatternEvaluator`'s
+  chord-mode branch reads those fields directly instead of re-parsing
+  the string. Failure path is unchanged (empty chord fields → treated
+  as Rest). After Phase 1b, `parse_chord_symbol` is invoked at parse
+  time only and `MiniAtomData`'s chord fields become the single source
+  of truth, satisfying the audit's "parse-once-store-once" goal.
 - **Codegen emit helpers become `CodeGenerator&` methods.** The free
   `codegen::emit_push_const(buffers_, stream_, val)` shape is deleted;
   the method `cg.emit_push_const(val)` routes through `emit()` which
@@ -267,6 +286,44 @@ per compile. The architecture overview in `CLAUDE.md` claims "String
 interning with FNV-1a hashing for fast identifier comparison" — the
 actual lexer ignores it.
 
+### 1.7 F3 — Mini-notation re-parsed up to 5× per string (tail folded into Phase 1b)
+
+The audit (§F3) enumerates 6 invocation sites for mini-notation /
+chord-symbol parsing (1 correct + 5 redundant). Phase 1b kills all 5
+redundant ones:
+
+| # | Site | What it does |
+|---|---|---|
+| 1 | `parser.cpp:1744` | Initial parse during `parse_mini_literal`. **Correct.** |
+| 2 | `codegen_patterns.cpp:1778` | Codegen-time chord re-parse via `const_cast`. Killed by Phase 1b sub-arena. |
+| 3 | `codegen_patterns.cpp:2133` | Codegen-time generic pattern-arg re-parse via `const_cast`. Killed by Phase 1b. |
+| 4 | `codegen_patterns.cpp:2183` | Codegen-time chord-in-transform re-parse via `const_cast`. Killed by Phase 1b. |
+| 5 | `codegen_patterns.cpp:2983` | Codegen-time timeline-curve re-parse via `const_cast`. Killed by Phase 1b. |
+| 6 | `pattern_eval.cpp:206` | `PatternEvaluator` re-parses chord symbols at evaluation time, bypassing `MiniAtomData`'s already-allocated chord fields. **Killed by Phase 1b sample-atom caching.** |
+
+Mechanism at site 6: when `chord_mode_` is on and the atom is
+`MiniAtomKind::Sample`, `evaluate_atom` calls
+`parse_chord_symbol(atom_data.sample_name)` to convert a sample-shaped
+token (e.g. `"Am7"` lexed as a sample) into a chord. The `MiniAtomData`
+struct *already* has `chord_root` / `chord_quality` / `chord_intervals`
+/ `chord_root_midi` fields populated by the mini-parser's
+`parse_chord_atom` path (`mini_parser.cpp:332-352`) — but only for
+chord-token atoms, not sample-token atoms.
+
+Why it bites: a single failure cascades into different diagnostics
+depending on which layer caught it (audit F3 mechanism). After Phase
+1b's Sample-atom caching, the mini-parser is the single source of
+truth for chord parsing; pattern_eval and codegen both read fields.
+
+Phase 1b scope addition: the mini-parser's `parse_sample_atom`
+(`mini_parser.cpp:309-330`) attempts `parse_chord_symbol(sample.name)`
+opportunistically and writes the result (or empty fallback) into the
+new atom's chord fields. `PatternEvaluator::evaluate_atom`
+(`pattern_eval.cpp:197-224`) drops the `parse_chord_symbol(...)` call
+and reads from `atom_data.chord_root` / `chord_quality` /
+`chord_intervals` / `chord_root_midi` instead, treating empty
+`chord_root` as the parse-failed case.
+
 ---
 
 ## 2. Goals and Non-Goals
@@ -288,7 +345,15 @@ actual lexer ignores it.
    carries a `SymbolId(u32)`, not a `std::string`. Lookup is O(1) with
    no rehash. Identifier copies through the parser/analyzer chain go
    away.
-7. **Every fixed bug has a precise regression test** + the two
+7. **Parse-once-store-once for chord and mini-notation strings.**
+   `parse_chord_symbol` is invoked at parse time only;
+   `MiniAtomData`'s chord fields are authoritative for every downstream
+   consumer (codegen, pattern_eval). `parse_mini` is invoked from
+   `Parser::parse_mini_literal` only; the sub-arena handle on
+   `MiniLiteralData` is authoritative for every downstream consumer.
+   After this PRD, `grep -n 'parse_chord_symbol\|parse_mini(' akkado/src/`
+   shows zero hits outside parser-stage code.
+8. **Every fixed bug has a precise regression test** + the two
    cross-cutting invariants are asserted in production code.
 
 ### Non-Goals
@@ -632,14 +697,19 @@ using TokenValue = std::variant<std::monostate, NumericValue, SymbolId, StringLi
 
 ---
 
-### Phase 1b — Mini-notation parse-at-parse-time (F1 part 2)
+### Phase 1b — Mini-notation parse-at-parse-time (F1 part 2 + F3 tail)
 
 **Scope.** Introduce a `MiniLiteralData` variant arm on `Node::data`,
 parse mini-notation strings into per-pattern sub-arenas at parse time,
 and delete the 4 `const_cast<AstArena&>` codegen-time re-parses in
-`codegen_patterns.cpp`.
+`codegen_patterns.cpp`. **Additionally** close F3's 5th re-parse site
+by caching `parse_chord_symbol` results on Sample-kind `MiniAtomData`
+at parse time, and switching `PatternEvaluator`'s chord-mode branch to
+read those fields instead of re-parsing.
 
-**Approach.** Today `parser.cpp:1759` sets
+**Approach.**
+
+Part 1 — `MiniLiteralData` sub-arena. Today `parser.cpp:1759` sets
 `arena_[node].data = Node::StringData{mode_marker}` and
 `parser.cpp:1754` stitches the parsed mini-AST as a child via
 `arena_.add_child(node, pattern_ast)`. Phase 1b adds a dedicated
@@ -653,12 +723,37 @@ sub-arena, parses into it, captures diagnostics, sets
 that previously read `as_string()` on a `MiniLiteral` node migrate to
 `as_mini_literal().mode_marker`.
 
+Part 2 — Sample-atom chord caching (F3 tail). Today
+`mini_parser.cpp:309-330` (`parse_sample_atom`) initialises Sample-kind
+`MiniAtomData` with empty `chord_root` / `chord_quality` /
+`chord_intervals` / `chord_root_midi` fields, leaving the chord-symbol
+parse to runtime. Phase 1b invokes `parse_chord_symbol(sample.name)`
+inside `parse_sample_atom` and writes the result into those four
+fields on success; on failure the fields stay empty (current behavior).
+`PatternEvaluator::evaluate_atom`'s `MiniAtomKind::Sample` branch at
+`pattern_eval.cpp:197-224` is rewritten to read
+`atom_data.chord_root` (and siblings) directly when `chord_mode_` is
+on, treating empty `chord_root` as the "not a valid chord symbol →
+Rest" case. The `#include <akkado/chord_parser.hpp>` in
+`pattern_eval.cpp` is removed (no parser dependency from runtime).
+
+Costs of Part 2: every Sample-kind atom pays one `parse_chord_symbol`
+call at parse time even when it's not consumed in chord mode. The
+function is pure, branches on the first character (`[A-G]`), and
+returns `nullopt` cheaply for non-chord-shaped names — measured cost
+in the parser is negligible compared to mini-lex overhead. The win is
+mechanical: `parse_chord_symbol` exists in exactly one execution path
+(parser) instead of two (parser + evaluator), and `MiniAtomData`'s
+chord fields are the single source of truth.
+
 **Files touched.**
 
 | File | Change |
 |---|---|
 | `akkado/include/akkado/ast.hpp` | Add `MiniLiteralData` struct (4 fields) and add it as a variant arm of `Node::data`. Add `as_mini_literal()` accessor mirroring the other `as_*` helpers. |
 | `akkado/src/parser.cpp:1705-1762` | Construct sub-arena; parse into it; set `MiniLiteralData` on the node; remove the `add_child` call at line 1754; remove the `StringData` assignment at line 1759. |
+| `akkado/src/mini_parser.cpp:309-330` | In `parse_sample_atom`, call `parse_chord_symbol(sample.name)` opportunistically and write `chord_root` / `chord_quality` / `chord_intervals` / `chord_root_midi` on success; leave empty on failure. Add `#include <akkado/chord_parser.hpp>`. |
+| `akkado/src/pattern_eval.cpp:197-224` | Rewrite `MiniAtomKind::Sample` chord-mode branch to read cached `chord_root` (and siblings) from `atom_data` instead of calling `parse_chord_symbol`. Empty `chord_root` ⇒ Rest. Remove `#include <akkado/chord_parser.hpp>`. |
 | `akkado/src/codegen_patterns.cpp:1778` | Replace `parse_mini(..., const_cast<AstArena&>)` with read of `ast_->arena[node].as_mini_literal().mini_arena`. |
 | `akkado/src/codegen_patterns.cpp:2133` | Same. |
 | `akkado/src/codegen_patterns.cpp:2183` | Same. |
@@ -667,7 +762,8 @@ that previously read `as_string()` on a `MiniLiteral` node migrate to
 | `akkado/src/analyzer.cpp` (MiniLiteral handling at `:240`, `:267`, `:727`, `:2326`) | Migrate any `as_string()` reads on MiniLiteral nodes. |
 | `akkado/src/shape_index.cpp` | Migrate MiniLiteral mode-marker read. |
 | `akkado/src/akkado.cpp` | Merge `MiniLiteralData::mini_diagnostics` into per-pass diagnostics with `SourceMap::adjust_all`. |
-| `akkado/tests/test_codegen.cpp` | Phase 1b regression test (no codegen-time arena growth). |
+| `akkado/tests/test_codegen.cpp` | Phase 1b regression tests (no codegen-time arena growth + chord-cache parity). |
+| `akkado/tests/test_pattern_eval.cpp` (or `test_mini_notation.cpp`) | F3-tail regression: chord-mode pattern with cached vs uncached chord produces identical events. |
 
 **Pre-implementation sweep.** Before opening the Phase 1b PR, run
 `grep -rn 'as_string()\|NodeType::MiniLiteral' akkado/src/ akkado/include/`
@@ -683,11 +779,20 @@ implementer's call-site map.
   zero after Phase 1b.)
 - Every codegen function signature taking `Ast&` is rewritten to
   `const Ast&`.
+- `grep -n 'parse_chord_symbol' akkado/src/` returns hits **only** in
+  parser-stage files (`mini_parser.cpp`, `chord_parser.cpp`, and the
+  existing `parser.cpp` call sites if any). No hits in
+  `pattern_eval.cpp`, `codegen*.cpp`, or `analyzer.cpp`.
+- `grep -n 'parse_mini(' akkado/src/` returns hits only in parser-stage
+  files. No hits in `codegen*.cpp`.
 - All existing mini-notation tests pass byte-identical sequence output
   (verified via Phase 0 snapshot harness).
+- Chord-mode pattern test: `pat("C E Am G").chord()` produces identical
+  `PatternEvent` chord_data before and after Phase 1b.
 - **Docs updated per §11 protocol** — PRD status block reflects
-  `Phase 1b: SHIPPED <commit> <date>`; audit doc marks F1 (part 2)
-  resolved and updates the F1 row to "resolved" overall.
+  `Phase 1b: SHIPPED <commit> <date>`; audit doc marks F1 (part 2) and
+  F3 (5th site) resolved, updates the F1 row to "resolved" overall, and
+  adds a RESOLVED tag to the F3 finding header.
 
 ---
 
@@ -994,6 +1099,30 @@ contributors.
   behavior).
 - **Mini-notation in const expressions.** const_eval doesn't currently
   enter mini-notation; sub-arena is opaque to const_eval. No change.
+- **Sample atom name that happens to look like a chord but isn't used
+  as one.** `pat("kick snare hh")` lexes as Sample atoms; the parser
+  attempts `parse_chord_symbol("kick")` which returns `nullopt` (no
+  uppercase root). Chord fields stay empty. Cost: 3 cheap `nullopt`
+  returns per such pattern at parse time. No behavioral change in
+  non-chord mode.
+- **Sample atom name that IS a valid chord but used as a sample.**
+  `pat("C E G").sample()` — parser caches chord fields on each atom,
+  but `chord_mode_ == false` at evaluation time so pattern_eval reads
+  `sample_name` as before. Cached fields are dead weight; harmless.
+- **Sample atom name that's a valid chord and used in chord mode.**
+  `pat("C E Am G").chord()` — parser cached fields. pattern_eval reads
+  `atom_data.chord_root` (`"C"`, `"E"`, `"A"`, `"G"`) directly. Output
+  identical to today.
+- **Chord lookup failure in chord mode.** `pat("xyz").chord()` —
+  parser's `parse_chord_symbol("xyz")` returns `nullopt`, chord fields
+  stay empty. pattern_eval sees empty `chord_root` and emits Rest. No
+  diagnostic change (same as today's failure path).
+- **Tests asserting current chord-mode diagnostic behavior.** Today
+  pattern_eval silently emits Rest on chord-symbol parse failure; no
+  diagnostic. The migration preserves this (parser's
+  `parse_chord_symbol` failure on a Sample atom is non-diagnostic — a
+  Sample atom is a valid form even if it isn't also a chord). No
+  diagnostic regressions expected.
 
 ### Phase 2 (`^` + mini-lexer)
 
@@ -1111,6 +1240,21 @@ with reviewer sign-off.
   parser-stage diagnostic list, not codegen-stage.
 - `test_parser.cpp [F1b]`: `MiniLiteralData::mini_arena` populated for
   every parsed mini-literal; root index reachable.
+- `test_mini_notation.cpp [F3]`: parse `pat("C E Am G").chord()`;
+  assert every Sample-kind atom in the sub-arena has `chord_root` set
+  (`"C"`, `"E"`, `"A"`, `"G"`).
+- `test_mini_notation.cpp [F3]`: parse `pat("kick snare hh")`; assert
+  every Sample-kind atom has empty `chord_root` (failed
+  `parse_chord_symbol` left fields empty).
+- `test_pattern_eval.cpp [F3]`: evaluate `pat("C E Am G").chord()` and
+  assert the emitted `PatternEvent::chord_data` matches today's
+  byte-for-byte output. Snapshot the event stream (root, quality,
+  intervals, root_midi) and diff against a checked-in expectation.
+- `test_pattern_eval.cpp [F3]`: evaluate `pat("xyz").chord()`; assert
+  emitted event is `Rest` (parse-failure path).
+- `test_pattern_eval.cpp [F3]`: `grep`-style invariant — fail the test
+  if `pattern_eval.cpp` contains the token `parse_chord_symbol` (build
+  a one-shot check that scans the source file).
 
 ### Phase 2 tests
 
@@ -1240,14 +1384,17 @@ cmake --build build --target akkado_tests
 | `akkado/src/codegen_arrays.cpp` | 3 | Internal helper-call rewrites |
 | `akkado/src/lexer.cpp` | 5 | `make_token(type, intern(text))` everywhere |
 | `akkado/src/mini_lexer.cpp` | 2, 5 | `advance` bumps `line_`; `current_location` uses local `line_`; interning |
+| `akkado/src/mini_parser.cpp` | 1b | `parse_sample_atom` opportunistically calls `parse_chord_symbol(sample.name)` and caches result on `MiniAtomData`'s chord fields (F3 tail) |
 | `akkado/src/parser.cpp` | 1b, 2, 5 | Sub-arena mini-parse; `^` right-assoc fix; 15+ identifier-handling sites use `SymbolId` |
+| `akkado/src/pattern_eval.cpp` | 1b | `MiniAtomKind::Sample` chord-mode branch reads cached `chord_root` (and siblings) from `MiniAtomData` instead of calling `parse_chord_symbol`; drop `chord_parser.hpp` include (F3 tail) |
 | `akkado/src/shape_index.cpp` | 5 | Interner-aware identifier handling (shape_index AST share is PRD-2, not here) |
 | `akkado/src/symbol_table.cpp` | 5 | Lookup on `SymbolId`; remove 16+ FNV rehash sites |
 | `akkado/src/voicing.cpp` | 4 | Delete process-globals; impl `VoicingRegistry` |
 | `akkado/tests/test_codegen.cpp` | 1a,1b,3,4 | F1a/F1b/F2/F14 regression tests |
 | `akkado/tests/test_lexer.cpp` | 5 | F12 interner tests |
-| `akkado/tests/test_mini_notation.cpp` | 2 | F8 multi-line position tests |
+| `akkado/tests/test_mini_notation.cpp` | 2, 1b | F8 multi-line position tests; F3 chord-cache parser tests |
 | `akkado/tests/test_parser.cpp` | 2 | F7 right-assoc tests |
+| `akkado/tests/test_pattern_eval.cpp` | 1b | F3 chord-mode event-stream parity + `parse_chord_symbol` scan invariant (new file if not already present) |
 | `akkado/tests/test_symbol_table.cpp` | 5 | F12 lookup-by-id tests |
 
 ### Files explicitly NOT changed
@@ -1286,6 +1433,7 @@ cmake --build build --target akkado_tests
 | Voicing free fn names corrected: `register_voicing` / `lookup_voicing` (not `addVoicing` / `lookupVoicing`) | Review pass 2026-05-25 |
 | Structural-hash invariant (not byte-hash) | Review pass 2026-05-25 |
 | Phase 5 perf criterion → "PR must include before/after numbers" | Review pass 2026-05-25 |
+| F3's 5th re-parse site (`pattern_eval.cpp:206`) folded into Phase 1b scope (Sample-atom chord caching) so the audit's "parse-once-store-once" goal lands in one phase | Review pass 2026-05-25 (post-filing) |
 
 ---
 
@@ -1370,6 +1518,7 @@ For convenience when editing:
 |---|---|---|
 | F1 (codegen AST mutation) | 1a + 1b | PRD-1 |
 | F2 (source-loc desync) | 3 | PRD-5 (note: PRD-5 also bundled F10/builder work, **not** in scope here — only mark the F2 portion shipped) |
+| F3 (mini-notation re-parsed 5×) | 1b | PRD-1 (folded into the same row as F1; mark F3 resolved alongside F1) |
 | F7 (`^` right-assoc) | 2 | PRD-10 (mark the `^` fix shipped; rest of PRD-10 — Pratt table unification — stays open) |
 | F8 (mini-lexer multi-line) | 2 | PRD-8 (mark line-tracking shipped; rest of PRD-8 — lex_primitives extract — stays open) |
 | F12 (string interning) | 5 | PRD-9 |
