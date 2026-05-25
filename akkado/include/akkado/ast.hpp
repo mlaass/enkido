@@ -93,10 +93,6 @@ enum class NodeType : std::uint8_t {
 
     // Program
     Program,        // Root node containing statements
-
-    // Synthetic — codegen-only nodes for spread expansion (Phase 6).
-    // CodeGenerator::pre_resolved_values_ caches the TypedValue.
-    PreResolved,    // Pre-evaluated TypedValue (synthetic spread arg)
 };
 
 /// Convert node type to string for debugging
@@ -142,7 +138,6 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::ImportDecl:  return "ImportDecl";
         case NodeType::Directive:   return "Directive";
         case NodeType::Program:     return "Program";
-        case NodeType::PreResolved: return "PreResolved";
     }
     return "Unknown";
 }

@@ -11387,3 +11387,107 @@ TEST_CASE("legato() accepts release: option (positional 3-arg form)",
     }
     CHECK(found);
 }
+
+// =====================================================================
+// PRD prd-parser-codegen-correctness Phase 1a — codegen does not mutate
+// the post-analyzer AST during spread-call expansion. Drives the
+// pipeline manually so we can hash `analysis.transformed_ast` before vs
+// after `CodeGenerator::generate()` and confirm the arena is identical.
+// =====================================================================
+#include "akkado/lexer.hpp"
+#include "akkado/parser.hpp"
+#include "akkado/analyzer.hpp"
+#include "akkado/codegen.hpp"
+#include "akkado/stdlib.hpp"
+#include "akkado/ast_hash.hpp"
+
+namespace {
+
+struct ArenaSnapshot {
+    std::size_t size = 0;
+    std::uint64_t hash = 0;
+};
+
+// Drive lex → parse → analyze, snapshot the AST, run codegen, return
+// (before, after) snapshots so the test can assert equality. Mirrors
+// the prefix-stdlib path in `akkado::compile()` so identifiers like
+// `osc`/`out` resolve to their polymorphic dispatchers.
+std::pair<ArenaSnapshot, ArenaSnapshot>
+codegen_arena_before_after(std::string_view user_source) {
+    std::string combined;
+    combined.append(akkado::STDLIB_SOURCE);
+    combined.push_back('\n');
+    for (const auto& embedded : akkado::STDLIB_EMBEDDED_FILES) {
+        combined.append(embedded.source);
+        combined.push_back('\n');
+    }
+    combined.append(user_source);
+
+    auto [tokens, lex_diags] = akkado::lex(combined, "<input>");
+    REQUIRE_FALSE(akkado::has_errors(lex_diags));
+
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), combined, "<input>");
+    REQUIRE_FALSE(akkado::has_errors(parse_diags));
+
+    akkado::SemanticAnalyzer analyzer;
+    auto analysis = analyzer.analyze(ast, "<input>");
+    REQUIRE(analysis.success);
+
+    ArenaSnapshot before{
+        analysis.transformed_ast.arena.size(),
+        akkado::arena_structural_hash(analysis.transformed_ast.arena)
+    };
+
+    akkado::CodeGenerator codegen;
+    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols,
+                                "<input>", nullptr, nullptr,
+                                /*bypass_master=*/true);
+    REQUIRE(gen.success);
+
+    ArenaSnapshot after{
+        analysis.transformed_ast.arena.size(),
+        akkado::arena_structural_hash(analysis.transformed_ast.arena)
+    };
+    return {before, after};
+}
+
+}  // namespace
+
+TEST_CASE("F1a: spread expansion does not mutate the AST arena", "[F1a][spread]") {
+    // Mirrors akkado/tests/fixtures/04_spread_args.ak. Spread of an array
+    // literal into a builtin's argument slot used to mint synthesized
+    // Argument + PreResolved AST nodes in the analyzer's output_arena_.
+    constexpr std::string_view src =
+        "osc(\"sin\", 440) |> lp(@, ..[800, 0.5]) |> out(@)\n";
+
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1a: spread + named arg does not mutate the AST arena", "[F1a][reorder]") {
+    // Mirrors akkado/tests/fixtures/05_named_args.ak. Record spread
+    // combined with a named override used to rewrite the call's
+    // first_child chain (and gap-fill with arena.alloc(Identifier "_")).
+    constexpr std::string_view src =
+        "fn f(a, b) -> a + b\n"
+        "r = {a: 1}\n"
+        "f(..r, b: 99) |> out(@)\n";
+
+    auto [before, after] = codegen_arena_before_after(src);
+    CHECK(before.size == after.size);
+    CHECK(before.hash == after.hash);
+}
+
+TEST_CASE("F1a: arena_structural_hash distinguishes structurally-different arenas",
+          "[F1a][hash]") {
+    auto [before_a, after_a] = codegen_arena_before_after(
+        "osc(\"sin\", 440) |> out(@)\n");
+    auto [before_b, after_b] = codegen_arena_before_after(
+        "osc(\"saw\", 220) |> out(@)\n");
+    // Different sources → different hashes (sanity check on the helper).
+    CHECK(before_a.hash != before_b.hash);
+    // Each program: codegen-stable.
+    CHECK(before_a.hash == after_a.hash);
+    CHECK(before_b.hash == after_b.hash);
+}

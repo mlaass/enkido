@@ -555,12 +555,16 @@ private:
     /// One entry per logical argument the call site provides. For concrete
     /// args, source_node points at the value AST and resolved is empty. For
     /// args produced by spreading a record/array, resolved holds the
-    /// pre-evaluated TypedValue and source_node is NULL_NODE.
+    /// pre-evaluated TypedValue and source_node is NULL_NODE. The
+    /// is_underscore flag marks gap-filled slots synthesized by
+    /// reorder_spread_named_args (PRD-parser-codegen-correctness Phase 1a;
+    /// replaces the old in-arena underscore-identifier allocation).
     struct ExpandedArg {
         std::optional<std::string> name;     // None → positional
-        NodeIndex source_node = NULL_NODE;   // Concrete value AST, or NULL_NODE if spread-resolved
+        NodeIndex source_node = NULL_NODE;   // Concrete value AST, or NULL_NODE if spread-resolved/underscore
         std::optional<TypedValue> resolved;  // Pre-evaluated TypedValue from spread expansion
         SourceLocation loc;
+        bool is_underscore = false;          // Gap-fill placeholder (apply parameter default)
     };
 
     /// Walks the call's children, expanding any ..record / ..array spread
@@ -571,15 +575,19 @@ private:
     /// Returns nullopt on hard error.
     std::optional<std::vector<ExpandedArg>> expand_call_arguments(NodeIndex call_node);
 
-    /// Reorder a builtin call's argument chain so spread-expanded named fields
-    /// (`..{name: value}`) land in their declared parameter slots, gap-filling
-    /// skipped slots with `_` placeholders. Mirrors
-    /// SemanticAnalyzer::reorder_named_arguments, but runs in codegen because a
-    /// record spread is only resolvable after its value is evaluated — the
-    /// analyzer defers reordering for spread calls. Unknown field names emit
-    /// W160 and are dropped; returns false on a hard error (E009/E010/E012).
-    bool reorder_spread_named_args(NodeIndex call_node, const BuiltinInfo& builtin,
-                                   const std::string& func_name);
+    /// Reorder a builtin call's argument vector so spread-expanded named
+    /// fields (`..{name: value}`) land in their declared parameter slots,
+    /// gap-filling skipped slots with is_underscore ExpandedArg entries.
+    /// Mirrors SemanticAnalyzer::reorder_named_arguments, but runs in
+    /// codegen because a record spread is only resolvable after its value
+    /// is evaluated — the analyzer defers reordering for spread calls.
+    /// Unknown field names emit W160 and are dropped; returns false on a
+    /// hard error (E009/E010/E012). `call_loc` is used as the source
+    /// location for gap-filled underscore entries.
+    bool reorder_spread_named_args(const BuiltinInfo& builtin,
+                                   const std::string& func_name,
+                                   std::vector<ExpandedArg>& args,
+                                   SourceLocation call_loc);
 
     /// Handle user-defined function calls - inline expansion, or (PRD L2) a
     /// shared BLOCK_CALL dispatch when the fn is eligible.
@@ -1188,10 +1196,36 @@ private:
     // multi_buffers_, array_lengths_, pattern_state_ids_)
     std::unordered_map<NodeIndex, TypedValue> node_types_;
 
-    // Side-table for synthetic NodeType::PreResolved nodes inserted during
-    // call-arg spread expansion (Phase 6). visit() returns this TypedValue
-    // verbatim — the buffer is already allocated by the spread source's visit.
-    std::unordered_map<NodeIndex, TypedValue> pre_resolved_values_;
+    // Side-table for pre-evaluated TypedValues produced by call-arg spread
+    // expansion. Keyed by (call_node, slot_index): the slot index is the
+    // post-reorder position in the call's argument list. The Call branch
+    // consumes these inline (no AST visit) — the buffer is already
+    // allocated by the spread source's earlier visit. See
+    // prd-parser-codegen-correctness.md §4 Phase 1a.
+    struct CallSlotKeyHash {
+        std::size_t operator()(const std::pair<NodeIndex, std::size_t>& p) const noexcept {
+            return std::hash<NodeIndex>{}(p.first) ^
+                   (std::hash<std::size_t>{}(p.second) << 1);
+        }
+    };
+    std::unordered_map<std::pair<NodeIndex, std::size_t>, TypedValue,
+                       CallSlotKeyHash> pre_resolved_values_;
+
+    // A single argument slot for a spread-expanded call (PRD-parser-codegen-
+    // correctness Phase 1a). Replaces the synthesized first_child chain
+    // the old code minted during spread expansion. The Call branch builds
+    // a local std::vector<CallSlot> on the stack and the per-arg loop
+    // iterates it — no shared state across nested calls.
+    struct CallSlot {
+        enum class Kind : std::uint8_t {
+            AstNode,    // Visit `node` like a normal AST child
+            Resolved,   // Use pre_resolved_values_[{call, slot}]; skip visit
+            Underscore  // Gap-fill: emit parameter default (or E106)
+        };
+        Kind kind = Kind::AstNode;
+        NodeIndex node = NULL_NODE;
+        SourceLocation loc;
+    };
 
     // Map from parameter name hash to literal AST node (for inline match resolution)
     // Only populated during user function calls when the argument is a literal

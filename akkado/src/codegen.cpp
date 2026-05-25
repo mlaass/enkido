@@ -214,19 +214,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
     // Track source location for any instructions emitted while processing this node
     current_source_loc_ = n.location;
 
-    // Synthetic PreResolved node: TypedValue is in pre_resolved_values_ side
-    // table (populated during call-arg spread expansion). Returns the cached
-    // value with no instruction emission — the underlying buffer was already
-    // allocated when the spread source was first visited.
-    if (n.type == NodeType::PreResolved) {
-        auto pr_it = pre_resolved_values_.find(node);
-        if (pr_it != pre_resolved_values_.end()) {
-            return pr_it->second;
-        }
-        // Defensive: missing side-table entry shouldn't happen.
-        return TypedValue::error_val();
-    }
-
     switch (n.type) {
         case NodeType::Program: {
             // Visit all statements, pushing module context for imported definitions
@@ -981,12 +968,14 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 return handle_function_value_call(node, n, sym->function_ref);
             }
 
-            // Phase 6: builtin/special-handler spread expansion. If the call
-            // contains ..record / ..array spread args, materialize the
-            // expanded list as a synthetic Argument chain (with PreResolved
-            // children for spread-resolved values) and swap it into the call
-            // node before dispatch. RAII restores on exit.
-            NodeIndex saved_first_child = NULL_NODE;
+            // Builtin/special-handler spread expansion. PRD-parser-codegen-
+            // correctness Phase 1a: the original AST is left untouched.
+            // expand_call_arguments returns a flat ExpandedArg list which
+            // (after optional reorder for named spread fields) is
+            // materialised into the local `spread_call_slots` consumed by
+            // the per-arg loop.
+            std::vector<ExpandedArg> expanded_args;
+            std::optional<std::vector<CallSlot>> spread_call_slots;
             bool did_spread_swap = false;
             {
                 NodeIndex it = n.first_child;
@@ -1004,64 +993,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 if (has_spread) {
                     auto expanded_opt = expand_call_arguments(node);
                     if (!expanded_opt) return TypedValue::error_val();
-
-                    AstArena& arena = const_cast<AstArena&>(ast_->arena);
-                    NodeIndex chain_head = NULL_NODE;
-                    NodeIndex prev = NULL_NODE;
-                    for (const auto& ea : *expanded_opt) {
-                        NodeIndex arg_idx = arena.alloc(NodeType::Argument, ea.loc);
-                        arena[arg_idx].data = Node::ArgumentData{ea.name, NULL_NODE};
-
-                        NodeIndex child_idx;
-                        if (ea.resolved) {
-                            child_idx = arena.alloc(NodeType::PreResolved, ea.loc);
-                            pre_resolved_values_[child_idx] = *ea.resolved;
-                        } else {
-                            child_idx = ea.source_node;
-                        }
-                        arena[arg_idx].first_child = child_idx;
-                        // Note: child_idx may have its own next_sibling (from
-                        // the original AST). Don't overwrite that — the
-                        // Argument-as-parent semantics treat first_child as
-                        // the value, and its sibling chain is irrelevant once
-                        // wrapped (each Argument has exactly one value).
-                        // But since AstArena stores siblings in-band, we
-                        // must defensively detach. Cloning avoids surprises;
-                        // here we simply clear next_sibling of the wrapped
-                        // child's NEW reference. Original AST already used
-                        // next_sibling to chain its parent's children — that
-                        // was needed only at the original parent (the call
-                        // node), and the value node's next_sibling was
-                        // already NULL_NODE by parser construction.
-
-                        if (prev == NULL_NODE) {
-                            chain_head = arg_idx;
-                        } else {
-                            arena[prev].next_sibling = arg_idx;
-                        }
-                        prev = arg_idx;
-                    }
-
-                    Node& mut_n = const_cast<Node&>(n);
-                    saved_first_child = mut_n.first_child;
-                    mut_n.first_child = chain_head;
+                    expanded_args = std::move(*expanded_opt);
                     did_spread_swap = true;
                 }
             }
-
-            // RAII: restore the call's child chain on every return path.
-            struct ChildRestore {
-                Node* node;
-                NodeIndex orig;
-                bool active;
-                ~ChildRestore() {
-                    if (active) node->first_child = orig;
-                }
-            } child_restore{
-                did_spread_swap ? const_cast<Node*>(&n) : nullptr,
-                saved_first_child,
-                did_spread_swap
-            };
 
             // Dispatch table for special function handlers
             using Handler = TypedValue (CodeGenerator::*)(NodeIndex, const Node&);
@@ -1293,8 +1228,45 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // (incl. extended-param slots) by name instead of being consumed
             // positionally and silently misbinding.
             if (did_spread_swap &&
-                !reorder_spread_named_args(node, *builtin, func_name)) {
+                !reorder_spread_named_args(*builtin, func_name, expanded_args,
+                                           n.location)) {
                 return TypedValue::error_val();
+            }
+
+            // Materialise the (possibly reordered) ExpandedArg vector into
+            // CallSlots for the per-arg loop. Side-table entries are keyed
+            // by (call_node, slot_index); the buffer was already allocated
+            // by the spread source's earlier visit.
+            if (did_spread_swap) {
+                std::vector<CallSlot> slots;
+                slots.reserve(expanded_args.size());
+                for (std::size_t i = 0; i < expanded_args.size(); ++i) {
+                    auto& ea = expanded_args[i];
+                    CallSlot s;
+                    s.loc = ea.loc;
+                    if (ea.is_underscore) {
+                        s.kind = CallSlot::Kind::Underscore;
+                        s.node = NULL_NODE;
+                    } else if (ea.resolved.has_value()) {
+                        s.kind = CallSlot::Kind::Resolved;
+                        s.node = NULL_NODE;
+                        pre_resolved_values_[{node, i}] = *ea.resolved;
+                    } else {
+                        s.kind = CallSlot::Kind::AstNode;
+                        // Unwrap Argument if present so downstream consumers
+                        // see the value node directly (matches chain-mode).
+                        NodeIndex av = ea.source_node;
+                        if (av != NULL_NODE) {
+                            const Node& sn = ast_->arena[av];
+                            if (sn.type == NodeType::Argument) {
+                                av = sn.first_child;
+                            }
+                        }
+                        s.node = av;
+                    }
+                    slots.push_back(std::move(s));
+                }
+                spread_call_slots = std::move(slots);
             }
 
             // For stateful functions, push path BEFORE visiting children
@@ -1307,24 +1279,50 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 pushed_path = true;
             }
 
-            // Visit arguments (dependencies must be satisfied)
+            // Visit arguments (dependencies must be satisfied).
+            //
+            // Iteration source: when spread expansion ran, `spread_call_slots`
+            // holds the canonical slot-ordered argument list (Resolved,
+            // Underscore, or AstNode). Otherwise we synthesise an equivalent
+            // CallSlot vector by walking `n.first_child` once — keeping the
+            // rest of the loop body single-shape.
             std::vector<std::uint16_t> arg_buffers;
-            std::size_t arg_idx = 0;
-            NodeIndex arg = n.first_child;
-            while (arg != NULL_NODE) {
-                const Node& arg_node = ast_->arena[arg];
-                NodeIndex arg_value = arg;
-                if (arg_node.type == NodeType::Argument) {
-                    arg_value = arg_node.first_child;
+            std::vector<CallSlot> chain_slots;
+            const std::vector<CallSlot>* effective_slots = nullptr;
+            if (spread_call_slots.has_value()) {
+                effective_slots = &*spread_call_slots;
+            } else {
+                for (NodeIndex it_arg = n.first_child; it_arg != NULL_NODE;
+                     it_arg = ast_->arena[it_arg].next_sibling) {
+                    NodeIndex arg_value = it_arg;
+                    const Node& arg_node = ast_->arena[it_arg];
+                    if (arg_node.type == NodeType::Argument) {
+                        arg_value = arg_node.first_child;
+                    }
+                    const Node& val_node = ast_->arena[arg_value];
+                    bool is_placeholder =
+                        (val_node.type == NodeType::Identifier &&
+                         std::holds_alternative<Node::IdentifierData>(val_node.data) &&
+                         val_node.as_identifier() == "_");
+                    CallSlot s;
+                    s.loc = val_node.location;
+                    if (is_placeholder) {
+                        s.kind = CallSlot::Kind::Underscore;
+                        s.node = NULL_NODE;
+                    } else {
+                        s.kind = CallSlot::Kind::AstNode;
+                        s.node = arg_value;
+                    }
+                    chain_slots.push_back(std::move(s));
                 }
+                effective_slots = &chain_slots;
+            }
 
-                // Check for underscore placeholder: fill with default value
-                const Node& val_node = ast_->arena[arg_value];
-                bool is_placeholder = (val_node.type == NodeType::Identifier &&
-                    std::holds_alternative<Node::IdentifierData>(val_node.data) &&
-                    val_node.as_identifier() == "_");
+            for (std::size_t arg_idx = 0; arg_idx < effective_slots->size();
+                 ++arg_idx) {
+                const CallSlot& slot = (*effective_slots)[arg_idx];
 
-                if (is_placeholder) {
+                if (slot.kind == CallSlot::Kind::Underscore) {
                     if (builtin->has_default(arg_idx)) {
                         std::uint16_t default_buf = buffers_.allocate();
                         if (default_buf == BufferAllocator::BUFFER_UNUSED) {
@@ -1345,17 +1343,33 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     } else {
                         error("E106", "Cannot skip required parameter '" +
                               std::string(builtin->param_names[arg_idx]) +
-                              "' — no default value", val_node.location);
+                              "' — no default value", slot.loc);
                         arg_buffers.push_back(0);
                     }
+                    continue;
+                }
+
+                TypedValue arg_tv;
+                SourceLocation diag_loc;
+
+                if (slot.kind == CallSlot::Kind::Resolved) {
+                    auto pr_it = pre_resolved_values_.find({node, arg_idx});
+                    arg_tv = (pr_it != pre_resolved_values_.end())
+                                 ? pr_it->second
+                                 : TypedValue::error_val();
+                    diag_loc = slot.loc;
                 } else {
-                    TypedValue arg_tv = visit(arg_value);
+                    // CallSlot::Kind::AstNode
+                    NodeIndex arg_value = slot.node;
+                    arg_tv = visit(arg_value);
+                    diag_loc = ast_->arena[arg_value].location;
 
                     // sample("name"[, ...]) form: parse the sample-name string,
                     // register it for runtime loading, and emit a PUSH_CONST
                     // placeholder whose state_id immediate is patched to the
                     // bank-assigned sample ID after samples are loaded. The
                     // numeric `sample(t, p, <int>)` form falls through.
+                    const Node& val_node = ast_->arena[arg_value];
                     if (func_name == "sample" && arg_idx == 2 &&
                         arg_tv.type == ValueType::String &&
                         val_node.type == NodeType::StringLit) {
@@ -1413,74 +1427,71 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                             }
                         }
                     }
-
-                    // PRD prd-patterns-as-scalar-values §5.3: implicit
-                    // Pattern→Signal coerce. arg_tv.buffer is already the
-                    // pattern's primary value buffer — for monophonic non-
-                    // sample patterns this is the FREQ buffer (Signal-typed
-                    // since SEQPAT_STEP populates raw scalars); for sample
-                    // patterns it is the post-SAMPLE_PLAY audio output
-                    // (already a Signal), which legitimately routes through
-                    // out(), gain stages, and effects.
-                    //
-                    // The genuine footgun is a polyphonic non-sample pattern
-                    // (chord, multi-voice note pattern): without a coerce
-                    // reject, `osc("sin", c"Am")` would silently emit only
-                    // voice-0's freq, dropping the chord's other voices.
-                    // Reject those at the slot with E160 so the user opts
-                    // into poly() / scalar() / a voice index explicitly.
-                    bool slot_expects_signal =
-                        arg_idx < MAX_BUILTIN_PARAMS &&
-                        (builtin->param_types[arg_idx] == ParamValueType::Signal ||
-                         builtin->param_types[arg_idx] == ParamValueType::Any);
-                    if (builtin->args_are_signal && slot_expects_signal &&
-                        arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
-                        arg_tv.pattern->max_voices > 1 &&
-                        !arg_tv.pattern->is_sample_pattern) {
-                        error("E160",
-                              func_name + "() cannot use a polyphonic pattern as scalar at "
-                              "argument '" + std::string(builtin->param_names[arg_idx]) +
-                              "'; use poly() to consume it, or pick a voice/field "
-                              "explicitly (e.g. p.freq)",
-                              ast_->arena[arg_value].location);
-                    }
-
-                    // PRD prd-pattern-event-arrays §4.5/§5.6: a DynArray
-                    // (notes(e)/freqs(e)) has a runtime-varying length, so it
-                    // cannot auto-fan-out across a builtin's fixed arity the
-                    // way a static array does. Reject it with a directive
-                    // pointing at poly() for runtime polyphony.
-                    if (arg_tv.type == ValueType::DynArray) {
-                        error("E181",
-                              func_name + "() cannot auto-expand over a dynamic "
-                              "array (chord size varies per pattern event). "
-                              "Wrap with poly() for runtime polyphony:\n"
-                              "  e |> poly(@, (f, g, v) -> osc(\"sin\", f) * "
-                              "ar(g, 0.01, 0.3) * v)",
-                              ast_->arena[arg_value].location);
-                    }
-
-                    arg_buffers.push_back(arg_tv.buffer);
-
-                    // Type check against annotation (non-fatal — continue for max error reporting).
-                    // DynArray already reported the dedicated E181 above; skip
-                    // the generic type-mismatch to avoid a duplicate diagnostic.
-                    if (arg_idx < MAX_BUILTIN_PARAMS &&
-                        builtin->param_types[arg_idx] != ParamValueType::Any &&
-                        !arg_tv.error && arg_tv.type != ValueType::Void &&
-                        arg_tv.type != ValueType::DynArray) {
-                        if (!type_compatible(arg_tv.type, builtin->param_types[arg_idx])) {
-                            error("E160", func_name + "() argument '" +
-                                  std::string(builtin->param_names[arg_idx]) + "' expects " +
-                                  param_value_type_name(builtin->param_types[arg_idx]) +
-                                  ", got " + value_type_name(arg_tv.type),
-                                  ast_->arena[arg_value].location);
-                        }
-                    }
                 }
 
-                ++arg_idx;
-                arg = ast_->arena[arg].next_sibling;
+                // PRD prd-patterns-as-scalar-values §5.3: implicit
+                // Pattern→Signal coerce. arg_tv.buffer is already the
+                // pattern's primary value buffer — for monophonic non-
+                // sample patterns this is the FREQ buffer (Signal-typed
+                // since SEQPAT_STEP populates raw scalars); for sample
+                // patterns it is the post-SAMPLE_PLAY audio output
+                // (already a Signal), which legitimately routes through
+                // out(), gain stages, and effects.
+                //
+                // The genuine footgun is a polyphonic non-sample pattern
+                // (chord, multi-voice note pattern): without a coerce
+                // reject, `osc("sin", c"Am")` would silently emit only
+                // voice-0's freq, dropping the chord's other voices.
+                // Reject those at the slot with E160 so the user opts
+                // into poly() / scalar() / a voice index explicitly.
+                bool slot_expects_signal =
+                    arg_idx < MAX_BUILTIN_PARAMS &&
+                    (builtin->param_types[arg_idx] == ParamValueType::Signal ||
+                     builtin->param_types[arg_idx] == ParamValueType::Any);
+                if (builtin->args_are_signal && slot_expects_signal &&
+                    arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
+                    arg_tv.pattern->max_voices > 1 &&
+                    !arg_tv.pattern->is_sample_pattern) {
+                    error("E160",
+                          func_name + "() cannot use a polyphonic pattern as scalar at "
+                          "argument '" + std::string(builtin->param_names[arg_idx]) +
+                          "'; use poly() to consume it, or pick a voice/field "
+                          "explicitly (e.g. p.freq)",
+                          diag_loc);
+                }
+
+                // PRD prd-pattern-event-arrays §4.5/§5.6: a DynArray
+                // (notes(e)/freqs(e)) has a runtime-varying length, so it
+                // cannot auto-fan-out across a builtin's fixed arity the
+                // way a static array does. Reject it with a directive
+                // pointing at poly() for runtime polyphony.
+                if (arg_tv.type == ValueType::DynArray) {
+                    error("E181",
+                          func_name + "() cannot auto-expand over a dynamic "
+                          "array (chord size varies per pattern event). "
+                          "Wrap with poly() for runtime polyphony:\n"
+                          "  e |> poly(@, (f, g, v) -> osc(\"sin\", f) * "
+                          "ar(g, 0.01, 0.3) * v)",
+                          diag_loc);
+                }
+
+                arg_buffers.push_back(arg_tv.buffer);
+
+                // Type check against annotation (non-fatal — continue for max error reporting).
+                // DynArray already reported the dedicated E181 above; skip
+                // the generic type-mismatch to avoid a duplicate diagnostic.
+                if (arg_idx < MAX_BUILTIN_PARAMS &&
+                    builtin->param_types[arg_idx] != ParamValueType::Any &&
+                    !arg_tv.error && arg_tv.type != ValueType::Void &&
+                    arg_tv.type != ValueType::DynArray) {
+                    if (!type_compatible(arg_tv.type, builtin->param_types[arg_idx])) {
+                        error("E160", func_name + "() argument '" +
+                              std::string(builtin->param_names[arg_idx]) + "' expects " +
+                              param_value_type_name(builtin->param_types[arg_idx]) +
+                              ", got " + value_type_name(arg_tv.type),
+                              diag_loc);
+                    }
+                }
             }
 
             // PRD §4.4 / §5.3 rule 2: out(L, R) expects two Mono signals.
@@ -1597,7 +1608,16 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // because they auto-escalate mono → stereo at the boundary (mono
             // input is broadcast inside the opcode body). As of Phase 5 every
             // audio-signal opcode is stereo-native; auto-lift is retired.
-            if (func_name != "out" && !builtin->stereo_native) {
+            //
+            // Gated on !did_spread_swap: with spread expansion the original
+            // first_child chain may contain a spread Argument whose
+            // first_child is NULL_NODE (the spread source lives in
+            // spread_source, not as a child) — re-visiting that would
+            // segfault. Pre-Phase-1a the synthesized chain didn't have this
+            // shape; we preserve byte-identical behaviour by skipping the
+            // re-walk. Per-arg type checks for the spread case already ran
+            // inside the per-arg loop using the cached TypedValues.
+            if (func_name != "out" && !builtin->stereo_native && !did_spread_swap) {
                 NodeIndex ch = n.first_child;
                 for (std::size_t ai = 0; ai < arg_buffers.size() &&
                         ai < MAX_BUILTIN_PARAMS && ch != NULL_NODE; ++ai,
@@ -1637,11 +1657,20 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Stereo input is consumed by the stereo-native emission path
             // below (single dispatch, STEREO_INPUT flag). Chord expansion-to-N
             // applies to stateful UGens (per-voice state).
+            //
+            // Gated on !did_spread_swap: a spread-expanded call has already
+            // unpacked its array/record source into individual per-slot
+            // values via expand_call_arguments. Re-running multi-buffer
+            // fan-out here would double-expand. Pre-Phase-1a, the synthesized
+            // PreResolved children weren't multi-buffer sources so the loop
+            // silently no-op'd; post-Phase-1a we read the original chain,
+            // whose spread-source array IS multi-buffer, so we must skip
+            // explicitly. See prd-parser-codegen-correctness.md §4 Phase 1a.
             int expansion_arg_idx = -1;
             std::vector<std::uint16_t> expansion_buffers;
             std::vector<NodeIndex> arg_nodes;
 
-            if (!arg_buffers.empty()) {
+            if (!arg_buffers.empty() && !did_spread_swap) {
                 NodeIndex arg_iter = n.first_child;
                 while (arg_iter != NULL_NODE) {
                     const Node& arg_node = ast_->arena[arg_iter];
@@ -3227,28 +3256,22 @@ CodeGenerator::expand_call_arguments(NodeIndex call_node) {
     return out;
 }
 
-bool CodeGenerator::reorder_spread_named_args(NodeIndex call_node,
-                                              const BuiltinInfo& builtin,
-                                              const std::string& func_name) {
-    AstArena& arena = const_cast<AstArena&>(ast_->arena);
+bool CodeGenerator::reorder_spread_named_args(const BuiltinInfo& builtin,
+                                              const std::string& func_name,
+                                              std::vector<ExpandedArg>& args,
+                                              SourceLocation call_loc) {
+    if (args.empty()) return true;
 
     struct ArgInfo {
-        NodeIndex node;
+        std::size_t arg_idx;              // index into args
         std::optional<std::string> name;  // none → positional
         int target_pos;                   // slot index, -1 = dropped/unknown
     };
-    std::vector<ArgInfo> args;
-    for (NodeIndex arg = arena[call_node].first_child; arg != NULL_NODE;
-         arg = arena[arg].next_sibling) {
-        std::optional<std::string> arg_name;
-        const Node& arg_node = arena[arg];
-        if (arg_node.type == NodeType::Argument &&
-            std::holds_alternative<Node::ArgumentData>(arg_node.data)) {
-            arg_name = arg_node.as_argument().name;
-        }
-        args.push_back({arg, std::move(arg_name), -1});
+    std::vector<ArgInfo> infos;
+    infos.reserve(args.size());
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        infos.push_back({i, args[i].name, -1});
     }
-    if (args.empty()) return true;
 
     // Resolve each argument to a target slot. Positional args fill 0,1,2…;
     // named args map by find_param() into the unified regular+extended index
@@ -3256,16 +3279,16 @@ bool CodeGenerator::reorder_spread_named_args(NodeIndex call_node,
     bool has_named = false;
     bool seen_named = false;
     std::set<std::string> used_params;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i].name.has_value()) {
+    for (std::size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].name.has_value()) {
             has_named = true;
             seen_named = true;
-            const std::string& name = *args[i].name;
+            const std::string& name = *infos[i].name;
 
             if (!used_params.insert(name).second) {
                 error("E010", "Duplicate named argument '" + name +
                       "' in call to '" + func_name + "'",
-                      arena[args[i].node].location);
+                      args[infos[i].arg_idx].loc);
                 return false;
             }
 
@@ -3287,33 +3310,33 @@ bool CodeGenerator::reorder_spread_named_args(NodeIndex call_node,
                 }
                 warn("W160", "Spread field '" + name +
                      "' has no matching parameter in " + func_name +
-                     "(" + sig + ")", arena[args[i].node].location);
+                     "(" + sig + ")", args[infos[i].arg_idx].loc);
                 continue;  // target_pos stays -1 → dropped
             }
-            args[i].target_pos = param_idx;
+            infos[i].target_pos = param_idx;
         } else {
             if (seen_named) {
                 error("E009", "Positional argument cannot follow named argument "
                       "in call to '" + func_name + "'",
-                      arena[args[i].node].location);
+                      args[infos[i].arg_idx].loc);
                 return false;
             }
-            args[i].target_pos = static_cast<int>(i);
+            infos[i].target_pos = static_cast<int>(i);
         }
     }
 
     if (!has_named) return true;  // already positional — nothing to reorder
 
     // A named arg must not collide with a positional one filling the same slot.
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i].name.has_value()) continue;
-        for (std::size_t j = 0; j < args.size(); ++j) {
-            if (args[j].name.has_value() && args[j].target_pos >= 0 &&
-                args[j].target_pos == static_cast<int>(i)) {
-                error("E012", "Parameter '" + *args[j].name + "' at position " +
+    for (std::size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].name.has_value()) continue;
+        for (std::size_t j = 0; j < infos.size(); ++j) {
+            if (infos[j].name.has_value() && infos[j].target_pos >= 0 &&
+                infos[j].target_pos == static_cast<int>(i)) {
+                error("E012", "Parameter '" + *infos[j].name + "' at position " +
                       std::to_string(i) + " conflicts with positional argument "
                       "in call to '" + func_name + "'",
-                      arena[args[i].node].location);
+                      args[infos[i].arg_idx].loc);
                 return false;
             }
         }
@@ -3321,50 +3344,46 @@ bool CodeGenerator::reorder_spread_named_args(NodeIndex call_node,
 
     // Build the canonical-order slot vector.
     int max_pos = -1;
-    for (const auto& a : args) {
-        if (a.target_pos > max_pos) max_pos = a.target_pos;
+    for (const auto& info : infos) {
+        if (info.target_pos > max_pos) max_pos = info.target_pos;
     }
     if (max_pos < 0) {
         // Every argument was a dropped unknown field — emit an empty call.
-        arena[call_node].first_child = NULL_NODE;
+        args.clear();
         return true;
     }
-    std::vector<NodeIndex> slots(static_cast<std::size_t>(max_pos) + 1, NULL_NODE);
-    for (const auto& a : args) {
-        if (a.target_pos >= 0) slots[static_cast<std::size_t>(a.target_pos)] = a.node;
-    }
-
-    // Names are positional now — clear them so downstream logic ignores them.
-    for (const auto& a : args) {
-        if (a.name.has_value() && a.target_pos >= 0) {
-            Node& an = arena[a.node];
-            if (an.type == NodeType::Argument) {
-                an.data = Node::ArgumentData{std::nullopt, NULL_NODE};
-            }
+    // -1 = empty (needs underscore gap-fill); ≥0 = source index into `args`.
+    std::vector<int> slot_source(static_cast<std::size_t>(max_pos) + 1, -1);
+    for (const auto& info : infos) {
+        if (info.target_pos >= 0) {
+            slot_source[static_cast<std::size_t>(info.target_pos)] =
+                static_cast<int>(info.arg_idx);
         }
     }
 
-    // Gap-fill skipped slots with bare `_` placeholders — the builtin arg loop
-    // turns each into the parameter's declared default. (alloc may grow the
-    // arena, so no Node& is held across this loop.)
-    const SourceLocation call_loc = arena[call_node].location;
-    for (std::size_t i = 0; i < slots.size(); ++i) {
-        if (slots[i] != NULL_NODE) continue;
-        NodeIndex underscore = arena.alloc(NodeType::Identifier, call_loc);
-        arena[underscore].data = Node::IdentifierData{"_"};
-        arena[underscore].next_sibling = NULL_NODE;
-        slots[i] = underscore;
+    // Materialise the slot-ordered ExpandedArg vector. Names are positional
+    // after reorder — clear them so downstream logic ignores them. Underscore
+    // gap-fills carry call_loc and is_underscore=true; the per-arg loop turns
+    // each into the parameter's declared default (or E106).
+    std::vector<ExpandedArg> reordered;
+    reordered.reserve(slot_source.size());
+    for (std::size_t i = 0; i < slot_source.size(); ++i) {
+        if (slot_source[i] < 0) {
+            ExpandedArg gap;
+            gap.name = std::nullopt;
+            gap.source_node = NULL_NODE;
+            gap.resolved = std::nullopt;
+            gap.loc = call_loc;
+            gap.is_underscore = true;
+            reordered.push_back(std::move(gap));
+        } else {
+            ExpandedArg moved = std::move(args[static_cast<std::size_t>(slot_source[i])]);
+            moved.name = std::nullopt;
+            reordered.push_back(std::move(moved));
+        }
     }
 
-    // Rebuild the call's child chain in canonical slot order.
-    arena[call_node].first_child = NULL_NODE;
-    NodeIndex prev = NULL_NODE;
-    for (NodeIndex idx : slots) {
-        arena[idx].next_sibling = NULL_NODE;
-        if (prev == NULL_NODE) arena[call_node].first_child = idx;
-        else arena[prev].next_sibling = idx;
-        prev = idx;
-    }
+    args = std::move(reordered);
     return true;
 }
 
