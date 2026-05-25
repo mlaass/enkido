@@ -183,7 +183,8 @@ void Parser::synchronize() {
 
 Precedence Parser::get_precedence(TokenType type) const {
     switch (type) {
-        case TokenType::Pipe:         return Precedence::Pipe;
+        case TokenType::Pipe:
+        case TokenType::Diamond:      return Precedence::Pipe;
         case TokenType::OrOr:         return Precedence::Or;
         case TokenType::AndAnd:       return Precedence::And;
         case TokenType::EqualEqual:
@@ -204,6 +205,7 @@ Precedence Parser::get_precedence(TokenType type) const {
 bool Parser::is_infix_operator(TokenType type) const {
     switch (type) {
         case TokenType::Pipe:
+        case TokenType::Diamond:
         case TokenType::OrOr:
         case TokenType::AndAnd:
         case TokenType::EqualEqual:
@@ -431,54 +433,13 @@ NodeIndex Parser::parse_statement() {
     }
 
     // Otherwise it's an expression statement.
+    //
+    // The diamond operator `<>` is no longer special-cased here — it is
+    // parsed as an infix operator at `Precedence::Pipe` (see
+    // `parse_diamond_infix`), so it composes naturally with any
+    // expression position including assignment RHS, sub-expressions,
+    // and arbitrary binding forms.
     NodeIndex expr = parse_expression();
-
-    // Diamond operator (bus-routing Phase 3): `expr <>` / `expr <>(N)` is
-    // statement-trailing sugar for `expr |> out(@)` / `expr |> bus(N, @)`.
-    // Consumed only here, after the full expression (including the entire
-    // `|>` chain), so `<>` naturally binds looser than `|>`.
-    if (expr != NULL_NODE && check(TokenType::Diamond)) {
-        Token diamond_tok = advance();  // consume '<>'
-
-        // Optional `(N)` bus-index argument. The index expression is wired
-        // in verbatim — `handle_bus_call` validates it (E260), so `<>(x)`
-        // and `bus(x, @)` produce the identical diagnostic.
-        NodeIndex index_expr = NULL_NODE;
-        if (match(TokenType::LParen)) {
-            index_expr = parse_expression();
-            consume(TokenType::RParen,
-                    "Expected ')' after bus index in `<>(N)`");
-        }
-
-        // `@` hole — the signal injected by the pipe.
-        NodeIndex hole = arena_.alloc(NodeType::Hole, diamond_tok.location);
-        arena_[hole].data = Node::HoleData{std::nullopt};
-
-        // Sink call: `out(@)` for bare `<>`, `bus(N, @)` for `<>(N)`.
-        NodeIndex call = make_node(NodeType::Call, diamond_tok);
-        arena_[call].data =
-            Node::IdentifierData{index_expr == NULL_NODE ? "out" : "bus"};
-
-        if (index_expr != NULL_NODE) {
-            NodeIndex idx_arg =
-                arena_.alloc(NodeType::Argument, arena_[index_expr].location);
-            arena_[idx_arg].data = Node::ArgumentData{std::nullopt};
-            arena_.add_child(idx_arg, index_expr);
-            arena_.add_child(call, idx_arg);
-        }
-
-        NodeIndex hole_arg =
-            arena_.alloc(NodeType::Argument, diamond_tok.location);
-        arena_[hole_arg].data = Node::ArgumentData{std::nullopt};
-        arena_.add_child(hole_arg, hole);
-        arena_.add_child(call, hole_arg);
-
-        // Wrap as `expr |> <call>`.
-        NodeIndex pipe = make_node(NodeType::Pipe, diamond_tok);
-        arena_.add_child(pipe, expr);
-        arena_.add_child(pipe, call);
-        return pipe;
-    }
 
     // Phase 4b: field-assignment sugar over record-valued state cells.
     //   `receiver.field = value` parses as `FieldAccess(receiver, field)`
@@ -709,18 +670,15 @@ NodeIndex Parser::parse_prefix() {
         case TokenType::Bang:
             return parse_unary_not();
         case TokenType::Diamond:
-            // The diamond `<>` is a statement terminator producing void; it
-            // is valid only trailing a complete statement (handled in
-            // parse_statement). Reaching it where an expression is expected
-            // means it was misplaced — sub-expression position, an
-            // assignment RHS, a closure/fn body, etc. (A leftover `<>` after
-            // a non-expression statement also surfaces here, since it
-            // becomes the leading token of the next statement parse.)
+            // `<>` is equivalent to `|> out(@)` and parses as an infix
+            // operator (see `parse_diamond_infix`); reaching it in prefix
+            // position means there is no left-hand side to pipe — e.g.
+            // leading `<>` at statement start, or `<>` directly after
+            // another operator.
             error_with_code(current(), "E263",
-                            "the diamond operator `<>` is a statement "
-                            "terminator and cannot appear in expression "
-                            "position — it must trail a complete statement, "
-                            "e.g. `osc(\"saw\", 220) <>`");
+                            "`<>` has no left-hand side — it is equivalent "
+                            "to `|> out(@)` and needs an expression to its "
+                            "left, e.g. `osc(\"saw\", 220) <>`");
             advance();  // consume '<>' so parsing makes progress
             return NULL_NODE;
         case TokenType::Underscore: {
@@ -745,6 +703,8 @@ NodeIndex Parser::parse_infix(NodeIndex left, const Token& op) {
     switch (op.type) {
         case TokenType::Pipe:
             return parse_pipe(left);
+        case TokenType::Diamond:
+            return parse_diamond_infix(left);
         case TokenType::Plus:
         case TokenType::Minus:
         case TokenType::Star:
@@ -1543,6 +1503,54 @@ NodeIndex Parser::parse_pipe(NodeIndex left) {
     }
 
     return node;
+}
+
+// Diamond `<>` / `<>(N)` infix: equivalent to `|> out(@)` / `|> bus(N, @)`.
+// Wired at `Precedence::Pipe` so it composes with `|>` in left-associative
+// chains and binds looser than arithmetic — `osc(...) |> lp(...) <>` parses
+// as `(osc(...) |> lp(...)) |> out(@)`. The synthesised subtree matches
+// the explicit `|> out(@)` form node-for-node, so later compiler stages
+// see one canonical shape.
+NodeIndex Parser::parse_diamond_infix(NodeIndex left) {
+    Token diamond_tok = previous();  // the `<>` token
+
+    // Optional `(N)` bus-index argument. The index expression is wired
+    // in verbatim — `handle_bus_call` validates it (E260), so `<>(x)`
+    // and `bus(x, @)` produce the identical diagnostic.
+    NodeIndex index_expr = NULL_NODE;
+    if (match(TokenType::LParen)) {
+        index_expr = parse_expression();
+        consume(TokenType::RParen,
+                "Expected ')' after bus index in `<>(N)`");
+    }
+
+    // `@` hole — the signal injected by the pipe.
+    NodeIndex hole = arena_.alloc(NodeType::Hole, diamond_tok.location);
+    arena_[hole].data = Node::HoleData{std::nullopt};
+
+    // Sink call: `out(@)` for bare `<>`, `bus(N, @)` for `<>(N)`.
+    NodeIndex call = make_node(NodeType::Call, diamond_tok);
+    arena_[call].data =
+        Node::IdentifierData{index_expr == NULL_NODE ? "out" : "bus"};
+
+    if (index_expr != NULL_NODE) {
+        NodeIndex idx_arg =
+            arena_.alloc(NodeType::Argument, arena_[index_expr].location);
+        arena_[idx_arg].data = Node::ArgumentData{std::nullopt};
+        arena_.add_child(idx_arg, index_expr);
+        arena_.add_child(call, idx_arg);
+    }
+
+    NodeIndex hole_arg =
+        arena_.alloc(NodeType::Argument, diamond_tok.location);
+    arena_[hole_arg].data = Node::ArgumentData{std::nullopt};
+    arena_.add_child(hole_arg, hole);
+    arena_.add_child(call, hole_arg);
+
+    NodeIndex pipe = make_node(NodeType::Pipe, diamond_tok);
+    arena_.add_child(pipe, left);
+    arena_.add_child(pipe, call);
+    return pipe;
 }
 
 // Method call or field access parsing (for x.method() or x.field syntax)

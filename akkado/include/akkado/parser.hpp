@@ -120,6 +120,7 @@ private:
     // Infix parsers
     NodeIndex parse_binary(NodeIndex left, const Token& op);
     NodeIndex parse_pipe(NodeIndex left);
+    NodeIndex parse_diamond_infix(NodeIndex left);
     NodeIndex parse_method_call(NodeIndex left);
     NodeIndex parse_index(NodeIndex left);
 

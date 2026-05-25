@@ -354,20 +354,54 @@ TEST_CASE("bus-routing: `<>(N)` with a non-literal index is rejected (E260)",
     CHECK(has_code(r, "E260"));
 }
 
-TEST_CASE("bus-routing: a misplaced `<>` is rejected (E263)", "[bus][diag]") {
+TEST_CASE("bus-routing: `<>` with no LHS after a binary operator is rejected "
+          "(E263)", "[bus][diag]") {
+    // `<>` is now a pipe-precedence infix operator; in prefix position
+    // (e.g. directly after a binary operator that needs an RHS) it has
+    // no left-hand side and the parser emits E263.
+    //
+    // Note: a "leading `<>`" at the very start of user code is *not* a
+    // robust test for E263 once stdlib is prepended — `<>` will be
+    // consumed as an infix on the trailing expression of the last
+    // stdlib statement, exactly as `|>` would be. That is the same
+    // cross-statement behavior any pipe-precedence operator has under
+    // this language's whitespace-insensitive statement model.
+    auto r = akkado::compile("1 + <>");
+    CHECK(!r.success);
+    CHECK(has_code(r, "E263"));
+}
+
+TEST_CASE("bus-routing: `<>` works anywhere `|> out(@)` works", "[bus]") {
+    // The diamond is now a pipe-precedence infix operator: it should
+    // produce byte-identical bytecode to the explicit `|> out(@)` rewrite
+    // wherever `|> out(@)` is allowed — including assignment RHS and
+    // sub-expressions, not just bare expression statements.
     SECTION("assignment RHS") {
-        auto r = akkado::compile("x = 0.5 <>");
-        CHECK(!r.success);
-        CHECK(has_code(r, "E263"));
+        CHECK(bytecode_identical("x = 0.5 <>", "x = 0.5 |> out(@)"));
+        CHECK(bytecode_identical("x = 0.5 <>(2)", "x = 0.5 |> bus(2, @)"));
     }
-    SECTION("leading position") {
-        auto r = akkado::compile("<> 0.5");
-        CHECK(!r.success);
-        CHECK(has_code(r, "E263"));
+    SECTION("sub-expression inside parens") {
+        CHECK(bytecode_identical("out((0.5 <>))", "out((0.5 |> out(@)))"));
     }
-    SECTION("sub-expression position") {
-        auto r = akkado::compile("out((0.5 <>))");
-        CHECK(!r.success);
+    SECTION("regression: trailing `<>` on a multi-line assignment chain") {
+        // The reported program: `<>` on its own line after a multi-line
+        // pipe chain inside an assignment must compile and produce the
+        // same bytecode as the explicit `|> out(@)` rewrite.
+        const char* with_diamond =
+            "dry = n\"c4 eb4 g4 bb4 c5 bb4 g4 eb4\"\n"
+            "    |> saw(@freq) * ar(@trig, 0.005, 0.1) * 0.5\n"
+            "    |> lp(@, 700)\n"
+            "    |> delay(@, 0.5, 0.7, _)\n"
+            "    |> reverb(@, ..{dry:0, wet:0})\n"
+            "  <>";
+        const char* with_pipe_out =
+            "dry = n\"c4 eb4 g4 bb4 c5 bb4 g4 eb4\"\n"
+            "    |> saw(@freq) * ar(@trig, 0.005, 0.1) * 0.5\n"
+            "    |> lp(@, 700)\n"
+            "    |> delay(@, 0.5, 0.7, _)\n"
+            "    |> reverb(@, ..{dry:0, wet:0})\n"
+            "  |> out(@)";
+        CHECK(bytecode_identical(with_diamond, with_pipe_out));
     }
 }
 
