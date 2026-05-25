@@ -165,6 +165,87 @@ TEST_CASE("Parser binary operators", "[parser]") {
     }
 }
 
+TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
+    // F7 was withdrawn in Phase 0 (commit b203e2e) — `^` is already
+    // right-associative on master. These tests lock current behaviour
+    // so a future parser refactor can't silently regress it. See
+    // docs/prd-parser-codegen-correctness.md §1.3 and §4 Phase 2.
+
+    SECTION("2 ^ 3 ^ 2 parses as pow(2, pow(3, 2))") {
+        auto ast = parse_ok("2 ^ 3 ^ 2");
+        NodeIndex outer = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[outer].type == NodeType::Call);
+        CHECK(ast.arena[outer].as_identifier() == "pow");
+
+        NodeIndex first_arg  = ast.arena[outer].first_child;
+        NodeIndex second_arg = ast.arena[first_arg].next_sibling;
+        REQUIRE(second_arg != NULL_NODE);
+
+        // First arg unwraps to NumberLit(2).
+        NodeIndex first_inner = ast.arena[first_arg].first_child;
+        REQUIRE(ast.arena[first_inner].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[first_inner].as_number(), WithinRel(2.0));
+
+        // Second arg unwraps to inner pow(3, 2) — right-nested.
+        NodeIndex inner = ast.arena[second_arg].first_child;
+        REQUIRE(ast.arena[inner].type == NodeType::Call);
+        CHECK(ast.arena[inner].as_identifier() == "pow");
+    }
+
+    SECTION("tower 2 ^ 2 ^ 2 ^ 2 nests right") {
+        auto ast = parse_ok("2 ^ 2 ^ 2 ^ 2");
+        // Walk three levels deep on the right; each level is a pow with
+        // NumberLit(2) on the left.
+        NodeIndex n = ast.arena[ast.root].first_child;
+        for (int depth = 0; depth < 3; ++depth) {
+            REQUIRE(ast.arena[n].type == NodeType::Call);
+            CHECK(ast.arena[n].as_identifier() == "pow");
+            NodeIndex left  = ast.arena[n].first_child;
+            NodeIndex right = ast.arena[left].next_sibling;
+            REQUIRE(right != NULL_NODE);
+            NodeIndex left_inner = ast.arena[left].first_child;
+            REQUIRE(ast.arena[left_inner].type == NodeType::NumberLit);
+            n = ast.arena[right].first_child;
+        }
+        // Deepest right operand is NumberLit(2).
+        REQUIRE(ast.arena[n].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[n].as_number(), WithinRel(2.0));
+    }
+
+    SECTION("-2 ^ 2 parses as pow(-2, 2) via negative-number lexing") {
+        // Lexer produces a single Number(-2) token when `-` is immediately
+        // followed by a digit (see lexer.cpp:246), so the AST has NumberLit(-2)
+        // as the first argument — not a unary-neg call wrapping NumberLit(2).
+        // Result is numerically (-2)^2 = 4 (documented divergence from
+        // Python's -(2^2) = -4).
+        auto ast = parse_ok("-2 ^ 2");
+        NodeIndex pow_call = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[pow_call].type == NodeType::Call);
+        CHECK(ast.arena[pow_call].as_identifier() == "pow");
+
+        NodeIndex first_arg = ast.arena[pow_call].first_child;
+        NodeIndex first_inner = ast.arena[first_arg].first_child;
+        REQUIRE(ast.arena[first_inner].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[first_inner].as_number(), WithinRel(-2.0));
+    }
+
+    SECTION("x ^ -1 parses cleanly") {
+        // Right operand begins with `-1`, which the lexer fuses into a single
+        // negative Number token. The whole expression is pow(x, -1).
+        auto ast = parse_ok("x ^ -1");
+        NodeIndex pow_call = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[pow_call].type == NodeType::Call);
+        CHECK(ast.arena[pow_call].as_identifier() == "pow");
+
+        NodeIndex first_arg  = ast.arena[pow_call].first_child;
+        NodeIndex second_arg = ast.arena[first_arg].next_sibling;
+        REQUIRE(second_arg != NULL_NODE);
+        NodeIndex second_inner = ast.arena[second_arg].first_child;
+        REQUIRE(ast.arena[second_inner].type == NodeType::NumberLit);
+        CHECK_THAT(ast.arena[second_inner].as_number(), WithinRel(-1.0));
+    }
+}
+
 TEST_CASE("Parser function calls", "[parser]") {
     SECTION("no arguments") {
         auto ast = parse_ok("foo()");

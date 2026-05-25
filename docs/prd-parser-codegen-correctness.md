@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 0 + 1a + 1b SHIPPED, 3 phases remaining
+> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 SHIPPED, 2 phases remaining
 > (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Phases land independently; the audit's complexity-sink findings are
@@ -83,6 +83,32 @@
 >   `arena.size()` and structural hash are unchanged across
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
+> - **Phase 2 (F8 mini-lexer line tracking + F7 lock-in tests) — SHIPPED
+>   2026-05-26** (commit `<commit>`). MiniLexer now tracks `line_` across
+>   `\n` (incl. `\r\n`) and snapshots `start_line_` / `start_column_` at
+>   token start in `lex_token()`. `current_location()` reports the
+>   token-start line/column; line 1 still adds `base_location_.column`
+>   so single-line callers see byte-identical output (since `column_`
+>   bumps once per non-`\n` char and `start_column_ - 1 == start_` on
+>   line 1). Line 2+ reports the pattern-relative column (we don't know
+>   the source-file indentation of continuation lines). The PRD's strict
+>   "diagnostic on c reports line 2" exit criterion lands via six `[F8]`
+>   regression tests in `akkado/tests/test_mini_notation.cpp` covering
+>   default base_location, non-trivial base_location, `\r\n` endings,
+>   trailing `\n`, and an error-token path through `make_error_token →
+>   current_location()`. F7 ships **regression tests only** — Phase 0
+>   already verified `^` is right-assoc. Four `[F7]` AST-structure tests
+>   in `akkado/tests/test_parser.cpp` (right-nested pow tower, `-2 ^ 2`
+>   via lexer's negative-number fusion, `x ^ -1`) plus two `[F7]`
+>   const-eval tests in `akkado/tests/test_const_eval.cpp` (`2^3^2 ==
+>   512`, `2^2^2^2 == 65536`). A clarifying multi-line comment was added
+>   above the no-op `static_cast<Precedence>(static_cast<int>(p))` at
+>   `parser.cpp:1459` explaining the intentional Pratt mechanism, with a
+>   backreference to §1.3. The stale Phase-2-prediction comment in
+>   `akkado/tests/fixtures/06_power_op.ak` was rewritten to reflect the
+>   Phase 0 finding; the `.disasm` snapshot is byte-identical. Full
+>   akkado suite green; snapshot harness reports byte-identical bytecode
+>   across every fixture. See §4 Phase 2.
 > - **F7 (right-assoc `^`) — WITHDRAWN 2026-05-25.** Phase 0's
 >   `06_power_op.ak` fixture compiled `2^3^2 * 100` and snapshotted POW
 >   instructions emitted in right-assoc order — outer `POW(2, POW(3,2))`
@@ -90,9 +116,9 @@
 >   at §1.3 was flawed: the left-assoc branch passes `p+1` while the
 >   right-assoc branch passes `p`, and `parse_precedence(p)` happily
 >   accepts another `^` (since `p ≥ p`), giving real right-assoc. No
->   code change needed. Phase 2's scope shrinks to F8 only; a regression
->   test (`2^3^2 == 512`) still ships in Phase 2 to lock the current
->   behavior. See §1.3, §4 Phase 2, §11.3.
+>   code change needed. Phase 2 (above) shipped only a regression test
+>   (`2^3^2 == 512` + AST structure) to lock current behavior. See §1.3,
+>   §4 Phase 2, §11.3.
 >
 > **Per-phase documentation protocol (mandatory).** On completion of
 > each phase, the implementing PR must also (a) update this PRD's
@@ -130,7 +156,7 @@ The findings:
 | F1 | Codegen mutates the post-parse AST (5 sites) | Critical | 1a + 1b |
 | F2 | Source-location vector silently desynchronises | Critical | 3 |
 | F7 | Right-associative `^` parses left-associative | ~~Critical~~ **WITHDRAWN** (Phase 0 verified `2^3^2 → 512` already; regression test only in Phase 2) | 2 (test only) |
-| F8 | Mini-lexer never bumps `line_` across `\n` | Critical | 2 |
+| F8 | Mini-lexer never bumps `line_` across `\n` | ~~Critical~~ **RESOLVED** (Phase 2, 2026-05-26) | 2 |
 | F14 | `voicing_registry` leaks state across compiles | Critical | 4 |
 | F12 | Lexers don't intern strings (16× rehash per compile) | Critical | 5 |
 | F3 | Mini-notation re-parsed up to 5× per string | High (tail) | 1b |

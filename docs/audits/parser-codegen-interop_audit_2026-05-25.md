@@ -14,8 +14,8 @@ The akkado compiler is structurally clean for a 75 KLOC code-base — one mutex,
 
 1. **F1 — Codegen mutates the AST in place** (`PreResolved` node injection + mini-notation re-parse via `const_cast` + spread-arg reorder), silently breaking the immutability assumption that downstream readers like `shape_index` rely on, and foreclosing every form of pass-parallelism the rest of the architecture is otherwise ready for.
 2. **F2 — Source-location wiring silently desynchronises**: ~12 helper-emission sites push to `instructions_` without pushing to the parallel `source_locations_` vector, corrupting click-to-source for every instruction emitted afterwards.
-3. **F7 — `^` operator parses left-associative** despite Pratt-table comments claiming right-assoc: `2^3^2` evaluates as `(2^3)^2 = 64` not `2^(3^2) = 512`.
-4. **F8 — Mini-lexer never bumps `line_` across `\n`**: every diagnostic emitted from inside a multi-line mini-notation string reports a wrong line/column.
+3. **F7 — `^` operator parses left-associative** despite Pratt-table comments claiming right-assoc: `2^3^2` evaluates as `(2^3)^2 = 64` not `2^(3^2) = 512`. **WITHDRAWN 2026-05-25** — Phase 0 (commit `b203e2e`) verified `^` is already right-associative on master; the original claim was based on a misread of the Pratt mechanic. See §F7 and PRD §1.3.
+4. **F8 — Mini-lexer never bumps `line_` across `\n`**: every diagnostic emitted from inside a multi-line mini-notation string reports a wrong line/column. **RESOLVED 2026-05-26** — Phase 2 (commit `<commit>`) added line tracking. See §F8.
 5. **F12 — Lexers don't intern strings at all**, despite the architecture overview's headline claim of FNV-1a string interning — identifiers are copied 4-5 times and rehashed 16+ times per compile.
 6. **F14 — `voicing_registry` leaks state across compiles** via a process-global `unordered_map` guarded by the compiler's only mutex, defeating cross-compile isolation and per-compile parallelism.
 
@@ -227,6 +227,19 @@ Four switches enumerating the same operator set.
 
 ### F7. Pratt right-associativity for `^` is silently broken — *High*
 
+> **WITHDRAWN 2026-05-25** — Phase 0 verification (commit `b203e2e`)
+> compiled fixture `06_power_op.ak` (`osc("sin", 2^3^2 * 100) |> out(@)`)
+> and the snapshot at `akkado/tests/snapshots/06_power_op.disasm` shows
+> the outer `POW` reading the inner `POW`'s result, i.e. `2^(3^2) = 512`.
+> The audit's reading at "Site" below was wrong: the right-assoc branch
+> passes `p` while the left-assoc branch passes `p+1`, and
+> `parse_precedence(p)` accepts another `^` (since `p ≥ p`), yielding
+> real right-associativity. The no-op `static_cast<Precedence>(static_cast<int>(next_prec))`
+> is intentional symmetry, not a bug. Phase 2 (commit `<commit>`,
+> 2026-05-26) shipped a clarifying comment above `parser.cpp:1459` and
+> regression tests (4 `[F7]` parser AST + 2 `[F7]` const-eval) locking
+> the current behaviour. See PRD §1.3.
+
 **Site:** `parser.cpp:1457-1463` — the "right-associative power" code has both branches setting `next_prec` to the same value (`static_cast<Precedence>(static_cast<int>(next_prec))` is a no-op). Power is parsed left-associatively despite the comment claiming otherwise.
 
 **Why it bites.** `2 ^ 3 ^ 2` parses as `(2^3)^2 = 64` instead of the mathematical `2^(3^2) = 512`. Trivially testable, no test catches it.
@@ -238,6 +251,20 @@ Four switches enumerating the same operator set.
 ---
 
 ### F8. Mini-lexer multi-line source positions are broken — *High*
+
+> **RESOLVED 2026-05-26** — Phase 2 (commit `<commit>`) added `line_`,
+> `start_line_`, `start_column_` members to `MiniLexer`. `advance()`
+> bumps `line_` on `\n` and resets `column_ = 1`; `lex_token()`
+> snapshots `start_line_`/`start_column_` alongside the existing
+> `start_ = current_` at every token start. `current_location()`
+> reports the token-start line/column, with line-1 still offset by
+> `base_location_.column` so existing single-line callers see
+> byte-identical output (`start_column_ - 1 == start_` on line 1).
+> Line 2+ reports pattern-relative column — we don't know source-file
+> indentation of continuation lines. Six `[F8]` regression tests in
+> `akkado/tests/test_mini_notation.cpp` cover default base_location,
+> non-trivial base_location offset, `\r\n` line endings, trailing
+> `\n`, and an error-token diagnostic on line 2.
 
 **Site:** `mini_lexer.cpp:73-77` (`advance` only bumps `column_`, never `line_`); `mini_lexer.cpp:146-153` (`current_location` reuses `base_location_.line` unconditionally).
 

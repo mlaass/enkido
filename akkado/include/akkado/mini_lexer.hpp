@@ -118,7 +118,10 @@ private:
     // Current position
     std::uint32_t start_ = 0;    // Start of current token
     std::uint32_t current_ = 0;  // Current position
-    std::uint32_t column_ = 1;   // Column within pattern (1-based)
+    std::uint32_t line_ = 1;     // Line within pattern (1-based), bumped on `\n`
+    std::uint32_t column_ = 1;   // Column within current line (1-based)
+    std::uint32_t start_line_ = 1;    // line_ snapshotted at token start
+    std::uint32_t start_column_ = 1;  // column_ snapshotted at token start
 };
 
 /// Convenience function to lex a mini-notation pattern

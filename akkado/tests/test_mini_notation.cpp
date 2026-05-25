@@ -263,6 +263,96 @@ TEST_CASE("Mini lexer basic tokens", "[mini_lexer]") {
 }
 
 // ============================================================================
+// F8 — MiniLexer multi-line position tracking
+// ============================================================================
+//
+// Before Phase 2, MiniLexer::advance() only bumped `column_` and never
+// touched `line_`, so every token in a multi-line pattern reported
+// `base_location_.line`. current_location() used `base.column + start_`
+// which corrupts column once the pattern crosses `\n`. These tests lock
+// in the corrected behaviour:
+//   - `\n` bumps `line_` and resets `column_ = 1`
+//   - `current_location()` reports the token-start line/column
+//   - Line-1 columns remain byte-identical to the historical formula
+//   - Line-2+ columns are pattern-relative (1-based within the line)
+// See docs/prd-parser-codegen-correctness.md §1.4, §4 Phase 2.
+
+TEST_CASE("MiniLexer multi-line position tracking (F8)", "[mini_lexer][F8]") {
+    SECTION("token on line 2 reports line 2") {
+        // Default base_location is line=1, column=1.
+        auto [tokens, diags] = lex_mini("a b\nc d");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 5);  // a b c d eof
+        // First-line tokens: line 1.
+        CHECK(tokens[0].location.line == 1);
+        CHECK(tokens[1].location.line == 1);
+        // Second-line tokens: line 2.
+        CHECK(tokens[2].location.line == 2);
+        CHECK(tokens[3].location.line == 2);
+        // Column on line 2 should reset (first non-ws token at column 1).
+        CHECK(tokens[2].location.column == 1);
+    }
+
+    SECTION("first-line column still offset by base_location.column") {
+        // Simulate a parser-side base_location pointing at column 11
+        // (e.g. `pat("..."` opens at column 6, content starts at 11).
+        SourceLocation base{ .line = 1, .column = 11, .offset = 10 };
+        auto [tokens, diags] = lex_mini("a b", base);
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+        CHECK(tokens[0].location.line == 1);
+        CHECK(tokens[0].location.column == 11);  // base.column + 0
+        CHECK(tokens[1].location.line == 1);
+        CHECK(tokens[1].location.column == 13);  // base.column + 2
+    }
+
+    SECTION("multi-line with non-trivial base_location") {
+        // Pattern starts at source line 3, column 8. Continuation line
+        // maps to source line 4 (base.line + (2 - 1) = 4).
+        SourceLocation base{ .line = 3, .column = 8, .offset = 0 };
+        auto [tokens, diags] = lex_mini("a\nb", base);
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+        CHECK(tokens[0].location.line == 3);   // base.line + 0
+        CHECK(tokens[0].location.column == 8); // base.column + 0
+        CHECK(tokens[1].location.line == 4);   // base.line + 1
+        // Line 2+ column is pattern-relative; first non-ws char is column 1.
+        CHECK(tokens[1].location.column == 1);
+    }
+
+    SECTION("\\r\\n line endings bump line once") {
+        auto [tokens, diags] = lex_mini("a\r\nb");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);
+        CHECK(tokens[0].location.line == 1);
+        CHECK(tokens[1].location.line == 2);
+        CHECK(tokens[1].location.column == 1);
+    }
+
+    SECTION("trailing newline doesn't crash and reports Eof cleanly") {
+        auto [tokens, diags] = lex_mini("a b\n");
+        REQUIRE(diags.empty());
+        REQUIRE(tokens.size() == 3);  // a, b, eof
+        CHECK(tokens[2].type == MiniTokenType::Eof);
+    }
+
+    SECTION("error diagnostic on line 2 reports line 2") {
+        // `&` is unhandled by the mini-lexer's lex_token() switch and
+        // falls through to make_error_token via the default arm at
+        // mini_lexer.cpp:421 ("Unexpected character in pattern").
+        // Locking the diagnostic line through the make_error_token →
+        // current_location() path.
+        auto [tokens, diags] = lex_mini("a\n&");
+        REQUIRE(!diags.empty());
+        bool found_line_2 = false;
+        for (const auto& d : diags) {
+            if (d.location.line == 2) { found_line_2 = true; break; }
+        }
+        CHECK(found_line_2);
+    }
+}
+
+// ============================================================================
 // Mini-Notation Parser Tests
 // ============================================================================
 

@@ -72,7 +72,12 @@ char MiniLexer::peek_ahead(std::size_t n) const {
 
 char MiniLexer::advance() {
     char c = pattern_[current_++];
-    column_++;
+    if (c == '\n') {
+        line_++;
+        column_ = 1;
+    } else {
+        column_++;
+    }
     return c;
 }
 
@@ -144,12 +149,18 @@ void MiniLexer::skip_whitespace() {
 }
 
 SourceLocation MiniLexer::current_location() const {
-    return {
-        .line = base_location_.line,
-        .column = base_location_.column + start_,
-        .offset = base_location_.offset + start_,
-        .length = current_ - start_
-    };
+    // Line 1 of the pattern keeps the historical column offset (base.column +
+    // start_) so single-line callers see byte-identical output. Line 2+ uses
+    // the pattern-relative column — we don't know the source-file indentation
+    // of continuation lines, so we report start_column_ as-is.
+    SourceLocation loc;
+    loc.line = base_location_.line + (start_line_ - 1);
+    loc.column = (start_line_ == 1)
+        ? (base_location_.column + (start_column_ - 1))
+        : start_column_;
+    loc.offset = base_location_.offset + start_;
+    loc.length = current_ - start_;
+    return loc;
 }
 
 bool MiniLexer::looks_like_pitch() const {
@@ -243,6 +254,8 @@ MiniToken MiniLexer::lex_token() {
     skip_whitespace();
 
     start_ = current_;
+    start_line_ = line_;
+    start_column_ = column_;
 
     if (is_at_end()) {
         return make_token(MiniTokenType::Eof);

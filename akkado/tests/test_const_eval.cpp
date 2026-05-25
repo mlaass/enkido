@@ -51,6 +51,28 @@ TEST_CASE("Const: arithmetic expression", "[const]") {
     CHECK(decode_const_float(insts[0]) == 445.0f);
 }
 
+TEST_CASE("Const: power right-associativity (F7)", "[const][F7]") {
+    // F7 was withdrawn in Phase 0 (commit b203e2e) — `^` is already
+    // right-associative on master. These tests lock the numeric value
+    // through the full const-eval pipeline. See PRD §1.3, §4 Phase 2.
+
+    SECTION("2 ^ 3 ^ 2 == 512") {
+        auto result = akkado::compile("const x = 2 ^ 3 ^ 2");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        REQUIRE(count_instructions(insts, cedar::Opcode::PUSH_CONST) >= 1);
+        CHECK(decode_const_float(insts[0]) == 512.0f);
+    }
+
+    SECTION("2 ^ 2 ^ 2 ^ 2 == 65536") {
+        auto result = akkado::compile("const x = 2 ^ 2 ^ 2 ^ 2");
+        REQUIRE(result.success);
+        auto insts = get_instructions(result);
+        REQUIRE(count_instructions(insts, cedar::Opcode::PUSH_CONST) >= 1);
+        CHECK(decode_const_float(insts[0]) == 65536.0f);
+    }
+}
+
 TEST_CASE("Const: use const variable in expression", "[const]") {
     auto result = akkado::compile(R"(
         const base = 440

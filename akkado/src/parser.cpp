@@ -1455,7 +1455,11 @@ NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
     // For right-associative (^), use lower precedence
     Precedence next_prec = get_precedence(op.type);
     if (op.type == TokenType::Caret) {
-        // Power is right-associative
+        // Power is right-associative.
+        // Pratt: pass the SAME precedence (not p+1) so parse_precedence(p)
+        // accepts another `^` (since `p >= p`), yielding `a ^ (b ^ c)`. The
+        // cast-int-and-back is a deliberate no-op kept for symmetry with the
+        // left-assoc branch. See docs/prd-parser-codegen-correctness.md §1.3.
         next_prec = static_cast<Precedence>(static_cast<int>(next_prec));
     } else {
         // Left-associative: increment to bind tighter on right
