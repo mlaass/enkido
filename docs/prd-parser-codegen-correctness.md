@@ -13,7 +13,7 @@
 >   `nkido_bytecode_dump` static library so tests can link it without
 >   pulling in the CLI. See §8 *Snapshot harness*.
 > - **Phase 1b (mini-notation parse-at-parse-time + F3 tail) — SHIPPED
->   2026-05-25** (commit `<PHASE_1B_COMMIT>`). The four
+>   2026-05-25** (commit `ed8703a`). The four
 >   `codegen_patterns.cpp` `const_cast<AstArena&>` re-parses are gone;
 >   `grep -rn 'const_cast<AstArena' akkado/src/` now returns zero code
 >   hits. `Node::data` gained a `MiniLiteralData` variant arm that

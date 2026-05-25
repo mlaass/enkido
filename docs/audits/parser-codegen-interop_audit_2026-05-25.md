@@ -465,7 +465,7 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 ### PRD-1 — Codegen no longer mutates the AST  *(Critical; blocks 3+ other wins)*
 
 > **SHIPPED via `prd-parser-codegen-correctness.md` Phase 1a + 1b**,
-> commits `deda0c6` (Phase 1a) and <PHASE_1B_COMMIT> (Phase 1b),
+> commits `deda0c6` (Phase 1a) and ed8703a (Phase 1b),
 > 2026-05-25. All six `const_cast<AstArena&>` sites are gone. The
 > analyzer's `Ast::arena` is fully read-only from codegen's perspective.
 > Prefix-form mini literals carry their parsed sub-AST in
