@@ -10,13 +10,18 @@
 
 ## Executive summary
 
-The akkado compiler is structurally clean for a 75 KLOC code-base — one mutex, one process-global mutable map, no static state in lex/parse/analyze/codegen instance fields. But the *interfaces between stages* have rotted: every consumer of the AST has its own ad-hoc walker, every dispatcher table is repeated 3–7×, and the codegen layer has been growing by accretion (110 commits to `codegen.cpp` alone) without a coherent extension model. Two correctness bugs and one architectural pretense fall out of this:
+The akkado compiler is structurally clean for a 75 KLOC code-base — one mutex, one process-global mutable map, no static state in lex/parse/analyze/codegen instance fields. But the *interfaces between stages* have rotted: every consumer of the AST has its own ad-hoc walker, every dispatcher table is repeated 3–7×, and the codegen layer has been growing by accretion (110 commits to `codegen.cpp` alone) without a coherent extension model. **Six critical correctness/architecture findings** fall out of this (full detail in §2):
 
-1. **Codegen mutates the AST in place** (`PreResolved` node injection + mini-notation re-parse via `const_cast`), silently breaking the immutability assumption that downstream readers like `shape_index` rely on, and foreclosing every form of pass-parallelism the rest of the architecture is otherwise ready for.
-2. **Source-location wiring silently desynchronises**: ~12 helper-emission sites push to `instructions_` without pushing to the parallel `source_locations_` vector, corrupting click-to-source for every instruction emitted afterwards.
-3. **Lexers don't intern strings at all**, despite the architecture overview's headline claim of FNV-1a string interning — identifiers are copied 4-5 times and rehashed 16+ times per compile.
+1. **F1 — Codegen mutates the AST in place** (`PreResolved` node injection + mini-notation re-parse via `const_cast` + spread-arg reorder), silently breaking the immutability assumption that downstream readers like `shape_index` rely on, and foreclosing every form of pass-parallelism the rest of the architecture is otherwise ready for.
+2. **F2 — Source-location wiring silently desynchronises**: ~12 helper-emission sites push to `instructions_` without pushing to the parallel `source_locations_` vector, corrupting click-to-source for every instruction emitted afterwards.
+3. **F7 — `^` operator parses left-associative** despite Pratt-table comments claiming right-assoc: `2^3^2` evaluates as `(2^3)^2 = 64` not `2^(3^2) = 512`.
+4. **F8 — Mini-lexer never bumps `line_` across `\n`**: every diagnostic emitted from inside a multi-line mini-notation string reports a wrong line/column.
+5. **F12 — Lexers don't intern strings at all**, despite the architecture overview's headline claim of FNV-1a string interning — identifiers are copied 4-5 times and rehashed 16+ times per compile.
+6. **F14 — `voicing_registry` leaks state across compiles** via a process-global `unordered_map` guarded by the compiler's only mutex, defeating cross-compile isolation and per-compile parallelism.
 
 The dominant simplification opportunity is the codegen `visit()` Call branch (**1,180 lines** in a single switch arm) plus its 7-way dispatcher fragmentation. The dominant parallelisation opportunity is splitting front-end work per import file — imports are *already resolved as a DAG* and then immediately collapsed into a single byte stream before tokenisation, throwing away the parallelism the import graph proves safe.
+
+**Resolution status.** All six critical findings are scoped into `docs/prd-parser-codegen-correctness.md` (filed 2026-05-25). Per-finding RESOLVED tags below get appended as each phase ships; see that PRD's status block for current state.
 
 ---
 
@@ -305,7 +310,7 @@ Hot identifiers like `freq`, `gate`, `vel` get rehashed dozens of times per comp
 - Re-defining a voicing with the same name in source A persists into the next compile of source B — cross-compile state leak that survives full `CodeGenerator` reset.
 - Only mutex in the compiler; defeats lock-free per-compile parallelism unless removed.
 
-**Fix sketch.** Move the registry into a per-compile `CompileContext` carried through `CodeGenerator`. Drop `registry_mutex()`. Single-customer (called only from `codegen_patterns.cpp`, 17 sites all in one file), so the blast radius is contained.
+**Fix sketch.** Move the registry into a per-compile `CompileContext` carried through `CodeGenerator`. Drop `registry_mutex()`. Single-customer: called only from `codegen_patterns.cpp` — **4 registry call sites** (3 × `lookup_voicing` at `:4538`/`:4540`/`:4803`, 1 × `register_voicing` at `:4904`). Blast radius is contained. (*Original audit claimed "17 sites all in one file"; that figure conflated all `voicing::` namespace mentions — including pure `parse_anchor` / `parse_mode` / `voice_chords` and `Mode` / `ChordSpec` / `VoicingDict` types — with actual registry touches. Corrected during the 2026-05-25 PRD-review pass; see `docs/prd-parser-codegen-correctness.md` §1.5.*)
 
 **Severity: High** (correctness bug + only concurrency obstacle in compiler globals).
 

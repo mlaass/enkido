@@ -36,15 +36,30 @@ The six findings:
 
 **Key Design Decisions** (locked — see §10 for sourcing):
 
-- **Phase 1a first; everything else parallelizes after.** The codegen
-  AST-mutation refactor (F1a — `PreResolved`) unblocks `shape_index` and
-  future parallel pass work. Phases 2–5 are independent and may land in
-  any order once Phase 1a is in.
-- **Per-pattern mini-notation sub-arena owned by `MiniLiteralData`.**
-  Each `MiniLiteralData` carries a `std::unique_ptr<AstArena>` populated
-  at parse time. The 4 `const_cast<AstArena&>` codegen-time re-parses
-  are deleted. Sub-arena destroyed with the literal; thread-local during
-  future parallel mini-parse.
+- **Phase 0 first (snapshot harness), then Phase 1a; rest parallelizes.**
+  Phase 0 lands a per-fixture bytecode-disassembly snapshot test so every
+  subsequent phase's "byte-identical bytecode" exit criterion is
+  mechanically checked. Phase 1a (the codegen AST-mutation refactor)
+  unblocks `shape_index` and future parallel pass work. Phases 2–5 are
+  independent and may land in any order once Phase 1a is in.
+- **`PreResolved` node kind removed entirely; side-table keyed by
+  `(call_node, arg_position)`.** No synthetic AST nodes are minted at
+  any stage. `expand_call_arguments` returns a flat `ExpandedArg` list;
+  the Call branch in `visit()` zips it against `pre_resolved_values_`
+  (a `std::unordered_map<std::pair<NodeIndex,int>, TypedValue>`). No
+  auxiliary arena is needed. `reorder_spread_named_args` is rewritten to
+  produce an `ArgInfo` vector + a separate "slot lookup" path instead of
+  mutating `arena[call_node].first_child` in place.
+- **New `MiniLiteralData` variant arm on `Node::data`.** Today
+  `parser.cpp:1759` sets `arena_[node].data = Node::StringData{mode_marker}`
+  on a `NodeType::MiniLiteral` node and adds the parsed mini-AST as a
+  child via `arena_.add_child(...)`. Phase 1b introduces a dedicated
+  `MiniLiteralData { std::string mode_marker; std::unique_ptr<AstArena>
+  mini_arena; NodeIndex mini_root; std::vector<Diagnostic> mini_diagnostics; }`
+  and stops stitching mini nodes as main-arena children. The 4
+  `const_cast<AstArena&>` codegen-time re-parses are deleted. Sub-arena
+  destroyed with the literal; thread-local during future parallel
+  mini-parse.
 - **Codegen emit helpers become `CodeGenerator&` methods.** The free
   `codegen::emit_push_const(buffers_, stream_, val)` shape is deleted;
   the method `cg.emit_push_const(val)` routes through `emit()` which
@@ -70,8 +85,13 @@ The six findings:
   multi-line mini-pattern positions for F8). Plus two cross-cutting
   invariants asserted in `generate()`:
   1. `instructions_.size() == source_locations_.size()`
-  2. After codegen, the input `Ast::arena` byte-hash is unchanged from
-     pre-codegen (asserts no codegen-side mutation crept back in).
+  2. After codegen, a **structural hash** of `Ast::arena` is unchanged
+     from pre-codegen (asserts no codegen-side mutation crept back in).
+     The hash is computed by an explicit post-order traversal that
+     reads each `Node::data` variant arm's named fields and feeds them
+     into FNV-1a — *not* a naive `memcpy` (the AST contains
+     `std::string` and `std::variant` members whose padding is
+     unspecified).
 
 ---
 
@@ -81,17 +101,22 @@ The six findings:
 
 | Site | File:line | What it does |
 |---|---|---|
-| PreResolved alloc | `codegen.cpp:1017` | `arena.alloc(NodeType::PreResolved, ea.loc)` inside `expand_call_arguments` writes a synthetic node into the analyzer's `output_arena_` during spread expansion. Value already lives in side table `pre_resolved_values_` (`codegen.hpp:1194`). |
+| PreResolved alloc | `codegen.cpp:1008,1018` | `expand_call_arguments` takes `AstArena& arena = const_cast<AstArena&>(ast_->arena);` then calls `arena.alloc(NodeType::PreResolved, ea.loc)` to write a synthetic node into the analyzer's `output_arena_` during spread expansion. Value already lives in side table `pre_resolved_values_` (`codegen.hpp:1194`). |
+| Spread arg reordering | `codegen.cpp:3233` | `reorder_spread_named_args` takes `AstArena& arena = const_cast<AstArena&>(ast_->arena);` and rewrites `arena[call_node].first_child` + sibling chains in-place to put named args in slot order. |
 | Chord re-parse | `codegen_patterns.cpp:1778` | `parse_mini(chord_str, const_cast<AstArena&>(ast_->arena), …)` parses chord string into the same arena codegen is reading from. |
 | Generic pattern arg re-parse | `codegen_patterns.cpp:2133` | Same `const_cast` pattern for any string-literal pattern argument. |
 | Chord-in-transform re-parse | `codegen_patterns.cpp:2183` | Same pattern, inside pattern transforms. |
 | Timeline curve re-parse | `codegen_patterns.cpp:2983` | Same pattern, for `timeline(t"…")` curve strings. |
 
+Total: **6** `const_cast<AstArena&>` sites in `akkado/src/` today. Phase 1a addresses the two `codegen.cpp` sites (spread expansion + spread reorder); Phase 1b addresses the four `codegen_patterns.cpp` re-parses.
+
 Why it bites:
 
 - `shape_index` cannot share the main compile's AST because it might be
   mid-mutation — instead it re-lexes + re-parses on every editor cursor
-  move (`shape_index.cpp:424-435`, 478 LOC of duplicate pipeline).
+  move (`shape_index.cpp:429-435` does the re-lex/parse;
+  `shape_index.cpp` is 478 LOC total of duplicate pipeline glue around
+  it).
 - Pattern evaluators cannot run in parallel across patterns because the
   arena they read could be growing.
 - The future LSP / autocomplete cannot hand the analyzer's AST to
@@ -200,8 +225,21 @@ std::unordered_map<std::string, VoicingDict>& voicing_registry() {
 }
 ```
 
-Mutated by codegen's `addVoicings()` handler (17 call sites in
-`codegen_patterns.cpp`). Two problems:
+Mutated by `voicing::register_voicing` (`voicing.cpp:300`), called from
+codegen's `handle_add_voicings_call` handler at `codegen_patterns.cpp:4904`.
+Read by `voicing::lookup_voicing` (`voicing.cpp:292`), called from three
+sites in `codegen_patterns.cpp`: `:4538` (resolves the user-named dict
+in `apply_voicing`), `:4540` (built-in `"close"` fallback when no dict
+named or named-dict lookup returned null), and `:4803` (membership
+check in `handle_voicing_call`, gates the E141 "dictionary not
+registered" diagnostic). Phase 4 must route all four registry touches
+through the new `VoicingRegistry`. The rest of the `voicing::*`
+namespace in `codegen_patterns.cpp` (`parse_anchor`, `parse_mode`,
+`voice_chords`, plus the `Mode` / `ChordSpec` / `VoicingDict` types) is
+pure functions / types and needs no rewire. The audit's "17 sites all
+in one file" line at `audit:313` conflated all `voicing::` namespace
+mentions with registry touches; the real registry surface is 4 call
+sites. Two problems:
 
 1. **Cross-compile state leak.** A user-defined voicing in source A
    persists into the next compile of source B. Survives full
@@ -324,40 +362,62 @@ Behavior when `ctx == nullptr`: `compile()` constructs a fresh
 
 ### 3.2 `Ast::arena` immutability
 
-Phase 1a removes the one mutating call site in `expand_call_arguments`
-(`codegen.cpp:1010-1025`). Replacement: index the `pre_resolved_values_`
-side table by `(parent_arg_node_index, position_within_call)` — or, more
-robustly, allocate a stable sentinel `NodeIndex` from a **separate
-small arena** owned by `CodeGenerator`, used only for these synthetic
-nodes. The `NodeType::PreResolved` kind is then removed entirely; the
-generic `visit()` Call branch's "is this a PreResolved arg?" check
-becomes a lookup in `pre_resolved_values_`.
+Phase 1a removes the two mutating call sites in `codegen.cpp`:
 
-Phase 1b removes the 4 `const_cast<AstArena&>` sites by parsing mini-
-notation strings at parse time. `MiniLiteralData` gains a sub-arena:
+1. **`expand_call_arguments` at `codegen.cpp:1008,1018`.** Drop the
+   `const_cast<AstArena&>(ast_->arena)` and stop allocating
+   `NodeType::PreResolved` nodes entirely. Replacement: the function
+   returns its existing `ExpandedArg` list directly to the caller; the
+   `pre_resolved_values_` side table is rekeyed from `NodeIndex` to
+   `std::pair<NodeIndex, int>` where the pair is `(call_node, arg_position)`.
+   The Call branch in `visit()` looks up `(node, i)` in
+   `pre_resolved_values_` before falling through to the generic
+   per-child visit. **`NodeType::PreResolved` is removed from
+   `NodeType`.** No synthetic AST nodes are minted anywhere.
+2. **`reorder_spread_named_args` at `codegen.cpp:3233`.** Today it
+   `const_cast`s the arena and rewrites `arena[call_node].first_child`
+   and sibling chains in place to put named args in slot order.
+   Replacement: it constructs the slot-ordered `ArgInfo` vector as a
+   local and the Call visit path iterates that vector instead of
+   re-walking `arena[call_node].first_child`. The arena is read-only.
+
+Phase 1b removes the 4 `const_cast<AstArena&>` sites in
+`codegen_patterns.cpp` by parsing mini-notation strings into a per-
+literal sub-arena at parse time. Today the parser sets
+`arena_[node].data = Node::StringData{mode_marker}` on the MiniLiteral
+node (`parser.cpp:1759`) and stitches the parsed mini-AST as a child
+via `arena_.add_child(node, pattern_ast)` (`parser.cpp:1754`) — there is
+**no `MiniLiteralData` struct today**, and the raw pattern string is
+never stored on the node.
+
+Phase 1b introduces a new variant arm:
 
 ```cpp
+// Added to Node::data variant in ast.hpp
 struct MiniLiteralData {
-    std::string raw;                              // existing
-    NodeIndex   mode_marker;                      // existing
-    std::unique_ptr<AstArena> mini_arena;         // ← new
-    NodeIndex   mini_root = NULL_NODE;            // ← new (index into mini_arena)
-    std::vector<Diagnostic> mini_diagnostics;     // ← new (parser pre-collected)
+    std::string mode_marker;                      // replaces StringData usage
+    std::unique_ptr<AstArena> mini_arena;         // owns the parsed sub-AST
+    NodeIndex   mini_root = NULL_NODE;            // index into mini_arena
+    std::vector<Diagnostic> mini_diagnostics;     // pre-collected by parser
 };
 ```
 
-The parser at `parser.cpp:1744` already calls `parse_mini(...)` and
-stitches into the main arena. Phase 1b changes it to:
+The parser at `parser.cpp:1705-1762` changes to:
 
 1. Construct a fresh `AstArena` for the literal.
-2. Parse into that sub-arena, capturing root index + diagnostics.
-3. Store both on `MiniLiteralData`.
-4. **Stop stitching mini nodes as children of the `MiniLiteral` main-
-   arena node** — they live in the sub-arena instead.
+2. Parse `pattern_str` into that sub-arena, capturing root index +
+   diagnostics.
+3. Set `arena_[node].data = Node::MiniLiteralData{...}` (replaces the
+   existing `StringData` assignment at line 1759).
+4. **Stop calling `arena_.add_child(node, pattern_ast)`** — mini nodes
+   live in the sub-arena, not as main-arena children.
+
+Diagnostics buffered in `mini_diagnostics` are merged into the main
+parser's diagnostic list at the end of `Parser::parse()` (no UX change).
 
 Codegen reads `MiniLiteralData::mini_arena` + `mini_root` instead of
-re-parsing. The chord/transform/timeline call sites use the same
-sub-arena handle on `MiniLiteralData::mini_arena`.
+re-parsing. The chord / transform / timeline call sites all read the
+sub-arena handle.
 
 After this PRD, every codegen function signature that takes an `Ast&`
 becomes `const Ast&`.
@@ -424,9 +484,26 @@ private:
 ```
 
 No mutex. Owner is `CompileContext`. The free functions
-`addVoicing(name, dict)` / `lookupVoicing(name)` become methods. The 17
-call sites in `codegen_patterns.cpp` route through
-`ctx_->voicing_registry->…`.
+`voicing::register_voicing(name, dict)` / `voicing::lookup_voicing(name)`
+(declared in `voicing.hpp:72,77`, implemented at `voicing.cpp:292,300`)
+become methods on `VoicingRegistry`. The four registry call sites in
+`codegen_patterns.cpp` route through `ctx_->voicing_registry->…`:
+
+- `:4538` — `voicing::lookup_voicing(compiler.voicing_dict_name())` in
+  `apply_voicing`
+- `:4540` — `voicing::lookup_voicing("close")` (built-in fallback) in
+  `apply_voicing`
+- `:4803` — `voicing::lookup_voicing(*name_str)` (membership check) in
+  `handle_voicing_call`
+- `:4904` — `voicing::register_voicing(*name_str, std::move(dict))` in
+  `handle_add_voicings_call`
+
+The free-function symbols are kept as thin wrappers around a
+process-default registry only if any out-of-tree caller needs them —
+`grep` confirms no in-tree caller does, so they are deleted in Phase 4.
+The other `voicing::*` references in `codegen_patterns.cpp`
+(`parse_anchor`, `parse_mode`, `voice_chords`, plus `Mode` / `ChordSpec`
+/ `VoicingDict` types) are pure / type-only and need no rewire.
 
 ### 3.5 Codegen emit consolidation
 
@@ -460,9 +537,14 @@ assert(instructions_.size() == source_locations_.size() &&
        "F2: source_locations_ vector desync");
 ```
 
-Plus a debug-build invariant: the input `Ast::arena` byte-hash is
-recorded before codegen begins and re-checked at the end; assert that
-it hasn't changed.
+Plus a debug-build invariant: a **structural hash** of the input
+`Ast::arena` is recorded before codegen begins and re-checked at the
+end; assert that it hasn't changed. The hash function (in a new helper
+`akkado/include/akkado/ast_hash.hpp`) does a post-order traversal that
+reads each `Node::data` variant arm's named fields (string `.value`,
+`.name`, integer atoms, etc.) into FNV-1a — explicitly *not*
+`memcpy`-style, since the AST contains `std::string` and `std::variant`
+members whose padding bytes and heap pointers are unspecified.
 
 ### 3.6 Token shape change
 
@@ -494,39 +576,56 @@ using TokenValue = std::variant<std::monostate, NumericValue, SymbolId, StringLi
 
 ## 4. Per-Phase Implementation Detail
 
-### Phase 1a — `PreResolved` to side table (F1 part 1)
+### Phase 1a — Remove `NodeType::PreResolved` + reorder via local vector (F1 part 1)
 
-**Scope.** Remove `NodeType::PreResolved`. Move `pre_resolved_values_`
-keyed by a stable identifier that doesn't require minting a real AST
-node.
+**Scope.** Remove `NodeType::PreResolved` entirely. Make codegen's two
+`codegen.cpp` `const_cast<AstArena&>` sites read-only.
 
-**Approach.** `CodeGenerator` gains a small per-compile auxiliary
-arena (`AstArena synthetic_arena_`) used only for synthetic nodes that
-codegen needs to mint. `expand_call_arguments` allocates synthetic
-`Argument`-shaped placeholder indices into `synthetic_arena_`, never
-into `ast_->arena`. The `pre_resolved_values_` map keys on the
-`(synthetic_arena_, synthetic_node)` pair. The Call branch in `visit()`
-checks for `NodeType::PreResolved` (now removed) — replaced with "if
-arg's first child resolves to a `pre_resolved_values_` entry, use the
-cached `TypedValue`".
+**Approach.** No synthetic arena is introduced. Two changes:
+
+1. **`expand_call_arguments` (`codegen.cpp:1000-1025`):** drop the
+   `const_cast<AstArena&>(ast_->arena)`; return the existing
+   `ExpandedArg` vector directly. Rekey `pre_resolved_values_` from
+   `std::unordered_map<NodeIndex, TypedValue>` to
+   `std::unordered_map<std::pair<NodeIndex, int>, TypedValue>` (or
+   equivalent), where the pair is `(call_node, arg_position)`. The
+   Call branch in `visit()` checks `pre_resolved_values_.find({call,
+   i})` before falling through to the generic per-child visit. The
+   `NodeType::PreResolved` enum value is deleted from `NodeType`.
+2. **`reorder_spread_named_args` (`codegen.cpp:3230-3360`):** drop the
+   `const_cast<AstArena&>`. Today this function rewrites
+   `arena[call_node].first_child` and sibling chains in place to put
+   named args in slot order. Replace the in-place rewrite by leaving
+   the function's local `std::vector<ArgInfo> args` as the canonical
+   slot order (already constructed and ordered) and exposing it to the
+   Call visit path via a per-call `std::optional<std::vector<NodeIndex>>
+   reordered_arg_chain_` member on `CodeGenerator`. The Call branch
+   prefers the reordered chain when present, else walks
+   `arena[call_node].first_child` as today.
 
 **Files touched.**
 
 | File | Change |
 |---|---|
-| `akkado/include/akkado/ast.hpp` | Remove `NodeType::PreResolved` and `PreResolvedData` variant arm. |
-| `akkado/include/akkado/codegen.hpp` | Add `synthetic_arena_` member; change `pre_resolved_values_` key shape. |
-| `akkado/src/codegen.cpp:1010-1025` | Replace `arena.alloc(NodeType::PreResolved, …)` with synthetic-arena alloc. |
-| `akkado/src/codegen.cpp` (Call branch) | Replace PreResolved switch arm with side-table lookup before generic emit. |
+| `akkado/include/akkado/ast.hpp` | Remove `NodeType::PreResolved` enum value (no `PreResolvedData` variant arm exists today — nothing to remove there). |
+| `akkado/include/akkado/codegen.hpp` | Change `pre_resolved_values_` key from `NodeIndex` to `std::pair<NodeIndex,int>`; add `reordered_arg_chain_` per-call helper. |
+| `akkado/src/codegen.cpp:1000-1025` | Drop `const_cast`; remove `arena.alloc(NodeType::PreResolved, …)`; return ExpandedArg list to caller; record `pre_resolved_values_[{call,i}] = …`. |
+| `akkado/src/codegen.cpp:3230-3360` | Drop `const_cast`; replace in-place arena rewrite with read-only ArgInfo vector consumed by the Call visit path. |
+| `akkado/src/codegen.cpp` (Call branch) | Look up `pre_resolved_values_[{call,i}]` per arg before generic visit; honor `reordered_arg_chain_` when set. |
+| `akkado/include/akkado/ast_hash.hpp` (NEW) | Helper `arena_structural_hash(const AstArena&)` used by the debug invariant. |
 | `akkado/tests/test_codegen.cpp` | Add Phase 1a regression test (see §7). |
 
 **Exit criteria.**
 
 - `grep -rn 'PreResolved' akkado/` returns no hits in `src/` or
   `include/` (tests + comments may reference it as historical).
-- Debug `assert(ast_->arena.size() == initial_size)` at end of
-  `generate()` passes for every fixture.
-- All existing codegen tests pass byte-identical bytecode.
+- `grep -n 'const_cast<AstArena' akkado/src/codegen.cpp` returns zero
+  hits (both `codegen.cpp` sites resolved here; the four
+  `codegen_patterns.cpp` sites are Phase 1b's scope).
+- Debug `assert(arena_structural_hash(ast_->arena) == initial_hash)` at
+  end of `generate()` passes for every fixture.
+- All existing codegen tests pass byte-identical bytecode (verified via
+  the Phase 0 snapshot harness).
 - **Docs updated per §11 protocol** — PRD status block reflects
   `Phase 1a: SHIPPED <commit> <date>`; audit doc marks F1 (part 1)
   resolved with backlink to the same commit.
@@ -535,35 +634,57 @@ cached `TypedValue`".
 
 ### Phase 1b — Mini-notation parse-at-parse-time (F1 part 2)
 
-**Scope.** Parse mini-notation strings into per-pattern sub-arenas at
-parse time. Delete the 4 `const_cast<AstArena&>` codegen-time re-parses.
+**Scope.** Introduce a `MiniLiteralData` variant arm on `Node::data`,
+parse mini-notation strings into per-pattern sub-arenas at parse time,
+and delete the 4 `const_cast<AstArena&>` codegen-time re-parses in
+`codegen_patterns.cpp`.
 
-**Approach.** `MiniLiteralData` gains `std::unique_ptr<AstArena>
-mini_arena`, `NodeIndex mini_root`, and `std::vector<Diagnostic>
-mini_diagnostics`. `Parser::parse_mini_literal` (`parser.cpp:1705-1762`)
-constructs the sub-arena, parses into it, captures diagnostics, and
-stops stitching mini nodes as main-arena children. The 4 codegen sites
-read `mini_arena` instead of re-parsing.
+**Approach.** Today `parser.cpp:1759` sets
+`arena_[node].data = Node::StringData{mode_marker}` and
+`parser.cpp:1754` stitches the parsed mini-AST as a child via
+`arena_.add_child(node, pattern_ast)`. Phase 1b adds a dedicated
+`MiniLiteralData` arm (carrying `mode_marker`, `mini_arena`,
+`mini_root`, `mini_diagnostics`) to the `Node::data` variant.
+`Parser::parse_mini_literal` (`parser.cpp:1705-1762`) constructs the
+sub-arena, parses into it, captures diagnostics, sets
+`arena_[node].data = Node::MiniLiteralData{...}`, and **stops calling
+`arena_.add_child(node, pattern_ast)`**. The 4 codegen sites read
+`as_mini_literal().mini_arena` instead of re-parsing. All consumers
+that previously read `as_string()` on a `MiniLiteral` node migrate to
+`as_mini_literal().mode_marker`.
 
 **Files touched.**
 
 | File | Change |
 |---|---|
-| `akkado/include/akkado/ast.hpp` | Add 3 fields to `MiniLiteralData`. |
-| `akkado/src/parser.cpp:1705-1762` | Switch to sub-arena parsing; no main-arena child stitching. |
-| `akkado/src/codegen_patterns.cpp:1778` | Replace `parse_mini(..., const_cast<AstArena&>)` with read of `mini_literal_data.mini_arena`. |
+| `akkado/include/akkado/ast.hpp` | Add `MiniLiteralData` struct (4 fields) and add it as a variant arm of `Node::data`. Add `as_mini_literal()` accessor mirroring the other `as_*` helpers. |
+| `akkado/src/parser.cpp:1705-1762` | Construct sub-arena; parse into it; set `MiniLiteralData` on the node; remove the `add_child` call at line 1754; remove the `StringData` assignment at line 1759. |
+| `akkado/src/codegen_patterns.cpp:1778` | Replace `parse_mini(..., const_cast<AstArena&>)` with read of `ast_->arena[node].as_mini_literal().mini_arena`. |
 | `akkado/src/codegen_patterns.cpp:2133` | Same. |
 | `akkado/src/codegen_patterns.cpp:2183` | Same. |
 | `akkado/src/codegen_patterns.cpp:2983` | Same. |
+| `akkado/src/codegen.cpp` (MiniLiteral switch arm) | Migrate from `as_string()` to `as_mini_literal().mode_marker` for mode-marker reads. |
+| `akkado/src/analyzer.cpp` (MiniLiteral handling at `:240`, `:267`, `:727`, `:2326`) | Migrate any `as_string()` reads on MiniLiteral nodes. |
+| `akkado/src/shape_index.cpp` | Migrate MiniLiteral mode-marker read. |
 | `akkado/src/akkado.cpp` | Merge `MiniLiteralData::mini_diagnostics` into per-pass diagnostics with `SourceMap::adjust_all`. |
 | `akkado/tests/test_codegen.cpp` | Phase 1b regression test (no codegen-time arena growth). |
 
+**Pre-implementation sweep.** Before opening the Phase 1b PR, run
+`grep -rn 'as_string()\|NodeType::MiniLiteral' akkado/src/ akkado/include/`
+and audit every `MiniLiteral`-adjacent `as_string()` reader for
+migration to `as_mini_literal().mode_marker`. The grep above is the
+implementer's call-site map.
+
 **Exit criteria.**
 
-- `grep -rn 'const_cast.*AstArena' akkado/src/` returns zero hits.
+- `grep -rn 'const_cast.*AstArena' akkado/src/codegen_patterns.cpp`
+  returns zero hits. (The two `codegen.cpp` sites were resolved in
+  Phase 1a; total `const_cast<AstArena` count across `akkado/src/` is
+  zero after Phase 1b.)
 - Every codegen function signature taking `Ast&` is rewritten to
   `const Ast&`.
-- All existing mini-notation tests pass byte-identical sequence output.
+- All existing mini-notation tests pass byte-identical sequence output
+  (verified via Phase 0 snapshot harness).
 - **Docs updated per §11 protocol** — PRD status block reflects
   `Phase 1b: SHIPPED <commit> <date>`; audit doc marks F1 (part 2)
   resolved and updates the F1 row to "resolved" overall.
@@ -681,11 +802,11 @@ process-global registry + mutex. Thread the registry through
 | `akkado/include/akkado/compile_context.hpp` | New header. |
 | `akkado/src/compile_context.cpp` | New impl. |
 | `akkado/include/akkado/voicing.hpp` | `VoicingRegistry` class wrapping the existing free fns. |
-| `akkado/src/voicing.cpp:13-30` | Delete `voicing_registry()` + `registry_mutex()`. Move logic into `VoicingRegistry`. |
+| `akkado/src/voicing.cpp:13-30,292-303` | Delete `voicing_registry()` + `registry_mutex()` + the free `register_voicing` / `lookup_voicing` wrappers. Move logic into `VoicingRegistry`. |
 | `akkado/include/akkado/akkado.hpp:105` | Add optional `CompileContext* ctx = nullptr` parameter. |
 | `akkado/src/akkado.cpp` | Construct default ctx if null; pass to `CodeGenerator`. |
 | `akkado/include/akkado/codegen.hpp` | Hold `CompileContext*` member; receive in ctor. |
-| `akkado/src/codegen_patterns.cpp` | 17 call sites: `addVoicing(...)` → `ctx_->voicing_registry->define(...)`; `lookupVoicing(...)` → `ctx_->voicing_registry->lookup(...)`. |
+| `akkado/src/codegen_patterns.cpp:4538,4540,4803,4904` | Four registry call sites: `voicing::lookup_voicing(...)` → `ctx_->voicing_registry->lookup(...)` at `:4538` (user dict in `apply_voicing`), `:4540` (built-in `"close"` fallback), `:4803` (membership check in `handle_voicing_call`); `voicing::register_voicing(...)` → `ctx_->voicing_registry->define(...)` at `:4904` (inside `handle_add_voicings_call`). Other `voicing::*` namespace mentions (pure fns + types) are untouched. |
 | `akkado/tests/test_codegen.cpp` | Phase 4 regression: compile source A defining voicing `x`, then compile source B *without* defining `x` — assert `x` lookup fails in B. |
 
 **Exit criteria.**
@@ -705,6 +826,25 @@ process-global registry + mutex. Thread the registry through
 **Scope.** Add `StringInterner` to `CompileContext`. Lex-time interning
 for all identifier-like token kinds. Token variant change. Parser /
 analyzer / codegen consumers updated.
+
+**Pre-implementation call-site sweep (required).** `IdentifierData::name`
+is `std::string` today (`ast.hpp:185`) and surfaces via
+`Node::as_identifier() const std::string&` (`ast.hpp:395-397`). Every
+consumer of that accessor changes. Before opening the Phase 5 PR, run
+and check in the result of:
+
+```bash
+grep -rn 'as_identifier\(\)\|IdentifierData\|symbol_table\.\(lookup\|insert\)' \
+    akkado/src/ akkado/include/
+```
+
+The output is the implementer's authoritative call-site map. Without
+this sweep, the implementer discovers the breadth of analyzer
+(`analyzer.cpp`, 2954 LOC), codegen (`codegen.cpp` + `codegen_patterns.cpp`,
+~10 KLOC combined), `const_eval.cpp`, `pattern_eval.cpp`, and
+`shape_index.cpp` consumers only inside the PR diff. The sweep is
+checked in as `docs/phase5-identifier-consumers.txt` and updated
+in-PR.
 
 **Files touched.**
 
@@ -737,9 +877,15 @@ analyzer / codegen consumers updated.
 - `Token` no longer holds `std::string` for any identifier-like token
   kind (verified by checking `TokenValue` variant).
 - Existing tests pass; new interner tests pass.
-- Microbench: identifier-heavy compile (~50KB stdlib) shows measurable
-  reduction in `std::string` allocations (visible via heap profiler /
-  ASan stats).
+- Microbench: identifier-heavy compile (~50 KB stdlib, e.g.
+  `akkado/stdlib/event_transforms.ak`) shows a reduction in
+  `std::string` allocations attributable to identifier handling. The
+  Phase 5 PR description **must** include before/after allocation
+  counts (recorded via heap profiler, `mallinfo()`, or ASan stats) so
+  the win is documented. No fixed numeric target — the structural
+  assertion above (`TokenValue` no longer holds `std::string` for
+  identifier tokens) is the real correctness check; the bench is
+  informational evidence.
 - **Docs updated per §11 protocol** — PRD status block reflects
   `Phase 5: SHIPPED <commit> <date>`; audit doc marks F12 resolved;
   audit doc's overall "all 6 critical correctness findings" tally
@@ -750,18 +896,24 @@ analyzer / codegen consumers updated.
 ## 5. Phase Dependencies and Order
 
 ```
-Phase 1a (PreResolved)  ───┐
-                           ├──> Phase 1b (mini-AST)
-                           │
-                           ├──> Phase 2 (^ + mini-lexer)        [parallel]
-                           ├──> Phase 3 (source-loc emit)       [parallel]
-                           ├──> Phase 4 (CompileContext+voicing) [parallel]
-                           │                       │
-                           │                       v
-                           └──>             Phase 5 (interner)
+Phase 0 (snapshot harness) ─┐
+                            v
+                 Phase 1a (PreResolved + reorder)  ───┐
+                                                      ├──> Phase 1b (mini-AST)
+                                                      │
+                                                      ├──> Phase 2 (^ + mini-lexer)        [parallel]
+                                                      ├──> Phase 3 (source-loc emit)       [parallel]
+                                                      ├──> Phase 4 (CompileContext+voicing) [parallel]
+                                                      │                       │
+                                                      │                       v
+                                                      └──>             Phase 5 (interner)
 ```
 
-- Phase 1a ships first; nothing else depends on it strictly but it
+- **Phase 0** ships a per-fixture bytecode-disassembly snapshot test
+  harness (see §8 *Snapshot harness*) so every subsequent phase's
+  "byte-identical bytecode" exit criterion is mechanically checked.
+  Mandatory prerequisite for Phase 1a.
+- Phase 1a ships next; nothing else depends on it strictly but it
   proves out the "no codegen mutation" pattern.
 - Phase 1b depends on Phase 1a being merged (both touch the codegen
   invariant; want to fix one mutation site cleanly before the next).
@@ -770,8 +922,9 @@ Phase 1a (PreResolved)  ───┐
 - Phase 5 depends on Phase 4 (`CompileContext` must exist to hold the
   interner). Otherwise independent of Phases 1a/1b/2/3.
 
-Estimated total effort: **6–9 weeks single-engineer**, **3–4 weeks**
-if Phases 2/3/4 parallelize across 2 contributors.
+Estimated total effort: **6–9 weeks single-engineer** (incl. Phase 0
+~0.5 week), **3–4 weeks** if Phases 2/3/4 parallelize across 2
+contributors.
 
 ---
 
@@ -785,9 +938,11 @@ if Phases 2/3/4 parallelize across 2 contributors.
 | Codegen public bytecode output | **Byte-identical** | Existing tests assert no diff. |
 | `compile()` public signature | **Modified** (additive) | New optional `CompileContext*` param. |
 | `Ast::arena` | **Modified** | Becomes `const`-correct post-analyzer. |
-| `MiniLiteralData` | **Modified** | Gains 3 fields (sub-arena, root, diagnostics). |
-| `pre_resolved_values_` key shape | **Modified** | Now keyed by synthetic arena index, not main arena. |
+| `Node::data` variant | **Modified** | Gains `MiniLiteralData` arm (replaces `StringData` usage for `MiniLiteral` nodes). |
+| `MiniLiteralData` | **New** | New struct: `mode_marker` (replaces existing StringData usage) + 3 new fields (sub-arena, root, diagnostics). No such struct exists today. |
+| `pre_resolved_values_` key shape | **Modified** | Now keyed by `std::pair<NodeIndex,int>` = `(call_node, arg_position)`. No synthetic arena; no synthetic nodes. |
 | `NodeType::PreResolved` | **Removed** | Side-table replaces it. |
+| `CodeGenerator::reordered_arg_chain_` | **New** | Per-call read-only slot vector replacing `reorder_spread_named_args`'s in-place arena rewrite. |
 | `codegen::emit_push_const`, `emit_zero` (free fns) | **Removed** | Replaced by `CodeGenerator` methods. |
 | `voicing_registry()` global, `registry_mutex()` global | **Removed** | Moved into `VoicingRegistry` class owned by `CompileContext`. |
 | `TokenValue::std::string` arm | **Removed** | Replaced by `SymbolId` (identifier-like) and `StringLitData` (literals). |
@@ -804,17 +959,23 @@ if Phases 2/3/4 parallelize across 2 contributors.
 
 ## 7. Edge Cases
 
-### Phase 1a (`PreResolved` removal)
+### Phase 1a (`PreResolved` removal + reorder via local vector)
 
-- **Synthetic arena lifetime.** `CodeGenerator::synthetic_arena_` must
-  survive every `visit()` call within one `generate()`. Cleared at
-  start of each `generate()` (matches existing `node_types_` reset
-  pattern).
+- **`pre_resolved_values_` lifetime.** Map cleared at start of each
+  `generate()` (matches existing reset patterns). Survives every
+  `visit()` call within one `generate()`.
+- **`reordered_arg_chain_` lifetime.** Per-call optional, set by
+  `reorder_spread_named_args` immediately before the Call branch
+  descends, cleared on Call branch exit. Never persists across calls.
 - **Concurrent reads.** No reader of `Ast::arena` runs during
   `generate()` today; the assertion is a future-proofing.
 - **Spread expansion of zero args.** Spread `..[]` produces zero
-  `ExpandedArg` entries — the existing `expanded_opt` is empty and
-  no synthetic nodes are allocated. No change.
+  `ExpandedArg` entries — `pre_resolved_values_` gets no new entries.
+  Call visit falls through to a zero-arg builtin call. No change.
+- **Named-arg reorder with no named args.** Today's fast-exit `if
+  (!has_named) return true;` (`codegen.cpp:3306`) stays — no
+  `reordered_arg_chain_` is set; Call walks `arena[call_node]
+  .first_child` as before.
 
 ### Phase 1b (mini-AST sub-arena)
 
@@ -904,6 +1065,34 @@ if Phases 2/3/4 parallelize across 2 contributors.
 Every phase ships at least one **precise regression test** that fails
 on master and passes after the phase lands. Plus two cross-cutting
 invariants asserted in production.
+
+### Phase 0 — Snapshot harness (prerequisite)
+
+Each "byte-identical bytecode" exit criterion across phases 1a/1b/2/3/4/5
+is verified by a snapshot test added before Phase 1a opens. The harness:
+
+1. **Fixture set.** Glob every `.ak` file under `akkado/stdlib/` plus
+   any `akkado/tests/fixtures/*.ak` (or add a small fixture dir if
+   none exists). Limit to files that successfully compile on master.
+2. **Snapshot generator.** A new test target `akkado_bytecode_snapshot`
+   that compiles each fixture via `compile()` and writes a
+   deterministic disassembly (one instruction per line: opcode name,
+   inputs, output, immediates) to `akkado/tests/snapshots/<fixture>.disasm`.
+   The disassembly reuses `tools/nkido-cli/bytecode_dump.cpp`'s
+   formatter (already exists, per CLAUDE.md) wrapped in a test-only
+   entry point.
+3. **Diff check.** A second test target `akkado_bytecode_snapshot_diff`
+   that re-runs the generator into a tempdir and asserts every file
+   matches the checked-in snapshot. Runs in `akkado_tests` by default.
+4. **Update flow.** A `--update-snapshots` flag on the test binary
+   overwrites the checked-in snapshots; intentional bytecode changes
+   are reviewed as snapshot diffs in PR.
+
+Every subsequent phase's exit criterion that says "byte-identical
+bytecode" is mechanically interpreted as "`akkado_bytecode_snapshot_diff`
+passes with no snapshot update." Phases that *intentionally* change
+bytecode (none of phases 1a–5 should) would update snapshots in-PR
+with reviewer sign-off.
 
 ### Phase 1a tests
 
@@ -1033,8 +1222,9 @@ cmake --build build --target akkado_tests
 | Path | Phases | Change |
 |---|---|---|
 | `akkado/include/akkado/akkado.hpp` | 4 | `compile()` gains optional `CompileContext*` arg |
-| `akkado/include/akkado/ast.hpp` | 1a, 1b, 5 | Remove `PreResolved` node kind/data; add `MiniLiteralData::{mini_arena, mini_root, mini_diagnostics}`; `IdentifierData::name` → `SymbolId` |
-| `akkado/include/akkado/codegen.hpp` | 1a, 3, 4 | `synthetic_arena_`; `emit_push_const`/`emit_zero` methods; `CompileContext&` ctor arg; new key shape for `pre_resolved_values_` |
+| `akkado/include/akkado/ast.hpp` | 1a, 1b, 5 | Remove `NodeType::PreResolved` enum value; add new `MiniLiteralData` struct (`mode_marker`, `mini_arena`, `mini_root`, `mini_diagnostics`) + variant arm + `as_mini_literal()` accessor; `IdentifierData::name` → `SymbolId` |
+| `akkado/include/akkado/ast_hash.hpp` | 1a | NEW header: `arena_structural_hash(const AstArena&)` for the debug invariant |
+| `akkado/include/akkado/codegen.hpp` | 1a, 3, 4 | New `pre_resolved_values_` key `std::pair<NodeIndex,int>`; new `reordered_arg_chain_` member; `emit_push_const`/`emit_zero` methods; `CompileContext&` ctor arg |
 | `akkado/include/akkado/codegen/helpers.hpp` | 3 | Delete `emit_push_const` and `emit_zero` free fns |
 | `akkado/include/akkado/lexer.hpp` | 5 | Ctor takes `StringInterner&` |
 | `akkado/include/akkado/mini_lexer.hpp` | 2, 5 | Add `line_`/`column_offset_` members; ctor takes interner |
@@ -1044,8 +1234,8 @@ cmake --build build --target akkado_tests
 | `akkado/include/akkado/voicing.hpp` | 4 | `VoicingRegistry` class wrapping the existing fns |
 | `akkado/src/akkado.cpp` | 1b, 4, 5 | Construct default ctx if null; merge mini-literal diagnostics; pass interner to lex |
 | `akkado/src/analyzer.cpp` | 1b, 5 | Treat input arena as const; resolve `SymbolId` → view for diagnostics |
-| `akkado/src/codegen.cpp` | 1a, 3, 4 | Synthetic-arena replacement at line 1017; emit_*-method impls; ctx threading |
-| `akkado/src/codegen_patterns.cpp` | 1b, 3, 4 | Replace 4 `const_cast` re-parses with sub-arena reads; replace 10 helper call sites; 17 voicing call sites |
+| `akkado/src/codegen.cpp` | 1a, 3, 4 | Drop `const_cast` + remove `PreResolved` alloc at `:1008,1018`; drop `const_cast` + replace in-place reorder at `:3233`; emit_*-method impls; ctx threading |
+| `akkado/src/codegen_patterns.cpp` | 1b, 3, 4 | Replace 4 `const_cast` re-parses with sub-arena reads; replace 10 helper call sites; 4 voicing-registry call sites (`:4538`, `:4540`, `:4803`, `:4904`) route through `ctx_->voicing_registry` |
 | `akkado/src/codegen_higher_order.cpp` | 3 | Rewrite line 699 helper call |
 | `akkado/src/codegen_arrays.cpp` | 3 | Internal helper-call rewrites |
 | `akkado/src/lexer.cpp` | 5 | `make_token(type, intern(text))` everywhere |
@@ -1089,6 +1279,13 @@ cmake --build build --target akkado_tests
 | F1 split into two sub-phases (PreResolved first, mini-parse second) | Round 4 Q1 |
 | CompileContext arg optional, defaults to fresh context | Round 4 Q2 |
 | Token: `std::string` arm replaced by `SymbolId` for identifier-like uses | Round 4 Q3 |
+| Phase 0 snapshot harness added as prerequisite | Review pass 2026-05-25 |
+| `PreResolved` removed entirely; side-table keyed by `(call_node, arg_position)`; no synthetic arena | Review pass 2026-05-25 |
+| Phase 1a also addresses `reorder_spread_named_args` in-place arena mutation | Review pass 2026-05-25 |
+| `MiniLiteralData` introduced as a new variant arm on `Node::data` (no such struct exists today) | Review pass 2026-05-25 |
+| Voicing free fn names corrected: `register_voicing` / `lookup_voicing` (not `addVoicing` / `lookupVoicing`) | Review pass 2026-05-25 |
+| Structural-hash invariant (not byte-hash) | Review pass 2026-05-25 |
+| Phase 5 perf criterion → "PR must include before/after numbers" | Review pass 2026-05-25 |
 
 ---
 
@@ -1158,11 +1355,12 @@ it as shipped:
 ```
 
 For phases that resolve more than one finding (Phase 2 resolves both F7
-and F8), add the RESOLVED tag to **both** finding headers. Phase 5
-additionally flips the executive-summary tally in the audit doc — find
-the sentence "Two correctness bugs and one architectural pretense fall
-out of this:" near the top of the executive summary and replace it
-with the resolved counterpart, noting all 6 findings are now closed.
+and F8), add the RESOLVED tag to **both** finding headers. The audit's
+executive-summary line was already updated when this PRD was filed
+(2026-05-25) to enumerate all six findings — no per-phase tally flip is
+required there. When Phase 5 ships, append a one-line "all six
+resolved" status marker beneath the enumeration; do not rewrite the
+enumeration itself.
 
 ### 11.3 Finding ↔ Phase ↔ PRD-shortlist map
 
