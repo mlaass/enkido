@@ -1,23 +1,34 @@
 # PRD: Pattern-Array Transforms — Whole-Pattern Operations as Stdlib Akkado
 
-> **Status: NOT STARTED — design ready, awaiting implementation kickoff.**
+> **Status: NOT STARTED — re-engineering, not missing functionality.**
 > Filed 2026-05-24 as the follow-up to
 > [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md)
-> Phase 5. Resolves the architectural debt from Phases 3 and 4 of the parent
-> PRD by lowering whole-pattern transforms to stdlib akkado on top of an
-> `Array<Event>` substrate.
+> Phase 5. The 11 user-facing transforms (`rev`, `palindrome`, `ply`,
+> `linger`, `segment`, `zoom`, `compress`, `iter`, `iterBack`, `fast`,
+> `slow`) **ship today** via `EVENT_RATE_SCALE` / `EVENT_REORDER` /
+> `EVENT_FANOUT` (parent Phase 3+4, opcodes 221–223) — kind-dispatched
+> C++ opcodes that work correctly. This PRD lowers them onto stdlib
+> akkado built on an `Array<Event>` substrate. It is a re-engineering
+> for principle-alignment, not a delivery of missing features.
+> `degrade` and `mask` are the only genuinely new user-facing
+> additions. Two scoped items deferred from v1: top-level
+> `event_random()` semantics (closure-only in v1) and explicit
+> closure cycle_length metadata for clock+array composition (see
+> §4 Non-Goals).
 
 ---
 
 ## Executive Summary
 
-This PRD finishes the migration started by `prd-runtime-event-transforms.md`:
-whole-pattern transforms (`rev`, `palindrome`, `ply`, `linger`, `segment`,
-`zoom`, `compress`, `iter`, `iterBack`, `fast`, `slow`, plus the deferred
-`degrade` and `mask`) move from kind-dispatched C++ opcodes to **stdlib
-akkado functions** built on an **`Array<Event>`** value type. The three
-stopgap opcodes from parent Phase 3+4 (`EVENT_RATE_SCALE`, `EVENT_REORDER`,
-`EVENT_FANOUT`) collapse into:
+The 11 whole-pattern transforms above are user-visible and working
+today through three kind-dispatched C++ opcodes. They violate the
+parent PRD's foundational principle — *opcodes are for primitive
+operations and DSP work, not for language constructs* — by hardcoding
+named transforms into C++ switch statements. This PRD lowers them
+onto **stdlib akkado functions** built on an **`Array<Event>`** value
+type, and adds two genuinely new transforms (`degrade`, `mask`).
+The three opcodes from parent Phase 3+4 (`EVENT_RATE_SCALE`,
+`EVENT_REORDER`, `EVENT_FANOUT`) collapse into:
 
 1. One **renamed, single-purpose clock primitive**: `EVENT_SPEED` (formerly
    `EVENT_RATE_SCALE`, no kind switch, no name dispatch).
@@ -245,8 +256,19 @@ which returns the full event record.
   Accepts signal/scalar/pattern-of-numbers; arbitrary closures returning
   per-cycle floats are deferred.
 - **Explicit cycle_length metadata on closure return.** Optimistic
-  cycle_length runtime chaining is reused as-is. Escalation deferred to a
-  follow-up only if composition tests fail.
+  cycle_length runtime chaining is reused as-is in v1. Compositions
+  that mix clock-control (`fast`/`slow`/`event_speed`) with array-
+  rewriting (`palindrome`, `ply`, etc.) may produce mistimed events
+  at the seam. This is a **documented v1 limitation**, not a
+  blocking bug — a follow-up PRD will add explicit closure
+  cycle_length metadata once a concrete failing composition needs
+  fixing. v1 ships even if `palindrome |> fast(2)` drifts.
+- **`event_random()` at top level (outside closures).** v1 supports
+  `event_random()` only inside closure bodies (`event_map`,
+  `event_filter`, or array `map`/`filter` over `Array<Event>`). Top-
+  level use raises a compile-time error. The earlier-drafted "fresh
+  per audio block, seeded from `(0, cycle_index, block_index)`"
+  semantics had no real call site and are dropped.
 - **`event_collect` whole-cycle buffering primitive.** Mentioned in original
   Q1; resolved by ruling out live-MIDI support. Not added.
 
@@ -427,10 +449,14 @@ pass; manual smoke test of every migrated transform in the web IDE.
 `p |> palindrome |> fast(2)` doubles cycle_length, then halves it:
 
 - **Behavior**: rely on today's `SequenceState.cycle_length` runtime
-  chaining. Verify with an integration test that the composition produces
-  the expected timing.
-- **If broken**: file follow-up PRD for explicit closure cycle_length
-  metadata. Documented as known risk.
+  chaining. Compositions that mix clock-control with array-rewriting
+  may produce mistimed events at the seam.
+- **v1 commitment**: ship as-is. The composition does not crash; the
+  timing may drift. Per Non-Goals, explicit closure cycle_length
+  metadata is deferred to a follow-up PRD. No verification test
+  asserts exact timing for clock+array compositions in v1.
+- **Documented limitation**: the user-facing concept doc lists
+  compositions known to drift so live coders can work around them.
 
 ### 8.4 Live MIDI sources
 
@@ -454,11 +480,16 @@ User writes their own `fn rev(events) = …`:
 
 User calls `event_random()` at top-level:
 
-- **Behavior**: returns a fresh scalar per audio block (not per event;
-  there's no event context). Seeded from `(0, cycle_index, block_index)`
-  in absence of pattern/event context. Documented but discouraged.
-- **Alternative considered**: error at top-level. Rejected — coerce, don't
-  fail.
+- **Behavior**: compile-time error `E… "event_random() requires an
+  event context; call from inside event_map / event_filter / array
+  closure"`. Per Non-Goals.
+- **Why error, not coerce**: there is no defensible "what would this
+  even mean" semantics at top-level — the function's whole identity
+  is per-event-onset determinism, and the fallback considered in
+  earlier drafts (per-audio-block PRNG seeded from
+  `(0, cycle_index, block_index)`) has no real call site to justify
+  it. Coerce-don't-fail applies when the user's intent is clear;
+  here it is not.
 
 ### 8.7 `pattern_active(p, t)` / `pattern_event(p, t)` with `t ∉ [0, 1)`
 
