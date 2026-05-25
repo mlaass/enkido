@@ -75,6 +75,17 @@ The PRD shortlist at the end groups findings into actionable refactors with roug
 
 ### F1. Codegen mutates the post-parse AST — blocks every form of parallelism — *Critical*
 
+> **PARTIALLY RESOLVED 2026-05-25** — Phase 1a (commit `deda0c6`)
+> closed the two `codegen.cpp` sites: `NodeType::PreResolved` removed,
+> spread-resolved `TypedValue`s now keyed by `(call_node, slot_index)`
+> in the existing side-table, and `reorder_spread_named_args` operates
+> on a local `ExpandedArg` vector instead of rewriting
+> `arena[call_node].first_child` in place. The four
+> `codegen_patterns.cpp` mini-notation re-parse sites remain — Phase 1b
+> scope. See
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md)
+> §4 Phase 1a / Phase 1b.
+
 **Sites:**
 - `codegen.cpp:1017` — `expand_call_arguments` allocates synthetic `NodeType::PreResolved` nodes directly into the analyzer's `output_arena_` during spread expansion.
 - `codegen_patterns.cpp:1778, 2132, 2182, 2982` — four sites re-parse mini-notation strings into the same arena via `const_cast<AstArena&>(ast_->arena)`. Triggered by `chord()`, generic `StringLit` pattern args, chord-inside-transform, and `timeline()` curve strings.
@@ -433,6 +444,13 @@ Analyzer: symbol table is global per program; pipe rewriting transforms a single
 Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be done in parallel.
 
 ### PRD-1 — Codegen no longer mutates the AST  *(Critical; blocks 3+ other wins)*
+
+> **PARTIALLY SHIPPED via `prd-parser-codegen-correctness.md` Phase 1a**,
+> commit `deda0c6`, 2026-05-25. The two `codegen.cpp` mutation sites
+> (PreResolved synthesis + named-arg arena rewrite) are gone. The four
+> `codegen_patterns.cpp` mini-notation re-parses (`:1778, 2132, 2182,
+> 2982`) remain — Phase 1b scope.
+
 **Scope:** Eliminate the two AST-mutation sites: move `PreResolved` payload into the existing `pre_resolved_values_` side-table and remove the node kind; parse every mini-notation string into a per-pattern sub-arena at parse time and store the handle on `MiniLiteralData`, removing all 4 codegen-time re-parses. Mark `Ast::arena` `const` post-analyzer.
 **Files touched:** `ast.hpp`, `parser.cpp`, `mini_parser.cpp`, `codegen.cpp:1017`, `codegen_patterns.cpp:1778, 2132, 2182, 2982`.
 **Effort:** Medium (1-2 weeks).

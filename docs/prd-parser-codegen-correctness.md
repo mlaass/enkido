@@ -1,8 +1,8 @@
-> **Status: IN PROGRESS — Phase 0 SHIPPED, 5 phases remaining (F7
+> **Status: IN PROGRESS — Phases 0 + 1a SHIPPED, 4 phases remaining (F7
 > withdrawn).** Filed 2026-05-25 as the correctness follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
-> Phases land independently after Phase 1a; the audit's complexity-sink
-> findings are deferred to separate PRDs.
+> Phases land independently; the audit's complexity-sink findings are
+> deferred to separate PRDs.
 >
 > - **Phase 0 (snapshot harness) — SHIPPED 2026-05-25** (commit
 >   `b203e2e`). Per-fixture bytecode-disassembly snapshot test at
@@ -12,6 +12,31 @@
 >   The bytecode-disassembly formatter was extracted into a
 >   `nkido_bytecode_dump` static library so tests can link it without
 >   pulling in the CLI. See §8 *Snapshot harness*.
+> - **Phase 1a (drop `NodeType::PreResolved` + read-only spread-arg
+>   reorder) — SHIPPED 2026-05-25** (commit `deda0c6`).
+>   `NodeType::PreResolved` removed entirely; spread-resolved
+>   `TypedValue`s now live in a side-table keyed by `(call_node,
+>   slot_index)`. The two `const_cast<AstArena&>` sites in
+>   `akkado/src/codegen.cpp` (spread expansion + named-arg reorder) are
+>   gone. `reorder_spread_named_args` operates on the local
+>   `ExpandedArg` vector and gap-fills with `is_underscore` entries; the
+>   per-arg loop consumes a unified `CallSlot` vector (AstNode /
+>   Resolved / Underscore) so spread and non-spread calls share one
+>   iteration shape. Two downstream re-walks of `n.first_child`
+>   (chord-expansion at codegen.cpp:1656, channel-type validation at
+>   :1612) are gated on `!did_spread_swap` — pre-Phase-1a those walks
+>   saw the synthesized PreResolved chain (which never triggered
+>   multi-buffer fan-out or Identifier checks), post-Phase-1a they
+>   would see the original spread Argument whose `first_child` is
+>   `NULL_NODE`, so skipping preserves byte-identical behaviour. New
+>   helper `akkado/include/akkado/ast_hash.hpp` provides
+>   `arena_structural_hash()`; production-side assertion in
+>   `generate()` is deferred to Phase 1b (the four
+>   `codegen_patterns.cpp` const_casts still mutate). Two `[F1a]`
+>   regression tests in `akkado/tests/test_codegen.cpp` assert
+>   `arena.size()` and structural hash are unchanged across
+>   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
+>   shapes. See §4 Phase 1a.
 > - **F7 (right-assoc `^`) — WITHDRAWN 2026-05-25.** Phase 0's
 >   `06_power_op.ak` fixture compiled `2^3^2 * 100` and snapshotted POW
 >   instructions emitted in right-assoc order — outer `POW(2, POW(3,2))`
