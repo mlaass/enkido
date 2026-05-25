@@ -1,22 +1,27 @@
-> **Status: IN PROGRESS — Phase 0 SHIPPED, 6 phases remaining.** Filed
-> 2026-05-25 as the correctness follow-up to
+> **Status: IN PROGRESS — Phase 0 SHIPPED, 5 phases remaining (F7
+> withdrawn).** Filed 2026-05-25 as the correctness follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Phases land independently after Phase 1a; the audit's complexity-sink
 > findings are deferred to separate PRDs.
 >
-> - **Phase 0 (snapshot harness) — SHIPPED 2026-05-25.** Per-fixture
->   bytecode-disassembly snapshot test at
+> - **Phase 0 (snapshot harness) — SHIPPED 2026-05-25** (commit
+>   `b203e2e`). Per-fixture bytecode-disassembly snapshot test at
 >   `akkado/tests/test_bytecode_snapshot.cpp`, fixtures under
 >   `akkado/tests/fixtures/`, baselines under `akkado/tests/snapshots/`.
 >   Regen with `NKIDO_UPDATE_SNAPSHOTS=1 ./build/akkado/tests/akkado_tests "[snapshot]"`.
 >   The bytecode-disassembly formatter was extracted into a
 >   `nkido_bytecode_dump` static library so tests can link it without
->   pulling in the CLI. See §8 *Snapshot harness*. **Note for Phase 2
->   implementer:** the F7 fixture `06_power_op.ak` already snapshots
->   `2^3^2 → 512` (right-assoc) on master. Pratt math says the existing
->   no-op cast at `parser.cpp:1455` is actually correct because the
->   left-assoc branch passes `p+1`; F7's premise should be re-validated
->   before Phase 2 work begins.
+>   pulling in the CLI. See §8 *Snapshot harness*.
+> - **F7 (right-assoc `^`) — WITHDRAWN 2026-05-25.** Phase 0's
+>   `06_power_op.ak` fixture compiled `2^3^2 * 100` and snapshotted POW
+>   instructions emitted in right-assoc order — outer `POW(2, POW(3,2))`
+>   = 512, not `POW(POW(2,3), 2)` = 64. The PRD/audit's Pratt analysis
+>   at §1.3 was flawed: the left-assoc branch passes `p+1` while the
+>   right-assoc branch passes `p`, and `parse_precedence(p)` happily
+>   accepts another `^` (since `p ≥ p`), giving real right-assoc. No
+>   code change needed. Phase 2's scope shrinks to F8 only; a regression
+>   test (`2^3^2 == 512`) still ships in Phase 2 to lock the current
+>   behavior. See §1.3, §4 Phase 2, §11.3.
 >
 > **Per-phase documentation protocol (mandatory).** On completion of
 > each phase, the implementing PR must also (a) update this PRD's
@@ -30,13 +35,15 @@
 ## Executive Summary
 
 The parser/codegen interop audit (2026-05-25) surfaced **6 critical
-findings** that produce wrong outputs today or break architectural
-invariants the rest of the codebase relies on. This PRD addresses all
-six in a coordinated rollout. Each finding becomes one phase, shipped as
-an independent PR after Phase 1a unblocks the rest. The audit's
-complexity-sink findings (codegen sprawl, dispatcher fragmentation,
-pattern-transform boilerplate) are explicitly **out of scope** here and
-covered by separate PRDs.
+findings**. Phase 0 verification reversed one (**F7** — `^`
+right-associativity — is already correct on master; see §1.3) leaving
+**5 critical findings** that produce wrong outputs today or break
+architectural invariants the rest of the codebase relies on. This PRD
+addresses all five in a coordinated rollout. Each finding becomes one
+phase, shipped as an independent PR after Phase 1a unblocks the rest.
+The audit's complexity-sink findings (codegen sprawl, dispatcher
+fragmentation, pattern-transform boilerplate) are explicitly **out of
+scope** here and covered by separate PRDs.
 
 One adjacent **High**-severity finding (**F3** — mini-notation re-parsed
 up to 5×) shares its mechanism with F1: 4 of F3's 5 re-parse sites are
@@ -51,7 +58,7 @@ The findings:
 |---|---|---|---|
 | F1 | Codegen mutates the post-parse AST (5 sites) | Critical | 1a + 1b |
 | F2 | Source-location vector silently desynchronises | Critical | 3 |
-| F7 | Right-associative `^` parses left-associative | Critical | 2 |
+| F7 | Right-associative `^` parses left-associative | ~~Critical~~ **WITHDRAWN** (Phase 0 verified `2^3^2 → 512` already; regression test only in Phase 2) | 2 (test only) |
 | F8 | Mini-lexer never bumps `line_` across `\n` | Critical | 2 |
 | F14 | `voicing_registry` leaks state across compiles | Critical | 4 |
 | F12 | Lexers don't intern strings (16× rehash per compile) | Critical | 5 |
@@ -99,10 +106,13 @@ The findings:
   the method `cg.emit_push_const(val)` routes through `emit()` which
   unconditionally writes both `instructions_` AND `source_locations_`.
   The bug becomes structurally impossible to reintroduce.
-- **`^` becomes truly right-associative.** `2^3^2 == 512`. The audit
-  confirms this was always the intent (per the comment at
-  `parser.cpp:1455`). Stdlib + tests swept to confirm no callers rely
-  on the broken left-assoc behavior.
+- **`^` is already right-associative.** Phase 0 empirically confirmed
+  `2^3^2 == 512` (commit `b203e2e`; snapshot `06_power_op.disasm` shows
+  outer `POW(2, POW(3,2))`). The audit's claim that the no-op cast at
+  `parser.cpp:1455` produces left-assoc was wrong: the right-assoc
+  branch passes `p` while the left-assoc branch passes `p+1`, and
+  `parse_precedence(p)` accepts another `^` since `p ≥ p`. Phase 2
+  ships only a regression test to lock the behavior; no code change.
 - **Minimal `CompileContext` introduced now.** Holds `VoicingRegistry`
   and `StringInterner` only. `SampleRegistry` / `FileResolver` /
   `lint_strict` / `bypass_master` migration is **deferred to a future
@@ -184,32 +194,54 @@ that point forward**. Click-to-source in the web IDE and `--trace` in
 `nkido-cli` will misattribute every subsequent instruction. No existing
 test asserts vector-length parity, so the bug is silent.
 
-### 1.3 F7 — Right-associative `^` is silently broken
+### 1.3 F7 — Right-associative `^` — **WITHDRAWN 2026-05-25**
 
-Site: `parser.cpp:1455-1463`:
+**Status:** withdrawn during Phase 0 verification (commit `b203e2e`).
+`^` is already right-associative on master. Phase 2 ships only a
+regression test (`2^3^2 == 512`) to lock the behavior. No parser code
+change.
+
+The site is `parser.cpp:1455-1463`:
 
 ```cpp
 // For right-associative (^), use lower precedence
 Precedence next_prec = get_precedence(op.type);
 if (op.type == TokenType::Caret) {
     // Power is right-associative
-    next_prec = static_cast<Precedence>(static_cast<int>(next_prec));   // ← no-op
+    next_prec = static_cast<Precedence>(static_cast<int>(next_prec));   // ← no-op cast, intentional
 } else {
     // Left-associative: increment to bind tighter on right
     next_prec = static_cast<Precedence>(static_cast<int>(next_prec) + 1);
 }
 ```
 
-The "right-associative" branch is a no-op cast; the only thing that
-differs from the left-assoc branch is the absent `+ 1`. Pratt
-right-assoc semantics require `parse_precedence(next_prec)` to recurse
-at the **same** precedence as the operator — which would be correct **if
-the left-assoc branch added 1** — but `parse_precedence` itself returns
-when it sees an operator of precedence `< min`, and both branches end up
-with the same minimum, so `^` always binds left.
+The audit (and an earlier draft of this PRD) read the no-op cast as
+"effectively identical to the left-assoc branch" and concluded `^`
+binds left. That reading was wrong. The two branches **do** differ:
+the right-assoc branch passes `p`, the left-assoc branch passes
+`p + 1`. Inside `parse_precedence(min)`, the next-operator loop
+condition is `prec(op) >= min`. For an upcoming `^` at precedence `p`
+called with `min = p` (right-assoc), `p >= p` holds, so the recursive
+call binds the next `^` — giving `a ^ (b ^ c)`. Called with `min = p+1`
+(left-assoc), `p >= p+1` fails, so the recursive call returns just `b`
+and the outer loop binds the next `^` — giving `(a ^ b) ^ c`. Standard
+Pratt; the code is correct.
 
-Observable: `2 ^ 3 ^ 2` parses as `(2^3)^2 = 64` instead of the
-mathematical / Python / Haskell `2^(3^2) = 512`. No test catches it.
+Observable: `2 ^ 3 ^ 2` evaluates to `2^(3^2) = 512` — matches Python,
+Haskell, mathematical convention. Verified by Phase 0's
+`06_power_op.ak` snapshot:
+
+```
+PUSH_CONST  buf[0] = 2.000
+PUSH_CONST  buf[1] = 3.000
+PUSH_CONST  buf[2] = 2.000
+POW         buf[3] <- buf[1], buf[2]   // 3^2 = 9
+POW         buf[4] <- buf[0], buf[3]   // 2^9 = 512
+```
+
+The audit doc and the audit's PRD-shortlist row for F7 should be
+updated to mark the finding withdrawn rather than resolved (no fix
+shipped; the premise was wrong).
 
 ### 1.4 F8 — Mini-lexer multi-line source positions are broken
 
@@ -350,7 +382,9 @@ and reads from `atom_data.chord_root` / `chord_quality` /
 2. **Make `instructions_.size() == source_locations_.size()`
    structurally true.** A single `emit()` path; helpers route through
    it. The invariant is `assert()`-ed at the end of `generate()`.
-3. **`2^3^2 == 512`.** Right-associative `^` behaves correctly.
+3. **`2^3^2 == 512` stays true.** Right-associative `^` already
+   behaves correctly on master (verified in Phase 0); Phase 2 ships a
+   regression test so it can't silently regress.
 4. **Multi-line mini-notation patterns report correct line/column** in
    every diagnostic.
 5. **No cross-compile state in compiler globals.** `voicing_registry`
@@ -811,22 +845,21 @@ implementer's call-site map.
 
 ---
 
-### Phase 2 — `^` right-assoc + mini-lexer line tracking (F7 + F8)
+### Phase 2 — Mini-lexer line tracking (F8) + F7 regression test only
 
-Bundled because both are tiny, both are parser-layer, and both ship
-their regression test as a single PR.
+**Scope reduction (2026-05-25).** F7 withdrew during Phase 0 (`^` is
+already right-associative — see §1.3). Phase 2 keeps F7's regression
+tests (`2^3^2 == 512`, tower assoc, unary interaction) to lock current
+behavior, but ships **no parser code change**. The remaining
+behavioral change in this phase is the F8 mini-lexer line-tracking
+fix.
 
-**F7 fix.** `parser.cpp:1455-1463` — the right-assoc branch recurses at
-`current_prec` (one *below* the operator's binding precedence, allowing
-the same operator to bind again on the right):
-
-```cpp
-// Right-associative: recurse at same precedence (Pratt convention)
-Precedence next_prec = (op.type == TokenType::Caret)
-    ? get_precedence(op.type)
-    : static_cast<Precedence>(static_cast<int>(get_precedence(op.type)) + 1);
-NodeIndex right = parse_precedence(next_prec);
-```
+**F7 (test-only).** Add Catch2 regression tests asserting
+`2^3^2 == 512`, `2^2^2^2 == 65536`, `-2^2 == 4` (unary-tighter), and
+`x ^ -1` parses cleanly. Leave `parser.cpp:1455-1463` untouched. Also
+add a one-line comment above the no-op cast explaining why it's
+intentional (left-assoc passes `p+1`, right-assoc passes `p`,
+recursion accepts another `^` since `p ≥ p` — see §1.3).
 
 **F8 fix.** `mini_lexer.cpp:73-77` and `:146-153`:
 
@@ -857,22 +890,23 @@ ctor; reset on `\n`.
 
 | File | Change |
 |---|---|
-| `akkado/src/parser.cpp:1455-1463` | Right-assoc fix. |
+| `akkado/src/parser.cpp:1455-1463` | **No code change** (F7 withdrawn). Add a one-line comment explaining the no-op cast is intentional, with a back-reference to §1.3. |
 | `akkado/src/mini_lexer.cpp:73-77, 146-153` | Line tracking. |
 | `akkado/include/akkado/mini_lexer.hpp` | Add `line_`, `column_offset_` members. |
-| `akkado/tests/test_parser.cpp` | `2^3^2 == 512` + tower assoc tests. |
+| `akkado/tests/test_parser.cpp` | `2^3^2 == 512` + tower assoc tests (regression — locks current behavior). |
 | `akkado/tests/test_mini_notation.cpp` | Multi-line pattern diagnostic line/column tests. |
-| Sweep | `grep -nE '\^.*\^' akkado/stdlib/ akkado/tests/ web/static/docs/` to confirm no caller relied on broken left-assoc. |
 
 **Exit criteria.**
 
 - `2 ^ 3 ^ 2` evaluates to 512 in const_eval, codegen, and any test
-  using power.
+  using power (regression test, asserts current behavior).
 - Multi-line mini-pattern `"c4 d4\ne4 f4"` reports line 2 for `e4`'s
   diagnostic.
-- Stdlib sweep finds zero callers needing left-assoc `^`.
+- Phase 0 snapshot `06_power_op.disasm` remains byte-identical (no
+  parser change → no codegen change).
 - **Docs updated per §11 protocol** — PRD status block reflects
-  `Phase 2: SHIPPED <commit> <date>`; audit doc marks F7 + F8 resolved.
+  `Phase 2: SHIPPED <commit> <date>`; audit doc marks F8 resolved and
+  marks F7 **withdrawn** with backlink to Phase 0 (commit `b203e2e`).
 
 ---
 
@@ -1069,7 +1103,7 @@ contributors.
 | `Token::as_string` | **Removed** | Replaced by `as_identifier(interner)` + `as_string_lit()`. |
 | `IdentifierData::name` field type | **Modified** | `std::string` → `SymbolId`. |
 | `SymbolTable` lookup API | **Modified** | Keyed by `SymbolId`; FNV recomputation gone. |
-| `parser.cpp:1455-1463` `^` precedence | **Modified** | Right-assoc fix. |
+| `parser.cpp:1455-1463` `^` precedence | **No change** | F7 withdrawn (Phase 0 verified `^` already right-assoc). Phase 2 adds a clarifying comment only. |
 | `mini_lexer.cpp` line tracking | **Modified** | Bumps `line_` on `\n`. |
 | `CompileContext` | **New** | New header + impl. |
 | `StringInterner` | **New** | New header + impl. |
@@ -1273,6 +1307,10 @@ with reviewer sign-off.
 
 ### Phase 2 tests
 
+F7 tests are **regression tests** (F7 withdrawn — `^` is already
+right-assoc on master). They lock current behavior so future
+parser refactors can't silently break it.
+
 - `test_parser.cpp [F7]`: `2 ^ 3 ^ 2` → 512 (via const-eval).
 - `test_parser.cpp [F7]`: tower `2 ^ 2 ^ 2 ^ 2` → 65536.
 - `test_parser.cpp [F7]`: `-2 ^ 2` → 4 (unary-tighter, documented).
@@ -1281,8 +1319,8 @@ with reviewer sign-off.
   diagnostic on `c` reports line 2.
 - `test_mini_notation.cpp [F8]`: pattern with trailing `\n` followed by
   unterminated content reports correct line.
-- Sweep `grep -nE '\^.*\^' akkado/stdlib akkado/tests web/static/docs` —
-  audit any existing 3+-operand `^` and re-baseline test outputs.
+- (Sweep `grep -nE '\^.*\^' akkado/stdlib akkado/tests web/static/docs`
+  no longer needed — F7 withdrew, no behavior change to re-baseline.)
 
 ### Phase 3 tests
 
@@ -1400,7 +1438,7 @@ cmake --build build --target akkado_tests
 | `akkado/src/lexer.cpp` | 5 | `make_token(type, intern(text))` everywhere |
 | `akkado/src/mini_lexer.cpp` | 2, 5 | `advance` bumps `line_`; `current_location` uses local `line_`; interning |
 | `akkado/src/mini_parser.cpp` | 1b | `parse_sample_atom` opportunistically calls `parse_chord_symbol(sample.name)` and caches result on `MiniAtomData`'s chord fields (F3 tail) |
-| `akkado/src/parser.cpp` | 1b, 2, 5 | Sub-arena mini-parse; `^` right-assoc fix; 15+ identifier-handling sites use `SymbolId` |
+| `akkado/src/parser.cpp` | 1b, 2, 5 | Sub-arena mini-parse; Phase 2 adds a one-line clarifying comment above the no-op cast at `:1455` (F7 withdrawn, no code change); 15+ identifier-handling sites use `SymbolId` |
 | `akkado/src/pattern_eval.cpp` | 1b | `MiniAtomKind::Sample` chord-mode branch reads cached `chord_root` (and siblings) from `MiniAtomData` instead of calling `parse_chord_symbol`; drop `chord_parser.hpp` include (F3 tail) |
 | `akkado/src/shape_index.cpp` | 5 | Interner-aware identifier handling (shape_index AST share is PRD-2, not here) |
 | `akkado/src/symbol_table.cpp` | 5 | Lookup on `SymbolId`; remove 16+ FNV rehash sites |
@@ -1434,7 +1472,7 @@ cmake --build build --target akkado_tests
 | Codegen helpers become `CodeGenerator&` methods | Round 2 Q2 |
 | Per-compile interner, view-into-source | Round 2 Q3 |
 | Introduce minimal CompileContext now | Round 2 Q4 |
-| `^` fix to right-associative | Round 3 Q1 |
+| `^` fix to right-associative | Round 3 Q1 — *superseded* by Phase 0 verification (2026-05-25): `^` is already right-assoc, no fix needed |
 | CompileContext holds VoicingRegistry + StringInterner only | Round 3 Q2 |
 | Intern all identifiers + keywords + builtin names | Round 3 Q3 |
 | Invariants asserted in `generate()` + checked by every codegen test | Round 3 Q4 |
@@ -1447,6 +1485,7 @@ cmake --build build --target akkado_tests
 | `MiniLiteralData` introduced as a new variant arm on `Node::data` (no such struct exists today) | Review pass 2026-05-25 |
 | Voicing free fn names corrected: `register_voicing` / `lookup_voicing` (not `addVoicing` / `lookupVoicing`) | Review pass 2026-05-25 |
 | Structural-hash invariant (not byte-hash) | Review pass 2026-05-25 |
+| F7 withdrawn: `^` already right-assoc on master; Phase 2 ships regression tests only | Phase 0 verification 2026-05-25 (commit `b203e2e`) |
 | Phase 5 perf criterion → "PR must include before/after numbers" | Review pass 2026-05-25 |
 | F3's 5th re-parse site (`pattern_eval.cpp:206`) folded into Phase 1b scope (Sample-atom chord caching) so the audit's "parse-once-store-once" goal lands in one phase | Review pass 2026-05-25 (post-filing) |
 
@@ -1517,13 +1556,29 @@ it as shipped:
 > commits `<hash1a>` + `<hash1b>`, <YYYY-MM-DD>.
 ```
 
-For phases that resolve more than one finding (Phase 2 resolves both F7
-and F8), add the RESOLVED tag to **both** finding headers. The audit's
-executive-summary line was already updated when this PRD was filed
-(2026-05-25) to enumerate all six findings — no per-phase tally flip is
-required there. When Phase 5 ships, append a one-line "all six
-resolved" status marker beneath the enumeration; do not rewrite the
-enumeration itself.
+For phases that touch more than one finding, add the appropriate tag
+to **each** finding header. Phase 2 marks F8 as RESOLVED, and marks F7
+as **WITHDRAWN** rather than resolved:
+
+```markdown
+### F7. Right-associative `^` parses left-associative — *Critical*
+
+> **WITHDRAWN 2026-05-25** during Phase 0 verification (commit `b203e2e`).
+> `^` is already right-associative on master: `2^3^2 → 512`. The
+> audit's Pratt analysis was flawed — the left-assoc branch passes
+> `p+1` while the right-assoc branch passes `p`, and the recursive
+> call accepts another `^` (since `p ≥ p`). See
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md)
+> §1.3. No code change shipped; Phase 2 of the PRD adds a regression
+> test to lock the behavior.
+```
+
+The audit's executive-summary line was updated when this PRD was filed
+(2026-05-25) to enumerate all six findings — when F7 is marked
+WITHDRAWN, also update the executive-summary tally from "6 critical"
+to "5 critical + 1 withdrawn" without rewriting the enumeration.
+When Phase 5 ships, append a one-line "5 resolved, 1 withdrawn" status
+marker beneath the enumeration.
 
 ### 11.3 Finding ↔ Phase ↔ PRD-shortlist map
 
@@ -1534,7 +1589,7 @@ For convenience when editing:
 | F1 (codegen AST mutation) | 1a + 1b | PRD-1 |
 | F2 (source-loc desync) | 3 | PRD-5 (note: PRD-5 also bundled F10/builder work, **not** in scope here — only mark the F2 portion shipped) |
 | F3 (mini-notation re-parsed 5×) | 1b | PRD-1 (folded into the same row as F1; mark F3 resolved alongside F1) |
-| F7 (`^` right-assoc) | 2 | PRD-10 (mark the `^` fix shipped; rest of PRD-10 — Pratt table unification — stays open) |
+| F7 (`^` right-assoc) | 2 (test-only) | PRD-10 (mark F7 **withdrawn** — Phase 0 verified `^` already right-assoc, no fix needed; Phase 2 ships regression tests only. Rest of PRD-10 — Pratt table unification — stays open.) |
 | F8 (mini-lexer multi-line) | 2 | PRD-8 (mark line-tracking shipped; rest of PRD-8 — lex_primitives extract — stays open) |
 | F12 (string interning) | 5 | PRD-9 |
 | F14 (voicing leak) | 4 | PRD-11 (mark voicing-registry-per-compile shipped; rest of PRD-11 — full CompileOptions — stays open) |
