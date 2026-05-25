@@ -578,3 +578,109 @@ TEST_CASE("mixer-closure: conflict case emits bus_r write before bus_l write",
     // value via some indirection).
     CHECK(insts[idx_r].inputs[0] == bus.l);
 }
+
+// ---------------------------------------------------------------------------
+// Variant coverage: the alias bug class also affects arity-2 closures, the
+// `master(...)` parse form, and non-zero bus indices. The mechanism is the
+// same — closure params bind directly to bus_l/bus_r — so each entry below
+// would have failed before the fix exactly as the arity-1 cases did.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("mixer-closure: arity-2 stereo(0, l) — silence on L, signal on R",
+          "[bus][mixer][regression]") {
+    // Arity-2 closure: param_l → bus_l directly, so `l` aliases bus_l. Same
+    // conflict class as `stereo(0, left(sg))` in arity-1 form.
+    auto r = akkado::compile(
+        "mixer(0, (l, r) -> stereo(0, l))\nout(stereo(0.4, 0.6))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.4f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: arity-2 stereo(r, l) channel swap",
+          "[bus][mixer][regression]") {
+    // Arity-2 swap. Without the fix the two COPYs collide via bus_l.
+    auto r = akkado::compile(
+        "mixer(0, (l, r) -> stereo(r, l))\nout(stereo(0.3, 0.7))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.7f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: master((sg) -> stereo(0, left(sg))) parse-path",
+          "[bus][mixer][regression]") {
+    // `master(...)` is a separate parser form for `mixer(0, ...)`. Exercise
+    // it once to lock the alias fix on this path too.
+    auto r = akkado::compile(
+        "master((sg) -> stereo(0, left(sg)))\nout(stereo(0.4, 0.6))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.4f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: non-zero bus — the reported `mixer(2, ...)` shape",
+          "[bus][mixer][regression]") {
+    // The reproduction the user reported used `mixer(2, ...)` after a
+    // `<>(2)` send. Bus 2 then sums into bus 0 in the epilogue. The closure
+    // mechanism is identical to bus 0, but lock the user-reported topology.
+    auto r = akkado::compile(
+        "osc(\"saw\", 220) * 0.3 <>(2)\n"
+        "mixer(2, (sg) -> stereo(0, left(sg)))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    // L stays at the bus-0 idle level (silence — no other writers).
+    float peak_l = 0.0f;
+    for (float v : b.L) peak_l = std::max(peak_l, std::abs(v));
+    CHECK(peak_l < 1e-3f);
+    // R carries the saw — peak well above noise.
+    float peak_r = 0.0f;
+    for (float v : b.R) peak_r = std::max(peak_r, std::abs(v));
+    CHECK(peak_r > 0.05f);
+}
+
+TEST_CASE("mixer-closure: stereo(left(sg) + right(sg), right(sg)) sum + alias",
+          "[bus][mixer][regression]") {
+    // rl is a fresh sum buffer (left+right allocates), rr == bus_r. The
+    // naive order would skip the right COPY (rr == bus_r) and overwrite
+    // bus_l with the precomputed sum — already safe. Lock the behavior:
+    // L = L_in + R_in (sum-to-mono on left), R unchanged.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(left(sg) + right(sg), right(sg)))\n"
+        "out(stereo(0.2, 0.3))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.5f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: stereo(right(sg), left(sg) + right(sg)) sum + swap",
+          "[bus][mixer][regression]") {
+    // rl == bus_r, rr is a fresh sum buffer. Not a true swap (rr != bus_l)
+    // but rl == bus_r still requires care: with the default order, the
+    // first COPY writes bus_l, then the second COPY writes bus_r — bus_r
+    // is the source for rl, but the first COPY only reads it (no write to
+    // bus_r yet), so it's safe.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> stereo(right(sg), left(sg) + right(sg)))\n"
+        "out(stereo(0.2, 0.3))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.3f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.5f, 1e-4f));
+}
+
+TEST_CASE("mixer-closure: pipe-form closure body — `sg |> stereo(0, left(@))`",
+          "[bus][mixer][regression]") {
+    // Closure body written as a pipe expression. `@` inside the pipe binds
+    // to `sg`; same alias mechanics as the direct call form.
+    auto r = akkado::compile(
+        "mixer(0, (sg) -> sg |> stereo(0, left(@)))\n"
+        "out(stereo(0.4, 0.6))");
+    REQUIRE(r.success);
+    auto b = render_lr(r);
+    CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
+    CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.4f, 1e-4f));
+}
