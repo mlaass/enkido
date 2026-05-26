@@ -112,6 +112,7 @@ public:
         chord_contexts_root_.clear();
         current_seq_idx_ = 0;
         total_events_ = 0;
+        cycle_length_ = 1.0f;
         if (root == NULL_NODE) return false;
 
         // Create root sequence at index 0 (query_pattern always starts from sequence 0)
@@ -143,6 +144,12 @@ public:
 
     // Check if pattern contains samples (vs pitch)
     bool is_sample_pattern() const { return is_sample_pattern_; }
+
+    // Pattern's cycle length in beats. Defaults to 1.0 (one beat per cycle).
+    // For top-level MiniPattern, equals the sum of element weights (each
+    // top-level element contributes weight beats — Slow modifiers stretch,
+    // single-child patterns inherit the child's weight).
+    float cycle_length() const { return cycle_length_; }
 
     // Register required samples
     void collect_samples(std::set<std::string>& required) const {
@@ -351,9 +358,12 @@ private:
 
         switch (n.type) {
             case NodeType::MiniPattern:
-                // Top-level: each element occupies its own cycle (per-cycle alternation).
-                // Use [...] for in-cycle subdivision. Deliberate divergence from Strudel.
-                compile_alternate_sequence(n, seq_idx, time_offset, time_span);
+                // Top-level: subdivide [0,1) time among children by per-element
+                // weight; cycle_length grows to sum-of-weights. Default unit
+                // weight gives one-element-per-beat (the per-cycle-alternation
+                // feel from CLAUDE.md). Modifiers like `/N` stretch elements
+                // per-element, uniformly with nested groups.
+                compile_top_level_pattern(n, seq_idx, time_offset, time_span);
                 break;
             case NodeType::MiniAtom:
                 compile_atom_event(n, seq_idx, time_offset, time_span);
@@ -532,6 +542,63 @@ private:
 
         if (children.empty()) return;
         if (total_weight <= 0.0f) total_weight = static_cast<float>(children.size());
+
+        float accumulated_time = 0.0f;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            float child_span = (weights[i] / total_weight) * time_span;
+            float child_offset = time_offset + accumulated_time;
+            compile_into_sequence(children[i], seq_idx, child_offset, child_span);
+            accumulated_time += child_span;
+        }
+    }
+
+    // Top-level MiniPattern: hybrid dispatch.
+    //   - All weights == 1 (no Slow / Weight modifiers anywhere at the top
+    //     level): use the per-cycle-alternation path (compile_alternate_sequence).
+    //     This preserves the runtime ERS contract (`.slow(N)`, `.fast(N)`)
+    //     which assumes cycle_length == 1 statically.
+    //   - Any weight != 1 (Slow/Weight on a top-level element): subdivide
+    //     [0,1) time among children proportionally and set
+    //     cycle_length_ = sum_of_weights. Per-element `/N` then stretches
+    //     uniformly with nested groups — `<a b c d>/4` → cycle_length 4,
+    //     `a [b c]/2 d` → cycle_length 4.
+    // Per-element rate semantics are identical in both paths; only the
+    // emitted bytecode shape differs.
+    void compile_top_level_pattern(const Node& n, std::uint16_t seq_idx,
+                                    float time_offset, float time_span) {
+        std::vector<NodeIndex> children;
+        std::vector<float> weights;
+        float total_weight = 0.0f;
+        bool any_non_unit = false;
+
+        NodeIndex child = n.first_child;
+        while (child != NULL_NODE) {
+            float weight = get_node_weight(child);
+            int repeat = get_node_repeat(child);
+            for (int i = 0; i < repeat; ++i) {
+                children.push_back(child);
+                weights.push_back(weight);
+                total_weight += weight;
+                if (weight != 1.0f) any_non_unit = true;
+            }
+            child = (*arena_)[child].next_sibling;
+        }
+
+        if (children.empty()) return;
+
+        if (!any_non_unit) {
+            // Uniform weights: legacy per-cycle-alternation path.
+            // cycle_length_ stays at the default 1.0 so `.slow(N)` /
+            // `.fast(N)` runtime ERS continues to scale from a 1.0 base.
+            compile_alternate_sequence(n, seq_idx, time_offset, time_span);
+            return;
+        }
+
+        if (total_weight <= 0.0f) total_weight = static_cast<float>(children.size());
+
+        // Record cycle_length in beats so handle_mini_literal / handle_chord_call
+        // and the pattern-for-transform base cases can pull it out.
+        cycle_length_ = total_weight;
 
         float accumulated_time = 0.0f;
         for (std::size_t i = 0; i < children.size(); ++i) {
@@ -1186,7 +1253,10 @@ private:
             }
 
             case Node::MiniModifierType::Slow: {
-                // /N: Slow down - just compile with same span (handled at cycle level)
+                // /N: per-element duration. The parent's get_node_weight()
+                // already included this Slow factor when allocating
+                // time_span, so we just compile the child into the
+                // (already-stretched) slot we were handed.
                 compile_into_sequence(child, seq_idx, time_offset, time_span);
                 break;
             }
@@ -1198,16 +1268,25 @@ private:
         }
     }
 
-    // Get the weight (@N) of a node (default 1.0)
+    // Get the weight of a node (default 1.0). Combines:
+    //   @N  (Weight)  — explicit weight multiplier
+    //   /N  (Slow)    — per-element duration: element occupies N× its slot
+    // Speed (*N) does NOT change weight; `*N` plays N copies in the same
+    // slot, handled by compile_modified_node. Walks the full Modified
+    // chain so `a@2/3` returns weight = 6.
     float get_node_weight(NodeIndex node_idx) {
-        const Node& n = (*arena_)[node_idx];
-        if (n.type == NodeType::MiniModified) {
-            const auto& mod = n.as_mini_modifier();
+        float weight = 1.0f;
+        NodeIndex cur = node_idx;
+        while (cur != NULL_NODE && (*arena_)[cur].type == NodeType::MiniModified) {
+            const auto& mod = (*arena_)[cur].as_mini_modifier();
             if (mod.modifier_type == Node::MiniModifierType::Weight) {
-                return mod.value;
+                weight *= mod.value;
+            } else if (mod.modifier_type == Node::MiniModifierType::Slow) {
+                weight *= mod.value;
             }
+            cur = (*arena_)[cur].first_child;
         }
-        return 1.0f;
+        return weight;
     }
 
     // Get the repeat count (!N) of a node (default 1)
@@ -1247,6 +1326,7 @@ private:
     std::uint32_t pattern_base_offset_ = 0;
     std::uint16_t current_seq_idx_ = 0;  // Track current sequence index for sample mappings
     std::uint32_t total_events_ = 0;     // Total event count across all sequences
+    float cycle_length_ = 1.0f;          // Beats per pattern cycle (computed at top-level)
 
     // Phase 2 PRD voicing side-channel: original chord (root_midi, intervals)
     // for each event in sequence_events_[0]. Empty/nullopt for non-chord
@@ -1317,8 +1397,9 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
-    float cycle_length = 1.0f;
+    // cycle_length is per-sequence in beats. The compiler computes it from
+    // the sum of top-level element weights (see compile_top_level_pattern).
+    float cycle_length = compiler.cycle_length();
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1663,8 +1744,9 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
-    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
-    float cycle_length = 1.0f;
+    // cycle_length is per-sequence in beats. The compiler computes it from
+    // the sum of top-level element weights (see compile_top_level_pattern).
+    float cycle_length = compiler.cycle_length();
 
     bool is_sample_pattern = compiler.is_sample_pattern();
 
@@ -1818,8 +1900,9 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // cycle_length is per-sequence in beats. Default 1 (cycle = beat).
-    float cycle_length = 1.0f;
+    // cycle_length is per-sequence in beats. The compiler computes it from
+    // the sum of top-level element weights (see compile_top_level_pattern).
+    float cycle_length = compiler.cycle_length();
 
     // Allocate buffers for outputs
     std::uint16_t value_buf = buffers_.allocate();
@@ -2145,7 +2228,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
+        out_cycle_length = compiler.cycle_length();
         return true;
     }
 
@@ -2168,7 +2251,7 @@ static bool compile_pattern_for_transform(
 
         out_num_elements = compiler.count_top_level_elements(out_pattern_node);
         out_events = compiler.sequence_events();
-        out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
+        out_cycle_length = compiler.cycle_length();
         return true;
     }
 
@@ -2219,7 +2302,7 @@ static bool compile_pattern_for_transform(
             if (!compiler.compile(out_pattern_node)) return false;
             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
             out_events = compiler.sequence_events();
-            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
+            out_cycle_length = compiler.cycle_length();
             return true;
         }
 
@@ -2692,7 +2775,7 @@ static bool compile_pattern_for_transform(
                         if (compiler.compile(out_pattern_node)) {
                             out_num_elements = compiler.count_top_level_elements(out_pattern_node);
                             out_events = compiler.sequence_events();
-                            out_cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
+                            out_cycle_length = compiler.cycle_length();
                             return true;
                         }
                     }

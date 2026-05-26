@@ -238,3 +238,114 @@ TEST_CASE("cycle_timing: n\"a\", n\"<a>\", n\"[a]\" are byte-equivalent",
         CHECK(si_bare->sequence_events[s].size() == si_grp->sequence_events[s].size());
     }
 }
+
+// ============================================================================
+// Per-element rate modifiers (`/N`, `@N`) in mini-notation.
+// Regression for: `c"<E5 Cm5 Am4 Dm5>/4"` previously dropped the /4 — each
+// chord advanced every beat instead of holding for 4 beats. The fix routes
+// Slow/Weight through compile_top_level_pattern: any non-unit weight at the
+// top level switches MiniPattern from per-cycle alternation to a weighted
+// subdivision whose cycle_length = sum-of-weights.
+// ============================================================================
+
+TEST_CASE("cycle_timing: /N on a top-level <...> stretches each note across N cycles",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // The user's reported bug, expressed with notes so we don't have to drag
+    // poly() in just to compile. `<c4 d4 e4 f4>/4` should be equivalent to
+    // `<c4 d4 e4 f4>.slow(4)`: each note holds for 4 beats, total 16 beats.
+    auto result = akkado::compile(R"(n"<c4 d4 e4 f4>/4")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    // Single top-level child with weight 4 → subdivision path, cycle_length 4.
+    CHECK(si->cycle_length == Catch::Approx(4.0f));
+    // Single SUB_SEQ event in the root sequence pointing at the inner
+    // ALTERNATE that holds the 4 chord events.
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    CHECK(si->sequence_events[1].size() == 4);
+}
+
+TEST_CASE("cycle_timing: /N on a top-level [...] stretches the group across N cycles",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // `[a b c d]/2` — group's 4 events stretched across 2 cycles.
+    // Events stay at relative t = 0, 0.25, 0.5, 0.75 in [0,1) but
+    // cycle_length=2 means they fire at beats 0, 0.5, 1.0, 1.5.
+    auto result = akkado::compile(R"(n"[c4 d4 e4 f4]/2")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(2.0f));
+    auto beats = beat_positions(*si);
+    REQUIRE(beats.size() == 4);
+    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(beats[1] == Catch::Approx(0.5f).margin(0.001f));
+    CHECK(beats[2] == Catch::Approx(1.0f).margin(0.001f));
+    CHECK(beats[3] == Catch::Approx(1.5f).margin(0.001f));
+}
+
+TEST_CASE("cycle_timing: /N on one element of a multi-element pattern stretches just that element",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // `a [b c]/2 d` — three top-level elements with weights [1, 2, 1].
+    // cycle_length = 4; middle group's children fall at the inner
+    // subdivisions of its 2-beat slot.
+    //   a       → beat 0
+    //   [b c]/2 → b at beat 1, c at beat 2 (slot spans beats 1-3)
+    //   d       → beat 3
+    auto result = akkado::compile(R"(n"c4 [d4 e4]/2 f4")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(4.0f));
+    auto beats = beat_positions(*si);
+    REQUIRE(beats.size() == 4);
+    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(beats[1] == Catch::Approx(1.0f).margin(0.001f));
+    CHECK(beats[2] == Catch::Approx(2.0f).margin(0.001f));
+    CHECK(beats[3] == Catch::Approx(3.0f).margin(0.001f));
+}
+
+TEST_CASE("cycle_timing: top-level @N (weight) stretches that element",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // `c4@2 e4` — two top-level elements with weights [2, 1].
+    // cycle_length = 3; events at beats 0, 2.
+    auto result = akkado::compile(R"(n"c4@2 e4")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(3.0f));
+    auto beats = beat_positions(*si);
+    REQUIRE(beats.size() == 2);
+    CHECK(beats[0] == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(beats[1] == Catch::Approx(2.0f).margin(0.001f));
+}
+
+TEST_CASE("cycle_timing: Weight + Slow on the same atom compose multiplicatively",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // `a@2/3` walks the Modified chain: weight × Weight × Slow = 1 × 2 × 3 = 6.
+    // Pattern is a single top-level element with weight 6 → cycle_length 6.
+    auto result = akkado::compile(R"(n"c4@2/3")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(6.0f));
+}
+
+TEST_CASE("cycle_timing: chord pattern with top-level /N (user-reported bug)",
+          "[codegen][patterns][cycle_timing][per_element_rate]") {
+    // Exact form from the user's bug report, wrapped in poly() so the
+    // polyphonic chord output has a consumer. chord() / c"…" both go
+    // through handle_chord_call which also picks up cycle_length() now.
+    auto result = akkado::compile(
+        R"(c"<E5 Cm5 Am4 Dm5>/4" |> poly(@, ({freq}) -> osc("sin", freq)) |> out(@, @))");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(4.0f));
+}
