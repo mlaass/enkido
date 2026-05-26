@@ -9,7 +9,6 @@ namespace akkado {
 
 using codegen::encode_const_value;
 using codegen::unwrap_argument;
-using codegen::emit_push_const;
 using codegen::extract_call_args;
 
 // ============================================================================

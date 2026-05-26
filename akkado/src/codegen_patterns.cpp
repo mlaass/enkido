@@ -21,7 +21,6 @@ namespace akkado {
 
 using codegen::encode_const_value;
 using codegen::unwrap_argument;
-using codegen::emit_zero;
 using codegen::SamplePatternEmitCtx;
 using codegen::emit_sample_chain;
 
@@ -1307,7 +1306,7 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     compiler.set_pattern_base_offset(pattern.location.offset);
     if (!compiler.compile(pattern_node)) {
         // Empty pattern - emit zero
-        std::uint16_t out = emit_zero(buffers_, emit_stream());
+        std::uint16_t out = emit_zero();
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -1653,7 +1652,7 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     SequenceCompiler compiler(mini_arena, sample_registry_);
     if (!compiler.compile(mini_pattern)) {
         // Empty pattern - emit zero
-        std::uint16_t out = emit_zero(buffers_, emit_stream());
+        std::uint16_t out = emit_zero();
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", loc);
         }
@@ -2710,7 +2709,6 @@ static bool compile_pattern_for_transform(
 static TypedValue emit_pattern_with_state(
     CodeGenerator& gen,
     BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions,
     std::vector<StateInitData>& state_inits,
     std::set<std::string>& required_samples,
     std::unordered_map<NodeIndex, TypedValue>& node_types,
@@ -2720,8 +2718,7 @@ static TypedValue emit_pattern_with_state(
     const SequenceCompiler& compiler,
     std::vector<std::vector<cedar::Event>>& sequence_events,
     const SourceLocation& pattern_loc,
-    const SourceLocation& call_loc,
-    void (*emit_fn)(std::vector<cedar::Instruction>&, const cedar::Instruction&)) {
+    const SourceLocation& call_loc) {
 
     // Collect required samples
     compiler.collect_samples(required_samples);
@@ -2749,7 +2746,7 @@ static TypedValue emit_pattern_with_state(
     query_inst.inputs[3] = 0xFFFF;
     query_inst.inputs[4] = 0xFFFF;
     query_inst.state_id = state_id;
-    emit_fn(instructions, query_inst);
+    gen.emit(query_inst);
 
     // Check for polyphonic patterns. Compute from the local (possibly
     // post-voicing) sequence_events rather than compiler.max_voices(), since
@@ -2781,7 +2778,7 @@ static TypedValue emit_pattern_with_state(
         step_inst.inputs[3] = 0xFFFF;
         step_inst.inputs[4] = 0xFFFF;
         step_inst.state_id = state_id;
-        emit_fn(instructions, step_inst);
+        gen.emit(step_inst);
 
         voice_buffers.push_back(voice_value_buf);
     }
@@ -2813,9 +2810,7 @@ static TypedValue emit_pattern_with_state(
         ctx.loc = call_loc;
         std::uint16_t output_buf = emit_sample_chain(
             buffers,
-            [&instructions, emit_fn](const cedar::Instruction& i) {
-                emit_fn(instructions, i);
-            },
+            [&gen](const cedar::Instruction& i) { gen.emit(i); },
             ctx);
         if (output_buf == BufferAllocator::BUFFER_UNUSED) {
             return TypedValue::void_val();
@@ -2892,7 +2887,7 @@ CodeGenerator::PatternQuerySource CodeGenerator::emit_pattern_query_only(
     query_inst.inputs[3] = 0xFFFF;
     query_inst.inputs[4] = 0xFFFF;
     query_inst.state_id = state_id;
-    emit_stream().push_back(query_inst);
+    emit(query_inst);
 
     // Store sequence program initialization data for the inner SequenceState.
     StateInitData seq_init;
@@ -2943,7 +2938,7 @@ TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n)
     auto breakpoints = events_to_breakpoints(stream.events);
     if (breakpoints.empty()) {
         // Empty curve - emit zero
-        std::uint16_t out = emit_zero(buffers_, emit_stream());
+        std::uint16_t out = emit_zero();
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -3048,7 +3043,7 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
     // Convert events to breakpoints
     auto breakpoints = events_to_breakpoints(stream.events);
     if (breakpoints.empty()) {
-        std::uint16_t out = emit_zero(buffers_, emit_stream());
+        std::uint16_t out = emit_zero();
         if (out == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
         }
@@ -3097,11 +3092,12 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
 
-// Helper to emit instruction (wrapper for member function access)
-static void emit_instruction_helper(std::vector<cedar::Instruction>& instructions,
-                                    const cedar::Instruction& inst) {
-    instructions.push_back(inst);
-}
+// Note: the previous `emit_instruction_helper(instructions, inst)` thunk was
+// removed in PRD prd-parser-codegen-correctness.md Phase 3 (F2) — it pushed
+// to `instructions` directly without updating `source_locations_`. Pattern
+// emission now routes through `CodeGenerator::emit()` (passed into
+// `emit_pattern_with_state` via its `gen` parameter), which keeps both
+// parallel vectors in sync.
 
 // ============================================================================
 // fast / slow — runtime rate scaling via EVENT_RATE_SCALE
@@ -3201,7 +3197,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     std::uint16_t factor_buf;
     if (factor_const.has_value()) {
         float rate = is_fast ? *factor_const : (1.0f / *factor_const);
-        factor_buf = codegen::emit_push_const(buffers_, emit_stream(), rate);
+        factor_buf = emit_push_const(rate);
         if (factor_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -3224,7 +3220,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
         } else {
             // slow(p, sig) → rate = 1.0 / sig at runtime.
             std::uint16_t one_buf =
-                codegen::emit_push_const(buffers_, emit_stream(), 1.0f);
+                emit_push_const(1.0f);
             if (one_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
@@ -3242,7 +3238,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
             div_inst.inputs[2] = 0xFFFF;
             div_inst.inputs[3] = 0xFFFF;
             div_inst.inputs[4] = 0xFFFF;
-            emit_stream().push_back(div_inst);
+            emit(div_inst);
         }
     }
 
@@ -3253,10 +3249,9 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
 
     const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, pattern.location, n.location);
     pop_path();
 
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -3279,6 +3274,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     pop_path();  // back out of fast#N / slow#N path
 
     auto& stream = emit_stream();
+    auto& locs = loc_stream();
     cedar::Instruction ers{};
     ers.opcode = cedar::Opcode::EVENT_RATE_SCALE;
     ers.out_buffer = 0xFFFF;
@@ -3294,7 +3290,9 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     // Insert ERS BEFORE the first SEQPAT_* instruction reading this state_id
     // so the cycle_length mutation lands before any opcode consults it on
     // this block. emit_pattern_with_state appends in topological order, so
-    // SEQPAT_QUERY is the earliest consumer.
+    // SEQPAT_QUERY is the earliest consumer. PRD prd-parser-codegen-
+    // correctness.md Phase 3 (F2): the non-tail insert must touch both
+    // `stream` AND `locs` in lock-step or the parallel invariant breaks.
     std::optional<std::size_t> insert_idx;
     for (std::size_t i = 0; i < stream.size(); ++i) {
         if (stream[i].state_id == state_id &&
@@ -3304,11 +3302,12 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
         }
     }
     if (insert_idx) {
-        stream.insert(stream.begin() + static_cast<std::ptrdiff_t>(*insert_idx),
-                      ers);
+        const auto pos = static_cast<std::ptrdiff_t>(*insert_idx);
+        stream.insert(stream.begin() + pos, ers);
+        locs.insert(locs.begin() + pos, n.location);
     } else {
         // Defensive: emit_pattern_with_state should always emit SEQPAT_QUERY.
-        stream.push_back(ers);
+        emit(ers);
     }
 
     StateInitData rs_init{};
@@ -3400,7 +3399,7 @@ TypedValue CodeGenerator::emit_reorder_call(
     op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
     op.inputs[4] = 0xFFFF;
     op.state_id = transform_state_id;
-    emit_stream().push_back(op);
+    emit(op);
 
     // Downstream transform state: holds the rewritten OutputEvents that the
     // readout reads via SEQPAT_STEP / SEQPAT_FIELD etc.
@@ -3506,7 +3505,7 @@ TypedValue CodeGenerator::emit_fanout_call(
     op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
     op.inputs[4] = 0xFFFF;
     op.state_id = transform_state_id;
-    emit_stream().push_back(op);
+    emit(op);
 
     StateInitData fn_init{};
     fn_init.state_id = transform_state_id;
@@ -4252,10 +4251,9 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, pattern.location, n.location);
 
     pop_path();
 
@@ -4312,8 +4310,7 @@ TypedValue CodeGenerator::handle_ply_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
     std::uint32_t n_int = static_cast<std::uint32_t>(*n_arg);
-    std::uint16_t n_buf = codegen::emit_push_const(
-        buffers_, emit_stream(), static_cast<float>(n_int));
+    std::uint16_t n_buf = emit_push_const(static_cast<float>(n_int));
     if (n_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
@@ -4388,8 +4385,7 @@ std::uint16_t CodeGenerator::resolve_scalar_or_signal_arg(
     // Constant: fold via PUSH_CONST.
     auto const_val = get_number_arg(*ast_, call, idx);
     if (const_val.has_value()) {
-        std::uint16_t buf = codegen::emit_push_const(
-            buffers_, emit_stream(), static_cast<float>(*const_val));
+        std::uint16_t buf = emit_push_const(static_cast<float>(*const_val));
         if (buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", call.location);
         }
@@ -4474,8 +4470,7 @@ TypedValue CodeGenerator::handle_segment_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
     std::uint32_t n_int = static_cast<std::uint32_t>(*n_arg);
-    std::uint16_t n_buf = codegen::emit_push_const(
-        buffers_, emit_stream(), static_cast<float>(n_int));
+    std::uint16_t n_buf = emit_push_const(static_cast<float>(n_int));
     if (n_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
@@ -4514,8 +4509,7 @@ TypedValue CodeGenerator::handle_iter_call(NodeIndex node, const Node& n) {
         error("E133", "iter() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-    std::uint16_t n_buf = codegen::emit_push_const(
-        buffers_, emit_stream(), static_cast<float>(n_int));
+    std::uint16_t n_buf = emit_push_const(static_cast<float>(n_int));
     if (n_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
@@ -4549,8 +4543,7 @@ TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
         error("E133", "iterBack() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
-    std::uint16_t n_buf = codegen::emit_push_const(
-        buffers_, emit_stream(), static_cast<float>(n_int));
+    std::uint16_t n_buf = emit_push_const(static_cast<float>(n_int));
     if (n_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
@@ -4644,10 +4637,9 @@ TypedValue CodeGenerator::handle_run_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, n.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, n.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -4677,10 +4669,9 @@ TypedValue CodeGenerator::handle_binary_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, n.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, n.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -4718,10 +4709,9 @@ TypedValue CodeGenerator::handle_binary_n_call(NodeIndex node, const Node& n) {
     float cycle_length = 1.0f;  // cycle_length in beats; default 1 (cycle = beat)
 
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, n.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, n.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -4777,10 +4767,9 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, pattern.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -4832,10 +4821,9 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, pattern.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -4886,10 +4874,9 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
 
     const Node& pattern = (*pattern_arena)[pattern_node];
     auto result_tv = emit_pattern_with_state(
-        *this, buffers_, emit_stream(), state_inits_, required_samples_,
+        *this, buffers_, state_inits_, required_samples_,
         node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location,
-        emit_instruction_helper);
+        compiler, sequence_events, pattern.location, n.location);
 
     pop_path();
     if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
@@ -5149,14 +5136,12 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     } else {
         // Legacy buffer-driven path: emit a constant preset buffer and one
         // SOUNDFONT_VOICE per chord voice, each with its own state_id.
-        std::uint16_t preset_buf = codegen::emit_push_const(buffers_, emit_stream(),
-                                                             static_cast<float>(preset_index));
+        std::uint16_t preset_buf = emit_push_const(static_cast<float>(preset_index));
         if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
-        source_locations_.push_back(current_source_loc_);
 
         per_voice_outs.reserve(freq_per_voice.size());
         for (std::size_t v = 0; v < freq_per_voice.size(); ++v) {
@@ -5209,14 +5194,12 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     const std::size_t n_voices = per_voice_outs.size();
     if (n_voices > 1) {
         const float scale = 1.0f / std::sqrt(static_cast<float>(n_voices));
-        std::uint16_t scale_buf = codegen::emit_push_const(
-            buffers_, emit_stream(), scale);
+        std::uint16_t scale_buf = emit_push_const(scale);
         if (scale_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
-        source_locations_.push_back(current_source_loc_);
         std::uint16_t scaled_buf = buffers_.allocate();
         if (scaled_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
@@ -5316,14 +5299,12 @@ TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
     push_path("sf_voice#" + std::to_string(sf_count));
 
     // Preset index as a constant input buffer (read at inputs[3]).
-    std::uint16_t preset_buf = codegen::emit_push_const(
-        buffers_, emit_stream(), static_cast<float>(preset_index));
+    std::uint16_t preset_buf = emit_push_const(static_cast<float>(preset_index));
     if (preset_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::error_val();
     }
-    source_locations_.push_back(current_source_loc_);
 
     // Allocate the adjacent stereo output pair (L = out_left, R = out_left+1).
     std::uint16_t out_left = buffers_.allocate();

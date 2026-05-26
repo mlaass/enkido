@@ -12,27 +12,10 @@
 namespace akkado {
 namespace codegen {
 
-// Emit a zero constant buffer (used for empty array results)
-// Returns buffer index or BUFFER_UNUSED on failure
-[[gnu::always_inline]]
-inline std::uint16_t emit_zero(
-    BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions
-) {
-    std::uint16_t out = buffers.allocate();
-    if (out == BufferAllocator::BUFFER_UNUSED) {
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::PUSH_CONST;
-    inst.out_buffer = out;
-    set_unused_inputs(inst);
-    encode_const_value(inst, 0.0f);
-    instructions.push_back(inst);
-
-    return out;
-}
+// NOTE: The free `emit_zero(buffers, instructions)` helper was removed in
+// PRD prd-parser-codegen-correctness.md Phase 3 (F2). Use
+// `CodeGenerator::emit_zero()` instead — it routes through emit() so
+// source_locations_ stays in sync.
 
 // Result of extracting call arguments
 struct CallArgs {
@@ -67,42 +50,11 @@ inline CallArgs extract_call_args(
     return result;
 }
 
-// Finalize multi-buffer array result:
-// - Empty vector: emit zero constant
-// - Single element: return as Signal
-// - Multiple elements: return as Array
-// Returns a TypedValue for the result
-[[gnu::always_inline]]
-inline TypedValue finalize_array_result(
-    NodeIndex node,
-    std::vector<std::uint16_t> result_buffers,
-    std::unordered_map<NodeIndex, TypedValue>& node_types,
-    BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions
-) {
-    if (result_buffers.empty()) {
-        std::uint16_t zero = emit_zero(buffers, instructions);
-        auto tv = TypedValue::signal(zero);
-        node_types[node] = tv;
-        return tv;
-    }
-
-    if (result_buffers.size() == 1) {
-        auto tv = TypedValue::signal(result_buffers[0]);
-        node_types[node] = tv;
-        return tv;
-    }
-
-    std::uint16_t first_buf = result_buffers[0];
-    std::vector<TypedValue> elements;
-    elements.reserve(result_buffers.size());
-    for (auto buf : result_buffers) {
-        elements.push_back(TypedValue::signal(buf));
-    }
-    auto tv = TypedValue::make_array(std::move(elements), first_buf);
-    node_types[node] = tv;
-    return tv;
-}
+// NOTE: The free `finalize_array_result(node, ..., node_types, buffers,
+// instructions)` helper was removed in PRD prd-parser-codegen-correctness.md
+// Phase 3 (F2). Use `CodeGenerator::finalize_array_result(node, buffers)`
+// instead — it routes empty-array zero emission through emit() so
+// source_locations_ stays in sync.
 
 // Get input buffers from a node (handles both single and multi-buffer sources)
 // Checks the node_types map for Array typed values

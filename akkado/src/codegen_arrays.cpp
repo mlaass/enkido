@@ -12,8 +12,6 @@ namespace akkado {
 
 using codegen::encode_const_value;
 using codegen::unwrap_argument;
-using codegen::emit_zero;
-using codegen::emit_push_const;
 using codegen::extract_call_args;
 using codegen::get_input_buffers;
 using codegen::closure_body;
@@ -228,36 +226,6 @@ std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref,
     return result;
 }
 
-// Finalize array result (helper)
-static TypedValue finalize_result(
-    NodeIndex node,
-    std::vector<std::uint16_t> result_buffers,
-    std::unordered_map<NodeIndex, TypedValue>& node_types,
-    BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions
-) {
-    if (result_buffers.empty()) {
-        std::uint16_t zero = emit_zero(buffers, instructions);
-        auto tv = TypedValue::signal(zero);
-        node_types[node] = tv;
-        return tv;
-    }
-    if (result_buffers.size() == 1) {
-        auto tv = TypedValue::signal(result_buffers[0]);
-        node_types[node] = tv;
-        return tv;
-    }
-    std::uint16_t first_buf = result_buffers[0];
-    std::vector<TypedValue> elements;
-    elements.reserve(result_buffers.size());
-    for (auto buf : result_buffers) {
-        elements.push_back(TypedValue::signal(buf));
-    }
-    auto tv = TypedValue::make_array(std::move(elements), first_buf);
-    node_types[node] = tv;
-    return tv;
-}
-
 // map(array, fn) — fn is (val) -> ... or (val, idx) -> ...
 TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     auto args = extract_call_args(ast_->arena, n.first_child, 2);
@@ -319,7 +287,7 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
         std::uint16_t result;
         if (with_index) {
             // A non-multi-buffer signal is a 1-element sequence: its index is 0.
-            std::uint16_t idx_buf = emit_push_const(buffers_, emit_stream(), 0.0f);
+            std::uint16_t idx_buf = emit_push_const(0.0f);
             if (idx_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
@@ -343,7 +311,7 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
         push_path("elem" + std::to_string(i));
         if (with_index) {
             std::uint16_t idx_buf =
-                emit_push_const(buffers_, emit_stream(), static_cast<float>(i));
+                emit_push_const(static_cast<float>(i));
             if (idx_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
@@ -358,7 +326,7 @@ TypedValue CodeGenerator::handle_map_call(NodeIndex node, const Node& n) {
     }
     pop_path();
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // sum(array) or sum(a, b, ...) — variadic, stereo-preserving.
@@ -427,7 +395,7 @@ TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
 
     // Empty operand list (e.g. sum([])) → zero, matching legacy behavior.
     if (operands.empty()) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
     // Single operand → passthrough (stereo preserved).
@@ -588,7 +556,7 @@ TypedValue CodeGenerator::handle_zipWith_call(NodeIndex node, const Node& n) {
 
     std::size_t len = std::min(buffers_a.size(), buffers_b.size());
     if (len == 0) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
 
@@ -602,7 +570,7 @@ TypedValue CodeGenerator::handle_zipWith_call(NodeIndex node, const Node& n) {
     }
     pop_path();
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // zip(a, b) - interleave
@@ -630,7 +598,7 @@ TypedValue CodeGenerator::handle_zip_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buffers_b[i]);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // take(n, array)
@@ -656,7 +624,7 @@ TypedValue CodeGenerator::handle_take_call(NodeIndex node, const Node& n) {
     count = std::min(count, elem_bufs.size());
     std::vector<std::uint16_t> result_buffers(elem_bufs.begin(), elem_bufs.begin() + count);
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // drop(n, array)
@@ -682,7 +650,7 @@ TypedValue CodeGenerator::handle_drop_call(NodeIndex node, const Node& n) {
     count = std::min(count, elem_bufs.size());
     std::vector<std::uint16_t> result_buffers(elem_bufs.begin() + count, elem_bufs.end());
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // reverse(array)
@@ -762,7 +730,7 @@ TypedValue CodeGenerator::handle_range_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buf);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // repeat(value, n)
@@ -783,7 +751,7 @@ TypedValue CodeGenerator::handle_repeat_call(NodeIndex node, const Node& n) {
     std::uint16_t value_buf = visit(args.nodes[0]).buffer;
 
     if (count == 0) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
     if (count == 1) {
@@ -846,7 +814,7 @@ TypedValue CodeGenerator::handle_spread_call(NodeIndex node, const Node& n) {
         }
         // Pad remaining slots with zero buffers
         for (std::size_t i = source_buffers.size(); i < target; ++i) {
-            std::uint16_t zero_buf = emit_zero(buffers_, emit_stream());
+            std::uint16_t zero_buf = emit_zero();
             if (zero_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
@@ -1048,10 +1016,11 @@ static cedar::Opcode binary_name_to_opcode(std::string_view func_name) {
     return cedar::Opcode::NOP;
 }
 
-// Emit a single binary operation instruction
+// Emit a single binary operation instruction. Routes through CodeGenerator's
+// emit() so source_locations_ stays in sync (PRD-correctness Phase 3 / F2).
 static std::uint16_t emit_binary_op(
+    CodeGenerator& gen,
     BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions,
     cedar::Opcode op,
     std::uint16_t lhs,
     std::uint16_t rhs
@@ -1070,7 +1039,7 @@ static std::uint16_t emit_binary_op(
     inst.inputs[3] = 0xFFFF;
     inst.inputs[4] = 0xFFFF;
     inst.state_id = 0;
-    instructions.push_back(inst);
+    gen.emit(inst);
 
     return out;
 }
@@ -1104,7 +1073,7 @@ TypedValue CodeGenerator::handle_binary_op_call(NodeIndex node, const Node& n) {
 
     // Neither is array - standard scalar operation
     if (!a_multi && !b_multi) {
-        std::uint16_t result = emit_binary_op(buffers_, emit_stream(), op, buf_a, buf_b);
+        std::uint16_t result = emit_binary_op(*this, buffers_, op, buf_a, buf_b);
         return cache_and_return(node, TypedValue::signal(result));
     }
 
@@ -1120,7 +1089,7 @@ TypedValue CodeGenerator::handle_binary_op_call(NodeIndex node, const Node& n) {
     for (std::size_t i = 0; i < len; ++i) {
         std::uint16_t a = buffers_a[i % buffers_a.size()];
         std::uint16_t b = buffers_b[i % buffers_b.size()];
-        std::uint16_t res = emit_binary_op(buffers_, emit_stream(), op, a, b);
+        std::uint16_t res = emit_binary_op(*this, buffers_, op, a, b);
         if (res == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1144,7 +1113,7 @@ TypedValue CodeGenerator::handle_binary_op_call(NodeIndex node, const Node& n) {
         return tv;
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // ============================================================================
@@ -1168,7 +1137,7 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
 
     auto elem_bufs = get_multi_buffers(args.nodes[0]);
     if (elem_bufs.empty()) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
     if (elem_bufs.size() == 1) {
@@ -1178,7 +1147,7 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
     // Sum all elements
     std::uint16_t sum_buf = elem_bufs[0];
     for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        sum_buf = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::ADD, sum_buf, elem_bufs[i]);
+        sum_buf = emit_binary_op(*this, buffers_, cedar::Opcode::ADD, sum_buf, elem_bufs[i]);
         if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1186,13 +1155,13 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
     }
 
     // Divide by length
-    std::uint16_t len_buf = emit_push_const(buffers_, emit_stream(), static_cast<float>(elem_bufs.size()));
+    std::uint16_t len_buf = emit_push_const(static_cast<float>(elem_bufs.size()));
     if (len_buf == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
 
-    std::uint16_t result = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::DIV, sum_buf, len_buf);
+    std::uint16_t result = emit_binary_op(*this, buffers_, cedar::Opcode::DIV, sum_buf, len_buf);
     return cache_and_return(node, TypedValue::signal(result));
 }
 
@@ -1215,7 +1184,7 @@ TypedValue CodeGenerator::handle_minmax_call(NodeIndex node, const Node& n) {
     if (args.nodes.size() == 2) {
         std::uint16_t buf_a = visit(args.nodes[0]).buffer;
         std::uint16_t buf_b = visit(args.nodes[1]).buffer;
-        std::uint16_t result = emit_binary_op(buffers_, emit_stream(), op, buf_a, buf_b);
+        std::uint16_t result = emit_binary_op(*this, buffers_, op, buf_a, buf_b);
         return cache_and_return(node, TypedValue::signal(result));
     }
 
@@ -1230,7 +1199,7 @@ TypedValue CodeGenerator::handle_minmax_call(NodeIndex node, const Node& n) {
     auto elem_bufs = get_multi_buffers(args.nodes[0]);
     if (elem_bufs.empty()) {
         // min/max of empty array - return 0
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
     if (elem_bufs.size() == 1) {
@@ -1239,7 +1208,7 @@ TypedValue CodeGenerator::handle_minmax_call(NodeIndex node, const Node& n) {
 
     std::uint16_t result = elem_bufs[0];
     for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        result = emit_binary_op(buffers_, emit_stream(), op, result, elem_bufs[i]);
+        result = emit_binary_op(*this, buffers_, op, result, elem_bufs[i]);
         if (result == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1278,7 +1247,7 @@ TypedValue CodeGenerator::handle_rotate_call(NodeIndex node, const Node& n) {
 
     auto elem_bufs = get_multi_buffers(args.nodes[0]);
     if (elem_bufs.empty() || elem_bufs.size() == 1) {
-        std::uint16_t first_buf = elem_bufs.empty() ? emit_zero(buffers_, emit_stream()) : elem_bufs[0];
+        std::uint16_t first_buf = elem_bufs.empty() ? emit_zero() : elem_bufs[0];
         return cache_and_return(node, TypedValue::signal(first_buf));
     }
 
@@ -1293,7 +1262,7 @@ TypedValue CodeGenerator::handle_rotate_call(NodeIndex node, const Node& n) {
         result.push_back(elem_bufs[static_cast<std::size_t>(src_idx)]);
     }
 
-    return finalize_result(node, std::move(result), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result));
 }
 
 // shuffle(array) - deterministic random permutation
@@ -1322,7 +1291,7 @@ TypedValue CodeGenerator::handle_shuffle_call(NodeIndex node, const Node& n) {
 
     auto elem_bufs = get_multi_buffers(args.nodes[0]);
     if (elem_bufs.size() <= 1) {
-        std::uint16_t first_buf = elem_bufs.empty() ? emit_zero(buffers_, emit_stream()) : elem_bufs[0];
+        std::uint16_t first_buf = elem_bufs.empty() ? emit_zero() : elem_bufs[0];
         return cache_and_return(node, TypedValue::signal(first_buf));
     }
 
@@ -1342,7 +1311,7 @@ TypedValue CodeGenerator::handle_shuffle_call(NodeIndex node, const Node& n) {
         std::swap(result[i], result[j]);
     }
 
-    return finalize_result(node, std::move(result), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result));
 }
 
 // sort(array, reverse=false) - sort elements (compile-time constants only)
@@ -1389,7 +1358,7 @@ TypedValue CodeGenerator::handle_sort_call(NodeIndex node, const Node& n) {
     }
 
     if (values.empty()) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
 
@@ -1405,7 +1374,7 @@ TypedValue CodeGenerator::handle_sort_call(NodeIndex node, const Node& n) {
     // Emit sorted constants
     std::vector<std::uint16_t> result_buffers;
     for (const auto& [val, _] : values) {
-        std::uint16_t buf = emit_push_const(buffers_, emit_stream(), val);
+        std::uint16_t buf = emit_push_const(val);
         if (buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1413,7 +1382,7 @@ TypedValue CodeGenerator::handle_sort_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buf);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // normalize(array, lo=0, hi=1) - scale to [lo, hi] range
@@ -1453,30 +1422,30 @@ TypedValue CodeGenerator::handle_normalize_call(NodeIndex node, const Node& n) {
 
     if (!is_multi_buffer(args.nodes[0])) {
         // Single element normalizes to lo (constant target floor)
-        std::uint16_t out = emit_push_const(buffers_, emit_stream(), static_cast<float>(lo_val));
+        std::uint16_t out = emit_push_const(static_cast<float>(lo_val));
         return cache_and_return(node, TypedValue::signal(out));
     }
 
     auto elem_bufs = get_multi_buffers(args.nodes[0]);
     if (elem_bufs.size() <= 1) {
-        std::uint16_t out = emit_push_const(buffers_, emit_stream(), static_cast<float>(lo_val));
+        std::uint16_t out = emit_push_const(static_cast<float>(lo_val));
         return cache_and_return(node, TypedValue::signal(out));
     }
 
     // Find min
     std::uint16_t min_buf = elem_bufs[0];
     for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        min_buf = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MIN, min_buf, elem_bufs[i]);
+        min_buf = emit_binary_op(*this, buffers_, cedar::Opcode::MIN, min_buf, elem_bufs[i]);
     }
 
     // Find max
     std::uint16_t max_buf = elem_bufs[0];
     for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        max_buf = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MAX, max_buf, elem_bufs[i]);
+        max_buf = emit_binary_op(*this, buffers_, cedar::Opcode::MAX, max_buf, elem_bufs[i]);
     }
 
     // src_range = max - min
-    std::uint16_t src_range = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::SUB, max_buf, min_buf);
+    std::uint16_t src_range = emit_binary_op(*this, buffers_, cedar::Opcode::SUB, max_buf, min_buf);
 
     // For the default [0,1] path, skip the extra MUL/ADD to keep emitted
     // ops identical to the pre-extension behavior.
@@ -1484,25 +1453,25 @@ TypedValue CodeGenerator::handle_normalize_call(NodeIndex node, const Node& n) {
     std::uint16_t span_buf = 0;
     std::uint16_t lo_buf = 0;
     if (!default_target) {
-        span_buf = emit_push_const(buffers_, emit_stream(), static_cast<float>(hi_val - lo_val));
-        lo_buf = emit_push_const(buffers_, emit_stream(), static_cast<float>(lo_val));
+        span_buf = emit_push_const(static_cast<float>(hi_val - lo_val));
+        lo_buf = emit_push_const(static_cast<float>(lo_val));
     }
 
     std::vector<std::uint16_t> result_buffers;
     for (auto buf : elem_bufs) {
-        std::uint16_t shifted = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::SUB, buf, min_buf);
-        std::uint16_t unit = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::DIV, shifted, src_range);
+        std::uint16_t shifted = emit_binary_op(*this, buffers_, cedar::Opcode::SUB, buf, min_buf);
+        std::uint16_t unit = emit_binary_op(*this, buffers_, cedar::Opcode::DIV, shifted, src_range);
         std::uint16_t out;
         if (default_target) {
             out = unit;
         } else {
-            std::uint16_t scaled = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::MUL, unit, span_buf);
-            out = emit_binary_op(buffers_, emit_stream(), cedar::Opcode::ADD, scaled, lo_buf);
+            std::uint16_t scaled = emit_binary_op(*this, buffers_, cedar::Opcode::MUL, unit, span_buf);
+            out = emit_binary_op(*this, buffers_, cedar::Opcode::ADD, scaled, lo_buf);
         }
         result_buffers.push_back(out);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 
@@ -1553,7 +1522,7 @@ TypedValue CodeGenerator::handle_linspace_call(NodeIndex node, const Node& n) {
     int count = static_cast<int>(*n_val);
 
     if (count <= 0) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
 
@@ -1577,7 +1546,7 @@ TypedValue CodeGenerator::handle_linspace_call(NodeIndex node, const Node& n) {
             double t = static_cast<double>(i) / static_cast<double>(count - 1);
             val = start * std::pow(end / start, t);
         }
-        std::uint16_t buf = emit_push_const(buffers_, emit_stream(), static_cast<float>(val));
+        std::uint16_t buf = emit_push_const(static_cast<float>(val));
         if (buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1585,7 +1554,7 @@ TypedValue CodeGenerator::handle_linspace_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buf);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // random(n, min=0, max=1) - N random values in [min, max) (deterministic by path)
@@ -1631,7 +1600,7 @@ TypedValue CodeGenerator::handle_random_call(NodeIndex node, const Node& n) {
 
     int count = static_cast<int>(*n_val);
     if (count <= 0) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
 
@@ -1647,7 +1616,7 @@ TypedValue CodeGenerator::handle_random_call(NodeIndex node, const Node& n) {
         float u = static_cast<float>((seed >> 16) & 0x7FFF) / 32768.0f;
         float val = lo + u * span;
 
-        std::uint16_t buf = emit_push_const(buffers_, emit_stream(), val);
+        std::uint16_t buf = emit_push_const(val);
         if (buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1655,7 +1624,7 @@ TypedValue CodeGenerator::handle_random_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buf);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 // harmonics(fundamental, n, ratio=1.0) - harmonic series with optional inharmonicity
@@ -1694,7 +1663,7 @@ TypedValue CodeGenerator::handle_harmonics_call(NodeIndex node, const Node& n) {
     int count = static_cast<int>(*n_val);
 
     if (count <= 0) {
-        std::uint16_t zero = emit_zero(buffers_, emit_stream());
+        std::uint16_t zero = emit_zero();
         return cache_and_return(node, TypedValue::signal(zero));
     }
 
@@ -1708,7 +1677,7 @@ TypedValue CodeGenerator::handle_harmonics_call(NodeIndex node, const Node& n) {
         float harmonic = natural
             ? fundamental * static_cast<float>(i)
             : fundamental * static_cast<float>(std::pow(static_cast<double>(i), exponent));
-        std::uint16_t buf = emit_push_const(buffers_, emit_stream(), harmonic);
+        std::uint16_t buf = emit_push_const(harmonic);
         if (buf == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
@@ -1716,7 +1685,7 @@ TypedValue CodeGenerator::handle_harmonics_call(NodeIndex node, const Node& n) {
         result_buffers.push_back(buf);
     }
 
-    return finalize_result(node, std::move(result_buffers), node_types_, buffers_, emit_stream());
+    return finalize_array_result(node, std::move(result_buffers));
 }
 
 } // namespace akkado

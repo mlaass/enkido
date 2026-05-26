@@ -112,6 +112,17 @@ The PRD shortlist at the end groups findings into actionable refactors with roug
 
 ### F2. Source-location vector silently desynchronises from instruction vector — *Critical*
 
+> **RESOLVED 2026-05-26** by Phase 3 commit `<commit>` of
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md).
+> Free-function emit helpers (`emit_push_const`, `emit_zero`,
+> `emit_midi_to_freq`, `finalize_array_result`) promoted to
+> `CodeGenerator` methods that route through `emit()`; file-local
+> statics `emit_binary_op` and `emit_pattern_with_state` rewired the
+> same way (the latter's function-pointer `emit_fn` parameter was
+> dropped). Every manual `source_locations_.push_back(...)`
+> compensation gone; debug assert + four `[F2]` regression tests
+> enforce the invariant going forward.
+
 **Sites:**
 - `codegen.hpp:1139` declares `current_source_loc_`. `codegen.cpp:215` mutates it in every `visit()` entry. `codegen.cpp:2272` (the `emit()` body) is the only site that pushes onto `source_locations_`.
 - Helpers `codegen::emit_push_const` (`codegen/helpers.hpp:31`) and `codegen::emit_zero` push to the instruction stream directly without touching `source_locations_`.
@@ -525,6 +536,12 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Unlocks:** PRD-5, PRD-6; cuts contributor friction for every codegen feature thereafter.
 
 ### PRD-5 — `StateInitBuilder` + `InstructionBuilder` + source-loc fix  *(High; bundles 3 problems)*
+
+> **PARTIALLY SHIPPED 2026-05-26**: the source-loc fix (F2) landed via
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md)
+> Phase 3, commit `<commit>`. The `StateInitBuilder` and
+> `InstructionBuilder` portions remain open.
+
 **Scope:** Bundle three correctness/complexity wins.
 - `InstructionBuilder` with named setters, default-`0xFFFF` inputs, single failure path → eliminates 606 bare sentinels + 177 manual buffer-alloc-failure blocks.
 - `StateInitBuilder` factory per `Type` → eliminates the 19 push-back duplications + the "forgot to copy field X" bug class.

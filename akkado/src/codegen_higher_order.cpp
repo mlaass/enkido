@@ -696,9 +696,7 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
                             packed = next;
                         }
                         data_buf = packed;
-                        len_buf = codegen::emit_push_const(
-                            buffers_, emit_stream(),
-                            static_cast<float>(arr_len));
+                        len_buf = emit_push_const(static_cast<float>(arr_len));
                     } else {
                         error("E174", "event_map() field '" + fname +
                               "' must be a chord array (e.g. e.notes or "

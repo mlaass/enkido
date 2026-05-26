@@ -429,16 +429,63 @@ private:
         return tv;
     }
 
-    /// Emit a single instruction
+public:
+    /// Emit a single instruction. Pushes both `instructions_` and
+    /// `source_locations_` (or the open subprogram body's parallel pair)
+    /// in a single site, so the two vectors cannot drift apart.
+    /// Public so the free static `emit_pattern_with_state()` /
+    /// `emit_binary_op()` helpers in codegen_*.cpp (and the
+    /// `emit_sample_chain` template thunks) can route every emission
+    /// through this one place. See PRD prd-parser-codegen-correctness.md
+    /// Phase 3 (F2).
     void emit(const cedar::Instruction& inst);
+
+private:
+    // ============================================================================
+    // PRD prd-parser-codegen-correctness.md Phase 3 (F2):
+    // every instruction-emit helper that needs to allocate a buffer + emit
+    // PUSH_CONST/MTOF/etc. is a method that routes through emit(). The free
+    // helpers in codegen/helpers.hpp / codegen/arrays.hpp / codegen/literals.hpp
+    // pushed into `instructions_` directly without updating `source_locations_`,
+    // silently desynchronising the two parallel vectors. The bug is now
+    // structurally impossible — every push goes through emit().
+    // ============================================================================
+
+    /// Allocate a buffer and emit PUSH_CONST writing `value` into it.
+    /// Returns the output buffer index, or BufferAllocator::BUFFER_UNUSED if
+    /// the buffer pool is exhausted.
+    std::uint16_t emit_push_const(float value);
+
+    /// Convenience for emit_push_const(0.0f) — used by array-handler empty
+    /// paths and pattern fallbacks.
+    std::uint16_t emit_zero();
+
+    /// PitchLit pattern: PUSH_CONST(midi) then MTOF to convert MIDI → Hz.
+    /// Returns the frequency buffer index, or BUFFER_UNUSED on allocation
+    /// failure.
+    std::uint16_t emit_midi_to_freq(float midi_note);
+
+    /// Finalize an N-buffer array codegen result: empty → emit_zero;
+    /// single → Signal; multi → Array TypedValue. Replaces the free
+    /// codegen::finalize_array_result helper so it can route through the
+    /// method emit_zero().
+    TypedValue finalize_array_result(NodeIndex node,
+                                     std::vector<std::uint16_t> result_buffers);
 
     /// The instruction vector that emission should currently append to: the
     /// open subprogram body while one is being compiled, otherwise the main
-    /// stream. Free-function emit helpers (emit_push_const, emit_binary_op,
-    /// emit_zero, finalize_result) route through this so their instructions
-    /// land in the same place emit() would put them — critical for shared-fn
-    /// and FOREACH_EVENT bodies, which would otherwise leak into main.
+    /// stream. Used by `emit_sample_chain` (free template helper that takes a
+    /// caller-supplied emit callable) so its instructions land in the same
+    /// place emit() would put them — critical for shared-fn and FOREACH_EVENT
+    /// bodies, which would otherwise leak into main.
     [[nodiscard]] std::vector<cedar::Instruction>& emit_stream();
+
+    /// Parallel accessor to emit_stream() returning the source-location
+    /// vector that matches it. Callers that need to insert an instruction
+    /// at a non-tail position (e.g. handle_fast/slow's EVENT_RATE_SCALE
+    /// insert-before-SEQPAT_QUERY) must touch BOTH streams in lock-step
+    /// to preserve the F2 parity invariant.
+    [[nodiscard]] std::vector<SourceLocation>& loc_stream();
 
     /// Generate semantic ID from path
     [[nodiscard]] std::uint32_t compute_state_id() const;

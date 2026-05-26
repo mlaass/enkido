@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <set>
 #include <sstream>
 #include <fstream>
@@ -11622,4 +11623,122 @@ TEST_CASE("F3: pattern_eval no longer invokes parse_chord_symbol",
     CHECK(contents.find("parse_chord_symbol(") == std::string::npos);
     // And the corresponding header include should be gone too.
     CHECK(contents.find("akkado/chord_parser.hpp") == std::string::npos);
+}
+
+// =============================================================================
+// F2 — Phase 3: source-location vector stays in lock-step with instructions.
+//
+// CodeGenerator carries two parallel vectors (`instructions_` and
+// `source_locations_`). Phase 3 promoted the previously-free emit helpers
+// (emit_push_const / emit_zero / emit_midi_to_freq / emit_binary_op /
+// emit_pattern_with_state) to CodeGenerator methods that route through the
+// single `emit()` site — both vectors are pushed in lock-step there. A debug
+// `assert()` in `generate()` enforces parity; these tests assert it
+// independently against the public `CompileResult.source_locations` /
+// `bytecode` surface so the invariant is checked even in NDEBUG builds.
+// =============================================================================
+
+namespace {
+
+constexpr std::size_t kInstructionStride = sizeof(cedar::Instruction);
+
+// Compile a source string with bypass_master so the bus epilogue doesn't add
+// instructions that the test would have to mentally subtract.
+akkado::CompileResult compile_for_parity(std::string_view src) {
+    return akkado::compile(src, "<f2-test>", nullptr, nullptr,
+                           /*lint_strict=*/false, /*bypass_master=*/true);
+}
+
+}  // namespace
+
+TEST_CASE("F2: instructions and source_locations have equal length after compile",
+          "[F2][parity]") {
+    auto result = compile_for_parity("osc(\"sin\", 440) |> out(@)\n");
+    REQUIRE(result.success);
+    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
+    const std::size_t inst_count = result.bytecode.size() / kInstructionStride;
+    CHECK(inst_count == result.source_locations.size());
+}
+
+TEST_CASE("F2: parity holds across every fixture",
+          "[F2][parity][sweep]") {
+    // Sweep every .ak under akkado/tests/fixtures (the Phase 0 snapshot
+    // harness uses the same set). Each fixture exercises a different codegen
+    // path (spread args, chord patterns, voicings, multi-line mini, …) so
+    // this catches any helper that bypasses emit() in a path the inline
+    // fixtures above don't reach.
+    const std::filesystem::path fixtures_dir{AKKADO_TEST_FIXTURES_DIR};
+    REQUIRE(std::filesystem::exists(fixtures_dir));
+
+    std::set<std::filesystem::path> fixtures;
+    for (const auto& entry : std::filesystem::directory_iterator(fixtures_dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".ak") {
+            fixtures.insert(entry.path());
+        }
+    }
+    REQUIRE_FALSE(fixtures.empty());
+
+    for (const auto& fixture : fixtures) {
+        CAPTURE(fixture.filename().string());
+        std::ifstream f(fixture);
+        REQUIRE(f.good());
+        std::stringstream buf;
+        buf << f.rdbuf();
+        auto result = compile_for_parity(buf.str());
+        REQUIRE(result.success);
+        REQUIRE(result.bytecode.size() % kInstructionStride == 0);
+        const std::size_t inst_count = result.bytecode.size() / kInstructionStride;
+        CHECK(inst_count == result.source_locations.size());
+    }
+}
+
+TEST_CASE("F2: emit_push_const-shaped paths produce one source-location per "
+          "instruction", "[F2][const]") {
+    // A program with several PUSH_CONST emissions (NumberLit + array-const
+    // path) used to be the prime offender: the free emit_push_const helper
+    // pushed to `instructions_` without compensating `source_locations_` at
+    // most of its call sites. Parity proves the method routes through emit().
+    auto result = compile_for_parity(
+        "x = 1.0\n"
+        "y = [2.0, 3.0, 4.0]\n"
+        "out(osc(\"sin\", x * y[0]))\n");
+    REQUIRE(result.success);
+    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
+    CHECK(result.bytecode.size() / kInstructionStride ==
+          result.source_locations.size());
+    // Sanity: at least one PUSH_CONST was emitted (otherwise the test has
+    // nothing to assert about).
+    std::vector<cedar::Instruction> insts(
+        result.bytecode.size() / kInstructionStride);
+    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+    const auto push_count = std::count_if(
+        insts.begin(), insts.end(),
+        [](const cedar::Instruction& i) {
+            return i.opcode == cedar::Opcode::PUSH_CONST;
+        });
+    CHECK(push_count > 0);
+}
+
+TEST_CASE("F2: pattern with EVENT_RATE_SCALE (slow/fast) holds parity",
+          "[F2][slow-fast]") {
+    // handle_fast_call / handle_slow_call insert EVENT_RATE_SCALE at a
+    // non-tail position in the active stream. Phase 3 added a paired
+    // `loc_stream()` insert so the parallel vectors stay in lock-step
+    // through the mid-stream rewrite.
+    auto result = compile_for_parity(
+        "slow(n\"c4 e4\", 2).freq |> saw(@) |> out(@)\n");
+    REQUIRE(result.success);
+    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
+    CHECK(result.bytecode.size() / kInstructionStride ==
+          result.source_locations.size());
+    // Sanity: EVENT_RATE_SCALE was actually emitted.
+    std::vector<cedar::Instruction> insts(
+        result.bytecode.size() / kInstructionStride);
+    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+    const bool has_ers = std::any_of(
+        insts.begin(), insts.end(),
+        [](const cedar::Instruction& i) {
+            return i.opcode == cedar::Opcode::EVENT_RATE_SCALE;
+        });
+    CHECK(has_ers);
 }

@@ -8,6 +8,7 @@
 #include "akkado/pattern_eval.hpp"
 #include <cedar/vm/state_pool.hpp>
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -161,6 +162,18 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     // appended after it and each block's absolute offset is resolved.
     result.main_instruction_count =
         static_cast<std::uint32_t>(instructions_.size());
+#ifndef NDEBUG
+    // PRD prd-parser-codegen-correctness.md Phase 3 (F2): the source-loc
+    // parallel vector must stay locked to instructions_. Every push goes
+    // through emit(), so this is now structurally enforced — the assert is
+    // a paranoid future-proof.
+    assert(instructions_.size() == source_locations_.size() &&
+           "F2: source_locations_ desync (main stream)");
+    for (const auto& desc : subprograms_) {
+        assert(desc.body.size() == desc.body_source_locs.size() &&
+               "F2: source_locations_ desync (subprogram body)");
+    }
+#endif
     for (auto& desc : subprograms_) {
         desc.offset = static_cast<std::uint32_t>(instructions_.size());
         instructions_.insert(instructions_.end(),
@@ -169,6 +182,10 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
                                  desc.body_source_locs.begin(),
                                  desc.body_source_locs.end());
     }
+#ifndef NDEBUG
+    assert(instructions_.size() == source_locations_.size() &&
+           "F2: source_locations_ desync after subprogram concat");
+#endif
 
     result.instructions = std::move(instructions_);
     result.subprograms = std::move(subprograms_);
@@ -304,8 +321,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
         case NodeType::PitchLit: {
             // Emit PUSH_CONST for MIDI note, then MTOF to convert to frequency
             float midi_value = static_cast<float>(n.as_pitch());
-            std::uint16_t freq_buf = codegen::emit_midi_to_freq(
-                buffers_, emit_stream(), midi_value);
+            std::uint16_t freq_buf = emit_midi_to_freq(midi_value);
             if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
@@ -885,7 +901,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Emit PUSH_CONST instruction(s) for runtime access
             if (std::holds_alternative<double>(*const_val)) {
                 float val = static_cast<float>(std::get<double>(*const_val));
-                std::uint16_t buf = codegen::emit_push_const(buffers_, emit_stream(), val);
+                std::uint16_t buf = emit_push_const(val);
                 if (buf == BufferAllocator::BUFFER_UNUSED) {
                     error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
@@ -900,20 +916,17 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     updated.const_value = *const_val;
                     symbols_->define(updated);
                 }
-                source_locations_.push_back(n.location);
                 return cache_and_return(node, TypedValue::number(buf));
             } else {
                 // Array const value
                 const auto& arr = std::get<std::vector<double>>(*const_val);
                 std::vector<TypedValue> result_elements;
                 for (double v : arr) {
-                    std::uint16_t buf = codegen::emit_push_const(buffers_, emit_stream(),
-                                                                  static_cast<float>(v));
+                    std::uint16_t buf = emit_push_const(static_cast<float>(v));
                     if (buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::error_val();
                     }
-                    source_locations_.push_back(n.location);
                     result_elements.push_back(TypedValue::number(buf));
                 }
 
@@ -2308,6 +2321,91 @@ std::vector<cedar::Instruction>& CodeGenerator::emit_stream() {
         return subprograms_[subprogram_stack_.back()].body;
     }
     return instructions_;
+}
+
+std::vector<SourceLocation>& CodeGenerator::loc_stream() {
+    // Parallel to emit_stream(): the source-location vector for whatever
+    // instruction stream is currently active. F2 callers that need to
+    // insert at a non-tail position touch BOTH streams in lock-step.
+    if (!subprogram_stack_.empty()) {
+        return subprograms_[subprogram_stack_.back()].body_source_locs;
+    }
+    return source_locations_;
+}
+
+// PRD prd-parser-codegen-correctness.md Phase 3 (F2): the four method
+// helpers below route every PUSH_CONST / MTOF emission through emit(), so
+// `source_locations_` cannot fall out of sync with `instructions_`. The
+// previous free-function helpers (codegen::emit_push_const, ::emit_zero,
+// ::emit_midi_to_freq, ::finalize_array_result) pushed into the instruction
+// vector directly and required callers to remember an adjacent
+// `source_locations_.push_back(...)` compensation — most callers didn't,
+// silently shifting the parallel arrays from that point on.
+
+std::uint16_t CodeGenerator::emit_push_const(float value) {
+    std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    cedar::Instruction inst{};
+    inst.opcode = cedar::Opcode::PUSH_CONST;
+    inst.out_buffer = out;
+    inst.inputs[0] = 0xFFFF;
+    inst.inputs[1] = 0xFFFF;
+    inst.inputs[2] = 0xFFFF;
+    inst.inputs[3] = 0xFFFF;
+    codegen::encode_const_value(inst, value);
+    emit(inst);
+    return out;
+}
+
+std::uint16_t CodeGenerator::emit_zero() {
+    return emit_push_const(0.0f);
+}
+
+std::uint16_t CodeGenerator::emit_midi_to_freq(float midi_note) {
+    std::uint16_t midi_buf = emit_push_const(midi_note);
+    if (midi_buf == BufferAllocator::BUFFER_UNUSED) {
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    std::uint16_t freq_buf = buffers_.allocate();
+    if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
+        return BufferAllocator::BUFFER_UNUSED;
+    }
+    cedar::Instruction mtof_inst{};
+    mtof_inst.opcode = cedar::Opcode::MTOF;
+    mtof_inst.out_buffer = freq_buf;
+    mtof_inst.inputs[0] = midi_buf;
+    mtof_inst.inputs[1] = 0xFFFF;
+    mtof_inst.inputs[2] = 0xFFFF;
+    mtof_inst.inputs[3] = 0xFFFF;
+    mtof_inst.state_id = 0;
+    emit(mtof_inst);
+    return freq_buf;
+}
+
+TypedValue CodeGenerator::finalize_array_result(
+    NodeIndex node, std::vector<std::uint16_t> result_buffers) {
+    if (result_buffers.empty()) {
+        std::uint16_t zero = emit_zero();
+        auto tv = TypedValue::signal(zero);
+        node_types_[node] = tv;
+        return tv;
+    }
+    if (result_buffers.size() == 1) {
+        auto tv = TypedValue::signal(result_buffers[0]);
+        node_types_[node] = tv;
+        return tv;
+    }
+    std::uint16_t first_buf = result_buffers[0];
+    std::vector<TypedValue> elements;
+    elements.reserve(result_buffers.size());
+    for (auto buf : result_buffers) {
+        elements.push_back(TypedValue::signal(buf));
+    }
+    auto tv = TypedValue::make_array(std::move(elements), first_buf);
+    node_types_[node] = tv;
+    return tv;
 }
 
 std::uint32_t CodeGenerator::begin_subprogram() {

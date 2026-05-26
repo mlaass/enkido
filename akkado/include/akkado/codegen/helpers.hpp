@@ -25,31 +25,10 @@ inline void encode_const_value(cedar::Instruction& inst, float value) {
     inst.inputs[4] = 0xFFFF;  // BUFFER_UNUSED
 }
 
-/// Create and emit a PUSH_CONST instruction, returning the output buffer index.
-/// Returns BufferAllocator::BUFFER_UNUSED if buffer pool exhausted.
-[[gnu::always_inline]]
-inline std::uint16_t emit_push_const(
-    BufferAllocator& buffers,
-    std::vector<cedar::Instruction>& instructions,
-    float value
-) {
-    std::uint16_t out = buffers.allocate();
-    if (out == BufferAllocator::BUFFER_UNUSED) {
-        return BufferAllocator::BUFFER_UNUSED;
-    }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::PUSH_CONST;
-    inst.out_buffer = out;
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    encode_const_value(inst, value);
-
-    instructions.push_back(inst);
-    return out;
-}
+// NOTE: The free `emit_push_const(buffers, instructions, value)` helper was
+// removed in PRD prd-parser-codegen-correctness.md Phase 3 (F2). Use
+// `CodeGenerator::emit_push_const(value)` instead — it routes through emit()
+// so source_locations_ stays in sync.
 
 // ============================================================================
 // AST Navigation Helpers

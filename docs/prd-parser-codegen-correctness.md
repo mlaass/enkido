@@ -1,5 +1,6 @@
-> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 SHIPPED, 2 phases remaining
-> (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up to
+> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 + 3 SHIPPED, 1 phase
+> remaining (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up
+> to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Phases land independently; the audit's complexity-sink findings are
 > deferred to separate PRDs.
@@ -83,6 +84,53 @@
 >   `arena.size()` and structural hash are unchanged across
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
+> - **Phase 3 (F2 source-location emit consolidation) — SHIPPED
+>   2026-05-26** (commit `<commit>`). Six free-function emit helpers
+>   (`codegen::emit_push_const`, `codegen::emit_zero`,
+>   `codegen::emit_midi_to_freq`, `codegen::finalize_array_result`, plus
+>   the file-local statics `emit_binary_op` in `codegen_arrays.cpp` and
+>   `emit_pattern_with_state`/`emit_instruction_helper` in
+>   `codegen_patterns.cpp`) are gone or rewired to route every emission
+>   through `CodeGenerator::emit()` — the single push site that touches
+>   both `instructions_` and `source_locations_` atomically (and honours
+>   the FOREACH_EVENT subprogram body detour). The four scope-creep
+>   discoveries beyond the PRD's named files: `emit_midi_to_freq`
+>   (1 site, also F2-buggy), the static `emit_binary_op` (13 sites, same
+>   bug), the static `emit_pattern_with_state` + `emit_instruction_helper`
+>   thunk (8 sites, function-pointer-driven so we dropped the
+>   `instructions/emit_fn` params and route through `gen.emit()`), and
+>   `handle_fast_call/handle_slow_call`'s mid-stream EVENT_RATE_SCALE
+>   insert (needed a paired `loc_stream()` insert to preserve parity at
+>   the non-tail position). Three method helpers landed:
+>   `CodeGenerator::emit_push_const(float)`,
+>   `CodeGenerator::emit_zero()`, `CodeGenerator::emit_midi_to_freq(float)`,
+>   `CodeGenerator::finalize_array_result(node, buffers)`; the static
+>   `finalize_result` duplicate in `codegen_arrays.cpp` was deleted and
+>   its 14 callers point at the method instead. The 7 manual
+>   `source_locations_.push_back(...)` compensations (4 in `codegen.cpp`
+>   / `codegen_functions.cpp` pushing `n.location`; 3 in
+>   `codegen_patterns.cpp` pushing `current_source_loc_`) are gone —
+>   `emit()` writes the location once via `current_source_loc_`, which
+>   `visit()` sets to `n.location` at the top of every node visit. A new
+>   `loc_stream()` accessor parallels `emit_stream()` for the one
+>   non-tail insert case. `emit()` moved from `private:` to `public:` so
+>   the remaining file-local static helpers (`emit_binary_op`,
+>   `emit_pattern_with_state`) can call it directly without per-helper
+>   friend declarations. Debug `assert()` in `generate()`'s epilogue
+>   enforces `instructions_.size() == source_locations_.size()` (main
+>   stream) and per-subprogram body parity — silent regression coverage
+>   across every codegen test in debug builds. Four `[F2]` regression
+>   tests in `akkado/tests/test_codegen.cpp` assert the parity invariant
+>   independently against `CompileResult.bytecode` /
+>   `CompileResult.source_locations` so it's checked in `NDEBUG` builds
+>   too: a single-fixture parity check, a sweep across every
+>   `akkado/tests/fixtures/*.ak`, a multi-`PUSH_CONST` shape (NumberLit +
+>   array-const path), and the EVENT_RATE_SCALE mid-stream-insert path
+>   from `slow()`. Full akkado suite: 1079 cases / 142080 assertions, all
+>   green. Snapshot harness byte-identical (snapshot disasm carries
+>   opcode/buffer/immediate info only — it would not catch source-loc
+>   drift on its own, hence the parity assert and the explicit `[F2]`
+>   tests). See §4 Phase 3.
 > - **Phase 2 (F8 mini-lexer line tracking + F7 lock-in tests) — SHIPPED
 >   2026-05-26** (commit `<commit>`). MiniLexer now tracks `line_` across
 >   `\n` (incl. `\r\n`) and snapshots `start_line_` / `start_column_` at

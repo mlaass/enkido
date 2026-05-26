@@ -9,7 +9,6 @@
 namespace akkado {
 
 using codegen::encode_const_value;
-using codegen::emit_push_const;
 using codegen::closure_body;
 
 // Maximum parameter count for a shareable `fn` (PRD §4.2). Params 0..4 travel
@@ -111,25 +110,22 @@ TypedValue CodeGenerator::handle_user_function_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    std::uint16_t buf = emit_push_const(buffers_, emit_stream(), val);
+                    std::uint16_t buf = emit_push_const(val);
                     if (buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::void_val();
                     }
-                    source_locations_.push_back(n.location);
                     return cache_and_return(node, TypedValue::number(buf));
                 } else {
                     // Array result
                     const auto& arr = std::get<std::vector<double>>(*result);
                     std::vector<std::uint16_t> result_buffers;
                     for (double v : arr) {
-                        std::uint16_t buf = emit_push_const(buffers_, emit_stream(),
-                                                             static_cast<float>(v));
+                        std::uint16_t buf = emit_push_const(static_cast<float>(v));
                         if (buf == BufferAllocator::BUFFER_UNUSED) {
                             error("E101", "Buffer pool exhausted", n.location);
                             return TypedValue::void_val();
                         }
-                        source_locations_.push_back(n.location);
                         result_buffers.push_back(buf);
                     }
                     std::uint16_t first = result_buffers.empty() ?
@@ -377,7 +373,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                 }
                 if (result && std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, emit_stream(), val);
+                    param_buf = emit_push_const(val);
                 } else {
                     error("E105",
                           "Cannot evaluate default expression at compile time for parameter '" +
@@ -493,7 +489,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     }
                     if (result && std::holds_alternative<double>(*result)) {
                         float val = static_cast<float>(std::get<double>(*result));
-                        param_buf = emit_push_const(buffers_, emit_stream(), val);
+                        param_buf = emit_push_const(val);
                         if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                             error("E101", "Buffer pool exhausted", n.location);
                             param_literals_ = std::move(saved_param_literals);
@@ -749,7 +745,7 @@ TypedValue CodeGenerator::handle_user_function_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, emit_stream(), val);
+                    param_buf = emit_push_const(val);
                     if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         param_literals_ = std::move(saved_param_literals);
@@ -1384,7 +1380,7 @@ TypedValue CodeGenerator::handle_function_value_call(
                 }
                 if (result && std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, emit_stream(), val);
+                    param_buf = emit_push_const(val);
                 } else {
                     error("E105",
                           "Cannot evaluate default expression at compile time for parameter '" +
@@ -1484,7 +1480,7 @@ TypedValue CodeGenerator::handle_function_value_call(
             if (result) {
                 if (std::holds_alternative<double>(*result)) {
                     float val = static_cast<float>(std::get<double>(*result));
-                    param_buf = emit_push_const(buffers_, emit_stream(), val);
+                    param_buf = emit_push_const(val);
                     if (param_buf == BufferAllocator::BUFFER_UNUSED) {
                         error("E101", "Buffer pool exhausted", n.location);
                         param_literals_ = std::move(saved_param_literals);
