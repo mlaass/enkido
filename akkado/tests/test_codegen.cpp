@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "akkado/akkado.hpp"
+#include "akkado/compile_context.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/mini_lexer.hpp"
 #include "akkado/mini_parser.hpp"
@@ -11440,7 +11441,8 @@ codegen_arena_before_after(std::string_view user_source) {
         akkado::arena_structural_hash(analysis.transformed_ast.arena)
     };
 
-    akkado::CodeGenerator codegen;
+    akkado::CompileContext ctx;
+    akkado::CodeGenerator codegen(ctx);
     auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols,
                                 "<input>", nullptr, nullptr,
                                 /*bypass_master=*/true);
@@ -11741,4 +11743,85 @@ TEST_CASE("F2: pattern with EVENT_RATE_SCALE (slow/fast) holds parity",
             return i.opcode == cedar::Opcode::EVENT_RATE_SCALE;
         });
     CHECK(has_ers);
+}
+
+// ============================================================================
+// PRD prd-parser-codegen-correctness.md Phase 4 (F14): per-compile
+// VoicingRegistry replaces the deleted process-global voicing_registry().
+// Cross-compile state must not leak through a fresh CompileContext; the
+// same CompileContext shared across two compiles must intentionally
+// preserve user-defined voicings (the live-coding workflow).
+// ============================================================================
+
+TEST_CASE("F14: user voicing defined in compile A does not leak into a fresh ctx for compile B",
+          "[F14][voicing][isolation]") {
+    // Source A defines a custom voicing `myV`. Source B references `myV`.
+    // With a fresh ctx for B, the lookup must fail (E141).
+    const char* source_a =
+        "addVoicings(\"myV\", {M: [0, 4, 7]})\n";
+    const char* source_b =
+        "voicing(c\"C Em\", \"myV\") |> out(@)\n";
+
+    // Compile A with its own ctx — should succeed and register myV in
+    // *that* ctx only.
+    akkado::CompileContext ctx_a;
+    auto result_a = akkado::compile(source_a, "<a>", nullptr, nullptr,
+                                    false, /*bypass_master=*/true, &ctx_a);
+    REQUIRE(result_a.success);
+
+    // Compile B with a *fresh* ctx — myV should not be visible.
+    akkado::CompileContext ctx_b;
+    auto result_b = akkado::compile(source_b, "<b>", nullptr, nullptr,
+                                    false, /*bypass_master=*/true, &ctx_b);
+    REQUIRE_FALSE(result_b.success);
+    const bool has_e141 = std::any_of(
+        result_b.diagnostics.begin(), result_b.diagnostics.end(),
+        [](const akkado::Diagnostic& d) { return d.code == "E141"; });
+    CHECK(has_e141);
+}
+
+TEST_CASE("F14: user voicing persists across compiles sharing the same ctx",
+          "[F14][voicing][shared-ctx]") {
+    // The intended live-coding mechanism: hosts reuse a CompileContext
+    // across edits to keep user-registered voicings alive between
+    // compiles.
+    const char* source_a =
+        "addVoicings(\"myV\", {M: [0, 4, 7]})\n";
+    const char* source_b =
+        "voicing(c\"C Em\", \"myV\") |> out(@)\n";
+
+    akkado::CompileContext shared_ctx;
+
+    auto result_a = akkado::compile(source_a, "<a>", nullptr, nullptr,
+                                    false, /*bypass_master=*/true, &shared_ctx);
+    REQUIRE(result_a.success);
+
+    auto result_b = akkado::compile(source_b, "<b>", nullptr, nullptr,
+                                    false, /*bypass_master=*/true, &shared_ctx);
+    REQUIRE(result_b.success);
+    // No E141 — myV was previously registered in shared_ctx.
+    const bool has_e141 = std::any_of(
+        result_b.diagnostics.begin(), result_b.diagnostics.end(),
+        [](const akkado::Diagnostic& d) { return d.code == "E141"; });
+    CHECK_FALSE(has_e141);
+}
+
+TEST_CASE("F14: built-in voicings (close/open/drop2/drop3) resolve in every fresh ctx",
+          "[F14][voicing][builtin]") {
+    // Each built-in voicing must be visible without addVoicings.
+    for (const char* name : {"close", "open", "drop2", "drop3"}) {
+        std::string source = "voicing(c\"C Em\", \"";
+        source += name;
+        source += "\") |> out(@)\n";
+
+        akkado::CompileContext ctx;
+        auto result = akkado::compile(source, "<input>", nullptr, nullptr,
+                                      false, /*bypass_master=*/true, &ctx);
+        INFO("voicing name = " << name);
+        REQUIRE(result.success);
+        const bool has_e141 = std::any_of(
+            result.diagnostics.begin(), result.diagnostics.end(),
+            [](const akkado::Diagnostic& d) { return d.code == "E141"; });
+        CHECK_FALSE(has_e141);
+    }
 }

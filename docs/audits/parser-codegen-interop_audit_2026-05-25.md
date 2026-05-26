@@ -372,6 +372,16 @@ Hot identifiers like `freq`, `gate`, `vel` get rehashed dozens of times per comp
 
 ### F14. `voicing_registry` is process-global and leaks state across compiles — *High*
 
+> **RESOLVED 2026-05-26** by Phase 4 of
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md).
+> New `akkado::CompileContext` owns a per-compile
+> `voicing::VoicingRegistry`; the process-global
+> `voicing_registry()` + `registry_mutex()` pair in `voicing.cpp` were
+> deleted. `compile()` / `compile_file()` gained an optional
+> `CompileContext* ctx = nullptr` argument; `CodeGenerator` ctor now
+> takes `CompileContext&`. Three `[F14]` regression tests in
+> `test_codegen.cpp` lock the isolation behavior.
+
 **Site:** `voicing.cpp:15-30` — `voicing_registry()` is a function-local `static std::unordered_map` guarded by a `static std::mutex registry_mutex()`. Mutated by codegen's `addVoicings()` handler.
 
 **Why it bites.**
@@ -575,6 +585,12 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Effort:** Small (3-5 days). One correctness bug fixed.
 
 ### PRD-11 — `CompileOptions` + voicing-registry-per-compile + debug-JSON gate  *(Medium; bundles 3 cleanups)*
+
+> **Voicing-registry-per-compile portion SHIPPED via `prd-parser-codegen-correctness.md` Phase 4**, 2026-05-26.
+> The full `CompileOptions` rollup and the `emit_debug_json` gate
+> remain open — `CompileContext` from Phase 4 is the scaffold the
+> eventual options migration will plug into.
+
 **Scope:** Roll the 6-arg `compile()` into `CompileOptions`. Move `voicing_registry()` (`voicing.cpp:15-30`) into the options object, eliminating the process-global mutex and cross-compile state leak. Add `emit_debug_json` field defaulting false; CLI/headless stop paying `serialize_mini_ast_json` cost.
 **Files touched:** `akkado.hpp`, `akkado.cpp`, `voicing.cpp`/`.hpp`, `codegen_patterns.cpp:1379`, CLI/WASM entry points.
 **Effort:** Small (3-5 days).

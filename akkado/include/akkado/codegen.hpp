@@ -23,6 +23,12 @@
 
 namespace akkado {
 
+// Forward declaration: CompileContext lives in akkado/compile_context.hpp
+// and is held by CodeGenerator as a raw, non-owning pointer (set by ctor).
+// Phase 4 (F14): used to reach the per-compile VoicingRegistry instead of
+// the deleted process-global registry. Phase 5 will hold StringInterner.
+struct CompileContext;
+
 // ============================================================================
 // Compiler Options (set by directives like $polyphony)
 // ============================================================================
@@ -401,6 +407,12 @@ class SequenceCompiler;
 /// Code generator: converts analyzed AST to Cedar bytecode
 class CodeGenerator {
 public:
+    /// Construct a codegen bound to a per-compile context. The context
+    /// owns the VoicingRegistry (Phase 4 / F14) and — once Phase 5
+    /// lands — the StringInterner. Codegen does NOT own the context;
+    /// caller must keep it alive for the duration of `generate()`.
+    explicit CodeGenerator(CompileContext& ctx);
+
     /// Generate bytecode from analyzed AST
     /// @param ast The transformed AST (after pipe rewriting)
     /// @param symbols Symbol table from semantic analysis
@@ -1212,6 +1224,12 @@ private:
     std::vector<std::shared_ptr<AstArena>> codegen_mini_arenas_;
     std::string filename_;
     SourceLocation current_source_loc_;  // Current source location for emitted instructions
+
+    // Per-compile context (PRD prd-parser-codegen-correctness.md Phase 4).
+    // Non-owning. Holds the VoicingRegistry that replaces the deleted
+    // process-global voicing_registry()/registry_mutex() pair in
+    // voicing.cpp. Set in ctor; never null.
+    CompileContext* ctx_ = nullptr;
 
     // Semantic path tracking for state_id generation
     std::vector<std::string> path_stack_;

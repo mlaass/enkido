@@ -1,6 +1,7 @@
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"  // Master include for all codegen helpers
 #include "akkado/builtins.hpp"
+#include "akkado/compile_context.hpp"
 #include "akkado/source_map.hpp"
 #include "akkado/stdlib.hpp"
 #include "akkado/chord_parser.hpp"
@@ -25,6 +26,8 @@ using codegen::is_upgradeable_oscillator;
 using codegen::upgrade_for_fm;
 using codegen::SamplePatternEmitCtx;
 using codegen::emit_sample_chain;
+
+CodeGenerator::CodeGenerator(CompileContext& ctx) : ctx_(&ctx) {}
 
 std::uint16_t BufferAllocator::allocate() {
     if (next_ >= MAX_ALLOCATABLE) {

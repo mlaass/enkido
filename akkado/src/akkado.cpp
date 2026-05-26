@@ -3,12 +3,14 @@
 #include "akkado/parser.hpp"
 #include "akkado/analyzer.hpp"
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
 #include "akkado/stdlib.hpp"
 #include "akkado/source_map.hpp"
 #include "akkado/import_scanner.hpp"
 #include "akkado/file_resolver.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <cstring>
 #ifndef __EMSCRIPTEN__
@@ -30,8 +32,19 @@ CompileResult compile(std::string_view source, std::string_view filename,
                      SampleRegistry* sample_registry,
                      const FileResolver* resolver,
                      bool lint_strict,
-                     bool bypass_master) {
+                     bool bypass_master,
+                     CompileContext* ctx) {
     CompileResult result;
+
+    // PRD prd-parser-codegen-correctness.md Phase 4 (F14): construct a
+    // stack-local context if the caller didn't supply one. Replaces the
+    // process-global voicing_registry()/registry_mutex() pair so each
+    // compile gets its own VoicingRegistry.
+    std::optional<CompileContext> default_ctx;
+    if (ctx == nullptr) {
+        default_ctx.emplace();
+        ctx = &*default_ctx;
+    }
 
     if (source.empty()) {
         result.diagnostics.push_back(Diagnostic{
@@ -185,7 +198,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
     }
 
     // Phase 4: Code Generation
-    CodeGenerator codegen;
+    CodeGenerator codegen(*ctx);
     auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry, &source_map, bypass_master);
     source_map.adjust_all(gen.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(),
@@ -263,7 +276,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
 CompileResult compile_file(const std::string& path,
                           SampleRegistry* sample_registry,
                           const FileResolver* resolver,
-                          bool lint_strict) {
+                          bool lint_strict,
+                          CompileContext* ctx) {
     std::ifstream file(path);
     if (!file) {
         CompileResult result;
@@ -290,11 +304,12 @@ CompileResult compile_file(const std::string& path,
         if (dir.empty()) dir = ".";
         FilesystemResolver default_resolver({dir});
         return compile(buffer.str(), path, sample_registry, &default_resolver,
-                       lint_strict);
+                       lint_strict, /*bypass_master=*/false, ctx);
     }
 #endif
 
-    return compile(buffer.str(), path, sample_registry, resolver, lint_strict);
+    return compile(buffer.str(), path, sample_registry, resolver, lint_strict,
+                   /*bypass_master=*/false, ctx);
 }
 
 } // namespace akkado

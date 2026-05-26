@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 + 3 SHIPPED, 1 phase
+> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 + 3 + 4 SHIPPED, 1 phase
 > remaining (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up
 > to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
@@ -84,6 +84,38 @@
 >   `arena.size()` and structural hash are unchanged across
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
+> - **Phase 4 (F14 `voicing_registry` per-compile isolation) — SHIPPED
+>   2026-05-26** (commit `<commit>`). New
+>   `akkado::CompileContext` (`akkado/include/akkado/compile_context.hpp`,
+>   `akkado/src/compile_context.cpp`) owns a `unique_ptr<voicing::VoicingRegistry>`
+>   and gets passed to `compile()` / `compile_file()` as a final
+>   defaulted `CompileContext* ctx = nullptr` argument. When the caller
+>   doesn't supply one, `compile()` constructs a stack-local
+>   `CompileContext` so the existing API stays additive. The new
+>   `voicing::VoicingRegistry` class replaces the deleted process-global
+>   `voicing_registry()` + `registry_mutex()` pair in `voicing.cpp` — no
+>   compiler mutex remains, and each compile gets its own
+>   `VoicingRegistry` pre-seeded with the four built-ins
+>   (`close`/`open`/`drop2`/`drop3`). The free `voicing::lookup_voicing`
+>   / `voicing::register_voicing` declarations were deleted from
+>   `voicing.hpp` (no in-tree callers). `CodeGenerator` gained an
+>   `explicit CodeGenerator(CompileContext&)` ctor (default ctor
+>   deleted) plus a non-owning `CompileContext* ctx_` member; the four
+>   `voicing::lookup_voicing` / `voicing::register_voicing` call sites
+>   in `codegen_patterns.cpp` (`:4667`, `:4669`, `:4929`, `:5030` —
+>   line numbers drifted slightly post-Phase-3 from the PRD's
+>   originally-listed 4538/4540/4803/4904) now route through
+>   `ctx_->voicing_registry->{lookup,define}`. The static
+>   `apply_voicing` helper gained a `const voicing::VoicingRegistry&`
+>   parameter so its three callers in `handle_anchor_call` /
+>   `handle_mode_call` / `handle_voicing_call` can hand it the ctx's
+>   registry. Three `[F14]` regression tests in `test_codegen.cpp`
+>   cover: (a) fresh-ctx isolation — voicing defined in compile A is
+>   not visible to a fresh ctx for compile B (E141 fires); (b)
+>   shared-ctx persistence — same ctx across A+B keeps the voicing
+>   visible (live-coding workflow); (c) built-ins resolve in every
+>   fresh ctx. Full akkado suite green; snapshot harness
+>   byte-identical. See §4 Phase 4.
 > - **Phase 3 (F2 source-location emit consolidation) — SHIPPED
 >   2026-05-26** (commit `<commit>`). Six free-function emit helpers
 >   (`codegen::emit_push_const`, `codegen::emit_zero`,

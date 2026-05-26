@@ -4,30 +4,10 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
-#include <mutex>
 
 namespace akkado::voicing {
 
 namespace {
-
-// Process-lifetime registry. mutex guards register/lookup against compile-time
-// concurrency (uncommon, but cheap).
-std::mutex& registry_mutex() {
-    static std::mutex m;
-    return m;
-}
-
-std::unordered_map<std::string, VoicingDict>& voicing_registry() {
-    static std::unordered_map<std::string, VoicingDict> reg = []() {
-        std::unordered_map<std::string, VoicingDict> r;
-        VoicingDict close{};   close.builtin_kind = 0;  r["close"] = close;
-        VoicingDict open{};    open.builtin_kind = 1;   r["open"] = open;
-        VoicingDict drop2{};   drop2.builtin_kind = 2;  r["drop2"] = drop2;
-        VoicingDict drop3{};   drop3.builtin_kind = 3;  r["drop3"] = drop3;
-        return r;
-    }();
-    return reg;
-}
 
 // Apply a built-in voicing transform to a sorted ascending chord (notes as
 // MIDI). Returns the transformed (still sorted ascending) note vector.
@@ -289,17 +269,26 @@ std::vector<std::vector<int>> voice_chords(
     return result;
 }
 
-const VoicingDict* lookup_voicing(std::string_view name) {
-    std::lock_guard<std::mutex> lock(registry_mutex());
-    auto& reg = voicing_registry();
-    auto it = reg.find(std::string(name));
-    if (it != reg.end()) return &it->second;
-    return nullptr;
+// PRD prd-parser-codegen-correctness.md Phase 4 (F14): per-compile
+// VoicingRegistry replaces the process-global registry + mutex above.
+// Built-ins ("close", "open", "drop2", "drop3") are seeded in the ctor;
+// user-registered dicts arrive via `define()` from
+// `handle_add_voicings_call` (codegen_patterns.cpp).
+VoicingRegistry::VoicingRegistry() {
+    VoicingDict close{};   close.builtin_kind = 0;  reg_["close"] = close;
+    VoicingDict open{};    open.builtin_kind = 1;   reg_["open"] = open;
+    VoicingDict drop2{};   drop2.builtin_kind = 2;  reg_["drop2"] = drop2;
+    VoicingDict drop3{};   drop3.builtin_kind = 3;  reg_["drop3"] = drop3;
 }
 
-void register_voicing(std::string_view name, VoicingDict dict) {
-    std::lock_guard<std::mutex> lock(registry_mutex());
-    voicing_registry()[std::string(name)] = std::move(dict);
+void VoicingRegistry::define(std::string_view name, VoicingDict dict) {
+    reg_[std::string(name)] = std::move(dict);
+}
+
+const VoicingDict* VoicingRegistry::lookup(std::string_view name) const {
+    auto it = reg_.find(std::string(name));
+    if (it != reg_.end()) return &it->second;
+    return nullptr;
 }
 
 } // namespace akkado::voicing

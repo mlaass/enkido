@@ -4,6 +4,7 @@
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/options.hpp"
+#include "akkado/compile_context.hpp"
 #include "akkado/chord_parser.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/mini_parser.hpp"
@@ -4648,6 +4649,7 @@ TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
 // the chord progression, and rewrites cedar::Event values[] with the
 // resolved frequencies. Phase 2 PRD §5.4.
 static void apply_voicing(SequenceCompiler& compiler,
+                          const voicing::VoicingRegistry& registry,
                           std::vector<std::vector<cedar::Event>>& sequence_events) {
     if (sequence_events.empty()) return;
     const auto& contexts = compiler.chord_contexts_root();
@@ -4664,9 +4666,9 @@ static void apply_voicing(SequenceCompiler& compiler,
 
     const voicing::VoicingDict* dict = nullptr;
     if (!compiler.voicing_dict_name().empty()) {
-        dict = voicing::lookup_voicing(compiler.voicing_dict_name());
+        dict = registry.lookup(compiler.voicing_dict_name());
     }
-    if (dict == nullptr) dict = voicing::lookup_voicing("close");
+    if (dict == nullptr) dict = registry.lookup("close");
 
     // Collect chord specs in sequence order.
     std::vector<voicing::ChordSpec> chords;
@@ -4842,7 +4844,7 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
     }
 
     compiler.set_voicing_anchor(*midi);
-    apply_voicing(compiler, sequence_events);
+    apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
 
     std::uint32_t cnt = call_counters_["anchor"]++;
     push_path("anchor#" + std::to_string(cnt));
@@ -4896,7 +4898,7 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
     }
 
     compiler.set_voicing_mode(*m);
-    apply_voicing(compiler, sequence_events);
+    apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
 
     std::uint32_t cnt = call_counters_["mode"]++;
     push_path("mode#" + std::to_string(cnt));
@@ -4926,7 +4928,7 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
         error("E131", "voicing() requires a string dictionary name as second argument", n.location);
         return TypedValue::void_val();
     }
-    if (voicing::lookup_voicing(*name_str) == nullptr) {
+    if (ctx_->voicing_registry->lookup(*name_str) == nullptr) {
         error("E141", "voicing() dictionary \"" + *name_str + "\" not registered (use addVoicings to register)", n.location);
         return TypedValue::void_val();
     }
@@ -4949,7 +4951,7 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
     }
 
     compiler.set_voicing_dict(*name_str);
-    apply_voicing(compiler, sequence_events);
+    apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
 
     std::uint32_t cnt = call_counters_["voicing"]++;
     push_path("voicing#" + std::to_string(cnt));
@@ -5027,7 +5029,7 @@ TypedValue CodeGenerator::handle_add_voicings_call(NodeIndex node, const Node& n
         field = f.next_sibling;
     }
 
-    voicing::register_voicing(*name_str, std::move(dict));
+    ctx_->voicing_registry->define(*name_str, std::move(dict));
     return TypedValue::void_val();
 }
 

@@ -66,14 +66,33 @@ std::vector<std::vector<int>> voice_chords(
     Mode mode,
     const VoicingDict* dict);
 
-/// Look up a voicing dictionary by name. Returns built-ins ("close", "open",
-/// "drop2", "drop3") and user-registered dicts. Returns nullptr if name is
-/// not recognized.
-const VoicingDict* lookup_voicing(std::string_view name);
+/// Per-compile voicing dictionary registry. Replaces the process-global
+/// `voicing_registry()` + `registry_mutex()` pair removed in Phase 4 of
+/// PRD prd-parser-codegen-correctness.md (F14).
+///
+/// Ctor pre-seeds the four built-in dicts: "close", "open", "drop2",
+/// "drop3". User-defined dicts (via `addVoicings()` in source) live
+/// alongside the built-ins; subsequent `define()` calls with the same
+/// name overwrite (consistent with hot-reload workflow).
+///
+/// No mutex — concurrent compiles get distinct `VoicingRegistry`
+/// instances (held by their own `CompileContext`). Callers that want
+/// cross-compile persistence reuse a `CompileContext`.
+class VoicingRegistry {
+public:
+    VoicingRegistry();
 
-/// Register a user-defined voicing dictionary. Process-lifetime global
-/// (mirrors param() registry). Subsequent calls with the same name
-/// overwrite (consistent with hot-reload workflow).
-void register_voicing(std::string_view name, VoicingDict dict);
+    /// Register a user-defined voicing dictionary. Overwrites any
+    /// existing entry with the same name (including built-ins).
+    void define(std::string_view name, VoicingDict dict);
+
+    /// Look up a voicing dictionary by name. Returns built-ins
+    /// ("close", "open", "drop2", "drop3") and user-registered dicts.
+    /// Returns nullptr if name is not recognized.
+    [[nodiscard]] const VoicingDict* lookup(std::string_view name) const;
+
+private:
+    std::unordered_map<std::string, VoicingDict> reg_;
+};
 
 } // namespace akkado::voicing
