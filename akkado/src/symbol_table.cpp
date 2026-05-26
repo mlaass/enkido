@@ -3,9 +3,48 @@
 namespace akkado {
 
 SymbolTable::SymbolTable() {
-    // Start with global scope containing builtins
+    // PRD prd-parser-codegen-correctness.md Phase 5 (F12): the default
+    // ctor leaves the table empty (one initial scope, no builtins).
+    // Production code calls register_builtins() after attaching an
+    // interner. Tests that exercise scope mechanics use this form.
     scopes_.emplace_back();
-    register_builtins();
+}
+
+SymbolTable::SymbolTable(StringInterner& interner) {
+    scopes_.emplace_back();
+    register_builtins(interner);
+}
+
+void SymbolTable::register_builtins(StringInterner& interner) {
+    interner_ = &interner;
+
+    // Register all built-in functions from the builtins table
+    for (const auto& [name, info] : BUILTIN_FUNCTIONS) {
+        // notes/freqs (pattern-event-arrays PRD) are codegen-dispatched but
+        // intentionally NOT pre-registered as global symbols: they are common
+        // variable names and must remain bindable (`notes = [...]`). The
+        // analyzer special-cases the call form; codegen's special_handlers
+        // map dispatches it.
+        if (name == "notes" || name == "freqs") continue;
+        Symbol sym{};
+        sym.kind = SymbolKind::Builtin;
+        sym.name_id = interner.intern(name);
+        sym.name = std::string(name);
+        sym.buffer_index = 0xFFFF;  // Not applicable for builtins
+        sym.builtin = info;
+        define(sym);
+    }
+
+    // Also register aliases
+    for (const auto& [alias, canonical] : BUILTIN_ALIASES) {
+        auto sym_opt = lookup(canonical);
+        if (sym_opt) {
+            Symbol alias_sym = *sym_opt;
+            alias_sym.name_id = interner.intern(alias);
+            alias_sym.name = std::string(alias);
+            define(alias_sym);
+        }
+    }
 }
 
 void SymbolTable::push_scope() {
@@ -20,15 +59,15 @@ void SymbolTable::pop_scope() {
 
 bool SymbolTable::define(const Symbol& symbol) {
     auto& current = scopes_.back();
-    bool was_new = current.find(symbol.name_hash) == current.end();
-    current.insert_or_assign(symbol.name_hash, symbol);
+    bool was_new = current.find(symbol.name_id) == current.end();
+    current.insert_or_assign(symbol.name_id, symbol);
     return was_new;
 }
 
 bool SymbolTable::define_variable(std::string_view name, std::uint16_t buffer_index) {
     Symbol sym{};
     sym.kind = SymbolKind::Variable;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = buffer_index;
     return define(sym);
@@ -37,7 +76,7 @@ bool SymbolTable::define_variable(std::string_view name, std::uint16_t buffer_in
 bool SymbolTable::define_parameter(std::string_view name, std::uint16_t buffer_index) {
     Symbol sym{};
     sym.kind = SymbolKind::Parameter;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = buffer_index;
     return define(sym);
@@ -46,7 +85,7 @@ bool SymbolTable::define_parameter(std::string_view name, std::uint16_t buffer_i
 bool SymbolTable::define_function(const UserFunctionInfo& func_info) {
     Symbol sym{};
     sym.kind = SymbolKind::UserFunction;
-    sym.name_hash = fnv1a_hash(func_info.name);
+    sym.name_id = interner_->intern(func_info.name);
     sym.name = func_info.name;
     sym.buffer_index = 0xFFFF;  // Not applicable for functions
     sym.user_function = func_info;
@@ -56,7 +95,7 @@ bool SymbolTable::define_function(const UserFunctionInfo& func_info) {
 bool SymbolTable::define_pattern(std::string_view name, const PatternInfo& pattern_info) {
     Symbol sym{};
     sym.kind = SymbolKind::Pattern;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;  // Patterns don't have a single buffer
     sym.pattern = pattern_info;
@@ -66,7 +105,7 @@ bool SymbolTable::define_pattern(std::string_view name, const PatternInfo& patte
 bool SymbolTable::define_array(std::string_view name, const ArrayInfo& array_info) {
     Symbol sym{};
     sym.kind = SymbolKind::Array;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;  // Arrays use array.buffer_indices instead
     sym.array = array_info;
@@ -76,7 +115,7 @@ bool SymbolTable::define_array(std::string_view name, const ArrayInfo& array_inf
 bool SymbolTable::define_function_value(std::string_view name, const FunctionRef& func_ref) {
     Symbol sym{};
     sym.kind = SymbolKind::FunctionValue;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;  // Function values don't have a buffer
     sym.function_ref = func_ref;
@@ -86,7 +125,7 @@ bool SymbolTable::define_function_value(std::string_view name, const FunctionRef
 bool SymbolTable::define_record(std::string_view name, std::shared_ptr<RecordTypeInfo> record_type) {
     Symbol sym{};
     sym.kind = SymbolKind::Record;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;  // Records don't have a single buffer
     sym.record_type = std::move(record_type);
@@ -96,7 +135,7 @@ bool SymbolTable::define_record(std::string_view name, std::shared_ptr<RecordTyp
 bool SymbolTable::define_const_variable(std::string_view name, const ConstValue& value) {
     Symbol sym{};
     sym.kind = SymbolKind::Variable;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;  // Will be assigned during codegen
     sym.is_const = true;
@@ -107,7 +146,7 @@ bool SymbolTable::define_const_variable(std::string_view name, const ConstValue&
 bool SymbolTable::define_const_placeholder(std::string_view name) {
     Symbol sym{};
     sym.kind = SymbolKind::Variable;
-    sym.name_hash = fnv1a_hash(name);
+    sym.name_id = interner_->intern(name);
     sym.name = std::string(name);
     sym.buffer_index = 0xFFFF;
     sym.is_const = true;
@@ -116,13 +155,18 @@ bool SymbolTable::define_const_placeholder(std::string_view name) {
 }
 
 std::optional<Symbol> SymbolTable::lookup(std::string_view name) const {
-    return lookup(fnv1a_hash(name));
+    // PRD Phase 5: route through find() — an absent name does not
+    // bloat the interner.
+    SymbolId id = interner_ ? interner_->find(name) : NULL_SYMBOL;
+    if (id == NULL_SYMBOL) return std::nullopt;
+    return lookup(id);
 }
 
-std::optional<Symbol> SymbolTable::lookup(std::uint32_t name_hash) const {
+std::optional<Symbol> SymbolTable::lookup(SymbolId id) const {
+    if (id == NULL_SYMBOL) return std::nullopt;
     // Search from innermost scope outward
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
-        auto found = it->find(name_hash);
+        auto found = it->find(id);
         if (found != it->end()) {
             return found->second;
         }
@@ -131,9 +175,10 @@ std::optional<Symbol> SymbolTable::lookup(std::uint32_t name_hash) const {
 }
 
 bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
-    if (scopes_.empty()) return false;
-    auto hash = fnv1a_hash(name);
-    return scopes_.back().find(hash) != scopes_.back().end();
+    if (scopes_.empty() || !interner_) return false;
+    SymbolId id = interner_->find(name);
+    if (id == NULL_SYMBOL) return false;
+    return scopes_.back().find(id) != scopes_.back().end();
 }
 
 static void update_symbol_nodes(Symbol& sym, const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
@@ -189,13 +234,13 @@ static void update_symbol_nodes(Symbol& sym, const std::unordered_map<NodeIndex,
 void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
     // Iterate through all scopes and update UserFunction, FunctionValue, and Pattern entries
     for (auto& scope : scopes_) {
-        for (auto& [hash, sym] : scope) {
+        for (auto& [id, sym] : scope) {
             update_symbol_nodes(sym, node_map);
         }
     }
     // Also update hidden symbols (namespace imports)
     for (auto& [mod_path, mod_symbols] : hidden_symbols_) {
-        for (auto& [hash, sym] : mod_symbols) {
+        for (auto& [id, sym] : mod_symbols) {
             update_symbol_nodes(sym, node_map);
         }
     }
@@ -204,7 +249,7 @@ void SymbolTable::update_function_nodes(const std::unordered_map<NodeIndex, Node
 bool SymbolTable::define_module(std::string_view alias, std::string_view canonical_path) {
     Symbol sym{};
     sym.kind = SymbolKind::Module;
-    sym.name_hash = fnv1a_hash(alias);
+    sym.name_id = interner_->intern(alias);
     sym.name = std::string(alias);
     sym.buffer_index = 0xFFFF;
     sym.module_path = std::string(canonical_path);
@@ -215,50 +260,24 @@ std::optional<Symbol> SymbolTable::lookup_in_module(
     std::string_view module_path, std::string_view name) const {
     auto mod_it = hidden_symbols_.find(std::string(module_path));
     if (mod_it == hidden_symbols_.end()) return std::nullopt;
-    auto sym_it = mod_it->second.find(fnv1a_hash(name));
+    SymbolId id = interner_ ? interner_->find(name) : NULL_SYMBOL;
+    if (id == NULL_SYMBOL) return std::nullopt;
+    auto sym_it = mod_it->second.find(id);
     if (sym_it == mod_it->second.end()) return std::nullopt;
     return sym_it->second;
 }
 
 void SymbolTable::hide_symbol(std::string_view name, std::string_view module_path) {
-    auto hash = fnv1a_hash(name);
+    if (!interner_) return;
+    SymbolId id = interner_->find(name);
+    if (id == NULL_SYMBOL) return;
     // Search scopes for the symbol and move it to hidden storage
     for (auto& scope : scopes_) {
-        auto it = scope.find(hash);
+        auto it = scope.find(id);
         if (it != scope.end()) {
-            hidden_symbols_[std::string(module_path)][hash] = it->second;
+            hidden_symbols_[std::string(module_path)][id] = it->second;
             scope.erase(it);
             return;
-        }
-    }
-}
-
-void SymbolTable::register_builtins() {
-    // Register all built-in functions from the builtins table
-    for (const auto& [name, info] : BUILTIN_FUNCTIONS) {
-        // notes/freqs (pattern-event-arrays PRD) are codegen-dispatched but
-        // intentionally NOT pre-registered as global symbols: they are common
-        // variable names and must remain bindable (`notes = [...]`). The
-        // analyzer special-cases the call form; codegen's special_handlers
-        // map dispatches it.
-        if (name == "notes" || name == "freqs") continue;
-        Symbol sym{};
-        sym.kind = SymbolKind::Builtin;
-        sym.name_hash = fnv1a_hash(name);
-        sym.name = std::string(name);
-        sym.buffer_index = 0xFFFF;  // Not applicable for builtins
-        sym.builtin = info;
-        define(sym);
-    }
-
-    // Also register aliases
-    for (const auto& [alias, canonical] : BUILTIN_ALIASES) {
-        auto sym_opt = lookup(canonical);
-        if (sym_opt) {
-            Symbol alias_sym = *sym_opt;
-            alias_sym.name_hash = fnv1a_hash(alias);
-            alias_sym.name = std::string(alias);
-            define(alias_sym);
         }
     }
 }

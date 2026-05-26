@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <akkado/string_interner.hpp>
 #include <akkado/symbol_table.hpp>
 
 #include <string>
@@ -12,7 +13,7 @@ using namespace akkado;
 // ============================================================================
 
 TEST_CASE("SymbolTable scope management", "[symbol_table]") {
-    SymbolTable table;
+    StringInterner interner; SymbolTable table; table.set_interner(interner);
 
     // Note: SymbolTable starts with 1 scope (global scope containing builtins)
     SECTION("initial scope depth is 1 (global scope)") {
@@ -66,7 +67,7 @@ TEST_CASE("SymbolTable scope management", "[symbol_table]") {
 }
 
 TEST_CASE("SymbolTable define operations", "[symbol_table]") {
-    SymbolTable table;
+    StringInterner interner; SymbolTable table; table.set_interner(interner);
 
     SECTION("define adds symbol to current scope") {
         bool ok = table.define_variable("x", 0);
@@ -117,7 +118,7 @@ TEST_CASE("SymbolTable define operations", "[symbol_table]") {
 }
 
 TEST_CASE("SymbolTable lookup operations", "[symbol_table]") {
-    SymbolTable table;
+    StringInterner interner; SymbolTable table; table.set_interner(interner);
 
     SECTION("lookup returns empty for undefined symbol") {
         auto sym = table.lookup("undefined");
@@ -138,11 +139,14 @@ TEST_CASE("SymbolTable lookup operations", "[symbol_table]") {
         CHECK(inner_sym->buffer_index == 1);
     }
 
-    SECTION("lookup by hash") {
+    SECTION("lookup by SymbolId") {
+        // PRD Phase 5: SymbolTable lookup is keyed on the interner's
+        // sequential SymbolId, not the FNV hash. Callers that already
+        // hold a SymbolId hit the no-rehash fast path.
         table.define_variable("test_var", 5);
 
-        std::uint32_t hash = fnv1a_hash("test_var");
-        auto sym = table.lookup(hash);
+        SymbolId id = interner.intern("test_var");
+        auto sym = table.lookup(id);
 
         REQUIRE(sym.has_value());
         CHECK(sym->name == "test_var");
@@ -179,7 +183,7 @@ TEST_CASE("SymbolTable lookup operations", "[symbol_table]") {
 }
 
 TEST_CASE("SymbolTable user functions", "[symbol_table]") {
-    SymbolTable table;
+    StringInterner interner; SymbolTable table; table.set_interner(interner);
 
     SECTION("define_function creates function symbol") {
         UserFunctionInfo func_info;
@@ -232,7 +236,7 @@ TEST_CASE("SymbolTable user functions", "[symbol_table]") {
 // ============================================================================
 
 TEST_CASE("SymbolTable edge cases", "[symbol_table][edge]") {
-    SymbolTable table;
+    StringInterner interner; SymbolTable table; table.set_interner(interner);
 
     SECTION("100 nested scopes") {
         std::size_t initial = table.scope_depth();
@@ -468,7 +472,7 @@ TEST_CASE("RecordTypeInfo field_names", "[symbol_table]") {
 
 TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
     SECTION("simulate compiler with many scopes and symbols") {
-        SymbolTable table;
+        StringInterner interner; SymbolTable table; table.set_interner(interner);
         std::size_t initial = table.scope_depth();
 
         // Simulate 100 functions
@@ -502,7 +506,7 @@ TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
     }
 
     SECTION("repeated push/pop cycles") {
-        SymbolTable table;
+        StringInterner interner; SymbolTable table; table.set_interner(interner);
 
         for (int cycle = 0; cycle < 1000; ++cycle) {
             table.push_scope();
@@ -517,7 +521,7 @@ TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
     }
 
     SECTION("deep nesting with many lookups") {
-        SymbolTable table;
+        StringInterner interner; SymbolTable table; table.set_interner(interner);
 
         // Create deep nesting with symbols at each level
         for (int depth = 0; depth < 50; ++depth) {
@@ -538,4 +542,45 @@ TEST_CASE("SymbolTable stress test", "[symbol_table][stress]") {
             table.pop_scope();
         }
     }
+}
+
+// ============================================================================
+// PRD prd-parser-codegen-correctness.md Phase 5 (F12): SymbolTable
+// lookup-by-SymbolId is the post-Phase-5 fast path (no FNV recompute).
+// ============================================================================
+
+TEST_CASE("F12: SymbolTable.lookup(SymbolId) hits the no-rehash fast path",
+          "[F12][symbol_table][interner]") {
+    StringInterner interner;
+    SymbolTable table;
+    table.set_interner(interner);
+
+    table.define_variable("test_var", 7);
+
+    // Pre-intern the name once — caller in production code typically
+    // already holds this SymbolId on the Identifier node.
+    SymbolId id = interner.intern("test_var");
+    REQUIRE(id != NULL_SYMBOL);
+
+    auto sym = table.lookup(id);
+    REQUIRE(sym.has_value());
+    CHECK(sym->name == "test_var");
+    CHECK(sym->buffer_index == 7);
+    CHECK(sym->name_id == id);  // Symbol.name_id is the interner SymbolId
+}
+
+TEST_CASE("F12: SymbolTable.lookup(string_view) routes through interner.find",
+          "[F12][symbol_table][interner]") {
+    StringInterner interner;
+    SymbolTable table;
+    table.set_interner(interner);
+
+    table.define_variable("known", 1);
+
+    // Looking up an absent name does NOT insert into the interner —
+    // routing through find() (vs intern()) means the interner stays
+    // clean of non-symbol strings.
+    auto missing = table.lookup("never_defined");
+    CHECK_FALSE(missing.has_value());
+    CHECK(interner.find("never_defined") == NULL_SYMBOL);
 }

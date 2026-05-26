@@ -3,6 +3,8 @@
 #include "akkado/lexer.hpp"
 #include "akkado/mini_lexer.hpp"
 #include "akkado/mini_parser.hpp"
+#include "akkado/string_interner.hpp"
+#include "test_lex_helper.hpp"
 #include "akkado/pattern_eval.hpp"
 #include "akkado/tuning.hpp"
 
@@ -2492,7 +2494,7 @@ TEST_CASE("Evaluate curve with weight modifier", "[curve_eval]") {
 }
 
 TEST_CASE("t prefix produces Timeline token", "[timeline_prefix]") {
-    auto [tokens, lex_diags] = akkado::lex("t\"__''\"");
+    auto [tokens, lex_diags] = akkado::test_helpers::lex("t\"__''\"");
     REQUIRE(lex_diags.empty());
     REQUIRE(tokens.size() >= 3);
     CHECK(tokens[0].type == TokenType::Timeline);

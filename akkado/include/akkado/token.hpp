@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 #include "diagnostics.hpp"
+#include "string_interner.hpp"
 
 namespace akkado {
 
@@ -174,8 +175,20 @@ struct PitchValue {
     std::uint8_t midi_note;
 };
 
-/// Token value - can be a number, string, pitch, or nothing
-using TokenValue = std::variant<std::monostate, NumericValue, std::string, PitchValue>;
+/// PRD prd-parser-codegen-correctness.md Phase 5 (F12): wrapper around
+/// raw literal text so the TokenValue variant distinguishes
+/// identifier-like tokens (carry SymbolId; identifier equality is
+/// id == id) from genuine string-content tokens (String literals,
+/// Directive names, Error messages) which keep an owned std::string.
+struct StringLitData {
+    std::string value;
+};
+
+/// Token value - identifier-like tokens carry a SymbolId interned at
+/// lex time; string-content tokens carry owned text. See PRD
+/// prd-parser-codegen-correctness.md Phase 5.
+using TokenValue = std::variant<std::monostate, NumericValue, SymbolId,
+                                StringLitData, PitchValue>;
 
 /// A single token from the lexer
 struct Token {
@@ -195,9 +208,18 @@ struct Token {
         return std::get<NumericValue>(value).value;
     }
 
-    /// Get string value (assumes type == String or Identifier)
-    [[nodiscard]] const std::string& as_string() const {
-        return std::get<std::string>(value);
+    /// Get interned SymbolId (assumes type == Identifier). Resolve to
+    /// a view via `StringInterner::view(id)` when string text is
+    /// needed (e.g. error messages).
+    [[nodiscard]] SymbolId as_identifier() const {
+        return std::get<SymbolId>(value);
+    }
+
+    /// Get owned string literal content (assumes type == String,
+    /// Directive, or Error — anything carrying raw text that isn't an
+    /// identifier symbol).
+    [[nodiscard]] const std::string& as_string_lit() const {
+        return std::get<StringLitData>(value).value;
     }
 
     /// Get pitch MIDI note (assumes type == PitchLit)

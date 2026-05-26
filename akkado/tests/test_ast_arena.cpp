@@ -2,12 +2,28 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <akkado/ast.hpp>
+#include <akkado/string_interner.hpp>
 
 #include <vector>
 #include <string>
 
 using namespace akkado;
 using Catch::Matchers::WithinAbs;
+
+namespace {
+// Phase 5: ast_arena tests synthesize IdentifierData with literal names.
+// A per-test interner converts the literals to SymbolIds.
+inline StringInterner& test_interner() {
+    static thread_local StringInterner i;
+    return i;
+}
+inline SymbolId sym(std::string_view s) {
+    return test_interner().intern(s);
+}
+inline std::string_view sview(SymbolId id) {
+    return test_interner().view(id);
+}
+} // namespace
 
 // ============================================================================
 // Unit Tests [ast_arena]
@@ -162,10 +178,10 @@ TEST_CASE("AstArena node data", "[ast_arena]") {
 
     SECTION("IdentifierData storage") {
         NodeIndex idx = arena.alloc(NodeType::Identifier, loc);
-        arena[idx].data = Node::IdentifierData{"my_var"};
+        arena[idx].data = Node::IdentifierData{sym("my_var")};
 
         CHECK(arena[idx].type == NodeType::Identifier);
-        CHECK(arena[idx].as_identifier() == "my_var");
+        CHECK(sview(arena[idx].as_identifier()) == "my_var");
     }
 
     SECTION("BinaryOpData storage") {
@@ -726,7 +742,7 @@ TEST_CASE("AstArena stress test", "[ast_arena][stress]") {
                 arena[binop].data = Node::BinaryOpData{BinOp::Add};
 
                 NodeIndex lhs = arena.alloc(NodeType::Identifier, loc);
-                arena[lhs].data = Node::IdentifierData{"var_" + std::to_string(fn) + "_" + std::to_string(stmt)};
+                arena[lhs].data = Node::IdentifierData{sym("var_" + std::to_string(fn) + "_" + std::to_string(stmt))};
 
                 NodeIndex rhs = arena.alloc(NodeType::NumberLit, loc);
                 arena[rhs].data = Node::NumberData{static_cast<double>(fn * 10 + stmt), true};

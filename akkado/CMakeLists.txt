@@ -75,6 +75,7 @@ add_custom_target(akkado_stdlib_embed
 add_library(akkado STATIC
     src/akkado.cpp
     src/compile_context.cpp
+    src/string_interner.cpp
     src/diagnostics.cpp
     src/lexer.cpp
     src/parser.cpp

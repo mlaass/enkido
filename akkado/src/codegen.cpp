@@ -603,7 +603,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
         }
 
         case NodeType::Identifier: {
-            const std::string& name = n.as_identifier();
+            std::string name = std::string(ctx_->interner->view(n.as_identifier()));
 
             // Builtin variable read (bpm, sr) — desugar to ENV_GET
             {
@@ -758,7 +758,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 return TypedValue::error_val();
             }
 
-            const std::string& var_name = n.as_identifier();
+            std::string var_name = std::string(ctx_->interner->view(n.as_identifier()));
 
             // Builtin variable assignment (bpm = 120) — extract compile-time constant
             {
@@ -771,7 +771,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         return TypedValue::error_val();
                     }
                     // Evaluate RHS as compile-time constant
-                    ConstEvaluator evaluator(*ast_, *symbols_);
+                    ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
                     auto const_val = evaluator.evaluate(value_idx);
                     for (const auto& diag : evaluator.diagnostics()) {
                         diagnostics_.push_back(diag);
@@ -825,7 +825,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     Symbol new_sym;
                     new_sym.kind = SymbolKind::Variable;
                     new_sym.name = var_name;
-                    new_sym.name_hash = fnv1a_hash(var_name);
+                    new_sym.name_id = ctx_->interner->intern(var_name);
                     new_sym.buffer_index = value_tv.buffer;
                     new_sym.multi_buffers = buffers_of(value_tv);
                     new_sym.typed_value = value_tv;
@@ -842,7 +842,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     Symbol new_sym;
                     new_sym.kind = SymbolKind::Variable;
                     new_sym.name = var_name;
-                    new_sym.name_hash = fnv1a_hash(var_name);
+                    new_sym.name_id = ctx_->interner->intern(var_name);
                     new_sym.buffer_index = value_tv.buffer;
                     new_sym.typed_value = value_tv;
                     symbols_->define(new_sym);
@@ -875,7 +875,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
         case NodeType::ConstDecl: {
             // Const variable: evaluate RHS at compile time
-            const std::string& var_name = n.as_identifier();
+            std::string var_name = std::string(ctx_->interner->view(n.as_identifier()));
             NodeIndex value_idx = n.first_child;
 
             if (value_idx == NULL_NODE) {
@@ -884,7 +884,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // Evaluate at compile time using ConstEvaluator
-            ConstEvaluator evaluator(*ast_, *symbols_);
+            ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
             auto const_val = evaluator.evaluate(value_idx);
 
             // Forward any diagnostics from const evaluator
@@ -945,7 +945,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     Symbol sym{};
                     sym.kind = SymbolKind::Variable;
                     sym.name = var_name;
-                    sym.name_hash = fnv1a_hash(var_name);
+                    sym.name_id = ctx_->interner->intern(var_name);
                     sym.buffer_index = first_buf;
                     sym.multi_buffers = std::move(result_buffers);
                     sym.is_const = true;
@@ -968,7 +968,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             [[fallthrough]];
         case NodeType::Call: {
             // Function name is stored in the node's data, not as a child
-            const std::string& func_name = n.as_identifier();
+            std::string func_name = std::string(ctx_->interner->view(n.as_identifier()));
 
             // Save the call's source location - visiting arguments may overwrite it
             SourceLocation call_loc = current_source_loc_;
@@ -1319,7 +1319,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     bool is_placeholder =
                         (val_node.type == NodeType::Identifier &&
                          std::holds_alternative<Node::IdentifierData>(val_node.data) &&
-                         val_node.as_identifier() == "_");
+                         ctx_->interner->view(val_node.as_identifier()) == "_");
                     CallSlot s;
                     s.loc = val_node.location;
                     if (is_placeholder) {
@@ -1704,7 +1704,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     }
                     const Node& arg_n = ast_->arena[arg_nodes[i]];
                     if (arg_n.type == NodeType::Identifier) {
-                        const std::string& name = arg_n.as_identifier();
+                        std::string name = std::string(ctx_->interner->view(arg_n.as_identifier()));
                         std::uint32_t param_hash = fnv1a_hash(name);
                         auto pit = param_multi_buffer_sources_.find(param_hash);
                         if (pit != param_multi_buffer_sources_.end()) {
@@ -2484,7 +2484,7 @@ void CodeGenerator::warn(const std::string& code, const std::string& message,
 // is a bus *placeholder* (bus_placeholder(N)); emit_bus_epilogue later
 // allocates the real per-bus scratch buffers and rewrites the placeholders.
 TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
-    const std::string func_name = n.as_identifier();  // "out" or "bus"
+    const std::string func_name = std::string(ctx_->interner->view(n.as_identifier()));  // "out" or "bus"
     const SourceLocation call_loc = n.location;
     current_source_loc_ = call_loc;
 
@@ -2623,7 +2623,7 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
 // MixerCall, and emits NOTHING at the call site — emit_bus_epilogue inlines
 // the closure body into the per-bus epilogue (prd-bus-routing Phase 2 §3.3).
 TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
-    const std::string func_name = n.as_identifier();  // "mixer" or "master"
+    const std::string func_name = std::string(ctx_->interner->view(n.as_identifier()));  // "mixer" or "master"
     const SourceLocation call_loc = n.location;
     current_source_loc_ = call_loc;
 
@@ -2736,7 +2736,7 @@ bool CodeGenerator::scan_closure_for_sinks(NodeIndex body) {
     const Node& n = ast_->arena[body];
     bool found = false;
     if (n.type == NodeType::Call) {
-        const std::string callee = n.as_identifier();
+        const std::string callee = std::string(ctx_->interner->view(n.as_identifier()));
         if (callee == "out" || callee == "bus" || callee == "mixer" ||
             callee == "master") {
             error("E261",
@@ -3177,7 +3177,7 @@ const TypedValue* CodeGenerator::get_node_type(NodeIndex node) const {
     if (n.type == NodeType::Identifier) {
         std::string var_name;
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            var_name = n.as_identifier();
+            var_name = ctx_->interner->view(n.as_identifier());
         }
         auto sym = symbols_->lookup(var_name);
         if (sym && sym->typed_value) {
@@ -3531,7 +3531,7 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
                 if (spread_node.type == NodeType::Identifier) {
                     std::string var_name;
                     if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
-                        var_name = spread_node.as_identifier();
+                        var_name = ctx_->interner->view(spread_node.as_identifier());
                     }
                     auto sym = symbols_->lookup(var_name);
                     if (sym && sym->typed_value && sym->typed_value->type == ValueType::Record &&
@@ -3622,7 +3622,7 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
     if (expr.type == NodeType::Identifier) {
         std::string var_name;
         if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
-            var_name = expr.as_identifier();
+            var_name = ctx_->interner->view(expr.as_identifier());
         }
         auto sym = symbols_->lookup(var_name);
         if (sym && sym->kind == SymbolKind::Module) {
@@ -3643,7 +3643,7 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
     if (expr.type == NodeType::Identifier) {
         std::string var_name;
         if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
-            var_name = expr.as_identifier();
+            var_name = ctx_->interner->view(expr.as_identifier());
         }
         auto sym = symbols_->lookup(var_name);
 
@@ -3904,7 +3904,7 @@ TypedValue CodeGenerator::handle_pipe_binding(NodeIndex node, const Node& n) {
         Symbol new_sym;
         new_sym.kind = SymbolKind::Variable;
         new_sym.name = binding_name;
-        new_sym.name_hash = fnv1a_hash(binding_name);
+        new_sym.name_id = ctx_->interner->intern(binding_name);
         new_sym.buffer_index = expr_tv.buffer;
         new_sym.typed_value = expr_tv;
         symbols_->define(new_sym);
@@ -3912,7 +3912,7 @@ TypedValue CodeGenerator::handle_pipe_binding(NodeIndex node, const Node& n) {
         Symbol new_sym;
         new_sym.kind = SymbolKind::Variable;
         new_sym.name = binding_name;
-        new_sym.name_hash = fnv1a_hash(binding_name);
+        new_sym.name_id = ctx_->interner->intern(binding_name);
         new_sym.buffer_index = expr_tv.buffer;
         new_sym.multi_buffers = buffers_of(expr_tv);
         new_sym.typed_value = expr_tv;
@@ -3923,7 +3923,7 @@ TypedValue CodeGenerator::handle_pipe_binding(NodeIndex node, const Node& n) {
         if (expr.type == NodeType::Identifier) {
             std::string var_name;
             if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
-                var_name = expr.as_identifier();
+                var_name = ctx_->interner->view(expr.as_identifier());
             }
             auto sym = symbols_->lookup(var_name);
             if (sym && sym->kind == SymbolKind::Record && sym->record_type) {

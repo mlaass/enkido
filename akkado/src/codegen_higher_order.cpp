@@ -18,6 +18,8 @@
 // freq buffer, so the pre-L3 single-signal form keeps compiling unchanged.
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 
 #include <cedar/opcodes/event_transform_encoding.hpp>
@@ -34,6 +36,7 @@ namespace {
 // is needed and to reject fields the event model cannot supply.
 void collect_param_fields(const AstArena& arena, NodeIndex root,
                           const std::string& param,
+                          const StringInterner& interner,
                           std::set<std::string>& out) {
     if (root == NULL_NODE) return;
     const Node& nd = arena[root];
@@ -43,14 +46,14 @@ void collect_param_fields(const AstArena& arena, NodeIndex root,
             const Node& r = arena[recv];
             if (r.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(r.data) &&
-                r.as_identifier() == param) {
+                interner.view(r.as_identifier()) == param) {
                 out.insert(nd.as_field_access().field_name);
             }
         }
     }
     for (NodeIndex c = nd.first_child; c != NULL_NODE;
          c = arena[c].next_sibling) {
-        collect_param_fields(arena, c, param, out);
+        collect_param_fields(arena, c, param, interner, out);
     }
 }
 
@@ -203,7 +206,7 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
 
     // Pre-scan the lambda body: which event-record fields does it touch?
     std::set<std::string> fields;
-    collect_param_fields(ast_->arena, func_ref->closure_node, record_param,
+    collect_param_fields(ast_->arena, func_ref->closure_node, record_param, *ctx_->interner,
                          fields);
     bool need_bank = false;
     for (const auto& f : fields) {
@@ -289,7 +292,7 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
         Symbol sym;
         sym.kind = SymbolKind::Variable;
         sym.name = record_param;
-        sym.name_hash = fnv1a_hash(record_param);
+        sym.name_id = ctx_->interner->intern(record_param);
         sym.buffer_index = freq_buf;
         sym.typed_value = build_event_record(freq_buf, bank_buf);
         symbols_->define(sym);
@@ -500,7 +503,7 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
 
     // Pre-scan: which event-record fields does the closure body read?
     std::set<std::string> fields;
-    collect_param_fields(ast_->arena, func_ref->closure_node, record_param,
+    collect_param_fields(ast_->arena, func_ref->closure_node, record_param, *ctx_->interner,
                          fields);
     bool need_bank = false;
     for (const auto& f : fields) {
@@ -578,7 +581,7 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         Symbol sym;
         sym.kind = SymbolKind::Variable;
         sym.name = record_param;
-        sym.name_hash = fnv1a_hash(record_param);
+        sym.name_id = ctx_->interner->intern(record_param);
         sym.buffer_index = freq_buf;
         sym.typed_value = build_event_record(freq_buf, bank_buf);
         symbols_->define(sym);

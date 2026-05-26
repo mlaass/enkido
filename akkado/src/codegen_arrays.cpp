@@ -3,7 +3,9 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/compile_context.hpp"
 #include "akkado/const_eval.hpp"
+#include "akkado/string_interner.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -33,12 +35,10 @@ static std::optional<double> resolve_const_scalar(
     }
 
     if (n.type == NodeType::Identifier) {
-        std::string name;
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
-        }
-        if (!name.empty()) {
-            auto sym = symbols.lookup(name);
+            // Phase 5 (F12): SymbolTable.lookup(SymbolId) is the no-rehash
+            // fast path; no need to materialize the name as a string here.
+            auto sym = symbols.lookup(n.as_identifier());
             if (sym && sym->is_const && sym->const_value.has_value()) {
                 if (std::holds_alternative<double>(*sym->const_value)) {
                     return std::get<double>(*sym->const_value);
@@ -57,7 +57,7 @@ NodeIndex CodeGenerator::resolve_param_literal(NodeIndex node) const {
 
     std::string name;
     if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-        name = n.as_identifier();
+        name = ctx_->interner->view(n.as_identifier());
     } else if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
         name = n.as_closure_param().name;
     }
@@ -78,7 +78,7 @@ std::uint16_t CodeGenerator::apply_lambda(NodeIndex lambda_node, std::uint16_t a
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    auto info = codegen::extract_closure_info(ast_->arena, lambda_node);
+    auto info = codegen::extract_closure_info(ast_->arena, lambda_node, *ctx_->interner);
     NodeIndex body = info.body;
 
     if (body == NULL_NODE) {
@@ -148,7 +148,7 @@ std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_no
                         param.default_node = child_node.first_child;
                     }
                 } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                    param.name = child_node.as_identifier();
+                    param.name = ctx_->interner->view(child_node.as_identifier());
                 }
                 ref.params.push_back(std::move(param));
             }
@@ -160,7 +160,7 @@ std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_no
     if (n.type == NodeType::Identifier) {
         std::string name;
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
+            name = ctx_->interner->view(n.as_identifier());
         } else {
             return std::nullopt;
         }
@@ -880,7 +880,7 @@ TypedValue CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
         }
     } else if (arr.type == NodeType::Identifier) {
         // Look up the symbol to see if it's a known array
-        const std::string& name = arr.as_identifier();
+        std::string name = std::string(ctx_->interner->view(arr.as_identifier()));
         auto sym = symbols_->lookup(name);
         if (sym && sym->kind == SymbolKind::Array) {
             length = sym->array.element_count;
@@ -1047,7 +1047,7 @@ static std::uint16_t emit_binary_op(
 TypedValue CodeGenerator::handle_binary_op_call(NodeIndex node, const Node& n) {
     std::string func_name;
     if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-        func_name = n.as_identifier();
+        func_name = ctx_->interner->view(n.as_identifier());
     } else {
         error("E160", "Invalid binary operation call", n.location);
         return TypedValue::void_val();
@@ -1169,7 +1169,7 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
 TypedValue CodeGenerator::handle_minmax_call(NodeIndex node, const Node& n) {
     std::string func_name;
     if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-        func_name = n.as_identifier();
+        func_name = ctx_->interner->view(n.as_identifier());
     }
 
     cedar::Opcode op = (func_name == "min") ? cedar::Opcode::MIN : cedar::Opcode::MAX;

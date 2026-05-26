@@ -2,6 +2,8 @@
 // Handles param(), button(), toggle() for UI auto-generation
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <algorithm>

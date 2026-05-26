@@ -294,9 +294,10 @@ TEST_CASE("Analyzer: Match expression analysis", "[analyzer]") {
 // verify that argument-count and reordering checks are deferred when spread
 // is present, without exercising the still-unimplemented codegen path.
 static std::vector<Diagnostic> analyze_only(std::string_view src) {
-    auto [tokens, lex_diags] = lex(src);
-    auto [ast, parse_diags] = parse(std::move(tokens), src);
-    SemanticAnalyzer analyzer;
+    StringInterner interner;
+    auto [tokens, lex_diags] = lex(src, interner);
+    auto [ast, parse_diags] = parse(std::move(tokens), src, interner);
+    SemanticAnalyzer analyzer(interner);
     auto result = analyzer.analyze(ast, "<input>");
     return result.diagnostics;
 }

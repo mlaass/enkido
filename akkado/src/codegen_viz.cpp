@@ -3,6 +3,8 @@
 // These functions pass signal through while creating visualization metadata
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/options.hpp"
 #include "akkado/builtins.hpp"

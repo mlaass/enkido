@@ -11426,13 +11426,15 @@ codegen_arena_before_after(std::string_view user_source) {
     }
     combined.append(user_source);
 
-    auto [tokens, lex_diags] = akkado::lex(combined, "<input>");
+    akkado::CompileContext ctx;
+    auto [tokens, lex_diags] = akkado::lex(combined, *ctx.interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(lex_diags));
 
-    auto [ast, parse_diags] = akkado::parse(std::move(tokens), combined, "<input>");
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), combined,
+                                             *ctx.interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(parse_diags));
 
-    akkado::SemanticAnalyzer analyzer;
+    akkado::SemanticAnalyzer analyzer(*ctx.interner);
     auto analysis = analyzer.analyze(ast, "<input>");
     REQUIRE(analysis.success);
 
@@ -11441,7 +11443,6 @@ codegen_arena_before_after(std::string_view user_source) {
         akkado::arena_structural_hash(analysis.transformed_ast.arena)
     };
 
-    akkado::CompileContext ctx;
     akkado::CodeGenerator codegen(ctx);
     auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols,
                                 "<input>", nullptr, nullptr,
@@ -11543,9 +11544,10 @@ TEST_CASE("F1b: chord pattern inside a transform does not mutate the AST arena",
 TEST_CASE("F1b: MiniLiteralData carries parsed sub-arena", "[F1b][parser]") {
     // Phase 1b moved the parsed mini-AST into MiniLiteralData::mini_arena.
     // Round-trip: pat literal → AST → check sub-arena is populated.
-    auto [tokens, lex_diags] = akkado::lex("s\"bd sd hh cp\"", "<input>");
+    akkado::StringInterner interner;
+    auto [tokens, lex_diags] = akkado::lex("s\"bd sd hh cp\"", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(lex_diags));
-    auto [ast, parse_diags] = akkado::parse(std::move(tokens), "s\"bd sd hh cp\"", "<input>");
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), "s\"bd sd hh cp\"", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(parse_diags));
 
     // Walk: Program → ExprStmt → MiniLiteral
@@ -11567,9 +11569,10 @@ TEST_CASE("F3: Sample-kind atoms cache parse_chord_symbol at parse time",
     // Phase 1b folds F3's 5th re-parse site: mini_parser populates chord_*
     // fields on Sample atoms whose names happen to be valid chord symbols,
     // so PatternEvaluator can read cached fields without re-parsing.
-    auto [tokens, lex_diags] = akkado::lex(R"(s"C E Am G")", "<input>");
+    akkado::StringInterner interner;
+    auto [tokens, lex_diags] = akkado::lex(R"(s"C E Am G")", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(lex_diags));
-    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"C E Am G")", "<input>");
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"C E Am G")", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(parse_diags));
 
     akkado::NodeIndex mini = ast.arena[ast.root].first_child;
@@ -11594,9 +11597,10 @@ TEST_CASE("F3: non-chord sample names leave chord fields empty",
     // parse_chord_symbol returns nullopt for non-chord-shaped names like
     // "kick" / "snare" / "hh". The cached fields stay empty — that's the
     // signal pattern_eval reads as "treat as Rest in chord mode".
-    auto [tokens, lex_diags] = akkado::lex(R"(s"kick snare hh")", "<input>");
+    akkado::StringInterner interner;
+    auto [tokens, lex_diags] = akkado::lex(R"(s"kick snare hh")", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(lex_diags));
-    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"kick snare hh")", "<input>");
+    auto [ast, parse_diags] = akkado::parse(std::move(tokens), R"(s"kick snare hh")", interner, "<input>");
     REQUIRE_FALSE(akkado::has_errors(parse_diags));
 
     akkado::NodeIndex mini = ast.arena[ast.root].first_child;

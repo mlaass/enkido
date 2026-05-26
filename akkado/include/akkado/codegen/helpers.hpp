@@ -5,6 +5,7 @@
 
 #include "akkado/ast.hpp"
 #include "akkado/codegen.hpp"
+#include "akkado/string_interner.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cstring>
 #include <vector>
@@ -86,7 +87,8 @@ inline NodeIndex closure_body(const AstArena& arena, NodeIndex closure_node) {
 /// DestructureParam children are not returned here — callers that need them
 /// walk children themselves with the same `child != body` bound.
 [[gnu::always_inline]]
-inline ClosureInfo extract_closure_info(const AstArena& arena, NodeIndex closure_node) {
+inline ClosureInfo extract_closure_info(const AstArena& arena, NodeIndex closure_node,
+                                        const StringInterner& interner) {
     ClosureInfo info{};
     info.body = NULL_NODE;
 
@@ -104,7 +106,9 @@ inline ClosureInfo extract_closure_info(const AstArena& arena, NodeIndex closure
         if (std::holds_alternative<Node::ClosureParamData>(cn.data)) {
             info.params.push_back(cn.as_closure_param().name);
         } else if (std::holds_alternative<Node::IdentifierData>(cn.data)) {
-            info.params.push_back(cn.as_identifier());
+            // PRD Phase 5 (F12): IdentifierData carries SymbolId; resolve
+            // to std::string via the per-compile interner.
+            info.params.push_back(std::string(interner.view(cn.as_identifier())));
         }
     }
     return info;

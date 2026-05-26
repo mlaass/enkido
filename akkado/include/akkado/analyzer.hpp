@@ -2,6 +2,7 @@
 
 #include "ast.hpp"
 #include "diagnostics.hpp"
+#include "string_interner.hpp"
 #include "symbol_table.hpp"
 #include <set>
 #include <span>
@@ -36,6 +37,17 @@ struct AnalysisResult {
 /// 3. Resolve & validate: Check function calls, argument counts
 class SemanticAnalyzer {
 public:
+    /// PRD prd-parser-codegen-correctness.md Phase 5: ctor takes the
+    /// per-compile interner so the analyzer's SymbolTable can register
+    /// builtins via SymbolId and downstream identifier resolution can
+    /// hit the no-rehash lookup path.
+    explicit SemanticAnalyzer(StringInterner& interner);
+
+    /// Default ctor — leaves no interner attached. Only the lex/parse
+    /// integration tests construct without one; the symbol table can't
+    /// resolve string-view lookups in that mode.
+    SemanticAnalyzer();
+
     /// Analyze and transform AST
     /// @param ast The parsed AST
     /// @param filename Filename for error reporting
@@ -157,12 +169,14 @@ private:
     // Hide definitions from namespaced modules (between pass 1 and pass 2)
     void hide_namespaced_definitions();
 
-    // Extract the definition name from an Assignment/FunctionDef/ConstDecl node
-    static std::string extract_definition_name(const Node& n);
+    // Extract the definition name from an Assignment/FunctionDef/ConstDecl node.
+    // Non-static (Phase 5): needs the interner to resolve IdentifierData::name.
+    std::string extract_definition_name(const Node& n) const;
 
     // Context
     const Ast* input_ast_ = nullptr;
     AstArena output_arena_;
+    StringInterner* interner_ = nullptr;
     SymbolTable symbols_;
     std::vector<Diagnostic> diagnostics_;
     std::string filename_;

@@ -6,6 +6,7 @@
 #include <optional>
 #include "token.hpp"
 #include "diagnostics.hpp"
+#include "string_interner.hpp"
 
 namespace akkado {
 
@@ -19,9 +20,15 @@ namespace akkado {
 class Lexer {
 public:
     /// Construct a lexer for the given source
-    /// @param source The source code to lex (must remain valid during lexing)
+    /// @param source The source code to lex (must remain valid during lexing
+    ///        AND for the full lifetime of `interner` — Phase 5 stores
+    ///        `string_view`s into source inside the interner).
+    /// @param interner Per-compile StringInterner. Identifier tokens have
+    ///        their text interned at lex time; non-identifier text tokens
+    ///        (strings, directives, errors) carry owned StringLitData.
     /// @param filename The filename for error reporting
-    explicit Lexer(std::string_view source, std::string_view filename = "<input>");
+    explicit Lexer(std::string_view source, StringInterner& interner,
+                   std::string_view filename = "<input>");
 
     /// Lex all tokens from the source
     /// @return Vector of tokens, ending with Eof token
@@ -74,6 +81,7 @@ private:
     [[nodiscard]] SourceLocation current_location() const;
 
     std::string_view source_;
+    StringInterner* interner_ = nullptr;  // PRD Phase 5: identifier interning at lex time
     std::string filename_;
     std::vector<Diagnostic> diagnostics_;
 
@@ -89,10 +97,12 @@ private:
 };
 
 /// Convenience function to lex source code
-/// @param source The source code to lex
+/// @param source The source code to lex (must outlive the interner)
+/// @param interner Per-compile StringInterner (see Lexer ctor)
 /// @param filename The filename for error reporting
 /// @return Pair of tokens and diagnostics
 std::pair<std::vector<Token>, std::vector<Diagnostic>>
-lex(std::string_view source, std::string_view filename = "<input>");
+lex(std::string_view source, StringInterner& interner,
+    std::string_view filename = "<input>");
 
 } // namespace akkado

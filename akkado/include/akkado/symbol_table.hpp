@@ -2,6 +2,7 @@
 
 #include "builtins.hpp"
 #include "ast.hpp"
+#include "string_interner.hpp"
 #include "typed_value.hpp"
 #include <cstdint>
 #include <memory>
@@ -137,7 +138,7 @@ struct RecordTypeInfo {
 /// Symbol entry in the symbol table
 struct Symbol {
     SymbolKind kind;
-    std::uint32_t name_hash;       // FNV-1a hash of name
+    SymbolId name_id = NULL_SYMBOL; // PRD Phase 5 (F12): interner id (was name_hash)
     std::string name;              // Original name (for error messages)
     std::uint16_t buffer_index;    // Allocated buffer for variables/params
 
@@ -183,9 +184,38 @@ struct Symbol {
 };
 
 /// Scoped symbol table with lexical scoping
+///
+/// PRD prd-parser-codegen-correctness.md Phase 5 (F12): the internal
+/// scopes_ map is now keyed on `SymbolId` (interner-assigned u32) so
+/// lookups skip the per-call FNV-1a recomputation that the old
+/// `Symbol.name_hash` path required. Callers that already hold a
+/// `SymbolId` (e.g. from `Node::as_identifier()`) hit the fast path.
+/// Callers that hand a `std::string_view` route through a convenience
+/// overload that interns first.
+///
+/// The default ctor leaves the table empty (one initial scope, no
+/// builtins). Production code passes a `StringInterner&` so
+/// `register_builtins()` can intern each builtin name. Unit tests
+/// that exercise scope mechanics keep using the default ctor.
 class SymbolTable {
 public:
     SymbolTable();
+    /// Construct with an interner and pre-register all builtin
+    /// functions + aliases.
+    explicit SymbolTable(StringInterner& interner);
+
+    /// Attach an interner post-construction. Required before any
+    /// `string_view`-based define/lookup overload is called.
+    void set_interner(StringInterner& interner) { interner_ = &interner; }
+
+    /// Returns the attached interner, or nullptr if none. Tooling that
+    /// renders diagnostics uses this to resolve `Symbol.name_id` ->
+    /// view (Symbol.name remains the authoritative diagnostic text).
+    [[nodiscard]] const StringInterner* interner() const { return interner_; }
+
+    /// Register all builtins. Requires an interner to be attached.
+    /// Idempotent — safe to call once after `set_interner`.
+    void register_builtins(StringInterner& interner);
 
     /// Push a new scope (entering block/closure)
     void push_scope();
@@ -227,11 +257,13 @@ public:
     /// Define a const variable placeholder (value not yet known)
     bool define_const_placeholder(std::string_view name);
 
-    /// Lookup a symbol by name (searches all scopes, innermost first)
+    /// Lookup a symbol by name (searches all scopes, innermost first).
+    /// Requires an attached interner; routes through `find()` so an
+    /// absent name does not bloat the interner.
     [[nodiscard]] std::optional<Symbol> lookup(std::string_view name) const;
 
-    /// Lookup by hash (faster for repeated lookups)
-    [[nodiscard]] std::optional<Symbol> lookup(std::uint32_t name_hash) const;
+    /// Lookup by SymbolId (PRD Phase 5 — no FNV recomputation).
+    [[nodiscard]] std::optional<Symbol> lookup(SymbolId id) const;
 
     /// Check if a name is defined in the current scope only
     [[nodiscard]] bool is_defined_in_current_scope(std::string_view name) const;
@@ -253,21 +285,22 @@ public:
     /// needs to enumerate top-level bindings (e.g. shape-index serializer
     /// for editor autocomplete). Returns an empty reference if the table is
     /// in an unexpected state — callers should treat empty as "no globals".
-    [[nodiscard]] const std::unordered_map<std::uint32_t, Symbol>& globals() const {
-        static const std::unordered_map<std::uint32_t, Symbol> empty;
+    [[nodiscard]] const std::unordered_map<SymbolId, Symbol>& globals() const {
+        static const std::unordered_map<SymbolId, Symbol> empty;
         return scopes_.empty() ? empty : scopes_.front();
     }
 
 private:
-    /// Each scope is a hash map from name_hash to Symbol
-    std::vector<std::unordered_map<std::uint32_t, Symbol>> scopes_;
+    /// Each scope is a hash map from SymbolId to Symbol (PRD Phase 5).
+    std::vector<std::unordered_map<SymbolId, Symbol>> scopes_;
 
     /// Hidden symbols per module (for namespace imports).
-    /// Key: module canonical path → inner map: name_hash → Symbol
-    std::unordered_map<std::string, std::unordered_map<std::uint32_t, Symbol>> hidden_symbols_;
+    /// Key: module canonical path → inner map: SymbolId → Symbol
+    std::unordered_map<std::string, std::unordered_map<SymbolId, Symbol>> hidden_symbols_;
 
-    /// Pre-populate with builtins
-    void register_builtins();
+    /// Per-compile string interner (non-owning). Required for
+    /// string_view-based define/lookup overloads.
+    StringInterner* interner_ = nullptr;
 };
 
 } // namespace akkado

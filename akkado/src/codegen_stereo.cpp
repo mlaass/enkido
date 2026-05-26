@@ -2,6 +2,8 @@
 // Handles stereo(), left(), right(), pan(), width(), ms_encode(), ms_decode(), pingpong()
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include <algorithm>
 
@@ -582,7 +584,7 @@ TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
         const Node& v = ast_->arena[idx];
         return v.type == NodeType::Identifier &&
                std::holds_alternative<Node::IdentifierData>(v.data) &&
-               v.as_identifier() == "_";
+               ctx_->interner->view(v.as_identifier()) == "_";
     };
 
     // Resolve a dry/wet extended-param slot: missing or `_` → leave as

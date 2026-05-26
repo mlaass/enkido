@@ -2,6 +2,8 @@
 // Extracted from codegen.cpp for maintainability
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/const_eval.hpp"
 #include <cstring>
@@ -42,15 +44,13 @@ static std::optional<ConstValue> resolve_const_value(
         }
 
         case NodeType::Identifier: {
-            std::string name;
+            // Phase 5 (F12): lookup by SymbolId — no rehash. The const_eval
+            // helper doesn't need to materialize the name as a string.
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                name = n.as_identifier();
-            }
-            if (name.empty()) return std::nullopt;
-
-            auto sym = symbols.lookup(name);
-            if (sym && sym->is_const && sym->const_value.has_value()) {
-                return *sym->const_value;
+                auto sym = symbols.lookup(n.as_identifier());
+                if (sym && sym->is_const && sym->const_value.has_value()) {
+                    return *sym->const_value;
+                }
             }
             return std::nullopt;
         }
@@ -100,7 +100,7 @@ TypedValue CodeGenerator::handle_user_function_call(
         }
 
         if (all_const) {
-            ConstEvaluator evaluator(*ast_, *symbols_);
+            ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
             auto result = evaluator.eval_const_fn_call(func, const_args, n.location);
 
             for (const auto& diag : evaluator.diagnostics()) {
@@ -194,7 +194,7 @@ TypedValue CodeGenerator::handle_user_function_call(
             const Node& an = ast_->arena[a];
             if (an.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(an.data) &&
-                an.as_identifier() == "_") {
+                ctx_->interner->view(an.as_identifier()) == "_") {
                 callable = false;  // `_` -> inline path fills the default
                 break;
             }
@@ -366,7 +366,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                 std::uint32_t param_hash = fnv1a_hash(param.name);
                 param_string_defaults_[param_hash] = *param.default_string;
             } else if (param.default_node != NULL_NODE) {
-                ConstEvaluator evaluator(*ast_, *symbols_);
+                ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
                 auto result = evaluator.evaluate(param.default_node);
                 for (const auto& diag : evaluator.diagnostics()) {
                     diagnostics_.push_back(diag);
@@ -459,7 +459,7 @@ TypedValue CodeGenerator::handle_user_function_call(
             const Node& arg_inner = ast_->arena[args[i]];
             bool is_placeholder = (arg_inner.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(arg_inner.data) &&
-                arg_inner.as_identifier() == "_");
+                ctx_->interner->view(arg_inner.as_identifier()) == "_");
 
             if (is_placeholder) {
                 // Use parameter default (same logic as trailing omission below)
@@ -482,7 +482,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     emit(push_inst);
                 } else if (func.params[i].default_node != NULL_NODE &&
                            !func.params[i].default_string.has_value()) {
-                    ConstEvaluator evaluator(*ast_, *symbols_);
+                    ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
                     auto result = evaluator.evaluate(func.params[i].default_node);
                     for (const auto& diag : evaluator.diagnostics()) {
                         diagnostics_.push_back(diag);
@@ -735,7 +735,7 @@ TypedValue CodeGenerator::handle_user_function_call(
         } else if (func.params[i].default_node != NULL_NODE &&
                    !func.params[i].default_string.has_value()) {
             // Expression default: evaluate at compile time via ConstEvaluator
-            ConstEvaluator evaluator(*ast_, *symbols_);
+            ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
             auto result = evaluator.evaluate(func.params[i].default_node);
 
             for (const auto& diag : evaluator.diagnostics()) {
@@ -842,7 +842,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     type_it->second.type == ValueType::Pattern) {
                     Symbol sym{};
                     sym.kind = SymbolKind::Variable;
-                    sym.name_hash = fnv1a_hash(func.params[i].name);
+                    sym.name_id = ctx_->interner->intern(func.params[i].name);
                     sym.name = func.params[i].name;
                     sym.buffer_index = param_bufs[i];
                     sym.typed_value = type_it->second;
@@ -868,7 +868,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                     // (and rejectable) inside the function body.
                     Symbol sym{};
                     sym.kind = SymbolKind::Variable;
-                    sym.name_hash = fnv1a_hash(func.params[i].name);
+                    sym.name_id = ctx_->interner->intern(func.params[i].name);
                     sym.name = func.params[i].name;
                     sym.buffer_index = param_bufs[i];
                     sym.typed_value = type_it->second;
@@ -966,7 +966,7 @@ void CodeGenerator::count_fn_calls(NodeIndex node) {
     const Node& n = ast_->arena[node];
     if (n.type == NodeType::Call &&
         std::holds_alternative<Node::IdentifierData>(n.data)) {
-        fn_call_counts_[n.as_identifier()]++;
+        fn_call_counts_[std::string(ctx_->interner->view(n.as_identifier()))]++;
     }
     NodeIndex child = n.first_child;
     while (child != NULL_NODE) {
@@ -1373,7 +1373,7 @@ TypedValue CodeGenerator::handle_function_value_call(
                 std::uint32_t param_hash = fnv1a_hash(param.name);
                 param_string_defaults_[param_hash] = *param.default_string;
             } else if (param.default_node != NULL_NODE) {
-                ConstEvaluator evaluator(*ast_, *symbols_);
+                ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
                 auto result = evaluator.evaluate(param.default_node);
                 for (const auto& diag : evaluator.diagnostics()) {
                     diagnostics_.push_back(diag);
@@ -1470,7 +1470,7 @@ TypedValue CodeGenerator::handle_function_value_call(
         } else if (func.params[i].default_node != NULL_NODE &&
                    !func.params[i].default_string.has_value()) {
             // Expression default: evaluate at compile time via ConstEvaluator
-            ConstEvaluator evaluator(*ast_, *symbols_);
+            ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
             auto result = evaluator.evaluate(func.params[i].default_node);
 
             for (const auto& diag : evaluator.diagnostics()) {
@@ -1564,7 +1564,7 @@ TypedValue CodeGenerator::handle_function_value_call(
             const Node& arg_node = ast_->arena[args[i]];
             if (arg_node.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(arg_node.data)) {
-                auto asym = symbols_->lookup(arg_node.as_identifier());
+                auto asym = symbols_->lookup(ctx_->interner->view(arg_node.as_identifier()));
                 if (asym && asym->kind == SymbolKind::Record && asym->record_type) {
                     record_type = asym->record_type;
                 }
@@ -1595,7 +1595,7 @@ TypedValue CodeGenerator::handle_function_value_call(
     }
 
     // Push semantic path for unique state IDs
-    const std::string& callee_name = n.as_identifier();
+    std::string callee_name = std::string(ctx_->interner->view(n.as_identifier()));
     std::uint32_t count = call_counters_[callee_name]++;
     push_path(callee_name + "#" + std::to_string(count));
 
@@ -1712,7 +1712,7 @@ TypedValue CodeGenerator::handle_closure(NodeIndex node, const Node& n) {
             if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 param_names.push_back(child_node.as_closure_param().name);
             } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                param_names.push_back(child_node.as_identifier());
+                param_names.push_back(std::string(ctx_->interner->view(child_node.as_identifier())));
             }
         }
     }
@@ -1776,7 +1776,7 @@ bool CodeGenerator::is_compile_time_match(NodeIndex node, const Node& n) const {
         if (std::holds_alternative<Node::ClosureParamData>(scrutinee_ptr->data)) {
             param_name = scrutinee_ptr->as_closure_param().name;
         } else if (std::holds_alternative<Node::IdentifierData>(scrutinee_ptr->data)) {
-            param_name = scrutinee_ptr->as_identifier();
+            param_name = std::string(ctx_->interner->view(scrutinee_ptr->as_identifier()));
         }
 
         if (!param_name.empty()) {
@@ -1841,7 +1841,7 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
             if (std::holds_alternative<Node::ClosureParamData>(scrutinee_ptr->data)) {
                 param_name = scrutinee_ptr->as_closure_param().name;
             } else if (std::holds_alternative<Node::IdentifierData>(scrutinee_ptr->data)) {
-                param_name = scrutinee_ptr->as_identifier();
+                param_name = std::string(ctx_->interner->view(scrutinee_ptr->as_identifier()));
             }
 
             if (!param_name.empty()) {
@@ -2286,7 +2286,7 @@ TypedValue CodeGenerator::handle_match_expr(NodeIndex node, const Node& n) {
 // Both opcodes share the same state_id to operate on the same delay buffer
 TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
     // Extract function name to determine time unit
-    const std::string& func_name = n.as_identifier();
+    std::string func_name = std::string(ctx_->interner->view(n.as_identifier()));
 
     // Determine time unit from function name
     // 0 = seconds (default), 1 = milliseconds, 2 = samples
@@ -2339,7 +2339,7 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
             param_name = child_node.as_closure_param().name;
             param_count++;
         } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-            param_name = child_node.as_identifier();
+            param_name = ctx_->interner->view(child_node.as_identifier());
             param_count++;
         }
     }
@@ -2505,7 +2505,7 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
 TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     using codegen::extract_call_args;
 
-    const std::string& func_name = n.as_identifier();
+    std::string func_name = std::string(ctx_->interner->view(n.as_identifier()));
 
     // Determine mode from function name
     std::uint8_t mode = 0;  // 0=poly
@@ -2809,7 +2809,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     // non-constant expression -> E419.
     auto eval_poly_default = [&](NodeIndex dn, float fallback) -> float {
         if (dn == NULL_NODE) return fallback;
-        ConstEvaluator evaluator(*ast_, *symbols_);
+        ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
         auto result = evaluator.evaluate(dn);
         for (const auto& diag : evaluator.diagnostics()) {
             diagnostics_.push_back(diag);
@@ -2898,7 +2898,7 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         Symbol sym;
         sym.kind = SymbolKind::Variable;
         sym.name = rest_name;
-        sym.name_hash = fnv1a_hash(rest_name);
+        sym.name_id = ctx_->interner->intern(rest_name);
         sym.buffer_index = bank_base;
         sym.typed_value = TypedValue::make_record(std::move(rec), bank_base);
         symbols_->define(sym);

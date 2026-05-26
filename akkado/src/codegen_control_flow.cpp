@@ -5,6 +5,8 @@
 // loop()/LOOP_STATIC lowering will join this file in Part B.
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/codegen/arrays.hpp"
 #include "akkado/const_eval.hpp"
 #include <cmath>
@@ -231,7 +233,7 @@ TypedValue CodeGenerator::handle_loop(NodeIndex node, const Node& n) {
     }
 
     // --- Constant-fold the iteration count --------------------------------
-    ConstEvaluator evaluator(*ast_, *symbols_);
+    ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
     auto count_val = evaluator.evaluate(count_node);
     for (const auto& diag : evaluator.diagnostics()) {
         diagnostics_.push_back(diag);

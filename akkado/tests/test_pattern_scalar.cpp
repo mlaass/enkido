@@ -7,8 +7,10 @@
 #include "akkado/lexer.hpp"
 #include "akkado/mini_lexer.hpp"
 #include "akkado/mini_parser.hpp"
+#include "test_lex_helper.hpp"
 
 using namespace akkado;
+using akkado::test_helpers::lex;
 
 // =============================================================================
 // Phase A: lexer prefixes + numeric atom mode
@@ -21,7 +23,7 @@ TEST_CASE("Typed pattern prefixes lex correctly", "[lexer][prefixes]") {
         REQUIRE(tokens.size() == 3);  // ValuePat, String, Eof
         CHECK(tokens[0].type == TokenType::ValuePat);
         CHECK(tokens[1].type == TokenType::String);
-        CHECK(tokens[1].as_string() == "<0 0.5 -0.5>");
+        CHECK(tokens[1].as_string_lit() == "<0 0.5 -0.5>");
     }
 
     SECTION("n\"…\" produces NotePat token") {
@@ -51,7 +53,7 @@ TEST_CASE("Typed pattern prefixes lex correctly", "[lexer][prefixes]") {
         // 4 identifiers + Eof
         REQUIRE(tokens.size() == 5);
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "value");
+        CHECK(test_helpers::ident_text(tokens[0].as_identifier()) == "value");
         CHECK(tokens[1].type == TokenType::Identifier);
         CHECK(tokens[2].type == TokenType::Identifier);
         CHECK(tokens[3].type == TokenType::Identifier);
@@ -61,7 +63,7 @@ TEST_CASE("Typed pattern prefixes lex correctly", "[lexer][prefixes]") {
         auto [tokens, diags] = lex("v + 1");
         REQUIRE(diags.empty());
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "v");
+        CHECK(test_helpers::ident_text(tokens[0].as_identifier()) == "v");
     }
 
     SECTION("backtick form works for typed prefixes too") {
@@ -69,7 +71,7 @@ TEST_CASE("Typed pattern prefixes lex correctly", "[lexer][prefixes]") {
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 3);
         CHECK(tokens[0].type == TokenType::ValuePat);
-        CHECK(tokens[1].as_string() == "<0 0.5>");
+        CHECK(tokens[1].as_string_lit() == "<0 0.5>");
     }
 }
 

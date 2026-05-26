@@ -408,10 +408,16 @@ class SequenceCompiler;
 class CodeGenerator {
 public:
     /// Construct a codegen bound to a per-compile context. The context
-    /// owns the VoicingRegistry (Phase 4 / F14) and — once Phase 5
-    /// lands — the StringInterner. Codegen does NOT own the context;
-    /// caller must keep it alive for the duration of `generate()`.
+    /// owns the VoicingRegistry (Phase 4 / F14) and the StringInterner
+    /// (Phase 5 / F12). Codegen does NOT own the context; caller must
+    /// keep it alive for the duration of `generate()`.
     explicit CodeGenerator(CompileContext& ctx);
+
+    /// Accessor used by free helpers in codegen_patterns.cpp etc. that
+    /// take a CodeGenerator reference. Returns the per-compile
+    /// context. Never null.
+    [[nodiscard]] CompileContext& ctx() { return *ctx_; }
+    [[nodiscard]] const CompileContext& ctx() const { return *ctx_; }
 
     /// Generate bytecode from analyzed AST
     /// @param ast The transformed AST (after pipe rewriting)

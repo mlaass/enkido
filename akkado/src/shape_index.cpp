@@ -136,7 +136,8 @@ NodeIndex chain_receiver(const Ast& ast, NodeIndex node) {
     return node;
 }
 
-bool is_pattern_producer(const Ast& ast, NodeIndex node) {
+bool is_pattern_producer(const Ast& ast, NodeIndex node,
+                         const StringInterner& interner) {
     if (node == NULL_NODE) return false;
     const Node& n = ast.arena[node];
     if (n.type == NodeType::MiniLiteral) return true;
@@ -147,7 +148,7 @@ bool is_pattern_producer(const Ast& ast, NodeIndex node) {
     if (n.type == NodeType::Call && n.first_child != NULL_NODE) {
         const Node& callee = ast.arena[n.first_child];
         if (callee.type == NodeType::Identifier) {
-            const std::string& name = callee.as_identifier();
+            std::string_view name = interner.view(callee.as_identifier());
             return name == "seq" || name == "timeline" ||
                    name == "sample" || name == "chord";
         }
@@ -157,12 +158,13 @@ bool is_pattern_producer(const Ast& ast, NodeIndex node) {
 
 // True when `rhs` is a method-call chain rooted at a pattern producer or
 // a direct pattern producer.
-bool rhs_is_pattern(const Ast& ast, NodeIndex rhs) {
+bool rhs_is_pattern(const Ast& ast, NodeIndex rhs,
+                    const StringInterner& interner) {
     if (rhs == NULL_NODE) return false;
     const Node& n = ast.arena[rhs];
-    if (is_pattern_producer(ast, rhs)) return true;
+    if (is_pattern_producer(ast, rhs, interner)) return true;
     if (n.type == NodeType::MethodCall) {
-        return is_pattern_producer(ast, chain_receiver(ast, rhs));
+        return is_pattern_producer(ast, chain_receiver(ast, rhs), interner);
     }
     return false;
 }
@@ -170,7 +172,8 @@ bool rhs_is_pattern(const Ast& ast, NodeIndex rhs) {
 // Walk a method-call chain from `outer` towards the receiver, collecting
 // the first-string-arg of every `.set("name", …)` call. Names appear in
 // chain order (outermost first); duplicates kept by insertion order.
-std::vector<std::string> collect_chain_set_names(const Ast& ast, NodeIndex outer) {
+std::vector<std::string> collect_chain_set_names(const Ast& ast, NodeIndex outer,
+                                                  const StringInterner& interner) {
     std::vector<std::string> names;
     std::vector<NodeIndex> stack;
     NodeIndex cur = outer;
@@ -182,7 +185,7 @@ std::vector<std::string> collect_chain_set_names(const Ast& ast, NodeIndex outer
     for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
         const Node& mc = ast.arena[*it];
         if (!std::holds_alternative<Node::IdentifierData>(mc.data)) continue;
-        if (mc.as_identifier() != "set") continue;
+        if (interner.view(mc.as_identifier()) != "set") continue;
         // First arg sits as the second child (after the receiver).
         NodeIndex arg = ast.arena[*it].first_child;
         if (arg != NULL_NODE) arg = ast.arena[arg].next_sibling;
@@ -260,6 +263,7 @@ std::pair<bool, NodeIndex> array_all_records(const Ast& ast, NodeIndex arr_node)
 
 void emit_binding(std::ostringstream& json,
                   const Ast& ast,
+                  const StringInterner& interner,
                   std::string_view name,
                   NodeIndex rhs) {
     json << "\"" << escape_json(name) << "\":{";
@@ -276,11 +280,11 @@ void emit_binding(std::ostringstream& json,
         return;
     }
 
-    if (rhs_is_pattern(ast, rhs)) {
+    if (rhs_is_pattern(ast, rhs, interner)) {
         json << "\"kind\":\"pattern\",";
         std::vector<std::string> custom_names;
         if (n.type == NodeType::MethodCall) {
-            custom_names = collect_chain_set_names(ast, rhs);
+            custom_names = collect_chain_set_names(ast, rhs, interner);
         }
         emit_pattern_fields(json, custom_names);
         json << "}";
@@ -310,18 +314,21 @@ struct AssignmentRow {
     NodeIndex rhs;
 };
 
-bool extract_top_level_assignment(const Ast& ast, NodeIndex idx, AssignmentRow& out) {
+bool extract_top_level_assignment(const Ast& ast, NodeIndex idx,
+                                  const StringInterner& interner,
+                                  AssignmentRow& out) {
     if (idx == NULL_NODE) return false;
     const Node& n = ast.arena[idx];
     if (n.type != NodeType::Assignment) return false;
     if (!std::holds_alternative<Node::IdentifierData>(n.data)) return false;
-    out.name = n.as_identifier();
+    out.name = std::string(interner.view(n.as_identifier()));
     out.rhs = n.first_child;
     return true;
 }
 
 // Walk siblings of a Program node to collect top-level assignments.
-std::vector<AssignmentRow> collect_top_level_assignments(const Ast& ast) {
+std::vector<AssignmentRow> collect_top_level_assignments(const Ast& ast,
+                                                          const StringInterner& interner) {
     std::vector<AssignmentRow> rows;
     if (ast.root == NULL_NODE) return rows;
     const Node& prog = ast.arena[ast.root];
@@ -329,7 +336,7 @@ std::vector<AssignmentRow> collect_top_level_assignments(const Ast& ast) {
     std::unordered_set<std::string> seen;
     while (stmt != NULL_NODE) {
         AssignmentRow row;
-        if (extract_top_level_assignment(ast, stmt, row)) {
+        if (extract_top_level_assignment(ast, stmt, interner, row)) {
             if (seen.insert(row.name).second) {
                 rows.push_back(std::move(row));
             }
@@ -382,6 +389,7 @@ NodeIndex deepest_pipe_covering(const Ast& ast,
 // PipeBinding wrapping one) that maps to a known top-level assignment.
 NodeIndex resolve_pipe_lhs_rhs(const Ast& ast,
                                NodeIndex pipe_idx,
+                               const StringInterner& interner,
                                const std::vector<AssignmentRow>& bindings) {
     if (pipe_idx == NULL_NODE) return NULL_NODE;
     const Node& pipe = ast.arena[pipe_idx];
@@ -399,7 +407,7 @@ NodeIndex resolve_pipe_lhs_rhs(const Ast& ast,
     };
 
     if (lhs.type == NodeType::Identifier) {
-        return find_binding(lhs.as_identifier());
+        return find_binding(std::string(interner.view(lhs.as_identifier())));
     }
 
     // `expr as e |> ...`: the LHS is a PipeBinding wrapping the producer.
@@ -408,7 +416,7 @@ NodeIndex resolve_pipe_lhs_rhs(const Ast& ast,
         if (inner == NULL_NODE) return NULL_NODE;
         const Node& inner_n = ast.arena[inner];
         if (inner_n.type == NodeType::Identifier) {
-            return find_binding(inner_n.as_identifier());
+            return find_binding(std::string(interner.view(inner_n.as_identifier())));
         }
         // The producer is an inline pat(...) or method-chain — return the
         // node directly so emit_binding-style logic can read it.
@@ -426,15 +434,22 @@ std::string shape_index_json(std::string_view source,
     std::ostringstream json;
     json << "{\"version\":1,\"sourceHash\":" << hash_source(source);
 
-    auto [tokens, lex_diags] = lex(source, "<shape-index>");
+    // PRD prd-parser-codegen-correctness.md Phase 5 (F12): shape_index
+    // re-lexes/re-parses for its own purposes (audit F1 / PRD-2 covers
+    // sharing the main compile's AST). It owns a local interner so
+    // identifier tokens get SymbolIds — required by the post-Phase-5
+    // Lexer/Parser ctor signatures.
+    StringInterner interner;
+
+    auto [tokens, lex_diags] = lex(source, interner, "<shape-index>");
     if (tokens.empty()) {
         json << ",\"bindings\":{}}";
         return json.str();
     }
 
-    auto [ast, parse_diags] = parse(std::move(tokens), source, "<shape-index>");
+    auto [ast, parse_diags] = parse(std::move(tokens), source, interner, "<shape-index>");
 
-    auto bindings = collect_top_level_assignments(ast);
+    auto bindings = collect_top_level_assignments(ast, interner);
 
     json << ",\"bindings\":{";
     bool first = true;
@@ -445,24 +460,24 @@ std::string shape_index_json(std::string_view source,
         // everything else so the JSON stays small (numbers, strings, etc.
         // need no completion data).
         const bool is_record = (rhs_n.type == NodeType::RecordLit);
-        const bool is_pattern = rhs_is_pattern(ast, row.rhs);
+        const bool is_pattern = rhs_is_pattern(ast, row.rhs, interner);
         const bool is_array = (rhs_n.type == NodeType::ArrayLit);
         if (!is_record && !is_pattern && !is_array) continue;
 
         if (!first) json << ",";
         first = false;
-        emit_binding(json, ast, row.name, row.rhs);
+        emit_binding(json, ast, interner, row.name, row.rhs);
     }
     json << "}";
 
     if (cursor_offset != SHAPE_INDEX_NO_CURSOR) {
         NodeIndex pipe_idx = deepest_pipe_covering(ast, ast.root, cursor_offset);
         if (pipe_idx != NULL_NODE) {
-            NodeIndex producer = resolve_pipe_lhs_rhs(ast, pipe_idx, bindings);
-            if (producer != NULL_NODE && rhs_is_pattern(ast, producer)) {
+            NodeIndex producer = resolve_pipe_lhs_rhs(ast, pipe_idx, interner, bindings);
+            if (producer != NULL_NODE && rhs_is_pattern(ast, producer, interner)) {
                 std::vector<std::string> custom_names;
                 if (ast.arena[producer].type == NodeType::MethodCall) {
-                    custom_names = collect_chain_set_names(ast, producer);
+                    custom_names = collect_chain_set_names(ast, producer, interner);
                 }
                 json << ",\"patternHole\":{\"kind\":\"pattern\",";
                 emit_pattern_fields(json, custom_names);

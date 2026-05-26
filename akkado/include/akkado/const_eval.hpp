@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "string_interner.hpp"
 #include "symbol_table.hpp"
 #include "diagnostics.hpp"
 #include <cstdint>
@@ -21,7 +22,10 @@ public:
     /// Construct evaluator with AST and symbol table context
     /// @param ast The transformed AST (post-analyzer)
     /// @param symbols Symbol table with const definitions
-    ConstEvaluator(const Ast& ast, const SymbolTable& symbols);
+    /// @param interner Per-compile interner — resolves
+    ///        `IdentifierData::name` (SymbolId post-Phase-5) to text.
+    ConstEvaluator(const Ast& ast, const SymbolTable& symbols,
+                   const StringInterner& interner);
 
     /// Evaluate an AST node to a compile-time constant
     /// @param node The node to evaluate
@@ -76,6 +80,7 @@ private:
     // Context
     const Ast* ast_;
     const SymbolTable* symbols_;
+    const StringInterner* interner_ = nullptr;  // PRD Phase 5 (F12)
     std::vector<Diagnostic> diagnostics_;
     std::string filename_;
 

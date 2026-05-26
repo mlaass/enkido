@@ -1,9 +1,39 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "akkado/lexer.hpp"
+#include "akkado/string_interner.hpp"
 
 using namespace akkado;
 using Catch::Matchers::WithinRel;
+
+namespace {
+// Phase 5 (F12): the public `lex(source, interner, filename)` API
+// requires a per-compile interner. test_lexer's TUs predate that
+// signature change; this helper wraps the new API with a per-thread
+// interner so the existing `lex(source)` and `lex(source, filename)`
+// shapes keep working unchanged. Identifier tokens carry SymbolIds
+// resolved against the shared interner; `tok_text(tok)` below picks
+// the right accessor based on token type so the existing
+// `tok.as_string() == "..."` assertions translate cleanly.
+inline StringInterner& shared_interner() {
+    static thread_local StringInterner interner;
+    return interner;
+}
+inline auto lex(std::string_view source, std::string_view filename = "<input>") {
+    return akkado::lex(source, shared_interner(), filename);
+}
+// Resolve an Identifier token's text via the shared interner, or
+// return string-lit content for String / Directive / Error tokens.
+// Returns an owned std::string so subsequent test comparisons (`== "..."`)
+// don't dangle if the interned source goes out of scope before the
+// next test case (which can happen across SECTION boundaries).
+inline std::string tok_text(const Token& t) {
+    if (t.type == TokenType::Identifier) {
+        return std::string(shared_interner().view(t.as_identifier()));
+    }
+    return t.as_string_lit();
+}
+} // namespace
 
 TEST_CASE("Lexer basic tokens", "[lexer]") {
     SECTION("empty source") {
@@ -305,7 +335,7 @@ TEST_CASE("Lexer pitch literals", "[lexer]") {
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].as_string() == "hello");
+        CHECK(tok_text(tokens[0]) == "hello");
     }
 }
 
@@ -317,7 +347,7 @@ TEST_CASE("Lexer no longer recognizes ChordLit syntax", "[lexer]") {
         auto [tokens, diags] = lex("C4");
         REQUIRE(tokens.size() == 2);
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "C4");
+        CHECK(tok_text(tokens[0]) == "C4");
     }
 
     SECTION("pitch literal format still works") {
@@ -337,7 +367,7 @@ TEST_CASE("Lexer strings", "[lexer]") {
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].as_string() == "hello world");
+        CHECK(tok_text(tokens[0]) == "hello world");
     }
 
     SECTION("single quoted") {
@@ -346,7 +376,7 @@ TEST_CASE("Lexer strings", "[lexer]") {
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].as_string() == "hello");
+        CHECK(tok_text(tokens[0]) == "hello");
     }
 
     SECTION("backtick quoted") {
@@ -355,7 +385,7 @@ TEST_CASE("Lexer strings", "[lexer]") {
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].as_string() == "mini notation");
+        CHECK(tok_text(tokens[0]) == "mini notation");
     }
 
     SECTION("escape sequences") {
@@ -363,7 +393,7 @@ TEST_CASE("Lexer strings", "[lexer]") {
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
-        CHECK(tokens[0].as_string() == "line1\nline2\ttab\\slash");
+        CHECK(tok_text(tokens[0]) == "line1\nline2\ttab\\slash");
     }
 
     SECTION("multiline string") {
@@ -371,7 +401,7 @@ TEST_CASE("Lexer strings", "[lexer]") {
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 2);
 
-        CHECK(tokens[0].as_string() == "line1\nline2\nline3");
+        CHECK(tok_text(tokens[0]) == "line1\nline2\nline3");
     }
 
     SECTION("unterminated string error") {
@@ -388,13 +418,13 @@ TEST_CASE("Lexer identifiers", "[lexer]") {
         REQUIRE(tokens.size() == 4);
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "foo");
+        CHECK(tok_text(tokens[0]) == "foo");
 
         CHECK(tokens[1].type == TokenType::Identifier);
-        CHECK(tokens[1].as_string() == "bar");
+        CHECK(tok_text(tokens[1]) == "bar");
 
         CHECK(tokens[2].type == TokenType::Identifier);
-        CHECK(tokens[2].as_string() == "baz");
+        CHECK(tok_text(tokens[2]) == "baz");
     }
 
     SECTION("identifiers with underscores and numbers") {
@@ -402,10 +432,10 @@ TEST_CASE("Lexer identifiers", "[lexer]") {
         REQUIRE(diags.empty());
         REQUIRE(tokens.size() == 5);
 
-        CHECK(tokens[0].as_string() == "foo_bar");
-        CHECK(tokens[1].as_string() == "baz123");
-        CHECK(tokens[2].as_string() == "_private");
-        CHECK(tokens[3].as_string() == "x1y2z3");
+        CHECK(tok_text(tokens[0]) == "foo_bar");
+        CHECK(tok_text(tokens[1]) == "baz123");
+        CHECK(tok_text(tokens[2]) == "_private");
+        CHECK(tok_text(tokens[3]) == "x1y2z3");
     }
 
     SECTION("underscore alone is token") {
@@ -434,7 +464,7 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         REQUIRE(tokens.size() == 2);
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "pat");
+        CHECK(tok_text(tokens[0]) == "pat");
     }
 
     SECTION("p\"...\" splits as identifier + string (post-removal)") {
@@ -443,9 +473,9 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         REQUIRE(tokens.size() == 3); // Identifier, String, Eof
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "p");
+        CHECK(tok_text(tokens[0]) == "p");
         CHECK(tokens[1].type == TokenType::String);
-        CHECK(tokens[1].as_string() == "c4 e4");
+        CHECK(tok_text(tokens[1]) == "c4 e4");
     }
 
     SECTION("p`...` splits as identifier + string (post-removal)") {
@@ -454,9 +484,9 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         REQUIRE(tokens.size() == 3); // Identifier, String, Eof
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "p");
+        CHECK(tok_text(tokens[0]) == "p");
         CHECK(tokens[1].type == TokenType::String);
-        CHECK(tokens[1].as_string() == "c4 e4");
+        CHECK(tok_text(tokens[1]) == "c4 e4");
     }
 
     SECTION("p followed by non-quote is identifier") {
@@ -464,7 +494,7 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         REQUIRE(diags.empty());
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "p");
+        CHECK(tok_text(tokens[0]) == "p");
     }
 
     SECTION("keywords are case sensitive") {
@@ -558,10 +588,10 @@ TEST_CASE("Lexer comments", "[lexer]") {
         REQUIRE(tokens.size() == 3);
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "foo");
+        CHECK(tok_text(tokens[0]) == "foo");
 
         CHECK(tokens[1].type == TokenType::Identifier);
-        CHECK(tokens[1].as_string() == "bar");
+        CHECK(tok_text(tokens[1]) == "bar");
     }
 
     SECTION("comment at end of file") {
@@ -751,10 +781,10 @@ TEST_CASE("Lexer complex expressions", "[lexer]") {
         REQUIRE(diags.empty());
 
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "pat");
+        CHECK(tok_text(tokens[0]) == "pat");
         CHECK(tokens[1].type == TokenType::LParen);
         CHECK(tokens[2].type == TokenType::String);
-        CHECK(tokens[2].as_string() == "c4 e4 g4");
+        CHECK(tok_text(tokens[2]) == "c4 e4 g4");
     }
 
     SECTION("math expression") {
@@ -900,7 +930,7 @@ TEST_CASE("Token accessors edge cases", "[lexer]") {
     SECTION("as_string for escaped characters") {
         auto [tokens, diags] = lex(R"("tab\there")");
         REQUIRE(diags.empty());
-        CHECK(tokens[0].as_string() == "tab\there");
+        CHECK(tok_text(tokens[0]) == "tab\there");
     }
 }
 
@@ -911,7 +941,7 @@ TEST_CASE("Lexer timeline string prefix", "[lexer][timeline]") {
         REQUIRE(tokens.size() >= 3);
         CHECK(tokens[0].type == TokenType::Timeline);
         CHECK(tokens[1].type == TokenType::String);
-        CHECK(tokens[1].as_string() == "__/''");
+        CHECK(tok_text(tokens[1]) == "__/''");
     }
 
     SECTION("t followed by backtick is Timeline token") {
@@ -931,6 +961,86 @@ TEST_CASE("Lexer timeline string prefix", "[lexer][timeline]") {
         auto [tokens, diags] = lex("total = 10");
         REQUIRE(diags.empty());
         CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[0].as_string() == "total");
+        CHECK(tok_text(tokens[0]) == "total");
     }
+}
+
+// ============================================================================
+// PRD prd-parser-codegen-correctness.md Phase 5 (F12): StringInterner +
+// Token shape change regression tests. Lock the no-rehash + SymbolId
+// invariants so future refactors can't silently regress them.
+// ============================================================================
+
+TEST_CASE("F12: Identifier tokens carry SymbolId, identical strings share an id",
+          "[F12][interner]") {
+    StringInterner interner;
+    auto [tokens, diags] = akkado::lex("foo bar foo", interner);
+    REQUIRE(diags.empty());
+    REQUIRE(tokens.size() == 4);  // foo, bar, foo, Eof
+
+    CHECK(tokens[0].type == TokenType::Identifier);
+    CHECK(tokens[1].type == TokenType::Identifier);
+    CHECK(tokens[2].type == TokenType::Identifier);
+
+    SymbolId a = tokens[0].as_identifier();
+    SymbolId b = tokens[1].as_identifier();
+    SymbolId c = tokens[2].as_identifier();
+
+    // Same string → same id; different strings → different ids.
+    CHECK(a == c);
+    CHECK(a != b);
+
+    // Resolve back to text via the interner.
+    CHECK(interner.view(a) == "foo");
+    CHECK(interner.view(b) == "bar");
+}
+
+TEST_CASE("F12: empty intern returns NULL_SYMBOL", "[F12][interner]") {
+    StringInterner interner;
+    CHECK(interner.intern("") == NULL_SYMBOL);
+    CHECK(interner.view(NULL_SYMBOL).empty());
+    CHECK(interner.hash(NULL_SYMBOL) == 0u);
+}
+
+TEST_CASE("F12: identifier-token TokenValue no longer holds std::string",
+          "[F12][token-shape]") {
+    StringInterner interner;
+    auto [tokens, diags] = akkado::lex("freq", interner);
+    REQUIRE(tokens.size() == 2);  // freq, Eof
+    REQUIRE(tokens[0].type == TokenType::Identifier);
+
+    // Structural assertion: identifier tokens hold SymbolId, not std::string.
+    CHECK(std::holds_alternative<SymbolId>(tokens[0].value));
+    CHECK_FALSE(std::holds_alternative<StringLitData>(tokens[0].value));
+
+    // And SymbolId resolves to the original text.
+    CHECK(interner.view(tokens[0].as_identifier()) == "freq");
+}
+
+TEST_CASE("F12: String tokens carry StringLitData, not SymbolId",
+          "[F12][token-shape]") {
+    StringInterner interner;
+    auto [tokens, diags] = akkado::lex(R"("hello")", interner);
+    REQUIRE(diags.empty());
+    REQUIRE(tokens.size() == 2);
+    REQUIRE(tokens[0].type == TokenType::String);
+
+    CHECK(std::holds_alternative<StringLitData>(tokens[0].value));
+    CHECK_FALSE(std::holds_alternative<SymbolId>(tokens[0].value));
+    CHECK(tokens[0].as_string_lit() == "hello");
+}
+
+TEST_CASE("F12: interned views survive source-buffer destruction",
+          "[F12][interner][lifetime]") {
+    // The interner owns its strings (Phase 5 design refinement) — a
+    // SymbolId resolved after the original source goes out of scope
+    // must still return the correct view. This is the property that
+    // lets CompileResult.symbols->lookup() keep working post-compile.
+    StringInterner interner;
+    SymbolId id;
+    {
+        std::string ephemeral = "transient_name";
+        id = interner.intern(ephemeral);
+    }  // ephemeral destroyed here
+    CHECK(interner.view(id) == "transient_name");
 }

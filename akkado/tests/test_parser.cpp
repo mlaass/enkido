@@ -2,9 +2,31 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "akkado/lexer.hpp"
 #include "akkado/parser.hpp"
+#include "akkado/string_interner.hpp"
 
 using namespace akkado;
 using Catch::Matchers::WithinRel;
+
+namespace {
+// Phase 5 (F12): the Lexer/Parser ctors now require a StringInterner.
+// Tests reuse a thread_local one so existing string-literal sources
+// keep their lexeme views alive for the program lifetime. Identifier
+// comparisons resolve through `ident_text(id)` below.
+inline StringInterner& test_interner() {
+    static thread_local StringInterner i;
+    return i;
+}
+inline auto lex(std::string_view src, std::string_view fn = "<input>") {
+    return akkado::lex(src, test_interner(), fn);
+}
+inline auto parse(std::vector<Token> tokens, std::string_view src,
+                  std::string_view fn = "<input>", bool lint = false) {
+    return akkado::parse(std::move(tokens), src, test_interner(), fn, lint);
+}
+inline std::string_view ident_text(SymbolId id) {
+    return test_interner().view(id);
+}
+} // namespace
 
 // Helper to parse source and return AST
 static Ast parse_source(std::string_view source) {
@@ -83,7 +105,7 @@ TEST_CASE("Parser literals", "[parser]") {
         auto ast = parse_ok("foo");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Identifier);
-        CHECK(ast.arena[child].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "foo");
     }
 
     SECTION("hole") {
@@ -98,7 +120,7 @@ TEST_CASE("Parser binary operators", "[parser]") {
         auto ast = parse_ok("1 + 2");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "add");
 
         // Should have two argument children
         CHECK(ast.arena.child_count(child) == 2);
@@ -108,28 +130,28 @@ TEST_CASE("Parser binary operators", "[parser]") {
         auto ast = parse_ok("5 - 3");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "sub");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "sub");
     }
 
     SECTION("multiplication") {
         auto ast = parse_ok("2 * 3");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "mul");
     }
 
     SECTION("division") {
         auto ast = parse_ok("10 / 2");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "div");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "div");
     }
 
     SECTION("power") {
         auto ast = parse_ok("2 ^ 3");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "pow");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "pow");
     }
 
     SECTION("precedence: mul before add") {
@@ -137,7 +159,7 @@ TEST_CASE("Parser binary operators", "[parser]") {
         auto ast = parse_ok("1 + 2 * 3");
         NodeIndex expr = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[expr].type == NodeType::Call);
-        CHECK(ast.arena[expr].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[expr].as_identifier()) == "add");
 
         // Second argument should be mul
         NodeIndex first_arg = ast.arena[expr].first_child;
@@ -147,7 +169,7 @@ TEST_CASE("Parser binary operators", "[parser]") {
         // The argument node contains the actual expression
         NodeIndex mul_expr = ast.arena[second_arg].first_child;
         REQUIRE(ast.arena[mul_expr].type == NodeType::Call);
-        CHECK(ast.arena[mul_expr].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[mul_expr].as_identifier()) == "mul");
     }
 
     SECTION("left associativity") {
@@ -155,13 +177,13 @@ TEST_CASE("Parser binary operators", "[parser]") {
         auto ast = parse_ok("1 - 2 - 3");
         NodeIndex expr = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[expr].type == NodeType::Call);
-        CHECK(ast.arena[expr].as_identifier() == "sub");
+        CHECK(ident_text(ast.arena[expr].as_identifier()) == "sub");
 
         // First argument should be another sub
         NodeIndex first_arg = ast.arena[expr].first_child;
         NodeIndex inner_sub = ast.arena[first_arg].first_child;
         REQUIRE(ast.arena[inner_sub].type == NodeType::Call);
-        CHECK(ast.arena[inner_sub].as_identifier() == "sub");
+        CHECK(ident_text(ast.arena[inner_sub].as_identifier()) == "sub");
     }
 }
 
@@ -175,7 +197,7 @@ TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
         auto ast = parse_ok("2 ^ 3 ^ 2");
         NodeIndex outer = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[outer].type == NodeType::Call);
-        CHECK(ast.arena[outer].as_identifier() == "pow");
+        CHECK(ident_text(ast.arena[outer].as_identifier()) == "pow");
 
         NodeIndex first_arg  = ast.arena[outer].first_child;
         NodeIndex second_arg = ast.arena[first_arg].next_sibling;
@@ -189,7 +211,7 @@ TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
         // Second arg unwraps to inner pow(3, 2) — right-nested.
         NodeIndex inner = ast.arena[second_arg].first_child;
         REQUIRE(ast.arena[inner].type == NodeType::Call);
-        CHECK(ast.arena[inner].as_identifier() == "pow");
+        CHECK(ident_text(ast.arena[inner].as_identifier()) == "pow");
     }
 
     SECTION("tower 2 ^ 2 ^ 2 ^ 2 nests right") {
@@ -199,7 +221,7 @@ TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
         NodeIndex n = ast.arena[ast.root].first_child;
         for (int depth = 0; depth < 3; ++depth) {
             REQUIRE(ast.arena[n].type == NodeType::Call);
-            CHECK(ast.arena[n].as_identifier() == "pow");
+            CHECK(ident_text(ast.arena[n].as_identifier()) == "pow");
             NodeIndex left  = ast.arena[n].first_child;
             NodeIndex right = ast.arena[left].next_sibling;
             REQUIRE(right != NULL_NODE);
@@ -221,7 +243,7 @@ TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
         auto ast = parse_ok("-2 ^ 2");
         NodeIndex pow_call = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[pow_call].type == NodeType::Call);
-        CHECK(ast.arena[pow_call].as_identifier() == "pow");
+        CHECK(ident_text(ast.arena[pow_call].as_identifier()) == "pow");
 
         NodeIndex first_arg = ast.arena[pow_call].first_child;
         NodeIndex first_inner = ast.arena[first_arg].first_child;
@@ -235,7 +257,7 @@ TEST_CASE("Power right-associativity (F7 regression)", "[parser][F7]") {
         auto ast = parse_ok("x ^ -1");
         NodeIndex pow_call = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[pow_call].type == NodeType::Call);
-        CHECK(ast.arena[pow_call].as_identifier() == "pow");
+        CHECK(ident_text(ast.arena[pow_call].as_identifier()) == "pow");
 
         NodeIndex first_arg  = ast.arena[pow_call].first_child;
         NodeIndex second_arg = ast.arena[first_arg].next_sibling;
@@ -251,7 +273,7 @@ TEST_CASE("Parser function calls", "[parser]") {
         auto ast = parse_ok("foo()");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "foo");
         CHECK(ast.arena.child_count(child) == 0);
     }
 
@@ -259,7 +281,7 @@ TEST_CASE("Parser function calls", "[parser]") {
         auto ast = parse_ok("sin(440)");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "sin");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "sin");
         CHECK(ast.arena.child_count(child) == 1);
     }
 
@@ -267,7 +289,7 @@ TEST_CASE("Parser function calls", "[parser]") {
         auto ast = parse_ok("lp(x, 1000, 0.7)");
         NodeIndex child = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[child].type == NodeType::Call);
-        CHECK(ast.arena[child].as_identifier() == "lp");
+        CHECK(ident_text(ast.arena[child].as_identifier()) == "lp");
         CHECK(ast.arena.child_count(child) == 3);
     }
 
@@ -275,7 +297,7 @@ TEST_CASE("Parser function calls", "[parser]") {
         auto ast = parse_ok("svflp(in: x, cut: 800, q: 0.5)");
         NodeIndex call = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[call].type == NodeType::Call);
-        CHECK(ast.arena[call].as_identifier() == "svflp");
+        CHECK(ident_text(ast.arena[call].as_identifier()) == "svflp");
 
         // Check first argument is named
         NodeIndex first_arg = ast.arena[call].first_child;
@@ -295,13 +317,13 @@ TEST_CASE("Parser function calls", "[parser]") {
         auto ast = parse_ok("f(g(x))");
         NodeIndex outer = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[outer].type == NodeType::Call);
-        CHECK(ast.arena[outer].as_identifier() == "f");
+        CHECK(ident_text(ast.arena[outer].as_identifier()) == "f");
 
         // The argument's child should be another call
         NodeIndex arg = ast.arena[outer].first_child;
         NodeIndex inner = ast.arena[arg].first_child;
         REQUIRE(ast.arena[inner].type == NodeType::Call);
-        CHECK(ast.arena[inner].as_identifier() == "g");
+        CHECK(ident_text(ast.arena[inner].as_identifier()) == "g");
     }
 }
 
@@ -332,7 +354,7 @@ TEST_CASE("Parser pipes", "[parser]") {
         NodeIndex first = ast.arena[pipe].first_child;
         NodeIndex second = ast.arena[first].next_sibling;
         REQUIRE(ast.arena[second].type == NodeType::Call);
-        CHECK(ast.arena[second].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[second].as_identifier()) == "mul");
     }
 
     SECTION("pipe as function argument") {
@@ -366,7 +388,7 @@ TEST_CASE("Parser closures", "[parser]") {
         // First child is param, second is body
         NodeIndex param = ast.arena[closure].first_child;
         REQUIRE(ast.arena[param].type == NodeType::Identifier);
-        CHECK(ast.arena[param].as_identifier() == "x");
+        CHECK(ident_text(ast.arena[param].as_identifier()) == "x");
 
         NodeIndex body = ast.arena[param].next_sibling;
         CHECK(ast.arena[body].type == NodeType::Identifier);
@@ -396,7 +418,7 @@ TEST_CASE("Parser closures", "[parser]") {
         NodeIndex param = ast.arena[closure].first_child;
         NodeIndex body = ast.arena[param].next_sibling;
         REQUIRE(ast.arena[body].type == NodeType::Call);
-        CHECK(ast.arena[body].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[body].as_identifier()) == "add");
     }
 
     SECTION("closure with pipe in body (greedy)") {
@@ -426,7 +448,7 @@ TEST_CASE("Parser assignments", "[parser]") {
         auto ast = parse_ok("x = 42");
         NodeIndex assign = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[assign].type == NodeType::Assignment);
-        CHECK(ast.arena[assign].as_identifier() == "x");
+        CHECK(ident_text(ast.arena[assign].as_identifier()) == "x");
 
         NodeIndex value = ast.arena[assign].first_child;
         REQUIRE(ast.arena[value].type == NodeType::NumberLit);
@@ -436,7 +458,7 @@ TEST_CASE("Parser assignments", "[parser]") {
         auto ast = parse_ok("bpm = 120");
         NodeIndex assign = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[assign].type == NodeType::Assignment);
-        CHECK(ast.arena[assign].as_identifier() == "bpm");
+        CHECK(ident_text(ast.arena[assign].as_identifier()) == "bpm");
     }
 
     SECTION("assignment with pipe") {
@@ -477,20 +499,20 @@ TEST_CASE("Parser complex expressions", "[parser]") {
         auto ast = parse_ok("400 + 300 * co");
         NodeIndex expr = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[expr].type == NodeType::Call);
-        CHECK(ast.arena[expr].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[expr].as_identifier()) == "add");
     }
 
     SECTION("parenthesized expression") {
         auto ast = parse_ok("(1 + 2) * 3");
         NodeIndex expr = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[expr].type == NodeType::Call);
-        CHECK(ast.arena[expr].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[expr].as_identifier()) == "mul");
 
         // First arg should be add
         NodeIndex first_arg = ast.arena[expr].first_child;
         NodeIndex add = ast.arena[first_arg].first_child;
         REQUIRE(ast.arena[add].type == NodeType::Call);
-        CHECK(ast.arena[add].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[add].as_identifier()) == "add");
     }
 
     SECTION("pipe with math") {
@@ -609,12 +631,12 @@ TEST_CASE("Parser method calls", "[parser]") {
         auto ast = parse_ok("x.foo()");
         NodeIndex method = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[method].type == NodeType::MethodCall);
-        CHECK(ast.arena[method].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[method].as_identifier()) == "foo");
 
         // Should have receiver as first child (x)
         NodeIndex receiver = ast.arena[method].first_child;
         REQUIRE(ast.arena[receiver].type == NodeType::Identifier);
-        CHECK(ast.arena[receiver].as_identifier() == "x");
+        CHECK(ident_text(ast.arena[receiver].as_identifier()) == "x");
 
         // No additional arguments
         CHECK(ast.arena[receiver].next_sibling == NULL_NODE);
@@ -624,12 +646,12 @@ TEST_CASE("Parser method calls", "[parser]") {
         auto ast = parse_ok("osc.filter(1000, 0.5)");
         NodeIndex method = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[method].type == NodeType::MethodCall);
-        CHECK(ast.arena[method].as_identifier() == "filter");
+        CHECK(ident_text(ast.arena[method].as_identifier()) == "filter");
 
         // First child is receiver, then arguments
         NodeIndex receiver = ast.arena[method].first_child;
         REQUIRE(ast.arena[receiver].type == NodeType::Identifier);
-        CHECK(ast.arena[receiver].as_identifier() == "osc");
+        CHECK(ident_text(ast.arena[receiver].as_identifier()) == "osc");
 
         // Two arguments after receiver
         NodeIndex arg1 = ast.arena[receiver].next_sibling;
@@ -643,29 +665,29 @@ TEST_CASE("Parser method calls", "[parser]") {
         auto ast = parse_ok("x.foo().bar()");
         NodeIndex outer = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[outer].type == NodeType::MethodCall);
-        CHECK(ast.arena[outer].as_identifier() == "bar");
+        CHECK(ident_text(ast.arena[outer].as_identifier()) == "bar");
 
         // Receiver should be inner method call
         NodeIndex inner = ast.arena[outer].first_child;
         REQUIRE(ast.arena[inner].type == NodeType::MethodCall);
-        CHECK(ast.arena[inner].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[inner].as_identifier()) == "foo");
 
         // Inner receiver should be x
         NodeIndex x = ast.arena[inner].first_child;
         REQUIRE(ast.arena[x].type == NodeType::Identifier);
-        CHECK(ast.arena[x].as_identifier() == "x");
+        CHECK(ident_text(ast.arena[x].as_identifier()) == "x");
     }
 
     SECTION("method call on function result") {
         auto ast = parse_ok("foo(1).bar()");
         NodeIndex method = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[method].type == NodeType::MethodCall);
-        CHECK(ast.arena[method].as_identifier() == "bar");
+        CHECK(ident_text(ast.arena[method].as_identifier()) == "bar");
 
         // Receiver should be function call
         NodeIndex call = ast.arena[method].first_child;
         REQUIRE(ast.arena[call].type == NodeType::Call);
-        CHECK(ast.arena[call].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[call].as_identifier()) == "foo");
     }
 
     SECTION("method call with pipe") {
@@ -677,7 +699,7 @@ TEST_CASE("Parser method calls", "[parser]") {
         NodeIndex lhs = ast.arena[pipe].first_child;
         NodeIndex rhs = ast.arena[lhs].next_sibling;
         REQUIRE(ast.arena[rhs].type == NodeType::MethodCall);
-        CHECK(ast.arena[rhs].as_identifier() == "filter");
+        CHECK(ident_text(ast.arena[rhs].as_identifier()) == "filter");
 
         // Receiver should be hole
         NodeIndex receiver = ast.arena[rhs].first_child;
@@ -688,7 +710,7 @@ TEST_CASE("Parser method calls", "[parser]") {
         auto ast = parse_ok("x.foo() + y.bar()");
         NodeIndex add = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[add].type == NodeType::Call);
-        CHECK(ast.arena[add].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[add].as_identifier()) == "add");
 
         // Both arguments should be method calls (wrapped in Argument nodes)
         NodeIndex arg1 = ast.arena[add].first_child;
@@ -698,10 +720,10 @@ TEST_CASE("Parser method calls", "[parser]") {
         NodeIndex method2 = ast.arena[arg2].first_child;
 
         REQUIRE(ast.arena[method1].type == NodeType::MethodCall);
-        CHECK(ast.arena[method1].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[method1].as_identifier()) == "foo");
 
         REQUIRE(ast.arena[method2].type == NodeType::MethodCall);
-        CHECK(ast.arena[method2].as_identifier() == "bar");
+        CHECK(ident_text(ast.arena[method2].as_identifier()) == "bar");
     }
 }
 
@@ -906,7 +928,7 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
         NodeIndex rhs = ast.arena[stmt].first_child;
         REQUIRE(rhs != NULL_NODE);
         REQUIRE(ast.arena[rhs].type == NodeType::Identifier);
-        CHECK(ast.arena[rhs].as_identifier() == "r");
+        CHECK(ident_text(ast.arena[rhs].as_identifier()) == "r");
     }
 
     SECTION("single-field destructure assignment") {
@@ -1211,10 +1233,10 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         NodeIndex elem2 = ast.arena[elem1].next_sibling;
 
         REQUIRE(ast.arena[elem1].type == NodeType::Call);
-        CHECK(ast.arena[elem1].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[elem1].as_identifier()) == "add");
 
         REQUIRE(ast.arena[elem2].type == NodeType::Call);
-        CHECK(ast.arena[elem2].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[elem2].as_identifier()) == "foo");
     }
 
     SECTION("nested arrays") {
@@ -1237,7 +1259,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         auto ast = parse_ok("xs = [1, 2, 3]");
         NodeIndex assign = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[assign].type == NodeType::Assignment);
-        CHECK(ast.arena[assign].as_identifier() == "xs");
+        CHECK(ident_text(ast.arena[assign].as_identifier()) == "xs");
 
         NodeIndex value = ast.arena[assign].first_child;
         REQUIRE(ast.arena[value].type == NodeType::ArrayLit);
@@ -1275,7 +1297,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         NodeIndex idx_expr = ast.arena[arr].next_sibling;
 
         REQUIRE(ast.arena[arr].type == NodeType::Identifier);
-        CHECK(ast.arena[arr].as_identifier() == "xs");
+        CHECK(ident_text(ast.arena[arr].as_identifier()) == "xs");
 
         REQUIRE(ast.arena[idx_expr].type == NodeType::NumberLit);
         CHECK_THAT(ast.arena[idx_expr].as_number(), WithinRel(0.0));
@@ -1290,7 +1312,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         NodeIndex idx_expr = ast.arena[arr].next_sibling;
 
         REQUIRE(ast.arena[idx_expr].type == NodeType::Identifier);
-        CHECK(ast.arena[idx_expr].as_identifier() == "i");
+        CHECK(ident_text(ast.arena[idx_expr].as_identifier()) == "i");
     }
 
     SECTION("array indexing with expression") {
@@ -1302,7 +1324,7 @@ TEST_CASE("Parser arrays", "[parser][array]") {
         NodeIndex idx_expr = ast.arena[arr].next_sibling;
 
         REQUIRE(ast.arena[idx_expr].type == NodeType::Call);
-        CHECK(ast.arena[idx_expr].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[idx_expr].as_identifier()) == "add");
     }
 
     SECTION("chained indexing") {
@@ -1330,14 +1352,14 @@ TEST_CASE("Parser arrays", "[parser][array]") {
 
         NodeIndex call = ast.arena[index].first_child;
         REQUIRE(ast.arena[call].type == NodeType::Call);
-        CHECK(ast.arena[call].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[call].as_identifier()) == "foo");
     }
 
     SECTION("method call on indexed value") {
         auto ast = parse_ok("xs[0].foo()");
         NodeIndex method = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[method].type == NodeType::MethodCall);
-        CHECK(ast.arena[method].as_identifier() == "foo");
+        CHECK(ident_text(ast.arena[method].as_identifier()) == "foo");
 
         NodeIndex index = ast.arena[method].first_child;
         REQUIRE(ast.arena[index].type == NodeType::Index);
@@ -1366,12 +1388,12 @@ TEST_CASE("Parser function definitions", "[parser]") {
         // Check param
         NodeIndex param = ast.arena[fn].first_child;
         REQUIRE(ast.arena[param].type == NodeType::Identifier);
-        CHECK(ast.arena[param].as_identifier() == "x");
+        CHECK(ident_text(ast.arena[param].as_identifier()) == "x");
 
         // Check body
         NodeIndex body = ast.arena[param].next_sibling;
         REQUIRE(ast.arena[body].type == NodeType::Call);
-        CHECK(ast.arena[body].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[body].as_identifier()) == "mul");
     }
 
     SECTION("function with multiple parameters") {
@@ -1483,7 +1505,7 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         REQUIRE(ast.arena[p1].type == NodeType::Identifier);
         // Second param is unannotated and stays IdentifierData (cheap path).
         REQUIRE(std::holds_alternative<Node::IdentifierData>(ast.arena[p1].data));
-        CHECK(ast.arena[p1].as_identifier() == "n");
+        CHECK(ident_text(ast.arena[p1].as_identifier()) == "n");
     }
 
     SECTION(": signal annotation also parses (long-form alias)") {
@@ -1757,7 +1779,7 @@ TEST_CASE("Parser fn arrow body does not swallow the next line",
             body = ast.arena[body].next_sibling;
         }
         REQUIRE(ast.arena[body].type == NodeType::Call);
-        CHECK(ast.arena[body].as_identifier() == "mul");
+        CHECK(ident_text(ast.arena[body].as_identifier()) == "mul");
 
         // The second top-level statement is the independent pipe.
         NodeIndex stmt2 = ast.arena[fn].next_sibling;
@@ -1855,7 +1877,7 @@ TEST_CASE("Parser underscore placeholder", "[parser]") {
         REQUIRE(ast.arena[arg2].type == NodeType::Argument);
         NodeIndex inner = ast.arena[arg2].first_child;
         REQUIRE(ast.arena[inner].type == NodeType::Identifier);
-        CHECK(ast.arena[inner].as_identifier() == "_");
+        CHECK(ident_text(ast.arena[inner].as_identifier()) == "_");
     }
 
     SECTION("cannot assign to underscore") {
@@ -1980,7 +2002,7 @@ TEST_CASE("Parser field access", "[parser][records]") {
         NodeIndex expr = ast.arena[access].first_child;
         REQUIRE(expr != NULL_NODE);
         REQUIRE(ast.arena[expr].type == NodeType::Identifier);
-        CHECK(ast.arena[expr].as_identifier() == "pos");
+        CHECK(ident_text(ast.arena[expr].as_identifier()) == "pos");
     }
 
     SECTION("chained field access") {
@@ -2071,7 +2093,7 @@ TEST_CASE("Parser >> and @ aliases", "[parser]") {
         NodeIndex lhs = ast.arena[pipe].first_child;
         NodeIndex rhs = ast.arena[lhs].next_sibling;
         REQUIRE(ast.arena[rhs].type == NodeType::Call);
-        CHECK(ast.arena[rhs].as_identifier() == "add");
+        CHECK(ident_text(ast.arena[rhs].as_identifier()) == "add");
     }
 
     SECTION("@ with field access") {

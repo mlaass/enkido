@@ -91,6 +91,16 @@ struct CompileResult {
     // the audio runtime; safe to ignore for normal compile-and-play.
     std::optional<SymbolTable> symbols;
     std::shared_ptr<Ast>       ast;
+
+    // PRD prd-parser-codegen-correctness.md Phase 5 (F12): the
+    // `symbols` SymbolTable above holds a non-owning pointer to a
+    // StringInterner inside this context. When `compile()` constructs
+    // a default context internally, it stashes it here so the
+    // interner outlives the function return — otherwise
+    // `r.symbols->lookup(name)` would dereference a destroyed
+    // interner. Callers that pass their own `CompileContext*` to
+    // `compile()` leave this empty; their context owns the lifetime.
+    std::shared_ptr<CompileContext> owned_ctx;
 };
 
 /// Compile Akkado source code to Cedar bytecode

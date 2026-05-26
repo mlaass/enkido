@@ -19,6 +19,8 @@
 // hot-swap diffs stable).
 
 #include "akkado/codegen.hpp"
+#include "akkado/compile_context.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/builtins.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cedar/dsp/constants.hpp>

@@ -2084,9 +2084,9 @@ static std::optional<std::string> get_string_arg(const Ast& ast, const Node& n, 
 
 // Helper: Check if a Call node calls a known pattern-producing function.
 // Does not check MiniLiteral or StringLit (those should be handled separately).
-static bool is_pattern_call(const Node& n) {
+static bool is_pattern_call(const Node& n, const StringInterner& interner) {
     if (n.type != NodeType::Call) return false;
-    const std::string& func_name = n.as_identifier();
+    std::string func_name = std::string(interner.view(n.as_identifier()));
     return func_name == "timeline" ||
            func_name == "chord" ||
            func_name == "slow" || func_name == "fast" ||
@@ -2111,16 +2111,17 @@ static bool is_pattern_call(const Node& n) {
 
 // Helper: Check if a node is a pattern-producing expression.
 // Uses symbol table for Identifier nodes (type-based), AST checks for literals/calls.
-static bool is_pattern_node(const Ast& ast, const SymbolTable& symbols, NodeIndex node) {
+static bool is_pattern_node(const Ast& ast, const SymbolTable& symbols, NodeIndex node,
+                             const StringInterner& interner) {
     if (node == NULL_NODE) return false;
 
     const Node& n = ast.arena[node];
 
     if (n.type == NodeType::MiniLiteral) return true;
     if (n.type == NodeType::StringLit) return true;
-    if (is_pattern_call(n)) return true;
+    if (is_pattern_call(n, interner)) return true;
 
-    // Identifier: check symbol table for Pattern kind
+    // Identifier: check symbol table for Pattern kind (SymbolId fast path)
     if (n.type == NodeType::Identifier) {
         auto sym = symbols.lookup(n.as_identifier());
         return sym && sym->kind == SymbolKind::Pattern;
@@ -2276,7 +2277,7 @@ static bool compile_pattern_for_transform(
 
     // Handle Call nodes
     if (pat_node.type == NodeType::Call) {
-        const std::string& func_name = pat_node.as_identifier();
+        std::string func_name = std::string(gen.ctx().interner->view(pat_node.as_identifier()));
 
         // Case 2.4: chord(...) base case — parse chord string and compile
         // through the same mini-notation pipeline used by handle_chord_call.
@@ -3248,7 +3249,7 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
         return TypedValue::void_val();
     }
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", std::string(fn_name) +
                   "() first argument must be a pattern", n.location);
         return TypedValue::void_val();
@@ -3519,7 +3520,7 @@ TypedValue CodeGenerator::handle_rev_call(NodeIndex node, const Node& n) {
         error("E130", "rev() requires a pattern as argument", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "rev() argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -3728,7 +3729,7 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "bank() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -3892,7 +3893,7 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "variant() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -3908,7 +3909,7 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
             error("E131", "variant() index must be non-negative", n.location);
             return TypedValue::void_val();
         }
-    } else if (!is_pattern_node(*ast_, *symbols_, variant_arg)) {
+    } else if (!is_pattern_node(*ast_, *symbols_, variant_arg, *ctx_->interner)) {
         error("E131", "variant() second argument must be a number or pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4098,7 +4099,7 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "transport() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4306,7 +4307,7 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "tune() second argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4363,7 +4364,7 @@ TypedValue CodeGenerator::handle_palindrome_call(NodeIndex node, const Node& n) 
         error("E130", "palindrome() requires a pattern as argument", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "palindrome() argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4389,7 +4390,7 @@ TypedValue CodeGenerator::handle_ply_call(NodeIndex node, const Node& n) {
               n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "ply() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4416,7 +4417,7 @@ TypedValue CodeGenerator::handle_linger_call(NodeIndex node, const Node& n) {
         error("E130", "linger() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "linger() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4501,7 +4502,7 @@ TypedValue CodeGenerator::handle_zoom_call(NodeIndex node, const Node& n) {
         error("E130", "zoom() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "zoom() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4549,7 +4550,7 @@ TypedValue CodeGenerator::handle_segment_call(NodeIndex node, const Node& n) {
               n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "segment() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4589,7 +4590,7 @@ TypedValue CodeGenerator::handle_iter_call(NodeIndex node, const Node& n) {
         error("E131", "iter() n must be in [1, 255]", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "iter() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4623,7 +4624,7 @@ TypedValue CodeGenerator::handle_iter_back_call(NodeIndex node, const Node& n) {
         error("E131", "iterBack() n must be in [1, 255]", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "iterBack() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4825,7 +4826,7 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
         error("E140", "anchor() could not parse note name \"" + *anchor_str + "\"", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "anchor() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4879,7 +4880,7 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
         error("E140", "mode() unknown mode \"" + *mode_str + "\"; expected below/above/duck/root", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "mode() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -4932,7 +4933,7 @@ TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
         error("E141", "voicing() dictionary \"" + *name_str + "\" not registered (use addVoicings to register)", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "voicing() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }
@@ -5044,7 +5045,7 @@ TypedValue CodeGenerator::handle_compress_call(NodeIndex node, const Node& n) {
         error("E130", "compress() requires a pattern as first argument", n.location);
         return TypedValue::void_val();
     }
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg)) {
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
         error("E133", "compress() first argument must be a pattern", n.location);
         return TypedValue::void_val();
     }

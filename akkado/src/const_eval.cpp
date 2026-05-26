@@ -6,8 +6,9 @@
 
 namespace akkado {
 
-ConstEvaluator::ConstEvaluator(const Ast& ast, const SymbolTable& symbols)
-    : ast_(&ast), symbols_(&symbols) {}
+ConstEvaluator::ConstEvaluator(const Ast& ast, const SymbolTable& symbols,
+                               const StringInterner& interner)
+    : ast_(&ast), symbols_(&symbols), interner_(&interner) {}
 
 std::optional<ConstValue> ConstEvaluator::evaluate(NodeIndex node) {
     bindings_.clear();
@@ -45,7 +46,7 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
         case NodeType::Identifier: {
             std::string name;
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                name = n.as_identifier();
+                name = std::string(interner_->view(n.as_identifier()));
             } else if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
                 name = n.as_closure_param().name;
             }
@@ -100,7 +101,7 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
 
         case NodeType::ConstDecl: {
             // const x = expr inside a block
-            const std::string& name = n.as_identifier();
+            std::string name = std::string(interner_->view(n.as_identifier()));
             NodeIndex rhs = n.first_child;
             if (rhs == NULL_NODE) return std::nullopt;
             auto val = eval(rhs);
@@ -111,7 +112,7 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
 
         case NodeType::Assignment: {
             // let x = expr inside a const fn block
-            const std::string& name = n.as_identifier();
+            std::string name = std::string(interner_->view(n.as_identifier()));
             NodeIndex rhs = n.first_child;
             if (rhs == NULL_NODE) return std::nullopt;
             auto val = eval(rhs);
@@ -213,7 +214,7 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
 }
 
 std::optional<ConstValue> ConstEvaluator::eval_call(NodeIndex node, const Node& n) {
-    const std::string& func_name = n.as_identifier();
+    std::string func_name = std::string(interner_->view(n.as_identifier()));
 
     // Collect arguments
     std::vector<ConstValue> args;
@@ -306,7 +307,7 @@ std::optional<ConstValue> ConstEvaluator::eval_call(NodeIndex node, const Node& 
                 if (std::holds_alternative<Node::ClosureParamData>(cc.data)) {
                     param_name = cc.as_closure_param().name;
                 } else if (std::holds_alternative<Node::IdentifierData>(cc.data)) {
-                    param_name = cc.as_identifier();
+                    param_name = std::string(interner_->view(cc.as_identifier()));
                 } else {
                     body = cchild;
                     break;
@@ -365,7 +366,7 @@ std::optional<ConstValue> ConstEvaluator::eval_call(NodeIndex node, const Node& 
                 if (std::holds_alternative<Node::ClosureParamData>(cc.data)) {
                     pname = cc.as_closure_param().name;
                 } else if (std::holds_alternative<Node::IdentifierData>(cc.data)) {
-                    pname = cc.as_identifier();
+                    pname = std::string(interner_->view(cc.as_identifier()));
                 } else {
                     body = cchild;
                     break;

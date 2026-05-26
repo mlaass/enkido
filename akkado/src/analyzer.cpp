@@ -8,6 +8,16 @@
 
 namespace akkado {
 
+SemanticAnalyzer::SemanticAnalyzer() = default;
+
+SemanticAnalyzer::SemanticAnalyzer(StringInterner& interner)
+    : interner_(&interner) {
+    // PRD prd-parser-codegen-correctness.md Phase 5: pre-register the
+    // builtin set into our SymbolTable through the per-compile interner
+    // so downstream Identifier lookups can hit the SymbolId fast path.
+    symbols_.register_builtins(interner);
+}
+
 bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
     if (idx == NULL_NODE || input_ast_ == nullptr) return false;
     const Node& n = (*input_ast_).arena[idx];
@@ -21,14 +31,14 @@ bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
         case NodeType::Call: {
             std::string call_name;
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                call_name = n.as_identifier();
+                call_name = interner_->view(n.as_identifier());
             }
             return call_name == "chord" || call_name == "seq";
         }
         case NodeType::Identifier: {
             std::string name;
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                name = n.as_identifier();
+                name = interner_->view(n.as_identifier());
             }
             if (name.empty()) return false;
             auto sym = symbols_.lookup(name);
@@ -45,6 +55,11 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
     input_ast_ = &ast;
     output_arena_ = AstArena{};
     symbols_ = SymbolTable{};
+    if (interner_) {
+        // Phase 5: re-attach interner + re-seed builtins (the
+        // SymbolTable{} reset above wiped both).
+        symbols_.register_builtins(*interner_);
+    }
     diagnostics_.clear();
     node_map_.clear();
     filename_ = std::string(filename);
@@ -89,18 +104,19 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
 }
 
 // Check if a call node has _ placeholders at a given position
-static bool is_placeholder_node(const AstArena& arena, NodeIndex child) {
+static bool is_placeholder_node(const AstArena& arena, NodeIndex child,
+                                const StringInterner& interner) {
     const Node& cn = arena[child];
     if (cn.type == NodeType::Identifier &&
         std::holds_alternative<Node::IdentifierData>(cn.data) &&
-        cn.as_identifier() == "_") {
+        interner.view(cn.as_identifier()) == "_") {
         return true;
     }
     if (cn.type == NodeType::Argument && cn.first_child != NULL_NODE) {
         const Node& inner = arena[cn.first_child];
         if (inner.type == NodeType::Identifier &&
             std::holds_alternative<Node::IdentifierData>(inner.data) &&
-            inner.as_identifier() == "_") {
+            interner.view(inner.as_identifier()) == "_") {
             return true;
         }
     }
@@ -111,17 +127,19 @@ static bool is_placeholder_node(const AstArena& arena, NodeIndex child) {
 // Returns true if this should be default-filling (not partial application).
 static bool all_placeholders_have_defaults(const AstArena& arena,
                                             const Node& call_node,
-                                            const SymbolTable& symbols) {
+                                            const SymbolTable& symbols,
+                                            const StringInterner& interner) {
     if (!std::holds_alternative<Node::IdentifierData>(call_node.data)) {
         return false;
     }
-    const std::string& func_name = call_node.as_identifier();
+    std::string func_name = std::string(interner.view(call_node.as_identifier()));
 
     const BuiltinInfo* builtin = lookup_builtin(func_name);
 
     const UserFunctionInfo* user_func = nullptr;
     if (!builtin) {
-        auto sym = symbols.lookup(func_name);
+        // Phase 5 fast path: lookup by SymbolId directly.
+        auto sym = symbols.lookup(call_node.as_identifier());
         if (sym && sym->kind == SymbolKind::UserFunction) {
             user_func = &sym->user_function;
         }
@@ -134,7 +152,7 @@ static bool all_placeholders_have_defaults(const AstArena& arena,
     std::size_t arg_idx = 0;
     NodeIndex child = call_node.first_child;
     while (child != NULL_NODE) {
-        if (is_placeholder_node(arena, child)) {
+        if (is_placeholder_node(arena, child, interner)) {
             if (builtin) {
                 if (!builtin->has_default(arg_idx)) return false;
             } else {
@@ -152,10 +170,10 @@ static bool all_placeholders_have_defaults(const AstArena& arena,
     return true;
 }
 
-std::string SemanticAnalyzer::extract_definition_name(const Node& n) {
+std::string SemanticAnalyzer::extract_definition_name(const Node& n) const {
     if (n.type == NodeType::Assignment || n.type == NodeType::ConstDecl) {
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            return n.as_identifier();
+            return std::string(interner_->view(n.as_identifier()));
         }
     }
     if (n.type == NodeType::FunctionDef) {
@@ -209,7 +227,7 @@ void SemanticAnalyzer::hide_namespaced_definitions() {
                                 std::make_shared<RecordTypeInfo>(*qsym.record_type);
                         }
                         std::string qname = alias + "." + def_name;
-                        qsym.name_hash = fnv1a_hash(qname);
+                        qsym.name_id = interner_->intern(qname);
                         qsym.name = qname;
                         qsym.origin_module = region->filename;
                         symbols_.define(qsym);
@@ -236,7 +254,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 
     if (n.type == NodeType::Assignment) {
         // Variable name is stored in the node's data (as IdentifierData)
-        const std::string& name = n.as_identifier();
+        std::string name = std::string(interner_->view(n.as_identifier()));
         // Check if RHS is a pattern expression (MiniLiteral)
         NodeIndex rhs = n.first_child;
 
@@ -296,7 +314,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     if (spread_node.type == NodeType::Identifier) {
                         std::string spread_name;
                         if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
-                            spread_name = spread_node.as_identifier();
+                            spread_name = interner_->view(spread_node.as_identifier());
                         }
                         auto spread_sym = symbols_.lookup(spread_name);
                         if (spread_sym && spread_sym->kind == SymbolKind::Record && spread_sym->record_type) {
@@ -394,7 +412,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                             param.default_node = child_node.first_child;
                         }
                     } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                        param.name = child_node.as_identifier();
+                        param.name = interner_->view(child_node.as_identifier());
                         param.default_value = std::nullopt;
                     } else {
                         break;  // Not a parameter, must be body
@@ -421,7 +439,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 if (lhs_node.type == NodeType::Identifier) {
                     std::string param_name;
                     if (std::holds_alternative<Node::IdentifierData>(lhs_node.data)) {
-                        param_name = lhs_node.as_identifier();
+                        param_name = interner_->view(lhs_node.as_identifier());
                     }
                     // Check if identifier is unbound (not defined)
                     if (!param_name.empty() && !symbols_.lookup(param_name)) {
@@ -455,7 +473,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     const Node& cn = (*input_ast_).arena[child];
                     if (cn.type == NodeType::Identifier &&
                         std::holds_alternative<Node::IdentifierData>(cn.data) &&
-                        cn.as_identifier() == "_") {
+                        interner_->view(cn.as_identifier()) == "_") {
                         has_placeholder = true;
                         break;
                     }
@@ -463,7 +481,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                         const Node& inner = (*input_ast_).arena[cn.first_child];
                         if (inner.type == NodeType::Identifier &&
                             std::holds_alternative<Node::IdentifierData>(inner.data) &&
-                            inner.as_identifier() == "_") {
+                            interner_->view(inner.as_identifier()) == "_") {
                             has_placeholder = true;
                             break;
                         }
@@ -473,7 +491,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             }
             if (has_placeholder &&
                 !all_placeholders_have_defaults((*input_ast_).arena,
-                                                 (*input_ast_).arena[rhs], symbols_)) {
+                                                 (*input_ast_).arena[rhs], symbols_, *interner_)) {
                 // Partial application: will be rewritten to a closure during pipe rewriting
                 // Count placeholder params
                 std::size_t placeholder_count = 0;
@@ -483,12 +501,12 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     bool is_ph = false;
                     if (cn.type == NodeType::Identifier &&
                         std::holds_alternative<Node::IdentifierData>(cn.data) &&
-                        cn.as_identifier() == "_") is_ph = true;
+                        interner_->view(cn.as_identifier()) == "_") is_ph = true;
                     if (cn.type == NodeType::Argument && cn.first_child != NULL_NODE) {
                         const Node& inner = (*input_ast_).arena[cn.first_child];
                         if (inner.type == NodeType::Identifier &&
                             std::holds_alternative<Node::IdentifierData>(inner.data) &&
-                            inner.as_identifier() == "_") is_ph = true;
+                            interner_->view(inner.as_identifier()) == "_") is_ph = true;
                     }
                     if (is_ph) placeholder_count++;
                     child = (*input_ast_).arena[child].next_sibling;
@@ -507,7 +525,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 const Node& call_node = (*input_ast_).arena[rhs];
                 std::string callee_name;
                 if (std::holds_alternative<Node::IdentifierData>(call_node.data)) {
-                    callee_name = call_node.as_identifier();
+                    callee_name = interner_->view(call_node.as_identifier());
                 }
                 auto callee_sym = symbols_.lookup(callee_name);
                 if (callee_sym && callee_sym->kind == SymbolKind::UserFunction) {
@@ -535,7 +553,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                                         param.default_node = child_node.first_child;
                                     }
                                 } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                                    param.name = child_node.as_identifier();
+                                    param.name = interner_->view(child_node.as_identifier());
                                 } else {
                                     break;
                                 }
@@ -563,7 +581,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     // flag just opens the door past the analyzer's gate.
                     Symbol sym{};
                     sym.kind = SymbolKind::Variable;
-                    sym.name_hash = fnv1a_hash(name);
+                    sym.name_id = interner_->intern(name);
                     sym.name = name;
                     sym.buffer_index = 0xFFFF;
                     sym.is_state_cell = true;
@@ -591,14 +609,14 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             std::string rhs_name;
             if (std::holds_alternative<Node::IdentifierData>(
                     (*input_ast_).arena[rhs].data)) {
-                rhs_name = (*input_ast_).arena[rhs].as_identifier();
+                rhs_name = std::string(interner_->view((*input_ast_).arena[rhs].as_identifier()));
             }
             auto rhs_sym = !rhs_name.empty() ? symbols_.lookup(rhs_name)
                                               : std::nullopt;
             if (rhs_sym && rhs_sym->is_state_cell) {
                 Symbol sym{};
                 sym.kind = SymbolKind::Variable;
-                sym.name_hash = fnv1a_hash(name);
+                sym.name_id = interner_->intern(name);
                 sym.name = name;
                 sym.buffer_index = 0xFFFF;
                 sym.is_state_cell = true;
@@ -648,7 +666,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 
     if (n.type == NodeType::ConstDecl) {
         // Const variable declaration: const x = expr
-        const std::string& name = n.as_identifier();
+        std::string name = std::string(interner_->view(n.as_identifier()));
 
         // Cannot declare builtin variable as const
         {
@@ -697,7 +715,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             if (expr_node.type == NodeType::Identifier) {
                 std::string expr_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
-                    expr_name = expr_node.as_identifier();
+                    expr_name = interner_->view(expr_node.as_identifier());
                 }
                 auto sym = symbols_.lookup(expr_name);
                 if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
@@ -732,7 +750,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             } else if (expr_node.type == NodeType::Call) {
                 std::string call_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
-                    call_name = expr_node.as_identifier();
+                    call_name = interner_->view(expr_node.as_identifier());
                 }
                 if (call_name == "chord" || call_name == "seq") {
                     PatternInfo pat_info{};
@@ -794,7 +812,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     param.default_node = child_node.first_child;
                 }
             } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                param.name = child_node.as_identifier();
+                param.name = interner_->view(child_node.as_identifier());
                 param.default_value = std::nullopt;
             }
             func_info.params.push_back(std::move(param));
@@ -862,7 +880,7 @@ void SemanticAnalyzer::detect_recursive_functions() {
             const Node& nn = output_arena_[idx];
             if (nn.type == NodeType::Call &&
                 std::holds_alternative<Node::IdentifierData>(nn.data)) {
-                const std::string& callee = nn.as_identifier();
+                std::string callee = std::string(interner_->view(nn.as_identifier()));
                 if (fns.count(callee)) callees.push_back(callee);
             }
             for (NodeIndex c = nn.first_child; output_arena_.valid(c);) {
@@ -1001,7 +1019,7 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) 
             if (lhs.type == NodeType::Identifier) {
                 std::string name;
                 if (std::holds_alternative<Node::IdentifierData>(lhs.data)) {
-                    name = lhs.as_identifier();
+                    name = interner_->view(lhs.as_identifier());
                 }
                 if (!name.empty() && !symbols_.lookup(name)) {
                     // Unbound identifier - transform to closure: x |> f(%) -> (x) -> f(x)
@@ -1157,7 +1175,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
             // Check direct Identifier("_")
             if (cn.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(cn.data) &&
-                cn.as_identifier() == "_") {
+                interner_->view(cn.as_identifier()) == "_") {
                 has_placeholder = true;
                 break;
             }
@@ -1166,7 +1184,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
                 const Node& inner = (*input_ast_).arena[cn.first_child];
                 if (inner.type == NodeType::Identifier &&
                     std::holds_alternative<Node::IdentifierData>(inner.data) &&
-                    inner.as_identifier() == "_") {
+                    interner_->view(inner.as_identifier()) == "_") {
                     has_placeholder = true;
                     break;
                 }
@@ -1175,7 +1193,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
         }
 
         if (has_placeholder &&
-            !all_placeholders_have_defaults((*input_ast_).arena, src, symbols_)) {
+            !all_placeholders_have_defaults((*input_ast_).arena, src, symbols_, *interner_)) {
             // Partial application: Build closure replacing each _ with a generated param name
             // 1. Clone the call, replacing _ with generated param names
             NodeIndex cloned_call = clone_node(src_idx);
@@ -1191,14 +1209,14 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
                 bool is_placeholder = false;
                 if (sc.type == NodeType::Identifier &&
                     std::holds_alternative<Node::IdentifierData>(sc.data) &&
-                    sc.as_identifier() == "_") {
+                    interner_->view(sc.as_identifier()) == "_") {
                     is_placeholder = true;
                 }
                 if (sc.type == NodeType::Argument && sc.first_child != NULL_NODE) {
                     const Node& inner = (*input_ast_).arena[sc.first_child];
                     if (inner.type == NodeType::Identifier &&
                         std::holds_alternative<Node::IdentifierData>(inner.data) &&
-                        inner.as_identifier() == "_") {
+                        interner_->view(inner.as_identifier()) == "_") {
                         is_placeholder = true;
                     }
                 }
@@ -1208,7 +1226,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
                     param_names.push_back(pname);
                     // Create identifier node with generated param name
                     dst_child = output_arena_.alloc(NodeType::Identifier, sc.location);
-                    output_arena_[dst_child].data = Node::IdentifierData{pname};
+                    output_arena_[dst_child].data = Node::IdentifierData{interner_->intern(pname)};
                 } else {
                     // Call arguments are not a binding-RHS context.
                     dst_child = clone_subtree(src_child, /*closure_allowed=*/false);
@@ -1233,7 +1251,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
             NodeIndex prev = NULL_NODE;
             for (const auto& pname : param_names) {
                 NodeIndex param_node = output_arena_.alloc(NodeType::Identifier, src.location);
-                output_arena_[param_node].data = Node::IdentifierData{pname};
+                output_arena_[param_node].data = Node::IdentifierData{interner_->intern(pname)};
                 output_arena_[param_node].next_sibling = NULL_NODE;
                 if (prev == NULL_NODE) {
                     output_arena_[closure].first_child = param_node;
@@ -1359,7 +1377,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
             if (pn.type == NodeType::Identifier) {
                 std::string pname;
                 if (std::holds_alternative<Node::IdentifierData>(pn.data)) {
-                    pname = pn.as_identifier();
+                    pname = interner_->view(pn.as_identifier());
                 } else if (std::holds_alternative<Node::ClosureParamData>(
                                pn.data)) {
                     pname = pn.as_closure_param().name;
@@ -1427,7 +1445,7 @@ NodeIndex SemanticAnalyzer::substitute_nodes(NodeIndex node, const SubstituteOpt
     if (!opts.binding_name.empty() && n.type == NodeType::Identifier) {
         std::string name;
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
+            name = interner_->view(n.as_identifier());
         }
         if (name == opts.binding_name) {
             NodeIndex bind_repl = (opts.binding_replacement != NULL_NODE)
@@ -1440,7 +1458,7 @@ NodeIndex SemanticAnalyzer::substitute_nodes(NodeIndex node, const SubstituteOpt
     if (!opts.destructure_fields.empty() && n.type == NodeType::Identifier) {
         std::string name;
         if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
+            name = interner_->view(n.as_identifier());
         }
         for (const auto& field : opts.destructure_fields) {
             if (name == field) {
@@ -1636,7 +1654,7 @@ NodeIndex SemanticAnalyzer::create_closure_from_pipe(
     NodeIndex param_node, NodeIndex body_node, SourceLocation loc) {
 
     const Node& param_src = (*input_ast_).arena[param_node];
-    const std::string& param_name = param_src.as_identifier();
+    std::string param_name = std::string(interner_->view(param_src.as_identifier()));
 
     // Create closure node
     NodeIndex closure = output_arena_.alloc(NodeType::Closure, loc);
@@ -1651,7 +1669,7 @@ NodeIndex SemanticAnalyzer::create_closure_from_pipe(
 
     // Create param reference for hole substitution
     NodeIndex param_ref = output_arena_.alloc(NodeType::Identifier, loc);
-    output_arena_[param_ref].data = Node::IdentifierData{param_name};
+    output_arena_[param_ref].data = Node::IdentifierData{interner_->intern(param_name)};
 
     // Substitute holes AND the parameter identifier in body with param reference
     NodeIndex body = substitute_nodes(body_node, {param_ref, {}, param_node});
@@ -1665,7 +1683,7 @@ NodeIndex SemanticAnalyzer::create_closure_from_pipe(
 NodeIndex SemanticAnalyzer::desugar_method_call(NodeIndex method_call_idx) {
     // Desugar: receiver.method(a, b) -> method(receiver, a, b)
     const Node& src = (*input_ast_).arena[method_call_idx];
-    const std::string& method_name = src.as_identifier();
+    std::string method_name = std::string(interner_->view(src.as_identifier()));
 
     // Get the receiver (first child of MethodCall)
     NodeIndex src_receiver = src.first_child;
@@ -1682,7 +1700,7 @@ NodeIndex SemanticAnalyzer::desugar_method_call(NodeIndex method_call_idx) {
     if (receiver_node.type == NodeType::Identifier) {
         std::string receiver_name;
         if (std::holds_alternative<Node::IdentifierData>(receiver_node.data)) {
-            receiver_name = receiver_node.as_identifier();
+            receiver_name = interner_->view(receiver_node.as_identifier());
         }
         auto sym = symbols_.lookup(receiver_name);
         if (sym && sym->kind == SymbolKind::Module) {
@@ -1694,7 +1712,7 @@ NodeIndex SemanticAnalyzer::desugar_method_call(NodeIndex method_call_idx) {
 
             std::string qname = receiver_name + "." + method_name;
             NodeIndex call_idx = output_arena_.alloc(NodeType::Call, src.location);
-            output_arena_[call_idx].data = Node::IdentifierData{qname};
+            output_arena_[call_idx].data = Node::IdentifierData{interner_->intern(qname)};
             node_map_[method_call_idx] = call_idx;
 
             // Clone arguments (skip receiver — it's the module, not a signal)
@@ -1783,7 +1801,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
 
     if (n.type == NodeType::Call) {
         // Function name is stored in the node's data (as IdentifierData)
-        const std::string& func_name = n.as_identifier();
+        std::string func_name = std::string(interner_->view(n.as_identifier()));
 
         // Look up in symbol table
         auto sym = symbols_.lookup(func_name);
@@ -1958,7 +1976,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                     if (std::holds_alternative<Node::ClosureParamData>(cn.data)) {
                         last_param = cn.as_closure_param().name;
                     } else if (std::holds_alternative<Node::IdentifierData>(cn.data)) {
-                        last_param = cn.as_identifier();
+                        last_param = interner_->view(cn.as_identifier());
                     }
                 }
                 if (!last_param.empty()) {
@@ -2109,7 +2127,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                         "default expression for parameter '" + param_name + "'");
                 }
             } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                param_name = child_node.as_identifier();
+                param_name = interner_->view(child_node.as_identifier());
             }
             if (!param_name.empty()) {
                 params.insert(param_name);
@@ -2150,7 +2168,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
         if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
             name = n.as_closure_param().name;
         } else if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
+            name = interner_->view(n.as_identifier());
         } else {
             // Shouldn't happen - unknown data type for Identifier node
             return;
@@ -2187,7 +2205,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
             if (expr_node.type == NodeType::Identifier) {
                 std::string expr_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
-                    expr_name = expr_node.as_identifier();
+                    expr_name = interner_->view(expr_node.as_identifier());
                 }
                 if (!expr_name.empty()) {
                     auto sym = symbols_.lookup(expr_name);
@@ -2246,7 +2264,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
             if (expr_node.type == NodeType::Identifier) {
                 std::string expr_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
-                    expr_name = expr_node.as_identifier();
+                    expr_name = interner_->view(expr_node.as_identifier());
                 }
                 auto sym = symbols_.lookup(expr_name);
                 if (sym) {
@@ -2272,7 +2290,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                         if (spread_node.type == NodeType::Identifier) {
                             std::string spread_name;
                             if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
-                                spread_name = spread_node.as_identifier();
+                                spread_name = interner_->view(spread_node.as_identifier());
                             }
                             auto spread_sym = symbols_.lookup(spread_name);
                             if (spread_sym && spread_sym->kind == SymbolKind::Record && spread_sym->record_type) {
@@ -2333,7 +2351,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 // Check if this is a pattern-producing call (chord, seq, etc.)
                 std::string call_name;
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
-                    call_name = expr_node.as_identifier();
+                    call_name = interner_->view(expr_node.as_identifier());
                 }
                 if (call_name == "chord" || call_name == "seq") {
                     // Pattern-producing call - define as Pattern for field access
@@ -2402,7 +2420,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                     param_name = child_node.as_closure_param().name;
                 } else if (std::holds_alternative<Node::IdentifierData>(child_node.data)) {
-                    param_name = child_node.as_identifier();
+                    param_name = interner_->view(child_node.as_identifier());
                 } else {
                     // This is the body (not a parameter)
                     body = child;
@@ -2537,7 +2555,7 @@ void SemanticAnalyzer::verify_const_purity(NodeIndex node, const std::string& co
     const Node& n = output_arena_[node];
 
     if (n.type == NodeType::Call) {
-        const std::string& func_name = n.as_identifier();
+        std::string func_name = std::string(interner_->view(n.as_identifier()));
 
         // Whitelist of pure functions allowed in const context
         static const std::set<std::string> pure_builtins = {
@@ -2621,7 +2639,7 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
         if (std::holds_alternative<Node::ClosureParamData>(n.data)) {
             name = n.as_closure_param().name;
         } else if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-            name = n.as_identifier();
+            name = interner_->view(n.as_identifier());
         } else {
             return;  // Unknown data type
         }
@@ -2796,7 +2814,7 @@ bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
     for (std::size_t i = 0; i < reordered.size(); ++i) {
         if (reordered[i] != NULL_NODE) continue;
         NodeIndex underscore = output_arena_.alloc(NodeType::Identifier, call_loc);
-        output_arena_[underscore].data = Node::IdentifierData{"_"};
+        output_arena_[underscore].data = Node::IdentifierData{interner_->intern("_")};
         output_arena_[underscore].next_sibling = NULL_NODE;
         reordered[i] = underscore;
     }

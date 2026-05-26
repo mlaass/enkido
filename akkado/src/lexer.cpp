@@ -32,8 +32,10 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
 
 } // namespace
 
-Lexer::Lexer(std::string_view source, std::string_view filename)
+Lexer::Lexer(std::string_view source, StringInterner& interner,
+             std::string_view filename)
     : source_(source)
+    , interner_(&interner)
     , filename_(filename)
 {}
 
@@ -132,7 +134,7 @@ Token Lexer::make_error_token(std::string_view message) {
             .length = current_ - start_
         },
         .lexeme = source_.substr(start_, current_ - start_),
-        .value = std::string(message)
+        .value = StringLitData{std::string(message)}
     };
 }
 
@@ -425,7 +427,7 @@ Token Lexer::lex_string(char quote) {
 
     advance(); // consume closing quote
 
-    return make_token(TokenType::String, std::move(value));
+    return make_token(TokenType::String, StringLitData{std::move(value)});
 }
 
 Token Lexer::lex_identifier() {
@@ -461,7 +463,10 @@ Token Lexer::lex_identifier() {
     TokenType type = identifier_type(text);
 
     if (type == TokenType::Identifier) {
-        return make_token(type, std::string(text));
+        // PRD prd-parser-codegen-correctness.md Phase 5 (F12): intern at
+        // lex time. `text` views the source buffer; source must outlive
+        // interner (compile()'s combined_source does).
+        return make_token(type, interner_->intern(text));
     }
 
     return make_token(type);
@@ -488,7 +493,7 @@ Token Lexer::lex_directive() {
 
     // Extract directive name (skip the '$')
     std::string_view text = source_.substr(start_ + 1, current_ - start_ - 1);
-    return make_token(TokenType::Directive, std::string(text));
+    return make_token(TokenType::Directive, StringLitData{std::string(text)});
 }
 
 std::optional<Token> Lexer::try_lex_pitch() {
@@ -598,8 +603,9 @@ SourceLocation Lexer::current_location() const {
 
 // Convenience function
 std::pair<std::vector<Token>, std::vector<Diagnostic>>
-lex(std::string_view source, std::string_view filename) {
-    Lexer lexer(source, filename);
+lex(std::string_view source, StringInterner& interner,
+    std::string_view filename) {
+    Lexer lexer(source, interner, filename);
     auto tokens = lexer.lex_all();
     return {std::move(tokens), lexer.diagnostics()};
 }

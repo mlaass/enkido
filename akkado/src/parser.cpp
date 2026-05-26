@@ -6,9 +6,11 @@
 namespace akkado {
 
 Parser::Parser(std::vector<Token> tokens, std::string_view source,
+               StringInterner& interner,
                std::string_view filename)
     : tokens_(std::move(tokens))
     , source_(source)
+    , interner_(&interner)
     , filename_(filename)
 {}
 
@@ -244,12 +246,12 @@ NodeIndex Parser::parse_import_decl() {
     // Expect string literal (path). Guard against the `str` keyword token
     // (which shares TokenType::String per PRD prd-parameter-type-annotations-phase-2 §4.4).
     if (!check(TokenType::String) ||
-        !std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
+        !std::holds_alternative<StringLitData>(tokens_[current_idx_].value)) {
         error("Expected module path string after 'import'");
         return node;
     }
     Token path_tok = advance();
-    std::string path = path_tok.as_string();
+    std::string path = path_tok.as_string_lit();
 
     // Optional: as <ident>
     std::string alias;
@@ -510,7 +512,7 @@ NodeIndex Parser::parse_assignment(const Token& name_token) {
     consume(TokenType::Equals, "Expected '=' after identifier");
 
     NodeIndex node = make_node(NodeType::Assignment, name_token);
-    arena_[node].data = Node::IdentifierData{std::string(name_token.lexeme)};
+    arena_[node].data = Node::IdentifierData{interner_->intern(name_token.lexeme)};
 
     NodeIndex value = parse_expression();
     if (value != NULL_NODE) {
@@ -685,7 +687,7 @@ NodeIndex Parser::parse_prefix() {
             // Placeholder for partial application: add(3, _)
             Token tok = advance();
             NodeIndex node = make_node(NodeType::Identifier, tok);
-            arena_[node].data = Node::IdentifierData{"_"};
+            arena_[node].data = Node::IdentifierData{interner_->intern("_")};
             return node;
         }
         default:
@@ -772,7 +774,7 @@ NodeIndex Parser::parse_string() {
     // `str` keyword to TokenType::String with an empty value variant. If
     // such a keyword-token leaks into expression position, emit a clean
     // E185 instead of crashing on std::bad_variant_access in as_string().
-    if (!std::holds_alternative<std::string>(tok.value)) {
+    if (!std::holds_alternative<StringLitData>(tok.value)) {
         error_with_code(tok, "E185",
             "Reserved type-name keyword '" + std::string(tok.lexeme) +
             "' cannot appear in expression position.");
@@ -780,7 +782,7 @@ NodeIndex Parser::parse_string() {
         return node;
     }
 
-    arena_[node].data = Node::StringData{tok.as_string()};
+    arena_[node].data = Node::StringData{tok.as_string_lit()};
     return node;
 }
 
@@ -861,7 +863,7 @@ NodeIndex Parser::parse_unary_not() {
 
     // Desugar to bnot(operand)
     NodeIndex node = make_node(NodeType::Call, bang_tok);
-    arena_[node].data = Node::IdentifierData{"bnot"};
+    arena_[node].data = Node::IdentifierData{interner_->intern("bnot")};
 
     // Add operand as argument
     NodeIndex arg = arena_.alloc(NodeType::Argument, arena_[operand].location);
@@ -979,7 +981,7 @@ NodeIndex Parser::parse_identifier_or_call() {
 
     // Plain identifier
     NodeIndex node = make_node(NodeType::Identifier, name_tok);
-    arena_[node].data = Node::IdentifierData{std::string(name_tok.lexeme)};
+    arena_[node].data = Node::IdentifierData{interner_->intern(name_tok.lexeme)};
     return node;
 }
 
@@ -1165,7 +1167,7 @@ NodeIndex Parser::parse_closure() {
                         param.is_rest, param.annotated_type};
                 } else {
                     // Simple parameter - use IdentifierData
-                    arena_[param_node].data = Node::IdentifierData{param.name};
+                    arena_[param_node].data = Node::IdentifierData{interner_->intern(param.name)};
                 }
 
                 // Attach expression/numeric default as child of param node. String
@@ -1343,12 +1345,12 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
             // Fast path: simple string literal (not followed by an operator).
             // Same guard as above for the `str` keyword token.
             else if (check(TokenType::String) &&
-                     std::holds_alternative<std::string>(tokens_[current_idx_].value) &&
+                     std::holds_alternative<StringLitData>(tokens_[current_idx_].value) &&
                      current_idx_ + 1 < tokens_.size() &&
                      (tokens_[current_idx_ + 1].type == TokenType::Comma ||
                       tokens_[current_idx_ + 1].type == TokenType::RParen)) {
                 Token str_tok = advance();
-                default_string = str_tok.as_string();
+                default_string = str_tok.as_string_lit();
                 seen_default = true;
                 default_node_idx = arena_.alloc(NodeType::StringLit, str_tok.location);
                 arena_[default_node_idx].data = Node::StringData{*default_string};
@@ -1472,7 +1474,7 @@ NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
     NodeIndex node = make_node(NodeType::Call, op);
 
     // Set function name based on operator
-    arena_[node].data = Node::IdentifierData{func_name};
+    arena_[node].data = Node::IdentifierData{interner_->intern(func_name)};
 
     // Add left and right as arguments
     NodeIndex left_arg = arena_.alloc(NodeType::Argument, arena_[left].location);
@@ -1535,7 +1537,7 @@ NodeIndex Parser::parse_diamond_infix(NodeIndex left) {
     // Sink call: `out(@)` for bare `<>`, `bus(N, @)` for `<>(N)`.
     NodeIndex call = make_node(NodeType::Call, diamond_tok);
     arena_[call].data =
-        Node::IdentifierData{index_expr == NULL_NODE ? "out" : "bus"};
+        Node::IdentifierData{interner_->intern(index_expr == NULL_NODE ? "out" : "bus")};
 
     if (index_expr != NULL_NODE) {
         NodeIndex idx_arg =
@@ -1572,7 +1574,7 @@ NodeIndex Parser::parse_method_call(NodeIndex left) {
     if (check(TokenType::LParen)) {
         // Method call: x.method(args)
         NodeIndex node = make_node(NodeType::MethodCall, dot_tok);
-        arena_[node].data = Node::IdentifierData{std::string(name_tok.lexeme)};
+        arena_[node].data = Node::IdentifierData{interner_->intern(name_tok.lexeme)};
 
         // Add receiver as first child
         arena_.add_child(node, left);
@@ -1636,7 +1638,7 @@ NodeIndex Parser::parse_index(NodeIndex left) {
 
 NodeIndex Parser::parse_call(const Token& name_token) {
     NodeIndex node = make_node(NodeType::Call, name_token);
-    arena_[node].data = Node::IdentifierData{std::string(name_token.lexeme)};
+    arena_[node].data = Node::IdentifierData{interner_->intern(name_token.lexeme)};
 
     consume(TokenType::LParen, "Expected '(' after function name");
 
@@ -1730,13 +1732,13 @@ NodeIndex Parser::parse_mini_literal() {
     // First argument: the mini-notation string. Guard against the `str` keyword
     // token (PRD prd-parameter-type-annotations-phase-2 §4.4).
     if (!check(TokenType::String) ||
-        !std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
+        !std::holds_alternative<StringLitData>(tokens_[current_idx_].value)) {
         error("Expected string for mini-notation pattern");
         return node;
     }
 
     Token pattern_tok = advance();
-    const std::string& pattern_str = pattern_tok.as_string();
+    const std::string& pattern_str = pattern_tok.as_string_lit();
 
     // Adjust location to point to content start (skip opening quote)
     // This ensures source offsets in mini-notation AST are relative to content
@@ -1832,9 +1834,9 @@ NodeIndex Parser::parse_match_expr() {
                 }
                 // Create a placeholder pattern node
                 pattern = make_node(NodeType::Identifier, arm_tok);
-                arena_[pattern].data = Node::IdentifierData{"_destructure"};
+                arena_[pattern].data = Node::IdentifierData{interner_->intern("_destructure")};
             } else if (check(TokenType::String) &&
-                       std::holds_alternative<std::string>(tokens_[current_idx_].value)) {
+                       std::holds_alternative<StringLitData>(tokens_[current_idx_].value)) {
                 pattern = parse_string();
             } else if ((check(TokenType::Number) &&
                         std::holds_alternative<NumericValue>(tokens_[current_idx_].value)) ||
@@ -1871,7 +1873,7 @@ NodeIndex Parser::parse_match_expr() {
                 is_wildcard = true;
                 // Create an Identifier node with "_" as a placeholder
                 pattern = make_node(NodeType::Identifier, arm_tok);
-                arena_[pattern].data = Node::IdentifierData{"_"};
+                arena_[pattern].data = Node::IdentifierData{interner_->intern("_")};
             } else {
                 error("Expected pattern (string, number, bool, or '_')");
                 synchronize();
@@ -1895,7 +1897,7 @@ NodeIndex Parser::parse_match_expr() {
                 advance();  // consume '_'
                 is_wildcard = true;
                 pattern = make_node(NodeType::Identifier, arm_tok);
-                arena_[pattern].data = Node::IdentifierData{"_"};
+                arena_[pattern].data = Node::IdentifierData{interner_->intern("_")};
             } else {
                 // The "pattern" is actually the guard expression
                 has_guard = true;
@@ -1950,7 +1952,7 @@ NodeIndex Parser::parse_const_decl(const Token& name_token) {
     consume(TokenType::Equals, "Expected '=' after const identifier");
 
     NodeIndex node = make_node(NodeType::ConstDecl, name_token);
-    arena_[node].data = Node::IdentifierData{std::string(name_token.lexeme)};
+    arena_[node].data = Node::IdentifierData{interner_->intern(name_token.lexeme)};
 
     NodeIndex value = parse_expression();
     if (value != NULL_NODE) {
@@ -2035,7 +2037,7 @@ NodeIndex Parser::parse_fn_def(bool is_const, bool is_inline) {
                 param.name, param.default_value, param.default_string,
                 param.is_rest, param.annotated_type};
         } else {
-            arena_[param_node].data = Node::IdentifierData{param.name};
+            arena_[param_node].data = Node::IdentifierData{interner_->intern(param.name)};
         }
 
         // Attach expression/numeric default as child of param node. String
@@ -2061,7 +2063,7 @@ NodeIndex Parser::parse_directive() {
     NodeIndex node = make_node(NodeType::Directive, dir_tok);
 
     // Get directive name from token value
-    const std::string& dir_name = dir_tok.as_string();
+    const std::string& dir_name = dir_tok.as_string_lit();
     arena_[node].data = Node::DirectiveData{dir_name};
 
     // Parse arguments if present
@@ -2144,7 +2146,7 @@ NodeIndex Parser::parse_record_literal() {
 
                 // Create identifier node for the value
                 NodeIndex ident = arena_.alloc(NodeType::Identifier, field_tok.location);
-                arena_[ident].data = Node::IdentifierData{field_name};
+                arena_[ident].data = Node::IdentifierData{interner_->intern(field_name)};
                 arena_.add_child(field_node, ident);
             }
 
@@ -2220,8 +2222,9 @@ std::vector<DestructureField> Parser::parse_destructure_fields(bool allow_defaul
 
 std::pair<Ast, std::vector<Diagnostic>>
 parse(std::vector<Token> tokens, std::string_view source,
+      StringInterner& interner,
       std::string_view filename, bool lint_strict) {
-    Parser parser(std::move(tokens), source, filename);
+    Parser parser(std::move(tokens), source, interner, filename);
     parser.set_lint_strict(lint_strict);
     Ast ast = parser.parse();
     return {std::move(ast), parser.diagnostics()};

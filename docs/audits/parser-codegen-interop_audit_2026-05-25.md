@@ -21,7 +21,7 @@ The akkado compiler is structurally clean for a 75 KLOC code-base — one mutex,
 
 The dominant simplification opportunity is the codegen `visit()` Call branch (**1,180 lines** in a single switch arm) plus its 7-way dispatcher fragmentation. The dominant parallelisation opportunity is splitting front-end work per import file — imports are *already resolved as a DAG* and then immediately collapsed into a single byte stream before tokenisation, throwing away the parallelism the import graph proves safe.
 
-**Resolution status.** All six critical findings are scoped into `docs/prd-parser-codegen-correctness.md` (filed 2026-05-25). Per-finding RESOLVED tags below get appended as each phase ships; see that PRD's status block for current state.
+**Resolution status.** All six critical findings are scoped into `docs/prd-parser-codegen-correctness.md` (filed 2026-05-25; closed 2026-05-26). **5 resolved (F1, F2, F8, F12, F14), 1 withdrawn (F7 — already correct on master).** Per-finding RESOLVED / WITHDRAWN tags appear below in §2; see the PRD's status block for the per-phase commit log.
 
 ---
 
@@ -341,6 +341,17 @@ Pitch-MIDI semitone table identical in both (`lexer.cpp:540`, `mini_lexer.cpp:22
 
 ### F12. Lexers don't intern strings — identifiers re-hashed 16+ times per compile — *High*
 
+> **RESOLVED 2026-05-26** by Phase 5 of
+> [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md).
+> New per-compile `akkado::StringInterner` (owned strings, sequential
+> `SymbolId(u32)` ids) is held by `CompileContext`. `Token::TokenValue`
+> variant carries `SymbolId` for `Identifier` tokens (interned at lex
+> time) and `StringLitData` for string-content tokens.
+> `IdentifierData::name` is a `SymbolId`; `SymbolTable::scopes_` is
+> keyed on `SymbolId`; `fnv1a_hash` calls inside `symbol_table.cpp`
+> are gone. Seven `[F12]` regression tests in `test_lexer.cpp` /
+> `test_symbol_table.cpp` lock the structural invariants.
+
 **Mechanism.** `grep -rn 'Symbol\|symbol_table' akkado/src/lexer.cpp akkado/src/mini_lexer.cpp` returns nothing. The lexers produce `std::string` payloads (`lexer.cpp:464`). Each identifier then:
 1. allocates in `Token.value` as `std::string` (`lexer.cpp:464`)
 2. is also stored as `lexeme` view (`lexer.cpp:113`)
@@ -575,6 +586,12 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Effort:** Medium (1-2 weeks).
 
 ### PRD-9 — Real string interning at lex time  *(High; foundational)*
+
+> **SHIPPED via `prd-parser-codegen-correctness.md` Phase 5**, 2026-05-26.
+> Per-compile `StringInterner` owned by `CompileContext`; lexer emits
+> `SymbolId` handles for identifier tokens; AST `IdentifierData::name`
+> carries the SymbolId. Hash computed once at intern time.
+
 **Scope:** Promote `StringInterner` to a top-level `CompileContext` owned object; lexers emit `Symbol` handles instead of `std::string` payloads; AST `IdentifierData` carries the handle. Hash computed once at intern time.
 **Files touched:** `symbol_table.hpp`, `token.hpp`/`mini_token.hpp`, `lexer.cpp`, `mini_lexer.cpp`, `parser.cpp` (15+ sites), `ast.hpp`, `analyzer.cpp`.
 **Effort:** Medium-Large (2-3 weeks). Best paired with PRD-8.

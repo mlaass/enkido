@@ -36,14 +36,15 @@ CompileResult compile(std::string_view source, std::string_view filename,
                      CompileContext* ctx) {
     CompileResult result;
 
-    // PRD prd-parser-codegen-correctness.md Phase 4 (F14): construct a
-    // stack-local context if the caller didn't supply one. Replaces the
-    // process-global voicing_registry()/registry_mutex() pair so each
-    // compile gets its own VoicingRegistry.
-    std::optional<CompileContext> default_ctx;
+    // PRD prd-parser-codegen-correctness.md Phase 4 (F14) + Phase 5 (F12):
+    // construct a heap-owned context if the caller didn't supply one,
+    // and stash it in `result.owned_ctx` so the interner / voicing
+    // registry outlive this function call (downstream tooling that
+    // inspects `result.symbols` post-compile would otherwise hold a
+    // dangling SymbolTable->interner pointer).
     if (ctx == nullptr) {
-        default_ctx.emplace();
-        ctx = &*default_ctx;
+        result.owned_ctx = std::make_shared<CompileContext>();
+        ctx = result.owned_ctx.get();
     }
 
     if (source.empty()) {
@@ -150,7 +151,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
     source_map.add_region(std::string(filename), offset, user_source.size(), cumulative_lines);
 
     // Phase 1: Lexing
-    auto [tokens, lex_diags] = lex(combined_source, filename);
+    auto [tokens, lex_diags] = lex(combined_source, *ctx->interner, filename);
     source_map.adjust_all(lex_diags);
     result.diagnostics.insert(result.diagnostics.end(),
                               lex_diags.begin(), lex_diags.end());
@@ -161,8 +162,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
     }
 
     // Phase 2: Parsing
-    auto [ast, parse_diags] = parse(std::move(tokens), combined_source, filename,
-                                     lint_strict);
+    auto [ast, parse_diags] = parse(std::move(tokens), combined_source,
+                                     *ctx->interner, filename, lint_strict);
     source_map.adjust_all(parse_diags);
     result.diagnostics.insert(result.diagnostics.end(),
                               parse_diags.begin(), parse_diags.end());
@@ -181,7 +182,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
         namespaces.push_back(ModuleNamespace{ns.canonical_path, ns.alias});
     }
 
-    SemanticAnalyzer analyzer;
+    SemanticAnalyzer analyzer(*ctx->interner);
     auto analysis = analyzer.analyze(ast, filename, &source_map, namespaces);
     source_map.adjust_all(analysis.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(),

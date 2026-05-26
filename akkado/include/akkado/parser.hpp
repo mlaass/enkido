@@ -5,6 +5,7 @@
 #include "token.hpp"
 #include "ast.hpp"
 #include "diagnostics.hpp"
+#include "string_interner.hpp"
 
 namespace akkado {
 
@@ -53,8 +54,12 @@ public:
     /// Construct a parser from a token stream
     /// @param tokens Vector of tokens from lexer (must end with Eof)
     /// @param source Original source for error messages
+    /// @param interner Per-compile StringInterner (Phase 5 — used to
+    ///        intern identifier strings synthesized by the parser
+    ///        itself, e.g. `"_"`, `"bnot"`, `"out"`, `"bus"`).
     /// @param filename Filename for error reporting
     Parser(std::vector<Token> tokens, std::string_view source,
+           StringInterner& interner,
            std::string_view filename = "<input>");
 
     /// Parse the entire program
@@ -177,6 +182,7 @@ private:
     // Data
     std::vector<Token> tokens_;
     std::string_view source_;
+    StringInterner* interner_ = nullptr;  // PRD Phase 5
     std::string filename_;
     std::vector<Diagnostic> diagnostics_;
     AstArena arena_;
@@ -190,11 +196,13 @@ private:
 /// Convenience function to parse source code
 /// @param tokens Tokens from lexer
 /// @param source Original source code
+/// @param interner Per-compile StringInterner
 /// @param filename Filename for error reporting
 /// @param lint_strict Emit opt-in lint warnings (W201 etc.). Off by default.
 /// @return Pair of AST and diagnostics
 std::pair<Ast, std::vector<Diagnostic>>
 parse(std::vector<Token> tokens, std::string_view source,
+      StringInterner& interner,
       std::string_view filename = "<input>",
       bool lint_strict = false);
 

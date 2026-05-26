@@ -7,6 +7,7 @@
 #include <variant>
 #include <optional>
 #include "diagnostics.hpp"
+#include "string_interner.hpp"  // for SymbolId (used in IdentifierData)
 #include "typed_value.hpp"  // for ParamValueType (used in ClosureParamData)
 
 namespace akkado {
@@ -180,7 +181,12 @@ struct Node {
     struct NumberData { double value; bool is_integer; };
     struct BoolData { bool value; };
     struct StringData { std::string value; };
-    struct IdentifierData { std::string name; };
+    // PRD prd-parser-codegen-correctness.md Phase 5 (F12): identifier
+    // names are per-compile interned SymbolIds. Resolve to a string
+    // view via the compile's `StringInterner::view(id)` when text is
+    // needed (diagnostics, JSON serialization). Equality compare via
+    // `id == id` — no string compare, no rehash.
+    struct IdentifierData { SymbolId name; };
     struct BinaryOpData { BinOp op; };
     struct ArgumentData {
         std::optional<std::string> name;        // Named arg
@@ -406,7 +412,10 @@ struct Node {
         return std::get<StringData>(data).value;
     }
 
-    [[nodiscard]] const std::string& as_identifier() const {
+    /// Phase 5 (F12): returns the interned identifier's SymbolId.
+    /// Resolve to a string_view via `StringInterner::view(id)` when
+    /// you need the text (diagnostics, error messages, serialization).
+    [[nodiscard]] SymbolId as_identifier() const {
         return std::get<IdentifierData>(data).name;
     }
 

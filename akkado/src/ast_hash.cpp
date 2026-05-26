@@ -61,7 +61,12 @@ void mix_node_data(std::uint64_t& h, const Node& n) {
         } else if constexpr (std::is_same_v<T, Node::StringData>) {
             mix_str(h, d.value);
         } else if constexpr (std::is_same_v<T, Node::IdentifierData>) {
-            mix_str(h, d.name);
+            // Phase 5: IdentifierData::name is SymbolId. Per-compile
+            // interner ids are stable across the hash window (one
+            // compile's pre/post-codegen comparison) — hashing the id
+            // itself is sufficient and faster than resolving via the
+            // interner.
+            mix_u32(h, d.name);
         } else if constexpr (std::is_same_v<T, Node::BinaryOpData>) {
             mix_byte(h, static_cast<std::uint8_t>(d.op));
         } else if constexpr (std::is_same_v<T, Node::ArgumentData>) {

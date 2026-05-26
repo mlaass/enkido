@@ -18,18 +18,19 @@
 namespace akkado {
 
 namespace voicing { class VoicingRegistry; }
+class StringInterner;
 
 /// Per-compile state container. See PRD prd-parser-codegen-correctness.md
 /// §3.1.
 ///
-/// Lifetime contract (Phase 5 preview): once the interner is populated,
-/// `CompileContext` MUST be destroyed before the source buffer it
-/// interned views from. For single-call use this is automatic
-/// (`compile()` owns both). Callers that reuse a `CompileContext` across
-/// compiles must own persistent source storage.
+/// Lifetime contract: once the interner is populated, `CompileContext`
+/// MUST be destroyed before the source buffer it interned views from.
+/// For single-call use this is automatic (`compile()` owns both).
+/// Callers that reuse a `CompileContext` across compiles must own
+/// persistent source storage for the ctx's full lifetime.
 struct CompileContext {
     std::unique_ptr<voicing::VoicingRegistry> voicing_registry;
-    // Phase 5: std::unique_ptr<StringInterner> interner; goes here.
+    std::unique_ptr<StringInterner>           interner;
 
     CompileContext();
     ~CompileContext();

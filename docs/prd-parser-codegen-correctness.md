@@ -1,9 +1,10 @@
-> **Status: IN PROGRESS — Phases 0 + 1a + 1b + 2 + 3 + 4 SHIPPED, 1 phase
-> remaining (F7 withdrawn).** Filed 2026-05-25 as the correctness follow-up
-> to
-> [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
-> Phases land independently; the audit's complexity-sink findings are
-> deferred to separate PRDs.
+> **Status: DONE — All 5 phases shipped (F7 withdrawn during Phase 0).**
+> Filed 2026-05-25; closed 2026-05-26. All 5 in-scope critical
+> correctness findings (F1 / F2 / F8 / F12 / F14) from
+> [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md)
+> are resolved; F7 is marked withdrawn (Phase 0 verified `^` is already
+> right-associative on master). Phases landed independently; the
+> audit's complexity-sink findings remain deferred to separate PRDs.
 >
 > - **Phase 0 (snapshot harness) — SHIPPED 2026-05-25** (commit
 >   `b203e2e`). Per-fixture bytecode-disassembly snapshot test at
@@ -84,6 +85,73 @@
 >   `arena.size()` and structural hash are unchanged across
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
+> - **Phase 5 (F12 StringInterner + Token shape change) — SHIPPED
+>   2026-05-26** (commit `<commit>`). New
+>   `akkado::StringInterner` (`akkado/include/akkado/string_interner.hpp`,
+>   `akkado/src/string_interner.cpp`) defines `SymbolId` (u32 sequential
+>   id) + `NULL_SYMBOL = 0` + an open-keyed dedup map. The interner
+>   owns its string storage (deviation from the PRD's
+>   view-into-source design — required so `CompileResult.symbols->lookup()`
+>   keeps working after `compile()` returns); the source-buffer
+>   lifetime contract was relaxed accordingly. The interner is held by
+>   `CompileContext::interner` (Phase 4's struct gained the field
+>   alongside its existing `voicing_registry`).
+>   `Token::TokenValue` variant: the `std::string` arm split into
+>   `SymbolId` (for `Identifier` tokens, interned at lex time via
+>   `Lexer::interner_`) and `StringLitData { std::string }` (for
+>   `String`, `Directive`, `Error` tokens). `Token::as_string()` was
+>   removed; new accessors `as_identifier() -> SymbolId` and
+>   `as_string_lit() -> const std::string&`. Mirror change in
+>   `MiniToken`: ctor now takes a `StringInterner&` for symmetry; the
+>   variant itself didn't need a new arm because no MiniToken atom is
+>   identifier-shaped.
+>   `IdentifierData::name` changed from `std::string` to `SymbolId`;
+>   `Node::as_identifier()` now returns `SymbolId`. Consumers across
+>   the analyzer/codegen/const_eval/shape_index/pattern_eval surface
+>   (~150 touch points) resolve to text via
+>   `ctx_->interner->view(SymbolId)` where they need a string, or pass
+>   the `SymbolId` straight into `SymbolTable::lookup(SymbolId)` for
+>   the no-rehash fast path.
+>   `SymbolTable`: internal `scopes_` map switched from FNV-hash key
+>   to `SymbolId` key. `Symbol.name_hash` renamed to `Symbol.name_id`
+>   (type `SymbolId`). `lookup(uint32_t)` overload removed; new
+>   `lookup(SymbolId)` is the primary path. Default `SymbolTable()`
+>   leaves the table empty (no builtins, no interner) for unit-test
+>   compatibility; new ctor `SymbolTable(StringInterner&)` and method
+>   `register_builtins(StringInterner&)` pre-seed builtins through
+>   the interner. `fnv1a_hash()` calls inside `symbol_table.cpp` are
+>   gone (the header declaration stays for Cedar runtime interop).
+>   `SemanticAnalyzer` gained a ctor taking `StringInterner&`; the
+>   analyzer's `analyze()` re-seeds builtins after its
+>   `symbols_ = SymbolTable{}` reset so the interner stays attached
+>   across multiple calls. `Lexer` / `Parser` / `lex()` / `parse()`
+>   ctors+free fns take a `StringInterner&`. `CompileResult` gained
+>   `owned_ctx` (`shared_ptr<CompileContext>`) so a `compile()` call
+>   that constructs its own context keeps it alive for downstream
+>   `result.symbols->lookup()` queries.
+>   `shape_index_json` got its own local `StringInterner` (PRD-2
+>   shared-AST work is the long-term replacement; for now shape_index
+>   re-lexes/re-parses with a self-owned interner). `ConstEvaluator`
+>   ctor took a `StringInterner&`; `extract_closure_info` helper in
+>   `codegen/helpers.hpp` similarly. Tests: 7 `[F12]` regression
+>   tests across `test_lexer.cpp` and `test_symbol_table.cpp` lock
+>   the structural invariants (id dedup, NULL_SYMBOL semantics,
+>   variant shape, lifetime). Plus a per-thread test helper
+>   `test_lex_helper.hpp` wraps the two-arg `lex(...)` / `parse(...)`
+>   shapes so test_lexer / test_parser / test_pattern_scalar /
+>   test_mini_notation / test_analyzer keep compiling unchanged.
+>   Perf bench (`/usr/bin/time -v` on a non-trivial 650-line input
+>   `akkado/stdlib/scale_quantize.ak`, 3 trials each before/after):
+>   user-time `0.34-0.35s → 0.32-0.33s` (~3-6% faster); minor page
+>   faults `27521 → 27484` (-37, ~0.1%); Max RSS unchanged at
+>   ~76 MB. Smaller `akkado/stdlib/event_transforms.ak` (77 lines):
+>   user-time `0.17-0.18s → 0.16-0.17s`; page faults `13841 → 13806`.
+>   The structural-correctness check (TokenValue no longer holds
+>   std::string for identifier tokens; SymbolTable map keyed on
+>   SymbolId; zero `fnv1a_hash` calls in symbol_table.cpp) is the
+>   real exit criterion per PRD §4 Phase 5; the bench is
+>   informational. Full akkado suite green (1088 cases / 142128
+>   assertions); snapshot harness byte-identical. See §4 Phase 5.
 > - **Phase 4 (F14 `voicing_registry` per-compile isolation) — SHIPPED
 >   2026-05-26** (commit `7ef8a49`). New
 >   `akkado::CompileContext` (`akkado/include/akkado/compile_context.hpp`,
