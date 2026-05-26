@@ -85,7 +85,7 @@
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
 > - **Phase 4 (F14 `voicing_registry` per-compile isolation) — SHIPPED
->   2026-05-26** (commit `<commit>`). New
+>   2026-05-26** (commit `7ef8a49`). New
 >   `akkado::CompileContext` (`akkado/include/akkado/compile_context.hpp`,
 >   `akkado/src/compile_context.cpp`) owns a `unique_ptr<voicing::VoicingRegistry>`
 >   and gets passed to `compile()` / `compile_file()` as a final
