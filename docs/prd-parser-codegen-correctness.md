@@ -86,7 +86,7 @@
 >   `generate()` for the `04_spread_args.ak` + `05_named_args.ak`
 >   shapes. See §4 Phase 1a.
 > - **Phase 5 (F12 StringInterner + Token shape change) — SHIPPED
->   2026-05-26** (commit `<commit>`). New
+>   2026-05-26** (commit `51a2380`). New
 >   `akkado::StringInterner` (`akkado/include/akkado/string_interner.hpp`,
 >   `akkado/src/string_interner.cpp`) defines `SymbolId` (u32 sequential
 >   id) + `NULL_SYMBOL = 0` + an open-keyed dedup map. The interner
