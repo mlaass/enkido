@@ -265,6 +265,28 @@ don't change the opcode's location in the program graph.
   changes, both the primary DSP state AND the ExtendedParams get new
   slots, the old ones GC away after the fade window.
 
+### GC co-touch
+
+Opcodes read ExtendedParams via `get_if` (not `get_or_create`), so the
+slot is never automatically marked as touched during a frame. Without
+intervention, `gc_sweep()` would move every ExtendedParams slot to the
+fading pool on the first hot-swap, the opcode would then read `nullptr`
+and silently fall back to its hardcoded C++ defaults — dropping every
+live recompile's dry/wet/attack/release/etc. constant change.
+
+`StatePool::gc_sweep()` works around this by co-touching every slot's
+sibling at `key ^ EXT_PARAMS_STATE_XOR` before the actual sweep. Since
+the XOR relationship is symmetric and `touch()` is a no-op when the
+sibling doesn't exist, opcodes without ExtendedParams pay one extra
+hash lookup per swap and no other code needs to change.
+
+Regression coverage:
+- `cedar/tests/test_hot_swap_extended_params.cpp` — VM-level sweep
+  across every builtin family that uses ExtendedParams<N>.
+- `akkado/tests/test_hot_swap_record_options.cpp` — end-to-end test
+  using record-spread options (`..{dry: 0, wet: 0}`) over the full
+  worklet-style compile + load + apply path.
+
 ## 8. Reference
 
 - `cedar/include/cedar/opcodes/dsp_state.hpp` — `ExtendedParams<N>` struct,
