@@ -5,7 +5,7 @@
 namespace nkido::test {
 
 inline constexpr const char* CLI_BINARY =
-    "@CMAKE_BINARY_DIR@/tools/nkido-cli/nkido-cli";
+    "@CMAKE_BINARY_DIR@/bin/nkido";
 
 inline constexpr const char* FIXTURES_DIR =
     "@CMAKE_CURRENT_SOURCE_DIR@/fixtures";

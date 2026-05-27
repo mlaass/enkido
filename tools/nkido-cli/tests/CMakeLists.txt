@@ -61,7 +61,7 @@ add_executable(nkido_cli_tests
 )
 
 # Make sure the CLI binary is built before tests try to invoke it.
-add_dependencies(nkido_cli_tests nkido-cli)
+add_dependencies(nkido_cli_tests nkido_cli)
 
 target_include_directories(nkido_cli_tests
     PRIVATE

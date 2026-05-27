@@ -25,7 +25,7 @@ import numpy as np
 import scipy.io.wavfile as wav
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "debug" / "bin" / "nkido"
 
 PEAK_THRESHOLD = 0.01     # below this = effectively inaudible
 RMS_THRESHOLD = 0.0005    # below this = no sustained signal
@@ -70,7 +70,7 @@ def main() -> int:
     args = p.parse_args()
 
     if not NKIDO_CLI.exists():
-        print(f"nkido-cli not built at {NKIDO_CLI}", file=sys.stderr)
+        print(f"nkido not built at {NKIDO_CLI}", file=sys.stderr)
         return 1
 
     patches: list[Path] = []

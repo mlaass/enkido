@@ -1,4 +1,4 @@
-# Nkido CLI - Unified synth tool with SDL2 audio output
+# nkido CLI - Unified synth tool with SDL2 audio output
 
 find_package(SDL2 REQUIRED)
 
@@ -20,7 +20,10 @@ target_link_libraries(nkido_bytecode_dump
         nkido_compiler_options
 )
 
-add_executable(nkido-cli
+# Target label is `nkido_cli` to avoid colliding with potential future
+# library/alias targets named `nkido`. OUTPUT_NAME controls the produced
+# binary filename ("nkido" / "nkido.exe").
+add_executable(nkido_cli
     main.cpp
     audio_engine.cpp
     asset_loader.cpp
@@ -33,7 +36,12 @@ add_executable(nkido-cli
     ui/ui_mode.cpp
 )
 
-target_link_libraries(nkido-cli
+set_target_properties(nkido_cli PROPERTIES
+    OUTPUT_NAME nkido
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+target_link_libraries(nkido_cli
     PRIVATE
         akkado
         cedar
@@ -43,14 +51,14 @@ target_link_libraries(nkido-cli
         nkido_compiler_options
 )
 
-target_include_directories(nkido-cli
+target_include_directories(nkido_cli
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # Built-in default sample kit. The compile-time path makes in-tree builds
 # resolve `s"bd"` etc. without setup; installed builds fall back to the
 # `share/nkido/default_kit/strudel.json` rule below.
-target_compile_definitions(nkido-cli PRIVATE
+target_compile_definitions(nkido_cli PRIVATE
     NKIDO_DEFAULT_KIT_PATH="${CMAKE_SOURCE_DIR}/web/static/samples/bpb_808_clean/strudel.json"
     NKIDO_SOUNDFONT_PATH="${CMAKE_SOURCE_DIR}/web/static/soundfonts"
     NKIDO_TDM_CATALOG_PATH="${CMAKE_SOURCE_DIR}/web/static/samples/tidal-drum-machines/catalog.json"
@@ -58,10 +66,10 @@ target_compile_definitions(nkido-cli PRIVATE
 
 # Platform-specific: SDL2main needed on Windows
 if(WIN32)
-    target_link_libraries(nkido-cli PRIVATE SDL2::SDL2main)
+    target_link_libraries(nkido_cli PRIVATE SDL2::SDL2main)
 endif()
 
-install(TARGETS nkido-cli
+install(TARGETS nkido_cli
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
