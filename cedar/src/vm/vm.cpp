@@ -353,7 +353,9 @@ void VM::rebind_states([[maybe_unused]] const ProgramSlot* old_slot,
     }
 
     // GC will clean up orphaned states after crossfade completes
-    // (handled by gc_sweep() called from hot_swap_end())
+    // (handled by gc_sweep() called from hot_swap_end()). The
+    // co-touch of sibling ExtendedParams<N> slots happens inside
+    // StatePool::gc_sweep().
 }
 
 // Single-step dispatch of one instruction at body[ip], returning next ip.

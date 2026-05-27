@@ -96,10 +96,15 @@ void live_load(cedar::VM& vm, const akkado::CompileResult& cr,
     apply_all_state_inits(vm, cr, seq_storage);
 }
 
-float peak_over(cedar::VM& vm, int blocks) {
+// Settle past the crossfade + DSP-tail decay window, then measure peak
+// over the last few blocks. The settle window MUST exceed the crossfade
+// duration (3 blocks default) plus the reverb-tank decay, otherwise the
+// peak captures audio from the OLD program still mixing in.
+float settle_then_peak(cedar::VM& vm, int settle_blocks, int measure_blocks) {
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (int b = 0; b < settle_blocks; ++b) vm.process_block(L.data(), R.data());
     float peak = 0.0f;
-    for (int b = 0; b < blocks; ++b) {
+    for (int b = 0; b < measure_blocks; ++b) {
         vm.process_block(L.data(), R.data());
         for (std::size_t i = 0; i < cedar::BLOCK_SIZE; ++i) {
             peak = std::max(peak, std::max(std::abs(L[i]), std::abs(R[i])));
@@ -145,15 +150,17 @@ TEST_CASE("hot-swap: freeverb wet:0.5 -> wet:0 via record-options silences audio
 
     // Load A: should produce audible output.
     live_load(vm, crA, seq_storage);
-    // Run long enough to clear the initial swap + let the reverb tank fill.
-    const float peak_a = peak_over(vm, 128);
+    // Settle past the initial swap (no crossfade — old slot was empty), let
+    // the reverb tank fill, then sample a steady block.
+    const float peak_a = settle_then_peak(vm, 128, 1);
     INFO("audible peak: " << peak_a);
     REQUIRE(peak_a > 0.05f);
 
     // Hot-swap to B: same opcode, different record-spread options.
     live_load(vm, crB, seq_storage);
-    // Drain the crossfade + decay tank under wet=0/dry=0.
-    const float peak_b = peak_over(vm, 256);
+    // Settle past the crossfade (default 3 blocks) + reverb tank decay,
+    // then sample. With dry=0/wet=0 the freeverb produces silence.
+    const float peak_b = settle_then_peak(vm, 64, 4);
     INFO("silent peak: " << peak_b);
     CHECK(peak_b < 1e-3f);
 }
@@ -182,12 +189,12 @@ void run_options_silence_case(const OptionsCase& tc) {
     std::vector<std::vector<cedar::Sequence>> seq_storage;
 
     live_load(vm, crA, seq_storage);
-    const float peak_a = peak_over(vm, 128);
+    const float peak_a = settle_then_peak(vm, 128, 1);
     INFO("audible peak: " << peak_a);
     REQUIRE(peak_a > 0.01f);
 
     live_load(vm, crB, seq_storage);
-    const float peak_b = peak_over(vm, 256);
+    const float peak_b = settle_then_peak(vm, 64, 4);
     INFO("silent peak: " << peak_b);
     CHECK(peak_b < 1e-3f);
 }

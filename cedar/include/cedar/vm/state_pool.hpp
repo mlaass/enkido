@@ -2,6 +2,7 @@
 
 #include "../dsp/constants.hpp"
 #include "../opcodes/dsp_state.hpp"
+#include "instruction.hpp"  // EXT_PARAMS_STATE_XOR for gc_sweep co-touch
 #include <array>
 #include <cstdint>
 #include <sstream>
@@ -235,6 +236,29 @@ public:
     // Garbage collect: move untouched states to fading pool
     // Call after hot-swap to begin fade-out of orphaned states
     void gc_sweep() {
+        // Co-touch ExtendedParams<N> sibling slots before sweeping.
+        //
+        // ExtendedParams<N> for an opcode lives at the XOR'd state_id
+        // (see ext_params_state_id() in instruction.hpp). Opcodes read
+        // it via get_if (not get_or_create), so it is never auto-touched
+        // during a frame. Without this co-touch, gc_sweep would evict
+        // every ExtendedParams slot after every hot-swap; the opcode
+        // would then read nullptr and fall back to its hardcoded C++
+        // defaults — silently dropping dry/wet/attack/release/etc.
+        // changes from live recompiles.
+        //
+        // The XOR is symmetric, so the sweep direction doesn't matter:
+        // any occupied + touched slot keeps its sibling alive too. Cost
+        // is one extra hash lookup per touched slot per gc_sweep call.
+        for (std::size_t i = 0; i < MAX_STATES; ++i) {
+            if (!states_[i].occupied || !touched_[i]) continue;
+            const std::uint32_t sibling = states_[i].key ^ EXT_PARAMS_STATE_XOR;
+            const std::size_t sibling_idx = find_slot(sibling);
+            if (sibling_idx != INVALID_SLOT) {
+                touched_[sibling_idx] = true;
+            }
+        }
+
         for (std::size_t i = 0; i < MAX_STATES; ++i) {
             if (states_[i].occupied && !touched_[i]) {
                 // Move to fading pool instead of immediate deletion
