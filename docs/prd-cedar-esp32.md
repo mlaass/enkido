@@ -243,7 +243,7 @@ The UART task calls `VM::load_program(std::span<const Instruction>)` (see `cedar
 | `scripts/cedar-size-report.sh` | **Stays** | Size report continues to validate the embedded config. |
 | nkido `cmake/` | **Stays** | `CompilerOptions.cmake` MinSizeRel flags work inside ESP-IDF. |
 | `akkado/` compiler | **Stays** | Host-only; no changes. |
-| `tools/akkado-cli/` | **Stays** | Produces bytecode consumed verbatim by the device. |
+| `tools/akkado/` | **Stays** | Produces bytecode consumed verbatim by the device. |
 | New repo `cedar-esp32` | **New** | Contains ESP-IDF project, ADF integration, loader, hardware glue. |
 | `tools/cedar-push` (host) | **New** | Python CLI for UART bytecode upload. Lives in cedar-esp32 repo. |
 | **[OPEN QUESTION]** Cedar API for sample registration by ID | **Possibly modified** | If Cedar samplers currently expect Cedar to own sample decoding, they need a hook to reference externally-decoded PCM. To be confirmed during Phase 2 when ADF integration begins. |

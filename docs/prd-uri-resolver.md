@@ -444,8 +444,8 @@ If any URI fails to resolve, compile is reported as success but install fails wi
 | `web/src/lib/audio/bank-registry.ts` | **Modified** | `loadBank(uri, name?)` only. `loadFromGitHub` deleted. Internal manifest fetch goes through `uriResolver`. |
 | `web/src/lib/stores/audio.svelte.ts` | **Modified** | Three `loadXFromUrl` methods → one `loadAsset(uri, kind?)`. |
 | `web/static/worklet/cedar-processor.js` | **Modified** | Drop `cedar_load_sample_wav` handler; align param order on remaining loads. |
-| `tools/nkido-cli/main.cpp` (or equivalent) | **Modified** | All `--soundfont`, `--bank`, `--sample` flags accept any URI; bare paths treated as `file://`. |
-| `tools/nkido-cli/CMakeLists.txt` | **Modified** | Link cpp-httplib (or include via `cedar` target). |
+| `tools/nkido/main.cpp` (or equivalent) | **Modified** | All `--soundfont`, `--bank`, `--sample` flags accept any URI; bare paths treated as `file://`. |
+| `tools/nkido/CMakeLists.txt` | **Modified** | Link cpp-httplib (or include via `cedar` target). |
 
 ### 6.2 What gets deleted outright
 
@@ -508,7 +508,7 @@ No `[[deprecated]]` shims, no compat wrappers. The audit table in §10 verifies 
 | `web/src/lib/audio/bank-registry.ts:154-185` | Delete `loadFromGitHub`. `loadBank(uri, name?)`. Internal fetch via `uriResolver`. |
 | `web/src/lib/stores/audio.svelte.ts:1288,1511,1562` | Replace three methods with `loadAsset(uri, kind?)`. Update call sites at lines 832, 906, 922, 965, 1073, 1108, 1335, 1367, 1404. |
 | `web/static/worklet/cedar-processor.js:930,979,1032,1104` | Drop `_cedar_load_sample_wav` handler (no caller anyway). Reorder `_cedar_load_soundfont` arg order. |
-| `tools/nkido-cli/*.cpp` | Replace direct `FileLoader::load` with `UriResolver::instance().load(uri)` for `--bank`, `--soundfont`, `--sample` flags. Register `file/http/github/bundled` handlers in `main()`. |
+| `tools/nkido/*.cpp` | Replace direct `FileLoader::load` with `UriResolver::instance().load(uri)` for `--bank`, `--soundfont`, `--sample` flags. Register `file/http/github/bundled` handlers in `main()`. |
 
 ### 7.3 Files explicitly NOT changing
 
@@ -611,7 +611,7 @@ Cedar tests: 184 passing / 1 skipped (network) — all 334,848 assertions green.
 - ✅ `nkido --bank/--soundfont/--sample` accept any URI; bare paths route to `file://`. Flags repeat; banks accumulate as default banks searched in order. `--sample` also accepts `name=uri` for explicit registry-name binding.
 - ✅ `nkido` registers all native handlers (`FileHandler`, `HttpHandler×2`, `GithubHandler`, `BundledHandler`) on `cedar::UriResolver::instance()` at startup, with a process-scoped `FileCache`.
 - ✅ `samples()` declarations from source flow through the same path: render mode iterates `cr.required_uris`, fetches each manifest, resolves every `RequiredSample` against the loaded banks.
-- ✅ New `tools/nkido-cli/asset_loader.{hpp,cpp}` adds a minimal strudel.json scanner (handles `_base`, `_name`, string and string-array fields), `register_native_handlers`, and the bank/soundfont/sample loaders.
+- ✅ New `tools/nkido/asset_loader.{hpp,cpp}` adds a minimal strudel.json scanner (handles `_base`, `_name`, string and string-array fields), `register_native_handlers`, and the bank/soundfont/sample loaders.
 - ✅ `akkado --uris` lists `required_uris` (text + JSON modes).
 - ✅ `docs/uri-schemes.md` covers the scheme list, `samples()` syntax, CLI usage, and caching. Mirrored to `web/static/docs/reference/` and indexed by `bun run build:docs`.
 - ✅ Smoke test: `nkido render --bank github:tidalcycles/Dirt-Samples --seconds 1 -o /tmp/x.wav --source 'sin(440) |> out(%, %)'` succeeds; cold run 301 ms, cache-hit 29 ms (10× speedup).

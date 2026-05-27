@@ -22,7 +22,7 @@ This PRD adds all three.
 
 ### 1.2 Proposed Solution
 
-1. Fix the remaining Windows-blocking source code in `tools/nkido-cli/` (currently `<unistd.h>` is included unconditionally in two files).
+1. Fix the remaining Windows-blocking source code in `tools/nkido/` (currently `<unistd.h>` is included unconditionally in two files).
 2. Add a small platform-abstraction layer for the three things that aren't already abstracted: console Ctrl+C handler, stdin/stdout binary mode, UTF-8 process code page.
 3. Bundle SDL2 on Windows by downloading the official SDL2 dev SDK in CI and installing `SDL2.dll` next to the executable.
 4. Add a `windows-latest` job to a new `.github/workflows/ci.yml` that builds, tests, and (on `v*` tags) uploads release artifacts.
@@ -60,22 +60,22 @@ This PRD adds all three.
 | `akkado` library on MSVC | **Works** | Same run |
 | `cedar/include/cedar/vm/audio_arena.hpp` MSVC branch | **Works** | `_aligned_malloc` / `_aligned_free` |
 | `cedar/src/io/file_cache.cpp` Windows branch | **Works** | Uses `%LOCALAPPDATA%\nkido\cache` |
-| `tools/nkido-cli/asset_loader.cpp::executable_dir()` Windows branch | **Works** | `GetModuleFileNameA` |
-| SDL2 `WIN32`-gated `SDL2main` link | **Works** | Already in `tools/nkido-cli/CMakeLists.txt:60-62` |
+| `tools/nkido/asset_loader.cpp::executable_dir()` Windows branch | **Works** | `GetModuleFileNameA` |
+| SDL2 `WIN32`-gated `SDL2main` link | **Works** | Already in `tools/nkido/CMakeLists.txt:60-62` |
 | RtMidi Windows backend (winmm) | **Works** | Built by FetchContent unconditionally; rtmidi enables winmm on Windows automatically |
 
 ### 2.2 What's broken or missing
 
 | Item | Problem | Where |
 |------|---------|-------|
-| `<unistd.h>` included unconditionally | MSVC has no `<unistd.h>`; build fails immediately | `tools/nkido-cli/asset_loader.cpp:20`, `tools/nkido-cli/tests/test_serve.cpp:27` |
-| `signal(SIGINT)` is racy on Windows | MSVC delivers SIGINT on a separate thread; audio thread can race during shutdown | `tools/nkido-cli/serve_mode.cpp:18-26` |
-| `std::cin` / `std::cout` in **text mode** | Windows CRT translates `\n` ↔ `\r\n` on stdin/stdout — corrupts the serve-mode JSON line protocol if any client sends `\r\n` line endings, and double-newlines our emitted JSON | `tools/nkido-cli/serve_mode.cpp:64, 1182` |
+| `<unistd.h>` included unconditionally | MSVC has no `<unistd.h>`; build fails immediately | `tools/nkido/asset_loader.cpp:20`, `tools/nkido/tests/test_serve.cpp:27` |
+| `signal(SIGINT)` is racy on Windows | MSVC delivers SIGINT on a separate thread; audio thread can race during shutdown | `tools/nkido/serve_mode.cpp:18-26` |
+| `std::cin` / `std::cout` in **text mode** | Windows CRT translates `\n` ↔ `\r\n` on stdin/stdout — corrupts the serve-mode JSON line protocol if any client sends `\r\n` line endings, and double-newlines our emitted JSON | `tools/nkido/serve_mode.cpp:64, 1182` |
 | UTF-8 paths | Default MSVC CRT treats `char*` paths as the system ANSI code page (CP1252 on most installs), so `C:\Users\Joël\…` breaks `std::ifstream` and `fopen` | All file I/O sites that take `std::string` paths |
-| `test_serve.cpp` is POSIX-only | Uses `mkstemp`, `close()`, shell command strings with env prefixes — would not even compile on MSVC, let alone run | `tools/nkido-cli/tests/test_serve.cpp:43-60+` |
+| `test_serve.cpp` is POSIX-only | Uses `mkstemp`, `close()`, shell command strings with env prefixes — would not even compile on MSVC, let alone run | `tools/nkido/tests/test_serve.cpp:43-60+` |
 | No Windows CI | No `.github/workflows/*.yml` builds on `windows-latest` | `.github/workflows/` |
 | No Windows release artifacts | `deploy.yml` only produces WASM | `.github/workflows/deploy.yml` |
-| SDL2 not bundled | `find_package(SDL2)` works on dev boxes that pre-installed the SDK, but there's no story for downloading it in CI or shipping `SDL2.dll` to end users | `tools/nkido-cli/CMakeLists.txt:3` |
+| SDL2 not bundled | `find_package(SDL2)` works on dev boxes that pre-installed the SDK, but there's no story for downloading it in CI or shipping `SDL2.dll` to end users | `tools/nkido/CMakeLists.txt:3` |
 
 ---
 
@@ -155,7 +155,7 @@ Two complementary mechanisms are needed; both are required, neither is sufficien
 **(a) Per-executable manifest** — Windows reads it at process start and routes ANSI APIs (`fopen`, `CreateFileA`, `GetCommandLineA`) through UTF-8 instead of the system code page. Win10 1903+. Manifest file:
 
 ```xml
-<!-- tools/nkido-cli/nkido.manifest -->
+<!-- tools/nkido/nkido.manifest -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <application>
     <windowsSettings>
@@ -165,7 +165,7 @@ Two complementary mechanisms are needed; both are required, neither is sufficien
 </assembly>
 ```
 
-A matching `tools/akkado-cli/akkado.manifest`.
+A matching `tools/akkado/akkado.manifest`.
 
 Embed via CMake (MSVC-only):
 ```cmake
@@ -190,7 +190,7 @@ POSIX version is a no-op. Called once at the top of each CLI's `main()`.
 
 ### 3.5 SDL2 acquisition (Windows)
 
-Keep `find_package(SDL2)` in `tools/nkido-cli/CMakeLists.txt` unchanged. Add a CI step that downloads the official SDL2 dev SDK zip, extracts it, and points `SDL2_DIR` (or `CMAKE_PREFIX_PATH`) at the extracted folder. This matches Option C from the Round 2 decision — predictable, fast, no vcpkg bootstrap, no FetchContent build of SDL2 (which is large).
+Keep `find_package(SDL2)` in `tools/nkido/CMakeLists.txt` unchanged. Add a CI step that downloads the official SDL2 dev SDK zip, extracts it, and points `SDL2_DIR` (or `CMAKE_PREFIX_PATH`) at the extracted folder. This matches Option C from the Round 2 decision — predictable, fast, no vcpkg bootstrap, no FetchContent build of SDL2 (which is large).
 
 Pin SDL2 **2.30.x** (latest 2.x stable; SDL3 is a future migration). Specific version `2.30.10` (or whatever is current at implementation time) pinned in the CI step for reproducibility.
 
@@ -271,13 +271,13 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 | File | Change |
 |------|--------|
-| `tools/nkido-cli/asset_loader.cpp` | Wrap line 20's `#include <unistd.h>` in `#if defined(__linux__)` (it's only used by the Linux `readlink("/proc/self/exe", …)` branch at line 591). |
-| `tools/nkido-cli/serve_mode.cpp` | Replace `install_signal_handlers()` body (lines 18-26) with `cedar::platform::install_ctrl_c_handler([](){ g_signal_received.store(true, std::memory_order_release); });`. Call `cedar::platform::set_stdio_binary_mode()` early in `serve()`. |
-| `tools/nkido-cli/main.cpp` | Call `cedar::platform::ensure_utf8_console()` as the first statement of `main()`. |
-| `tools/akkado-cli/main.cpp` | Same: call `cedar::platform::ensure_utf8_console()` first. |
-| `tools/nkido-cli/tests/test_serve.cpp` | Replace POSIX-specific subprocess/`mkstemp` machinery with a portable equivalent. Concrete plan in §6. |
-| `tools/nkido-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... nkido.manifest)`, `install(FILES ${SDL2_RUNTIME_LIBRARY} DESTINATION ${CMAKE_INSTALL_BINDIR})`, and a `POST_BUILD` `copy_if_different` of `SDL2.dll` next to `nkido.exe` in the build tree (so `ctest` works in-place). |
-| `tools/akkado-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... akkado.manifest)`. |
+| `tools/nkido/asset_loader.cpp` | Wrap line 20's `#include <unistd.h>` in `#if defined(__linux__)` (it's only used by the Linux `readlink("/proc/self/exe", …)` branch at line 591). |
+| `tools/nkido/serve_mode.cpp` | Replace `install_signal_handlers()` body (lines 18-26) with `cedar::platform::install_ctrl_c_handler([](){ g_signal_received.store(true, std::memory_order_release); });`. Call `cedar::platform::set_stdio_binary_mode()` early in `serve()`. |
+| `tools/nkido/main.cpp` | Call `cedar::platform::ensure_utf8_console()` as the first statement of `main()`. |
+| `tools/akkado/main.cpp` | Same: call `cedar::platform::ensure_utf8_console()` first. |
+| `tools/nkido/tests/test_serve.cpp` | Replace POSIX-specific subprocess/`mkstemp` machinery with a portable equivalent. Concrete plan in §6. |
+| `tools/nkido/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... nkido.manifest)`, `install(FILES ${SDL2_RUNTIME_LIBRARY} DESTINATION ${CMAKE_INSTALL_BINDIR})`, and a `POST_BUILD` `copy_if_different` of `SDL2.dll` next to `nkido.exe` in the build tree (so `ctest` works in-place). |
+| `tools/akkado/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... akkado.manifest)`. |
 | `cmake/CompilerOptions.cmake` | No change in v1. (Existing MSVC `/W4 /permissive-` block is fine without `/WX`.) |
 | `.github/workflows/deploy.yml` | Leave alone. (Windows lives in a new file so the WASM deploy stays isolated.) |
 | `README.md` (top level) | Add a "Windows" subsection under build instructions: link to the Release page, note the SmartScreen warning, mention "Right-click → Properties → Unblock" if needed. |
@@ -297,8 +297,8 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 | `cedar/src/platform/utf8_init_posix.cpp` | No-op. |
 | `cedar/src/platform/utf8_init_win.cpp` | `SetConsoleOutputCP(CP_UTF8); SetConsoleCP(CP_UTF8);`. |
 | `cedar/CMakeLists.txt` (modify) | Conditionally compile `*_win.cpp` on `WIN32`, `*_posix.cpp` otherwise. |
-| `tools/nkido-cli/nkido.manifest` | UTF-8 `activeCodePage` manifest, embedded in the exe via `target_sources`. |
-| `tools/akkado-cli/akkado.manifest` | Same for `akkado`. |
+| `tools/nkido/nkido.manifest` | UTF-8 `activeCodePage` manifest, embedded in the exe via `target_sources`. |
+| `tools/akkado/akkado.manifest` | Same for `akkado`. |
 | `.github/workflows/ci.yml` | Linux + Windows + cedar-only matrix; Windows release-zip upload on `v*` tags. |
 | `scripts/package-windows-zip.ps1` | PowerShell: take a `cmake --install` staging dir, flatten `bin/`+`share/nkido/` to root, copy `README.txt` / `LICENSE.txt`, `Compress-Archive` to `nkido-windows-x64-vX.Y.Z.zip`. Called from CI. |
 | `tools/windows/README.txt.in` | CMake-configured template; ends up at zip root with version/git-sha/build-date. |
@@ -311,8 +311,8 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 | `cedar/src/dsp/fft.cpp` | `std::countr_zero` already in place. |
 | `akkado/src/lexer.cpp`, `akkado/src/mini_lexer.cpp` | `std::strtod` already in place. |
 | `cedar/src/io/file_cache.cpp` | Windows branch already present and correct. |
-| `tools/nkido-cli/asset_loader.cpp::executable_dir()` (line 588+) | `GetModuleFileNameA` branch already correct. |
-| `tools/nkido-cli/CMakeLists.txt:60-62` | `SDL2main` link guard already correct. |
+| `tools/nkido/asset_loader.cpp::executable_dir()` (line 588+) | `GetModuleFileNameA` branch already correct. |
+| `tools/nkido/CMakeLists.txt:60-62` | `SDL2main` link guard already correct. |
 | `cmake/Dependencies.cmake` | rtmidi's FetchContent already handles winmm on Windows automatically. |
 | `web/` | Out of scope. |
 | `tools/midi2akk/src/` | Python; Windows-works today. README update only. |
@@ -347,7 +347,7 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 **Goal:** `ctest` runs green on Windows.
 
-**Files:** primarily `tools/nkido-cli/tests/test_serve.cpp` rewrite — replace the `mkstemp` + shell-string + `popen`-style approach with either:
+**Files:** primarily `tools/nkido/tests/test_serve.cpp` rewrite — replace the `mkstemp` + shell-string + `popen`-style approach with either:
 - **Option A (preferred):** `std::filesystem::temp_directory_path()` + `_popen`/`popen` behind a thin `tests/test_subprocess.hpp` helper.
 - **Option B (fallback):** mark the test `[!mayfail]` on Windows and file a follow-up. Avoid if possible — the test exists for a reason.
 

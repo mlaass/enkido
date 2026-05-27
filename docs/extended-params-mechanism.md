@@ -280,5 +280,5 @@ don't change the opcode's location in the program graph.
   `extended_param_names`, `extended_defaults`.
 - `akkado/include/akkado/codegen.hpp` — `StateInitData::Type::ExtendedParams`.
 - `akkado/src/codegen.cpp` — `CodeGenerator::emit_extended_params_init`.
-- `tools/nkido-cli/program_loader.cpp` — `apply_state_inits`.
+- `tools/nkido/program_loader.cpp` — `apply_state_inits`.
 - `web/wasm/nkido_wasm.cpp` — `cedar_apply_state_inits`.

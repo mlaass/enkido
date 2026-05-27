@@ -763,7 +763,7 @@ Before extension v1 can ship, `nkido` needs:
 1. A new `serve` subcommand that runs headless (no SDL2 window, audio backend stays).
 2. A line-delimited JSON command/event protocol on stdin/stdout (`load`, `stop`, `set_param`, `quit` → `compiled`, `diagnostic`, `stopped`, `param_changed`).
 3. Hot-swap: receiving a new `load` while playing should reuse Cedar's existing crossfade path.
-4. `tools/nkido-cli/bytecode_loader.cpp` extended to recognize `.akk` as a source extension (currently keys on `.akkado` only — see line ~with `".akkado"` literal). Without this, files saved with `.akk` will be misclassified as bytecode.
+4. `tools/nkido/bytecode_loader.cpp` extended to recognize `.akk` as a source extension (currently keys on `.akkado` only — see line ~with `".akkado"` literal). Without this, files saved with `.akk` will be misclassified as bytecode.
 
 This is its own work item, tracked separately from the extension; the VS Code extension PRD assumes it lands first.
 
@@ -789,6 +789,6 @@ This is its own work item, tracked separately from the extension; the VS Code ex
 - [TextMate Grammar Guide](https://macromates.com/manual/en/language_grammars)
 - [Nkido Web IDE PRD](./prd-nkido-web-ide.md) - Source of truth for feature parity
 - [Nkido Editor Autocomplete PRD](./prd-editor-autocomplete.md) - Completion logic reference
-- [nkido source](../tools/nkido-cli/) - CLI integration target
+- [nkido source](../tools/nkido/) - CLI integration target
 - [Web IDE Akkado Language](../web/src/lib/editor/akkado-language.ts) - Tokenizer to port
 - [Web IDE Completions](../web/src/lib/editor/akkado-completions.ts) - Completion logic to reuse

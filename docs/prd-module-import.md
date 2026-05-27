@@ -364,7 +364,7 @@ vehicle for both stdlib and web modules.
 | `akkado/src/file_resolver.cpp` | URI canonicalization; `read()` → `UriResolver::load()` |
 | `akkado/src/import_scanner.cpp` | Use canonical URI string as dedup/cycle key |
 | `akkado/src/akkado.cpp` | `compile_file()` builds a `UriFileResolver`; ensure `file`/`bundled` handlers registered |
-| `tools/akkado-cli/main.cpp`, `tools/nkido-cli/main.cpp` | Register stdlib `bundled` assets at startup (shared with sample/soundfont URI setup) |
+| `tools/akkado/main.cpp`, `tools/nkido/main.cpp` | Register stdlib `bundled` assets at startup (shared with sample/soundfont URI setup) |
 | `akkado/tests/test_file_resolver.cpp` | Update for `UriFileResolver` |
 
 ### Phase D: Web Virtual Filesystem & Multi-Tab Editor

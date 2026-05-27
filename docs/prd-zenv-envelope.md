@@ -487,7 +487,7 @@ No backward-incompatible changes. All additions; nothing is renamed or removed.
 | `akkado/include/akkado/codegen.hpp`                                 | Add `StateInitData::Type::ZenvEnvelope` payload                                              |
 | `akkado/include/akkado/codegen/options.hpp`                         | Add `validate_array_elements()` helper                                                       |
 | `akkado/src/codegen.cpp`                                            | Route `"zenv"` to `handle_zenv_call()` in the builtin dispatch table                         |
-| `tools/nkido-cli/program_loader.cpp`                                | Apply `ZenvEnvelope` state init                                                              |
+| `tools/nkido/program_loader.cpp`                                | Apply `ZenvEnvelope` state init                                                              |
 | `web/wasm/nkido_wasm.cpp`                                           | Apply `ZenvEnvelope` state init (WASM path)                                                  |
 | `web/src/lib/components/Panel/StateInspector.svelte`                | Phase 3 — render `ZenvState` segment list + playhead                                         |
 | `web/static/docs/reference/builtins/envelopes.md`                   | New `## zenv` section with examples and curve-shape reference                                |
@@ -553,7 +553,7 @@ Files in scope:
 - `akkado/include/akkado/codegen_envelope.hpp` (new)
 - `akkado/src/codegen.cpp` (dispatch)
 - `akkado/src/codegen_envelope.cpp` (new)
-- `tools/nkido-cli/program_loader.cpp`
+- `tools/nkido/program_loader.cpp`
 - `web/wasm/nkido_wasm.cpp`
 - `akkado/tests/test_codegen.cpp` — `[zenv]` section
 - `web/static/docs/reference/builtins/envelopes.md`

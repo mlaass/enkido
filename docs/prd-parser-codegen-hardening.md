@@ -864,9 +864,9 @@ the pattern debug panel).
 | `akkado/include/akkado/codegen.hpp` | Add `emit_debug_json_` bool member; ctor parameter. |
 | `akkado/src/codegen_patterns.cpp:1379` | Gate `serialize_mini_ast_json` behind the flag. |
 | `web/wasm/nkido_wasm.cpp:589` | Migrate to new API; set `emit_debug_json = true`. |
-| `tools/nkido-cli/main.cpp:274` | Migrate; leave `emit_debug_json = false`. |
-| `tools/nkido-cli/bytecode_loader.cpp:63` | Migrate. |
-| `tools/akkado-cli/main.cpp:106` | Migrate; leave `emit_debug_json = false`. |
+| `tools/nkido/main.cpp:274` | Migrate; leave `emit_debug_json = false`. |
+| `tools/nkido/bytecode_loader.cpp:63` | Migrate. |
+| `tools/akkado/main.cpp:106` | Migrate; leave `emit_debug_json = false`. |
 | `akkado/tests/test_*.cpp` (15+ files) | Mechanical migration; `compile(src)` → `compile(src, {})` mostly. |
 | `akkado/tests/test_codegen.cpp` (NEW test) | Assert `emit_debug_json = false` produces no JSON in `compile_result_to_debug_string` (or whatever the existing accessor is). |
 
@@ -1294,9 +1294,9 @@ if Phases 2/3/4/5 parallelize across 2 contributors.
 | `akkado/src/shape_index.cpp` | 8 | Wholesale rewrite (478 → ~80 LOC) |
 | `akkado/src/symbol_table.cpp:5-9, 236-264` | 3 | Chain to `builtin_scope()`; delete per-construction registration |
 | `web/wasm/nkido_wasm.cpp:589, 1380` | 2, 8 | Migrate to `CompileOptions`; drive shape_index from `CompileArtifacts` |
-| `tools/nkido-cli/main.cpp:274` | 2 | Migrate to `CompileOptions` |
-| `tools/nkido-cli/bytecode_loader.cpp:63` | 2 | Migrate |
-| `tools/akkado-cli/main.cpp:106` | 2 | Migrate |
+| `tools/nkido/main.cpp:274` | 2 | Migrate to `CompileOptions` |
+| `tools/nkido/bytecode_loader.cpp:63` | 2 | Migrate |
+| `tools/akkado/main.cpp:106` | 2 | Migrate |
 | `akkado/tests/test_*.cpp` (~15+ files) | 2, 6, 7, 8 | Mechanical migrations |
 | `akkado/tests/test_lexer.cpp:839` | 1 | Remove unreachable `MiniString` arm |
 | `docs/audits/parser-codegen-interop_audit_2026-05-25.md` | 9 | Final RESOLVED tags per §12 |

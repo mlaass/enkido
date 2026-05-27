@@ -189,8 +189,8 @@ nkido/
 │   ├── src/
 │   └── tests/
 ├── tools/
-│   ├── nkido-cli/ # Bytecode player with audio engine
-│   └── akkado-cli/ # Compiler CLI
+│   ├── nkido/     # Bytecode player with audio engine
+│   └── akkado/    # Compiler CLI
 ├── web/            # SvelteKit web app
 │   ├── src/
 │   ├── static/docs/  # Markdown documentation
@@ -286,7 +286,7 @@ And generates:
 
 The generated header is used by:
 - `web/wasm/nkido_wasm.cpp` - for debug disassembly in web UI
-- `tools/nkido-cli/bytecode_dump.cpp` - for CLI bytecode inspection
+- `tools/nkido/bytecode_dump.cpp` - for CLI bytecode inspection
 
 ### Pattern Debug Serialization
 

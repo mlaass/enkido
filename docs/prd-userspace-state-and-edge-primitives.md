@@ -388,7 +388,7 @@ No language-level state-tracking is needed for the closure body — the `counter
 | MethodCall codegen (`akkado/src/codegen.cpp:1513`) | **Modified** | E113 stub → UFCS desugar |
 | Auto-generated opcode metadata | **Regenerated** | Run `cd web && bun run build:opcodes` after rename + STATE_OP addition. Script: `web/scripts/generate-opcode-metadata.ts` |
 | `web/wasm/nkido_wasm.cpp` | **Stays** | Uses generated opcode metadata; rebuild only |
-| `tools/nkido-cli/bytecode_dump.cpp` | **Stays** | Same |
+| `tools/nkido/bytecode_dump.cpp` | **Stays** | Same |
 | Existing tests | **Modified (mechanical)** | Any test referencing `Opcode::SAH` or `SAHState` by name needs the rename. Behavior tests pass unchanged. |
 | Existing patches (`web/static/patches/*.akk`) | **Stays** | `sah(in, trig)` still works |
 | Documentation (`web/static/docs/`) | **Modified** | New entries for state cells, gateup, gatedown, counter, methods |
@@ -678,4 +678,4 @@ bun run check              # type-check
 - All four `step` variants and `step_dir` are implementable and correct in `web/static/patches/stepper-demo.akk`.
 - New reference docs link from the F1 lookup index (run `bun run build:docs`).
 - Exactly one new DSP-level opcode (`STATE_OP`) is added, alongside the `SAH` → `EDGE_OP` rename. The decision and rationale are captured in §1 Major Design Decisions and §10 Q1.
-- The `web/wasm/nkido_wasm.cpp` and `tools/nkido-cli/bytecode_dump.cpp` builds pass after `bun run build:opcodes` regenerates `cedar/include/cedar/generated/opcode_metadata.hpp` (no source changes needed in those files).
+- The `web/wasm/nkido_wasm.cpp` and `tools/nkido/bytecode_dump.cpp` builds pass after `bun run build:opcodes` regenerates `cedar/include/cedar/generated/opcode_metadata.hpp` (no source changes needed in those files).

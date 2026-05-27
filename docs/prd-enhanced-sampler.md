@@ -504,8 +504,8 @@ If multiple sources exist, `smpl` chunk takes priority.
 | `akkado/tests/test_sample_registry.cpp` | Tests for variant loading and loop point detection |
 | `web/src/lib/stores/audio.svelte.ts` | Pass `SampleLoadParams` from compile result to sample loading |
 | `web/wasm/nkido_wasm.cpp` | Extended sample loading API, variant registration |
-| `tools/nkido-cli/asset_loader.cpp` | CLI support for extended sample params |
-| `tools/nkido-cli/main.cpp` | Parse extended sample CLI options |
+| `tools/nkido/asset_loader.cpp` | CLI support for extended sample params |
+| `tools/nkido/main.cpp` | Parse extended sample CLI options |
 | `web/static/docs/reference/builtins/samples-loading.md` | Document extended `samples()` parameters |
 | `docs/sampler_usage.md` | Update with new features |
 

@@ -673,7 +673,7 @@ Three independent PRs. Each one is shippable on its own.
 - `cedar/src/vm/vm.cpp` — dispatch loop skip-handling
 - `akkado/include/akkado/builtins.hpp` — `when`, `loop` builtin entries
 - `akkado/src/codegen.cpp` or NEW `akkado/src/codegen_control_flow.cpp` — lowering
-- `web/wasm/nkido_wasm.cpp`, `tools/nkido-cli/bytecode_dump.cpp` — disassembly support
+- `web/wasm/nkido_wasm.cpp`, `tools/nkido/bytecode_dump.cpp` — disassembly support
 - `experiments/test_op_when.py`, `experiments/test_op_loop.py` — NEW
 - `akkado/tests/test_control_flow.cpp` — NEW
 
@@ -722,7 +722,7 @@ Three independent PRs. Each one is shippable on its own.
 - `cedar/src/vm/swap_prepare.cpp` — NEW (or wherever bytecode handoff lives — needs investigation)
 - `akkado/src/codegen.cpp`, `akkado/src/codegen_functions.cpp` — fn-as-shared-block emission
 - `akkado/include/akkado/codegen.hpp` — extended path scheme
-- `web/wasm/nkido_wasm.cpp`, `tools/nkido-cli/bytecode_dump.cpp` — render subprogram table + expanded/unexpanded views
+- `web/wasm/nkido_wasm.cpp`, `tools/nkido/bytecode_dump.cpp` — render subprogram table + expanded/unexpanded views
 - `akkado/tests/test_block_call.cpp` — NEW
 - `docs/concepts/callable-fns.md` — NEW user-facing doc
 

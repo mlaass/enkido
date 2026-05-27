@@ -169,7 +169,7 @@ is no automated tripwire. More broadly:
 Two pieces:
 
 **(a) In-process cap via `setrlimit(RLIMIT_AS, ...)`** added to
-`tools/akkado-cli/main.cpp` and `tools/nkido-cli/main.cpp`. Activated
+`tools/akkado/main.cpp` and `tools/nkido/main.cpp`. Activated
 by a `NKIDO_RLIMIT_MB` environment variable read at startup; when
 unset, no cap (current behavior). The OS kills the process cleanly if
 exceeded. This is the worst-case backstop — when a runaway compile
@@ -374,8 +374,8 @@ The release ritual becomes: `./scripts/check-release.sh && ./scripts/bump-versio
 |---|---|---|
 | Cedar core (non-test C++) | **Stays** | No production code changes. |
 | Akkado compiler core | **Stays** | No production code changes. |
-| `tools/akkado-cli/main.cpp` | **Modified** | Read `NKIDO_RLIMIT_MB`, call `setrlimit` if set. |
-| `tools/nkido-cli/main.cpp` | **Modified** | Same RLIMIT_AS hook. |
+| `tools/akkado/main.cpp` | **Modified** | Read `NKIDO_RLIMIT_MB`, call `setrlimit` if set. |
+| `tools/nkido/main.cpp` | **Modified** | Same RLIMIT_AS hook. |
 | `cedar/tests/test_memory_stress.cpp` | **Renamed** | → `test_logical_stress.cpp`. Contents unchanged. |
 | `cmake/CompilerOptions.cmake` | **Stays** | Existing ASan/UBSan flags reused as-is. |
 | `CMakePresets.json` | **Modified** | New `sanitize` preset. |
@@ -418,8 +418,8 @@ The release ritual becomes: `./scripts/check-release.sh && ./scripts/bump-versio
 
 | File | Change |
 |---|---|
-| `tools/akkado-cli/main.cpp` | Add `NKIDO_RLIMIT_MB` reader + `setrlimit` call at startup. |
-| `tools/nkido-cli/main.cpp` | Same. |
+| `tools/akkado/main.cpp` | Add `NKIDO_RLIMIT_MB` reader + `setrlimit` call at startup. |
+| `tools/nkido/main.cpp` | Same. |
 | `CMakePresets.json` | Add `sanitize` preset (inherits `debug` + ASan/UBSan). |
 | `cedar/tests/CMakeLists.txt` | Add `zero_alloc_hooks.cpp` + `test_zero_alloc.cpp`; rename `test_memory_stress.cpp` reference. |
 | `akkado/tests/CMakeLists.txt` | Add `test_drift_fuzz.cpp` + fuzz headers. |
@@ -533,7 +533,7 @@ CI workflow.
 
 **Files:**
 - New: `scripts/memory/run_with_limit.py`, `scripts/memory/check_corpus.sh`, `scripts/memory/budgets.sh`, `scripts/memory/run_all.sh` (skeleton — only invokes the guard).
-- Modified: `tools/akkado-cli/main.cpp`, `tools/nkido-cli/main.cpp` (add `NKIDO_RLIMIT_MB` reader).
+- Modified: `tools/akkado/main.cpp`, `tools/nkido/main.cpp` (add `NKIDO_RLIMIT_MB` reader).
 - Modified: `CLAUDE.md` (document `scripts/memory/run_all.sh`).
 
 **Verification:**

@@ -1,6 +1,6 @@
 # CLI Tools
 
 if(NKIDO_BUILD_AKKADO)
-    add_subdirectory(akkado-cli)
-    add_subdirectory(nkido-cli)
+    add_subdirectory(akkado)
+    add_subdirectory(nkido)
 endif()

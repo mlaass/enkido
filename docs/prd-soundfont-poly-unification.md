@@ -347,8 +347,8 @@ fn gm_route(channel, program) =
 
 | File | Change |
 |---|---|
-| `tools/nkido-cli/main.cpp` | Add `--soundfont-alias key=path` flag (repeatable); populate registry before compile |
-| `tools/akkado-cli/main.cpp` | Same flag for consistency |
+| `tools/nkido/main.cpp` | Add `--soundfont-alias key=path` flag (repeatable); populate registry before compile |
+| `tools/akkado/main.cpp` | Same flag for consistency |
 | `web/src/lib/stores/settings.svelte.ts` | Persistent alias key/path map |
 | `web/src/lib/components/Settings/SoundFontAliases.svelte` (new) | Simple key/path editor |
 | `web/wasm/nkido_wasm.cpp` | Expose `register_soundfont_alias(key, path)` to JS |

@@ -282,8 +282,8 @@ osc("sin", $samples())  // error E687: compile-time call '$samples' cannot be us
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Hosts                                                           │
-│   tools/akkado-cli/   passes a DefaultCompileTimeContext         │
-│   tools/nkido-cli/    same; adds EnvMap snapshot when --live     │
+│   tools/akkado/   passes a DefaultCompileTimeContext         │
+│   tools/nkido/    same; adds EnvMap snapshot when --live     │
 │   web/wasm/           passes context with live EnvMap on every   │
 │                       recompile                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -730,8 +730,8 @@ When the host doesn't pass a context (or passes one with no live env, no resolve
 | `akkado/include/akkado/akkado.hpp` | 1 | Add `compile_log` to `CompileResult`; add `compile_ctx` parameter to `compile(...)`. |
 | `akkado/src/akkado.cpp` | 1 | Wire compile-time pass between analyzer and codegen; populate `compile_log`. |
 | `akkado/include/akkado/diagnostics.hpp` | 1 | Add error codes E680–E699 (see §10). |
-| `tools/akkado-cli/main.cpp` | 1 | Print `compile_log` entries to stdout. |
-| `tools/nkido-cli/main.cpp` | 1 | Same. Optional: `--live-env <file>` flag (TBD). |
+| `tools/akkado/main.cpp` | 1 | Print `compile_log` entries to stdout. |
+| `tools/nkido/main.cpp` | 1 | Same. Optional: `--live-env <file>` flag (TBD). |
 | `web/wasm/nkido_wasm.cpp` | 2 | Add `akkado_get_compile_log_count()`, `akkado_get_compile_log_entry(i, fields...)`; accept env snapshot via existing `cedar_set_param` calls before compile. |
 | `web/static/worklet/cedar-processor.js` | 2 | Pre-compile: collect EnvMap snapshot keys/values; on `compiled` message: include `compile_log` array. |
 | `web/src/lib/stores/audio.svelte.ts` | 2 | On `compiled` message: forward `compile_log` to the new store. |
@@ -781,8 +781,8 @@ Each phase ends with a deployable, demo-able artifact.
 7. Add the compile-time pass driver in `compile_time.cpp`. Walks AST in source order, dispatches each `$`-call to the handler table, builds `compile_log`.
 8. Wire into `akkado.cpp::compile()`: run the pass after analyzer, before codegen.
 9. Add error codes E680–E699 to `diagnostics.hpp`.
-10. Modify `tools/akkado-cli/main.cpp`: route `compile_log` to stdout (line per entry, with `file:line:col  text`).
-11. Modify `tools/nkido-cli/main.cpp`: same.
+10. Modify `tools/akkado/main.cpp`: route `compile_log` to stdout (line per entry, with `file:line:col  text`).
+11. Modify `tools/nkido/main.cpp`: same.
 
 **Verification:**
 

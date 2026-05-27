@@ -490,4 +490,4 @@ bun run check
 - Exactly one new opcode (or one mode-extension on `SEQPAT_QUERY`) added — Q1 documents the chosen mechanism in the implementation PR.
 - `len()` is polymorphic with documented compile-time-vs-runtime dispatch.
 - `osc("sin", freqs(e))` errors at compile time with the `poly()` directive message.
-- The `web/wasm/nkido_wasm.cpp` and `tools/nkido-cli/bytecode_dump.cpp` builds pass after `bun run build:opcodes`.
+- The `web/wasm/nkido_wasm.cpp` and `tools/nkido/bytecode_dump.cpp` builds pass after `bun run build:opcodes`.

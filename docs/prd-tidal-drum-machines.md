@@ -26,7 +26,7 @@ NKIDO already has the full sample-bank machinery:
 
 | Capability | Where | Notes |
 |---|---|---|
-| Strudel-format bank manifests (`strudel.json`) | `web/src/lib/audio/bank-registry.ts`, `tools/nkido-cli/asset_loader.cpp` | `bd → ["kick.wav", …]` variant arrays |
+| Strudel-format bank manifests (`strudel.json`) | `web/src/lib/audio/bank-registry.ts`, `tools/nkido/asset_loader.cpp` | `bd → ["kick.wav", …]` variant arrays |
 | URI resolution (`https:`, `github:`, `file://`, …) | `cedar/include/cedar/io/uri_resolver.hpp`, `web/src/lib/io/uri-resolver.ts` | `github:user/repo/path` → `raw.githubusercontent.com` |
 | Sample fetch + decode + register | `audio.svelte.ts` (web), `program_loader.cpp` (CLI) | WAV/OGG/FLAC/MP3 decoded in WASM/C++ |
 | IndexedDB cache | `web/src/lib/io/file-cache.ts` | 500 MB LRU, pinned entries survive eviction |
@@ -275,8 +275,8 @@ A required sample that never registers must not crash the VM. `op_sample_play` a
 | `web/src/lib/audio/bank-registry.ts` | Register 80 catalog banks as known/lazy manifests |
 | `web/src/lib/stores/audio.svelte.ts` | Resolve catalog-bank required samples; soft-fail on fetch error; prefetch action |
 | `web/src/lib/components/Panel/FilesPanel.svelte` | Mount the `DrumMachineCatalog` section |
-| `tools/nkido-cli/asset_loader.hpp` / `.cpp` | `find_tdm_catalog_path()` + catalog parser |
-| `tools/nkido-cli/program_loader.cpp` | Register catalog banks; resolve via local cache or GitHub; soft-fail |
+| `tools/nkido/asset_loader.hpp` / `.cpp` | `find_tdm_catalog_path()` + catalog parser |
+| `tools/nkido/program_loader.cpp` | Register catalog banks; resolve via local cache or GitHub; soft-fail |
 | `docs/uri-schemes.md` / `docs/sampler_usage.md` | Document `.bank("<Machine>")` and the download script |
 
 ### No changes

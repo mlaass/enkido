@@ -424,7 +424,7 @@ if (req.kind === 4) {  // VideoClip
 
 ### 4.7 CLI integration
 
-**`tools/nkido-cli/asset_loader.cpp`** — new handler for `UriKind::VideoClip`:
+**`tools/nkido/asset_loader.cpp`** — new handler for `UriKind::VideoClip`:
 
 ```cpp
 bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
@@ -464,8 +464,8 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 | `web/src/lib/audio/bank-registry.ts` | **Modified** | `registerBuiltinBank` already exists; add `registerSyntheticBank(name, samples)` helper |
 | `tools/youtube-backend/main.py` | **New** | FastAPI server with yt-dlp integration |
 | `tools/youtube-backend/requirements.txt` | **New** | `fastapi`, `uvicorn`, `yt-dlp` |
-| `tools/nkido-cli/asset_loader.cpp` | **Modified** | Add `UriKind::VideoClip` handling with yt-dlp subprocess |
-| `tools/nkido-cli/asset_loader.hpp` | **Modified** | Declare new functions |
+| `tools/nkido/asset_loader.cpp` | **Modified** | Add `UriKind::VideoClip` handling with yt-dlp subprocess |
+| `tools/nkido/asset_loader.hpp` | **Modified** | Declare new functions |
 | `web/src/lib/settings.svelte.ts` (settings store) | **Modified** | Persist backend URL + API key |
 | `web/static/worklet/cedar-processor.js` | **Unaffected** | No changes — samples load through existing paths |
 | `cedar/` (VM, opcodes) | **Unaffected** | No changes — samples are just samples |
@@ -488,8 +488,8 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 | `web/src/lib/stores/settings.svelte.ts` | Add `youtubeBackendUrl: ""` and `youtubeBackendApiKey: ""` with `setYoutubeBackendUrl()` / `setYoutubeBackendApiKey()` |
 | `web/src/lib/stores/audio.svelte.ts:compile()` | Add `kind === 4` case in requiredUris drain loop |
 | `web/src/lib/audio/bank-registry.ts` | Add `registerSyntheticBank(name: string, samples: Map<string, string[]>)` — creates a bank from in-memory audio data |
-| `tools/nkido-cli/asset_loader.cpp` | Handle `UriKind::VideoClip`: check yt-dlp, download, extract clips, register in bank |
-| `tools/nkido-cli/asset_loader.hpp` | Add declarations for clip extraction functions |
+| `tools/nkido/asset_loader.cpp` | Handle `UriKind::VideoClip`: check yt-dlp, download, extract clips, register in bank |
+| `tools/nkido/asset_loader.hpp` | Add declarations for clip extraction functions |
 
 ### Create
 
@@ -574,8 +574,8 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 **Goal:** `nkido` handles `VideoClip` URIs by shelling out to `yt-dlp`.
 
 **Files to modify:**
-- `tools/nkido-cli/asset_loader.cpp` — `UriKind::VideoClip` handler
-- `tools/nkido-cli/asset_loader.hpp` — declarations
+- `tools/nkido/asset_loader.cpp` — `UriKind::VideoClip` handler
+- `tools/nkido/asset_loader.hpp` — declarations
 
 **Verification:**
 - `nkido render --seconds 1 -o out.wav --source 'samples("https://youtube.com/...", {kick: {s: 0, e: 2}}); s"kick" |> out'` works

@@ -208,7 +208,7 @@ namespace {
 
 // Apply a compile result's sequence state inits to the VM. Mirrors the
 // host-side logic in web/wasm/nkido_wasm.cpp:911 and
-// tools/nkido-cli/program_loader.cpp:235. The seq_storage buffer keeps
+// tools/nkido/program_loader.cpp:235. The seq_storage buffer keeps
 // the source sequences alive while init_sequence_program copies their
 // events into arena memory.
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,

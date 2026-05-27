@@ -243,7 +243,7 @@ New opcode `DISTORT_SHAPER` exposed as `shaper(in, drive, c)`.
 - `cedar/include/cedar/opcodes/distortion.hpp` — add opcode body.
 - `cedar/include/cedar/vm/instruction.hpp` — add enum entry `DISTORT_SHAPER`.
 - `akkado/include/akkado/builtins.hpp` — register builtin with `extended_param_count = 8`.
-- After: run `cd web && bun run build:opcodes` to regenerate opcode metadata for `web/wasm/nkido_wasm.cpp` and `tools/nkido-cli/bytecode_dump.cpp`.
+- After: run `cd web && bun run build:opcodes` to regenerate opcode metadata for `web/wasm/nkido_wasm.cpp` and `tools/nkido/bytecode_dump.cpp`.
 
 **Akkado signature:**
 ```akkado
@@ -273,7 +273,7 @@ The eight coefficients `c0..c7` map to Chebyshev terms T₀ through T₇ and are
 | 3 | `akkado/include/akkado/stdlib.hpp`, `web/static/docs/reference/builtins/multiband.md` (new) | Append `multiband2fx`; write reference docs for both. |
 | 4 | `cedar/include/cedar/opcodes/distortion.hpp`, `cedar/include/cedar/vm/instruction.hpp`, `akkado/include/akkado/builtins.hpp` | New `DISTORT_SHAPER` opcode + enum + builtin registration with `extended_param_count = 8`. |
 | 2+4 | `web/static/docs/reference/builtins/distortion.md` | Document `hardclip`, `asym`, `foldback`, `quantize`, `dist`, `shaper`. |
-| 1, 4 | `web/wasm/nkido_wasm.cpp`, `tools/nkido-cli/bytecode_dump.cpp` | Auto-regenerate via `cd web && bun run build:opcodes` after each opcode change. |
+| 1, 4 | `web/wasm/nkido_wasm.cpp`, `tools/nkido/bytecode_dump.cpp` | Auto-regenerate via `cd web && bun run build:opcodes` after each opcode change. |
 
 ---
 

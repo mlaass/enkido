@@ -272,7 +272,7 @@ Compiler emits a call alongside bytecode if it sees a string literal in `in('...
 
 ### 4.6 Host integration — Native CLI
 
-**`tools/nkido-cli/audio_engine.hpp` / `.cpp`**:
+**`tools/nkido/audio_engine.hpp` / `.cpp`**:
 
 - Open a second SDL2 audio device with `SDL_OpenAudioDevice(..., is_capture=1, ...)`.
 - Capture callback fills an internal ring buffer; playback callback pulls 128 samples and sets `ctx.input_left` / `input_right` before `vm().process_block()`.
@@ -325,8 +325,8 @@ The Godot extension must, before each `process_block()` call, fill `ctx.input_le
 | `web/src/lib/stores/audio.svelte.ts` | Source-selection state, permission handling, `MediaStream` routing |
 | `web/src/lib/components/Panel/*` | Add audio-input panel to sidebar tabs |
 | `web/src/lib/settings.svelte.ts` | Persist input-constraint toggles and default source |
-| `tools/nkido-cli/audio_engine.hpp/.cpp` | SDL2 capture device + device selection |
-| `tools/nkido-cli/main.cpp` | `--list-devices` and `--input-device` flags |
+| `tools/nkido/audio_engine.hpp/.cpp` | SDL2 capture device + device selection |
+| `tools/nkido/main.cpp` | `--list-devices` and `--input-device` flags |
 
 ### Create
 

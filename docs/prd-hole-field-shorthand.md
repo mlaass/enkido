@@ -426,7 +426,7 @@ existing constructor argument — no new option needed.
 | `akkado/src/codegen.cpp` (~line 2598, ~line 2631) | E136 message: change `Available: …` suffix to show example as `@freq` instead of `%.freq`. |
 | `web/src/lib/editor/akkado-completions.ts`        | Add trigger registration for bare adjacent `@` / `%`. Reuse the existing hole-completion provider used for `@.` / `%.`. |
 | `web/src/lib/editor/akkado-shape-index.ts`        | Update header comment to mention `@field` / `%field`. |
-| `tools/akkado-cli/main.cpp`                       | Wire the `--strict` flag through to `CompilerOptions::strict` if not already done. |
+| `tools/akkado/main.cpp`                       | Wire the `--strict` flag through to `CompilerOptions::strict` if not already done. |
 
 ### 6.2 Files to migrate (mechanical rewrite, dotted → dotless)
 

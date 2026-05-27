@@ -1501,7 +1501,7 @@ is verified by a snapshot test added before Phase 1a opens. The harness:
    that compiles each fixture via `compile()` and writes a
    deterministic disassembly (one instruction per line: opcode name,
    inputs, output, immediates) to `akkado/tests/snapshots/<fixture>.disasm`.
-   The disassembly reuses `tools/nkido-cli/bytecode_dump.cpp`'s
+   The disassembly reuses `tools/nkido/bytecode_dump.cpp`'s
    formatter (already exists, per CLAUDE.md) wrapped in a test-only
    entry point.
 3. **Diff check.** A second test target `akkado_bytecode_snapshot_diff`
@@ -1701,7 +1701,7 @@ cmake --build build --target akkado_tests
 |---|---|
 | `cedar/**` | Cedar VM untouched |
 | `akkado/include/akkado/builtins.hpp` | Builtin table format unchanged (Phase 5 SymbolId lookup uses string-view query, not table-key change) |
-| `tools/akkado-cli/**`, `tools/nkido-cli/**`, `web/wasm/**` | Public `compile()` API change is additive; existing callers compile unchanged |
+| `tools/akkado/**`, `tools/nkido/**`, `web/wasm/**` | Public `compile()` API change is additive; existing callers compile unchanged |
 
 ---
 

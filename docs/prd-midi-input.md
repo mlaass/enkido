@@ -637,7 +637,7 @@ FetchContent_Declare(rtmidi
 FetchContent_MakeAvailable(rtmidi)
 ```
 
-New `tools/nkido-cli/midi_input.{hpp,cpp}`:
+New `tools/nkido/midi_input.{hpp,cpp}`:
 
 ```cpp
 class MidiInput {
@@ -866,8 +866,8 @@ the old queue per §4.12.
 | `cedar/src/io/smf_parser.cpp` | pure-C++ SMF parser, arena-allocated |
 | `cedar/tests/test_midi.cpp` | `[midi]` Catch2 cases for parser and queue |
 | `akkado/include/akkado/required_midi.hpp` | `RequiredMidiSource`, `RequiredMidiCcRoute` |
-| `tools/nkido-cli/midi_input.hpp` | `MidiInput` RtMidi wrapper |
-| `tools/nkido-cli/midi_input.cpp` | Implementation |
+| `tools/nkido/midi_input.hpp` | `MidiInput` RtMidi wrapper |
+| `tools/nkido/midi_input.cpp` | Implementation |
 | `web/src/lib/midi/midi-input.ts` | Web MIDI acquisition + worklet pump |
 | `web/src/lib/audio/midi-bank.ts` | `.mid` file registry |
 | `web/src/lib/components/Panel/MidiInputPanel.svelte` | UI |
@@ -898,9 +898,9 @@ the old queue per §4.12.
 | `web/wasm/nkido_wasm.cpp` | Add the five new exports (`cedar_push_midi_event`, `cedar_load_midi_file`, `cedar_set_default_midi_device`, `cedar_get_required_midi_sources`, `cedar_get_midi_cc_routes`) |
 | `web/static/worklet/cedar-processor.js` | Handle `'midi'` MessagePort message |
 | `web/src/lib/stores/audio.svelte.ts` | Own `MidiInputStore`, wire to worklet |
-| `tools/nkido-cli/audio_engine.hpp` | Add `MidiInput`, `init_midi`, route-table |
-| `tools/nkido-cli/audio_engine.cpp` | Implement above |
-| `tools/nkido-cli/main.cpp` | `--list-midi-devices`, `--midi-in`, `--midi-file` |
+| `tools/nkido/audio_engine.hpp` | Add `MidiInput`, `init_midi`, route-table |
+| `tools/nkido/audio_engine.cpp` | Implement above |
+| `tools/nkido/main.cpp` | `--list-midi-devices`, `--midi-in`, `--midi-file` |
 | `cmake/Dependencies.cmake` | FetchContent rtmidi |
 | `web/scripts/generate-opcode-metadata.ts` | Recognize `MIDI_QUERY` (stateful) |
 
