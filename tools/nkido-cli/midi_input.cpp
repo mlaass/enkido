@@ -58,7 +58,7 @@ bool MidiInput::open(const std::string& port_substr) {
 
     try {
         rt_->openPort(static_cast<unsigned int>(chosen),
-                      "nkido-cli MIDI input");
+                      "nkido MIDI input");
         // Ignore sysex/timing/active-sense — we don't process them in v1.
         rt_->ignoreTypes(true, true, true);
         rt_->setCallback(&MidiInput::on_message, this);

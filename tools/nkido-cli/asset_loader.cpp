@@ -409,7 +409,7 @@ int load_soundfont_uri(cedar::VM& vm, const std::string& uri, const std::string&
         cedar::MemoryView(bytes.data(), bytes.size()), display_name, vm.sample_bank());
 #else
     (void)vm; (void)uri; (void)display_name;
-    std::cerr << "error: nkido-cli built without SoundFont support\n";
+    std::cerr << "error: nkido built without SoundFont support\n";
     return -1;
 #endif
 }
