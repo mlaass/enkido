@@ -13,10 +13,13 @@
 #include <cedar/vm/audio_arena.hpp>
 #include <cedar/dsp/constants.hpp>
 #include <cedar/opcodes/sequence.hpp>
+#include <cedar/opcodes/dsp_state.hpp>
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -206,28 +209,60 @@ TEST_CASE("Recompile is deterministic: non-chord patterns", "[determinism][hot_s
 
 namespace {
 
-// Apply a compile result's sequence state inits to the VM. Mirrors the
-// host-side logic in web/wasm/nkido_wasm.cpp:911 and
-// tools/nkido/program_loader.cpp:235. The seq_storage buffer keeps
-// the source sequences alive while init_sequence_program copies their
-// events into arena memory.
+// Apply a compile result's state inits to the VM. Mirrors the host-side logic
+// in web/wasm/nkido_wasm.cpp:1152 (`cedar_apply_state_inits`) and
+// tools/nkido/program_loader.cpp:288 (`apply_state_inits`). Covers the init
+// types reached by the patches in this file: SequenceProgram, PolyAlloc,
+// ForeachAlloc, EventTransform, RateScale, ExtendedParams. The seq_storage
+// buffer keeps the source sequences alive while init_sequence_program copies
+// their events into arena memory.
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
     for (const auto& init : cr.state_inits) {
-        if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
-        std::vector<cedar::Sequence> seq_copy = init.sequences;
-        for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
-            if (!init.sequence_events[i].empty()) {
-                seq_copy[i].events = const_cast<cedar::Event*>(init.sequence_events[i].data());
-                seq_copy[i].num_events = static_cast<std::uint32_t>(init.sequence_events[i].size());
-                seq_copy[i].capacity = static_cast<std::uint32_t>(init.sequence_events[i].size());
+        if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+            std::vector<cedar::Sequence> seq_copy = init.sequences;
+            for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
+                if (!init.sequence_events[i].empty()) {
+                    seq_copy[i].events = const_cast<cedar::Event*>(init.sequence_events[i].data());
+                    seq_copy[i].num_events = static_cast<std::uint32_t>(init.sequence_events[i].size());
+                    seq_copy[i].capacity = static_cast<std::uint32_t>(init.sequence_events[i].size());
+                }
             }
+            seq_storage.push_back(std::move(seq_copy));
+            auto& stored = seq_storage.back();
+            vm.init_sequence_program_state(
+                init.state_id, stored.data(), stored.size(),
+                init.cycle_length, init.is_sample_pattern, init.total_events);
+        } else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            vm.init_poly_state(init.state_id, init.poly_seq_state_id,
+                               init.poly_max_voices, init.poly_mode,
+                               init.poly_steal_strategy,
+                               init.poly_release_seconds,
+                               init.poly_prop_count, init.poly_prop_defaults);
+        } else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
+            vm.init_foreach_state(init.state_id, init.foreach_allocator_kind,
+                                  init.foreach_block_id,
+                                  init.foreach_event_src_state_id,
+                                  init.foreach_max_iterations,
+                                  init.poly_max_voices, init.poly_mode,
+                                  init.poly_steal_strategy,
+                                  init.poly_release_seconds,
+                                  init.poly_prop_count,
+                                  init.poly_prop_defaults);
+        } else if (init.type == akkado::StateInitData::Type::EventTransform ||
+                   init.type == akkado::StateInitData::Type::Reorder ||
+                   init.type == akkado::StateInitData::Type::Fanout) {
+            vm.init_event_transform_state(init.state_id, init.cycle_length,
+                                          init.is_sample_pattern,
+                                          init.total_events);
+        } else if (init.type == akkado::StateInitData::Type::RateScale) {
+            vm.init_event_rate_scale_state(init.state_id);
+        } else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
+            vm.init_extended_params(init.state_id,
+                                    init.ext_constants.data(),
+                                    init.ext_buffer_indices.data(),
+                                    init.ext_count);
         }
-        seq_storage.push_back(std::move(seq_copy));
-        auto& stored = seq_storage.back();
-        vm.init_sequence_program_state(
-            init.state_id, stored.data(), stored.size(),
-            init.cycle_length, init.is_sample_pattern, init.total_events);
     }
 }
 
@@ -342,5 +377,311 @@ TEST_CASE("VM hot-swap preserves alternation across recompile", "[determinism][h
     auto* after_swap = vm.states().get_if<cedar::SequenceState>(seq_state_id);
     REQUIRE(after_swap != nullptr);
     CHECK(after_swap->sequences[alt_seq_idx].step >= step_before);
+}
+
+// ============================================================================
+// Regression: hot-swap inside a poly() instrument body must not stick voices
+// ============================================================================
+//
+// User report: editing the `delay()` line in the patch below — even fully
+// commenting it out — caused the audio to lock into a stable tone that
+// persisted until the page was reloaded. Pattern events stopped firing,
+// existing voices never received note-off, and the AR envelope's edge
+// detector never saw a new rising edge to retrigger from.
+//
+// The contract this test pins down: after a live recompile that changes the
+// body of a poly()'s instrument closure but leaves the pattern source
+// untouched, (a) the upstream SequenceState must keep advancing through
+// cycles, (b) at least one voice in the PolyAllocState must retrigger or
+// release in the post-swap window, and (c) the audio output must not be
+// frozen (consecutive blocks identical sample-for-sample, RMS variance
+// vanishingly small).
+//
+// Run with `[hot_swap]` or `[regression]` tag. Both crossfade=0 and the
+// default crossfade path are exercised — the bug is not crossfade-specific.
+
+namespace {
+
+std::uint32_t find_state_init_id(const akkado::CompileResult& cr,
+                                 akkado::StateInitData::Type t) {
+    for (const auto& init : cr.state_inits) {
+        if (init.type == t) return init.state_id;
+    }
+    return 0;
+}
+
+// poly() lowers to either a legacy PolyAlloc or a ForeachAlloc(VOICE_POOL)
+// state init depending on the path the compiler took. Both back PolyAllocState
+// in the state pool — same struct, same opcode handler — so for the test we
+// just want the state_id, whichever kind it is.
+std::uint32_t find_poly_state_id(const akkado::CompileResult& cr) {
+    for (const auto& init : cr.state_inits) {
+        if (init.type == akkado::StateInitData::Type::PolyAlloc) {
+            return init.state_id;
+        }
+        if (init.type == akkado::StateInitData::Type::ForeachAlloc &&
+            init.foreach_allocator_kind == 0) {
+            return init.state_id;
+        }
+    }
+    return 0;
+}
+
+float block_rms(std::span<const float> samples) {
+    if (samples.empty()) return 0.0f;
+    double acc = 0.0;
+    for (float s : samples) acc += static_cast<double>(s) * s;
+    return static_cast<float>(std::sqrt(acc / samples.size()));
+}
+
+}  // namespace
+
+TEST_CASE("Hot-swap inside poly body must not stick voices",
+          "[hot_swap][regression][drone]") {
+    // Full user patch (program A) and the same patch with the delay line
+    // removed (program B) — exactly the edit the user performed.
+    constexpr const char* kSrcA =
+        "bpm = 110\n"
+        "stab = ({freq, gate, vel}) ->\n"
+        "    saw(freq) * ar(gate, 0.05, 0.4) * vel\n"
+        "    |> lp(@, 1200)\n"
+        "    |> delay(@, 0.3, 0.1)\n"
+        "\n"
+        "c\"C Em Am G\" |> poly(@, stab) * 0.3 |> out(@)\n";
+    constexpr const char* kSrcB =
+        "bpm = 110\n"
+        "stab = ({freq, gate, vel}) ->\n"
+        "    saw(freq) * ar(gate, 0.05, 0.4) * vel\n"
+        "    |> lp(@, 1200)\n"
+        "\n"
+        "c\"C Em Am G\" |> poly(@, stab) * 0.3 |> out(@)\n";
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks) {
+        auto cr_a = akkado::compile(kSrcA);
+        if (!cr_a.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_a.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile A diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_a.success);
+        auto cr_b = akkado::compile(kSrcB);
+        if (!cr_b.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_b.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile B diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_b.success);
+
+        const std::uint32_t seq_state_id =
+            find_state_init_id(cr_a, akkado::StateInitData::Type::SequenceProgram);
+        const std::uint32_t poly_state_id = find_poly_state_id(cr_a);
+        REQUIRE(seq_state_id != 0);
+        REQUIRE(poly_state_id != 0);
+        // Stable state_ids across the edit: the chord pattern source is
+        // unchanged, and the poly() call site has not moved. If these shift,
+        // the bug analysis changes (H5 in the plan), so capture explicitly.
+        CHECK(find_state_init_id(cr_b, akkado::StateInitData::Type::SequenceProgram)
+              == seq_state_id);
+        CHECK(find_poly_state_id(cr_b) == poly_state_id);
+
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_a, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+
+        // Program A: render long enough for the pattern to advance several
+        // cycles. At 110 BPM, cycle_length=1 beat → ~0.545 s per cycle.
+        // 2 seconds covers ~3.7 cycles, more than enough to see voices
+        // allocated and released.
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+        const std::size_t blocks_a = blocks_per_sec * 2;
+        for (std::size_t i = 0; i < blocks_a; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        auto* seq_pre = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        REQUIRE(seq_pre != nullptr);
+        const std::uint32_t cycle_pre = seq_pre->cycle_index;
+        INFO("crossfade_blocks=" << crossfade_blocks
+             << " cycle_index after A: " << cycle_pre);
+        REQUIRE(cycle_pre > 0);
+
+        auto* poly_pre = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        REQUIRE(poly_pre != nullptr);
+        REQUIRE(poly_pre->voices != nullptr);
+
+        // Snapshot per-voice age + active mask before the swap. After the
+        // swap we want to see at least one of: (a) a voice's age has reset
+        // (it was retriggered or reused for a new note), (b) a voice was
+        // observed releasing, (c) a previously-active voice has gone inactive.
+        std::array<std::uint32_t, cedar::PolyAllocState::MAX_VOICES> pre_age{};
+        std::array<bool, cedar::PolyAllocState::MAX_VOICES> pre_active{};
+        for (std::uint16_t v = 0; v < poly_pre->max_voices; ++v) {
+            pre_age[v] = poly_pre->voices[v].age;
+            pre_active[v] = poly_pre->voices[v].active;
+        }
+
+        // Live recompile to program B.
+        live_load(vm, cr_b, seq_storage);
+
+        // Program B: render another 2 seconds and watch playback.
+        const std::size_t blocks_b = blocks_per_sec * 2;
+        std::vector<float> mono_out;
+        mono_out.reserve(blocks_b * cedar::BLOCK_SIZE);
+        bool observed_voice_retrigger_or_release = false;
+        bool observed_pattern_advance = false;
+        bool observed_releasing_flag = false;
+        for (std::size_t i = 0; i < blocks_b; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) mono_out.push_back(s);
+
+            auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+            if (seq_now && seq_now->cycle_index > cycle_pre) {
+                observed_pattern_advance = true;
+            }
+            auto* poly_now = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+            if (poly_now && poly_now->voices) {
+                for (std::uint16_t v = 0; v < poly_now->max_voices; ++v) {
+                    const auto& voice = poly_now->voices[v];
+                    if (voice.releasing) observed_releasing_flag = true;
+                    // Age reset: voice was reallocated/retriggered.
+                    if (pre_active[v] && voice.active && voice.age < pre_age[v]) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                    // Active → inactive: voice was released and timed out.
+                    if (pre_active[v] && !voice.active) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                }
+            }
+        }
+        if (observed_releasing_flag) observed_voice_retrigger_or_release = true;
+
+        // Diagnostic readout for failure analysis.
+        const std::uint32_t live_xor = vm.states().state_id_xor();
+        INFO("post-B state_id_xor: " << live_xor
+             << " seq_state_id=" << seq_state_id
+             << " poly_state_id=" << poly_state_id
+             << " pool_size=" << vm.states().size());
+        // Dump all state ids in cr_b for cross-reference.
+        std::ostringstream all_inits_os;
+        for (const auto& init : cr_b.state_inits) {
+            all_inits_os << "init{type=" << static_cast<int>(init.type)
+                         << " id=" << init.state_id << "} ";
+        }
+        INFO("post-B cr_b state_inits: " << all_inits_os.str());
+        // Dump bytecode's POLY-class opcode state_ids.
+        std::ostringstream poly_opcodes_os;
+        const std::size_t n_inst_b = cr_b.bytecode.size() / sizeof(cedar::Instruction);
+        for (std::size_t k = 0; k < n_inst_b; ++k) {
+            cedar::Instruction ins{};
+            std::memcpy(&ins, cr_b.bytecode.data() + k * sizeof(cedar::Instruction),
+                        sizeof(ins));
+            if (ins.opcode == cedar::Opcode::POLY_BEGIN ||
+                ins.opcode == cedar::Opcode::FOREACH_EVENT) {
+                poly_opcodes_os << "[" << k << "]op="
+                                << static_cast<int>(ins.opcode)
+                                << " state_id=" << ins.state_id << " ";
+            }
+        }
+        INFO("post-B cr_b POLY/FOREACH opcodes: " << poly_opcodes_os.str());
+        auto* seq_post = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        INFO("post-B cycle_index: "
+             << (seq_post ? static_cast<int>(seq_post->cycle_index) : -1)
+             << " last_queried_cycle: "
+             << (seq_post ? seq_post->last_queried_cycle : -1.0f)
+             << " output.num_events: "
+             << (seq_post ? static_cast<int>(seq_post->output.num_events) : -1));
+        std::ostringstream voice_os;
+        if (poly_post == nullptr) {
+            voice_os << "(poly_post=null)";
+        } else if (poly_post->voices == nullptr) {
+            voice_os << "(voices=null, max_voices=" << int(poly_post->max_voices)
+                     << " seq_state_id=" << poly_post->seq_state_id << ")";
+        } else {
+            voice_os << "max_voices=" << int(poly_post->max_voices)
+                     << " seq_state_id=" << poly_post->seq_state_id << " ";
+            for (std::uint16_t v = 0; v < poly_post->max_voices; ++v) {
+                const auto& vc = poly_post->voices[v];
+                if (vc.active || vc.releasing) {
+                    voice_os << "v" << v << "{a=" << vc.active << " r=" << vc.releasing
+                             << " g=" << vc.gate << " freq=" << vc.freq
+                             << " age=" << vc.age << "} ";
+                }
+            }
+        }
+        INFO("post-B voices: " << voice_os.str());
+
+        // First/middle/last block samples to characterize the stuck audio.
+        std::ostringstream sample_os;
+        sample_os << "samples[0..4]=";
+        for (std::size_t k = 0; k < 4 && k < mono_out.size(); ++k) {
+            sample_os << mono_out[k] << ",";
+        }
+        const std::size_t mid_off = mono_out.size() / 2;
+        sample_os << " samples[mid..mid+4]=";
+        for (std::size_t k = 0; k < 4 && mid_off + k < mono_out.size(); ++k) {
+            sample_os << mono_out[mid_off + k] << ",";
+        }
+        INFO("post-B " << sample_os.str());
+
+        // Count states in the fading pool (orphaned by the swap). A nonzero
+        // count past the fade window means an orphaned state is somehow still
+        // driving output.
+        INFO("post-B fading_count: " << vm.states().fading_count());
+
+        // (A) Pattern keeps advancing.
+        CHECK(observed_pattern_advance);
+        // (B) Voices retrigger or release at least once in post-swap window.
+        CHECK(observed_voice_retrigger_or_release);
+
+        // (C) Audio is not a stuck periodic tone. Two non-overlapping
+        // 512-sample windows ≥ 0.5 s apart must differ. A frozen voice
+        // playing a band-limited saw eventually settles to a periodic
+        // waveform with constant per-block RMS; both checks catch that.
+        const std::size_t half_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / 2;
+        const std::size_t win = 512;
+        REQUIRE(mono_out.size() >= half_sec + win + cedar::BLOCK_SIZE);
+        std::span<const float> w0(mono_out.data() + cedar::BLOCK_SIZE, win);
+        std::span<const float> w1(mono_out.data() + half_sec + cedar::BLOCK_SIZE, win);
+        bool windows_bit_identical = (w0.size() == w1.size()) &&
+            std::memcmp(w0.data(), w1.data(), w0.size() * sizeof(float)) == 0;
+        CHECK_FALSE(windows_bit_identical);
+
+        // Block-to-block RMS variance: gather per-128-sample RMS across the
+        // post-swap window, compute stddev. A live pattern with attack/release
+        // envelopes produces large RMS variance; a frozen voice does not.
+        std::vector<float> per_block_rms;
+        per_block_rms.reserve(mono_out.size() / cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono_out.size();
+             i += cedar::BLOCK_SIZE) {
+            per_block_rms.push_back(
+                block_rms({mono_out.data() + i, cedar::BLOCK_SIZE}));
+        }
+        REQUIRE(per_block_rms.size() > 4);
+        double sum = 0.0;
+        for (float r : per_block_rms) sum += r;
+        const double mean = sum / per_block_rms.size();
+        double var = 0.0;
+        for (float r : per_block_rms) var += (r - mean) * (r - mean);
+        const double stddev = std::sqrt(var / per_block_rms.size());
+        INFO("post-B per-block RMS mean=" << mean << " stddev=" << stddev);
+        // The user's patch envelopes a chord every ~0.55 s with attack 0.05
+        // and release 0.4 — block-to-block RMS varies a lot. A frozen voice
+        // gives stddev ~ 0. Use 5% of the mean as a generous floor.
+        CHECK(stddev > 0.05 * std::max(mean, 1e-6));
+    };
+
+    SECTION("crossfade disabled") {
+        run_scenario(0);
+    }
+    SECTION("default crossfade") {
+        run_scenario(3);
+    }
 }
 
