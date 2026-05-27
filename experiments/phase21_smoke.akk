@@ -2,19 +2,19 @@
 // Exercises custom-property pipe-binding and standalone bend/aftertouch/dur
 // transforms. Should compile clean and run for >=30 s without crashing.
 
-// §11.1 — custom-property pipe-binding accessor `e.cutoff`
+// §11.1: custom-property pipe-binding accessor `e.cutoff`
 voice_a = n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
-  |> osc("saw", e.freq) * (e.cutoff * 0.4 + 0.1)
+  |> saw(e.freq) * (e.cutoff * 0.4 + 0.1)
 
-// §11.2 — standalone bend() (uses the same custom-property runtime plumbing)
+// §11.2: standalone bend() (uses the same custom-property runtime plumbing)
 //   The bend value lands on event.prop_vals[slot]; surfaced via e.bend after
 //   pipe-binding. Slot is keyed by the transform name "bend".
 voice_b = bend(n"c4 e4 g4", 0.2) as p
-  |> osc("sin", p.freq + p.bend * 50.0) * 0.1
+  |> sine( p.freq + p.bend * 50.0) * 0.1
 
-// §11.2 — standalone dur() multiplies event.duration in place
+// §11.2: standalone dur() multiplies event.duration in place
 voice_c = dur(n"c4 e4 g4 b4", 0.5)
   |> mtof(%)
-  |> osc("tri", %) * 0.08
+  |> tri( %) * 0.08
 
 voice_a + voice_b + voice_c |> sum(%) |> out(%, %)

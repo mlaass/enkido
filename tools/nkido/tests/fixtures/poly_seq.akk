@@ -1,4 +1,4 @@
-// Polyphonic sequence with percussive AR envelopes — exercises both
+// Polyphonic sequence with percussive AR envelopes: exercises both
 // SequenceProgram and PolyAlloc state inits, with notes that fully decay
 // between attacks so a transient detector can count them.
 

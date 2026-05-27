@@ -6,12 +6,12 @@
 //   palindrome doubles cycle; ply repeats each event 2x; swing adds groove.
 melody = n"c4 e4 g4 b4".palindrome().ply(2).swing(8)
 
-// Block A2: iter rotation (Phase A4) — runtime cycle counter rotates events
+// Block A2: iter rotation (Phase A4): runtime cycle counter rotates events
 //   1/4 of cycle each cycle, so the pattern advances over 4 cycles.
 arp = n"c4 e4 g4 b4".iter(4)
 
 // Block B: algorithmic generators (Phase B)
-//   binary(178) = 0b10110010 — 8-step trigger pattern over the cycle.
+//   binary(178) = 0b10110010: 8-step trigger pattern over the cycle.
 trig = binary(178)
 
 // Block C: voicing-led chord progression (Phase C)
@@ -24,7 +24,7 @@ prog = chord("Am C G F").anchor("c4").mode("below")
 hits = n"c4{vel:0.8} e4{vel:0.5} g4{vel:1.0} c5{vel:0.6}"
 
 // Mix it all together.
-mtof(melody) |> osc("sin", %) * 0.15 +
-mtof(arp)    |> osc("tri", %) * 0.10 +
-mtof(hits)   |> osc("saw", %) * 0.08 +
-mtof(prog)   |> osc("sin", %) * 0.06 |> sum(%) |> out(%, %)
+mtof(melody) |> sine( %) * 0.15 +
+mtof(arp)    |> tri( %) * 0.10 +
+mtof(hits)   |> saw(%) * 0.08 +
+mtof(prog)   |> sine( %) * 0.06 |> sum(%) |> out(%, %)
