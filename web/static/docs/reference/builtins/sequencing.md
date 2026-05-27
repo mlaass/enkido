@@ -129,11 +129,18 @@ Related: [euclid](#euclid), [lfo](#lfo)
 | hits  | number | -       | Number of hits in pattern |
 | steps | number | -       | Total steps in pattern |
 | rot   | number | 0       | Rotation offset |
+| dur   | signal | 4       | Pattern span in cycles (audio-rate) |
 
 Creates rhythms by distributing hits as evenly as possible across steps. Classic patterns: (3,8) = Cuban tresillo, (5,8) = West African bell.
 
+The default `dur=4` spans the pattern over 4 cycles (= 1 bar at 4/4 under nkido's
+cycle=beat model), matching the classic Strudel/Tidal tresillo feel. Pass a
+smaller `dur` for a busier pattern (`dur=1` packs all steps into a single beat),
+or a larger `dur` to stretch the pattern over multiple bars. `dur` is audio-rate,
+so you can modulate it with an LFO or pattern.
+
 ```akk
-// Tresillo pattern
+// Tresillo pattern (3 hits over 1 bar)
 osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(@)
 ```
 
@@ -146,6 +153,17 @@ osc("noise") |> hp(@, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(@)
 // Rotated pattern
 osc("saw", 110) * ar(euclid(5, 16, 2)) |> lp(@, 800) |> out(@)
 ```
+
+```akk
+// Stretched pattern: 5 hits over 2 bars (8 cycles)
+osc("sin", 110) * ar(euclid(5, 16, 0, 8), 0.005, 0.4) |> out(@)
+```
+
+> **Note:** `.fast(N)` / `.slow(N)` are *pattern* transforms and do **not** apply
+> to `euclid()` (which is a signal generator). Use the `dur` parameter instead:
+> `euclid(3, 8, 0, 8)` is the closest equivalent to `euclid(3, 8).slow(2)`.
+> For pattern-style transforms over an Euclidean rhythm, use mini-notation
+> Euclidean syntax: `n"c4(3,8)".slow(2)`.
 
 Related: [trigger](#trigger), [timelines](timelines)
 

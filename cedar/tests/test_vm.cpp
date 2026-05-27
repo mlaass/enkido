@@ -697,6 +697,65 @@ TEST_CASE("VM EUCLID opcode", "[vm][sequencing]") {
         // Should have gotten some triggers
         CHECK(trigger_count > 0);
     }
+
+    SECTION("EUCLID default dur=4: 8-step pattern spans 1 bar (4 beats)") {
+        // At 120 BPM, samples_per_beat = 24000. Default dur=4 → 96000 samples
+        // per full pattern. For E(8,8) (every step is a hit), that yields
+        // exactly 8 triggers per bar = 2 triggers per beat.
+        std::array<Instruction, 3> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 8.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 8.0f),
+            Instruction::make_binary(Opcode::EUCLID, 2, 0, 1, 42)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Run for exactly 4 beats = 96000 samples = 750 blocks.
+        int trigger_count = 0;
+        int blocks_per_bar = 96000 / BLOCK_SIZE;
+        for (int block = 0; block < blocks_per_bar; ++block) {
+            vm.process_block(left.data(), right.data());
+            const float* result = vm.buffers().get(2);
+            for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+                if (result[i] == 1.0f) trigger_count++;
+            }
+        }
+
+        // Tolerate ±1 (one trigger may sit exactly at the bar boundary).
+        CHECK(trigger_count >= 7);
+        CHECK(trigger_count <= 9);
+    }
+
+    SECTION("EUCLID dur=1 explicit: 8-step pattern spans 1 beat (legacy fast)") {
+        // Explicit dur=1 wired into inputs[3] restores the pre-fix behavior:
+        // E(8,8) fires 8 triggers per beat instead of 8 per bar.
+        std::array<Instruction, 4> program = {
+            make_const_instruction(Opcode::PUSH_CONST, 0, 8.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 1, 8.0f),
+            make_const_instruction(Opcode::PUSH_CONST, 2, 1.0f),  // dur=1
+            // Slots: in0=hits(0), in1=steps(1), in2=rotation(unused→default), in3=dur(2)
+            Instruction::make_quaternary(Opcode::EUCLID, 3, 0, 1, BUFFER_UNUSED, 2, 43)
+        };
+        vm.load_program(program);
+
+        std::array<float, BLOCK_SIZE> left{}, right{};
+
+        // Run for 1 beat = 24000 samples.
+        int trigger_count = 0;
+        int blocks_per_beat = 24000 / BLOCK_SIZE;
+        for (int block = 0; block < blocks_per_beat; ++block) {
+            vm.process_block(left.data(), right.data());
+            const float* result = vm.buffers().get(3);
+            for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+                if (result[i] == 1.0f) trigger_count++;
+            }
+        }
+
+        // Should fire ~8 triggers per beat at dur=1 (legacy behavior).
+        CHECK(trigger_count >= 7);
+        CHECK(trigger_count <= 9);
+    }
 }
 
 TEST_CASE("VM TRIGGER opcode", "[vm][sequencing]") {

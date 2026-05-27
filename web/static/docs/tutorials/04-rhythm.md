@@ -37,10 +37,12 @@ kick + hat |> out(@)
 
 ## Euclidean rhythms
 
-The `euclid` function distributes hits evenly across a number of steps:
+The `euclid` function distributes hits evenly across a number of steps.
+The fourth argument `dur` (default 4) sets the pattern span in cycles, so
+`euclid(3, 8)` spans 1 bar at 4/4 by default:
 
 ```akk
-// Tresillo (3 hits over 8 steps)
+// Tresillo (3 hits over 8 steps, spread across 1 bar)
 osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(@)
 ```
 
@@ -48,6 +50,11 @@ Classic Euclidean patterns:
 - `euclid(3, 8)` - Cuban tresillo
 - `euclid(5, 8)` - West African bell pattern
 - `euclid(7, 16)` - Brazilian samba
+
+`euclid` is a signal-domain trigger generator. To slow or speed it, change
+`dur` directly — `.fast()` and `.slow()` are pattern transforms and don't apply
+here. For pattern-style transforms over a Euclidean rhythm, use mini-notation
+Euclidean syntax instead: `n"c4(3,8)".slow(2)`.
 
 ```akk
 // Layered Euclidean rhythms

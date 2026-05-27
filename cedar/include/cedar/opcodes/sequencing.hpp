@@ -161,7 +161,8 @@ inline std::uint32_t compute_euclidean_pattern(std::uint32_t hits, std::uint32_t
 
 // in0: hits (number of triggers in pattern)
 // in1: steps (total steps in pattern)
-// in2: rotation (optional, shifts pattern)
+// in2: rotation (optional, shifts pattern, default 0)
+// in3: dur (optional, pattern span in cycles, default 4 — audio-rate)
 // Outputs: 1.0 on trigger, 0.0 otherwise
 [[gnu::always_inline]]
 inline void op_euclid(ExecutionContext& ctx, const Instruction& inst) {
@@ -180,6 +181,14 @@ inline void op_euclid(ExecutionContext& ctx, const Instruction& inst) {
         rotation = static_cast<std::uint32_t>(std::max(0.0f, rot_buf[0]));
     }
 
+    // dur: pattern span in cycles (audio-rate). Defensive fallback if codegen
+    // left the slot unwired (callable from raw Cedar tests without optional
+    // defaults emitted).
+    const float* dur_buf = (inst.inputs[3] != BUFFER_UNUSED)
+                               ? ctx.buffers->get(inst.inputs[3])
+                               : nullptr;
+    constexpr float kDefaultDur = 4.0f;
+
     // Recompute pattern only if parameters changed
     if (hits != state.last_hits || steps != state.last_steps || rotation != state.last_rotation) {
         state.pattern = compute_euclidean_pattern(hits, steps, rotation);
@@ -190,15 +199,22 @@ inline void op_euclid(ExecutionContext& ctx, const Instruction& inst) {
         state.prev_step = UINT32_MAX;
     }
 
-    // 1 bar = 1 beat = 1 cycle under the cycle=beat model.
+    // Pattern spans `dur` cycles (default 4 — i.e. 1 bar at 4/4 under the
+    // cycle=beat model). One step = (dur / steps) cycles. Trigger fires on
+    // sample boundaries where the step index advances AND the pattern bit is
+    // set.
     const float spb = ctx.samples_per_beat();
-    const float samples_per_bar = spb;
 
     for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-        // Direct calculation: which step are we in?
+        float dur = dur_buf ? std::max(0.0001f, dur_buf[i]) : kDefaultDur;
+        float samples_per_pattern = spb * dur;
         std::uint64_t sample = ctx.global_sample_counter + i;
-        float bar_phase = std::fmod(static_cast<float>(sample), samples_per_bar) / samples_per_bar;
-        std::uint32_t current_step = static_cast<std::uint32_t>(bar_phase * static_cast<float>(steps)) % steps;
+        float pattern_phase =
+            std::fmod(static_cast<float>(sample), samples_per_pattern) /
+            samples_per_pattern;
+        std::uint32_t current_step =
+            static_cast<std::uint32_t>(pattern_phase * static_cast<float>(steps)) %
+            steps;
 
         // Detect step boundary
         bool step_changed = (current_step != state.prev_step);

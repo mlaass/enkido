@@ -658,6 +658,32 @@
       "description": "SoundFont playback: soundfont(pattern, \\\"file.sf2\\\", preset). Accepts midi() upstream for live polyphonic SF2 playback.",
       "requires_state": true
     },
+    "sf_voice": {
+      "params": [
+        {
+          "name": "file",
+          "required": true
+        },
+        {
+          "name": "preset",
+          "required": true
+        },
+        {
+          "name": "freq",
+          "required": true
+        },
+        {
+          "name": "gate",
+          "required": true
+        },
+        {
+          "name": "vel",
+          "required": true
+        }
+      ],
+      "description": "Single-voice SoundFont player: sf_voice(file, preset, freq, gate, vel). Stereo output; designed as an instrument for poly().",
+      "requires_state": true
+    },
     "midi": {
       "params": [
         {
@@ -1067,7 +1093,7 @@
           "default": 0.5
         }
       ],
-      "description": "Comb filter (resonant delay)",
+      "description": "Comb filter (resonant delay). damping rolls off the tail.",
       "requires_state": true
     },
     "saturate": {
@@ -1332,7 +1358,7 @@
           "default": 1
         }
       ],
-      "description": "Dynamic range compressor",
+      "description": "Dynamic range compressor. attack/release in ms.",
       "requires_state": true
     },
     "limiter": {
@@ -1362,7 +1388,7 @@
           "default": 1
         }
       ],
-      "description": "Peak limiter with lookahead",
+      "description": "Peak limiter. lookahead in ms (0 = off).",
       "requires_state": true
     },
     "gate": {
@@ -1392,7 +1418,7 @@
           "default": 5
         }
       ],
-      "description": "Noise gate with hysteresis",
+      "description": "Noise gate with hysteresis. attack/hold/release in ms.",
       "requires_state": true
     },
     "add": {
@@ -1533,6 +1559,20 @@
         }
       ],
       "description": "Round up to integer",
+      "requires_state": false
+    },
+    "fmod": {
+      "params": [
+        {
+          "name": "a",
+          "required": true
+        },
+        {
+          "name": "b",
+          "required": true
+        }
+      ],
+      "description": "C-style float remainder: fmod(a,b); sign follows a",
       "requires_state": false
     },
     "sin": {
@@ -1719,6 +1759,24 @@
         }
       ],
       "description": "Select between signals: (cond > 0) ? a : b",
+      "requires_state": false
+    },
+    "when": {
+      "params": [
+        {
+          "name": "cond",
+          "required": true
+        },
+        {
+          "name": "true_branch",
+          "required": true
+        },
+        {
+          "name": "false_branch",
+          "required": true
+        }
+      ],
+      "description": "Block-rate conditional bypass: runs only the taken branch",
       "requires_state": false
     },
     "gt": {
@@ -2024,7 +2082,49 @@
           "required": false
         }
       ],
-      "description": "Audio output (mono or stereo)",
+      "description": "Audio output (mono or stereo) — alias for bus(0, ...)",
+      "requires_state": false
+    },
+    "bus": {
+      "params": [
+        {
+          "name": "N",
+          "required": true
+        },
+        {
+          "name": "L",
+          "required": true
+        },
+        {
+          "name": "R",
+          "required": false
+        }
+      ],
+      "description": "Route a signal into numbered bus N (bus 0 is the master)",
+      "requires_state": false
+    },
+    "mixer": {
+      "params": [
+        {
+          "name": "N",
+          "required": true
+        },
+        {
+          "name": "closure",
+          "required": true
+        }
+      ],
+      "description": "Attach a processing closure to bus N",
+      "requires_state": false
+    },
+    "master": {
+      "params": [
+        {
+          "name": "closure",
+          "required": true
+        }
+      ],
+      "description": "Attach a processing closure to bus 0 — alias for ",
       "requires_state": false
     },
     "stereo": {
@@ -2181,9 +2281,14 @@
           "name": "rot",
           "required": false,
           "default": 0
+        },
+        {
+          "name": "dur",
+          "required": false,
+          "default": 4
         }
       ],
-      "description": "Euclidean rhythm generator",
+      "description": "Euclidean rhythm trigger generator. dur = pattern span in cycles (default 4).",
       "requires_state": true
     },
     "timeline": {
@@ -2203,8 +2308,28 @@
           "required": true
         }
       ],
-      "description": "Array length (compile-time)",
+      "description": "Array length (compile-time for static arrays, runtime for dynamic arrays)",
       "requires_state": false
+    },
+    "notes": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        }
+      ],
+      "description": "Active pattern event's chord notes as a dynamic array of MIDI numbers",
+      "requires_state": true
+    },
+    "freqs": {
+      "params": [
+        {
+          "name": "pattern",
+          "required": true
+        }
+      ],
+      "description": "Active pattern event's chord notes as a dynamic array of frequencies (Hz)",
+      "requires_state": true
     },
     "state": {
       "params": [
@@ -2455,24 +2580,6 @@
       "description": "Scale array to [lo, hi] range (defaults to [0, 1])",
       "requires_state": false
     },
-    "scale": {
-      "params": [
-        {
-          "name": "array",
-          "required": true
-        },
-        {
-          "name": "lo",
-          "required": true
-        },
-        {
-          "name": "hi",
-          "required": true
-        }
-      ],
-      "description": "Scale array to [lo, hi] range",
-      "requires_state": false
-    },
     "poly": {
       "params": [
         {
@@ -2493,6 +2600,62 @@
         }
       ],
       "description": "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128. `release` (seconds) extends per-voice mix tail past note-off.",
+      "requires_state": true
+    },
+    "each_voice": {
+      "params": [
+        {
+          "name": "input",
+          "required": true
+        },
+        {
+          "name": "lambda",
+          "required": true
+        }
+      ],
+      "description": "Higher-order per-event instrument: each_voice(input, (n) -> ...) runs the lambda once per pattern event and mixes the outputs.",
+      "requires_state": true
+    },
+    "each": {
+      "params": [
+        {
+          "name": "input",
+          "required": true
+        },
+        {
+          "name": "lambda",
+          "required": true
+        }
+      ],
+      "description": "Higher-order per-event sink: each(input, (n) -> ...) runs the lambda once per event for side effects (the body calls out() itself).",
+      "requires_state": true
+    },
+    "event_map": {
+      "params": [
+        {
+          "name": "events",
+          "required": true
+        },
+        {
+          "name": "transform",
+          "required": true
+        }
+      ],
+      "description": "Per-event rewrite: event_map(events, (e) -> {note: e.note + 7}) ",
+      "requires_state": true
+    },
+    "event_filter": {
+      "params": [
+        {
+          "name": "events",
+          "required": true
+        },
+        {
+          "name": "predicate",
+          "required": true
+        }
+      ],
+      "description": "Per-event filter: event_filter(events, (e) -> e.vel > 0.5) ",
       "requires_state": true
     },
     "mono": {
@@ -2649,7 +2812,7 @@
           "required": true
         }
       ],
-      "description": "Slow down pattern by factor (stretch time).",
+      "description": "Slow down pattern by factor (stretch time). Factor may be a ",
       "requires_state": false
     },
     "fast": {
@@ -2663,7 +2826,7 @@
           "required": true
         }
       ],
-      "description": "Speed up pattern by factor (compress time).",
+      "description": "Speed up pattern by factor (compress time). Factor may be a ",
       "requires_state": false
     },
     "rev": {
@@ -2676,75 +2839,28 @@
       "description": "Reverse pattern event order.",
       "requires_state": false
     },
-    "transpose": {
+    "transport": {
       "params": [
         {
           "name": "pattern",
           "required": true
         },
         {
-          "name": "semitones",
-          "required": true
-        }
-      ],
-      "description": "Transpose pattern pitches by semitones.",
-      "requires_state": false
-    },
-    "velocity": {
-      "params": [
-        {
-          "name": "pattern",
+          "name": "trig",
           "required": true
         },
         {
-          "name": "vel",
-          "required": true
-        }
-      ],
-      "description": "Set velocity on pattern events (0-1).",
-      "requires_state": false
-    },
-    "bend": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
+          "name": "step",
+          "required": false,
+          "default": 1
         },
         {
-          "name": "value",
-          "required": true
+          "name": "reset",
+          "required": false
         }
       ],
-      "description": "Set bend value on pattern events; reachable via e.bend.",
-      "requires_state": false
-    },
-    "aftertouch": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "value",
-          "required": true
-        }
-      ],
-      "description": "Set aftertouch value on pattern events; reachable via e.aftertouch.",
-      "requires_state": false
-    },
-    "dur": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "factor",
-          "required": true
-        }
-      ],
-      "description": "Multiply event durations by factor.",
-      "requires_state": false
+      "description": "Trigger-driven pattern transport — decouples a pattern from ",
+      "requires_state": true
     },
     "bank": {
       "params": [
@@ -2786,34 +2902,6 @@
         }
       ],
       "description": "Apply microtonal tuning context to a pattern.",
-      "requires_state": false
-    },
-    "early": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "amount",
-          "required": true
-        }
-      ],
-      "description": "Shift events earlier by amount cycles (wraps).",
-      "requires_state": false
-    },
-    "late": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "amount",
-          "required": true
-        }
-      ],
-      "description": "Shift events later by amount cycles (wraps).",
       "requires_state": false
     },
     "palindrome": {
@@ -2902,38 +2990,6 @@
         }
       ],
       "description": "Sample pattern at n evenly-spaced points; emit n equal-duration events.",
-      "requires_state": false
-    },
-    "swing": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "n",
-          "required": false
-        }
-      ],
-      "description": "Apply 1/3 swing on n-slice grid (default n=4).",
-      "requires_state": false
-    },
-    "swingBy": {
-      "params": [
-        {
-          "name": "pattern",
-          "required": true
-        },
-        {
-          "name": "amount",
-          "required": true
-        },
-        {
-          "name": "n",
-          "required": false
-        }
-      ],
-      "description": "Apply swing of `amount` on n-slice grid (default n=4).",
       "requires_state": false
     },
     "iter": {

@@ -111,13 +111,17 @@ class SequencerTestHost:
 
         self.vm.load_program(self.program)
 
-    def create_euclid_program(self, hits: int, steps: int, rotation: int = 0, state_id: int = 1):
+    def create_euclid_program(self, hits: int, steps: int, rotation: int = 0,
+                              dur: float | None = None, state_id: int = 1):
         """Create EUCLID program.
 
         Args:
             hits: Number of hits in pattern
             steps: Total steps in pattern
             rotation: Pattern rotation
+            dur: Pattern span in cycles. If None, uses make_ternary (slot 3
+                 BUFFER_UNUSED → opcode falls back to its built-in default 4.0).
+                 If set, uses make_quinary and wires the value into slot 3.
             state_id: State ID
         """
         self.program = []
@@ -137,10 +141,19 @@ class SequencerTestHost:
             cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 3, cedar.hash("rotation"))
         )
 
-        # EUCLID: hits (buf 1), steps (buf 2), rotation (buf 3) -> output (buf 10)
-        self.program.append(
-            cedar.Instruction.make_ternary(cedar.Opcode.EUCLID, 10, 1, 2, 3, state_id)
-        )
+        if dur is None:
+            self.program.append(
+                cedar.Instruction.make_ternary(cedar.Opcode.EUCLID, 10, 1, 2, 3, state_id)
+            )
+        else:
+            self.vm.set_param("dur", float(dur))
+            self.program.append(
+                cedar.Instruction.make_nullary(cedar.Opcode.ENV_GET, 4, cedar.hash("dur"))
+            )
+            # slot 4 is unused — same buffer as dur is fine, opcode never reads it
+            self.program.append(
+                cedar.Instruction.make_quinary(cedar.Opcode.EUCLID, 10, 1, 2, 3, 4, 4, state_id)
+            )
 
         self.program.append(
             cedar.Instruction.make_unary(cedar.Opcode.OUTPUT, 0, 10)
@@ -477,7 +490,103 @@ def test_euclid_timing_precision():
 
 
 # =============================================================================
-# Test 4: Cross-Opcode Timing Alignment
+# Test 4: EUCLID dur parameter (pattern span in cycles)
+# =============================================================================
+
+def test_euclid_dur_parameter():
+    """
+    Verify the `dur` parameter scales pattern span linearly.
+
+    Expected behavior (per implementation):
+    - dur=N stretches the pattern over N cycles (= N beats under cycle=beat).
+    - Default (no slot wired) = 4 cycles, so E(3,8) defaults to 3 hits/bar at 4/4.
+    - Trigger count over a long window scales as hits * total_cycles / (steps * dur)
+      ... well, more simply: pattern repeats once every (dur * spb) samples, so total
+      triggers ≈ hits * (duration_sec * bpm / 60) / dur.
+
+    If this test fails, check op_euclid in cedar/include/cedar/opcodes/sequencing.hpp.
+    """
+    print("\nTest 4: EUCLID dur parameter (pattern span)")
+    print("=" * 60)
+
+    sr = 48000
+    bpm = 120
+    spb = sr * 60.0 / bpm  # samples per beat (= per cycle)
+    # ≥300s simulated audio per CLAUDE.md DSP testing guidelines for time-based opcodes.
+    duration = 320.0
+
+    results = {'sample_rate': sr, 'bpm': bpm, 'duration_sec': duration, 'tests': []}
+
+    cases = [
+        # (hits, steps, dur, label)
+        (3, 8, 1.0,  "E(3,8) dur=1 (1 beat span — legacy fast feel)"),
+        (3, 8, None, "E(3,8) dur=default (slot unwired → 4)"),
+        (3, 8, 4.0,  "E(3,8) dur=4 (1 bar at 4/4 — new default)"),
+        (3, 8, 8.0,  "E(3,8) dur=8 (2 bars span)"),
+    ]
+
+    trigger_counts = {}
+    for i, (hits, steps, dur, label) in enumerate(cases):
+        host = SequencerTestHost(sr, bpm)
+        host.create_euclid_program(hits, steps, rotation=0, dur=dur,
+                                    state_id=1300 + i)
+        output = host.run(duration)
+        triggers = count_triggers(output, threshold=0.5)
+        n_triggers = len(triggers)
+
+        # dur=None should match dur=4.0 (default fallback)
+        effective_dur = 4.0 if dur is None else dur
+        cycles_in_window = duration * bpm / 60.0
+        # Number of full pattern repetitions = cycles_in_window / dur
+        expected_repetitions = cycles_in_window / effective_dur
+        expected_triggers = hits * expected_repetitions
+
+        tolerance = max(2, expected_triggers * 0.02)  # 2% or ≥2 triggers
+        passed = abs(n_triggers - expected_triggers) <= tolerance
+
+        # Save WAV for human listening
+        wav_path = os.path.join(OUT, f"dur_{i}_{('default' if dur is None else dur)}.wav")
+        save_wav(wav_path, output, sr)
+        print(f"  {label}")
+        print(f"    Triggers: {n_triggers} (expected ~{expected_triggers:.1f})")
+        print(f"    Saved {wav_path} — listen for {hits} hits per {effective_dur:.0f} beats")
+        status = "✓ PASS" if passed else "✗ FAIL"
+        print(f"    {status}")
+        results['tests'].append({
+            'label': label,
+            'hits': hits, 'steps': steps, 'dur': dur,
+            'triggers': n_triggers,
+            'expected': float(expected_triggers),
+            'passed': bool(passed),
+        })
+
+        trigger_counts[i] = n_triggers
+
+    # Cross-check: dur=1 should produce ~4x triggers compared to dur=4
+    if 0 in trigger_counts and 2 in trigger_counts:
+        ratio = trigger_counts[0] / max(1, trigger_counts[2])
+        ratio_ok = abs(ratio - 4.0) < 0.1
+        print(f"\n  Ratio dur=1 / dur=4 = {ratio:.3f} (expected 4.0) "
+              f"{'✓ PASS' if ratio_ok else '✗ FAIL'}")
+        results['ratio_dur1_over_dur4'] = ratio
+
+    # Cross-check: default slot wiring matches dur=4 within ±1%
+    if 1 in trigger_counts and 2 in trigger_counts:
+        default_match = abs(trigger_counts[1] - trigger_counts[2]) <= max(1, trigger_counts[2] * 0.01)
+        print(f"  Default (unwired) trigger count = {trigger_counts[1]}, "
+              f"dur=4 = {trigger_counts[2]} "
+              f"{'✓ PASS' if default_match else '✗ FAIL'}")
+        results['default_matches_dur4'] = bool(default_match)
+
+    with open(os.path.join(OUT, 'euclid_dur.json'), 'w') as f:
+        json.dump(results, f, indent=2, cls=NumpyEncoder)
+    print(f"\n  Saved: {os.path.join(OUT, 'euclid_dur.json')}")
+
+    return results
+
+
+# =============================================================================
+# Test 5: Cross-Opcode Timing Alignment
 # =============================================================================
 
 def test_cross_opcode_alignment():
@@ -591,6 +700,7 @@ if __name__ == "__main__":
     test_euclid_patterns()
     test_euclid_rotation()
     test_euclid_timing_precision()
+    test_euclid_dur_parameter()
     test_cross_opcode_alignment()
 
     print()

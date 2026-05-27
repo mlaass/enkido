@@ -3250,6 +3250,20 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
     }
 
     if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
+        // Targeted hint for the common mistake of `euclid(...).fast/.slow`:
+        // euclid() is a signal generator, not a pattern, so the rate-scale
+        // path can't reach it. Point users at the `dur` parameter.
+        const Node& parg_node = ast_->arena[pattern_arg];
+        if (parg_node.type == NodeType::Call &&
+            ctx_->interner->view(parg_node.as_identifier()) == "euclid") {
+            error("E133", std::string(fn_name) +
+                      "() is not supported on euclid() — euclid is a signal, "
+                      "not a pattern. Use the dur parameter to scale span: "
+                      "euclid(hits, steps, rot, dur). For example "
+                      "euclid(3, 8, 0, 8) doubles the default span.",
+                  n.location);
+            return TypedValue::void_val();
+        }
         error("E133", std::string(fn_name) +
                   "() first argument must be a pattern", n.location);
         return TypedValue::void_val();

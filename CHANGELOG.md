@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠ BREAKING — `euclid()` default span changed from 1 cycle to 4 cycles (1 bar)
+
+The runtime `euclid(hits, steps)` builtin previously packed all `steps` into a
+single cycle (= 1 beat under cycle=beat). At common BPMs this ran at near-32nd-
+note rate — far from the "tresillo" feel the docs claimed. We added an explicit
+`dur` parameter (audio-rate signal, default **4 cycles**) so `euclid(3, 8)` now
+spans 1 bar at 4/4 by default, matching the classic Strudel/Tidal feel.
+
+Existing patches using `euclid(3, 8)` will now sound 4× slower. To preserve the
+old feel pass `dur=1` explicitly: `euclid(3, 8, 0, 1)`. To stretch further, raise
+`dur`: `euclid(5, 16, 0, 8)` spans 2 bars.
+
+`.fast()` and `.slow()` remain pattern-only and still do **not** apply to
+`euclid()` (it returns a signal, not a pattern). Trying to use them now emits a
+targeted hint pointing at the `dur` parameter instead of the generic
+`E133 first argument must be a pattern`. For pattern-style rate scaling over an
+Euclidean rhythm, use mini-notation Euclidean syntax: `n"c4(3,8)".slow(2)`.
+
 ### ⚠ BREAKING — mini-notation: cycle = beat, top-level = alternation
 
 The clock unit and the mini-notation top-level grouping rule both

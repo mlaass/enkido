@@ -279,6 +279,58 @@ TEST_CASE("fast(p, N) for N>1 fires the right number of triggers (wrap-detect re
     CHECK(seq->cycle_index <= 9u);
 }
 
+TEST_CASE("fast()/slow() on euclid() emits targeted hint about dur parameter",
+          "[fast-slow][euclid]") {
+    // Regression: prior to the euclid dur-param fix, users hit a generic
+    // 'E133 first argument must be a pattern' when writing
+    // `euclid(3,8).slow(2)`. The signal-vs-pattern type mismatch is real but
+    // the error gave no hint about the correct way to slow euclid (the new
+    // `dur` parameter). This test pins the targeted message in place.
+    SECTION("slow on euclid produces hint mentioning dur") {
+        auto r = akkado::compile(R"(
+            euclid(3, 8).slow(2) |> out(@)
+        )");
+        CHECK_FALSE(r.success);
+        bool saw_dur_hint = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.code == "E133" &&
+                d.message.find("dur") != std::string::npos &&
+                d.message.find("euclid") != std::string::npos) {
+                saw_dur_hint = true;
+            }
+        }
+        CHECK(saw_dur_hint);
+    }
+
+    SECTION("fast on euclid produces hint mentioning dur") {
+        auto r = akkado::compile(R"(
+            euclid(3, 8).fast(2) |> out(@)
+        )");
+        CHECK_FALSE(r.success);
+        bool saw_dur_hint = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.code == "E133" &&
+                d.message.find("dur") != std::string::npos &&
+                d.message.find("euclid") != std::string::npos) {
+                saw_dur_hint = true;
+            }
+        }
+        CHECK(saw_dur_hint);
+    }
+
+    SECTION("euclid with explicit dur arg compiles cleanly") {
+        auto r = akkado::compile(R"(
+            osc("sin", 110) * ar(euclid(3, 8, 0, 8), 0.005, 0.4) |> out(@)
+        )");
+        if (!r.success) {
+            for (const auto& d : r.diagnostics) {
+                INFO(d.code << ": " << d.message);
+            }
+        }
+        CHECK(r.success);
+    }
+}
+
 TEST_CASE("fast applied to a Pattern-bound identifier emits ERS",
           "[fast-slow][phase3]") {
     // Multi-use scenario: a pattern defined once, transformed two different
