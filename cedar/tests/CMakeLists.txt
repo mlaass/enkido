@@ -43,6 +43,7 @@ add_executable(cedar_tests
     test_state_op.cpp
     test_phaser.cpp
     test_drywet.cpp
+    test_hot_swap_extended_params.cpp
     test_seqpat_gate.cpp
     test_seqpat_step.cpp
     test_event_map.cpp
