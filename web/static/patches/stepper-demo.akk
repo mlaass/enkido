@@ -8,18 +8,18 @@
 
 bpm = 120
 
-// step(arr, trig): walks `arr` cyclically on every rising edge of `trig`.
+// step(xs, trig): walks `xs` cyclically on every rising edge of `trig`.
 // ARRAY_INDEX wraps by default, so an unbounded `counter` index is fine —
-// no need for an explicit wrap(..., 0, len(arr)) here.
-fn step (arr, trig) -> arr[counter(trig)]
+// no need for an explicit wrap(..., 0, len(xs)) here.
+fn step (xs, trig) -> xs[counter(trig)]
 
-// step_dir(arr, trig, dir): like step, but advances by `dir` each tick
+// step_dir(xs, trig, dir): like step, but advances by `dir` each tick
 // (use 1 for forward, -1 for backward, etc.). Uses a state cell directly
 // to carry the index across blocks.
-fn step_dir (arr, trig, dir) -> {
+fn step_dir (xs, trig, dir) -> {
   idx = state(0)
   idx.set(select(gateup(trig), idx.get() + dir, idx.get()))
-  arr[idx.get()]
+  xs[idx.get()]
 }
 
 // MIDI notes for an A minor pentatonic arpeggio

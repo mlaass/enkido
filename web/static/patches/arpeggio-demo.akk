@@ -6,10 +6,10 @@
 
 bpm = 112
 
-// step(arr, trig): advance an index through `arr` on each rising edge.
+// step(xs, trig): advance an index through `xs` on each rising edge.
 // ARRAY_INDEX wraps by default, so a free-running counter is fine — and
 // because e.notes is a *dynamic* array, the wrap follows the chord size.
-fn step (arr, trig) -> arr[counter(trig)]
+fn step (xs, trig) -> xs[counter(trig)]
 
 // Four chords, one per cycle. Each `[a,b,c]` is a simultaneous chord.
 n"[c4,e4,g4] [a3,c4,e4] [f3,a3,c4] [g3,b3,d4]" as e
