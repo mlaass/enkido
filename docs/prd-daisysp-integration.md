@@ -667,7 +667,7 @@ TEST_CASE("modal renders without NaN/Inf for 5 seconds", "[daisy][physical]") {
 
 Each phase ships at least one `web/static/patches/daisy-*.akk` patch demonstrating the new modules in a musical context. Demo patches must:
 - Compile cleanly under the production build.
-- Render audibly via `nkido-cli render`.
+- Render audibly via `nkido render`.
 - Be linked from the web IDE's pattern picker.
 
 ### 10.3 Side-by-side A/B comparison (required for `ds_*`)

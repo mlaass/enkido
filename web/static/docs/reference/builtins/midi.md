@@ -123,7 +123,7 @@ Held keys survive recompiles. When you edit the instrument body and re-run, the 
 | Host | Source selection |
 |------|-----------------|
 | Web | Files panel → MIDI tab. Permission prompt on first use; requires a secure context (HTTPS or `localhost`). Drag a `.mid` onto the panel to register it for `midi({file: "..."})`. |
-| CLI (`nkido-cli`) | `--list-midi-devices` enumerates ports; `--midi-in "Name"` (substring) selects one. Defaults to the first available port. |
+| CLI (`nkido`) | `--list-midi-devices` enumerates ports; `--midi-in "Name"` (substring) selects one. Defaults to the first available port. |
 | Godot | Extension wires `ctx.midi_event_callback` from the chosen Godot MIDI bus. |
 
 When no MIDI is available (permission denied, device unplugged, file not yet uploaded), `midi()` silently produces no events. The pipe stays valid; downstream voices stay idle.

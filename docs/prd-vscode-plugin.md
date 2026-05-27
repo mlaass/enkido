@@ -1,4 +1,4 @@
-> **Status: DONE (v0.1.0)** — VS Code extension shipped in sibling repo [`nkido-vscode`](https://github.com/mlaass/nkido-vscode). Packaged as `nkido-0.1.0.vsix` with TextMate grammar, language config, autocomplete/diagnostics/signature-help providers, command palette integration, and `nkido-cli serve` integration. The required `serve` mode now exists in this repo.
+> **Status: DONE (v0.1.0)** — VS Code extension shipped in sibling repo [`nkido-vscode`](https://github.com/mlaass/nkido-vscode). Packaged as `nkido-0.1.0.vsix` with TextMate grammar, language config, autocomplete/diagnostics/signature-help providers, command palette integration, and `nkido serve` integration. The required `serve` mode now exists in this repo.
 
 # PRD: VS Code Extension for Nkido/Akkado
 
@@ -19,7 +19,7 @@ Create a VS Code extension that brings the full web IDE experience to VS Code:
 - Autocomplete with function signatures (via VS Code Direct API)
 - Real-time diagnostics with inline squiggly underlines and Problems panel
 - Signature help tooltips when typing function calls
-- Integration with `nkido-cli` for compilation and playback (per-command for `check`/`compile`, persistent `serve` mode for live hot-swap)
+- Integration with `nkido` for compilation and playback (per-command for `check`/`compile`, persistent `serve` mode for live hot-swap)
 - User-configurable keyboard shortcuts (defaulting to web IDE conventions: Ctrl+Enter to evaluate, Escape to stop)
 
 ### 1.3 Goals (v1)
@@ -28,7 +28,7 @@ Create a VS Code extension that brings the full web IDE experience to VS Code:
 - **Autocomplete**: Builtin functions, aliases, keywords, user-defined variables/functions (VS Code Direct API)
 - **Diagnostics**: Compilation errors shown as squiggly underlines + Problems panel (VS Code Direct API)
 - **Signature help**: Parameter tooltips when typing function calls (VS Code Direct API)
-- **CLI integration**: Play/stop/compile via `nkido-cli` (spawn-per-command for `check`/`compile`, persistent `serve` mode for hot-swap)
+- **CLI integration**: Play/stop/compile via `nkido` (spawn-per-command for `check`/`compile`, persistent `serve` mode for hot-swap)
 - **Configurable shortcuts**: User can customize keyboard bindings, defaults match web IDE
 - **Dedicated output channel**: "Nkido" channel showing compilation status, errors, playback state
 
@@ -38,7 +38,7 @@ Create a VS Code extension that brings the full web IDE experience to VS Code:
 - **Parameter controls UI**: No sliders, knobs, or buttons for `param()`/`toggle()`/`button()`
 - **Debug panels**: No state inspector, pattern debugger, or instruction highlighting
 - **Multi-file support**: Single file only, no module imports
-- **WASM integration**: No embedded WASM compiler — always use `nkido-cli` as the backend
+- **WASM integration**: No embedded WASM compiler — always use `nkido` as the backend
 
 ---
 
@@ -50,7 +50,7 @@ Create a VS Code extension that brings the full web IDE experience to VS Code:
 2. Extension activates, providing syntax highlighting
 3. User writes Akkado code with autocomplete assistance
 4. User presses `Ctrl+Enter` (configurable) to compile and play
-5. `nkido-cli` is spawned, compilation errors appear as squiggly underlines
+5. `nkido` is spawned, compilation errors appear as squiggly underlines
 6. On success, audio plays; status shown in Nkido output channel
 7. User presses `Escape` (configurable) to stop playback
 
@@ -92,15 +92,15 @@ When compilation fails:
 ### 2.5 CLI Integration Modes
 
 **Spawn-per-command mode** (simple operations, available today):
-- `nkido-cli check file.akkado --json` — Syntax check (JSON diagnostics)
-- `nkido-cli compile -o out.cedar file.akkado` — Compile to bytecode
-- `nkido-cli play file.akkado` — Play once and exit
+- `nkido check file.akkado --json` — Syntax check (JSON diagnostics)
+- `nkido compile -o out.cedar file.akkado` — Compile to bytecode
+- `nkido play file.akkado` — Play once and exit
 
 **Persistent hot-swap mode** (live coding):
-- Today, `nkido-cli ui` is a self-contained SDL2 editor with no external command channel — it only consumes SDL keyboard/text events.
-- For VS Code v1, `nkido-cli` must grow a headless persistent mode (working name: `nkido-cli serve`) that reads newline-delimited JSON commands from stdin (`{"cmd": "load", "source": "..."}`, `{"cmd": "stop"}`) and emits status/diagnostics to stdout.
+- Today, `nkido ui` is a self-contained SDL2 editor with no external command channel — it only consumes SDL keyboard/text events.
+- For VS Code v1, `nkido` must grow a headless persistent mode (working name: `nkido serve`) that reads newline-delimited JSON commands from stdin (`{"cmd": "load", "source": "..."}`, `{"cmd": "stop"}`) and emits status/diagnostics to stdout.
 - The extension launches one `serve` process per workspace, sends source on Ctrl+Enter for hot-swap, sends stop on Escape, and kills the process on deactivation.
-- See section 11 (Impact Assessment) for the prerequisite work in `tools/nkido-cli`.
+- See section 11 (Impact Assessment) for the prerequisite work in `tools/nkido`.
 
 ---
 
@@ -124,7 +124,7 @@ When compilation fails:
 │   │   ├── akkado.tmLanguage.json          # TextMate grammar
 │   │   └── grammar-generator.ts            # Generates grammar from web IDE tokens
 │   ├── cli/
-│   │   ├── cli-client.ts                   # nkido-cli wrapper (spawn-per-command)
+│   │   ├── cli-client.ts                   # nkido wrapper (spawn-per-command)
 │   │   ├── serve-mode-manager.ts           # Persistent serve-mode process (JSON over stdio)
 │   │   └── audio-engine.ts                 # Playback state management
 │   ├── commands/
@@ -164,14 +164,14 @@ When compilation fails:
 │  ┌─────────────────────────────────────────────┐              │
 │  │  - extension.ts (activation, commands)      │              │
 │  │  - providers/*.ts (completion, diagnostics) │              │
-│  │  - cli-client.ts (nkido-cli wrapper)       │              │
+│  │  - cli-client.ts (nkido wrapper)       │              │
 │  │  - serve-mode-manager.ts (persistent JSON) │              │
 │  └──────────────────────┬──────────────────────┘              │
 └─────────────────────────┼─────────────────────────────────────┘
                           │ spawns
                           ▼
 ┌─────────────────────────────────────────────┐
-│            nkido-cli (C++ binary)           │
+│            nkido (C++ binary)           │
 │                                             │
 │  Modes:                                     │
 │  - check: Syntax check (spawn, exit)        │
@@ -235,7 +235,7 @@ Configurable via VS Code settings (`settings.json`):
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `nkido.cliPath` | string | `""` (search PATH) | Path to `nkido-cli` executable |
+| `nkido.cliPath` | string | `""` (search PATH) | Path to `nkido` executable |
 | `nkido.shortcuts.evaluate` | string | `Ctrl+Enter` | Keyboard shortcut for evaluate/play |
 | `nkido.shortcuts.stop` | string | `Escape` | Keyboard shortcut for stop |
 | `nkido.autoCompileOnSave` | boolean | `false` | Auto-compile on save |
@@ -253,7 +253,7 @@ Configurable via VS Code settings (`settings.json`):
 | `Nkido: Compile` | `nkido.compile` | Compile to bytecode without playing |
 | `Nkido: Check Syntax` | `nkido.check` | Syntax check only |
 | `Nkido: Show Output` | `nkido.showOutput` | Focus Nkido output channel |
-| `Nkido: Restart CLI` | `nkido.restartCli` | Restart `nkido-cli serve` process |
+| `Nkido: Restart CLI` | `nkido.restartCli` | Restart `nkido serve` process |
 
 ### 4.3 VS Code API Features
 
@@ -390,7 +390,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 }
 ```
 
-### 5.3 CLI Client (nkido-cli Wrapper)
+### 5.3 CLI Client (nkido Wrapper)
 
 ```typescript
 // cli-client.ts
@@ -443,7 +443,7 @@ export class CliClient {
 
 ### 5.4 Serve Mode Manager (Persistent Process)
 
-Spawns `nkido-cli serve` (headless mode, prerequisite — see section 11) and exchanges newline-delimited JSON over stdio. One process per workspace; restarted on crash.
+Spawns `nkido serve` (headless mode, prerequisite — see section 11) and exchanges newline-delimited JSON over stdio. One process per workspace; restarted on crash.
 
 Wire format (subject to refinement when the CLI side is designed):
 
@@ -552,7 +552,7 @@ import { SignatureHelpProvider } from './providers/signature-help';
 
 export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('nkido');
-    const cliPath = config.get<string>('cliPath') || 'nkido-cli';
+    const cliPath = config.get<string>('cliPath') || 'nkido';
     const outputChannel = vscode.window.createOutputChannel('Nkido');
     
     const cliClient = new CliClient(cliPath, outputChannel);
@@ -632,7 +632,7 @@ export function activate(context: vscode.ExtensionContext) {
 **Goal:** Errors appear as squiggly underlines + Problems panel. Autocomplete works.
 
 1. Implement `CompletionProvider` using VS Code Direct API
-2. Implement `DiagnosticProvider` (parse `nkido-cli check --json` output)
+2. Implement `DiagnosticProvider` (parse `nkido check --json` output)
 3. Implement `SignatureHelpProvider` for function parameter tooltips
 4. Register providers in `extension.ts`
 5. Test with sample `.akkado` file
@@ -651,8 +651,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 **Goal:** Play/stop commands work. Audio plays from VS Code.
 
-1. Implement `CliClient` (spawns `nkido-cli` for `check`/`compile`/`play`)
-2. Implement `ServeModeManager` (persistent `nkido-cli serve` process, JSON over stdio — depends on the CLI prerequisite in section 11)
+1. Implement `CliClient` (spawns `nkido` for `check`/`compile`/`play`)
+2. Implement `ServeModeManager` (persistent `nkido serve` process, JSON over stdio — depends on the CLI prerequisite in section 11)
 3. Register commands: `nkido.evaluate`, `nkido.stop`, `nkido.compile`
 4. Configure keyboard shortcuts (default Ctrl+Enter, Escape)
 5. Add settings: `nkido.cliPath`, `nkido.autoCompileOnSave`
@@ -693,9 +693,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 **Empty file:** `nkido.evaluate` shows info message "No code to evaluate", no error.
 
-**Missing nkido-cli:** Extension shows warning "nkido-cli not found. Configure path in settings." Output channel logs full error. Diagnostics cleared.
+**Missing nkido:** Extension shows warning "nkido not found. Configure path in settings." Output channel logs full error. Diagnostics cleared.
 
-**Invalid code:** `nkido-cli check` returns errors. Squiggly underlines appear at correct line/column. Problems panel populated. Audio stops if playing.
+**Invalid code:** `nkido check` returns errors. Squiggly underlines appear at correct line/column. Problems panel populated. Audio stops if playing.
 
 **CLI crashes:** `ServeModeManager` detects process exit, clears playback state. Output channel shows error. User can restart via `Nkido: Restart CLI`.
 
@@ -739,7 +739,7 @@ code --install-extension nkido-0.1.0.vsix
 
 1. **Serve-mode wire format**: JSON over stdio is the proposed transport, but the exact command/event vocabulary needs to be locked down with the CLI work in section 11. Concretely: how are diagnostics shaped (reuse `format_diagnostic_json`?), how is the audio backend selected, and how is `param()` state pushed?
 
-2. **nkido-cli path validation**: Should the extension verify `nkido-cli` works on startup, or lazily on first use?
+2. **nkido path validation**: Should the extension verify `nkido` works on startup, or lazily on first use?
 
 3. **Signature help trigger**: Using `(` and `,` as trigger characters. Should `Ctrl+Shift+Space` also manually trigger it (standard VS Code behavior)?
 
@@ -749,16 +749,16 @@ code --install-extension nkido-0.1.0.vsix
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `nkido/cedar` | **Stays** | No modifications, used via `nkido-cli` |
-| `nkido/akkado` | **Stays** | No modifications, used via `nkido-cli` |
-| `nkido/tools/nkido-cli` | **Modified (prerequisite)** | Adds new `serve` mode (headless, JSON-over-stdio) for hot-swap; `bytecode_loader.cpp` extended to recognize `.akk` alongside `.akkado`. Existing `ui` mode is unchanged. |
+| `nkido/cedar` | **Stays** | No modifications, used via `nkido` |
+| `nkido/akkado` | **Stays** | No modifications, used via `nkido` |
+| `nkido/tools/nkido` | **Modified (prerequisite)** | Adds new `serve` mode (headless, JSON-over-stdio) for hot-swap; `bytecode_loader.cpp` extended to recognize `.akk` alongside `.akkado`. Existing `ui` mode is unchanged. |
 | `~/workspace/nkido-vscode` | **New** | Entire extension is new |
 | File icon assets (`icons/akkado-light.svg`, `icons/akkado-dark.svg`) | **New (human-delivered)** | Provided by maintainer, see section 5.5 |
 | Web IDE (`nkido/web`) | **Stays** | Independent, may share syntax definitions in future |
 
-### 11.1 Prerequisite: `nkido-cli serve` mode
+### 11.1 Prerequisite: `nkido serve` mode
 
-Before extension v1 can ship, `nkido-cli` needs:
+Before extension v1 can ship, `nkido` needs:
 
 1. A new `serve` subcommand that runs headless (no SDL2 window, audio backend stays).
 2. A line-delimited JSON command/event protocol on stdin/stdout (`load`, `stop`, `set_param`, `quit` → `compiled`, `diagnostic`, `stopped`, `param_changed`).
@@ -789,6 +789,6 @@ This is its own work item, tracked separately from the extension; the VS Code ex
 - [TextMate Grammar Guide](https://macromates.com/manual/en/language_grammars)
 - [Nkido Web IDE PRD](./prd-nkido-web-ide.md) - Source of truth for feature parity
 - [Nkido Editor Autocomplete PRD](./prd-editor-autocomplete.md) - Completion logic reference
-- [nkido-cli source](../tools/nkido-cli/) - CLI integration target
+- [nkido source](../tools/nkido-cli/) - CLI integration target
 - [Web IDE Akkado Language](../web/src/lib/editor/akkado-language.ts) - Tokenizer to port
 - [Web IDE Completions](../web/src/lib/editor/akkado-completions.ts) - Completion logic to reuse

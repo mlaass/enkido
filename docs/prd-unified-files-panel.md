@@ -365,5 +365,5 @@ does today.
 - `web/src/lib/io/file-cache.ts` — existing IndexedDB URI cache; will
   host the upload manifest in Phase B.
 - `web/src/lib/audio/default-samples.ts` — canonical built-in kit; also
-  consumed by `nkido-cli` (`program_loader.cpp::find_default_bank_uri`).
+  consumed by `nkido` (`program_loader.cpp::find_default_bank_uri`).
   Out of scope for changes here.

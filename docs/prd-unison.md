@@ -566,13 +566,13 @@ Tasks:
 
 **Implementation notes**:
 - File: `experiments/test_op_unison.py` (the `test_op_*.py` glob is what `run_all.sh` picks up).
-- Render bridge: `nkido-cli render --source ... --seconds N -o wav` — matches the established pattern in `test_op_poly.py` / `test_chord_pipeline.py`. (The PRD-draft mention of "akkado-cli + cedar_core bindings" was descriptive; no existing test loads bytecode through the Python bindings, and `nkido-cli render` does the same job in one subprocess.)
+- Render bridge: `nkido render --source ... --seconds N -o wav` — matches the established pattern in `test_op_poly.py` / `test_chord_pipeline.py`. (The PRD-draft mention of "akkado + cedar_core bindings" was descriptive; no existing test loads bytecode through the Python bindings, and `nkido render` does the same job in one subprocess.)
 - Four sections: (1) 5-voice spectrum at 440 Hz with detune 0.3 → hard-asserts exactly 5 peaks in 431–449 Hz; (2) `voices: 1` special case → 1 centered peak + L/R balance check; (3) sweep `voices ∈ {2, 4, 8}` → exact peak counts, WAVs saved; (4) 300 s `chord("Cmaj7 Am7 Fmaj7 G7") |> poly(%, fat, 4)` with `fat` calling `unison(..., voices: 4)` → checks NaN/Inf, sustained-clipping fraction (transient ±1.0 peak alignment from 16 in-phase saws is normal; >0.1 % of samples at full scale is not), DC offset, and per-second RMS dropout (≥10 % of median).
 - FFT search band tightened from the original `[420, 460]` Hz to `[431, 449]` Hz — exactly brackets the ±detune-semitone spread. Wider bands picked up FFT edge leakage as spurious extra peaks at higher voice counts.
 - Long-render gain staging: `chord(...) |> poly(%, fat, 4) |> % * 0.15 |> out(%)`. The `* 0.15` is what `unison-pad.akk` gets from its `% * 0.6 + freeverb * 0.4` blend.
 
 Tasks:
-- [x] Compile a small unison patch and render it through the akkado → Cedar pipeline (via `nkido-cli render`).
+- [x] Compile a small unison patch and render it through the akkado → Cedar pipeline (via `nkido render`).
 - [x] Render the patch for ≥ 300 seconds for the poly+unison case (300 s at 110 BPM, 55 MB WAV).
 - [x] Verify spectrum has approximately `voices` peaks within ±detune semitones of the fundamental (hard assertion at voices ∈ {1, 2, 4, 5, 8}).
 - [x] Save WAVs to `output/op_unison/`.

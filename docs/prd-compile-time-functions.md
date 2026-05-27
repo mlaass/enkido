@@ -601,25 +601,25 @@ Each `LogEntry.filename` records the originating file so the IDE can route click
 
 ### 6.1 CLI output
 
-`akkado-cli compile script.ak` renders prints to **stdout** and diagnostics to **stderr**. Both are interleaved by source order at the byte level — a single output stream when redirected together, but cleanly separable when piped.
+`akkado compile script.ak` renders prints to **stdout** and diagnostics to **stderr**. Both are interleaved by source order at the byte level — a single output stream when redirected together, but cleanly separable when piped.
 
 ```
-$ akkado-cli compile script.ak
+$ akkado compile script.ak
 script.ak:1:1  hello from compile time         ← stdout
 script.ak:5:1  bpm: 140, sr: 48000             ← stdout
 script.ak:7:18  W310  $print: identifier 'bpmm' not in scope  ← stderr
 ```
 
 ```
-$ akkado-cli compile script.ak 2>/dev/null
+$ akkado compile script.ak 2>/dev/null
 script.ak:1:1  hello from compile time
 script.ak:5:1  bpm: 140, sr: 48000
 
-$ akkado-cli compile script.ak 1>/dev/null
+$ akkado compile script.ak 1>/dev/null
 script.ak:7:18  W310  $print: identifier 'bpmm' not in scope
 ```
 
-`nkido-cli` follows the same rule when compiling a patch via `--ak`.
+`nkido` follows the same rule when compiling a patch via `--ak`.
 
 The `--quiet` flag (existing) suppresses `compile_log` from stdout but still ships entries in the `CompileResult` JSON output (when JSON mode is on).
 
@@ -688,8 +688,8 @@ When the host doesn't pass a context (or passes one with no live env, no resolve
 | `akkado::ConstEvaluator` | **No change** | Reused by the compile-time pass. |
 | `akkado::FileResolver` | **No change** | Read-only consumer. |
 | `akkado::SampleRegistry` | **No change** | Read-only consumer. |
-| `tools/akkado-cli` | **Modified** | Routes `compile_log` → stdout, diagnostics → stderr. |
-| `tools/nkido-cli` | **Modified** | Same. Adds `--live-env <file>` flag for snapshotting? (See §13 Open Questions.) |
+| `tools/akkado` | **Modified** | Routes `compile_log` → stdout, diagnostics → stderr. |
+| `tools/nkido` | **Modified** | Same. Adds `--live-env <file>` flag for snapshotting? (See §13 Open Questions.) |
 | `web/wasm/nkido_wasm.cpp` | **Modified** | Adds exports to read `compile_log`; passes live `EnvMap` snapshot into `compile_ctx`. |
 | `web/static/worklet/cedar-processor.js` | **Modified** | On recompile, snapshots EnvMap into a host-side struct, passes it to the wasm compile call. |
 | `web/src/lib/stores/audio.svelte.ts` | **Modified** | Receives `compile_log` from worklet messages; routes to a new `compileLog` rune-store. |
@@ -757,7 +757,7 @@ Each phase ends with a deployable, demo-able artifact.
 
 ### Phase 1 — Akkado compile-time pass + CLI integration
 
-**Goal:** A user running `akkado-cli compile script.ak` with `$print` in the source sees the print on stdout.
+**Goal:** A user running `akkado compile script.ak` with `$print` in the source sees the print on stdout.
 
 **Steps:**
 
@@ -786,8 +786,8 @@ Each phase ends with a deployable, demo-able artifact.
 
 **Verification:**
 
-- `echo '$print("hi")' | akkado-cli compile -` → stdout has `<input>:1:1  hi`, exit 0.
-- `echo 'bpm = 140 \n $print("bpm: {bpm:.0f}")' | akkado-cli compile -` → stdout has `<input>:2:1  bpm: 140`.
+- `echo '$print("hi")' | akkado compile -` → stdout has `<input>:1:1  hi`, exit 0.
+- `echo 'bpm = 140 \n $print("bpm: {bpm:.0f}")' | akkado compile -` → stdout has `<input>:2:1  bpm: 140`.
 - `$samples()` → stdout has the registered sample names.
 - `$print("typo: {missing}")` → stdout has `typo: <undefined: missing>`, stderr has W310.
 - `$print(42)` → stderr has E683, exit nonzero.
@@ -988,7 +988,7 @@ Targeted at the format parser/evaluator in isolation. Same coverage as 11.1 but 
 
 Bash scripts in `akkado/tests/cli/`:
 
-- `test_print_stdout.sh`: `echo '$print("hi")' | akkado-cli compile -` produces `<input>:1:1  hi` on stdout, nothing on stderr.
+- `test_print_stdout.sh`: `echo '$print("hi")' | akkado compile -` produces `<input>:1:1  hi` on stdout, nothing on stderr.
 - `test_print_with_warning.sh`: `echo '$print("{x}")'` produces stdout entry + stderr warning.
 - `test_pipe_separation.sh`: stdout and stderr separable (test with `2>/dev/null`).
 
@@ -1029,7 +1029,7 @@ Catch2 `[compile-time][bench]` tag:
 ## 13. Open Questions
 
 - **[OPEN QUESTION] `$samples()` empty rendering.** Today: empty list renders as `""`. Should we render `<empty>` to make it visible? Lean toward `<empty>` for clarity, but it's a minor UX call.
-- **[OPEN QUESTION] CLI `--live-env` flag.** `nkido-cli` could accept a JSON file with EnvMap key/value pairs to populate the snapshot for offline `$env` testing. Useful for testing patches that rely on host-set env. Defer if low demand.
+- **[OPEN QUESTION] CLI `--live-env` flag.** `nkido` could accept a JSON file with EnvMap key/value pairs to populate the snapshot for offline `$env` testing. Useful for testing patches that rely on host-set env. Defer if low demand.
 - **[OPEN QUESTION] Positional `{0}`/`{1}` interpolation.** v1's multi-arg behavior is "comma-append after the template." Future PRD may add `{0}`, `{1}` positional refs that pull from those args. Forward-compatible: a template with no `{N}` references keeps today's append behavior; a template that uses `{0}` skips the append for that index.
 - **[OPEN QUESTION] Nested `$call` arity.** `{$env("k")}` is one call. Are deeper nests (`{$env($name())}`) allowed? v1 says yes, parser supports it; tests should cover at least one level. Document the recursion limit (e.g., 8) explicitly.
 - **[OPEN QUESTION] `compile_log` for failed compiles.** §10.5 says hosts discard logs from failed compiles. Should the IDE surface them anyway, tagged `(broken compile)`? Lean toward "hide by default; debug-mode toggle" — defer to a Phase 3 polish PR.

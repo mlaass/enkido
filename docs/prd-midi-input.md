@@ -25,7 +25,7 @@ is a compile error — the source must be unambiguous.
 
 Live MIDI input is supported in both hosts:
 - **Browser** — Web MIDI API for live devices; drag-drop for `.mid` files.
-- **`nkido-cli`** — RtMidi for live devices; `cedar::UriResolver` for `.mid`.
+- **`nkido`** — RtMidi for live devices; `cedar::UriResolver` for `.mid`.
 
 Continuous controllers (CC, pitch-bend, channel pressure) do **not** thread
 through `poly`. Instead, a sister builtin `midi_cc("paramName", {cc: 74})`
@@ -1039,10 +1039,10 @@ the old queue per §4.12.
 
 ### 8.5 CLI manual tests
 
-- `nkido-cli --list-midi-devices` prints ALSA/CoreMIDI/WinMM port list.
-- `echo 'midi() |> poly(piano, 8) |> out' | nkido-cli serve` + keyboard →
+- `nkido --list-midi-devices` prints ALSA/CoreMIDI/WinMM port list.
+- `echo 'midi() |> poly(piano, 8) |> out' | nkido serve` + keyboard →
   audible notes.
-- `nkido-cli render --code 'midi({file: "twinkle.mid"}) |> poly(piano, 8) |> out'
+- `nkido render --code 'midi({file: "twinkle.mid"}) |> poly(piano, 8) |> out'
   --seconds 60` produces a correct WAV.
 - `--midi-in "Launchkey"` opens the named device; absent name falls back to
   first.
@@ -1050,7 +1050,7 @@ the old queue per §4.12.
 ### 8.6 Cross-host parity
 
 Same source `midi({file: "song.mid"}) |> poly(piano, 8) |> out` rendered
-via `nkido-cli render` and recorded in the browser AudioContext should
+via `nkido render` and recorded in the browser AudioContext should
 produce identical PCM within float tolerance (modulo block-boundary phase
 if any asynchronous source differs).
 
@@ -1094,7 +1094,7 @@ bytecode dump of `midi() |> poly(synth)` shows expected shape.
 - `AudioEngine` integration; route-table swap on program reload.
 - `--list-midi-devices`, `--midi-in <name>` flags.
 
-**Verify**: plug a keyboard, run `nkido-cli serve` with `midi() |>
+**Verify**: plug a keyboard, run `nkido serve` with `midi() |>
 poly(synth) |> out`, audibly play notes.
 
 **Phase 4 — Web live MIDI (1 day)**

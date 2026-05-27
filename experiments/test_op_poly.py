@@ -5,7 +5,7 @@ Tests POLY voice allocation against the user-reported "incomplete chord" /
 "hiccups every few bars" symptom.
 
 These tests drive the user's actual `chord("C Em Am G") |> poly(@, stab) |> out(@)`
-patch through the offline render pipeline (`nkido-cli render`), then analyze:
+patch through the offline render pipeline (`nkido render`), then analyze:
 
 1. Voice trace (JSONL): every block, list of active voices with freq, gate, etc.
    - Detect "firing voice" count > 3 (more chord notes than expected)
@@ -36,7 +36,7 @@ from scipy import signal as scipy_signal
 # Locate repo root and binaries
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 PATCH_PATH = REPO_ROOT / "web" / "static" / "patches" / "chord-stab.akk"
 
 OUT_DIR = THIS_DIR / "output" / "op_poly"
@@ -46,13 +46,13 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 def render(source_path: str, wav_path: str, trace_path: str,
            seconds: float = 8.0, bpm: float = 110.0) -> dict:
     """
-    Run `nkido-cli render` on the source file. Returns a dict with paths.
+    Run `nkido render` on the source file. Returns a dict with paths.
     Raises if the renderer fails.
     """
     if not NKIDO_CLI.exists():
         raise FileNotFoundError(
-            f"nkido-cli not found at {NKIDO_CLI}. "
-            f"Build it with: cmake --build {REPO_ROOT}/build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. "
+            f"Build it with: cmake --build {REPO_ROOT}/build --target nkido"
         )
 
     cmd = [
@@ -66,7 +66,7 @@ def render(source_path: str, wav_path: str, trace_path: str,
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         raise RuntimeError(
-            f"nkido-cli render failed (exit {result.returncode}):\n"
+            f"nkido render failed (exit {result.returncode}):\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
     return {"wav": wav_path, "trace": trace_path}
@@ -630,8 +630,8 @@ def main():
     print(f"Output:   {OUT_DIR}")
 
     if not NKIDO_CLI.exists():
-        print(f"\n✗ FAIL: nkido-cli not found at {NKIDO_CLI}")
-        print(f"  Build with: cmake --build {REPO_ROOT}/build --target nkido-cli")
+        print(f"\n✗ FAIL: nkido not found at {NKIDO_CLI}")
+        print(f"  Build with: cmake --build {REPO_ROOT}/build --target nkido")
         sys.exit(1)
     if not PATCH_PATH.exists():
         print(f"\n✗ FAIL: patch source not found at {PATCH_PATH}")

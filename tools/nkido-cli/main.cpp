@@ -372,7 +372,7 @@ int handle_render_mode(const nkido::Options& opts) {
     // PRD prd-midi-input §7.4: gather File-kind midi state_ids and build a
     // CC route table for offline dispatch. The render path doesn't go
     // through AudioEngine::apply_midi_route_plan, so do it inline here so
-    // `midi({file:...}) |> ... ; midi_cc(...)` works in `nkido-cli render`.
+    // `midi({file:...}) |> ... ; midi_cc(...)` works in `nkido render`.
     std::vector<std::uint32_t> file_midi_state_ids;
     for (const auto& req : load.compile_result->required_midi_sources) {
         if (req.kind == cedar::MidiSourceKind::File) {

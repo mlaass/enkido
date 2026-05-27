@@ -2,7 +2,7 @@
 unison Stdlib Function Quality Tests (Cedar Engine)
 ====================================================
 Smoke tests for the userspace `unison(...)` stdlib function. Drives real
-akkado source through `nkido-cli render` and verifies:
+akkado source through `nkido render` and verifies:
 
 1. A 5-voice unison around 440 Hz produces exactly 5 spectral peaks within
    the documented detune window (±0.3 semitones).
@@ -28,7 +28,7 @@ import numpy as np
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 
 OUT_DIR = THIS_DIR / "output" / "op_unison"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,11 +39,11 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # -----------------------------------------------------------------------------
 
 def render(source: str, wav_path: Path, seconds: float, bpm: float = 120.0) -> None:
-    """Run `nkido-cli render --source ...` and write a WAV. Raise on failure."""
+    """Run `nkido render --source ...` and write a WAV. Raise on failure."""
     if not NKIDO_CLI.exists():
         raise FileNotFoundError(
-            f"nkido-cli not found at {NKIDO_CLI}. "
-            f"Build with: cmake --build {REPO_ROOT}/build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. "
+            f"Build with: cmake --build {REPO_ROOT}/build --target nkido"
         )
     cmd = [
         str(NKIDO_CLI), "render",
@@ -58,7 +58,7 @@ def render(source: str, wav_path: Path, seconds: float, bpm: float = 120.0) -> N
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0 or not wav_path.exists():
         raise RuntimeError(
-            f"nkido-cli render failed (exit {result.returncode}):\n"
+            f"nkido render failed (exit {result.returncode}):\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
@@ -391,8 +391,8 @@ def main() -> int:
     print(f"Output:   {OUT_DIR}")
 
     if not NKIDO_CLI.exists():
-        print(f"\n✗ FAIL: nkido-cli not found at {NKIDO_CLI}")
-        print(f"  Build with: cmake --build {REPO_ROOT}/build --target nkido-cli")
+        print(f"\n✗ FAIL: nkido not found at {NKIDO_CLI}")
+        print(f"  Build with: cmake --build {REPO_ROOT}/build --target nkido")
         return 2
 
     failures: list[tuple[str, str]] = []

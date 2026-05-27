@@ -73,7 +73,7 @@ All contributions are welcome. Here are some ways to help:
 nkido/
 ├── cedar/          # Audio synthesis engine (standalone C++ library)
 ├── akkado/         # Language compiler (depends on cedar)
-├── tools/          # CLI tools (nkido-cli, akkado-cli)
+├── tools/          # CLI tools (nkido, akkado)
 ├── web/            # SvelteKit web IDE
 ├── experiments/    # Python DSP test scripts
 └── docs/           # Design documents and PRDs

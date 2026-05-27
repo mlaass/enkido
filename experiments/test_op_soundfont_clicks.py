@@ -4,7 +4,7 @@ Click analysis for the user's chord-soundfont pipeline.
 Reproduces the user-reported clicking on every note onset:
     c"<[Am Am7] [Dm7 Dm] G CM >" |> soundfont(@, "gm", 0) |> out(@*.85)
 
-Renders the pattern to WAV via nkido-cli, then locates discontinuities by
+Renders the pattern to WAV via nkido, then locates discontinuities by
 measuring sample-to-sample difference (first derivative). A click manifests
 as a large d/dt value localized to a single sample. We then group nearby
 spikes into "click events", count them, and save annotated plots.
@@ -35,13 +35,13 @@ USER_PATTERN = (
 
 
 def render_pattern(seconds=12.0):
-    """Render the user's pattern via nkido-cli and return (sr, samples)."""
+    """Render the user's pattern via nkido and return (sr, samples)."""
     src_path = os.path.join(OUT, "pattern.akk")
     with open(src_path, "w") as f:
         f.write(USER_PATTERN + "\n")
     wav_path = os.path.join(OUT, "pattern.wav")
     sf2 = os.path.join(REPO, "web/static/soundfonts/FluidR3Mono_GM.sf3")
-    cli = os.path.join(REPO, "build/tools/nkido-cli/nkido-cli")
+    cli = os.path.join(REPO, "build/bin/nkido")
     cmd = [
         cli, "render",
         "--soundfont", f"file://{sf2}",
@@ -51,8 +51,8 @@ def render_pattern(seconds=12.0):
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        print("nkido-cli stderr:", res.stderr)
-        raise RuntimeError(f"nkido-cli render failed: {res.returncode}")
+        print("nkido stderr:", res.stderr)
+        raise RuntimeError(f"nkido render failed: {res.returncode}")
     sr, audio = scipy.io.wavfile.read(wav_path)
     if audio.dtype == np.int16:
         audio = audio.astype(np.float32) / 32768.0

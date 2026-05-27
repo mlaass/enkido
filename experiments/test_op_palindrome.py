@@ -38,7 +38,7 @@ from cedar_testing import output_dir
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("op_palindrome")
 WAV_PATH = os.path.join(OUT, "palindrome_long_window.wav")
 SRC_PATH = os.path.join(OUT, "palindrome_long_window.akk")
@@ -57,8 +57,8 @@ EXPECTED_PITCHES_HZ = [261.63, 329.63, 392.00, 493.88]
 def _render():
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build with:\n"
+            f"  cmake --build build --target nkido"
         )
     with open(SRC_PATH, "w") as f:
         f.write(AKK_SRC)
@@ -74,7 +74,7 @@ def _render():
     if res.returncode != 0:
         print(res.stdout)
         print(res.stderr)
-        raise RuntimeError(f"nkido-cli render failed (code {res.returncode})")
+        raise RuntimeError(f"nkido render failed (code {res.returncode})")
     return WAV_PATH
 
 

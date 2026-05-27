@@ -7,7 +7,7 @@
  * end-to-end, and verifies the sampler output is scaled by velocity.
  *
  * Why this test exists: previously, sampler velocity was only verified via
- * `nkido-cli render` (offline WAV with --bank file://). That confirms the
+ * `nkido render` (offline WAV with --bank file://). That confirms the
  * compiler emits the right bytecode but does NOT prove the WASM artifact loaded
  * by the AudioWorklet executes velocity-scaled output. If a future change
  * regresses any link in {codegen, opcode VM, WASM glue, sample bank wiring},

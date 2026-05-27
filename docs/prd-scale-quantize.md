@@ -429,7 +429,7 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
   degrees (driven from `v"…"`).
 - **Edge cases** — one test per §8 row, including each error code (`E184`,
   `E185`, `E186`) via `CHECK_FALSE(compile(...).success)`.
-- **Audio render** — `nkido-cli render` of a quantized generative melody and
+- **Audio render** — `nkido render` of a quantized generative melody and
   a degree-mapped sequence; per the project's experiment methodology, the
   long-running pattern test (Phase 5, patternable) renders **≥ 300 s** of
   simulated audio to surface per-cycle bugs; a shorter WAV is saved for human

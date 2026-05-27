@@ -7,7 +7,7 @@ PRD prd-patterns-as-scalar-values §10.3 acceptance:
 the parsed atoms across 300+ seconds of simulated audio."
 
 Approach: render osc("sin", v"<220 440 880 660>") for 320 s via
-`nkido-cli render`. Each cycle (4 beats @ 120 BPM = 2 s) the freq buffer
+`nkido render`. Each cycle (4 beats @ 120 BPM = 2 s) the freq buffer
 should step through 220, 440, 880, 660 Hz with no mtof applied. Across
 160 cycles the output spectrum must remain dominated by exactly those
 four bins, with stable RMS energy and no silent windows.
@@ -40,7 +40,7 @@ from cedar_testing import output_dir
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("op_seqpat_step_value")
 WAV_PATH = os.path.join(OUT, "value_pattern_long_window.wav")
 SRC_PATH = os.path.join(OUT, "value_pattern_long_window.akk")
@@ -60,8 +60,8 @@ osc("sin", v"<220 440 880 660>") * 0.2 |> out(%, %)
 def _render():
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build with:\n"
+            f"  cmake --build build --target nkido"
         )
     with open(SRC_PATH, "w") as f:
         f.write(AKK_SRC)
@@ -78,7 +78,7 @@ def _render():
     if res.returncode != 0:
         print(res.stdout)
         print(res.stderr)
-        raise RuntimeError(f"nkido-cli render failed (code {res.returncode})")
+        raise RuntimeError(f"nkido render failed (code {res.returncode})")
     return WAV_PATH
 
 

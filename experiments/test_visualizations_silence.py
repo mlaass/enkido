@@ -6,7 +6,7 @@ producing silent audio. The visualizations.akk patch was the public
 symptom (initially misdiagnosed as visualizer opcodes "eating" the
 signal); the actual fix lives in akkado/src/analyzer.cpp.
 
-This test renders three patches through `nkido-cli render` and asserts
+This test renders three patches through `nkido render` and asserts
 each produces real audio (peak > 0.05). Run with:
 
     cd experiments && uv run python test_visualizations_silence.py
@@ -26,7 +26,7 @@ import numpy as np
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 VIZ_PATCH = os.path.join(REPO_ROOT, "web", "static", "patches", "visualizations.akk")
 
 MINIMAL_REPRO = """\
@@ -59,7 +59,7 @@ def render(source_or_path: str, *, is_path: bool, seconds: float = 2.0) -> np.nd
         )
         if result.returncode != 0:
             raise RuntimeError(
-                f"nkido-cli render failed (rc={result.returncode}):\n"
+                f"nkido render failed (rc={result.returncode}):\n"
                 f"stderr: {result.stderr}\nstdout: {result.stdout}"
             )
 
@@ -96,8 +96,8 @@ def assert_audible(name: str, samples: np.ndarray, threshold: float = 0.05) -> b
 
 def main() -> int:
     if not os.path.exists(NKIDO_CLI):
-        print(f"ERROR: nkido-cli not built at {NKIDO_CLI}")
-        print("Build first: cmake --build build --target nkido-cli")
+        print(f"ERROR: nkido not built at {NKIDO_CLI}")
+        print("Build first: cmake --build build --target nkido")
         return 2
 
     if not os.path.exists(VIZ_PATCH):

@@ -827,7 +827,7 @@ Acceptance:
 
 1. Compiles with no errors.
 2. `cmake --build build && ./build/akkado/tests/akkado_tests` passes.
-3. Renders via `nkido-cli render` and produces three notes with 3-
+3. Renders via `nkido render` and produces three notes with 3-
    voice unison arrays each.
 
 **Record-annotated callback inside a higher-order fn:**

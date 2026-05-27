@@ -7,7 +7,7 @@ same `handle_poly_call` codegen and the same `PolyAllocState` as poly, so
 every Phase 1-3 callback shape and the per-voice field bank apply unchanged.
 
 These tests drive the mono voice manager through the offline render pipeline
-(`nkido-cli render`) for >=300s and verify:
+(`nkido render`) for >=300s and verify:
 
 1. The poly voice trace never shows more than one voice — mono is
    single-voice by construction (PolyAllocState mode==1 always uses slot 0).
@@ -33,7 +33,7 @@ import numpy as np
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 
 OUT_DIR = THIS_DIR / "output" / "op_mono"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,11 +44,11 @@ RENDER_BPM = 120.0
 
 def render(source_path, wav_path, trace_path, seconds=RENDER_SECONDS,
            bpm=RENDER_BPM):
-    """Run `nkido-cli render` on the source file. Raises if it fails."""
+    """Run `nkido render` on the source file. Raises if it fails."""
     if not NKIDO_CLI.exists():
         raise FileNotFoundError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build it with: "
-            f"cmake --build {REPO_ROOT}/build --target nkido-cli")
+            f"nkido not found at {NKIDO_CLI}. Build it with: "
+            f"cmake --build {REPO_ROOT}/build --target nkido")
     cmd = [
         str(NKIDO_CLI), "render", str(source_path),
         "-o", str(wav_path),
@@ -60,7 +60,7 @@ def render(source_path, wav_path, trace_path, seconds=RENDER_SECONDS,
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
         raise RuntimeError(
-            f"nkido-cli render failed (exit {result.returncode}):\n"
+            f"nkido render failed (exit {result.returncode}):\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}")
 
 
@@ -217,9 +217,9 @@ def main():
     print(f"Output:   {OUT_DIR}")
 
     if not NKIDO_CLI.exists():
-        print(f"\n✗ FAIL: nkido-cli not found at {NKIDO_CLI}")
+        print(f"\n✗ FAIL: nkido not found at {NKIDO_CLI}")
         print(f"  Build with: cmake --build {REPO_ROOT}/build --target "
-              f"nkido-cli")
+              f"nkido")
         sys.exit(1)
 
     failures = []

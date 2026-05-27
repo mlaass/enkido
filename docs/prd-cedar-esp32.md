@@ -80,8 +80,8 @@ idf.py -p /dev/ttyUSB0 monitor   # monitoring still uses host idf.py or picocom
 ### 4.3 Live bytecode push
 
 ```bash
-# Compile on host using existing akkado-cli
-./build/tools/akkado-cli/akkado-cli compile patch.akk -o patch.cbc
+# Compile on host using existing akkado
+./build/bin/akkado compile patch.akk -o patch.cbc
 
 # Push to device
 cedar-push --port /dev/ttyUSB0 patch.cbc
@@ -111,7 +111,7 @@ Key mapping is compiled into the bytecode's parameter metadata (first N `param`/
 ```
 ┌─────────────────┐  UART   ┌─────────────────────────────────────────────┐
 │  Host           │ ──────► │  ESP32-A1S                                  │
-│  - akkado-cli   │         │  ┌──────────────────────────────────────┐   │
+│  - akkado   │         │  ┌──────────────────────────────────────┐   │
 │  - cedar-push   │         │  │  main/ (cedar-esp32 app)             │   │
 └─────────────────┘         │  │  ├─ boot: init ADF + Cedar           │   │
                             │  │  ├─ UART listener (bytecode loader)  │   │

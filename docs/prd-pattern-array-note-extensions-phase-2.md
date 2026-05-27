@@ -530,7 +530,7 @@ n"c4{vel:0.8, bend:0.2, cutoff:0.3} e4{vel:1.0, cutoff:0.7}" as e
   |> out(@, @)
 ```
 
-**Acceptance:** the program compiles with `cmake --build build` clean, runs in `nkido-cli render` for ≥ 30 s without crashes, and an experiment script confirms event-list correctness for blocks 0–N (per §10.3).
+**Acceptance:** the program compiles with `cmake --build build` clean, runs in `nkido render` for ≥ 30 s without crashes, and an experiment script confirms event-list correctness for blocks 0–N (per §10.3).
 
 This phase blocks PRD closure — no Phase A–D claim is "done" until they all coexist in this program.
 

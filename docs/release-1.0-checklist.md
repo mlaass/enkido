@@ -132,7 +132,7 @@
 - [x] CMake build system with presets (debug, release, cedar-only, wasm)
 - [x] Emscripten WASM build
 - [x] AudioWorklet integration
-- [x] CLI tools: `nkido-cli`, `akkado-cli`
+- [x] CLI tools: `nkido`, `akkado`
 - [x] Python bindings (`cedar_core`) for DSP experiments
 - [x] Auto-generated opcode metadata
 - [x] Auto-generated docs lookup index

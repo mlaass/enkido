@@ -3,7 +3,7 @@ Glide Pattern Integration Test
 ==============================
 End-to-end Phase 2 verification for `docs/prd-glide-interp.md`.
 
-Renders five akkado patches via `nkido-cli render` and validates:
+Renders five akkado patches via `nkido render` and validates:
 
   1. Settle time — `n"c4 c5" |> saw(mono(glide(@.freq, 0.1))) |> out(@)`
      The dominant frequency in a 10 ms window must reach the target
@@ -41,7 +41,7 @@ from cedar_testing import output_dir
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("glide_pattern")
 SR = 48000
 
@@ -61,8 +61,8 @@ def _write_patch(name: str, src: str) -> str:
 def _render(akk_path: str, seconds: float, wav_name: str) -> str:
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build it with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build it with:\n"
+            f"  cmake --build build --target nkido"
         )
     wav_path = os.path.join(OUT, wav_name)
     cmd = [
@@ -76,11 +76,11 @@ def _render(akk_path: str, seconds: float, wav_name: str) -> str:
     print(f"  $ {' '.join(cmd[-7:])}")
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     if res.returncode != 0:
-        print("  --- nkido-cli stdout ---")
+        print("  --- nkido stdout ---")
         print(res.stdout[-2000:])
-        print("  --- nkido-cli stderr ---")
+        print("  --- nkido stderr ---")
         print(res.stderr[-2000:])
-        raise RuntimeError(f"nkido-cli failed with exit code {res.returncode}")
+        raise RuntimeError(f"nkido failed with exit code {res.returncode}")
     return wav_path
 
 

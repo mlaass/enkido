@@ -1821,7 +1821,7 @@ TEST_CASE("midi-file-cc: drain → vm.set_param round-trip drives a param value"
     // post-process_block drain by calling vm.set_param() in the drain
     // callback. After the CC fires, has_param("cutoff") is true and the
     // value lands at the expected normalized magnitude. This mirrors what
-    // nkido-cli's handle_render_mode does with the real
+    // nkido's handle_render_mode does with the real
     // dispatch_midi_cc/MidiCcRouteTable indirection.
     VM vm;
     vm.set_sample_rate(48000.0f);

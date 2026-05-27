@@ -575,7 +575,7 @@ Tasks:
 Verification:
 - `cmake --build build` clean.
 - `./build/akkado/tests/akkado_tests "[zenv]"` — green.
-- CLI smoke: `./build/tools/akkado-cli/akkado-cli -e '<demo source>'` compiles; `./build/tools/nkido-cli/nkido-cli` plays.
+- CLI smoke: `./build/bin/akkado -e '<demo source>'` compiles; `./build/bin/nkido` plays.
 - Web smoke: `bun run dev`, load each demo patch, gate it, audibly verify the envelope shape and sustain loop.
 
 ### 8.3 Phase 3 — Web UI draggable editor
@@ -690,11 +690,11 @@ SECTION("zenv runtime rate modulation") {
 ### 9.3 CLI smoke test
 
 ```bash
-./build/tools/akkado-cli/akkado-cli -e \
+./build/bin/akkado -e \
   'osc("sin", 220) * zenv(button("g"), levels:[0,1,0.5,0], times:[0.01,0.2,0.3], curves:[0.5,0,-0.5], loop:[2,2]) |> out(@)' \
   > /tmp/zenv-smoke.cbc
 
-./build/tools/nkido-cli/nkido-cli /tmp/zenv-smoke.cbc --seconds 5
+./build/bin/nkido /tmp/zenv-smoke.cbc --seconds 5
 ```
 
 ### 9.4 Audible checks

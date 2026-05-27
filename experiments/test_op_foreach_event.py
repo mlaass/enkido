@@ -32,7 +32,7 @@ from cedar_testing import output_dir
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 
 OUT = output_dir("op_foreach_event")
 
@@ -67,11 +67,11 @@ PATCHES = [
 
 
 def render(name: str, source: str, seconds: float) -> str:
-    """Render a source string to a WAV via `nkido-cli render`. Returns the path."""
+    """Render a source string to a WAV via `nkido render`. Returns the path."""
     if not NKIDO_CLI.exists():
         raise FileNotFoundError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build it with: "
-            f"cmake --build {REPO_ROOT}/build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build it with: "
+            f"cmake --build {REPO_ROOT}/build --target nkido"
         )
     src_path = os.path.join(OUT, f"{name}.akkado")
     wav_path = os.path.join(OUT, f"{name}_{int(seconds)}s.wav")

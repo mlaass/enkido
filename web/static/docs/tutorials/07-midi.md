@@ -17,7 +17,7 @@ The shortest playable MIDI patch is one line:
 midi() |> poly(@, ({freq, gate, vel}) -> osc("sin", freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel, 8) |> out(@)
 ```
 
-Bare `midi()` opens the host's default MIDI input. On the web, the Files panel has a MIDI tab that lists every visible device and asks for browser permission on first use. On the CLI, run `nkido-cli --list-midi-devices` to see what's connected, then pass `--midi-in "Name"` (substring match) to pick one.
+Bare `midi()` opens the host's default MIDI input. On the web, the Files panel has a MIDI tab that lists every visible device and asks for browser permission on first use. On the CLI, run `nkido --list-midi-devices` to see what's connected, then pass `--midi-in "Name"` (substring match) to pick one.
 
 ## A velocity-aware lead
 

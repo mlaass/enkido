@@ -33,7 +33,7 @@ from cedar_testing import output_dir
 OUT = output_dir("op_sf_voice")
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-CLI = os.path.join(REPO, "build/tools/nkido-cli/nkido-cli")
+CLI = os.path.join(REPO, "build/bin/nkido")
 SF2 = os.path.join(REPO, "web/static/soundfonts/TimGM6mb.sf3")
 
 # SF_VOICE driven through poly() — the Phase 1 goal line.
@@ -43,7 +43,7 @@ PATTERN = (
 
 
 def render(seconds, name):
-    """Render PATTERN via nkido-cli and return (sr, stereo float audio, path)."""
+    """Render PATTERN via nkido and return (sr, stereo float audio, path)."""
     src_path = os.path.join(OUT, f"{name}.akk")
     with open(src_path, "w") as f:
         f.write(PATTERN + "\n")
@@ -57,8 +57,8 @@ def render(seconds, name):
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        print("nkido-cli stderr:", res.stderr)
-        raise RuntimeError(f"nkido-cli render failed: {res.returncode}")
+        print("nkido stderr:", res.stderr)
+        raise RuntimeError(f"nkido render failed: {res.returncode}")
     sr, audio = scipy.io.wavfile.read(wav_path)
     if audio.dtype == np.int16:
         audio = audio.astype(np.float32) / 32768.0
@@ -181,7 +181,7 @@ def test_long_run_stability():
 
 if __name__ == "__main__":
     if not os.path.exists(CLI):
-        raise SystemExit(f"nkido-cli not built at {CLI} — run cmake --build build")
+        raise SystemExit(f"nkido not built at {CLI} — run cmake --build build")
     if not os.path.exists(SF2):
         raise SystemExit(f"test SoundFont missing at {SF2}")
 

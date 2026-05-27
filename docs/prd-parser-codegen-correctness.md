@@ -436,7 +436,7 @@ sites that **don't** compensate; only 3 do:
 
 Each missed compensation shifts the parallel arrays by one entry **from
 that point forward**. Click-to-source in the web IDE and `--trace` in
-`nkido-cli` will misattribute every subsequent instruction. No existing
+`nkido` will misattribute every subsequent instruction. No existing
 test asserts vector-length parity, so the bug is silent.
 
 ### 1.3 F7 — Right-associative `^` — **WITHDRAWN 2026-05-25**

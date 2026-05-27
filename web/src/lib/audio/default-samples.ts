@@ -3,7 +3,7 @@
  * These samples are auto-loaded when the audio engine initializes.
  *
  * The canonical source is web/static/samples/bpb_808_clean/strudel.json,
- * which is also consumed by nkido-cli (program_loader.cpp::find_default_bank_uri).
+ * which is also consumed by nkido (program_loader.cpp::find_default_bank_uri).
  * This list MUST stay in sync — any name added/removed here must also be
  * applied to the JSON, or the CLI and web will resolve different sample
  * sets for the same patch.

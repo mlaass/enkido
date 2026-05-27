@@ -624,7 +624,7 @@ Acceptance:
 
 1. Compiles with no `E160`, no `E184`, no warnings.
 2. `cmake --build build && ./build/akkado/tests/akkado_tests` passes.
-3. Renders via `nkido-cli render` and the resulting WAV contains three
+3. Renders via `nkido render` and the resulting WAV contains three
    notes at the transposed frequencies (c4+7 = g4, e4+7 = b4, g4+7 = d5)
    — a quick scope check.
 4. Manual paste in `bun run dev` web IDE: green compile, audible

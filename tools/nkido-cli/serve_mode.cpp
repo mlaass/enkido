@@ -1072,7 +1072,7 @@ void handle_command_line(ServeState& s, const std::string& line) {
     } else if (cmd == "load_bank") {
         // Register a sample-bank manifest URI with the same machinery `--bank`
         // uses on the CLI. The VS Code "Nkido extension" needs this because it
-        // spawns `nkido-cli serve` without flags; without this command, sample
+        // spawns `nkido serve` without flags; without this command, sample
         // patches typed in the editor produce only "sample 'X' not found in
         // any loaded bank" warnings.
         //

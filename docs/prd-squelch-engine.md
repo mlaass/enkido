@@ -124,8 +124,8 @@ These are the items from the original v1.0 spec that are not yet shipped. None b
 For the §3 recipe:
 
 1. `cmake --build build` succeeds.
-2. Save the §3 patch as `web/static/patches/squelch-engine.akk` (or any `.akk` file) and compile: `./build/tools/akkado-cli/akkado-cli compile <file>` should produce bytecode without errors.
-3. `./build/tools/nkido-cli/nkido-cli render --seconds 8 <file> out.wav` and listen — the macro knobs at their defaults should sound like a TB-303 acid line; sweeping SQUELCH and BITE should produce the characteristic "chirp" and "wah".
+2. Save the §3 patch as `web/static/patches/squelch-engine.akk` (or any `.akk` file) and compile: `./build/bin/akkado compile <file>` should produce bytecode without errors.
+3. `./build/bin/nkido render --seconds 8 <file> out.wav` and listen — the macro knobs at their defaults should sound like a TB-303 acid line; sweeping SQUELCH and BITE should produce the characteristic "chirp" and "wah".
 4. In the web IDE (`cd web && bun run dev`) load the patch and verify the six sliders appear and respond live.
 
 For the §4 DSP gaps, the existing per-opcode tests cover regression behavior:

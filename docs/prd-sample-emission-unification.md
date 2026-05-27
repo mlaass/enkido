@@ -456,7 +456,7 @@ Golden values are checked in. If a phase changes behavior unintentionally, the t
 
 ### 8.3 Manual smoke test
 
-After Phase 4, render `web/static/patches/test.akk` (the user's pattern from the velocity bug) via `nkido-cli render` and confirm step-5 peak amplitude is unchanged from the pre-refactor render. (Not automated because it requires the bank manifest fixture, but a one-line shell command at PR review time.)
+After Phase 4, render `web/static/patches/test.akk` (the user's pattern from the velocity bug) via `nkido render` and confirm step-5 peak amplitude is unchanged from the pre-refactor render. (Not automated because it requires the bank manifest fixture, but a one-line shell command at PR review time.)
 
 ---
 

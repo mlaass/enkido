@@ -149,7 +149,7 @@ $soundfont_alias("strings", "static/soundfonts/strings_orch.sf2")
 
 ```bash
 # Runtime config (fallback when no directive is present)
-nkido-cli render --soundfont-alias gm=/path/to/FluidR3_GM.sf2 input.akk
+nkido render --soundfont-alias gm=/path/to/FluidR3_GM.sf2 input.akk
 ```
 
 The web UI exposes an equivalent settings panel. Resolution order: directive → runtime config → error (`E5xx: unknown soundfont alias "gm"`).
@@ -266,7 +266,7 @@ Re-verify struct alignment + size after the addition. Bump the `OutputEvents` ar
 **Directive** `$soundfont_alias("gm", "path/...")`: handled at akkado top level (parser already supports `$directive` syntax — see `$polyphony` precedent). The codegen emits a `SOUNDFONT_REGISTER_ALIAS` initialization instruction (or, simpler, the codegen calls a registry hook at compile time and emits no instruction — design detail).
 
 **Runtime config**:
-- CLI: `nkido-cli render --soundfont-alias gm=/path/to/file.sf2 [--soundfont-alias drums=/path/to/...]`
+- CLI: `nkido render --soundfont-alias gm=/path/to/file.sf2 [--soundfont-alias drums=/path/to/...]`
 - Web UI: settings panel with key/path pairs persisted in localStorage (theme-store pattern).
 - Both populate the registry's `aliases_` map at startup. Directives override.
 
@@ -586,7 +586,7 @@ uv run python test_gm_route.py
 ./run_all.sh
 
 # Render the GM end-to-end fixture (≥300s)
-./build/tools/nkido-cli/nkido-cli render \
+./build/bin/nkido render \
     --soundfont-alias gm=/path/to/FluidR3_GM.sf2 \
     --seconds 300 \
     experiments/fixtures/gm_routing.akk -o gm_routing.wav

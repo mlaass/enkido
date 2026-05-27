@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — Bringing `nkido-cli` and `akkado-cli` to Windows (MSVC) with full runtime parity, CI on every PR, and downloadable release zips on every `v*` tag.
+> **Status: NOT STARTED** — Bringing `nkido` and `akkado` to Windows (MSVC) with full runtime parity, CI on every PR, and downloadable release zips on every `v*` tag.
 
 # PRD: Windows Port of Nkido Executables
 
@@ -14,7 +14,7 @@
 The Cedar and Akkado **libraries** already compile on Windows under MSVC — three blockers (`std::aligned_alloc`, `__builtin_ctz`, `std::from_chars<double>`) were fixed on 2026-04-22 and verified green via the `godot-nkido-addon` CI ([run 24777116197 attempt 2](https://github.com/mlaass/godot-nkido-addon/actions/runs/24777116197)) across `windows-latest / {Debug, Release}`. See `docs/cross-platform-porting.md` for that history.
 
 What does **not** exist today:
-- A Windows build of the `nkido-cli` and `akkado-cli` **executables** (the addon CI builds Cedar as a library only).
+- A Windows build of the `nkido` and `akkado` **executables** (the addon CI builds Cedar as a library only).
 - Any Windows CI in this repo (`.github/workflows/deploy.yml` runs `ubuntu-latest` only and produces a WASM build).
 - Any pre-built Windows binaries on the GitHub Releases page.
 
@@ -30,7 +30,7 @@ This PRD adds all three.
 
 ### 1.3 Goals
 
-- **Full runtime parity** on Windows for `nkido-cli` and `akkado-cli`: real-time audio (SDL2 → WASAPI/DirectSound), live MIDI in (RtMidi → winmm), SDL visualization window, `serve` mode with stdin JSON protocol, all CLI subcommands (`compile`, `disasm`, `render`, `serve`, etc.).
+- **Full runtime parity** on Windows for `nkido` and `akkado`: real-time audio (SDL2 → WASAPI/DirectSound), live MIDI in (RtMidi → winmm), SDL visualization window, `serve` mode with stdin JSON protocol, all CLI subcommands (`compile`, `disasm`, `render`, `serve`, etc.).
 - **Windows CI on every push/PR** that exercises (a) the full nkido build (cedar+akkado+tools), (b) the standalone `cedar-only` preset (protects the Godot addon's downstream build), and (c) the `cedar_tests` + `akkado_tests` test suites via `ctest`.
 - **Self-contained release zip** auto-attached to each GitHub Release on `v*` tags, ready to extract and run with no further setup.
 - **UTF-8 paths everywhere**, so `C:\Users\Joël\samples\kick.wav` works.
@@ -92,7 +92,7 @@ cedar/include/cedar/platform/
 └── utf8_init.hpp     // ensure_utf8_console()    -- no-op on POSIX
 ```
 
-These live in `cedar` (not `tools/nkido-cli`) because the same Ctrl+C / UTF-8 console abstractions would be useful for any future Cedar consumer (e.g. a Windows-only Cedar host). Cost: <100 LOC total.
+These live in `cedar` (not `tools/nkido`) because the same Ctrl+C / UTF-8 console abstractions would be useful for any future Cedar consumer (e.g. a Windows-only Cedar host). Cost: <100 LOC total.
 
 ### 3.2 Console Ctrl+C handler
 
@@ -146,7 +146,7 @@ void set_stdio_binary_mode() {
 }
 ```
 
-Called once from `main()` of `nkido-cli` (before serve mode reads stdin) and once from `main()` of `akkado-cli` (defensive, since `--emit-json` writes structured output).
+Called once from `main()` of `nkido` (before serve mode reads stdin) and once from `main()` of `akkado` (defensive, since `--emit-json` writes structured output).
 
 ### 3.4 UTF-8 console + manifest
 
@@ -155,7 +155,7 @@ Two complementary mechanisms are needed; both are required, neither is sufficien
 **(a) Per-executable manifest** — Windows reads it at process start and routes ANSI APIs (`fopen`, `CreateFileA`, `GetCommandLineA`) through UTF-8 instead of the system code page. Win10 1903+. Manifest file:
 
 ```xml
-<!-- tools/nkido-cli/nkido-cli.manifest -->
+<!-- tools/nkido-cli/nkido.manifest -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <application>
     <windowsSettings>
@@ -165,13 +165,13 @@ Two complementary mechanisms are needed; both are required, neither is sufficien
 </assembly>
 ```
 
-A matching `tools/akkado-cli/akkado-cli.manifest`.
+A matching `tools/akkado-cli/akkado.manifest`.
 
 Embed via CMake (MSVC-only):
 ```cmake
 if(WIN32)
-    target_sources(nkido-cli PRIVATE nkido-cli.manifest)
-    target_sources(akkado-cli PRIVATE akkado-cli.manifest)
+    target_sources(nkido PRIVATE nkido.manifest)
+    target_sources(akkado PRIVATE akkado.manifest)
 endif()
 ```
 
@@ -207,7 +207,7 @@ CI step (sketch):
 ```
 
 `SDL2.dll` then needs to be:
-1. Copied next to `nkido-cli.exe` in the build directory (so CI can `ctest`).
+1. Copied next to `nkido.exe` in the build directory (so CI can `ctest`).
 2. Installed via CMake into the bin dir (so `cmake --install` lays it out for the zip).
 
 Done with a small post-build step + an `install(FILES)` rule, both Windows-only.
@@ -216,8 +216,8 @@ Done with a small post-build step + an `install(FILES)` rule, both Windows-only.
 
 CMake `install()` rules already lay out the install tree:
 ```
-<prefix>/bin/nkido-cli.exe
-<prefix>/bin/akkado-cli.exe
+<prefix>/bin/nkido.exe
+<prefix>/bin/akkado.exe
 <prefix>/bin/SDL2.dll                              (new, WIN32-only)
 <prefix>/share/nkido/default_kit/*.wav
 <prefix>/share/nkido/default_kit/strudel.json
@@ -228,8 +228,8 @@ CMake `install()` rules already lay out the install tree:
 For the release zip we want a *nested* root folder so extracting doesn't spray files into `Downloads/`:
 ```
 nkido-vX.Y.Z/
-├── nkido-cli.exe
-├── akkado-cli.exe
+├── nkido.exe
+├── akkado.exe
 ├── SDL2.dll
 ├── README.txt
 ├── LICENSE.txt
@@ -276,8 +276,8 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 | `tools/nkido-cli/main.cpp` | Call `cedar::platform::ensure_utf8_console()` as the first statement of `main()`. |
 | `tools/akkado-cli/main.cpp` | Same: call `cedar::platform::ensure_utf8_console()` first. |
 | `tools/nkido-cli/tests/test_serve.cpp` | Replace POSIX-specific subprocess/`mkstemp` machinery with a portable equivalent. Concrete plan in §6. |
-| `tools/nkido-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... nkido-cli.manifest)`, `install(FILES ${SDL2_RUNTIME_LIBRARY} DESTINATION ${CMAKE_INSTALL_BINDIR})`, and a `POST_BUILD` `copy_if_different` of `SDL2.dll` next to `nkido-cli.exe` in the build tree (so `ctest` works in-place). |
-| `tools/akkado-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... akkado-cli.manifest)`. |
+| `tools/nkido-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... nkido.manifest)`, `install(FILES ${SDL2_RUNTIME_LIBRARY} DESTINATION ${CMAKE_INSTALL_BINDIR})`, and a `POST_BUILD` `copy_if_different` of `SDL2.dll` next to `nkido.exe` in the build tree (so `ctest` works in-place). |
+| `tools/akkado-cli/CMakeLists.txt` | Add `WIN32`-gated `target_sources(... akkado.manifest)`. |
 | `cmake/CompilerOptions.cmake` | No change in v1. (Existing MSVC `/W4 /permissive-` block is fine without `/WX`.) |
 | `.github/workflows/deploy.yml` | Leave alone. (Windows lives in a new file so the WASM deploy stays isolated.) |
 | `README.md` (top level) | Add a "Windows" subsection under build instructions: link to the Release page, note the SmartScreen warning, mention "Right-click → Properties → Unblock" if needed. |
@@ -297,8 +297,8 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 | `cedar/src/platform/utf8_init_posix.cpp` | No-op. |
 | `cedar/src/platform/utf8_init_win.cpp` | `SetConsoleOutputCP(CP_UTF8); SetConsoleCP(CP_UTF8);`. |
 | `cedar/CMakeLists.txt` (modify) | Conditionally compile `*_win.cpp` on `WIN32`, `*_posix.cpp` otherwise. |
-| `tools/nkido-cli/nkido-cli.manifest` | UTF-8 `activeCodePage` manifest, embedded in the exe via `target_sources`. |
-| `tools/akkado-cli/akkado-cli.manifest` | Same for `akkado-cli`. |
+| `tools/nkido-cli/nkido.manifest` | UTF-8 `activeCodePage` manifest, embedded in the exe via `target_sources`. |
+| `tools/akkado-cli/akkado.manifest` | Same for `akkado`. |
 | `.github/workflows/ci.yml` | Linux + Windows + cedar-only matrix; Windows release-zip upload on `v*` tags. |
 | `scripts/package-windows-zip.ps1` | PowerShell: take a `cmake --install` staging dir, flatten `bin/`+`share/nkido/` to root, copy `README.txt` / `LICENSE.txt`, `Compress-Archive` to `nkido-windows-x64-vX.Y.Z.zip`. Called from CI. |
 | `tools/windows/README.txt.in` | CMake-configured template; ends up at zip root with version/git-sha/build-date. |
@@ -323,13 +323,13 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 ### Phase 1 — Source-level Windows readiness (no CI yet)
 
-**Goal:** A fresh MSVC `cmake --build` succeeds for `nkido-cli`, `akkado-cli`, `cedar_tests`, `akkado_tests` on a Windows developer machine.
+**Goal:** A fresh MSVC `cmake --build` succeeds for `nkido`, `akkado`, `cedar_tests`, `akkado_tests` on a Windows developer machine.
 
 **Files:** all changes in §4.1 + §4.2 *except* `.github/workflows/ci.yml`.
 
-**Verification:** Manual — run `cmake --preset debug` and `cmake --build build/debug` on a Win11 + VS 2022 + SDL2-2.30.10 box. Confirm `build/debug/tools/nkido-cli/nkido-cli.exe` and `akkado-cli.exe` exist. Run `nkido-cli.exe --help`, `akkado-cli.exe --help`, `nkido-cli.exe render --help`. **Do not** run the audio path yet — that's Phase 3.
+**Verification:** Manual — run `cmake --preset debug` and `cmake --build build/debug` on a Win11 + VS 2022 + SDL2-2.30.10 box. Confirm `build/debug/bin/nkido.exe` and `build/debug/bin/akkado.exe` exist. Run `nkido.exe --help`, `akkado.exe --help`, `nkido.exe render --help`. **Do not** run the audio path yet — that's Phase 3.
 
-**Commit:** `feat(windows): source-level MSVC readiness for nkido-cli and akkado-cli`
+**Commit:** `feat(windows): source-level MSVC readiness for nkido and akkado`
 
 ### Phase 2 — Platform abstractions integrated
 
@@ -338,8 +338,8 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 **Files:** `serve_mode.cpp` (handler swap + `set_stdio_binary_mode` call), `main.cpp` × 2 (`ensure_utf8_console` calls), the three `cedar/include/cedar/platform/*.hpp` plus their POSIX + Windows implementations, manifest files + CMake `target_sources` lines.
 
 **Verification:**
-- Linux: `cedar_tests`, `akkado_tests`, `nkido-cli render` all pass (no behavior change — POSIX implementations are no-op / wrap existing `signal`).
-- Windows: launch `nkido-cli serve`, hit Ctrl+C → process exits within 1s with no stuck audio. Pass JSON over stdin and watch stdout for the parsed events. Confirm `nkido-cli render examples/with-emoji-é.akk out.wav` works (UTF-8 path test).
+- Linux: `cedar_tests`, `akkado_tests`, `nkido render` all pass (no behavior change — POSIX implementations are no-op / wrap existing `signal`).
+- Windows: launch `nkido serve`, hit Ctrl+C → process exits within 1s with no stuck audio. Pass JSON over stdin and watch stdout for the parsed events. Confirm `nkido render examples/with-emoji-é.akk out.wav` works (UTF-8 path test).
 
 **Commit:** `feat(windows): platform abstractions for ctrl-c, stdio binary mode, UTF-8 console`
 
@@ -380,7 +380,7 @@ Other tests audited: `cedar_tests` and `akkado_tests` use Catch2 + standard C++ 
 
 **Files:** `scripts/package-windows-zip.ps1` (new), `tools/windows/README.txt.in` (new), additional release-only step in `.github/workflows/ci.yml`.
 
-**Verification:** Tag a test pre-release (e.g. `v0.0.0-windows-test`), wait for CI, download the produced zip on a clean Win11 VM (no Visual Studio installed), extract, double-click `nkido-cli.exe` → sees `--help` output; run `nkido-cli render examples/hello.akk out.wav` → produces a WAV; run `nkido-cli serve` → emits the initial banner JSON. Delete the pre-release after.
+**Verification:** Tag a test pre-release (e.g. `v0.0.0-windows-test`), wait for CI, download the produced zip on a clean Win11 VM (no Visual Studio installed), extract, double-click `nkido.exe` → sees `--help` output; run `nkido render examples/hello.akk out.wav` → produces a WAV; run `nkido serve` → emits the initial banner JSON. Delete the pre-release after.
 
 **Commit:** `ci(windows): build self-contained release zip and attach to GitHub Releases on v* tags`
 
@@ -390,7 +390,7 @@ Other tests audited: `cedar_tests` and `akkado_tests` use Catch2 + standard C++ 
 
 ### 6.1 Console code page when there is no console
 
-`nkido-cli` may be launched from `cmd.exe`, PowerShell, Windows Terminal, or detached (no console at all — e.g. spawned by a parent like VS Code's task runner). `SetConsoleOutputCP(CP_UTF8)` returns `FALSE` with `GetLastError() == ERROR_INVALID_HANDLE` when there's no attached console. **Expected behavior:** ignore the failure silently — there's no console to set the code page on, so it doesn't matter. The manifest already covers ANSI API calls.
+`nkido` may be launched from `cmd.exe`, PowerShell, Windows Terminal, or detached (no console at all — e.g. spawned by a parent like VS Code's task runner). `SetConsoleOutputCP(CP_UTF8)` returns `FALSE` with `GetLastError() == ERROR_INVALID_HANDLE` when there's no attached console. **Expected behavior:** ignore the failure silently — there's no console to set the code page on, so it doesn't matter. The manifest already covers ANSI API calls.
 
 ### 6.2 stdin not a terminal (e.g. piped from a file)
 
@@ -402,11 +402,11 @@ Windows `SetConsoleCtrlHandler` fires the handler on a **new thread**, just like
 
 ### 6.4 SDL2.dll missing at runtime
 
-If a user extracts the zip but accidentally moves `nkido-cli.exe` to another folder without `SDL2.dll`, Windows shows a "SDL2.dll was not found" dialog before `main()` runs. We can't catch this in code; document the requirement in `README.txt`: "keep all files in the same folder".
+If a user extracts the zip but accidentally moves `nkido.exe` to another folder without `SDL2.dll`, Windows shows a "SDL2.dll was not found" dialog before `main()` runs. We can't catch this in code; document the requirement in `README.txt`: "keep all files in the same folder".
 
 ### 6.5 SmartScreen / Windows Defender
 
-Unsigned executables downloaded from GitHub trigger SmartScreen on first launch. Document in `README.txt`: "Right-click `nkido-cli.exe` → Properties → check 'Unblock' → OK". Code signing is out of scope for v1 (needs a paid Authenticode cert).
+Unsigned executables downloaded from GitHub trigger SmartScreen on first launch. Document in `README.txt`: "Right-click `nkido.exe` → Properties → check 'Unblock' → OK". Code signing is out of scope for v1 (needs a paid Authenticode cert).
 
 ### 6.6 Paths with backslashes inside `.akk` source files
 
@@ -434,7 +434,7 @@ The `cedar-only` preset disables akkado and tools — the only thing it builds i
 |-------|------|
 | 1 | Manual `cmake --build` on a Windows dev box; `--help` runs on both executables. |
 | 2 | Round-trip Ctrl+C and UTF-8 path tests on Windows; existing Linux tests unchanged. |
-| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido-cli_tests`. |
+| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_tests`. |
 | 4 | All 4 CI jobs green on a no-op PR. |
 | 5 | Pre-release tag → downloadable zip → smoke-test on clean Win11 VM. |
 
@@ -443,16 +443,16 @@ The `cedar-only` preset disables akkado and tools — the only thing it builds i
 The PRD is **DONE** when all of the following are true on `master`:
 
 1. `ci.yml` runs on every push/PR with `windows-debug`, `windows-release`, `windows-cedar-only`, and `linux-debug` jobs, all green.
-2. `cedar_tests` + `akkado_tests` + `nkido-cli_tests` pass on Windows via `ctest`.
+2. `cedar_tests` + `akkado_tests` + `nkido_tests` pass on Windows via `ctest`.
 3. Pushing a `v*` tag produces `nkido-windows-x64-vX.Y.Z.zip` attached to the Release page.
-4. Manual smoke test on a clean Win10 1903+ machine (no Visual Studio, no Bun, no Python): download the zip, extract, run `nkido-cli render examples/hello.akk out.wav`, listen to `out.wav` → audible. Run `nkido-cli serve`, paste a `compile` command → get an `event_count` response. Plug in a USB MIDI keyboard, run `nkido-cli serve --midi`, play notes → see `note_on` events emitted on stdout.
+4. Manual smoke test on a clean Win10 1903+ machine (no Visual Studio, no Bun, no Python): download the zip, extract, run `nkido render examples/hello.akk out.wav`, listen to `out.wav` → audible. Run `nkido serve`, paste a `compile` command → get an `event_count` response. Plug in a USB MIDI keyboard, run `nkido serve --midi`, play notes → see `note_on` events emitted on stdout.
 5. `docs/cross-platform-porting.md` updated with a "**Windows executables: SHIPPED**" section linking to this PRD and the first release tag that included Windows binaries.
 
 ### 7.3 Concrete UTF-8 path smoke test
 
 Create `examples/utf8-é-é.akk` containing a trivial program. On Windows:
 ```cmd
-nkido-cli.exe compile examples\utf8-é-é.akk --emit-json
+nkido.exe compile examples\utf8-é-é.akk --emit-json
 ```
 Expected: succeeds, prints valid JSON. Pre-port: fails with "file not found" because MSVC's `fopen("é")` lookup uses CP1252.
 
@@ -473,7 +473,7 @@ The existing `test_serve.cpp::TEST_CASE("serve registers banks on demand")` (the
 | `softprops/action-gh-release` race between `deploy.yml` and `ci.yml` on the same tag | Medium | Low | Both workflows use `append_body: false` and `fail_on_unmatched_files: false`; first one creates the Release, second attaches its assets. |
 | Test ported via `_popen` deadlocks on Windows when the child blocks on stdout | Low | Medium | Use threaded reader (one thread per pipe) — well-known pattern. Catch2's `[!mayfail]` is the escape hatch if it doesn't pan out in time. |
 | User reports broken non-ASCII paths despite the manifest | Low | Medium | The manifest only kicks in on Win10 1903+. Document the minimum version in `README.txt`. |
-| Antivirus quarantines `nkido-cli.exe` on first download | Medium | Low | Document the "Unblock" workaround; revisit code signing in a follow-up PRD. |
+| Antivirus quarantines `nkido.exe` on first download | Medium | Low | Document the "Unblock" workaround; revisit code signing in a follow-up PRD. |
 
 ---
 
@@ -484,7 +484,7 @@ None at PRD time — all design decisions were resolved during the question roun
 | Decision | Choice |
 |----------|--------|
 | v1 scope | CI + downloadable zips on `v*` tags |
-| Tools in scope | `nkido-cli`, `akkado-cli` (midi2akk = doc-only) |
+| Tools in scope | `nkido`, `akkado` (midi2akk = doc-only) |
 | Runtime parity | Full (audio + MIDI + viz + serve) |
 | Toolchain | MSVC (VS 2022) only |
 | Dep mgmt | Pre-downloaded SDL2 dev SDK + FetchContent rtmidi |

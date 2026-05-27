@@ -8,7 +8,7 @@ values across 300+ seconds. No drift, no zombie events, no value drops."
 
 Approach: render three Akkado programs that exercise the pattern-arg
 forms of `bend()`, `aftertouch()`, and `dur()` for 320 s each via
-`nkido-cli render`. Each program uses a v"…" pattern as the second
+`nkido render`. Each program uses a v"…" pattern as the second
 argument, sample-and-held into the host pattern's per-event property
 buffer (SEQPAT_PROP). The output spectrum / envelope must reflect the
 pattern's values stably across 100+ cycles.
@@ -54,7 +54,7 @@ from cedar_testing import output_dir
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("op_seqpat_prop")
 RENDER_SECONDS = 320.0  # > 300 per PRD §10.3
 SR = 48000
@@ -64,8 +64,8 @@ BPM = 120.0
 def _render(akk_src: str, name: str) -> str:
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build with:\n"
+            f"  cmake --build build --target nkido"
         )
     src_path = os.path.join(OUT, f"{name}.akk")
     wav_path = os.path.join(OUT, f"{name}.wav")
@@ -84,7 +84,7 @@ def _render(akk_src: str, name: str) -> str:
     if res.returncode != 0:
         print(res.stdout)
         print(res.stderr)
-        raise RuntimeError(f"nkido-cli render failed (code {res.returncode})")
+        raise RuntimeError(f"nkido render failed (code {res.returncode})")
     return wav_path
 
 

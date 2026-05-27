@@ -7,7 +7,7 @@ keywords: [uri, resolver, samples, soundfont, wavetable, github, http, https, fi
 
 # URI Schemes
 
-Every asset loaded by nkido — sample banks, SoundFonts, wavetables, single audio files — is identified by a URI. The same scheme syntax works in akkado source code (`samples("...")`), on the CLI (`nkido-cli --bank ...`), and in the web app. A single resolver dispatches each URI to the right backend based on its scheme prefix.
+Every asset loaded by nkido — sample banks, SoundFonts, wavetables, single audio files — is identified by a URI. The same scheme syntax works in akkado source code (`samples("...")`), on the CLI (`nkido --bank ...`), and in the web app. A single resolver dispatches each URI to the right backend based on its scheme prefix.
 
 ## Supported schemes
 
@@ -98,25 +98,25 @@ scripts/download-tdm.sh --all                              # everything
 scripts/download-tdm.sh --list                             # available names
 ```
 
-`nkido-cli` auto-discovers `~/.cache/nkido/tidal-drum-machines/` and plays
+`nkido` auto-discovers `~/.cache/nkido/tidal-drum-machines/` and plays
 downloaded machines offline; machines not yet downloaded still stream from
 GitHub when online.
 
 ## On the CLI
 
-`nkido-cli` accepts URI-keyed flags for assets supplied outside the program:
+`nkido` accepts URI-keyed flags for assets supplied outside the program:
 
 ```bash
 # Sample bank from GitHub
-nkido-cli render --bank github:tidalcycles/Dirt-Samples \
+nkido render --bank github:tidalcycles/Dirt-Samples \
   --seconds 5 -o out.wav --source 'sin(440) |> out(%)'
 
 # SoundFont from a local path
-nkido-cli render --soundfont ~/Music/gm.sf2 \
+nkido render --soundfont ~/Music/gm.sf2 \
   --seconds 4 -o out.wav song.akkado
 
 # Single sample from HTTPS, with explicit registry name
-nkido-cli render --sample 'kick=https://example.com/kick.wav' \
+nkido render --sample 'kick=https://example.com/kick.wav' \
   --seconds 1 -o out.wav --source '0 |> out(%)'
 ```
 

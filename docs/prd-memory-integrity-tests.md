@@ -1,5 +1,5 @@
 > **Status: NOT STARTED** — Test infrastructure only; the 48GB
-> `akkado-cli --check` explosion that triggered this PRD is tracked
+> `akkado --check` explosion that triggered this PRD is tracked
 > separately and will be reproduced + fixed using the harness this PRD
 > ships.
 
@@ -8,7 +8,7 @@
 ## Executive Summary
 
 NKIDO has no automated way to detect memory failures in its CLI tools,
-its VM, or its compiler. The trigger incident: a single `akkado-cli
+its VM, or its compiler. The trigger incident: a single `akkado
 --check /tmp/test_5.ak` invocation ballooned to **48 GB RSS / 190 GB
 VSZ** before being killed manually. No existing test would have caught
 that — the closest, `cedar/tests/test_memory_stress.cpp`, is a
@@ -18,7 +18,7 @@ never measures actual process memory.
 This PRD ships a four-legged memory-integrity harness that covers:
 
 1. **Explosion guard** — RSS-ceiling + wall-clock wrapper around
-   `akkado-cli` and `nkido-cli` invocations against existing fixtures
+   `akkado` and `nkido` invocations against existing fixtures
    and corpora. Per-binary RLIMIT_AS provides a hard runtime cap; an
    external wrapper records peak RSS for reporting.
 2. **Sanitizer build** — an ASan + LSan + UBSan build configuration and
@@ -43,8 +43,8 @@ This PRD ships a four-legged memory-integrity harness that covers:
 - **All four legs ship; comprehensive scope, not minimal.** This PRD
   treats memory integrity as a first-class concern alongside audio
   correctness.
-- **Coverage stops at native code.** v1 covers `akkado-cli`, Cedar VM,
-  and `nkido-cli`. WASM and Python (`cedar_core`) are out of scope.
+- **Coverage stops at native code.** v1 covers `akkado`, Cedar VM,
+  and `nkido`. WASM and Python (`cedar_core`) are out of scope.
 - **No PR-blocking CI gate in v1.** The new memory workflow is
   `workflow_dispatch`-only initially. Scheduled cron is a deliberate
   follow-up so the harness stabilises before it gates merges.
@@ -82,7 +82,7 @@ This PRD ships a four-legged memory-integrity harness that covers:
 
 ### 1.2 The gap
 
-The trigger incident — `akkado-cli --check /tmp/test_5.ak` consuming
+The trigger incident — `akkado --check /tmp/test_5.ak` consuming
 48 GB RSS — surfaced via a human noticing the system slow down. There
 is no automated tripwire. More broadly:
 
@@ -106,7 +106,7 @@ is no automated tripwire. More broadly:
 
 ### 2.1 Goals
 
-1. Catch the akkado-cli class of unbounded-growth bug automatically on
+1. Catch the akkado class of unbounded-growth bug automatically on
    any of the inputs in the test corpus.
 2. Detect leaks in Cedar + Akkado on every sanitizer run.
 3. Mechanically enforce the audio-path zero-allocation invariant.
@@ -137,7 +137,7 @@ is no automated tripwire. More broadly:
   `workflow_dispatch`-only. Moving to scheduled cron and eventually a
   PR gate is a follow-up once the harness has stabilised over real
   use.
-- **Fixing the 48GB `akkado-cli --check` bug.** This PRD ships the
+- **Fixing the 48GB `akkado --check` bug.** This PRD ships the
   harness; the bug is reproduced and fixed in a separate commit/issue
   using the harness.
 
@@ -196,11 +196,11 @@ into a single pass/fail line.
 
 | Binary | RSS ceiling | Wall-clock timeout |
 |---|---|---|
-| `akkado-cli` | 1024 MB | 60 s |
-| `nkido-cli` (render mode) | 2048 MB | 300 s |
+| `akkado` | 1024 MB | 60 s |
+| `nkido` (render mode) | 2048 MB | 300 s |
 | Catch2 test binaries (under sanitizers) | 4096 MB | 600 s |
 
-The akkado-cli budget is 48× under the trigger-incident peak. If a
+The akkado budget is 48× under the trigger-incident peak. If a
 legitimate compile-time computation exceeds it (e.g. very large
 constant folding), the budget gets revisited in a separate PRD — not
 silently raised.
@@ -447,7 +447,7 @@ The release ritual becomes: `./scripts/check-release.sh && ./scripts/bump-versio
 
 | Variable | Default | Effect |
 |---|---|---|
-| `NKIDO_RLIMIT_MB` | unset | If set in `akkado-cli`/`nkido-cli`, calls `setrlimit(RLIMIT_AS, n*1024*1024)` at startup. Unset → no cap. |
+| `NKIDO_RLIMIT_MB` | unset | If set in `akkado`/`nkido`, calls `setrlimit(RLIMIT_AS, n*1024*1024)` at startup. Unset → no cap. |
 | `LSAN_OPTIONS` | unset | Set in CI to `suppressions=$PWD/cedar/tests/lsan.supp`. |
 | `ASAN_OPTIONS` | unset | Set in CI to `detect_leaks=1:abort_on_error=0`. |
 | `UBSAN_OPTIONS` | unset | Set in CI to `print_stacktrace=1:halt_on_error=1`. |
@@ -529,7 +529,7 @@ CI workflow.
 
 ### 8.1 Phase 1 — Explosion guard (the trigger fix)
 
-**Goal:** detect the akkado-cli class of bug on any corpus input.
+**Goal:** detect the akkado class of bug on any corpus input.
 
 **Files:**
 - New: `scripts/memory/run_with_limit.py`, `scripts/memory/check_corpus.sh`, `scripts/memory/budgets.sh`, `scripts/memory/run_all.sh` (skeleton — only invokes the guard).
@@ -603,7 +603,7 @@ input.
 - Add TSan job for SPSC + triple-buffer paths.
 - Extend to WASM (Emscripten memory profiling).
 - Extend to Python (`cedar_core`) leak surface.
-- Reproduce + fix the original 48 GB `akkado-cli --check` bug.
+- Reproduce + fix the original 48 GB `akkado --check` bug.
 
 ---
 
@@ -633,7 +633,7 @@ is reported as a distinct kind from a memory-budget failure.
 **Input:** an `.ak` file that pre-computes a 100 MB wavetable at
 compile time.
 
-**Expected behavior:** if it exceeds the 1 GB `akkado-cli` budget, the
+**Expected behavior:** if it exceeds the 1 GB `akkado` budget, the
 test fails. Resolution: the budget gets revisited in a separate PRD
 (or the test fixture moves to a higher-budget tier), not silently
 raised. Hard ceilings stay loud.
@@ -660,7 +660,7 @@ test docstring says exactly when the guard arms.
 
 ### 9.6 RLIMIT vs threading
 
-**Input:** `nkido-cli serve` with multiple threads.
+**Input:** `nkido serve` with multiple threads.
 
 **Expected behavior:** `RLIMIT_AS` is process-wide (virtual address
 space), not per-thread. Setting it works for `serve` mode. We do
@@ -694,14 +694,14 @@ requires a comment explaining what's leaking and why it's accepted.
 | Decision | Choice | Round |
 |---|---|---|
 | Failure modes covered | All four (explosions, leaks, zero-alloc, pool budgets + drift) | 1 |
-| Component scope | `akkado-cli` + Cedar VM + `nkido-cli` (no WASM / Python in v1) | 1 |
+| Component scope | `akkado` + Cedar VM + `nkido` (no WASM / Python in v1) | 1 |
 | Run targets | Local + manual CI (`workflow_dispatch`) + pre-release | 1 |
 | Ambition | Comprehensive — all four legs | 1 |
 | RSS measurement | Both `setrlimit` + external wrapper | 2 |
 | Sanitizers | ASan + LSan + UBSan in v1; Valgrind as follow-up; TSan deferred | 2 |
 | Zero-alloc enforcement | Test-only `operator new` / `malloc` overrides | 2 |
 | Drift fuzz strategy | Seed corpus + token + AST mutations + invalid-code mix | 2 |
-| RSS budgets | akkado-cli 1 GB / nkido-cli 2 GB / tests 4 GB | 3 |
+| RSS budgets | akkado 1 GB / nkido 2 GB / tests 4 GB | 3 |
 | Drift detection | Both peak ceiling AND slope check | 3 |
 | File layout | `scripts/memory/` + `cedar/tests/` + `akkado/tests/` (per-component) | 3 |
 | Suppressions | Checked-in `lsan.supp` with per-entry justification | 3 |
@@ -728,7 +728,7 @@ code), each phase ships a `tests/manual/negative_*.md` walkthrough
 showing how to deliberately introduce the bug and confirm the test
 fails with a clear message. Examples:
 
-- Explosion guard: add `std::vector<int> v; while(true) v.push_back(0);` to akkado-cli main; confirm wrapper kills + reports.
+- Explosion guard: add `std::vector<int> v; while(true) v.push_back(0);` to akkado main; confirm wrapper kills + reports.
 - ASan: add `int* p = new int[10]; p[10] = 0;` to a Cedar test; confirm ASan reports heap-buffer-overflow.
 - LSan: add `new int(42); // leaked` to a Cedar test; confirm LSan reports the leak with stack.
 - Zero-alloc: add `new int(0)` inside `VM::run_block()`; confirm guard aborts.
@@ -748,7 +748,7 @@ in markdown so the next maintainer can re-verify.
    checkout.
 4. All five negative walkthroughs in §11.1 produce the expected
    failure when manually applied.
-5. The original 48 GB `akkado-cli --check /tmp/test_5.ak` input
+5. The original 48 GB `akkado --check /tmp/test_5.ak` input
    (when reproducible) is caught by the explosion guard with peak RSS
    and timeout reported.
 

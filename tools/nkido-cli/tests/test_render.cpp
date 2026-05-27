@@ -1,4 +1,4 @@
-// Integration tests for nkido-cli render mode. We invoke the built CLI as a
+// Integration tests for nkido render mode. We invoke the built CLI as a
 // subprocess so we exercise the same end-to-end path real users hit. Render
 // mode shares its program-loading code with play/serve/ui (see
 // program_loader.cpp), so any regression here implies a regression in those
@@ -45,7 +45,7 @@ struct Wav {
 };
 
 // Minimal WAV reader. Handles 16-bit PCM with a single fmt chunk and a
-// single data chunk — exactly what nkido-cli's render mode emits.
+// single data chunk — exactly what nkido's render mode emits.
 Wav read_wav(const std::string& path) {
     Wav out;
     std::ifstream f(path, std::ios::binary);

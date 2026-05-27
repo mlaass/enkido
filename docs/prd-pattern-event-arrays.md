@@ -459,10 +459,10 @@ Python in `experiments/test_op_seqpat_values.py`: drive a synthetic pattern with
 
 ### Phase 4 — Demos
 
-- Compile `web/static/patches/arpeggio-demo.akk` and `harmonizer-demo.akk` via akkado-cli; confirm no errors.
+- Compile `web/static/patches/arpeggio-demo.akk` and `harmonizer-demo.akk` via akkado; confirm no errors.
 - Audition in web dev server; verify arpeggio walks the chord notes, harmonizer adds intervals correctly.
 - Listen for click/discontinuity at chord-event boundaries (should be inaudible — wrap is sample-accurate).
-- `nkido-cli render --seconds 16 -o /tmp/arp.wav arpeggio-demo.akk` and inspect WAV by ear.
+- `nkido render --seconds 16 -o /tmp/arp.wav arpeggio-demo.akk` and inspect WAV by ear.
 
 ### Build / lint commands
 

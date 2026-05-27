@@ -12,7 +12,7 @@ On the CLI, `yt-dlp` is invoked directly as a subprocess — no backend server n
 
 - **No UI panel — "just code."** Users declare imports in their Akkado source via the clips dictionary syntax. This mirrors how `samples("github:...")` already works: a compile-time directive that the host resolves before playback.
 - **Backend proxy with yt-dlp.** A small Python/FastAPI server handles audio extraction on the web side. Users self-host and configure the URL in the settings panel.
-- **CLI uses yt-dlp directly.** No server needed — `nkido-cli` shells out to `yt-dlp` if available.
+- **CLI uses yt-dlp directly.** No server needed — `nkido` shells out to `yt-dlp` if available.
 - **Strudel-manifest-compatible syntax.** The clips dictionary mirrors the structure of a `strudel.json` manifest: keys are sample names, values are paths (but here, timestamps into the source audio).
 - **Any yt-dlp URL works.** Not just YouTube — SoundCloud, Bandcamp, Vimeo, direct MP3/WAV URLs, and anything else yt-dlp supports.
 
@@ -217,7 +217,7 @@ samples("https://youtube.com/watch?v=abc", {
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  nkido-cli (asset_loader.cpp)                                    │
+│  nkido (asset_loader.cpp)                                    │
 │  1. Sees UriKind::VideoClip                                      │
 │  2. Checks if yt-dlp is on PATH                                  │
 │     - If yes: spawns subprocess for each clip:                   │
@@ -571,17 +571,17 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 
 ### Phase 4 — CLI: yt-dlp subprocess (1 day)
 
-**Goal:** `nkido-cli` handles `VideoClip` URIs by shelling out to `yt-dlp`.
+**Goal:** `nkido` handles `VideoClip` URIs by shelling out to `yt-dlp`.
 
 **Files to modify:**
 - `tools/nkido-cli/asset_loader.cpp` — `UriKind::VideoClip` handler
 - `tools/nkido-cli/asset_loader.hpp` — declarations
 
 **Verification:**
-- `nkido-cli render --seconds 1 -o out.wav --source 'samples("https://youtube.com/...", {kick: {s: 0, e: 2}}); s"kick" |> out'` works
+- `nkido render --seconds 1 -o out.wav --source 'samples("https://youtube.com/...", {kick: {s: 0, e: 2}}); s"kick" |> out'` works
 - yt-dlp not installed → error with install instructions
 - Clip extraction uses cached audio on re-run
-- `nkido-cli` without video clip sources → unchanged behavior
+- `nkido` without video clip sources → unchanged behavior
 
 ### Phase 5 — Tests, docs, polish (0.5 day)
 
@@ -592,7 +592,7 @@ bool extract_video_clips(const UriRequest& req, SampleBank& bank) {
 **Verification:**
 - `bun run check` clean
 - `./build/akkado/tests/akkado_tests` green
-- `./build/tools/nkido-cli/nkido-cli --help` still works
+- `./build/bin/nkido --help` still works
 - Docs indexed: `bun run build:docs`
 
 **Total estimated effort:** ~5 working days.
@@ -725,7 +725,7 @@ curl -X POST http://localhost:8765/extract \
 
 ```bash
 # yt-dlp installed
-nkido-cli render --seconds 5 -o /tmp/test.wav \
+nkido render --seconds 5 -o /tmp/test.wav \
   --source '
     samples("https://youtube.com/watch?v=dQw4W9WgXcQ", {
         kick: {s: 32, e: 34},
@@ -737,7 +737,7 @@ nkido-cli render --seconds 5 -o /tmp/test.wav \
 # Listen to /tmp/test.wav
 
 # yt-dlp not installed
-nkido-cli render --seconds 1 -o /tmp/x.wav \
+nkido render --seconds 1 -o /tmp/x.wav \
   --source 'samples("https://youtube.com/watch?v=abc", {x: {s:0, e:1}}) |> out'
 # → Error: "yt-dlp not found. Install: pip install yt-dlp"
 ```

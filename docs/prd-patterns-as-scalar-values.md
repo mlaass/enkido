@@ -587,7 +587,7 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 
 **Verification:**
 - Unit test: `n"c4 e4 g4".bend(v"<0 0.5 -0.5>")` produces three events with `event.bend` ∈ {0, 0.5, -0.5}.
-- Integration test: full pipeline compiles and runs in `nkido-cli render` for ≥ 30s without crashes.
+- Integration test: full pipeline compiles and runs in `nkido render` for ≥ 30s without crashes.
 - Long-window experiment (`experiments/test_op_seqpat_prop.py`): 300+ s of simulated audio confirming bend depth tracks v-pattern across many cycles.
 
 **Acceptance:** Pattern-arg `bend()` / `aftertouch()` / `dur()` audibly modulate; constant-arg behavior unchanged.
@@ -629,7 +629,7 @@ n"c4 e4 g4 b4".bend(v"<0 0.25 -0.25 0>") as e
 // osc("sin", c"Am C G")  // E160 expected
 ```
 
-**Acceptance:** First two stanzas compile clean and render audibly correct for ≥ 30 s in `nkido-cli render`. Commented-out third line, when uncommented in a separate test program, produces E160 with the documented message.
+**Acceptance:** First two stanzas compile clean and render audibly correct for ≥ 30 s in `nkido render`. Commented-out third line, when uncommented in a separate test program, produces E160 with the documented message.
 
 This phase blocks PRD closure — no Phase A–E claim is "done" until they all coexist in this program.
 
@@ -763,7 +763,7 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 ### 10.2 Integration Tests
 
 - The Phase F smoke program compiles clean with `cmake --build build`.
-- `nkido-cli render` runs the smoke program for 30 s without crashes; output WAV non-trivial.
+- `nkido render` runs the smoke program for 30 s without crashes; output WAV non-trivial.
 - `bun run check` and `bun run build` clean in `web/`.
 
 ### 10.3 Experiments (Cedar runtime, ≥ 300 s simulated)

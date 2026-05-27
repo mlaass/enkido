@@ -4,7 +4,7 @@ test_chord_pipeline.py
 ======================
 Audio-level regression test for the chord-pattern → soundfont pipeline.
 
-Renders the four user-reported pipelines through `nkido-cli render` and
+Renders the four user-reported pipelines through `nkido render` and
 inspects the resulting WAVs to verify that:
 
   1. `c"CM Am Dm G" |> soundfont(@, ...) |> out(@, @)` produces audible
@@ -30,7 +30,7 @@ import numpy as np
 import scipy.io.wavfile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 SOUNDFONT = REPO_ROOT / "web" / "static" / "soundfonts" / "FluidR3Mono_GM.sf3"
 OUT = Path(__file__).resolve().parent / "output" / "chord_pipeline"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ BPM = 30.0
 
 
 def render(name: str, source: str) -> Path:
-    """Render `source` to WAV via nkido-cli. Returns the WAV path."""
+    """Render `source` to WAV via nkido. Returns the WAV path."""
     wav = OUT / f"{name}.wav"
     if wav.exists():
         wav.unlink()
@@ -226,7 +226,7 @@ CHORD_VOICES_RAW = [
 
 def main() -> int:
     if not NKIDO_CLI.exists():
-        print(f"error: nkido-cli not built — run `cmake --build {REPO_ROOT}/build --target nkido-cli`")
+        print(f"error: nkido not built — run `cmake --build {REPO_ROOT}/build --target nkido`")
         return 2
     if not SOUNDFONT.exists():
         print(f"error: soundfont not found at {SOUNDFONT}")
@@ -253,7 +253,7 @@ def main() -> int:
          f'n"c4 a4 d4 g4" |> soundfont(@, "{sf_name}", 0) |> out(@, @)'),
     ]
 
-    print(f"Rendering {len(cases)} cases through nkido-cli (8s each)...")
+    print(f"Rendering {len(cases)} cases through nkido (8s each)...")
     wavs = {}
     for name, src in cases:
         wav = render(name, src)

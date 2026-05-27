@@ -418,9 +418,9 @@ The Godot extension must, before each `process_block()` call, fill `ctx.input_le
 
 ### 8.4 CLI manual tests
 
-- `nkido-cli --list-devices` prints numbered list of capture devices.
-- `nkido-cli --input-device "USB Audio"` selects named device.
-- `nkido-cli --input-device "nonexistent"` warns and falls back to default.
+- `nkido --list-devices` prints numbered list of capture devices.
+- `nkido --input-device "USB Audio"` selects named device.
+- `nkido --input-device "nonexistent"` warns and falls back to default.
 - Piping input through `in() |> lp(@, 800) |> out` in a `.cedar` file works audibly.
 
 ### 8.5 Cedar → CLI → Web integration sanity

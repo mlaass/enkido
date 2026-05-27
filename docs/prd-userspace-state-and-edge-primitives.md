@@ -644,7 +644,7 @@ Akkado tests in `akkado/tests/test_state.cpp`:
 
 ### Phase 4 — Userspace `step` end-to-end
 
-- Compile a patch using `step(arr, trig)` in the akkado-cli
+- Compile a patch using `step(arr, trig)` in the akkado
 - Audition `web/static/patches/stepper-demo.akk` in the web dev server
 - Verify the pattern advances on each beat
 - Verify reset variant resets at the expected boundary

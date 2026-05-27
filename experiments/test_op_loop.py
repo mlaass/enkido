@@ -7,7 +7,7 @@ instructions N times in sequence, threading the accumulator (`@` is the running
 value — iteration k+1's `@` is iteration k's output). N is a compile-time
 constant.
 
-Tests (rendered through `nkido-cli render`, the real compile + VM path):
+Tests (rendered through `nkido render`, the real compile + VM path):
 
   1. Long-render stability — a 300 s render of a pattern-driven oscillator
      through a `loop(4)` gain chain. Output must stay finite and bounded for
@@ -33,7 +33,7 @@ import scipy.io.wavfile
 from cedar_testing import output_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 OUT = output_dir("op_loop")
 
 
@@ -146,8 +146,8 @@ def test_iteration_count():
 
 def main():
     if not NKIDO_CLI.exists():
-        print(f"error: nkido-cli not built at {NKIDO_CLI}")
-        print(f"  build it: cmake --build {REPO_ROOT}/build --target nkido-cli")
+        print(f"error: nkido not built at {NKIDO_CLI}")
+        print(f"  build it: cmake --build {REPO_ROOT}/build --target nkido")
         sys.exit(1)
 
     results = [test_long_render(), test_iteration_count()]

@@ -1,8 +1,8 @@
-// Integration tests for nkido-cli serve mode. We spawn the binary as a
+// Integration tests for nkido serve mode. We spawn the binary as a
 // subprocess, pipe a sequence of JSON commands into stdin, and check stdout
 // for the expected events.
 //
-// The motivating bug: the VS Code "Nkido extension" launches `nkido-cli serve`
+// The motivating bug: the VS Code "Nkido extension" launches `nkido serve`
 // with no `--bank` flag, and previously the JSON wire protocol had no way to
 // register a bank. Sample patches typed in the editor would print
 // `warning: sample 'X' not found in any loaded bank` and play silence.
@@ -158,7 +158,7 @@ TEST_CASE("serve mode: --no-default-bank suppresses the built-in default kit",
 
 TEST_CASE("serve mode: bare sample name resolves via built-in default kit",
           "[serve][sample][default_kit]") {
-    // Parity with the web UI: launching `nkido-cli serve` with no `--bank`
+    // Parity with the web UI: launching `nkido serve` with no `--bank`
     // and no `samples()` call must still let `s"bd"` resolve, because the
     // built-in default kit is auto-registered. We point NKIDO_DEFAULT_KIT
     // at a minimal one-entry fixture so the test doesn't depend on any

@@ -71,7 +71,7 @@ target_link_libraries(akkado_tests
 )
 
 # Phase 0 of prd-parser-codegen-correctness.md: bytecode-disassembly
-# snapshot harness. Reuses the formatter from tools/nkido-cli, so the
+# snapshot harness. Reuses the formatter from tools/nkido, so the
 # test only builds when tools are enabled (default ON).
 if(NKIDO_BUILD_TOOLS)
     target_sources(akkado_tests PRIVATE test_bytecode_snapshot.cpp)

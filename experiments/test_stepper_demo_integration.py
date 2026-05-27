@@ -3,7 +3,7 @@ Stepper Demo Integration Test
 =============================
 End-to-end regression guard for `web/static/patches/stepper-demo.akk`.
 
-Compiles + renders the demo via `nkido-cli render` and verifies via STFT
+Compiles + renders the demo via `nkido render` and verifies via STFT
 pitch tracking that BOTH voices walk through their notes:
 
   * Left (melody) — forward stepper, 5 distinct pentatonic notes
@@ -28,7 +28,7 @@ from cedar_testing import output_dir
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 DEMO_PATH = os.path.join(REPO_ROOT, "web", "static", "patches", "stepper-demo.akk")
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("stepper_demo")
 WAV_PATH = os.path.join(OUT, "stepper-demo.wav")
 RENDER_SECONDS = 6.0
@@ -36,11 +36,11 @@ SR = 48000
 
 
 def _render():
-    """Render the demo with nkido-cli. Returns the WAV path."""
+    """Render the demo with nkido. Returns the WAV path."""
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build it with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build it with:\n"
+            f"  cmake --build build --target nkido"
         )
     if not os.path.isfile(DEMO_PATH):
         raise RuntimeError(f"Demo not found at {DEMO_PATH}")
@@ -55,11 +55,11 @@ def _render():
     print(f"  $ {' '.join(cmd)}")
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if res.returncode != 0:
-        print("  --- nkido-cli stdout ---")
+        print("  --- nkido stdout ---")
         print(res.stdout)
-        print("  --- nkido-cli stderr ---")
+        print("  --- nkido stderr ---")
         print(res.stderr)
-        raise RuntimeError(f"nkido-cli failed with exit code {res.returncode}")
+        raise RuntimeError(f"nkido failed with exit code {res.returncode}")
     return WAV_PATH
 
 

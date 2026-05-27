@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Downloads the samples of selected drum machines (or all of them) into
 #   ${XDG_CACHE_HOME:-$HOME/.cache}/nkido/tidal-drum-machines/<Machine>/...
-# preserving the relative paths the catalog encodes. nkido-cli auto-discovers
+# preserving the relative paths the catalog encodes. nkido auto-discovers
 # this cache and plays catalog kits offline; machines not downloaded still
 # stream from GitHub when online.
 #

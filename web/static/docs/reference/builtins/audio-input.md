@@ -68,7 +68,7 @@ When no input is available (permission denied, device unplugged, file not yet up
 | Host | Source selection |
 |------|-----------------|
 | Web | Settings panel → Audio Input. Pick **Mic** (browser permission prompt), **Tab** (`getDisplayMedia`, requires "Share tab audio"), or **File** (drag/drop a WAV). |
-| CLI (`nkido-cli`) | `--list-devices` enumerates capture devices; `--input-device "Name"` selects one. Defaults to the system default. |
+| CLI (`nkido`) | `--list-devices` enumerates capture devices; `--input-device "Name"` selects one. Defaults to the system default. |
 | Godot | Extension wires `ctx.input_left/right` from the chosen Godot bus or `AudioStreamMicrophone`. |
 
 ### Feedback warning

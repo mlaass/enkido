@@ -6,7 +6,7 @@ Phase 2 PRD §10.3 acceptance: "extend with `iter` rotation tests across at
 least 300 seconds of simulated audio. Verify the pattern rotates correctly
 cycle-after-cycle, no voice drops, no timing drift."
 
-Approach: compile + render an iter() pattern via `nkido-cli render` for
+Approach: compile + render an iter() pattern via `nkido render` for
 300+ seconds. iter(4) on a 4-note pitched pattern rotates the start
 position by 1/4 each cycle, so over 4 cycles every note has been heard at
 every slot. Across 150 cycles (300 s @ 120 BPM, 4 beats/cycle) the
@@ -40,7 +40,7 @@ from cedar_testing import output_dir
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido-cli", "nkido-cli")
+NKIDO_CLI = os.path.join(REPO_ROOT, "build", "tools", "nkido", "nkido")
 OUT = output_dir("op_seqpat_step")
 WAV_PATH = os.path.join(OUT, "iter_long_window.wav")
 SRC_PATH = os.path.join(OUT, "iter_long_window.akk")
@@ -58,8 +58,8 @@ mtof(arp) |> osc("sin", %) * 0.2 |> out(%, %)
 def _render():
     if not os.path.isfile(NKIDO_CLI):
         raise RuntimeError(
-            f"nkido-cli not found at {NKIDO_CLI}. Build with:\n"
-            f"  cmake --build build --target nkido-cli"
+            f"nkido not found at {NKIDO_CLI}. Build with:\n"
+            f"  cmake --build build --target nkido"
         )
     with open(SRC_PATH, "w") as f:
         f.write(AKK_SRC)
@@ -75,7 +75,7 @@ def _render():
     if res.returncode != 0:
         print(res.stdout)
         print(res.stderr)
-        raise RuntimeError(f"nkido-cli render failed (code {res.returncode})")
+        raise RuntimeError(f"nkido render failed (code {res.returncode})")
     return WAV_PATH
 
 

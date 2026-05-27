@@ -24,8 +24,8 @@ cmake --build build
 ./build/akkado/tests/akkado_tests
 
 # Use CLI tools
-./build/tools/akkado-cli/akkado-cli --help
-./build/tools/nkido-cli/nkido-cli --help
+./build/bin/akkado --help
+./build/bin/nkido --help
 ```
 
 ### Web IDE

@@ -258,7 +258,7 @@ the grouped shape lets each consumer take only what it cares about.
 
 Plus: `serialize_mini_ast_json` runs unconditionally at
 `codegen_patterns.cpp:1379` for every pattern in every compile — even
-`nkido-cli render` which never reads it. A debug-JSON gate cuts ~5-15%
+`nkido render` which never reads it. A debug-JSON gate cuts ~5-15%
 off headless compile time on pattern-heavy programs.
 
 ### 1.6 Builtin re-registration (audit §3.5 / PRD-12)
@@ -775,7 +775,7 @@ if (emit_debug_json_) {
 }
 ```
 
-CLI tools (`nkido-cli`, `akkado-cli`) leave the option at default
+CLI tools (`nkido`, `akkado`) leave the option at default
 (false). Web/wasm explicitly sets `true` (it consumes the JSON for
 the pattern debug panel).
 

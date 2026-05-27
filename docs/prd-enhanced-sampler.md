@@ -466,7 +466,7 @@ If multiple sources exist, `smpl` chunk takes priority.
 | `BuiltinSignature` | **Modified** | Update `sample()` param names and defaults |
 | `audio.svelte.ts` | **Modified** | Pass `SampleLoadParams` when loading banks |
 | `nkido_wasm.cpp` | **Modified** | WASM bridge for extended sample loading |
-| `nkido-cli` | **Modified** | CLI support for extended sample params |
+| `nkido` | **Modified** | CLI support for extended sample params |
 | `test_sample_registry.cpp` | **Modified** | Tests for variant loading |
 | `test_codegen.cpp` | **Modified** | Tests for extended sample() builtin |
 | `samplers.hpp` tests | **New** | Tests for pan, velocity, loops, algorithms |

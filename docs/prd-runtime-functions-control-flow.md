@@ -74,7 +74,7 @@ The brainstorm exploration confirmed:
 - **L2**: A user `fn` called from N sites produces audio bit-exact to the current per-site-inlined behavior, and pre-expansion bytecode is measurably smaller than current.
 - **L2**: Hot-swap state preservation works per-call-site via the existing semantic-path scheme extended with a `block@callsite_N` component.
 - **L3**: POLY reimplemented as `FOREACH_EVENT + voice allocator + BLOCK_CALL voice_body` is bit-exact to today's POLY across all existing `akkado/tests/` cases.
-- **L3**: `n"…".each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI, with state preserved across hot-swap.
+- **L3**: `n"…".each_voice(n => osc(...))` renders correctly in both `nkido render` and the web UI, with state preserved across hot-swap.
 - **No new audio-thread allocations.** Every new state slot, every new block-table entry, every voice-pool entry is allocated at swap-prepare or init time only.
 
 ### Non-Goals
@@ -102,7 +102,7 @@ The brainstorm exploration confirmed:
 | `SELECT` and sample-rate logic operators (opcodes 140–149, `prd-conditionals-logic.md`) | All shipped behavior | Unchanged — `when()` is additive, not a replacement |
 | `inst.rate` policy ([extended-params-mechanism.md](extended-params-mechanism.md) §5) | Compile-time mode dispatch only; no runtime bit-packing | Unchanged — new opcodes follow the rule (FOREACH_EVENT `allocator_kind` is a compile-time enum ≤4 values, the legitimate `rate` use) |
 | Audio-path allocation invariant | Zero runtime allocations on audio thread | Unchanged — every new state slot, subprogram-table entry, voice-pool entry sized at swap-prepare time |
-| `nkido-cli`, `bytecode_dump.cpp`, web bytecode disassembler | Existing disassembly UX | Extended to render `Subprogram` side-table and toggle expanded/unexpanded views (Phase 2 UX detail) |
+| `nkido`, `bytecode_dump.cpp`, web bytecode disassembler | Existing disassembly UX | Extended to render `Subprogram` side-table and toggle expanded/unexpanded views (Phase 2 UX detail) |
 | Akkado lexer | Existing tokens | Adds `#` as annotation-prefix lexeme |
 | Akkado parser | Existing precedence table, expression-vs-statement positions | Adds annotation parsing at statement position; adds `loop()` contextual keyword + block-expression form (see §7.6) |
 
@@ -777,7 +777,7 @@ Three independent PRs. Each one is shippable on its own.
 
 **Acceptance:**
 - All existing POLY tests pass bit-exact.
-- `n"…".each_voice(n => osc(...))` renders correctly in both `nkido-cli render` and the web UI.
+- `n"…".each_voice(n => osc(...))` renders correctly in both `nkido render` and the web UI.
 - A 300-second simulated render shows zero allocation events on the audio thread.
 - Hot-swap state preservation works across POLY migration (existing PolyAllocState path-hash unchanged).
 

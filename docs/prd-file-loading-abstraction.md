@@ -370,7 +370,7 @@ interface SerializedPreset {
 ### 5.1 Native: Loading a SoundFont
 
 ```
-CLI: nkido-cli --soundfont gm.sf2 song.akkado
+CLI: nkido --soundfont gm.sf2 song.akkado
          │
          ▼
 FileLoader::load("gm.sf2") → OwnedBuffer

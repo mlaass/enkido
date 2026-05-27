@@ -242,7 +242,7 @@ TEST_CASE(": evs-annotated param exposes Pattern field access in the body",
 // PRD prd-parameter-type-annotations §10.3: end-to-end verification examples.
 // The acceptance check is "compiles clean and the resulting WAV has the right
 // peaks." This file ships the compile-only half (Catch2); the render-and-peak
-// half is run out of band against ./build/tools/nkido-cli/nkido-cli render
+// half is run out of band against ./build/bin/nkido render
 // (see the commit message for the render result).
 //
 // These programs unblock prd-runtime-event-transforms.md Phase 2b — once they

@@ -25,7 +25,7 @@ This PRD does three things in one stroke:
 2. **Aggressively collapses the redundant surfaces** — the WASM bridge drops to one-and-a-half entry points, `SampleBank` to two, `SoundFontRegistry` and `WavetableBankRegistry` standardize on `MemoryView`, the TS `loadFile()` becomes URI-string only, `BankRegistry.loadFromGitHub` is deleted, the audio store's three `loadXFromUrl()` methods collapse to one.
 3. **Adds `samples("uri")` to akkado** — programs can declare HTTP, GitHub, or bundled sample sources directly. Compile-time resolution: the host fetches everything before the audio thread sees the new bytecode.
 
-The CLI gets HTTP support for free via cpp-httplib (header-only, no system deps), so `nkido-cli --bank github:tidalcycles/Dirt-Samples song.akkado` works with no extra wiring.
+The CLI gets HTTP support for free via cpp-httplib (header-only, no system deps), so `nkido --bank github:tidalcycles/Dirt-Samples song.akkado` works with no extra wiring.
 
 ### 1.1 Why now
 
@@ -77,7 +77,7 @@ The five-PRD arc is at its inflection point. One more feature (Strudel-style HTT
 
 - **One conceptual model:** an asset is a URI; loading an asset is `resolver.load(uri)`. Same shape on C++ and TS.
 - **Lean surface:** the WASM bridge, SampleBank, registries, audio store, and BankRegistry each lose at least one redundant entry point.
-- **Akkado HTTP works on web and native CLI.** `nkido-cli --bank github:tidalcycles/Dirt-Samples song.akkado` runs.
+- **Akkado HTTP works on web and native CLI.** `nkido --bank github:tidalcycles/Dirt-Samples song.akkado` runs.
 - **RT-safe asset loading.** Audio thread never sees an unresolved URI; all fetches happen in compile/host code before the bytecode swap.
 - **Future-friendly.** Adding `res://` for a Godot host is a handler registration, not a refactor. Adding `s3://` later would be the same.
 - **Bug fix as a side effect:** the GitHub double-fetch becomes structurally impossible.
@@ -200,13 +200,13 @@ bankRegistry.loadBank('blob:nkido:abc123', 'my-uploaded-bank');  // for File upl
 
 ```bash
 # Today (only paths)
-nkido-cli --soundfont gm.sf2 song.akkado
-nkido-cli --bank ./tr808/strudel.json song.akkado
+nkido --soundfont gm.sf2 song.akkado
+nkido --bank ./tr808/strudel.json song.akkado
 
 # After
-nkido-cli --soundfont https://example.com/gm.sf2 song.akkado
-nkido-cli --bank github:tidalcycles/Dirt-Samples song.akkado
-nkido-cli --bank ./tr808/strudel.json song.akkado          # bare path = file:// (back-compat)
+nkido --soundfont https://example.com/gm.sf2 song.akkado
+nkido --bank github:tidalcycles/Dirt-Samples song.akkado
+nkido --bank ./tr808/strudel.json song.akkado          # bare path = file:// (back-compat)
 ```
 
 ---
@@ -539,7 +539,7 @@ No API users yet. Existing code unchanged. `FileError` enum extended with `Netwo
 
 ### Phase 2 — Native HTTP + github: + native cache (2 days) ✅ DONE
 
-**Goal:** `nkido-cli --bank github:user/repo manifest.json` returns bytes (not yet wired into bank loading).
+**Goal:** `nkido --bank github:user/repo manifest.json` returns bytes (not yet wired into bank loading).
 
 - Vendor cpp-httplib into `cedar/third_party/` ✅ (v0.18.5)
 - `HttpHandler` (uses cpp-httplib) ✅
@@ -608,13 +608,13 @@ Cedar tests: 184 passing / 1 skipped (network) — all 334,848 assertions green.
 
 **Goal:** CLI flags accept URIs uniformly. Docs updated.
 
-- ✅ `nkido-cli --bank/--soundfont/--sample` accept any URI; bare paths route to `file://`. Flags repeat; banks accumulate as default banks searched in order. `--sample` also accepts `name=uri` for explicit registry-name binding.
-- ✅ `nkido-cli` registers all native handlers (`FileHandler`, `HttpHandler×2`, `GithubHandler`, `BundledHandler`) on `cedar::UriResolver::instance()` at startup, with a process-scoped `FileCache`.
+- ✅ `nkido --bank/--soundfont/--sample` accept any URI; bare paths route to `file://`. Flags repeat; banks accumulate as default banks searched in order. `--sample` also accepts `name=uri` for explicit registry-name binding.
+- ✅ `nkido` registers all native handlers (`FileHandler`, `HttpHandler×2`, `GithubHandler`, `BundledHandler`) on `cedar::UriResolver::instance()` at startup, with a process-scoped `FileCache`.
 - ✅ `samples()` declarations from source flow through the same path: render mode iterates `cr.required_uris`, fetches each manifest, resolves every `RequiredSample` against the loaded banks.
 - ✅ New `tools/nkido-cli/asset_loader.{hpp,cpp}` adds a minimal strudel.json scanner (handles `_base`, `_name`, string and string-array fields), `register_native_handlers`, and the bank/soundfont/sample loaders.
-- ✅ `akkado-cli --uris` lists `required_uris` (text + JSON modes).
+- ✅ `akkado --uris` lists `required_uris` (text + JSON modes).
 - ✅ `docs/uri-schemes.md` covers the scheme list, `samples()` syntax, CLI usage, and caching. Mirrored to `web/static/docs/reference/` and indexed by `bun run build:docs`.
-- ✅ Smoke test: `nkido-cli render --bank github:tidalcycles/Dirt-Samples --seconds 1 -o /tmp/x.wav --source 'sin(440) |> out(%, %)'` succeeds; cold run 301 ms, cache-hit 29 ms (10× speedup).
+- ✅ Smoke test: `nkido render --bank github:tidalcycles/Dirt-Samples --seconds 1 -o /tmp/x.wav --source 'sin(440) |> out(%, %)'` succeeds; cold run 301 ms, cache-hit 29 ms (10× speedup).
 
 ### Phase 9 — Verification sweep (0.5 day) ✅ DONE
 
@@ -623,7 +623,7 @@ Cedar tests: 184 passing / 1 skipped (network) — all 334,848 assertions green.
 - ✅ Cedar tests: 334,788 / 334,788 assertions passing, 184 / 185 cases passing (1 skipped).
 - ✅ Akkado tests: 137,577 / 137,577 assertions passing across 570 cases.
 - ✅ Web type-check + targeted vitest suites (uri-resolver, bank-registry): 22 / 22 passing.
-- ✅ E2E smoke: `nkido-cli render --bank github:tidalcycles/Dirt-Samples --seconds 1 -o out.wav --source 'sin(440) |> out(%, %)'` succeeds; cold 332 ms, cache-hit 28 ms (12× speedup). `samples("github:tidalcycles/Dirt-Samples")` in source resolves identically.
+- ✅ E2E smoke: `nkido render --bank github:tidalcycles/Dirt-Samples --seconds 1 -o out.wav --source 'sin(440) |> out(%, %)'` succeeds; cold 332 ms, cache-hit 28 ms (12× speedup). `samples("github:tidalcycles/Dirt-Samples")` in source resolves identically.
 - ✅ Web demo path: `audio.svelte.ts::compile()` drains `requiredUris` between wavetable and SoundFont drains, dispatches kind=SampleBank → `loadAsset(uri, 'sample_bank')`. The `bank-registry.test.ts` regression test pins single-fetch invariant for `loadBank('github:...')`.
 - ✅ CHANGELOG entry filed under the next release; PRD §1 status flipped to DONE.
 
@@ -733,7 +733,7 @@ cmake --preset debug && cmake --build build
 ./build/akkado/tests/akkado_tests "[samples-builtin]"
 
 # Native CLI: github bank end-to-end
-./build/tools/nkido-cli/nkido-cli render \
+./build/bin/nkido render \
     --bank github:tidalcycles/Dirt-Samples \
     --seconds 5 \
     --out /tmp/test.wav \
@@ -741,14 +741,14 @@ cmake --preset debug && cmake --build build
 # Listen to /tmp/test.wav
 
 # Native CLI: HTTP soundfont
-./build/tools/nkido-cli/nkido-cli render \
+./build/bin/nkido render \
     --soundfont https://example.com/gm.sf2 \
     -e 'soundfont("gm.sf2", 0) |> out(%, %)' \
     --out /tmp/sf.wav
 
 # Cache works on second run (much faster)
-time ./build/tools/nkido-cli/nkido-cli render --bank github:tidalcycles/Dirt-Samples ...
-time ./build/tools/nkido-cli/nkido-cli render --bank github:tidalcycles/Dirt-Samples ...
+time ./build/bin/nkido render --bank github:tidalcycles/Dirt-Samples ...
+time ./build/bin/nkido render --bank github:tidalcycles/Dirt-Samples ...
 # Second run should be near-instant for the manifest fetch
 ```
 

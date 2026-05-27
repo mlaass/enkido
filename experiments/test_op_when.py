@@ -7,7 +7,7 @@ compiler lowers it to SKIP_IF_ZERO / SKIP_IF_NONZERO opcodes so the VM executes
 ONLY the taken branch's instructions. Unlike `select()`, the untaken branch is
 skipped entirely — its opcodes never run.
 
-Tests (rendered through `nkido-cli render`, the real compile + VM path):
+Tests (rendered through `nkido render`, the real compile + VM path):
 
   1. Long-render correctness — a 300 s render with a 0.1 Hz square LFO driving
      the condition. The output must alternate between an audible region (true
@@ -36,13 +36,13 @@ import scipy.io.wavfile
 from cedar_testing import output_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido-cli" / "nkido-cli"
+NKIDO_CLI = REPO_ROOT / "build" / "tools" / "nkido" / "nkido"
 OUT = output_dir("op_when")
 SR = 48000
 
 
 def render(name: str, source: str, seconds: float) -> Path | None:
-    """Render `source` to a WAV via nkido-cli. Returns the path or None."""
+    """Render `source` to a WAV via nkido. Returns the path or None."""
     wav = Path(OUT) / f"{name}.wav"
     if wav.exists():
         wav.unlink()
@@ -229,8 +229,8 @@ def test_cpu_bypass():
 
 def main():
     if not NKIDO_CLI.exists():
-        print(f"error: nkido-cli not built at {NKIDO_CLI}")
-        print(f"  build it: cmake --build {REPO_ROOT}/build --target nkido-cli")
+        print(f"error: nkido not built at {NKIDO_CLI}")
+        print(f"  build it: cmake --build {REPO_ROOT}/build --target nkido")
         sys.exit(1)
 
     results = [test_long_render(), test_cpu_bypass()]

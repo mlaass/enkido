@@ -349,7 +349,7 @@ have a workaround: `(@callback)()` or `@.callback()`.
 | Severity      | Warning                                             |
 | Default       | Off                                                 |
 | Enabled by    | `CompilerOptions::strict == true` (existing flag)   |
-| CLI           | `akkado-cli --strict file.akk`                      |
+| CLI           | `akkado --strict file.akk`                      |
 | Web IDE       | Tied to a future "Lint" toggle in settings (out of scope here; for now the web IDE compiles without `strict`). |
 | Message       | `Dotted hole-field access is deprecated; write '<hole><field>' instead.` |
 | Location      | The hole token's source location.                   |
@@ -528,7 +528,7 @@ cd web && bun run check
 
 **Goal:** `--strict` mode flags dotted hole-field usages.
 
-1. Confirm the `--strict` flag is plumbed through `akkado-cli` to the
+1. Confirm the `--strict` flag is plumbed through `akkado` to the
    parser.
 2. Wire the `lint_strict_` branch in `parse_hole()` to emit W201.
 3. Add a test that compiles a dotted snippet under `strict=true` and
@@ -537,7 +537,7 @@ cd web && bun run check
 **Verification:**
 
 ```bash
-./build/tools/akkado-cli/akkado-cli --strict examples/old-style.akk 2>&1 | grep W201
+./build/bin/akkado --strict examples/old-style.akk 2>&1 | grep W201
 ```
 
 ---
@@ -762,7 +762,7 @@ After Phase 3 migration:
 ```bash
 # Every shipped patch must still compile and produce non-silent audio.
 for p in web/static/patches/*.akk; do
-    ./build/tools/akkado-cli/akkado-cli "$n" --check
+    ./build/bin/akkado "$n" --check
 done
 ```
 
@@ -808,5 +808,5 @@ cd web && bun run check && bun run build
   from `parse_hole()` entirely.
 - **Web IDE lint toggle.** A "strict mode" toggle in the settings panel
   would surface W201 in the diagnostics gutter without requiring CLI use.
-- **Auto-fixer.** A `akkado-cli --fix` mode (out of scope here) could
+- **Auto-fixer.** A `akkado --fix` mode (out of scope here) could
   rewrite dotted hole-field accesses to the dotless form automatically.
