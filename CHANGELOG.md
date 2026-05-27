@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-28
+
+### ⚠ BREAKING — CLI binaries renamed: `nkido-cli` → `nkido`, `akkado-cli` → `akkado`
+
+The bytecode player and compiler CLIs were renamed and their build output
+moved to `build/bin/`. Update any wrapper scripts, CI, or shell aliases.
+Source folders `tools/nkido-cli/` and `tools/akkado-cli/` were renamed to
+`tools/nkido/` and `tools/akkado/` to match.
+
+### ⚠ BREAKING — `pat` builtin and `p"…"` literal removed
+
+The untyped `pat("…")` builtin and the `p"…"` raw-pattern literal were
+removed in favor of typed prefixes (`n"…"`, `s"…"`, etc.). The typed
+forms carry full event semantics; the raw form only ever surfaced step
+indices and is unused by any shipped patch.
+
 ### ⚠ BREAKING — `euclid()` default span changed from 1 cycle to 4 cycles (1 bar)
 
 The runtime `euclid(hits, steps)` builtin previously packed all `steps` into a
@@ -134,6 +150,38 @@ for the planned Strudel-style scale-quantize transform
   covering one slot-based and one ExtendedParams-based example per
   category.
 
+- **Bus routing** — diamond `<>` operator (`signal <> 3` routes to bus 3),
+  numbered buses with always-safe `master`, per-bus FX via mixer/master
+  closures. Three phases shipped: numbered buses + master, per-bus FX,
+  and the `<>` operator at pipe precedence.
+- **Per-element `*N` / `/N` rate modifiers in mini-notation** —
+  `n"c4*2 d4/2"` doubles/halves individual event durations under one
+  uniform per-element mechanism (no top-level vs inner split).
+- **Runtime event transforms** — closure-taking `event_map` /
+  `event_filter`, runtime `fast()` / `slow()` (`EVENT_RATE_SCALE`),
+  structural `EVENT_REORDER` / `EVENT_FANOUT`, and stdlib `key` /
+  `scale` / `voice` / `invert` / `swing` / `swingBy` / `early` / `late`
+  / 5 property modifiers. Chord-array READ/WRITE inside event_map
+  closures. New `fmod` builtin + stdlib `.ak` embed mechanism.
+- **Block-rate control flow** — `when() { … }` conditional bypass,
+  `loop(N) { body }` bounded static iteration, `#inline` annotation
+  with recursion rejection, `each()` / `reduce()` over event records,
+  `FOREACH_EVENT` + subprogram table (POLY migrated onto it),
+  `BLOCK_CALL` shared-block fn dispatch, `BLOCK_BIND` for shareable
+  fns with >5 params.
+- **Parameter type annotations Phase 2** — `evs` / `sig` / `num` /
+  `rec` / `arr` / `str` / `fn` annotations parsed via `name: type`
+  grammar, propagated through analyzer, dispatched in
+  `handle_user_function_call`. New `E184` type-mismatch diagnostic.
+- **Built-in Tidal Drum Machines sample catalog** — TR-808/909/etc.
+  packs ship inside the WASM bundle, addressable from `s"…"` patterns.
+- **`SF_VOICE` opcode** — single-voice soundfont primitive (poly
+  unification Phase 1).
+- **`transport()` builtin** is now reachable — previously declared but
+  unregistered.
+- **Live-editor → embedding parent postMessage** — iframe embeds can
+  observe code edits.
+
 ### Changed
 
 - `chorus`, `flanger`, `phaser` extend their existing `ExtendedParams`
@@ -164,6 +212,26 @@ for the planned Strudel-style scale-quantize transform
   legato notes now glide without re-attacking (gate stays high); a note
   arriving after the previous one's release tail still retriggers, as
   documented.
+- **Hot-swap robustness** — `ExtendedParams<N>` slots, `SEQPAT_QUERY`
+  cycle cache, and `foreach_event` state all survive recompiles; audio
+  arena buffers are deep-copied into the crossfade snapshot; state pool
+  is snapshotted across crossfade dual-execution; byte-identical
+  recompiles skip the crossfade entirely.
+- **`SEQPAT_STEP` mid-block cycle wrap** — `state.output` is refreshed
+  on the wrap, eliminating a one-block stale-value glitch.
+- **Rest as first event** — no longer fires a phantom trigger on the
+  cycle wrap.
+- **Mixer-closure stereo copy-back** — must not alias the L bus into
+  both channels.
+- **`fn` arrow body** — no longer swallows the line that follows.
+- **`..record` spread** — fields now bind to builtin params by name.
+- **`<>` operator** — parses as a pipe-precedence infix, not
+  statement-only.
+- **Canonical closure-body recovery** — handles bare-identifier bodies.
+- **Step-highlighting offsets** — accurate source ranges for pattern
+  step highlights in the editor.
+- **StatePool tables** are heap-allocated so the VM fits on the default
+  thread stack.
 
 ### Known limitations / deferred work
 
