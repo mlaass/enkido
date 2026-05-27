@@ -3,11 +3,13 @@
 #include "../dsp/constants.hpp"
 #include "../opcodes/dsp_state.hpp"
 #include "instruction.hpp"  // EXT_PARAMS_STATE_XOR for gc_sweep co-touch
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iomanip>
+#include <memory>
 #include <sstream>
 #include <string>
-#include <iomanip>
 
 namespace cedar {
 
@@ -57,9 +59,24 @@ struct FadingEntry {
 // Fixed-size open-addressing hash table - ZERO runtime allocations
 class StatePool {
 public:
-    StatePool() {
+    StatePool()
+        : storage_(std::make_unique<Storage>()),
+          states_(storage_->states.data()),
+          fading_states_(storage_->fading_states.data()),
+          touched_(storage_->touched.data()) {
         clear_all();
     }
+
+    // Movable (unique_ptr is noexcept-movable; the cached pointers stay
+    // valid because moving a unique_ptr transfers ownership of the same
+    // underlying allocation — the Storage struct doesn't move in memory).
+    StatePool(StatePool&&) noexcept = default;
+    StatePool& operator=(StatePool&&) noexcept = default;
+
+    // Non-copyable (the variants inside contain non-copyable types like
+    // MidiQueueState; element-wise copy goes through copy_states_from).
+    StatePool(const StatePool&) = delete;
+    StatePool& operator=(const StatePool&) = delete;
 
     void set_state_id_xor(std::uint32_t xor_val) { state_id_xor_ = xor_val; }
     std::uint32_t state_id_xor() const { return state_id_xor_; }
@@ -158,7 +175,7 @@ public:
 
     // Clear touched set (call at start of program execution)
     void begin_frame() {
-        touched_.fill(false);
+        std::fill_n(touched_, MAX_STATES, false);
     }
 
     // Copy the active-state table from another pool, element-wise.
@@ -1181,9 +1198,27 @@ private:
         state_count_ = 0;
     }
 
-    std::array<StateEntry, MAX_STATES> states_;
-    std::array<FadingEntry, MAX_STATES> fading_states_;
-    std::array<bool, MAX_STATES> touched_;
+    // Backing storage for the three large fixed-size tables. Heap-allocated
+    // so a stack-allocated VM (which holds two StatePools — active + shadow
+    // for the crossfade snapshot) stays under the default 8 MB thread stack.
+    // Allocated once in the constructor; never re-allocated for the lifetime
+    // of the pool, so the audio thread still sees zero allocations.
+    struct Storage {
+        std::array<StateEntry, MAX_STATES> states{};
+        std::array<FadingEntry, MAX_STATES> fading_states{};
+        std::array<bool, MAX_STATES> touched{};
+    };
+    std::unique_ptr<Storage> storage_;
+
+    // Cached raw pointers into `storage_`. Keep the original `states_`,
+    // `fading_states_`, `touched_` names so all the existing indexed accesses
+    // in this header (and they are MANY) read unchanged. Pointers remain
+    // valid through move because moving a unique_ptr transfers ownership of
+    // the same heap allocation — Storage's address never changes.
+    StateEntry* states_;
+    FadingEntry* fading_states_;
+    bool* touched_;
+
     std::size_t state_count_ = 0;
     std::uint32_t fade_blocks_ = 3;  // Default: match crossfade duration
     std::uint32_t state_id_xor_ = 0; // XOR mask for poly voice state isolation
