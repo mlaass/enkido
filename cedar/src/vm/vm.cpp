@@ -517,7 +517,17 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
     // Resolve the per-instance state. init_foreach_state created exactly one
     // of these three types for this state_id, so the first non-null wins and
     // selects the allocator kind.
+    //
+    // Each successful branch must mark the state as touched. begin_frame()
+    // clears the touched-flag array at the top of every execute_program
+    // call, and gc_sweep() (run at crossfade completion) evicts every
+    // untouched slot. get_or_create / get touch implicitly; get_if does
+    // not — so without an explicit touch here, a structural hot-swap that
+    // crossfades evicts PolyAllocState / Foreach{Iter,Shared}State even
+    // though the new program is still using it, silently breaking
+    // event-driven voice synthesis.
     if (auto* poly_state = state_pool_.get_if<PolyAllocState>(inst.state_id)) {
+        state_pool_.touch(inst.state_id);
         // VOICE_POOL — bit-exact with legacy POLY: identical run_voice_pool,
         // identical convention slots; only the body location differs.
         const auto body = slot->block_body(poly_state->block_id);
@@ -529,11 +539,13 @@ void VM::execute_foreach_event(const ProgramSlot* slot,
         return;
     }
     if (auto* iter_state = state_pool_.get_if<ForeachIterState>(inst.state_id)) {
+        state_pool_.touch(inst.state_id);
         const auto body = slot->block_body(iter_state->block_id);
         run_foreach_per_iteration(slot, *iter_state, inst, body);
         return;
     }
     if (auto* shared_state = state_pool_.get_if<ForeachSharedState>(inst.state_id)) {
+        state_pool_.touch(inst.state_id);
         const auto body = slot->block_body(shared_state->block_id);
         run_foreach_shared(slot, *shared_state, inst, body);
         return;
