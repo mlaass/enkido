@@ -1,8 +1,8 @@
-// Sine + vibrato — the smallest possible Akkado patch. A 5 Hz LFO
-// modulates the carrier frequency by a few hertz. Swap `"sin"` for
-// `"saw"`, `"tri"`, `"sqr"`, or `"noise"` to hear other waveforms.
+// Sine + vibrato: the smallest possible Akkado patch. A 5 Hz LFO
+// modulates the carrier frequency by a few hertz. Swap `sine` for
+// `saw`, `tri`, `sqr`, or `noise` to hear other waveforms.
 
 bpm = 120
 
-vibrato = osc("sin", 5) * 3
-osc("sin", 440 + vibrato) * 0.3 |> out(@)
+vibrato = sine( 5) * 3
+sine( 440 + vibrato) * 0.3 |> out(@)

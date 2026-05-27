@@ -1,7 +1,7 @@
 // Drum'n'Bass with Amen breaks from Dirt-Samples
 //
 // `samples("github:...")` is a top-level directive that pulls a Strudel
-// sample bank from any URL — file://, https://, or `github:user/repo`.
+// sample bank from any URL: file://, https://, or `github:user/repo`.
 // First play fetches the manifest + each variant over HTTPS (a few hundred
 // KB total); the IndexedDB cache makes every subsequent run instant.
 // `.bank("Dirt-Samples")` routes events to that bank instead of the bundled
@@ -28,11 +28,11 @@ s"jungbass:0 ~ "
 
 
 // bass with modulated resonance and saturation
-osc("saw", n"d1 d1 d1 d#1".slow(4))  
+saw(n"d1 d1 d1 d#1".slow(4))  
     * ar(euclid(3, 8), 0.005, 0.45)
-    |> lp(@, 420, (osc("sin", 1/spb,0, trigger(1/2))+2)*3  |> oscilloscope(@))
+    |> lp(@, 420, (sine( 1/spb,0, trigger(1/2))+2)*3  |> oscilloscope(@))
     |> saturate(@, 4)
-    |> @*.7 + freeverb(@)*.15
+    |> @*.7 + reverb(@)*.15
     .saturate(2)
     .limiter()
     |> out(@ * 0.5)

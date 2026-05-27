@@ -1,14 +1,16 @@
-// Polyphonic chord pad — `chord("...")` emits one event per chord
+// Polyphonic chord pad: `chord("...")` emits one event per chord
 // (up to 3 voices each), and `poly()` allocates a voice per active
 // note. Each voice has its own gate, frequency, and velocity.
 
 bpm = 80
 
-pad = ({freq, gate, vel}) ->
-    osc("saw", freq) * adsr(gate, 0.3, 0.4, 0.8, 0.8) * vel * 0.1
+fn pad ({freq, gate, vel}) ->
+    saw(freq) 
+    * adsr(gate, 0.3, 0.4, 0.8, 0.8) 
+    * vel * 0.1
         |> lp(@, 1400)
 
-chord("Cmaj7 Am7 Dm7 G7")
+chord("Cmaj7 Am7 Dm7 <Gm5 G7>")
     |> poly(@, pad)
-    |> @ * 0.7 + freeverb(@, 0.7, 0.5) * 0.25
+    |> reverb(@, 0.7, 0.5, ..{dry:0.7,wet:.25})
     |> out(@)

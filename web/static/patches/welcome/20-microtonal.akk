@@ -1,13 +1,13 @@
-// 31-tone equal temperament — `tune("31edo", ...)` makes the `^`
+// 31-tone equal temperament: `tune("31edo", ...)` makes the `^`
 // and `v` operators step by ~38.7 cents (one 31-tone step). You can
 // reach quarter-tones, neutral thirds, and intervals that live
-// between the semitones — building blocks of raga and maqam scales.
+// between the semitones: building blocks of raga and maqam scales.
 
 bpm = 90
 
-n"a3 a^3 a^^3 b3 c^4 d4 d^4 e4"
+n"a3 a^3 a^^3 b3 c^4 dv4 d^4 e4"
     |> tune("31edo", @)
-    |> osc("tri", @freq) * ar(@trig, 0.005, 0.4) * 0.3
+    |> tri( @freq) * ar(@trig, 0.005, 0.4) * 0.3
     |> lp(@, 1800)
-    |> @ + freeverb(@, 0.7, 0.5) * 0.4
+    |> reverb(@, 0.7, 0.5) 
     |> out(@)

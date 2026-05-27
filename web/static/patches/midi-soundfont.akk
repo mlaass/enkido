@@ -1,8 +1,8 @@
-// MIDI → SoundFont — live polyphonic SF2 playback from a USB controller.
+// MIDI → SoundFont: live polyphonic SF2 playback from a USB controller.
 //
 // Plug in a USB keyboard and play. `midi()` captures note-on/off events and
 // dispatches them directly through `soundfont()`'s built-in 32-voice
-// allocator — no `poly()` wrapper required. Preset 0 is Acoustic Grand
+// allocator: no `poly()` wrapper required. Preset 0 is Acoustic Grand
 // Piano in the GM standard; edit the number to swap instruments (see
 // `/docs/reference/builtins/soundfonts` for the GM preset table).
 //

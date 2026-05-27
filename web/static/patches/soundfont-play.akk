@@ -3,27 +3,24 @@
 // SF2 synth: gate, freq, and velocity are extracted from the events.
 //
 // Preset 0 is Acoustic Grand Piano in the GM standard. Preset 1 is Bright
-// Acoustic Piano, layered an octave below for body.
-//
-// Gain staging: `soundfont()` and the reverbs (freeverb, dattorro) all output
-// at unity. `out()` is pure summation across calls, so two layered voices +
-// reverb chains will clip without explicit per-voice attenuation. Each chain
-// here targets ~0.3 peak so the summed output stays under 1.0 with headroom.
+// Acoustic Piano, layered 2 octaves below for body.
 
 bpm = 100
 
-melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@1.25 eb4@2 c4@1.75 ~@8"
+melody = n"c4 eb4 g4 c5 ~ g4 eb4 c4 d4 f#4 a4 d5 ~ a4 f#4 d4 eb4 g4 b4 eb5 ~ b4 g4@2 eb4@2 c4@2 ~@8"
 
-// Lead piano: dry voice + small freeverb tail. 0.3 leaves headroom for the
-// transient peaks that exceed the steady-state RMS by ~3x.
+// Lead piano: dry voice + small reeverb tail
 melody
-    |> soundfont(@, "gm", 0) * 0.3
-    |> @ + freeverb(@, 0.65, 0.4) * 0.15
-    |> out(@)
+  |> soundfont(@, "gm", 0) * 0.3
+  |> pan(@, 0.25)
+  |> reverb(@, 0.65, 0.4, ..{wet:0.15}) 
+  |> out(@)
 
-// Sub-octave bright piano, delayed by a quarter beat for a layered feel.
-// dattorro is fully wet, so we attenuate after the effect and add only a
-// quiet dry blend (no doubled-amplitude `+@` trick from the old patch).
-bass = melody |> transpose(@, -12).late(.25) |> soundfont(@, "gm", 1) * 0.22
-
-dattorro(bass) * 0.6 + bass * 0.5 |> out(@)
+// slowed down sub-octave bright piano, delayed by a beat for a layered feel.
+melody.slow(2)
+  |> transpose(@, -24)
+  |> soundfont(@, "gm", 1) * 0.22
+  |> delay(@, spb, 0,0,0.7)
+  |> pan(@, -0.25)
+  |> dattorro(@)
+  |> out(@)

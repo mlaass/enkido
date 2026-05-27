@@ -1,4 +1,4 @@
-// MIDI CC + Pitch-Bend — live filter and pitch control from a USB controller.
+// MIDI CC + Pitch-Bend: live filter and pitch control from a USB controller.
 //
 // Plug in a keyboard and play. Three external controls are wired in:
 //   * Mod wheel        (CC 1)  -> filter cutoff
@@ -7,14 +7,14 @@
 //
 // `midi_cc(name, {...})` is a compile-time directive (prd-midi-input §4.8)
 // that routes incoming controller messages straight into `param()` slots via
-// EnvMap — no audio-thread work, no extra opcode. The sliders below act as
+// EnvMap: no audio-thread work, no extra opcode. The sliders below act as
 // the fallback / default when nothing is sending on those CCs.
 //
 // CC numbers vary per controller. Common conventions:
 //   CC 1  = mod wheel (universal)
 //   CC 2  = breath / Korg-style joystick Y-axis
-//   CC 71 = "resonance" (GM2 spec — only sent by mappable knobs)
-//   CC 74 = "brightness/filter" (GM2 spec — same caveat)
+//   CC 71 = "resonance" (GM2 spec: only sent by mappable knobs)
+//   CC 74 = "brightness/filter" (GM2 spec: same caveat)
 // If a route doesn't move, change its `cc:` to match what your gear sends.
 
 bpm = 120
@@ -38,8 +38,8 @@ midi_cc("pitch_bend", {pb: true, min: -2, max: 2})
 fn bend_mult() -> pow(2, pitch_bend / 12)
 
 fn lead({freq, gate, vel}) ->
-    osc("saw", freq * bend_mult()) * 0.55
-        + osc("sqr", glide(freq, 0.05) * bend_mult() * 0.5) * 0.3
+    saw(freq * bend_mult()) * 0.55
+        + sqr(glide(freq, 0.05) * bend_mult() * 0.5) * 0.3
         |> lp(@, cutoff, res)
         |> @ * adsr(gate, 0.01, 0.15, 0.75, 0.35) * vel * amp
 

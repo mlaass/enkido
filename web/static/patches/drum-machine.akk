@@ -15,7 +15,7 @@ s"[bd cp] hh [bd,sd] [hh ~ <rim*3 oh>] bd [bd cp] [bd,sd] [hh*4]"
 s"~ hh ~ hh ~ hh ~ <hh oh>" |> out(@)
 
 // Sub-bass cycling three (3,8) tresillos and one (5,8) cinquillo, fattened with saturation
-osc("sin", 55.555) * ar(euclid(v"<3 3 3 5>".slow(4), 8), 0.02, 0.45) * 1.2
+sine( 55.555) * ar(euclid(v"<3 3 3 5>".slow(4), 8), 0.02, 0.45) * 1.2
     |> saturate(@, 5)
     |> lp(@, 420.69)
     |> out(@ * 0.5)

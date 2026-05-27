@@ -1,14 +1,15 @@
-// Generative texture — slow LFOs at incommensurate rates modulate
+// Generative texture: slow LFOs at incommensurate rates modulate
 // frequency and filter cutoff. Nothing repeats exactly, but the
 // contour drifts inside a comfortable musical range.
 
 bpm = 80
 
-slow1 = osc("sin", 0.073) * 200 + 220
-slow2 = osc("tri", 0.041) * 1200 + 1800
+slow1 = sine( 0.073) * 200 + 220
+slow2 = tri( 0.041) * 1200 + 1800
+slow3 = sine(.0923) + 1
 
-osc("saw", slow1) * 0.12
-    |> lp(@, slow2, 1.4)
-    |> @ * 0.5 + freeverb(@, 0.8, 0.6) * 0.25
+  saw_pwm(slow1*sine(55 + slow3 * 12) , slow3/2) * 0.12 
+    |> lp(@, slow2, 1.4)    
+    |> reverb(@, 0.8, 0.6, ..{dry:0.5, wet: 0.2}) 
     |> limiter(@, -1)
     |> out(@)

@@ -1,11 +1,9 @@
-// Chorus + saw lead — `chorus()` outputs 100% wet, so we mix dry
-// and wet manually (`dry * 0.4 + chorus(dry, ...) * 0.6`) for a
-// thickened lead that occupies both stereo channels.
+// Chorus Saw lead: thickened lead that occupies both stereo channels.
 
 bpm = 110
 
-dry = n"c4 eb4 g4 bb4 c5 bb4 g4 eb4"
-    |> osc("saw", @freq) * ar(@trig, 0.005, 0.18) * 0.4
+n"c2 eb2 g2 bb2 c3 bb2 g2 eb2".fast(2)
+    |> saw(@freq) + tri(@freq*4) * ar(@trig, 0.005, 0.18) * 0.4
     |> lp(@, 2400)
-
-dry * 0.4 + chorus(dry, 0.6, 0.5) * 0.6 |> out(@)
+    |> chorus(@, 0.6, 0.9, 40) 
+    |> out(@)

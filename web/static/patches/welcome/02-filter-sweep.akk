@@ -1,10 +1,10 @@
-// Saw + filter sweep — a slow LFO drags the lowpass cutoff up and
+// Saw + filter sweep: a slow LFO drags the lowpass cutoff up and
 // down for classic "wah" tone-shaping. Move `0.15` (Hz) to sweep
 // faster; raise the `1.8` resonance to make the filter sing.
 
 bpm = 120
 
-cutoff = osc("sin", 0.15) * 1200 + 1600
-osc("saw", 110) * 0.3
+cutoff = sine( 0.15) * 1200 + 1600
+saw(110) * 0.3
     |> lp(@, cutoff, 1.8)
     |> out(@)

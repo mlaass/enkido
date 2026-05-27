@@ -1,4 +1,4 @@
-// Chord Stab — a slow chord progression with a filter envelope.
+// Chord Stab: a slow chord progression with a filter envelope.
 // `chord()` emits a polyphonic event stream (one event per chord,
 // with up to 3 voices per event). `poly(input, instr, voices=64)`
 // allocates voices and runs the instrument `(freq, gate, vel) -> ...`

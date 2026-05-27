@@ -1,11 +1,10 @@
-// Arpeggio + dotted-eighth delay — a four-note arpeggio fed into a
-// long-feedback delay. The dotted-eighth (`0.375 s` at 120 BPM) is
-// the famous "U2 / The Edge" rhythmic echo trick.
+// Arpeggio + dotted-eighth delay: a four-note arpeggio fed into a
+// long-feedback delay. Using `spb` Seconds Per Beat to set the delay time.
 
 bpm = 120
 
 n"c4 e4 g4 b4"
-    |> osc("tri", @freq) * ar(@trig, 0.001, 0.18) * 0.4
+    |> tri( @freq) * ar(@trig, 0.001, 0.18) * 0.4
     |> lp(@, 3000)
-    |> @ + delay(@, 0.375, 0.55) * 0.7
+    |> delay(@, spb*1.333, 0.55, ..{wet: 0.75})
     |> out(@)

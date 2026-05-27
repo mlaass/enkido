@@ -1,4 +1,4 @@
-// Euclidean rhythm — `euclid(hits, steps)` spreads N hits as evenly
+// Euclidean rhythm: `euclid(hits, steps)` spreads N hits as evenly
 // as possible over M steps. (3,8) is the tresillo found in Cuban,
 // West African, and bluegrass music. Try (5,8) or (7,16).
 
@@ -6,7 +6,7 @@ bpm = 110
 
 s"bd ~ ~ ~" |> out(@)
 
-osc("sin", 55) * ar(euclid(3, 8), 0.005, 0.4) * 0.7
+sine( 55) * ar(euclid(3, 8), 0.005, 0.4) * 0.7
     |> saturate(@, 3)
     |> lp(@, 500)
     |> out(@)

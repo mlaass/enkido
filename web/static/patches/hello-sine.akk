@@ -1,4 +1,4 @@
-// Oscillators — the smallest possible Akkado patch, plus a touch of
+// Oscillators: the smallest possible Akkado patch, plus a touch of
 // vibrato to show how oscillators compose: an LFO modulates the
 // frequency of a sine, and the result goes to both stereo channels.
 //
@@ -7,5 +7,5 @@
 
 bpm = 120
 
-vibrato = osc("sin", 5) * 3
-osc("sin", 440 + vibrato) * 0.3 |> out(@)
+vibrato = sine( 5) * 3
+sine( 440 + vibrato) * 0.3 |> out(@)

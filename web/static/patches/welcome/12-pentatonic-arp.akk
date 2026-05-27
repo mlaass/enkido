@@ -1,11 +1,12 @@
-// Pentatonic arp — an A-minor pentatonic scale stepped one note per
-// 16th. The AR envelope gives each note a percussive pluck; the
+// Plucky arp: an distilled blues scale stepped one note per beat
+// The ar envelope gives each note a percussive pluck; the
 // lowpass softens the highs; the delay adds rhythmic echoes.
 
 bpm = 120
 
-n"a3 c4 d4 e4 g4 e4 d4 c4"
-    |> osc("tri", @freq) * ar(@trig, 0.001, 0.25) * 0.4
+
+n"a3 c4 d#4 e4 g4 e4 d#4 c4"
+    |> tri( @freq) * ar(@trig, 0.001, 0.25) * 0.4
     |> lp(@, 2400)
-    |> @ + delay(@, 0.375, 0.4) * 0.35
+    |> delay(@, 0.375, 0.4)
     |> out(@)

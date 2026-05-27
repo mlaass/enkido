@@ -20,5 +20,5 @@ notes
 as voice
 
 voice
-    |> @ + freeverb(@, 0.5, 0.5) * 0.4
+    |> @ + reverb(@, 0.5, 0.5) * 0.4
     |> out(@)

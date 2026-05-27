@@ -1,6 +1,6 @@
 // Stepper Demo: userspace `step` and `step_dir` written entirely in Akkado.
 //
-// Both operators are implemented here using only primitives : 
+// Both operators are implemented here using only primitives: 
 // `counter()` for index advancement, `state()` for
 // per-instance storage, `gateup()` for trigger detection.
 // Uniform Function Call Syntax (UFCS) makes `array.step(trig)` read naturally as a method call.
@@ -9,7 +9,7 @@
 bpm = 120
 
 // step(xs, trig): walks `xs` cyclically on every rising edge of `trig`.
-// ARRAY_INDEX wraps by default, so an unbounded `counter` index is fine —
+// ARRAY_INDEX wraps by default, so an unbounded `counter` index is fine:
 // no need for an explicit wrap(..., 0, len(xs)) here.
 fn step (xs, trig) -> xs[counter(trig)]
 
@@ -25,10 +25,10 @@ fn step_dir (xs, trig, dir) -> {
 // MIDI notes for an A minor pentatonic arpeggio
 notes = [57, 60, 64, 67, 72]
 
-// Forward stepper at 16th notes — index walks 0,1,2,3,4,0,1,2,...
+// Forward stepper at 16th notes: index walks 0,1,2,3,4,0,1,2,...
 melody = notes.step(trigger(4))
 
-// Same notes, octave down, walking BACKWARD at 8th notes — index walks
+// Same notes, octave down, walking BACKWARD at 8th notes: index walks
 // 0,-1,-2,-3,... and ARRAY_INDEX wraps to keep us inside the array.
 bass = notes.step_dir(trigger(2), -1)
 

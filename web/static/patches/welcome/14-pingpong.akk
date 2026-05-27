@@ -1,10 +1,10 @@
-// True stereo ping-pong delay — `pingpong()` is the dedicated stereo
+// True stereo ping-pong delay: `pingpong()` is the dedicated stereo
 // delay opcode; echoes bounce between left and right channels. The
 // mono source widens into stereo as the feedback decays.
 
 bpm = 110
 
-src = n"e4 ~ ~ b3 ~ ~ g4 ~"
-    |> osc("tri", @freq) * ar(@trig, 0.001, 0.3) * 0.4
-
-src + pingpong(src, src, 0.375, 0.6) * 0.7 |> out(@)
+n"e4 ~ ~ b3 ~ ~ g4 ~"
+  |> tri( @freq) * ar(@trig, 0.001, 0.3) * 0.4
+  |> pingpong(stereo(@, 0), 0.5,0.5)
+  |> out(@)

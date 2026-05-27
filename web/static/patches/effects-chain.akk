@@ -9,10 +9,12 @@ bpm = 110
 
 src = n"<a3 b3> e4 ab4 c#5 e5 c#5 ab4 e4"
     |> saw(@freq) * ar(trigger(4), 0.001, 0.18)
-    |> lp(@, 2200)
+    |> lp(@, 2200, 0.5 + ar(trigger(2)))
 
 src
     |> saturate(@, 3.5)            // soft tube-style drive
-    |> @+delay(@, 0.375, 0.45)     // dotted-eighth feedback
-    |> chorus(@, 0.6, 0.5)         // gentle width
+    |> delay(@, spb * 1.5, 0.45)   // dotted-eighth feedback
+    |> chorus(@, 0.7)              // gentle width
+    |> reverb(@, ..{wet:0.1})
+    |> comp(@ * 2, ..{ratio:1.5, attack:1, release: 30})
     |> out(@)

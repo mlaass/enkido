@@ -1,26 +1,25 @@
-// Arpeggio Demo — a chord arpeggiator written entirely in userspace.
+// Arpeggio Demo: a chord arpeggiator written entirely in userspace.
 //
 // Pattern events carry chord data. `e.notes` surfaces the current chord as a
 // dynamic array of MIDI numbers; `step()` (from the state primitives) walks
-// that array on every trigger. No C++ opcode per arpeggiator — just data.
+// that array on every trigger. No C++ opcode per arpeggiator: just data.
 
-bpm = 112
+bpm = 110
 
 // step(xs, trig): advance an index through `xs` on each rising edge.
-// ARRAY_INDEX wraps by default, so a free-running counter is fine — and
+// ARRAY_INDEX wraps by default, so a free-running counter is fine: and
 // because e.notes is a *dynamic* array, the wrap follows the chord size.
 fn step (xs, trig) -> xs[counter(trig)]
 
 // Four chords, one per cycle. Each `[a,b,c]` is a simultaneous chord.
 n"[c4,e4,g4] [a3,c4,e4] [f3,a3,c4] [g3,b3,d4]" as e
 
-// Sixteen steps per cycle — the index walks the 3-note chord, wrapping.
-trig = trigger(16)
+// 4 steps per beat: the index walks the 3-note chord, wrapping.
+trig = trigger(4)
 
-e.notes.step(trig)              // dynamic array -> the stepped MIDI note
+step(e.notes, trig)              // dynamic array -> the stepped MIDI note
   |> mtof(@)                     // MIDI -> Hz
-  |> osc("saw", @)               // saw voice
+  |> saw(@)                      // saw voice
   |> lp(@, 1600, 2)              // tame the top end
   |> @ * ar(trig, 0.004, 0.14)   // pluck envelope, retriggered each step
-  |> @ * 0.32
-  |> out(@)
+  |> out(@ * 0.3)

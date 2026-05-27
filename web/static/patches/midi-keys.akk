@@ -1,4 +1,4 @@
-// MIDI Keys — live MIDI input via `midi() |> poly(@, instrument, voices)`.
+// MIDI Keys: live MIDI input via `midi() |> poly(@, instrument, voices)`.
 //
 // Plug in a USB controller, run `nkido-cli play web/static/patches/midi-keys.akk`,
 // and play notes. Bare `midi()` opens the first available MIDI input port;
@@ -8,7 +8,7 @@
 // velocity-modulated filter envelope, so soft notes are dark and hard notes
 // open up. Live sliders let you tweak the tone while you play.
 //
-// Known limitation: faint click at note-off — see `docs/prd-midi-input.md`
+// Known limitation: faint click at note-off: see `docs/prd-midi-input.md`
 // §"Future". Root cause is poly's gate-multiplied accumulation
 // (prd-polyphony-system.md §2.7) silencing ADSR release tails in one
 // sample; fix lives in the polyphony PRD, not here.
@@ -21,12 +21,12 @@ res         = param("res",    0.4, 0,    1)
 verb_mix    = param("verb",   0.25, 0,   1)
 
 fn lead({freq, gate, vel}) ->
-    osc("saw", freq) * 0.6 + osc("sqr", freq * 0.5) * 0.3
+    saw(freq) * 0.6 + sqr(freq * 0.5) * 0.3
         |> lp(@, cutoff_base + env_amount * vel * ar(gate, 0.005, 0.4), res)
         |> @ * adsr(gate, 0.05, 0.2, 0.7, 0.3) * vel
 
 midi()
     |> poly(@, lead, 8)
-    |> @ * (1.0 - verb_mix) + freeverb(@, 0.7, 0.5) * verb_mix
+    |> @ * (1.0 - verb_mix) + reverb(@, 0.7, 0.5) * verb_mix
     |> out(@)
 

@@ -1,10 +1,10 @@
-// Wind through trees — broadband noise filtered by a breathing
+// Wind through trees: broadband noise filtered by a breathing
 // lowpass. The slow LFO modulates the cutoff like gusts of air.
 // Drop the highpass or move the rates for different weather.
 
 bpm = 100
 
-breath = osc("sin", 0.18) * 600 + 1000
+breath = sine( 0.18) * 600 + 1000
 noise() * 0.3
     |> lp(@, breath, 2.0)
     |> hp(@, 200)

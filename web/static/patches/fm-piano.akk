@@ -1,9 +1,9 @@
-// FM Synth — Rhodes-style electric piano via FM synthesis.
+// FM Synth: Rhodes-style electric piano via FM synthesis.
 // Two-operator FM (carrier + modulator) with a percussive AR envelope,
 // driven polyphonically by a chord progression.
 //
 // The bell-like attack comes from a high modulation index that decays
-// to a softer steady-state — classic DX7 EP voicing.
+// to a softer steady-state: classic DX7 EP voicing.
 
 
 bpm = 96
@@ -12,9 +12,9 @@ ep = ({freq, gate, vel}) -> {
     // Modulator at double frequency, scaled by an AR envelope so the
     // FM index is high at attack and decays toward zero.
     mod_env = ar(gate, 0.001, 0.6)
-    mod = osc("tri", freq) * mod_env * freq * 1.2
+    mod = tri( freq) * mod_env * freq * 1.2
     // Carrier reads the modulator on its frequency input.
-    osc("sin", (freq/2 + mod) ) * ar(gate, 0.005, 1.4) * vel
+    sine( (freq/2 + mod) ) * ar(gate, 0.005, 1.4) * vel
 }
 
 chord("Cmaj7 Am9 Dm9 G13")

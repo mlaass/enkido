@@ -1,21 +1,20 @@
-// Harmonizer Demo — turn a single melody line into triads.
+// Harmonizer Demo: turn a single melody line into triads.
 //
 // For every melody note, `map()` over a static interval array builds a
 // 3-note chord [root, +major third, +fifth]. A static array fans a stateful
-// UGen out at compile time, so `osc()` over the array becomes three
+// UGen out at compile time, so `saw()` over the array becomes three
 // oscillators; `sum()` mixes them back to one voice.
 
 bpm = 96
 
-// A plain monophonic melody — e.note is the scalar MIDI number.
+// A plain monophonic melody: e.note is the scalar MIDI number.
 n"c4 e4 g4 e4 a3 c4 e4 d4" as e
 
 // Stack a major third and a fifth on top of each note.
 triad = map([0, 4, 7], (i) -> e.note + i)   // static 3-element array
 
-// osc() fans out over the static array -> three saws; sum() mixes them.
-sum(osc("saw", mtof(triad)))
+// functions applied to arrays map to arrays sum collapses
+triad.mtof().saw().sum()
   |> lp(@, 2000, 2)                          // soften the stack
   |> @ * ar(e.trig, 0.012, 0.35)             // shared pluck envelope
-  |> @ * 0.16
-  |> out(@)
+  |> out(@*0.5)

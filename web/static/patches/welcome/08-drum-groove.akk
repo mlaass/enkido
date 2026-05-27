@@ -1,11 +1,11 @@
-// Nested mini-notation drum groove — square brackets subdivide a
-// beat, commas stack hits in parallel, and `<>` cycles between
-// alternatives once per bar. Read the pattern aloud to hear it.
+// Nested mini-notation drum groove: square brackets subdivide a
+// beat and `<>` cycles between alternatives once per bar. 
+// multiply the "speed" of what is in front of *
 
 bpm = 110
 
-s"bd [bd ~] sd [bd <sd hh>]"
+s"bd bd sd [bd <sd [rim rim]>]"
     |> out(@)
 
-s"hh ~ hh hh ~ hh ~ <hh oh>"
+s"<hh ~ hh hh ~ hh ~ <hh oh>>*2"
     |> out(@ * 0.5)

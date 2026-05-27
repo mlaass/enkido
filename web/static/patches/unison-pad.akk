@@ -2,21 +2,22 @@
 // `unison()` composes with `poly()`: wrap unison in a 3-arg instrument and
 // hand it to `poly`. Each chord note triggers its own detuned unison cluster,
 // so a 4-voice chord with `voices: 4` unison runs up to 16 oscillators at
-// once. CPU scales with `poly_voices * unison_voices` — keep both modest.
+// once. CPU scales with `poly_voices * unison_voices`: keep both modest.
 
 bpm = 72
 
 fn pad_voice(freq, gate, vel, ext) ->
-    saw(freq, ext.phase) * adsr(gate, 0.4, 0.6, 0.7, 1.2) * vel
+    saw(freq, ext.phase) * adsr(gate, 0.4, 0.6, 0.7, 1.2) * vel    
+    |> lp(@, 1800)
+    
 
 // fat(): a normal 3-arg poly instrument that fans each note into 4 detuned
 // unison voices. `unison` always returns stereo, so `poly` will too.
 fn fat({freq, gate, vel}) ->
     unison(freq, gate, vel, pad_voice,
-           voices: 4, detune: 0.25, width: 0.7, phase: 0.5)
+           voices: 4, detune: 0.25, width: 0.7, phase: 0.5)*0.2
 
-chord("Cmaj9 Am11 Fmaj7 G13")
+chord("Cmaj9 Am11 Fmaj7 G9")
     |> poly(@, fat, 4)
-    |> lp(@, 1800)
-    |> @ * 0.6 + freeverb(@, 0.75, 0.6) * 0.4
+    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})
     |> out(@)
