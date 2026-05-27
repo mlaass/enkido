@@ -12,6 +12,7 @@
 #include "akkado/akkado.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -348,4 +349,180 @@ TEST_CASE("cycle_timing: chord pattern with top-level /N (user-reported bug)",
     REQUIRE(si != nullptr);
 
     CHECK(si->cycle_length == Catch::Approx(4.0f));
+}
+
+// ============================================================================
+// Top-level rest regression: `n"c4 ~ ~ ~"`, `s"bd ~ ~ ~"`, …
+// User report: rests in top-level patterns produce spurious trigger pulses
+// and/or the wrong pitch rotates between cycles, instead of one-event-per-
+// cycle alternation with silent rest cycles. These tests pin the *compiled
+// sequence shape* — `num_values == 0` for rest entries, correct freq for
+// non-rest entries — so a regression in the audio path is provably not a
+// regression in codegen (or vice versa).
+// ============================================================================
+
+namespace {
+
+// Per-event num_values across an alternate sub-sequence (sequence_events[1]),
+// in alternate-step order. ALTERNATE-mode events are written in the same
+// order they were added to the sub-sequence (no time-sort applies because
+// every alternate child shares time=0).
+std::vector<int> alternate_num_values(const akkado::StateInitData& si) {
+    std::vector<int> out;
+    if (si.sequence_events.size() < 2) return out;
+    for (const auto& e : si.sequence_events[1]) {
+        out.push_back(static_cast<int>(e.num_values));
+    }
+    return out;
+}
+
+// Per-event freq for events with num_values >= 1, in the same ordering.
+// For rest entries (num_values == 0) we push NaN so a stray match would
+// stand out.
+std::vector<float> alternate_voice0_freqs(const akkado::StateInitData& si) {
+    std::vector<float> out;
+    if (si.sequence_events.size() < 2) return out;
+    for (const auto& e : si.sequence_events[1]) {
+        out.push_back(e.num_values >= 1 ? e.values[0]
+                                        : std::numeric_limits<float>::quiet_NaN());
+    }
+    return out;
+}
+
+constexpr float kFreqC4 = 261.6256f;
+constexpr float kFreqE5 = 659.2551f;
+constexpr float kFreqD3 = 146.8324f;
+constexpr float kFreqE4 = 329.6276f;
+constexpr float kFreqB3 = 246.9417f;
+constexpr float kFreqG4 = 391.9954f;
+
+}  // namespace
+
+TEST_CASE("cycle_timing: top-level rest `n\"c4 ~ ~ ~\"` → 4 alternate events with [1,0,0,0]",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    auto result = akkado::compile(R"(n"c4 ~ ~ ~")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);  // one SUB_SEQ in root
+    REQUIRE(si->sequence_events[1].size() == 4);  // 4 alternate choices
+
+    auto nv = alternate_num_values(*si);
+    REQUIRE(nv == std::vector<int>{1, 0, 0, 0});
+
+    auto freqs = alternate_voice0_freqs(*si);
+    CHECK(freqs[0] == Catch::Approx(kFreqC4).margin(0.5f));
+}
+
+TEST_CASE("cycle_timing: 12-element rest pattern `n\"c4 ~ ~ ~ e5 ~ ~ ~ d3 ~ ~ ~\"`",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    auto result = akkado::compile(R"(n"c4 ~ ~ ~ e5 ~ ~ ~ d3 ~ ~ ~")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    REQUIRE(si->sequence_events[1].size() == 12);
+
+    auto nv = alternate_num_values(*si);
+    REQUIRE(nv == std::vector<int>({1,0,0,0, 1,0,0,0, 1,0,0,0}));
+
+    auto freqs = alternate_voice0_freqs(*si);
+    CHECK(freqs[0] == Catch::Approx(kFreqC4).margin(0.5f));
+    CHECK(freqs[4] == Catch::Approx(kFreqE5).margin(0.5f));
+    CHECK(freqs[8] == Catch::Approx(kFreqD3).margin(0.5f));
+}
+
+TEST_CASE("cycle_timing: top-level rest `s\"bd ~ ~ ~\"` → 4 alternate events with [1,0,0,0]",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    auto result = akkado::compile(R"(s"bd ~ ~ ~" |> out(@))");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    CHECK(si->is_sample_pattern == true);
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    REQUIRE(si->sequence_events[1].size() == 4);
+
+    auto nv = alternate_num_values(*si);
+    REQUIRE(nv == std::vector<int>{1, 0, 0, 0});
+}
+
+TEST_CASE("cycle_timing: 8-element interleaved rest pattern `n\"e4 ~ ~ b3 ~ ~ g4 ~\"`",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    auto result = akkado::compile(R"(n"e4 ~ ~ b3 ~ ~ g4 ~")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    REQUIRE(si->sequence_events[1].size() == 8);
+
+    auto nv = alternate_num_values(*si);
+    REQUIRE(nv == std::vector<int>({1,0,0, 1,0,0, 1,0}));
+
+    auto freqs = alternate_voice0_freqs(*si);
+    CHECK(freqs[0] == Catch::Approx(kFreqE4).margin(0.5f));
+    CHECK(freqs[3] == Catch::Approx(kFreqB3).margin(0.5f));
+    CHECK(freqs[6] == Catch::Approx(kFreqG4).margin(0.5f));
+}
+
+TEST_CASE("cycle_timing: rest inside [...] subdivision `n\"[c4 ~ ~ ~]\"`",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    // [c4 ~ ~ ~] is a single-child top-level wrap → inlines via the
+    // single-child alternate guard → compile_group_events fills the root
+    // directly with 4 DATA events at 0, 0.25, 0.5, 0.75.
+    auto result = akkado::compile(R"(n"[c4 ~ ~ ~]")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 1);
+    REQUIRE(si->sequence_events[0].size() == 4);
+
+    // Events are kept in insertion order (compile_group_events appends
+    // children left-to-right at increasing time_offset).
+    const auto& evs = si->sequence_events[0];
+    CHECK(evs[0].time == Catch::Approx(0.0f).margin(0.001f));
+    CHECK(evs[1].time == Catch::Approx(0.25f).margin(0.001f));
+    CHECK(evs[2].time == Catch::Approx(0.5f).margin(0.001f));
+    CHECK(evs[3].time == Catch::Approx(0.75f).margin(0.001f));
+
+    CHECK(static_cast<int>(evs[0].num_values) == 1);
+    CHECK(static_cast<int>(evs[1].num_values) == 0);
+    CHECK(static_cast<int>(evs[2].num_values) == 0);
+    CHECK(static_cast<int>(evs[3].num_values) == 0);
+
+    CHECK(evs[0].values[0] == Catch::Approx(kFreqC4).margin(0.5f));
+}
+
+TEST_CASE("cycle_timing: explicit alternation `n\"<c4 e5 d3>\"` → 3 alternate events",
+          "[codegen][patterns][cycle_timing][rest_regression]") {
+    auto result = akkado::compile(R"(n"<c4 e5 d3>")");
+    REQUIRE(result.success);
+    const auto* si = find_seq_init(result);
+    REQUIRE(si != nullptr);
+
+    CHECK(si->cycle_length == Catch::Approx(1.0f));
+    REQUIRE(si->sequence_events.size() >= 2);
+    REQUIRE(si->sequence_events[0].size() == 1);
+    REQUIRE(si->sequence_events[1].size() == 3);
+
+    auto nv = alternate_num_values(*si);
+    REQUIRE(nv == std::vector<int>{1, 1, 1});
+
+    auto freqs = alternate_voice0_freqs(*si);
+    CHECK(freqs[0] == Catch::Approx(kFreqC4).margin(0.5f));
+    CHECK(freqs[1] == Catch::Approx(kFreqE5).margin(0.5f));
+    CHECK(freqs[2] == Catch::Approx(kFreqD3).margin(0.5f));
 }

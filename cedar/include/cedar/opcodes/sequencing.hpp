@@ -484,6 +484,32 @@ inline void op_seqpat_step(ExecutionContext& ctx, const Instruction& inst) {
         bool wrapped = (state.last_beat_pos >= 0.0f &&
                         beat_pos < state.last_beat_pos - wrap_threshold);
         if (wrapped) {
+            // Cycle just wrapped mid-block. SEQPAT_QUERY runs once per block at
+            // its starting sample, so state.output here still holds the
+            // just-finished cycle's events. For ALTERNATE-mode patterns each
+            // cycle yields a *different* event (e.g. `c4 ~ ~ ~` rotates note →
+            // rest → rest → rest); without a mid-block refresh the trigger
+            // logic below crosses the *previous* cycle's events[0] and fires a
+            // spurious trigger on every cycle that follows a note. Re-query
+            // now so the new cycle's events drive the rest of this block.
+            // Only re-query through the SequenceProgram path. Tests that
+            // pre-fill state.output without installing sequences (e.g.
+            // test_seqpat_step.cpp's install_step_test_state) leave
+            // num_sequences == 0; for them the existing per-block events
+            // are the source of truth and we leave state.output alone.
+            if (!external_clock && state.num_sequences > 0) {
+                float new_beat_start =
+                    static_cast<float>(ctx.global_sample_counter + i) / spb;
+                float new_cycle = std::floor(new_beat_start / state.cycle_length);
+                if (new_cycle != state.last_queried_cycle) {
+                    state.last_queried_cycle = new_cycle;
+                    state.cycle_index = static_cast<std::uint32_t>(new_cycle);
+                    query_pattern(state,
+                                  static_cast<std::uint64_t>(new_cycle),
+                                  state.cycle_length);
+                    // query_pattern resets current_index = 0
+                }
+            }
             state.current_index = 0;
         }
 
