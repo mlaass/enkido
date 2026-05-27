@@ -60,6 +60,7 @@ add_executable(akkado_tests
     test_transport.cpp
     test_sample_emission_golden.cpp
     test_hot_swap_determinism.cpp
+    test_hot_swap_record_options.cpp
     test_fuzz_determinism.cpp
     test_fuzz_recompile_audio.cpp
 )
