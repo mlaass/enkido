@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Growable chunked BufferPool.** Cedar's `BufferPool` now backs its
+  registers with up to 64 lazily-allocated 256-buffer slabs (default
+  cap raised from 256 to 16384 total). Slab pointers are stable across
+  growth, so the audio thread's in-flight reads survive a hot-swap
+  that armed new slabs on the compile thread. Hosts (nkido CLI play /
+  serve / ui / render and the web/wasm worklet) call
+  `pool.ensure_capacity(required_buffers)` off-cycle before publishing
+  the new bytecode.
+- **`CompileResult::required_buffers`.** Codegen now reports the peak
+  distinct buffer indices used by the program so hosts can size the
+  pool exactly. Backwards compatible: hosts that ignore the field still
+  work for programs that fit in the default slab.
+
+### Changed
+
+- **Codegen sum/mix accumulator.** `sum()` and `mean()` over arrays now
+  emit one accumulator buffer + N-1 in-place ADD instructions instead
+  of an N-1-buffer linear chain. Programs that fan out wide (e.g.
+  `unison(..., voices: 8)` summed under `poly`) no longer exhaust the
+  pool on the per-voice sum. Bit-identical output.
+- **`BufferAllocator` reuses freed indices.** Codegen now has a
+  `BufferAllocator::release(idx)` that puts indices back into a LIFO
+  free list. `reset_to(mark)` drains free-list entries past the mark.
+  Used by the sum/mix accumulator and reserved for future
+  refcount-driven release across general opcodes.
+- **`cedar::MAX_BUFFERS` semantics.** Previously the size of a single
+  flat buffer array (256). Now the total addressable buffer index
+  space (16384 by default). Per-slab size lives in
+  `cedar::SLAB_BUFFERS`. The `CEDAR_MAX_BUFFERS` build flag still
+  works; it must be a positive multiple of `SLAB_BUFFERS`.
+- **`BUFFER_ZERO` is now an explicit constant.** Pinned at 255 (last
+  slot of slab 0) so it stays in the pre-allocated slab regardless of
+  any future cap changes.
+
 ## [0.4.1] - 2026-05-28
 
 ### ⚠ BREAKING — CLI binaries renamed: `nkido-cli` → `nkido`, `akkado-cli` → `akkado`

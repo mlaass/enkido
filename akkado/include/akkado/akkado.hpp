@@ -84,6 +84,13 @@ struct CompileResult {
     // registry, and block bytecode swap until every URI resolves.
     std::vector<UriRequest> required_uris;
 
+    // Peak distinct buffer indices the compiled program references. Hosts
+    // call `vm.buffers().ensure_capacity(required_buffers)` off the audio
+    // cycle (compile/hot-swap thread) before publishing the new bytecode,
+    // so the chunked BufferPool grows to fit the program. Zero on
+    // unsuccessful compiles.
+    std::uint32_t required_buffers = 0;
+
     // Phase 2 records-system-unification: analyzer outputs retained for
     // downstream tooling (e.g. shape index serialization). Populated by
     // compile() whenever the corresponding pass runs, including on early-

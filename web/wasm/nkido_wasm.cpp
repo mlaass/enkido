@@ -138,6 +138,15 @@ WASM_EXPORT int cedar_load_program(const uint8_t* bytecode, uint32_t byte_count)
     size_t inst_count = byte_count / INST_SIZE;
     auto instructions = reinterpret_cast<const cedar::Instruction*>(bytecode);
 
+    // Grow the buffer pool to fit the new program's peak before the load
+    // crossfade arms. JS host calls this on the main thread, not the
+    // AudioWorklet processor — heap allocation is safe here, and the
+    // chunked BufferPool keeps existing slab pointers stable for any
+    // reads still in flight from the previous program.
+    if (g_compile_result.required_buffers > 0) {
+        g_vm->buffers().ensure_capacity(g_compile_result.required_buffers);
+    }
+
     // PRD prd-runtime-functions-control-flow L3: if the most recent compile
     // produced FOREACH_EVENT subprogram blocks, stage their table for this
     // load. The bytecode passed here is g_compile_result.bytecode, so the

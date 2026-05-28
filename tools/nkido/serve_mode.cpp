@@ -995,6 +995,14 @@ void handle_command_line(ServeState& s, const std::string& line) {
                 return;
             }
             resolve_sample_ids_in_events(s.engine->vm(), cr);
+            // Grow the buffer pool to fit the new program's peak before
+            // the crossfade arms. Runs on the compile/serve thread; the
+            // chunked BufferPool keeps existing slab pointers stable so
+            // the audio thread's in-flight reads of the previous program
+            // remain valid.
+            if (cr.required_buffers > 0) {
+                s.engine->vm().buffers().ensure_capacity(cr.required_buffers);
+            }
             // PRD L3: stage the FOREACH_EVENT subprogram table for this hot-swap.
             s.engine->vm().set_block_table(cr.block_table, cr.main_instruction_count);
             auto load_result = s.engine->vm().load_program(load.instructions);

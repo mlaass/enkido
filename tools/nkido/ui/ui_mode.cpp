@@ -289,6 +289,14 @@ void UIMode::compile_and_play() {
             return;
         }
         resolve_sample_ids_in_events(engine_.vm(), cr);
+        // Grow the buffer pool to fit the new program's peak before the
+        // crossfade arms. We're on the UI/load thread; the audio thread
+        // is still running the previous program against its own
+        // (smaller) buffer set, and chunked slabs keep existing slab
+        // pointers stable across growth.
+        if (cr.required_buffers > 0) {
+            engine_.vm().buffers().ensure_capacity(cr.required_buffers);
+        }
         // PRD L3: stage the FOREACH_EVENT subprogram table for this hot-swap.
         engine_.vm().set_block_table(cr.block_table, cr.main_instruction_count);
         auto load_result = engine_.vm().load_program(load.instructions);

@@ -15,6 +15,71 @@ using Catch::Matchers::WithinAbs;
 // Unit Tests [buffer_pool]
 // ============================================================================
 
+// ============================================================================
+// Chunked-slab growth (Phase B)
+// ============================================================================
+
+TEST_CASE("BufferPool grows in slabs via ensure_capacity", "[buffer_pool][grow]") {
+    BufferPool pool;
+
+    SECTION("default construction preallocates slab 0") {
+        // SLAB_BUFFERS - 1 (BUFFER_ZERO) and every prior index must be live
+        // without an explicit ensure_capacity call.
+        CHECK(pool.active_slabs() >= 1);
+        REQUIRE(pool.get(0) != nullptr);
+        REQUIRE(pool.get(BUFFER_ZERO) != nullptr);
+    }
+
+    SECTION("ensure_capacity is idempotent") {
+        const auto initial = pool.active_slabs();
+        pool.ensure_capacity(SLAB_BUFFERS);
+        CHECK(pool.active_slabs() == initial);
+    }
+
+    SECTION("ensure_capacity grows exactly enough slabs") {
+        // Asking for SLAB_BUFFERS + 1 must give us 2 slabs.
+        pool.ensure_capacity(SLAB_BUFFERS + 1);
+        CHECK(pool.active_slabs() == 2);
+        // Asking for half a slab past that bumps to 3.
+        pool.ensure_capacity(2 * SLAB_BUFFERS + SLAB_BUFFERS / 2);
+        CHECK(pool.active_slabs() == 3);
+    }
+
+    SECTION("existing buffer pointers survive growth") {
+        // Write a marker into slab 0, grow the pool, re-read — value must
+        // be intact (chunked layout never moves existing slabs).
+        float* before = pool.get(42);
+        before[0] = 1.25f;
+        before[BLOCK_SIZE - 1] = -3.5f;
+
+        pool.ensure_capacity(MAX_BUFFERS);  // arm every slab
+
+        float* after = pool.get(42);
+        CHECK(after == before);
+        CHECK(after[0] == 1.25f);
+        CHECK(after[BLOCK_SIZE - 1] == -3.5f);
+    }
+
+    SECTION("buffers in grown slabs are 32-byte aligned") {
+        pool.ensure_capacity(MAX_BUFFERS);
+        for (std::uint16_t idx : {SLAB_BUFFERS, 2 * SLAB_BUFFERS, 10 * SLAB_BUFFERS}) {
+            if (idx >= MAX_BUFFERS) continue;
+            auto addr = reinterpret_cast<std::uintptr_t>(pool.get(idx));
+            CHECK((addr % 32) == 0);
+        }
+    }
+
+    SECTION("indices in distinct slabs return distinct pointers") {
+        pool.ensure_capacity(3 * SLAB_BUFFERS);
+        float* a = pool.get(0);
+        float* b = pool.get(SLAB_BUFFERS);
+        float* c = pool.get(2 * SLAB_BUFFERS);
+        CHECK(a != b);
+        CHECK(b != c);
+        CHECK(a != c);
+    }
+}
+
 TEST_CASE("BufferPool basic operations", "[buffer_pool]") {
     BufferPool pool;
 
@@ -115,6 +180,9 @@ TEST_CASE("BufferPool edge cases", "[buffer_pool][edge]") {
     BufferPool pool;
 
     SECTION("boundary indices (0 and MAX_BUFFERS-1)") {
+        // BufferPool grows in slabs; pre-arm the last slab so
+        // get(MAX_BUFFERS-1) doesn't hit the un-armed fallback path.
+        pool.ensure_capacity(MAX_BUFFERS);
         float* ptr0 = pool.get(0);
         float* ptrMax = pool.get(MAX_BUFFERS - 1);
 
@@ -240,6 +308,9 @@ TEST_CASE("BufferPool edge cases", "[buffer_pool][edge]") {
 
 TEST_CASE("BufferPool stress test", "[buffer_pool][stress]") {
     BufferPool pool;
+    // Stress test picks random indices in [0, MAX_BUFFERS); pre-grow so
+    // every get() lands on a live slab.
+    pool.ensure_capacity(MAX_BUFFERS);
     std::mt19937 rng(42);
 
     SECTION("100000 random get/fill/copy operations") {

@@ -12,6 +12,7 @@
 #include <cedar/opcodes/sequence.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
 #include <cedar/opcodes/midi.hpp>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -365,38 +366,64 @@ struct CodeGenResult {
     std::vector<BuiltinVarOverride> builtin_var_overrides;  // Builtin variable overrides (bpm, sr)
     std::vector<RequiredWavetable> required_wavetables;  // Wavetable banks from wt_load()
     std::vector<UriRequest> required_uris;  // URI declarations from samples() etc.
+    std::uint32_t required_buffers = 0;  // Peak distinct buffer indices used (cedar::BufferPool::ensure_capacity input)
     bool success = false;
 };
 
-/// Buffer allocator for code generation
-/// Simple linear allocation with no reuse (MVP)
+/// Buffer allocator for code generation.
+///
+/// Hands out buffer indices to codegen. Backed by a high-water mark
+/// (`next_`) plus a free list of returned indices. `release(idx)` puts an
+/// index back for reuse; subsequent `allocate()` calls drain the free
+/// list LIFO before bumping the cursor again. This keeps `peak_count()`
+/// honest (true high-water mark of distinct indices ever in flight) while
+/// the live count is much smaller — what the BufferPool actually needs at
+/// runtime.
+///
+/// The address space is the full `cedar::MAX_BUFFERS`. Cedar's BufferPool
+/// grows in slabs lazily up to that cap; the engine calls
+/// `BufferPool::ensure_capacity(peak_count())` before publishing a
+/// compiled program. Index `cedar::BUFFER_ZERO` (= 255) is reserved as
+/// the always-zero scratch slot and is skipped by `allocate()`.
 class BufferAllocator {
 public:
-    static constexpr std::uint16_t MAX_BUFFERS = 256;
+    static constexpr std::uint16_t MAX_BUFFERS =
+        static_cast<std::uint16_t>(cedar::MAX_BUFFERS);
     static constexpr std::uint16_t BUFFER_UNUSED = 0xFFFF;
-    // Buffer 255 is reserved for BUFFER_ZERO (always contains 0.0)
-    static constexpr std::uint16_t MAX_ALLOCATABLE = 255;
+    // BUFFER_ZERO (= 255) is reserved; allocator skips it.
+    static constexpr std::uint16_t MAX_ALLOCATABLE = MAX_BUFFERS;
 
     BufferAllocator() = default;
 
-    /// Allocate a new buffer
-    /// Returns BUFFER_UNUSED if pool exhausted
+    /// Allocate a buffer. Pops from the free list if non-empty, else bumps
+    /// the high-water mark. Returns BUFFER_UNUSED only if both routes fail.
     [[nodiscard]] std::uint16_t allocate();
 
-    /// Get current allocation count
+    /// Return a buffer index for reuse. Safe to call with BUFFER_UNUSED
+    /// (no-op). Indices >= MAX_ALLOCATABLE (e.g. BUFFER_ZERO=255) are
+    /// rejected. Caller is responsible for not releasing a buffer that is
+    /// still live (i.e. still being read by a not-yet-emitted opcode).
+    void release(std::uint16_t idx);
+
+    /// Live high-water mark (distinct indices ever handed out). Equal to
+    /// the required BufferPool capacity for the compiled program.
     [[nodiscard]] std::uint16_t count() const { return next_; }
+    [[nodiscard]] std::uint16_t peak_count() const { return next_; }
 
     /// Roll the cursor back to a previous count() mark, reclaiming every
     /// buffer allocated since. Used to discard a speculative shared-`fn`
     /// block compile (PRD L2). Safe only when nothing outside the rolled-back
     /// region still references a buffer index >= mark.
-    void reset_to(std::uint16_t mark) { if (mark <= next_) next_ = mark; }
+    void reset_to(std::uint16_t mark);
 
     /// Check if any buffers available
-    [[nodiscard]] bool has_available() const { return next_ < MAX_ALLOCATABLE; }
+    [[nodiscard]] bool has_available() const {
+        return !free_list_.empty() || next_ < MAX_ALLOCATABLE;
+    }
 
 private:
     std::uint16_t next_ = 0;
+    std::vector<std::uint16_t> free_list_;
 };
 
 // Forward declaration: SequenceCompiler is defined in codegen_patterns.cpp.

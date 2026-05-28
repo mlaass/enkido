@@ -19,12 +19,32 @@ inline constexpr std::size_t BLOCK_SIZE = 128;
 inline constexpr float DEFAULT_SAMPLE_RATE = 48000.0f;
 inline constexpr float DEFAULT_BPM = 120.0f;
 
-// Memory limits (overridable via CEDAR_MAX_* defines)
+// Buffer pool layout.
+//
+// The pool is chunked into slabs so it can grow on hot-swap without
+// invalidating audio-thread pointers. Each slab holds SLAB_BUFFERS
+// SIMD-aligned, BLOCK_SIZE-sized buffers (contiguous memory). The pool
+// holds up to MAX_SLABS slabs; slab N is allocated lazily by
+// `BufferPool::ensure_capacity` when codegen demands more than
+// (N * SLAB_BUFFERS) distinct buffers.
+//
+// Audio-thread reads via `pool.get(idx)` only ever touch slabs that
+// were live before the currently-published program was atomically
+// installed, so growth from the compile thread never races a read.
+inline constexpr std::size_t SLAB_BUFFERS = 256;
+
+// MAX_BUFFERS = total addressable buffer indices. CEDAR_MAX_BUFFERS used
+// to set the size of a single fixed array; it now sets this cap, and
+// must be a positive multiple of SLAB_BUFFERS.
 #ifdef CEDAR_MAX_BUFFERS
 inline constexpr std::size_t MAX_BUFFERS = CEDAR_MAX_BUFFERS;
 #else
-inline constexpr std::size_t MAX_BUFFERS = 256;
+inline constexpr std::size_t MAX_BUFFERS = 16384;  // 64 slabs * 256
 #endif
+static_assert(MAX_BUFFERS > 0 && MAX_BUFFERS % SLAB_BUFFERS == 0,
+              "CEDAR_MAX_BUFFERS must be a positive multiple of SLAB_BUFFERS (256)");
+
+inline constexpr std::size_t MAX_SLABS = MAX_BUFFERS / SLAB_BUFFERS;
 
 #ifdef CEDAR_MAX_STATES
 inline constexpr std::size_t MAX_STATES = CEDAR_MAX_STATES;
@@ -70,10 +90,11 @@ inline constexpr std::size_t MAX_BLOCK_BODY = 255;
 // Special buffer indices
 inline constexpr std::uint16_t BUFFER_UNUSED = 0xFFFF;
 
-// Reserved buffer index for constant zero (always contains 0.0)
-// Used as default for optional inputs like phase offset and trigger
-// This buffer is reserved and should NEVER be used for program data
-inline constexpr std::uint16_t BUFFER_ZERO = static_cast<std::uint16_t>(MAX_BUFFERS - 1);
+// Reserved buffer index for constant zero (always contains 0.0). Lives at
+// the last slot of slab 0 so it stays valid from the very first VM block
+// (slab 0 is preallocated at VM construction). Codegen must never hand
+// this index out.
+inline constexpr std::uint16_t BUFFER_ZERO = static_cast<std::uint16_t>(SLAB_BUFFERS - 1);
 
 // Rate flags
 inline constexpr std::uint8_t RATE_AUDIO = 0;    // Process every sample

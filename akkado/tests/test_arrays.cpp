@@ -442,6 +442,23 @@ TEST_CASE("sum: reduces array with addition", "[arrays][sum]") {
         auto values = collect_consts(insts);
         CHECK(std::find(values.begin(), values.end(), 0.0f) != values.end());
     }
+
+    SECTION("8-element sum reuses one accumulator buffer") {
+        // The in-place accumulator emits N-1 ADDs but writes them all
+        // into the same output buffer, instead of allocating a fresh
+        // temp per ADD. A linear chain would burn 7 distinct buffers
+        // for 8 elements; we expect exactly 1.
+        auto result = must_compile("sum([1, 2, 3, 4, 5, 6, 7, 8])");
+        auto insts = get_instructions(result);
+        CHECK(count_instructions(insts, cedar::Opcode::ADD) == 7);
+        std::set<std::uint16_t> add_outs;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::ADD) {
+                add_outs.insert(inst.out_buffer);
+            }
+        }
+        CHECK(add_outs.size() == 1);
+    }
 }
 
 // =============================================================================
@@ -477,6 +494,14 @@ TEST_CASE("mean: arithmetic average", "[arrays][mean]") {
         // Sum (2 ADDs) + divide-by-length (1 DIV)
         CHECK(count_instructions(insts, cedar::Opcode::ADD) == 2);
         CHECK(count_instructions(insts, cedar::Opcode::DIV) == 1);
+        // Both ADDs share the same accumulator output buffer.
+        std::set<std::uint16_t> add_outs;
+        for (const auto& inst : insts) {
+            if (inst.opcode == cedar::Opcode::ADD) {
+                add_outs.insert(inst.out_buffer);
+            }
+        }
+        CHECK(add_outs.size() == 1);
     }
 
     SECTION("single element returns element") {
