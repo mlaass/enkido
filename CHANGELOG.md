@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.2] - 2026-05-28
 
 ### Added
 
+- **`_` placeholder in specialized call handlers.** The `_` argument
+  placeholder now works inside builtins routed through specialized
+  codegen call handlers, not just generic calls.
 - **Growable chunked BufferPool.** Cedar's `BufferPool` now backs its
   registers with up to 64 lazily-allocated 256-buffer slabs (default
   cap raised from 256 to 16384 total). Slab pointers are stable across
@@ -42,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BUFFER_ZERO` is now an explicit constant.** Pinned at 255 (last
   slot of slab 0) so it stays in the pre-allocated slab regardless of
   any future cap changes.
+
+### Fixed
+
+- **Live IDE deep links 404'd on `live.nkido.cc`.** Opening a shared
+  patch (`/p#code=…`) or any non-prerendered route returned Netlify's
+  "Page not found". The deploy never applied the repo's `netlify.toml`,
+  so the SPA fallback rewrite, `SharedArrayBuffer` COOP/COEP headers,
+  and immutable-asset caching were all missing in production. The deploy
+  now applies `netlify.toml` and also ships `_redirects` / `_headers` in
+  the build artifact.
+- **`scales` dispatcher compile failure on a non-literal scrutinee.**
+  Selecting a scale with a runtime (non-literal) argument no longer
+  fails to compile.
 
 ## [0.4.1] - 2026-05-28
 
