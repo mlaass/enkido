@@ -685,3 +685,230 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
     }
 }
 
+// ============================================================================
+// Regression: hot-swap inside a unison()/poly() body with ADSR + reverb
+// ============================================================================
+//
+// Second user report after the first fix (commit 1fd6c95) landed: editing
+// ANY value in the patch below — ADSR times, reverb wet, lp cutoff, even
+// just whitespace inside the closure body — causes the same drone-forever
+// symptom. This patch is more nested than the first repro:
+//
+//   chord("...").transpose(N)  ->  EVENT_REORDER / EVENT_MAP transform state
+//          |> poly(@, fat)     ->  FOREACH_EVENT(VOICE_POOL) PolyAllocState
+//          |> reverb(@, ...)   ->  DattorroState (or whichever reverb opcode)
+//
+// fat() is a named userspace fn whose body calls unison() — a stdlib fn that
+// statically fans pad_voice() into N detuned voices. So the inner saw/adsr/lp
+// states live behind BLOCK_CALL with per-voice + per-call-site state_id_xor.
+//
+// Test contract is the same as the prior poly() drone test: pattern must
+// advance, voices must retrigger/release, audio must not be a stuck periodic
+// waveform.
+
+TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
+          "[hot_swap][regression][drone][adsr]") {
+    constexpr const char* kSrcA =
+        "bpm = 72\n"
+        "\n"
+        "fn pad_voice(freq, gate, vel, ext) ->\n"
+        "    saw(freq, ext.phase) * adsr(gate, 0.5, 0.6, 0.7, 1.2) * vel\n"
+        "    |> lp(@, 2800)\n"
+        "\n"
+        "fn fat({freq, gate, vel}) ->\n"
+        "    unison(freq, gate, vel, pad_voice,\n"
+        "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n"
+        "\n"
+        "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+        "    |> poly(@, fat)\n"
+        "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+        "    |> out(@)\n";
+    // Program B: same as A but with the ADSR attack time changed
+    // (0.5 -> 0.6). This is the exact kind of "edit anything" the user
+    // reports as triggering the drone.
+    constexpr const char* kSrcB =
+        "bpm = 72\n"
+        "\n"
+        "fn pad_voice(freq, gate, vel, ext) ->\n"
+        "    saw(freq, ext.phase) * adsr(gate, 0.6, 0.6, 0.7, 1.2) * vel\n"
+        "    |> lp(@, 2800)\n"
+        "\n"
+        "fn fat({freq, gate, vel}) ->\n"
+        "    unison(freq, gate, vel, pad_voice,\n"
+        "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n"
+        "\n"
+        "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+        "    |> poly(@, fat)\n"
+        "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+        "    |> out(@)\n";
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks) {
+        auto cr_a = akkado::compile(kSrcA);
+        if (!cr_a.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_a.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile A diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_a.success);
+        auto cr_b = akkado::compile(kSrcB);
+        if (!cr_b.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_b.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile B diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_b.success);
+
+        const std::uint32_t seq_state_id =
+            find_state_init_id(cr_a, akkado::StateInitData::Type::SequenceProgram);
+        const std::uint32_t poly_state_id = find_poly_state_id(cr_a);
+        REQUIRE(seq_state_id != 0);
+        REQUIRE(poly_state_id != 0);
+
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_a, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+
+        // The chord pattern has @2 duration modifiers, total cycle length =
+        // 6 beats. At 72 BPM that's 5 s per cycle. Run program A for ~6 s
+        // so we cross a cycle boundary and voices have allocated and aged.
+        const std::size_t blocks_a = blocks_per_sec * 6;
+        for (std::size_t i = 0; i < blocks_a; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        auto* seq_pre = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        REQUIRE(seq_pre != nullptr);
+        const std::uint32_t cycle_pre = seq_pre->cycle_index;
+        const float last_beat_pre = seq_pre->last_beat_pos;
+        INFO("crossfade_blocks=" << crossfade_blocks
+             << " cycle_index after A: " << cycle_pre
+             << " last_beat_pos after A: " << last_beat_pre);
+        // Pattern must have at least started — last_beat_pos > 0 even within
+        // cycle 0. Use this rather than cycle_index since cycle_length is 6.
+        REQUIRE(last_beat_pre > 0.0f);
+
+        auto* poly_pre = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        REQUIRE(poly_pre != nullptr);
+        REQUIRE(poly_pre->voices != nullptr);
+        std::array<std::uint32_t, cedar::PolyAllocState::MAX_VOICES> pre_age{};
+        std::array<bool, cedar::PolyAllocState::MAX_VOICES> pre_active{};
+        for (std::uint16_t v = 0; v < poly_pre->max_voices; ++v) {
+            pre_age[v] = poly_pre->voices[v].age;
+            pre_active[v] = poly_pre->voices[v].active;
+        }
+
+        // Hot-swap to program B.
+        live_load(vm, cr_b, seq_storage);
+
+        // Render another ~6 s — long enough to cross at least one cycle
+        // boundary after the swap, ensuring all chord events fire.
+        const std::size_t blocks_b = blocks_per_sec * 6;
+        std::vector<float> mono_out;
+        mono_out.reserve(blocks_b * cedar::BLOCK_SIZE);
+        bool observed_voice_retrigger_or_release = false;
+        bool observed_pattern_advance = false;
+        for (std::size_t i = 0; i < blocks_b; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) mono_out.push_back(s);
+
+            auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+            if (seq_now && (seq_now->cycle_index > cycle_pre ||
+                            seq_now->last_beat_pos > last_beat_pre + 0.5f)) {
+                observed_pattern_advance = true;
+            }
+            auto* poly_now = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+            if (poly_now && poly_now->voices) {
+                for (std::uint16_t v = 0; v < poly_now->max_voices; ++v) {
+                    const auto& voice = poly_now->voices[v];
+                    if (voice.releasing) observed_voice_retrigger_or_release = true;
+                    if (pre_active[v] && voice.active && voice.age < pre_age[v]) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                    if (pre_active[v] && !voice.active) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                }
+            }
+        }
+
+        // Diagnostics for failure analysis.
+        auto* seq_post = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        INFO("post-B cycle_index: "
+             << (seq_post ? static_cast<int>(seq_post->cycle_index) : -1)
+             << " last_queried_cycle: "
+             << (seq_post ? seq_post->last_queried_cycle : -1.0f)
+             << " last_beat_pos: "
+             << (seq_post ? seq_post->last_beat_pos : -1.0f)
+             << " output.num_events: "
+             << (seq_post ? static_cast<int>(seq_post->output.num_events) : -1)
+             << " pool_size: " << vm.states().size()
+             << " fading: " << vm.states().fading_count());
+        std::ostringstream voice_os;
+        if (poly_post == nullptr) {
+            voice_os << "(poly_post=null)";
+        } else if (poly_post->voices == nullptr) {
+            voice_os << "(voices=null)";
+        } else {
+            voice_os << "max_voices=" << int(poly_post->max_voices) << " ";
+            for (std::uint16_t v = 0; v < poly_post->max_voices; ++v) {
+                const auto& vc = poly_post->voices[v];
+                if (vc.active || vc.releasing) {
+                    voice_os << "v" << v << "{a=" << vc.active << " r=" << vc.releasing
+                             << " g=" << vc.gate << " freq=" << vc.freq << "} ";
+                }
+            }
+        }
+        INFO("post-B voices: " << voice_os.str());
+        // Dump every cr_b state_init for cross-reference if assertions fail.
+        std::ostringstream all_inits_os;
+        for (const auto& init : cr_b.state_inits) {
+            all_inits_os << "{type=" << static_cast<int>(init.type)
+                         << " id=" << init.state_id << "} ";
+        }
+        INFO("post-B cr_b state_inits: " << all_inits_os.str());
+
+        CHECK(observed_pattern_advance);
+        CHECK(observed_voice_retrigger_or_release);
+
+        const std::size_t half_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / 2;
+        const std::size_t win = 512;
+        REQUIRE(mono_out.size() >= half_sec + win + cedar::BLOCK_SIZE);
+        std::span<const float> w0(mono_out.data() + cedar::BLOCK_SIZE, win);
+        std::span<const float> w1(mono_out.data() + half_sec + cedar::BLOCK_SIZE, win);
+        bool windows_bit_identical = (w0.size() == w1.size()) &&
+            std::memcmp(w0.data(), w1.data(), w0.size() * sizeof(float)) == 0;
+        CHECK_FALSE(windows_bit_identical);
+
+        std::vector<float> per_block_rms;
+        per_block_rms.reserve(mono_out.size() / cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono_out.size();
+             i += cedar::BLOCK_SIZE) {
+            per_block_rms.push_back(
+                block_rms({mono_out.data() + i, cedar::BLOCK_SIZE}));
+        }
+        REQUIRE(per_block_rms.size() > 4);
+        double sum = 0.0;
+        for (float r : per_block_rms) sum += r;
+        const double mean = sum / per_block_rms.size();
+        double var = 0.0;
+        for (float r : per_block_rms) var += (r - mean) * (r - mean);
+        const double stddev = std::sqrt(var / per_block_rms.size());
+        INFO("post-B per-block RMS mean=" << mean << " stddev=" << stddev);
+        CHECK(stddev > 0.05 * std::max(mean, 1e-6));
+    };
+
+    SECTION("crossfade disabled") {
+        run_scenario(0);
+    }
+    SECTION("default crossfade") {
+        run_scenario(3);
+    }
+}
+
