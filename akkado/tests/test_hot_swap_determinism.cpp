@@ -539,6 +539,63 @@ float block_rms(std::span<const float> samples) {
     return static_cast<float>(std::sqrt(acc / samples.size()));
 }
 
+// Single-bin DFT magnitude via the standard Goertzel recurrence. Used by
+// Layer B (canonical reference test) for cheap per-band energy comparison —
+// linking kissfft into the akkado test target is more dependency churn than
+// a 25-line hand-roll is worth.
+double goertzel_magnitude(std::span<const float> samples,
+                          double freq_hz,
+                          double sample_rate) {
+    if (samples.empty() || sample_rate <= 0.0) return 0.0;
+    const double omega = 2.0 * M_PI * freq_hz / sample_rate;
+    const double coeff = 2.0 * std::cos(omega);
+    double s_prev = 0.0, s_prev2 = 0.0;
+    for (float x : samples) {
+        const double s = static_cast<double>(x) + coeff * s_prev - s_prev2;
+        s_prev2 = s_prev;
+        s_prev = s;
+    }
+    const double real = s_prev - s_prev2 * std::cos(omega);
+    const double imag = s_prev2 * std::sin(omega);
+    return std::sqrt(real * real + imag * imag);
+}
+
+// Per-block RMS series for a mono buffer.
+std::vector<float> per_block_rms(std::span<const float> mono) {
+    std::vector<float> rms;
+    rms.reserve(mono.size() / cedar::BLOCK_SIZE);
+    for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono.size();
+         i += cedar::BLOCK_SIZE) {
+        rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+    }
+    return rms;
+}
+
+// Pearson correlation between two equal-length float sequences. Returns 1.0
+// when the sequences move in lockstep (musically the same envelope), 0.0
+// when uncorrelated, -1.0 when anti-correlated. Returns 0.0 for trivial
+// constant sequences (no variance to correlate).
+double pearson_correlation(std::span<const float> a, std::span<const float> b) {
+    if (a.size() != b.size() || a.empty()) return 0.0;
+    double sum_a = 0.0, sum_b = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        sum_a += a[i];
+        sum_b += b[i];
+    }
+    const double mean_a = sum_a / a.size();
+    const double mean_b = sum_b / b.size();
+    double cov = 0.0, var_a = 0.0, var_b = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double da = a[i] - mean_a;
+        const double db = b[i] - mean_b;
+        cov += da * db;
+        var_a += da * da;
+        var_b += db * db;
+    }
+    if (var_a < 1e-12 || var_b < 1e-12) return 0.0;
+    return cov / std::sqrt(var_a * var_b);
+}
+
 }  // namespace
 
 TEST_CASE("Hot-swap inside poly body must not stick voices",
@@ -1371,4 +1428,216 @@ TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
     SECTION("crossfade=3, 4 blocks between swaps") {
         run_scenario(3, 4);
     }
+}
+
+// ============================================================================
+// Canonical reference comparison: hot-swap audio vs clean B-from-scratch
+// ============================================================================
+//
+// The other [hot_swap] tests prove "the bug 1fd6c95 fixed has not regressed."
+// They do NOT prove "the audio after a swap is musically correct" — a stuck
+// periodic drone passes the RMS-variance check, and the new VoiceFireCounter
+// only verifies voice ALLOCATIONS, not the actual audio output. This test
+// fills that gap by comparing the post-swap audio against a reference
+// rendering of program B alone, aligned on global_sample_counter.
+//
+// Layer B catches two related failure modes:
+//   1. Voice GC eviction (the 1fd6c95 class) — swap_buf shows ~zero onsets
+//      and ~zero band energy while ref_buf shows full energy + onsets.
+//   2. Silent-reverb-on-poly-chain (separately reported by the user) — when
+//      reverb is wired into a poly chain in some structural shapes, the
+//      WHOLE output goes to zero. Reverb is included in this test pattern
+//      to keep that code path exercised.
+
+namespace {
+
+constexpr float kSampleRate = 48000.0f;
+
+// Pattern shape: simple chord pad (no unison wrapper, no nested fn) so the
+// reverb-vs-no-reverb structural divergence is minimal and the spectral
+// metrics remain meaningful. A and B differ only in the lp cutoff — pure
+// constant edit, no structural change, no state_id shift.
+const char* canonical_src(int lp_cut) {
+    static std::string buf;
+    std::ostringstream os;
+    os << "bpm = 110\n\n"
+       << "fn pad(freq, gate, vel) ->\n"
+       << "    saw(freq) * adsr(gate, 0.02, 0.15, 0.7, 0.3) * vel\n"
+       << "    |> lp(@, " << lp_cut << ")\n\n"
+       << "c\"Cmaj7 Fmaj7 Gmaj7 Am7\"\n"
+       << "    |> poly(@, pad) * 0.3\n"
+       << "    |> reverb(@, 0.6, 0.5, ..{wet: 0.1})\n"
+       << "    |> out(@)\n";
+    buf = os.str();
+    return buf.c_str();
+}
+
+}  // namespace
+
+TEST_CASE("Hot-swap audio matches a clean reference rendering",
+          "[hot_swap][regression][canonical]") {
+    auto cr_a = akkado::compile(canonical_src(2400));
+    if (!cr_a.success) {
+        std::ostringstream os;
+        for (const auto& d : cr_a.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+        INFO("Compile A diagnostics:\n" << os.str());
+    }
+    REQUIRE(cr_a.success);
+    auto cr_b = akkado::compile(canonical_src(2200));
+    if (!cr_b.success) {
+        std::ostringstream os;
+        for (const auto& d : cr_b.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+        INFO("Compile B diagnostics:\n" << os.str());
+    }
+    REQUIRE(cr_b.success);
+
+    // Block budget: pattern plays one chord per cycle (cycle_length = 1 beat
+    // = ~0.545 s at 110 BPM, top-level alternation). 6 s warmup gets the
+    // reverb tail and lp filter close to steady state; 4 s window crosses
+    // ~7 chord onsets — enough RMS variance for the correlation check to
+    // have meaningful resolution.
+    constexpr std::size_t kSr = 48000;
+    constexpr std::size_t kWarmupBlocks = (kSr * 6) / cedar::BLOCK_SIZE;
+    constexpr std::size_t kWindowBlocks = (kSr * 4) / cedar::BLOCK_SIZE;
+    // Skip the first ~20 ms of each captured window: this absorbs both any
+    // crossfade transient (when crossfade > 0) and the leading edge of an
+    // onset that straddles the window boundary. Same skip applied to both
+    // sides so the comparison stays apples-to-apples.
+    constexpr std::size_t kSkipBlocks = 8;
+
+    auto render_swap = [&](std::uint32_t crossfade_blocks) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_a, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        for (std::size_t i = 0; i < kWarmupBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+        const std::uint64_t swap_global =
+            vm.context().global_sample_counter;
+
+        // Hot-swap into B.
+        live_load(vm, cr_b, seq_storage);
+
+        std::vector<float> out;
+        out.reserve(kWindowBlocks * cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i < kWindowBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) out.push_back(s);
+        }
+        return std::make_pair(out, swap_global);
+    };
+
+    auto render_reference = [&](std::uint64_t target_global) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(0);  // no crossfade on a cold start
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_b, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        // Pre-roll exactly to target_global so the captured window starts
+        // at the same global_sample_counter as the hot-swap path — pattern
+        // phase and cycle index align bit-for-bit between the two runs.
+        while (vm.context().global_sample_counter < target_global) {
+            vm.process_block(left.data(), right.data());
+        }
+        REQUIRE(vm.context().global_sample_counter == target_global);
+
+        std::vector<float> out;
+        out.reserve(kWindowBlocks * cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i < kWindowBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) out.push_back(s);
+        }
+        return out;
+    };
+
+    auto run = [&](std::uint32_t crossfade_blocks) {
+        const auto [swap_buf, swap_global] = render_swap(crossfade_blocks);
+        const auto ref_buf = render_reference(swap_global);
+        REQUIRE(swap_buf.size() == ref_buf.size());
+
+        const std::size_t skip_samples = kSkipBlocks * cedar::BLOCK_SIZE;
+        REQUIRE(swap_buf.size() > skip_samples);
+        std::span<const float> swap_window(swap_buf.data() + skip_samples,
+                                           swap_buf.size() - skip_samples);
+        std::span<const float> ref_window(ref_buf.data() + skip_samples,
+                                          ref_buf.size() - skip_samples);
+
+        const float ref_rms = block_rms(ref_window);
+        const float swap_rms = block_rms(swap_window);
+        INFO("crossfade=" << crossfade_blocks
+             << " ref_rms=" << ref_rms << " swap_rms=" << swap_rms);
+        // Sanity: reference must have audible signal — else the pattern
+        // didn't render at all and the rest of the comparison is meaningless.
+        REQUIRE(ref_rms > 1e-3f);
+
+        // ------------------------------------------------------------------
+        // Assertion 1: aggregate RMS equivalence (±25%)
+        // ------------------------------------------------------------------
+        // The hot-swap path preserves stateful node memory; the reference
+        // starts cold. Despite that, average signal energy over a 4 s
+        // window should match closely — the "silent reverb" or "voices
+        // vanish" failure modes collapse swap_rms to near zero.
+        const float rms_rel_delta = std::abs(swap_rms - ref_rms) / ref_rms;
+        INFO("rms_rel_delta=" << rms_rel_delta);
+        CHECK(rms_rel_delta <= 0.25f);
+
+        // ------------------------------------------------------------------
+        // Assertion 2: per-block RMS correlation (≥ 0.9)
+        // ------------------------------------------------------------------
+        // The chord progression's per-block envelope (chord-onset attacks,
+        // ADSR sustains, release tails) traces the same shape in both
+        // buffers when the swap is musically correct. Pearson correlation
+        // collapses to ~0 if the swap path produces a different envelope
+        // (frozen drone, voice subset firing, wrong attack timing).
+        auto ref_rms_series = per_block_rms(ref_window);
+        auto swap_rms_series = per_block_rms(swap_window);
+        REQUIRE(ref_rms_series.size() == swap_rms_series.size());
+        REQUIRE(ref_rms_series.size() > 16);
+        const double rms_correlation = pearson_correlation(
+            std::span<const float>(ref_rms_series.data(), ref_rms_series.size()),
+            std::span<const float>(swap_rms_series.data(), swap_rms_series.size()));
+        INFO("rms_correlation=" << rms_correlation);
+        CHECK(rms_correlation >= 0.9);
+
+        // ------------------------------------------------------------------
+        // Assertion 3: three-band Goertzel energy match (±25%)
+        // ------------------------------------------------------------------
+        // Hot-swap preserves stateful node memory (lp filter, ADSR phase,
+        // reverb tail) while the reference starts cold — bit-equal
+        // waveforms are not expected. But the chord progression, register,
+        // and reverb wet level are identical, so per-band energy averaged
+        // over the 4 s window should match within 25 %. The "voices
+        // vanish" / "silent reverb" failure collapses ALL bands to ~0.
+        constexpr std::array<double, 3> kBands = {250.0, 1000.0, 4000.0};
+        constexpr double kBandTolerance = 0.25;
+        for (double band_hz : kBands) {
+            const double ref_mag = goertzel_magnitude(
+                ref_window, band_hz, static_cast<double>(kSampleRate));
+            const double swap_mag = goertzel_magnitude(
+                swap_window, band_hz, static_cast<double>(kSampleRate));
+            // Normalize by window length so the magnitudes are comparable
+            // across different window sizes.
+            const double ref_norm = ref_mag /
+                static_cast<double>(ref_window.size());
+            const double swap_norm = swap_mag /
+                static_cast<double>(swap_window.size());
+            const double rel_delta = ref_norm > 1e-9
+                ? std::abs(swap_norm - ref_norm) / ref_norm
+                : 0.0;
+            INFO("band=" << band_hz << " Hz"
+                 << " ref_mag=" << ref_norm
+                 << " swap_mag=" << swap_norm
+                 << " rel_delta=" << rel_delta);
+            // Reference must have audible energy in this band — sanity.
+            REQUIRE(ref_norm > 1e-5);
+            CHECK(rel_delta <= kBandTolerance);
+        }
+    };
+
+    SECTION("crossfade disabled") { run(0); }
+    SECTION("default crossfade") { run(3); }
 }
