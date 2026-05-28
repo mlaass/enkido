@@ -1,6 +1,11 @@
 > **Status: NOT STARTED** — design doc; ready for implementation.
 > Discovered & root-caused 2026-05-28 via the new e2e test
 > [`web/e2e/hot-swap-audio.spec.ts`](../web/e2e/hot-swap-audio.spec.ts).
+> Reviewed 2026-05-28: wire format expanded to cover block_table,
+> MIDI sources, and sample mappings; SequenceProgram events memcpy
+> the raw `cedar::Event` struct; codec is auto-generated from C++
+> headers; SlotBusy retry is kept but simplified; the <5 ms target
+> reframed as the worklet load-step duration, not `evaluate()` E2E.
 
 # Compile Off the AudioWorklet Thread PRD
 
@@ -40,20 +45,33 @@ architectural mistake, not a design choice.
 
 - **Dedicated Web Worker** for compile (`compile.worker.ts`). Worker
   loads its own `nkido.wasm` instance, eagerly at page load alongside
-  the worklet.
-- **State inits travel as a packed WASM-heap buffer** from worker → main
-  thread → worklet. The worklet unpacks via a single new WASM C API
-  `cedar_apply_state_inits_from_buffer`. No re-hydration of
-  `g_compile_result` in the worklet's WASM.
-- **Wire format mirrors current compile-result shape** —
-  `{success, bytecode, stateInits, requiredSamples, …}` — one big
-  payload, minimum diff vs today's worklet-side compile handler.
+  the worklet. Compile requests issued before the worker WASM finishes
+  loading are queued and flushed on `ready` — and the queue itself is
+  supersede-by-newest, so only the latest pre-ready compile lands.
+- **Three packed WASM-heap buffers** travel worker → main → worklet:
+  (a) `bytecode`, (b) `stateInitsBuf` (records keyed by
+  `StateInitData::Type`, plus inline sample-mapping records resolved
+  at the worklet's sample bank), (c) `midiSourcesBuf` (one record per
+  `RequiredMidiSource`). The L3 `BlockEntry[]` table travels as a
+  fourth typed-array field on the `loadProgram` message. The worklet
+  exposes three new WASM C APIs that consume them in place — no
+  re-hydration of `g_compile_result` in the worklet's WASM.
+- **Sequence `Event` payloads are memcpy'd raw** from the C++ struct.
+  Worker and worklet share a build, so layouts match by construction;
+  the `version` field in the buffer header guards mismatch. The
+  packer/unpacker for every record type is auto-generated from the
+  C++ headers at build time (see §5.4), so layout drift surfaces at
+  build, not at runtime.
 - **Worker queue is `superseded-by-newest`**, not FIFO: an in-flight
   compile is discarded if a newer source arrives. Live coders always
   see the latest source applied.
-- **The `loadCompiledProgram` SlotBusy retry loop is dropped.** With
-  the worker enforcing one-pending-compile, the worklet can guarantee
-  no overlapping load attempts; a single attempt suffices.
+- **The worklet's `loadProgram` keeps a (simplified) SlotBusy retry.**
+  Supersede-by-newest serializes compiles, but two compiles finishing
+  close together can still post two `loadProgram` messages to the
+  worklet before the audio thread fires `process_block` and frees a
+  swap slot. SlotBusy is a runtime-thread invariant on `SwapController`,
+  unrelated to upstream serialization — the retry stays, simplified to a
+  single per-block retry instead of today's multi-attempt state machine.
 - **CLI tools are unaffected** — they already compile on the main
   thread, no AudioWorklet, no equivalent block.
 - **Worklet contract** is documented in `CLAUDE.md` and at the top of
@@ -98,14 +116,26 @@ audioEngine.compile(src)
 
 ### 2.2 Why moving compile elsewhere requires a WASM API change
 
-Today, state-init application reads from
-`g_compile_result.state_inits` inside the WASM the worklet owns —
-because compile populated `g_compile_result` in that same WASM. If
-compile moves to a separate worker (separate WASM instance), the
-worklet's `g_compile_result` is empty. State-init data has to be
-shipped across the worker → main → worklet boundary, then re-applied
-inside the worklet's WASM from external data, not from
-`g_compile_result`.
+Today, the worklet's WASM populates `g_compile_result` via
+`_akkado_compile` and then *every* post-compile step reads from it:
+
+| Today's post-compile call | Reads from `g_compile_result` |
+|---------------------------|-------------------------------|
+| `cedar_load_program(bytecode, len)` (wasm) | `required_buffers` (advisory; redundant with `max_buffer_index`), `block_table` + `main_instruction_count` (required for FOREACH_EVENT / `iter()` / poly L3) |
+| `akkado_patch_sample_ids_in_bytecode` (wasm) | `scalar_sample_mappings` (for direct `sample("name", …)` calls) |
+| `akkado_resolve_sample_ids` (wasm) | `state_inits[].sequence_sample_mappings` (patches sample IDs into pattern events) |
+| `cedar_apply_state_inits` (wasm) | `state_inits[]` (all 8 `StateInitData::Type`s) |
+| `cedar_apply_midi_sources` (wasm) | `required_midi_sources` (one `init_midi_queue_state` per `midi(...)` call) |
+
+If compile moves to a separate worker (separate WASM instance), the
+worklet's `g_compile_result` is empty for every one of the rows above.
+Every datum the apply-side reads has to be shipped across the worker →
+main → worklet boundary, then re-applied from external data — not from
+`g_compile_result`. This PRD adds three packed buffers
+(`stateInitsBuf`, `midiSourcesBuf`, `blockTable`) and three new WASM
+exports (`cedar_apply_state_inits_from_buffer`,
+`cedar_apply_midi_sources_from_buffer`, `cedar_set_block_table`) to
+replace the in-WASM `g_compile_result` indirection.
 
 ### 2.3 Measured timings on the user's unison-pad
 
@@ -145,9 +175,11 @@ dependent today, but the architecture is broken regardless.
   **outside the AudioWorklet thread**.
 - The AudioWorklet thread does only:
   1. `_cedar_process_block` (audio rendering, every 2.67 ms),
-  2. `_cedar_apply_state_inits_from_buffer` (called once per swap, must
-     stay under 2 ms),
-  3. `_cedar_load_program` (already fast).
+  2. `_cedar_set_block_table` (per swap, fast),
+  3. `_cedar_apply_state_inits_from_buffer` (per swap, target <2 ms),
+  4. `_cedar_apply_midi_sources_from_buffer` (per swap, fast),
+  5. `_akkado_patch_sample_ids_in_bytecode` + `_akkado_resolve_sample_ids_from_buffer` (per swap, fast — operate on caller-provided buffers, not `g_compile_result`),
+  6. `_cedar_load_program` (already fast).
 - E2E test `web/e2e/hot-swap-audio.spec.ts` goes green: no audible gap
   during rapid recompiles of the unison-pad, however long compile takes.
 - Compile latency on the audio thread is **architecturally bounded** —
@@ -155,8 +187,10 @@ dependent today, but the architecture is broken regardless.
   compiler features, the audio thread cannot starve from compile work.
 - Worklet contract is documented + linked from `CLAUDE.md` so the next
   person editing the worklet cannot reintroduce the bug.
-- SlotBusy retry path removed. New flow has no concurrent load attempts
-  by construction.
+- SlotBusy retry stays in the worklet's `loadProgram` handler,
+  simplified to a single per-`process_block` retry. `pendingProgram`
+  + `pendingLoadRetry` state shrinks, but the retry idea is kept
+  because supersede-by-newest serializes compiles, not load messages.
 
 ### Non-Goals
 
@@ -195,14 +229,25 @@ dependent today, but the architecture is broken regardless.
        postMessage       │                         │  port.postMessage
        {compile, source} │                         │  {loadProgram,
                          ▼                         ▼   bytecode,
-       ┌───────────────────────────┐    ┌──────────  stateInits}──────┐
-       │  Compile Worker           │    │  AudioWorkletProcessor      │
-       │  (compile.worker.ts)      │    │  (cedar-processor.js)        │
+       ┌───────────────────────────┐    ┌──────────  stateInitsBuf,──┐
+       │  Compile Worker           │    │  midiSourcesBuf,           │
+       │  (compile.worker.ts)      │    │  blockTable}                │
        │                           │    │                              │
-       │  WASM instance #1         │    │  WASM instance #2            │
-       │    _akkado_compile        │    │    _cedar_load_program       │
-       │    _akkado_get_*          │    │    _cedar_apply_state_inits_ │
-       │    _akkado_get_diag_*     │    │      from_buffer  (NEW)      │
+       │  WASM instance #1         │    │  AudioWorkletProcessor       │
+       │    _akkado_compile        │    │  (cedar-processor.js)        │
+       │    _akkado_get_*          │    │                              │
+       │    _akkado_get_diag_*     │    │  WASM instance #2            │
+       │                           │    │    _cedar_set_block_table   │
+       │                           │    │      (NEW)                   │
+       │                           │    │    _cedar_load_program       │
+       │                           │    │    _akkado_patch_sample_ids_ │
+       │                           │    │      in_bytecode             │
+       │                           │    │    _akkado_resolve_sample_   │
+       │                           │    │      ids_from_buffer (NEW)   │
+       │                           │    │    _cedar_apply_state_inits_ │
+       │                           │    │      from_buffer (NEW)       │
+       │                           │    │    _cedar_apply_midi_sources_│
+       │                           │    │      from_buffer (NEW)       │
        │                           │    │    _cedar_process_block      │
        └───────────────────────────┘    └──────────────────────────────┘
 ```
@@ -226,9 +271,13 @@ audioEngine.compile(source)
   _akkado_compile(source)            ◄── slow but on worker thread
   extractStateInits()                ◄── reads worker WASM heap
   extractRequiredSamples() etc.
-  pack stateInits into a u8 buffer   ◄── §5
+  pack stateInits into u8 buffer     ◄── §5.1–5.3 (incl. sample-mapping records)
+  pack midi sources into u8 buffer   ◄── §5.6
+  serialize BlockEntry[] + main_inst ◄── §5.7 (Int32Array)
   post back {success, bytecode,
              stateInitsBuf,
+             midiSourcesBuf,
+             blockTable, mainInstCount,
              requiredSamples, ...,
              diagnostics?}
   │
@@ -239,16 +288,29 @@ audioEngine.compile(source)
     await sample/SF2/MIDI loads     ◄── existing code path, unchanged
     post {type:'loadProgram',
           bytecode,
-          stateInitsBuf} to worklet
+          stateInitsBuf,
+          midiSourcesBuf,
+          blockTable,
+          mainInstCount} to worklet
   │
   ▼
 [Worklet] handleMessage({loadProgram})
+  _cedar_set_block_table(ptr, count, mainInstCount)
+                                     ◄── stages L3 subprogram table
   _nkido_malloc + memcpy bytecode    ◄── ~tens of µs
-  _cedar_load_program(ptr, len)      ◄── fast: ensure_capacity + swap-arm
+  _akkado_patch_sample_ids_in_bytecode(buf, len)
+                                     ◄── now reads from stateInitsBuf, NOT g_compile_result
+  _cedar_load_program(ptr, len)      ◄── fast: ensure_capacity + swap-arm.
+                                     ◄── On SlotBusy: hold buf, retry from next process_block.
   _nkido_malloc + memcpy stateInits
+  _akkado_resolve_sample_ids_from_buffer(ptr, len)
+                                     ◄── patches sample IDs into events in-place
   _cedar_apply_state_inits_from_buffer(ptr, len)
                                      ◄── unpack + per-init init_* calls
-  free both pointers
+  _nkido_malloc + memcpy midiSources
+  _cedar_apply_midi_sources_from_buffer(ptr, len)
+                                     ◄── one init_midi_queue_state per record
+  free all pointers
   post 'programLoaded' back
   │
   ▼
@@ -260,8 +322,17 @@ blocked for more than the load-step duration (target <5 ms).
 ### 4.3 Worker lifetime
 
 - Spawned in `audioEngine.initialize()` (same place as the worklet),
-  same `nkido.wasm` URL.
+  same `nkido.wasm` URL. Worker and worklet share the same WASM
+  build — the worker exercises the `akkado_*` + `_akkado_get_*`
+  surface; the worklet exercises `_cedar_*` + the new
+  `*_from_buffer` / `_cedar_set_block_table` surface.
 - Worker is held in the audio engine module as a singleton reference.
+- **Boot-time queueing.** The worker emits `{type:'ready'}` after its
+  WASM is initialized. `audioEngine.compile(source)` resolves against
+  a `workerReady` promise; calls issued before ready are queued, and
+  the queue itself is supersede-by-newest (only the latest pending
+  source is dispatched once ready). This avoids dropping the user's
+  first Ctrl+Enter if it lands during WASM init.
 - On worker error or unexpected termination: surface a synthetic
   compile diagnostic (`'Compile worker unavailable, restarting'`),
   respawn lazily on next compile.
@@ -294,14 +365,43 @@ The worker doesn't need to know about supersession — every compile
 runs to completion. The main thread just drops stale results. Cheap and
 simple; avoids the complexity of compile interruption.
 
+Supersede-by-newest only serializes **compiles**, not the
+`loadProgram` post to the worklet. If two non-superseded compiles
+finish close together, both may post `loadProgram` before the audio
+thread fires `process_block` — the second call would hit
+`LoadResult::SlotBusy` on the worklet's `SwapController`. The worklet
+keeps a single-shot retry on SlotBusy (drive from the next
+`process_block`) so the second message doesn't get dropped silently.
+See §9.8.
+
 ---
 
-## 5. State-Init Buffer Wire Format
+## 5. Wire Formats
 
-A single contiguous `u8` buffer the worker produces and the worklet
-consumes via `cedar_apply_state_inits_from_buffer`. Little-endian.
+Three packed `u8` buffers + one `Int32Array` cross the worker → main →
+worklet boundary. All buffers are little-endian. Layouts that mirror
+C++ structs are produced by `memcpy` from worker WASM and consumed by
+`memcpy` in worklet WASM — worker and worklet are the same build, so
+struct layouts match by construction; the `version` field in each
+buffer header guards mismatch at the boundary (e.g. stale browser
+cache during deploys).
 
-### 5.1 Top-level layout
+The buffers:
+
+| Field on `loadProgram` message | Format | Consumer in worklet |
+|--------------------------------|--------|---------------------|
+| `bytecode` | `Uint8Array` of `cedar::Instruction[]` | `_cedar_load_program` (after `_akkado_patch_sample_ids_in_bytecode`) |
+| `stateInitsBuf` | §5.1–5.3 | `_akkado_resolve_sample_ids_from_buffer` then `_cedar_apply_state_inits_from_buffer` |
+| `midiSourcesBuf` | §5.6 | `_cedar_apply_midi_sources_from_buffer` |
+| `blockTable` + `mainInstCount` | `Int32Array` of `BlockEntry` packed + `u32` | `_cedar_set_block_table` (called *before* `_cedar_load_program` so the table is staged for the load) |
+
+`stateInitsBuf` carries both `StateInitData` records **and** sample-
+mapping records (`SequenceSampleMapping[]` per sequence record;
+`ScalarSampleMapping[]` for direct `sample("name", …)` calls). The
+worklet's sample bank is queried at apply time — the worker doesn't
+need a sample-bank snapshot.
+
+### 5.1 stateInitsBuf — top-level layout
 
 ```
 [ magic: u32 = 0x494E4954 ("INIT") ]
@@ -313,60 +413,82 @@ consumes via `cedar_apply_state_inits_from_buffer`. Little-endian.
 [ record_{N-1} ]
 ```
 
+Records are either `StateInit` records (one per
+`g_compile_result.state_inits[]` entry — §5.3) or `SampleMapping`
+records (§5.3 sub-section, batched per scope). Forward-compatible:
+unknown record types log and skip.
+
 ### 5.2 Record header (every record)
 
 ```
-[ type: u8 ]          ; matches akkado::StateInitData::Type
+[ kind: u8 ]          ; 0 = StateInit (payload's first byte is StateInitData::Type)
+                      ; 1 = SequenceSampleMapping batch (binds events in a SequenceProgram)
+                      ; 2 = ScalarSampleMapping batch (patches PUSH_CONSTs)
 [ pad: u8[3] ]
-[ state_id: u32 ]
+[ state_id: u32 ]     ; for kind=0 the owning state; for kind=1 the parent SequenceProgram state; for kind=2 unused (zero)
 [ payload_size: u32 ] ; bytes of type-specific payload following this header
 [ payload bytes ... ]
 ```
 
 The worklet's unpacker walks records using the header size; unknown
-types log and skip. Forward-compatible.
+kinds log and skip. Forward-compatible.
 
-### 5.3 Per-type payloads
+### 5.3 Per-type payloads (kind = 0, StateInit)
 
-Each maps 1:1 to an existing `init_*` function in the VM. Field order
-mirrors the function signature.
+The first byte of each StateInit payload is the `StateInitData::Type`
+discriminant (see `akkado/include/akkado/codegen.hpp:140` for the
+authoritative enum); remaining bytes map 1:1 to an existing `init_*`
+function in the VM. Field order mirrors the function signature.
+
+> **Layouts that contain `cedar::Event`, `cedar::Sequence`,
+> `cedar::TimelineState::Breakpoint`, `BlockEntry`, etc. are emitted
+> by `memcpy` of the C++ struct** (with explicit struct-padding
+> preserved). Worker and worklet share the build, so layouts match by
+> construction. The `version` field gates the build-mismatch case.
+> The pack/unpack code on both sides is **auto-generated** from the
+> C++ headers (see §5.4) so layout drift fails at build, not runtime.
 
 #### `Timeline` (type = 1)
 
 ```
-[ loop: u8 ]
-[ pad: u8[3] ]
+[ type: u8 = 1, pad: u8[3] ]
+[ loop: u8, pad: u8[3] ]
 [ loop_length: f32 ]
 [ num_points: u32 ]
-[ points: { time: f32, value: f32, curve: u8, pad: u8[3] }[num_points] ]
+[ points: memcpy of cedar::TimelineState::Breakpoint[num_points] ]
 ```
 
 #### `SequenceProgram` (type = 2)
 
 ```
+[ type: u8 = 2, pad: u8[3] ]
 [ cycle_length: f32 ]
-[ is_sample_pattern: u8 ]
-[ pad: u8[3] ]
+[ is_sample_pattern: u8, pad: u8[3] ]
 [ total_events: u32 ]
 [ num_sequences: u32 ]
 [ sequences:
   { duration: f32,
     mode: u8, pad: u8[3],
     num_events: u32,
-    events: { time: f32,
-              duration: f32,
-              midi_note: f32,
-              velocity: f32,
-              num_values: u8, pad: u8[3],
-              values: f32[num_values]   ; variable length
-            }[num_events]
+    events: memcpy of cedar::Event[num_events]
+            (full struct: time, duration, chance, velocity,
+             midi_note, type, num_values, type_id, source_offset,
+             source_length, values[16], velocities[16], notes[16],
+             prop_vals[4], prop_set_mask, etc. — see
+             cedar/include/cedar/opcodes/sequence.hpp:44 for the
+             authoritative layout)
   }[num_sequences]
 ]
 ```
 
+`SequenceSampleMapping` records for this sequence travel as
+**separate `kind = 1` records** in the same buffer, carrying
+`state_id` of the owning sequence in the record header (see §5.3.x).
+
 #### `PolyAlloc` (type = 3)
 
 ```
+[ type: u8 = 3, pad: u8[3] ]
 [ seq_state_id: u32 ]
 [ max_voices: u8 ]
 [ mode: u8 ]
@@ -379,16 +501,16 @@ mirrors the function signature.
 #### `ExtendedParams` (type = 4)
 
 ```
-[ count: u8 ]
-[ pad: u8[3] ]
-[ constants: f32[count] ]
-[ buffer_indices: u16[count] ]
-[ pad to 4-byte boundary ]
+[ type: u8 = 4, pad: u8[3] ]
+[ count: u8, pad: u8[3] ]
+[ constants: f32[MAX_EXTENDED_PARAMS]    ; 8 floats fixed ]
+[ buffer_indices: u16[MAX_EXTENDED_PARAMS] ; 8 u16s fixed ]
 ```
 
 #### `SoundfontEvents` (type = 5)
 
 ```
+[ type: u8 = 5, pad: u8[3] ]
 [ sf_seq_state_id: u32 ]
 [ sf_preset_idx: i32 ]
 ```
@@ -396,71 +518,183 @@ mirrors the function signature.
 #### `ForeachAlloc` (type = 6)
 
 ```
-[ allocator_kind: u8 ]
-[ pad: u8[3] ]
+[ type: u8 = 6, pad: u8[3] ]
+[ allocator_kind: u8, pad: u8[3] ]
 [ block_id: u32 ]
 [ event_src_state_id: u32 ]
-[ max_iterations: u16 ]
-[ pad: u8[2] ]
-[ max_voices: u8 ]    ; only for VOICE_POOL (kind 0)
-[ mode: u8 ]          ; only for VOICE_POOL
-[ steal_strategy: u8 ]; only for VOICE_POOL
-[ prop_count: u8 ]    ; only for VOICE_POOL
-[ release_seconds: f32 ]                          ; only for VOICE_POOL
-[ prop_defaults: f32[MAX_PROPS_PER_EVENT] ]       ; only for VOICE_POOL
+[ max_iterations: u16, pad: u8[2] ]
+[ max_voices: u8 ]    ; VOICE_POOL only (kind 0) — zero for others
+[ mode: u8 ]          ; VOICE_POOL only
+[ steal_strategy: u8 ]; VOICE_POOL only
+[ prop_count: u8 ]    ; VOICE_POOL only
+[ release_seconds: f32 ]                          ; VOICE_POOL only
+[ prop_defaults: f32[MAX_PROPS_PER_EVENT] ]       ; VOICE_POOL only
 ```
 
-#### `EventTransform` (type = 7), `RateScale` (type = 8) — wait
+#### `EventTransform` (type = 7) / `RateScale` (type = 8) / `Reorder` (type = 9) / `Fanout` (type = 10)
 
-The numeric IDs above are placeholders. **The final mapping must
-match `akkado::StateInitData::Type` exactly** (see
-`akkado/include/akkado/codegen.hpp:140`). Implementation must read the
-enum, not invent values.
+Type discriminants match `akkado::StateInitData::Type` exactly (see
+`akkado/include/akkado/codegen.hpp:142–171`).
 
-#### `EventTransform` / `Reorder` / `Fanout`
+`EventTransform`, `Reorder`, `Fanout` share a payload:
 
 ```
+[ type: u8 = {7|9|10}, pad: u8[3] ]
 [ cycle_length: f32 ]
-[ is_sample_pattern: u8 ]
-[ pad: u8[3] ]
-[ total_events: u32 ]   ; output buffer capacity hint
+[ is_sample_pattern: u8, pad: u8[3] ]
+[ total_events: u32 ]   ; output buffer capacity
 ```
 
-#### `RateScale`
+`RateScale`:
 
 ```
-; no payload
+[ type: u8 = 8, pad: u8[3] ]
+; no further payload
 ```
 
-### 5.4 Pack/unpack symmetry
+#### `SequenceSampleMapping` batch (kind = 1)
 
-The worker's packer and the worklet's unpacker share the layout above.
-A small shared TS module (`web/src/lib/audio/state-init-codec.ts`)
-exports both `packStateInits(jsObjects): Uint8Array` and a TS
-description of the format for sanity checks. The worklet only needs the
-C side (`cedar_apply_state_inits_from_buffer`) — it never sees the JS
-objects.
+One record per parent `SequenceProgram`. `state_id` in the record
+header is the owning sequence's state_id.
+
+```
+[ count: u32 ]
+[ mappings:
+  { seq_idx: u16, event_idx: u16, value_slot: u8, variant: u8, pad: u8[2],
+    bank_len: u16, name_len: u16,
+    bank_chars: u8[bank_len], name_chars: u8[name_len]
+  }[count]
+]
+```
+
+Worklet calls `_akkado_resolve_sample_ids_from_buffer(buf, len)` which
+walks all `kind = 1` records, looks each name up in the worklet's
+sample bank, and writes the resolved ID into the corresponding
+`Event::values[value_slot]` already laid down by the matching
+SequenceProgram record (which was applied earlier in the buffer
+walk).
+
+#### `ScalarSampleMapping` batch (kind = 2)
+
+```
+[ count: u32 ]
+[ mappings:
+  { instruction_index: u32, variant: u8, pad: u8[3],
+    bank_len: u16, name_len: u16,
+    bank_chars: u8[bank_len], name_chars: u8[name_len]
+  }[count]
+]
+```
+
+Read by `_akkado_patch_sample_ids_in_bytecode(bytecode, len,
+mappings_buf, mappings_len)` — same as today's function, but the
+mappings source is the buffer parameter instead of `g_compile_result`.
+Worklet calls this after `_nkido_malloc + memcpy(bytecode)` and before
+`_cedar_load_program`, as today.
+
+### 5.4 Pack/unpack symmetry — codec generated from C++ headers
+
+`web/src/lib/audio/state-init-codec.ts` contains both the worker-side
+packer (TS) and a TS description of every record layout for
+unit-test sanity checks. To keep the wire format aligned with the C++
+side **at build time**, this file is **auto-generated** by a new
+script `web/scripts/build-state-init-codec.ts` (analogous to the
+existing `build:opcodes` and `build:docs` generators) which parses:
+
+- `akkado/include/akkado/codegen.hpp` (`StateInitData`,
+  `SequenceSampleMapping`, `RequiredMidiSource`, `SubprogramDesc`)
+- `cedar/include/cedar/opcodes/sequence.hpp` (`Event`, `Sequence`,
+  `MAX_VALUES_PER_EVENT`, `MAX_PROPS_PER_EVENT`)
+- `cedar/include/cedar/opcodes/dsp_state.hpp` (`ExtendedParams<N>`,
+  `MAX_EXTENDED_PARAMS`)
+- `cedar/include/cedar/vm/vm.hpp` (`BlockEntry`)
+
+…and emits a typed pack function per record, plus assertions that the
+emitted byte sizes match `sizeof(T)` from the WASM side. Run via
+`bun run build:state-init-codec`. Any layout change in the C++
+headers forces regeneration on the next build; CI fails if committed
+codec is out of date.
+
+The worklet only consumes via the C-side WASM exports below — it
+never sees the JS objects, so no codec on the worklet side.
 
 ### 5.5 New WASM exports
 
 Add to `web/wasm/CMakeLists.txt` `NKIDO_EXPORTED_FUNCTIONS`:
 
 ```
+_cedar_set_block_table
 _cedar_apply_state_inits_from_buffer
+_cedar_apply_midi_sources_from_buffer
+_akkado_resolve_sample_ids_from_buffer
 ```
 
-Signature in `web/wasm/nkido_wasm.cpp`:
+Update the existing `_akkado_patch_sample_ids_in_bytecode` signature
+to take a mappings buffer parameter (was: reads
+`g_compile_result.scalar_sample_mappings`; now: reads caller-provided
+buffer).
+
+Signatures in `web/wasm/nkido_wasm.cpp`:
 
 ```cpp
-// Parse a packed buffer (format §5.1–5.3) and route each record to the
-// matching VM::init_*_state call. Returns the number of records applied,
-// or -1 on a malformed buffer (bad magic, truncated, unknown type).
+// Stage the FOREACH_EVENT subprogram table for the next
+// cedar_load_program call. Mirrors today's load_program path that
+// reads g_compile_result.block_table.
+WASM_EXPORT int32_t cedar_set_block_table(
+    const uint8_t* entries_buf, uint32_t entry_count,
+    uint32_t main_instruction_count);
+
+// Parse stateInitsBuf (format §5.1–5.3) and route each StateInit
+// record to the matching VM::init_*_state call. Sample-mapping
+// records (kind=1,2) are validated but not applied here — see
+// _akkado_resolve_sample_ids_from_buffer.
+// Returns # of state-init records applied, or -1 on malformed buffer.
 WASM_EXPORT int32_t cedar_apply_state_inits_from_buffer(
+    const uint8_t* buf, uint32_t byte_count);
+
+// Walk SequenceSampleMapping records (kind=1) in stateInitsBuf and
+// patch Event::values[slot] = bank.get_sample_id(name) for each.
+// Must run AFTER cedar_apply_state_inits_from_buffer (so events
+// exist) and AFTER sample bank is populated.
+WASM_EXPORT int32_t akkado_resolve_sample_ids_from_buffer(
+    const uint8_t* buf, uint32_t byte_count);
+
+// Parse midiSourcesBuf (format §5.6) and call VM::init_midi_queue_state
+// for each record. Must run AFTER cedar_load_program (new program's
+// state pool active).
+WASM_EXPORT int32_t cedar_apply_midi_sources_from_buffer(
     const uint8_t* buf, uint32_t byte_count);
 ```
 
-The implementation lives next to the existing `cedar_apply_state_inits`
-(deleted in this PRD — see §7).
+Delete `cedar_apply_state_inits`, `cedar_apply_midi_sources`,
+`akkado_resolve_sample_ids` (no callers after this PRD).
+
+### 5.6 midiSourcesBuf
+
+One record per `g_compile_result.required_midi_sources[]` entry.
+Mirrors `cedar::MidiSourceKind` and `MidiQueueState::TempoMode`.
+
+```
+[ magic: u32 = 0x4D494449 ("MIDI") ]
+[ version: u16 = 1 ]
+[ record_count: u16 ]
+[ records:
+  { state_id: u32,
+    kind: u8, channel_filter: u8, loop: u8, tempo_mode: u8,
+    name_len: u16, pad: u8[2],
+    name_chars: u8[name_len], pad to 4-byte boundary
+  }[record_count]
+]
+```
+
+### 5.7 blockTable
+
+Posted as a `Uint8Array` (memcpy of `BlockEntry[]`) + a `u32`
+`mainInstCount`. The worklet calls
+`_cedar_set_block_table(entries, count, mainInstCount)` **before**
+`_cedar_load_program` so the table is staged for that load (matches
+today's `g_compile_result.block_table` flow). Empty table is fine —
+patches without `foreach()`/`iter()` have zero entries.
 
 ---
 
@@ -471,12 +705,13 @@ The implementation lives next to the existing `cedar_apply_state_inits`
 | Cedar VM (`cedar/`) | **Unchanged** | Hot-swap mechanism already bit-perfect (proven). |
 | Akkado compiler (`akkado/`) | **Unchanged** | Still produces `CompileResult` with state_inits; just runs in a different WASM instance. |
 | `tools/nkido`, `tools/akkado` | **Unchanged** | No worklet, no contract violation. |
-| `web/wasm/nkido_wasm.cpp` | **Modified** | New `cedar_apply_state_inits_from_buffer`. Delete old `cedar_apply_state_inits` (no caller after this PRD). |
-| `web/wasm/CMakeLists.txt` | **Modified** | Update `NKIDO_EXPORTED_FUNCTIONS` list. |
-| `web/static/worklet/cedar-processor.js` | **Modified** | Delete entire `'compile'` message handler + `extract*` helpers. Replace `'loadCompiledProgram'` with `'loadProgram'` taking pre-packed `stateInitsBuf`. Drop SlotBusy retry loop. |
-| `web/src/lib/audio/compile.worker.ts` | **New** | Owns compile WASM. Mirrors today's worklet `compile` handler, returns one big payload. |
-| `web/src/lib/audio/state-init-codec.ts` | **New** | TS pack function + format docs. Used in worker. |
-| `web/src/lib/stores/audio.svelte.ts` | **Modified** | Spawn worker in `initialize()`. Route `compile()` to worker, sample-load on main, post `loadProgram` to worklet. Generation/supersede logic. Surface worker-down diagnostics. |
+| `web/wasm/nkido_wasm.cpp` | **Modified** | Add `cedar_set_block_table`, `cedar_apply_state_inits_from_buffer`, `akkado_resolve_sample_ids_from_buffer`, `cedar_apply_midi_sources_from_buffer`. Change `akkado_patch_sample_ids_in_bytecode` to take a mappings-buffer argument. Delete `cedar_apply_state_inits`, `cedar_apply_midi_sources`, `akkado_resolve_sample_ids` (no callers after this PRD). |
+| `web/wasm/CMakeLists.txt` | **Modified** | Update `NKIDO_EXPORTED_FUNCTIONS` list (add 4 new, remove 3 old). |
+| `web/static/worklet/cedar-processor.js` | **Modified** | Delete entire `'compile'` message handler + `extract*` helpers. Replace `'loadCompiledProgram'` with `'loadProgram'` taking pre-packed `{bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount}`. Keep a single per-`process_block` SlotBusy retry; drop today's multi-attempt `pendingLoadRetry` state machine. Add a top-of-file comment block stating the worklet-thread contract. |
+| `web/src/lib/audio/compile.worker.ts` | **New** | Owns compile WASM. Mirrors today's worklet `compile` handler, plus pack steps for stateInitsBuf, midiSourcesBuf, blockTable. Returns one big payload. Emits `{type:'ready'}` after WASM init. |
+| `web/src/lib/audio/state-init-codec.ts` | **New, auto-generated** | TS pack functions for every record type. Generated by `web/scripts/build-state-init-codec.ts` from the C++ headers (see §5.4). Don't hand-edit. |
+| `web/scripts/build-state-init-codec.ts` | **New** | Codec generator. Wires into `bun run build:state-init-codec` and runs as part of `bun run build:wasm` so the codec is regenerated whenever WASM is rebuilt. |
+| `web/src/lib/stores/audio.svelte.ts` | **Modified** | Spawn worker in `initialize()` with boot-time queueing (§4.3). Replace `compile()` body: post `compile` to worker (with generation tag), await `compileResult`, drop if superseded, then run existing sample-load pipeline, then post `loadProgram` with all four buffers. Surface worker error/death as a compile diagnostic; respawn lazily. |
 | `web/e2e/hot-swap-audio.spec.ts` | **Unchanged** | Same test, will go green. |
 | `akkado/tests/test_hot_swap_event_transforms.cpp` | **Unchanged** | CLI runtime test unaffected. |
 | `CLAUDE.md` | **Modified** | Add a "Worklet thread contract" section. |
@@ -489,18 +724,20 @@ The implementation lives next to the existing `cedar_apply_state_inits`
 
 | File | Purpose |
 |------|---------|
-| `web/src/lib/audio/compile.worker.ts` | Web Worker entry point. Loads its own WASM instance. Listens for `{type:'compile', gen, source}`. Calls `_akkado_compile`, extracts diagnostics + bytecode + state_inits (packed) + required-sample/SF2/MIDI/viz/param/disassembly metadata. Posts back `{type:'compileResult', gen, success, ...payload}`. |
-| `web/src/lib/audio/state-init-codec.ts` | Pack JS-side state-init records into the wire format from §5. Format documented inline. Used only by the worker. |
+| `web/src/lib/audio/compile.worker.ts` | Web Worker entry point. Loads its own WASM instance. On WASM init, posts `{type:'ready'}`. Listens for `{type:'compile', gen, source}`. Calls `_akkado_compile`, extracts diagnostics + bytecode + state-init records + sample mappings + MIDI sources + block table, packs them via the §5 codecs, and posts back `{type:'compileResult', gen, success, ...payload}`. |
+| `web/src/lib/audio/state-init-codec.ts` | **Auto-generated.** Pack functions for every record type, plus TS layout assertions. Generated by `build-state-init-codec.ts` from C++ headers (§5.4). Don't hand-edit. |
+| `web/scripts/build-state-init-codec.ts` | Codec generator. Parses `akkado/include/akkado/codegen.hpp`, `cedar/include/cedar/opcodes/sequence.hpp`, `cedar/include/cedar/opcodes/dsp_state.hpp`, `cedar/include/cedar/vm/vm.hpp` for struct layouts; emits typed pack fns + size assertions into `state-init-codec.ts`. |
 
 ### 7.2 Files to modify
 
 | File | Change |
 |------|--------|
-| `web/wasm/nkido_wasm.cpp` | Add `cedar_apply_state_inits_from_buffer`. Delete `cedar_apply_state_inits` (no callers). |
-| `web/wasm/CMakeLists.txt` | Replace `_cedar_apply_state_inits` with `_cedar_apply_state_inits_from_buffer` in exports list. |
-| `web/static/worklet/cedar-processor.js` | Remove `case 'compile':`, the entire compile + extract helper stack (`extractStateInits`, `extractDiagnostics`, `extractParamDecls`, `extractVizDecls`, `extractBuiltinVarOverrides`, `getRequired*` helpers). Rename `loadCompiledProgram` → `loadProgram` and accept `{bytecode, stateInitsBuf}` directly (no `pendingProgram` indirection). Drop the SlotBusy retry loop — the new orchestrator guarantees no overlap. Add a top-of-file comment block stating the worklet-thread contract. |
-| `web/src/lib/stores/audio.svelte.ts` | In `initialize()`: spawn the compile worker, load its WASM. Replace `compile()` body: post `compile` to worker (with generation tag), await `compileResult`, drop if superseded, then run existing sample-load pipeline, then post `loadProgram` to worklet. Surface worker error/death as a compile diagnostic; respawn lazily. |
-| `CLAUDE.md` (nkido project) | Add a "Web architecture: worklet thread contract" section: only `process_block` + `cedar_apply_state_inits_from_buffer` may run inside the worklet. Compile, parsing, codegen, fetch, decode — all forbidden on the worklet thread. Pointer to this PRD. |
+| `web/wasm/nkido_wasm.cpp` | Add `cedar_set_block_table`, `cedar_apply_state_inits_from_buffer`, `akkado_resolve_sample_ids_from_buffer`, `cedar_apply_midi_sources_from_buffer`. Change `akkado_patch_sample_ids_in_bytecode` to take a mappings buffer arg. Delete `cedar_apply_state_inits`, `cedar_apply_midi_sources`, `akkado_resolve_sample_ids` (no callers). |
+| `web/wasm/CMakeLists.txt` | Update `NKIDO_EXPORTED_FUNCTIONS`: add the four new `*_from_buffer` / `_cedar_set_block_table` exports; remove the three deleted exports. |
+| `web/package.json` | Add `build:state-init-codec` script (wraps `build-state-init-codec.ts`); chain it into `build:wasm` so codec is regenerated on every WASM rebuild. |
+| `web/static/worklet/cedar-processor.js` | Remove `case 'compile':`, the entire compile + extract helper stack (`extractStateInits`, `extractDiagnostics`, `extractParamDecls`, `extractVizDecls`, `extractBuiltinVarOverrides`, `getRequired*` helpers). Rename `loadCompiledProgram` → `loadProgram` and accept `{bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount}`. Keep a single per-`process_block` SlotBusy retry; drop today's multi-attempt `pendingLoadRetry` state machine. Add a top-of-file comment block stating the worklet-thread contract. |
+| `web/src/lib/stores/audio.svelte.ts` | In `initialize()`: spawn the compile worker, load its WASM, await `ready`. Replace `compile()` body: queue-then-send to worker (with generation tag), await `compileResult`, drop if superseded, then run existing sample-load pipeline, then post `loadProgram` with all four buffers. Surface worker error/death as a compile diagnostic; respawn lazily. |
+| `CLAUDE.md` (nkido project) | Add a "Web architecture: worklet thread contract" section: only `process_block` + `_cedar_set_block_table` + `_cedar_apply_*_from_buffer` + `_akkado_*_from_buffer` may run inside the worklet. Compile, parsing, codegen, fetch, decode — all forbidden on the worklet thread. Pointer to this PRD. |
 
 ### 7.3 Files that explicitly require **no changes**
 
@@ -536,8 +773,15 @@ verification step.
    for a few patches, then check the NEW worker produces identical JS,
    and that the packed buffer round-trips through the WASM unpacker.
 4. **Worklet rewire** — delete the compile handler + extract helpers.
-   Replace `loadCompiledProgram` with `loadProgram(bytecode, stateInitsBuf)`.
-   Drop SlotBusy retry. **Verify**: app boots, simple patch plays.
+   Replace `loadCompiledProgram` with
+   `loadProgram({bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount})`.
+   Wire `_cedar_set_block_table` → `_akkado_patch_sample_ids_in_bytecode`
+   (with mappings buffer) → `_cedar_load_program` →
+   `_akkado_resolve_sample_ids_from_buffer` →
+   `_cedar_apply_state_inits_from_buffer` →
+   `_cedar_apply_midi_sources_from_buffer`. Keep a single per-block
+   SlotBusy retry. **Verify**: app boots, simple patch plays; a patch
+   using `foreach()` / `iter()` and one using `midi(...)` both play.
 5. **Main-thread orchestrator** — `audio.svelte.ts` compile() routes
    to worker, runs sample loads, posts `loadProgram` to worklet.
    Implement supersede-by-generation. **Verify**: e2e test
@@ -596,6 +840,14 @@ error similar to today's worklet-WASM-failed path. Audio engine sits in
 a degraded state — runtime still works for the currently loaded
 program (if any), but compile is unavailable until reload.
 
+### 9.6.b Worker not yet ready, user hits Ctrl+Enter
+
+`audioEngine.compile()` awaits a `workerReady` promise (§4.3). Pre-
+ready compiles are queued in a single-slot supersede-by-newest queue:
+only the latest pre-ready compile is dispatched once `ready` fires.
+The user never loses the most recent source they typed even if they
+press Ctrl+Enter mid-WASM-init.
+
 ### 9.7 Initial program load (first compile, no prior program)
 
 Same path as hot-swap: worker compiles, main loads samples, worklet
@@ -603,20 +855,26 @@ calls `_cedar_load_program` (which sees no previous program, no
 crossfade, direct install). State-init buffer is applied. No special
 case.
 
-### 9.8 Hot-swap during compile result delivery
+### 9.8 Two `loadProgram` messages arrive between `process_block` ticks
 
-Worklet's `process()` keeps running throughout. When `loadProgram`
-arrives, the next `process_block` will see `swap_controller_`'s pending
-flag and execute the handover. There is no window where audio stops
-because nothing on the worklet thread blocks `process()` for more than
-the load step (target <5 ms).
+Both compiles passed the supersede-by-newest filter (e.g. quick
+edit, quick edit again). Main thread posts `loadProgram` A then B.
+Worklet handles A → `_cedar_load_program` arms a swap. Worklet then
+handles B → `_cedar_load_program` returns `SlotBusy` (both A/B slots
+occupied because audio thread hasn't yet performed A's swap). Worklet
+parks B's bytecode + buffers in `pendingProgram`; the next
+`process_block` finishes A's swap and immediately calls the parked
+load. Single-shot retry, no multi-attempt state machine.
 
 ### 9.9 State-init buffer is malformed (bug in packer)
 
 `cedar_apply_state_inits_from_buffer` returns -1 and logs
 `[CEDAR BUG]` to console. The new program loads with no state inits,
 which is a known broken state (patterns won't play). User sees broken
-audio. Better to surface loudly than silently swallow.
+audio. Better to surface loudly than silently swallow. Same handling
+for `cedar_apply_midi_sources_from_buffer` and
+`akkado_resolve_sample_ids_from_buffer` (each returns -1 on bad
+magic / truncated buffer).
 
 ### 9.10 Worker takes 5+ seconds to compile (huge patch, slow compiler)
 
@@ -656,12 +914,21 @@ Locks down the wire format independently of the worker.
 cd web && bun run test:e2e -- --grep "unison-pad"
 ```
 
+The acceptance criteria are **audio-gap-only** — `editor.evaluate()`
+end-to-end latency is *not* a goal because the worker still spends
+~110 ms in `_akkado_compile` (non-goal §3: not speeding up the
+compiler). The gap goes away because compile no longer runs on the
+worklet thread, not because compile got faster.
+
 Expected after this PRD:
-- `editor.evaluate()` median **<5 ms** (currently 112 ms).
 - `worstRun` of low-RMS samples **<2** (currently 12–14, ~280 ms).
 - No `Output silent for 100 blocks` warning in console output.
 - Test passes 5 of 5 consecutive runs (currently fails 3 of 3 with
   aggressive timing).
+- Worklet `loadProgram` handler duration **<5 ms** median (measured
+  via a worklet-side `console.timeEnd('loadProgram')` log captured
+  in the test). This is the *true* metric the PRD bounds — what the
+  worklet thread does per swap.
 
 ### 10.4 Worker error recovery test (new)
 
