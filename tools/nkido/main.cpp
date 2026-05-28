@@ -9,6 +9,7 @@
 #include "cedar/vm/vm.hpp"
 #include "cedar/opcodes/dsp_state.hpp"
 #include "cedar/io/file_cache.hpp"
+#include "cedar/platform/utf8_init.hpp"
 #include <iostream>
 #include <fstream>
 #include <cstring>
@@ -490,6 +491,10 @@ int handle_render_mode(const nkido::Options& opts) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // Switch the attached console to UTF-8 so non-ASCII paths and
+    // diagnostic messages render correctly on Windows. POSIX: no-op.
+    cedar::platform::ensure_utf8_console();
+
     // Parse arguments
     auto opts = parse_args(argc, argv);
     if (!opts) {

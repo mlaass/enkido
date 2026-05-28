@@ -1,6 +1,7 @@
 #pragma once
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
+#include <cstddef>
 #include <cstdint>
 
 namespace nkido::ui {

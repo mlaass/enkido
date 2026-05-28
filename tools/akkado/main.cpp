@@ -2,6 +2,7 @@
 #include <fstream>
 #include <cstdlib>
 #include "akkado/akkado.hpp"
+#include "cedar/platform/utf8_init.hpp"
 
 void print_usage(const char* program) {
     std::cout << "Akkado Compiler v" << akkado::Version::string() << "\n\n"
@@ -23,6 +24,10 @@ void print_version() {
 }
 
 int main(int argc, char* argv[]) {
+    // Switch the attached console to UTF-8 so non-ASCII paths and
+    // diagnostic messages render correctly on Windows. POSIX: no-op.
+    cedar::platform::ensure_utf8_console();
+
     if (argc < 2) {
         print_usage(argv[0]);
         return EXIT_FAILURE;

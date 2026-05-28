@@ -5,7 +5,7 @@
 #include "../audio_engine.hpp"
 #include "../bytecode_loader.hpp"
 #include "cedar/opcodes/dsp_state.hpp"
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <string>
 #include <vector>
 #include <cstdint>

@@ -67,6 +67,10 @@ target_compile_definitions(nkido_cli PRIVATE
 # Platform-specific: SDL2main needed on Windows
 if(WIN32)
     target_link_libraries(nkido_cli PRIVATE SDL2::SDL2main)
+    # Embed UTF-8 activeCodePage manifest so ANSI APIs (fopen, CreateFileA)
+    # use UTF-8 on Win10 1903+. CMake auto-passes .manifest files to the
+    # MSVC linker (handled identically by Ninja and the VS generator).
+    target_sources(nkido_cli PRIVATE nkido.manifest)
 endif()
 
 install(TARGETS nkido_cli
@@ -98,6 +102,6 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/web/static/soundfonts/
         PATTERN "LICENSE.md"
 )
 
-if(NKIDO_BUILD_TESTS)
+if(NKIDO_BUILD_NKIDO_TESTS)
     add_subdirectory(tests)
 endif()

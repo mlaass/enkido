@@ -1,8 +1,8 @@
 #include "audio_engine.hpp"
 #include "midi_input.hpp"
 #include "cedar/io/uri_resolver.hpp"
-#include <SDL2/SDL.h>
-#include <csignal>
+#include "cedar/platform/ctrl_c.hpp"
+#include <SDL.h>
 #include <chrono>
 #include <thread>
 #include <cstring>
@@ -16,14 +16,10 @@ namespace nkido {
 // Global signal flag
 std::atomic<bool> g_signal_received{false};
 
-static void signal_handler(int signal) {
-    (void)signal;
-    g_signal_received.store(true, std::memory_order_release);
-}
-
 void install_signal_handlers() {
-    std::signal(SIGINT, signal_handler);
-    std::signal(SIGTERM, signal_handler);
+    cedar::platform::install_ctrl_c_handler([]() {
+        g_signal_received.store(true, std::memory_order_release);
+    });
 }
 
 AudioEngine::AudioEngine() = default;

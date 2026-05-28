@@ -18,6 +18,11 @@ target_link_libraries(akkado_cli
         nkido_compiler_options
 )
 
+if(WIN32)
+    # UTF-8 activeCodePage manifest, embedded via the MSVC linker.
+    target_sources(akkado_cli PRIVATE akkado.manifest)
+endif()
+
 # Install
 install(TARGETS akkado_cli
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

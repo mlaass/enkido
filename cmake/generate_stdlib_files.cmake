@@ -42,13 +42,46 @@ struct StdlibFile {
 ]==])
 
 set(_count 0)
+# MSVC's per-literal limit is ~16380 chars (error C2026 "string too
+# big"). Long .ak files (e.g. scale_quantize.ak ~94KB) must be emitted
+# as multiple adjacent raw-string literals which the C++ compiler
+# concatenates at parse time. We split well under the limit (target
+# 12000 bytes per chunk) and extend each chunk to the next newline so
+# a logical line is never bisected.
+set(_chunk_target 12000)
+
 foreach(_ak ${_ak_files})
     get_filename_component(_name "${_ak}" NAME_WE)
     file(READ "${_ak}" _content)
+    string(LENGTH "${_content}" _total_len)
     file(APPEND "${OUTPUT_HEADER}"
-         "constexpr std::string_view STDLIB_${_name}_SOURCE = R\"akstdlib(\n")
-    file(APPEND "${OUTPUT_HEADER}" "${_content}")
-    file(APPEND "${OUTPUT_HEADER}" ")akstdlib\"")
+         "constexpr std::string_view STDLIB_${_name}_SOURCE =\n")
+
+    set(_pos 0)
+    while(_pos LESS _total_len)
+        math(EXPR _remaining "${_total_len} - ${_pos}")
+        if(_remaining LESS_EQUAL ${_chunk_target})
+            set(_take ${_remaining})
+        else()
+            # Take chunk_target bytes, then extend to the next newline
+            # so we don't split a source line across two literals.
+            math(EXPR _probe_end "${_pos} + ${_chunk_target}")
+            math(EXPR _search_len "${_total_len} - ${_probe_end}")
+            string(SUBSTRING "${_content}" ${_probe_end} ${_search_len} _tail)
+            string(FIND "${_tail}" "\n" _nl_pos)
+            if(_nl_pos EQUAL -1)
+                set(_take ${_remaining})
+            else()
+                math(EXPR _take "${_chunk_target} + ${_nl_pos} + 1")
+            endif()
+        endif()
+        string(SUBSTRING "${_content}" ${_pos} ${_take} _chunk)
+        file(APPEND "${OUTPUT_HEADER}" "    R\"akstdlib(")
+        file(APPEND "${OUTPUT_HEADER}" "${_chunk}")
+        file(APPEND "${OUTPUT_HEADER}" ")akstdlib\"\n")
+        math(EXPR _pos "${_pos} + ${_take}")
+    endwhile()
+
     file(APPEND "${OUTPUT_HEADER}" [==[;
 
 ]==])

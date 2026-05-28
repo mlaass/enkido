@@ -1071,7 +1071,7 @@ private:
                 // branch but not yet on the merged event, copy the value.
                 std::uint32_t new_bits = hit->prop_vals_used & ~merged_props_used;
                 while (new_bits) {
-                    int s = __builtin_ctz(new_bits);
+                    int s = std::countr_zero(new_bits);
                     e.prop_vals[static_cast<std::size_t>(s)] =
                         hit->prop_vals[static_cast<std::size_t>(s)];
                     e.prop_set_mask |= static_cast<std::uint8_t>(1u << s);

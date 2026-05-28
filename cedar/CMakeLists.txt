@@ -96,6 +96,23 @@ if(CEDAR_ENABLE_FILE_IO AND NOT EMSCRIPTEN)
     )
 endif()
 
+# Platform abstractions (Ctrl+C handler, stdio binary mode, UTF-8 console).
+# Header API is platform-neutral; the implementation is selected here so
+# the rest of the build can call `cedar::platform::*` unconditionally.
+if(WIN32)
+    list(APPEND CEDAR_SOURCES
+        src/platform/ctrl_c_win.cpp
+        src/platform/stdio_binary_win.cpp
+        src/platform/utf8_init_win.cpp
+    )
+else()
+    list(APPEND CEDAR_SOURCES
+        src/platform/ctrl_c_posix.cpp
+        src/platform/stdio_binary_posix.cpp
+        src/platform/utf8_init_posix.cpp
+    )
+endif()
+
 # Cedar library
 add_library(cedar STATIC ${CEDAR_SOURCES})
 

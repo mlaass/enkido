@@ -22,6 +22,11 @@ option(NKIDO_BUILD_CEDAR "Build Cedar synth engine" ON)
 option(NKIDO_BUILD_AKKADO "Build Akkado compiler" ON)
 option(NKIDO_BUILD_TOOLS "Build CLI tools" ON)
 option(NKIDO_BUILD_TESTS "Build tests" ON)
+# nkido CLI tests (test_serve.cpp) are still POSIX-only — split into
+# their own flag so cedar_tests + akkado_tests can stay enabled on
+# Windows while the broken nkido tests are skipped. Defaults to the
+# umbrella flag for source-unchanged behaviour on Linux/macOS.
+option(NKIDO_BUILD_NKIDO_TESTS "Build nkido CLI tests" ${NKIDO_BUILD_TESTS})
 
 # Include CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -48,4 +53,15 @@ endif()
 # Testing
 if(NKIDO_BUILD_TESTS)
     enable_testing()
+endif()
+
+# Windows-only: stage the repo LICENSE into the install tree with the
+# conventional .txt extension so the future release zip carries it
+# without leaking a renamed file into Linux/macOS install layouts.
+if(WIN32)
+    include(GNUInstallDirs)
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/nkido
+        RENAME LICENSE.txt
+    )
 endif()

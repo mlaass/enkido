@@ -8,8 +8,9 @@
 #include "akkado/diagnostics.hpp"
 #include "cedar/vm/vm.hpp"
 #include "cedar/opcodes/dsp_state.hpp"
+#include "cedar/platform/stdio_binary.hpp"
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <algorithm>
 
 #include <atomic>
@@ -1130,6 +1131,9 @@ int run_serve_mode(const Options& opts) {
     engine->set_preferred_midi_device(
         opts.midi_device ? opts.midi_device->c_str() : nullptr);
 
+    // Switch stdin/stdout to binary so the line-delimited JSON protocol
+    // is not corrupted by Windows CRT CRLF translation. POSIX: no-op.
+    cedar::platform::set_stdio_binary_mode();
     install_signal_handlers();
 
     // Open an SDL window with a live waveform + level meter so the user
