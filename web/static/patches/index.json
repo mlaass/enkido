@@ -8,7 +8,7 @@
   {
     "slug": "wavetable-scan",
     "title": "Wavetable",
-    "description": "Smooch wavetable oscillator scanning through a bank of harmonic frames.",
+    "description": "Wavetable oscillator scanning through a bank of harmonic frames.",
     "landing": true
   },
   {
