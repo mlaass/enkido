@@ -2528,6 +2528,14 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
         args.push_back(c);
     }
 
+    // Resolve `_` placeholders against this builtin's defaults (PRD §10
+    // Addendum). out()/bus() have no numeric defaults today so this is a
+    // no-op; it locks in the architectural rule for future edits.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
+    }
+
     // Resolve the bus index. out(...) targets bus 0; bus(N, ...) takes a
     // compile-time non-negative integer literal as its first argument.
     int bus_index = 0;
@@ -2665,6 +2673,14 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
     for (NodeIndex c = n.first_child; c != NULL_NODE;
          c = ast_->arena[c].next_sibling) {
         args.push_back(c);
+    }
+
+    // Resolve `_` placeholders against this builtin's defaults (PRD §10
+    // Addendum). master()/mixer() have no numeric defaults today; the call
+    // is a no-op but locks in the architectural rule for future edits.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
     }
 
     // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a

@@ -50,6 +50,46 @@ inline CallArgs extract_call_args(
     return result;
 }
 
+// Rewrites each `Identifier("_")` in `args` whose slot has a numeric
+// default in `builtin` into a synthetic NumberLit node in `arena`, so that
+// downstream "must be a number literal" checks in specialized handlers
+// (poly's voices/release, tap_delay's dry/wet, etc.) see the resolved
+// default instead of failing on the bare `_` identifier.
+//
+// Slots without a default are left untouched — the analyzer's
+// `all_placeholders_have_defaults` pre-pass already converts those into
+// closure partial-applications before codegen, so a residual `_` here is
+// either a defensive miss or a future call site to harden.
+//
+// Predicate must stay in sync with `analyzer.cpp` `is_placeholder_node` and
+// the generic CallSlot branch at `codegen.cpp` (`CallSlot::Underscore`).
+//
+// String defaults are out of scope — no specialized handler today reads a
+// string-defaulted optional via `extract_call_args`.
+inline void resolve_underscore_defaults(
+    AstArena& arena,
+    const StringInterner& interner,
+    std::vector<NodeIndex>& args,
+    const BuiltinInfo& builtin
+) {
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        NodeIndex inner = unwrap_argument(arena, args[i]);
+        if (inner == NULL_NODE) continue;
+        const Node& n = arena[inner];
+        if (n.type != NodeType::Identifier) continue;
+        if (!std::holds_alternative<Node::IdentifierData>(n.data)) continue;
+        if (interner.view(n.as_identifier()) != "_") continue;
+        if (!builtin.has_default(i)) continue;
+
+        float default_val = builtin.get_default(i);
+        SourceLocation loc = n.location;
+        NodeIndex synthetic = arena.alloc(NodeType::NumberLit, loc);
+        arena[synthetic].data = Node::NumberData{
+            static_cast<double>(default_val), false};
+        args[i] = synthetic;
+    }
+}
+
 // NOTE: The free `finalize_array_result(node, ..., node_types, buffers,
 // instructions)` helper was removed in PRD prd-parser-codegen-correctness.md
 // Phase 3 (F2). Use `CodeGenerator::finalize_array_result(node, buffers)`

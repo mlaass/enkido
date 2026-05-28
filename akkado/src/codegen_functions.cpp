@@ -2297,22 +2297,19 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
         time_unit = 2;
     }
 
-    // Collect arguments: in, time, fb, processor
-    std::vector<NodeIndex> args;
-    NodeIndex arg = n.first_child;
-    while (arg != NULL_NODE) {
-        const Node& arg_node = ast_->arena[arg];
-        NodeIndex arg_value = arg;
-        if (arg_node.type == NodeType::Argument) {
-            arg_value = arg_node.first_child;
-        }
-        args.push_back(arg_value);
-        arg = ast_->arena[arg].next_sibling;
-    }
-
-    if (args.size() < 4) {
-        error("E301", func_name + "() requires 4 arguments: " + func_name + "(in, time, fb, processor)", n.location);
+    // Collect arguments: in, time, fb, processor, [dry], [wet]
+    auto extracted = codegen::extract_call_args(ast_->arena, n.first_child, 4, 6);
+    if (!extracted.valid) {
+        error("E301", func_name + "() requires 4-6 arguments: " + func_name + "(in, time, fb, processor, dry?, wet?)", n.location);
         return TypedValue::void_val();
+    }
+    std::vector<NodeIndex>& args = extracted.nodes;
+
+    // Substitute `_` placeholders at optional slots (dry, wet) with their
+    // BuiltinInfo defaults. See PRD §10 Addendum.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
     }
 
     // Validate that processor (4th arg) is a Closure
@@ -2529,6 +2526,16 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
             error("E400", func_name + "() requires 1-3 arguments: " + func_name + "(instrument) or " + func_name + "(input, instrument, release=0)", n.location);
         }
         return TypedValue::void_val();
+    }
+
+    // Substitute `_` placeholders at optional slots (voices, release) with
+    // their BuiltinInfo defaults. See PRD §10 Addendum — this hooks
+    // specialized handlers into the same default-filling the generic
+    // CallSlot dispatcher already provides.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner,
+            args.nodes, *bi);
     }
 
     // Parse arguments based on func_name and arg count

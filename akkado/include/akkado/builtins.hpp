@@ -1292,7 +1292,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // — see PRD prd-midi-input §7.2. Default 0 = legacy behavior.
     {"poly",      {cedar::Opcode::NOP, 2, 2, true,
                    {"input", "instrument", "voices", "release", "", ""},
-                   {NAN, NAN, 64.0f, 0.0f, NAN},
+                   {64.0f, 0.0f, NAN, NAN, NAN},
                    "Polyphonic voice manager: allocates voices driven by a pattern input. Default 64 voices, max 128. `release` (seconds) extends per-voice mix tail past note-off.",
                    0, {}, {}, ChannelCount::Stereo, true}},
     // Higher-order DSL (PRD prd-runtime-functions-control-flow L3 §7.5). All
@@ -1339,12 +1339,12 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // dual-role builtin — prefer fully-positional `mono(input, synth, 0.3)`.
     {"mono",      {cedar::Opcode::MONO_DOWNMIX, 1, 2, false,
                    {"signal_or_instrument", "input", "release", "", "", ""},
-                   {NAN, NAN, 0.0f, NAN, NAN},
+                   {NAN, 0.0f, NAN, NAN, NAN},
                    "Stereo-to-mono downmix (L+R)*0.5, or monophonic voice manager. `release` (seconds) extends mix tail past note-off in voice-manager mode.",
                    0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
     {"legato",    {cedar::Opcode::NOP, 1, 2, false,
                    {"instrument", "input", "release", "", "", ""},
-                   {NAN, NAN, 0.0f, NAN, NAN},
+                   {NAN, 0.0f, NAN, NAN, NAN},
                    "Legato voice manager. `release` (seconds) extends mix tail past note-off."}},
     {"spread",    {cedar::Opcode::NOP, 2, 0, false,
                    {"n", "source", "", "", "", ""},
