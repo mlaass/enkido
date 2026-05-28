@@ -152,6 +152,19 @@ cmake -B build-cedar cedar/
 cmake --build build-cedar
 ```
 
+### Git Hooks
+
+Tracked hooks live in `scripts/hooks/`. Each fresh clone needs a one-time:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+Current hooks:
+- `pre-commit` — regenerates `web/src/lib/welcome-patches.generated.ts`
+  (and re-stages it) whenever a commit touches anything under
+  `web/static/patches/welcome/`. Requires `bun` on `PATH`.
+
 ## Releases
 
 Version bumps go through `scripts/bump-version.sh` — **never edit `VERSION`

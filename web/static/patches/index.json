@@ -32,7 +32,7 @@
   {
     "slug": "unison-pad",
     "title": "Unison Pad",
-    "description": "Polyphonic pad: each chord note fans into a 4-voice detuned unison cluster via poly(@, fat, 4).",
+    "description": "Polyphonic pad: each chord note fans into a 3-voice detuned unison cluster via poly(@, fat, _, 3).",
     "landing": true
   },
   {
@@ -62,7 +62,7 @@
   {
     "slug": "soundfont-play",
     "title": "SoundFont",
-    "description": "Melody played through the built-in General MIDI SoundFont (acoustic grand piano).",
+    "description": "Melody layered through two GM piano presets — a dry lead with reverb plus a slowed sub-octave through delay and dattorro.",
     "landing": true
   },
   {
@@ -74,18 +74,18 @@
   {
     "slug": "hello-sine",
     "title": "Oscillators",
-    "description": "The smallest Akkado patch — a sine wave with vibrato. Swap the waveform name to hear saw, tri, square, or noise.",
+    "description": "The smallest Akkado patch — a sine wave with vibrato. Swap `sine` for `saw`, `tri`, `sqr`, or `noise` to hear each waveform.",
     "landing": true
-  },
-  {
-    "slug": "kick-pattern",
-    "title": "Kick Pattern",
-    "description": "Four-on-the-floor kick driven by a mini-notation pattern."
   },
   {
     "slug": "chord-stab",
     "title": "Chord Stab",
     "description": "Strudel-style chord expansion with a filter and envelope."
+  },
+  {
+    "slug": "rock-groove",
+    "title": "Rock Groove",
+    "description": "Nested mini-notation drum kit plus a tri-bass riff through a saturated low-pass."
   },
   {
     "slug": "midi-keys",
@@ -95,12 +95,17 @@
   {
     "slug": "midi-cc-filter",
     "title": "MIDI CC + Bend",
-    "description": "Mod wheel sweeps the filter, CC 71 controls resonance, pitch-bend wheel bends ±2 semitones — `midi_cc()` routes external controllers straight into `param()` slots."
+    "description": "Mod wheel sweeps cutoff, CC 2 controls resonance, pitch-bend wheel bends ±2 semitones — `midi_cc()` routes external controllers straight into `param()` slots."
+  },
+  {
+    "slug": "midi-cc-filtermono",
+    "title": "MIDI Mono Lead",
+    "description": "Monophonic glide lead with PWM and pitch-bend — `midi_cc()` routes five external controls (cutoff, resonance, PWM, glide time, pitch-bend) into a saw+sub voice."
   },
   {
     "slug": "midi-soundfont",
     "title": "MIDI → SoundFont",
-    "description": "Live polyphonic SF2 playback from a USB keyboard — `midi() |> soundfont(@, \"gm\", N)` layers piano (GM 0) and strings (GM 48) through the built-in 32-voice SoundFont allocator."
+    "description": "Live polyphonic SF2 playback from a USB keyboard — `midi() |> soundfont(@, \"gm\", 0)` runs grand piano notes through the built-in 32-voice SoundFont allocator."
   },
   {
     "slug": "stepper-demo",
@@ -115,6 +120,6 @@
   {
     "slug": "harmonizer-demo",
     "title": "Harmonizer",
-    "description": "`map()` over a static interval array turns every melody note into a triad; `osc()` fans out across the array and `sum()` mixes it back."
+    "description": "`map()` over a static interval array turns every melody note into a triad; `saw()` fans out across the array and `sum()` mixes it back."
   }
 ]
