@@ -1298,6 +1298,54 @@ WASM_EXPORT uint32_t cedar_apply_midi_sources() {
 }
 
 // ============================================================================
+// Compile-result packers (PRD prd-compile-off-audio-thread §5)
+//
+// The compile worker calls these immediately after akkado_compile() to
+// receive the wire-format buffers it forwards to the main thread. Each
+// repacks on call; the returned pointer is valid until the next pack call
+// or akkado_clear_result(). Worker copies bytes out before either occurs.
+// ============================================================================
+
+static std::vector<std::uint8_t> g_state_inits_buf;
+static std::vector<std::uint8_t> g_midi_sources_buf;
+static std::vector<std::uint8_t> g_block_table_buf;
+
+WASM_EXPORT const uint8_t* akkado_pack_state_inits_buffer() {
+    g_state_inits_buf = akkado::state_init_buffer::pack_state_inits(
+        g_compile_result.state_inits,
+        g_compile_result.scalar_sample_mappings);
+    return g_state_inits_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_state_inits_buffer_size() {
+    return static_cast<uint32_t>(g_state_inits_buf.size());
+}
+
+WASM_EXPORT const uint8_t* akkado_pack_midi_sources_buffer() {
+    g_midi_sources_buf = akkado::state_init_buffer::pack_midi_sources(
+        g_compile_result.required_midi_sources);
+    return g_midi_sources_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_midi_sources_buffer_size() {
+    return static_cast<uint32_t>(g_midi_sources_buf.size());
+}
+
+WASM_EXPORT const uint8_t* akkado_pack_block_table_buffer() {
+    g_block_table_buf = akkado::state_init_buffer::pack_block_table(
+        g_compile_result.block_table);
+    return g_block_table_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_block_table_buffer_size() {
+    return static_cast<uint32_t>(g_block_table_buf.size());
+}
+
+WASM_EXPORT uint32_t akkado_get_main_instruction_count() {
+    return g_compile_result.main_instruction_count;
+}
+
+// ============================================================================
 // Buffer-based State Init API (PRD prd-compile-off-audio-thread §5)
 //
 // These exports replace the in-WASM g_compile_result indirection used by

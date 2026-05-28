@@ -27,6 +27,74 @@ interface Diagnostic {
     column: number;
 }
 
+interface ExtendedSample {
+    bank: string | null;
+    name: string;
+    variant: number;
+    qualifiedName: string;
+}
+
+interface RequiredSoundFont {
+    filename: string;
+    preset: number;
+}
+
+interface RequiredWavetable {
+    name: string;
+    path: string;
+    id: number;
+}
+
+interface UriRequest {
+    uri: string;
+    kind: number;
+}
+
+interface RequiredMidiSource {
+    stateId: number;
+    kind: number;
+    name: string;
+    channel: number;
+    loop: boolean;
+    tempo: number;
+}
+
+interface RequiredMidiCcRoute {
+    paramName: string;
+    ccNum: number;
+    channel: number;
+    scale: number;
+    bias: number;
+    slewMs: number;
+}
+
+interface ParamDecl {
+    name: string;
+    type: number;
+    defaultValue: number;
+    min: number;
+    max: number;
+    options: string[];
+    sourceOffset: number;
+    sourceLength: number;
+}
+
+interface VizDecl {
+    name: string;
+    type: number;
+    stateId: number;
+    sourceOffset: number;
+    sourceLength: number;
+    patternIndex: number;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    options: any;
+}
+
+interface BuiltinVarOverride {
+    name: string;
+    value: number;
+}
+
 let wasm: NkidoModule | null = null;
 let isReady = false;
 const messageQueue: unknown[] = [];
@@ -112,19 +180,229 @@ async function initFromCode(jsCode: string, wasmBinary: ArrayBuffer) {
     }
 }
 
-function copyBytecode(bytecodePtr: number, bytecodeSize: number): Uint8Array {
-    const out = new Uint8Array(bytecodeSize);
+function copyBytes(ptr: number, byteCount: number): Uint8Array {
+    const out = new Uint8Array(byteCount);
+    if (byteCount === 0) return out;
     if (wasm.HEAPU8) {
-        out.set(wasm.HEAPU8.subarray(bytecodePtr, bytecodePtr + bytecodeSize));
+        out.set(wasm.HEAPU8.subarray(ptr, ptr + byteCount));
     } else if (wasm.wasmMemory) {
         const heap = new Uint8Array(wasm.wasmMemory.buffer);
-        out.set(heap.subarray(bytecodePtr, bytecodePtr + bytecodeSize));
+        out.set(heap.subarray(ptr, ptr + byteCount));
     } else {
-        for (let i = 0; i < bytecodeSize; i++) {
-            out[i] = wasm.getValue(bytecodePtr + i, 'i8') & 0xff;
+        for (let i = 0; i < byteCount; i++) {
+            out[i] = wasm.getValue(ptr + i, 'i8') & 0xff;
         }
     }
     return out;
+}
+
+function utf8(ptr: number): string {
+    return ptr ? wasm.UTF8ToString(ptr) : '';
+}
+
+function getRequiredSamples(): string[] {
+    const count = wasm._akkado_get_required_samples_count();
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push(utf8(wasm._akkado_get_required_sample(i)));
+    }
+    return out;
+}
+
+function getRequiredSamplesExtended(): ExtendedSample[] {
+    if (!wasm._akkado_get_required_samples_extended_count) return [];
+    const count = wasm._akkado_get_required_samples_extended_count();
+    const out: ExtendedSample[] = [];
+    for (let i = 0; i < count; i++) {
+        const bankPtr = wasm._akkado_get_required_sample_bank(i);
+        out.push({
+            bank: bankPtr ? wasm.UTF8ToString(bankPtr) : null,
+            name: utf8(wasm._akkado_get_required_sample_name(i)),
+            variant: wasm._akkado_get_required_sample_variant(i),
+            qualifiedName: utf8(wasm._akkado_get_required_sample_qualified(i))
+        });
+    }
+    return out;
+}
+
+function getRequiredSoundFonts(): RequiredSoundFont[] {
+    if (!wasm._akkado_get_required_soundfonts_count) return [];
+    const count = wasm._akkado_get_required_soundfonts_count();
+    const out: RequiredSoundFont[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            filename: utf8(wasm._akkado_get_required_soundfont_filename(i)),
+            preset: wasm._akkado_get_required_soundfont_preset(i)
+        });
+    }
+    return out;
+}
+
+function getRequiredWavetables(): RequiredWavetable[] {
+    if (!wasm._akkado_get_required_wavetables_count) return [];
+    const count = wasm._akkado_get_required_wavetables_count();
+    const out: RequiredWavetable[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            name: utf8(wasm._akkado_get_required_wavetable_name(i)),
+            path: utf8(wasm._akkado_get_required_wavetable_path(i)),
+            id: i
+        });
+    }
+    return out;
+}
+
+function getRequiredUris(): UriRequest[] {
+    if (!wasm._akkado_get_required_uri_count) return [];
+    const count = wasm._akkado_get_required_uri_count();
+    const out: UriRequest[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            uri: utf8(wasm._akkado_get_required_uri(i)),
+            kind: wasm._akkado_get_required_uri_kind(i)
+        });
+    }
+    return out;
+}
+
+function getRequiredInputSources(): string[] {
+    if (!wasm._akkado_get_required_input_sources_count) return [];
+    const count = wasm._akkado_get_required_input_sources_count();
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push(utf8(wasm._akkado_get_required_input_source(i)));
+    }
+    return out;
+}
+
+function getRequiredMidiSources(): RequiredMidiSource[] {
+    if (!wasm._akkado_get_required_midi_sources_count) return [];
+    const count = wasm._akkado_get_required_midi_sources_count();
+    const out: RequiredMidiSource[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            stateId: wasm._akkado_get_required_midi_source_state_id(i) >>> 0,
+            kind: wasm._akkado_get_required_midi_source_kind(i),
+            name: utf8(wasm._akkado_get_required_midi_source_name(i)),
+            channel: wasm._akkado_get_required_midi_source_channel(i),
+            loop: wasm._akkado_get_required_midi_source_loop(i) === 1,
+            tempo: wasm._akkado_get_required_midi_source_tempo(i)
+        });
+    }
+    return out;
+}
+
+function getRequiredMidiCcRoutes(): RequiredMidiCcRoute[] {
+    if (!wasm._akkado_get_required_midi_cc_routes_count) return [];
+    const count = wasm._akkado_get_required_midi_cc_routes_count();
+    const out: RequiredMidiCcRoute[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            paramName: utf8(wasm._akkado_get_required_midi_cc_route_name(i)),
+            ccNum: wasm._akkado_get_required_midi_cc_route_cc(i) | 0,
+            channel: wasm._akkado_get_required_midi_cc_route_channel(i) | 0,
+            scale: wasm._akkado_get_required_midi_cc_route_scale(i),
+            bias: wasm._akkado_get_required_midi_cc_route_bias(i),
+            slewMs: wasm._akkado_get_required_midi_cc_route_slew_ms(i)
+        });
+    }
+    return out;
+}
+
+function extractParamDecls(): ParamDecl[] {
+    if (!wasm._akkado_get_param_decl_count) return [];
+    const count = wasm._akkado_get_param_decl_count();
+    const out: ParamDecl[] = [];
+    for (let i = 0; i < count; i++) {
+        const type = wasm._akkado_get_param_type(i);
+        const options: string[] = [];
+        if (type === 3) {
+            const optCount = wasm._akkado_get_param_option_count(i);
+            for (let j = 0; j < optCount; j++) {
+                options.push(utf8(wasm._akkado_get_param_option(i, j)));
+            }
+        }
+        out.push({
+            name: utf8(wasm._akkado_get_param_name(i)),
+            type,
+            defaultValue: wasm._akkado_get_param_default(i),
+            min: wasm._akkado_get_param_min(i),
+            max: wasm._akkado_get_param_max(i),
+            options,
+            sourceOffset: wasm._akkado_get_param_source_offset(i),
+            sourceLength: wasm._akkado_get_param_source_length(i)
+        });
+    }
+    return out;
+}
+
+function extractVizDecls(): VizDecl[] {
+    if (!wasm._akkado_get_viz_count) return [];
+    const count = wasm._akkado_get_viz_count();
+    const out: VizDecl[] = [];
+    for (let i = 0; i < count; i++) {
+        let options = null;
+        const optionsPtr = wasm._akkado_get_viz_options ? wasm._akkado_get_viz_options(i) : 0;
+        if (optionsPtr) {
+            const optionsStr = wasm.UTF8ToString(optionsPtr);
+            try { options = JSON.parse(optionsStr); } catch (e) {
+                console.warn('[CompileWorker] viz options parse fail:', e);
+            }
+        }
+        out.push({
+            name: utf8(wasm._akkado_get_viz_name(i)),
+            type: wasm._akkado_get_viz_type(i),
+            stateId: wasm._akkado_get_viz_state_id(i),
+            sourceOffset: wasm._akkado_get_viz_source_offset(i),
+            sourceLength: wasm._akkado_get_viz_source_length(i),
+            patternIndex: wasm._akkado_get_viz_pattern_index(i),
+            options
+        });
+    }
+    return out;
+}
+
+function extractBuiltinVarOverrides(): BuiltinVarOverride[] {
+    if (!wasm._akkado_get_builtin_var_override_count) return [];
+    const count = wasm._akkado_get_builtin_var_override_count();
+    const out: BuiltinVarOverride[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push({
+            name: utf8(wasm._akkado_get_builtin_var_override_name(i)),
+            value: wasm._akkado_get_builtin_var_override_value(i)
+        });
+    }
+    return out;
+}
+
+function extractDisassembly(): unknown {
+    if (!wasm._akkado_get_disassembly) return null;
+    const ptr = wasm._akkado_get_disassembly();
+    if (!ptr) return null;
+    try {
+        return JSON.parse(wasm.UTF8ToString(ptr));
+    } catch (e) {
+        console.warn('[CompileWorker] disassembly parse fail:', e);
+        return null;
+    }
+}
+
+function packStateInits(): Uint8Array {
+    const ptr = wasm._akkado_pack_state_inits_buffer();
+    const size = wasm._akkado_get_state_inits_buffer_size();
+    return copyBytes(ptr, size);
+}
+
+function packMidiSources(): Uint8Array {
+    const ptr = wasm._akkado_pack_midi_sources_buffer();
+    const size = wasm._akkado_get_midi_sources_buffer_size();
+    return copyBytes(ptr, size);
+}
+
+function packBlockTable(): Uint8Array {
+    const ptr = wasm._akkado_pack_block_table_buffer();
+    const size = wasm._akkado_get_block_table_buffer_size();
+    return copyBytes(ptr, size);
 }
 
 function extractDiagnostics(): Diagnostic[] {
@@ -172,18 +450,65 @@ function compile(gen: number, source: string) {
             wasm.stringToUTF8(source, sourcePtr, utf8ByteLen + 1);
             const success = wasm._akkado_compile(sourcePtr, utf8ByteLen);
             if (success) {
+                // Extract every JS-side metadata field FIRST (each call
+                // walks the live WASM heap), then pack the three buffers,
+                // then copy bytecode, then clear_result. Pack calls grow
+                // their own static vectors which may invalidate previous
+                // heap views — copyBytes always fetches a fresh view.
+                const requiredSamples = getRequiredSamples();
+                const requiredSamplesExtended = getRequiredSamplesExtended();
+                const requiredSoundfonts = getRequiredSoundFonts();
+                const requiredWavetables = getRequiredWavetables();
+                const requiredUris = getRequiredUris();
+                const requiredInputSources = getRequiredInputSources();
+                const requiredMidiSources = getRequiredMidiSources();
+                const requiredMidiCcRoutes = getRequiredMidiCcRoutes();
+                const paramDecls = extractParamDecls();
+                const vizDecls = extractVizDecls();
+                const builtinVarOverrides = extractBuiltinVarOverrides();
+                const disassembly = extractDisassembly();
+
+                const stateInitsBuf = packStateInits();
+                const midiSourcesBuf = packMidiSources();
+                const blockTable = packBlockTable();
+                const mainInstCount = wasm._akkado_get_main_instruction_count();
+
                 const bytecodePtr = wasm._akkado_get_bytecode();
                 const bytecodeSize = wasm._akkado_get_bytecode_size();
-                const bytecode = copyBytecode(bytecodePtr, bytecodeSize);
+                const bytecode = copyBytes(bytecodePtr, bytecodeSize);
+
                 wasm._akkado_clear_result();
+
                 self.postMessage(
                     {
                         type: 'compileResult',
                         gen,
                         success: true,
-                        bytecode
+                        bytecode,
+                        bytecodeSize,
+                        stateInitsBuf,
+                        midiSourcesBuf,
+                        blockTable,
+                        mainInstCount,
+                        requiredSamples,
+                        requiredSamplesExtended,
+                        requiredSoundfonts,
+                        requiredWavetables,
+                        requiredUris,
+                        requiredInputSources,
+                        requiredMidiSources,
+                        requiredMidiCcRoutes,
+                        paramDecls,
+                        vizDecls,
+                        builtinVarOverrides,
+                        disassembly
                     },
-                    [bytecode.buffer]
+                    [
+                        bytecode.buffer,
+                        stateInitsBuf.buffer,
+                        midiSourcesBuf.buffer,
+                        blockTable.buffer
+                    ]
                 );
             } else {
                 const diagnostics = extractDiagnostics();

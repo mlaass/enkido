@@ -106,6 +106,14 @@ if(EMSCRIPTEN)
         _akkado_resolve_sample_ids_from_buffer
         _cedar_apply_midi_sources_from_buffer
         _akkado_patch_sample_ids_in_bytecode_from_buffer
+        # Compile-result packers (PRD §5)
+        _akkado_pack_state_inits_buffer
+        _akkado_get_state_inits_buffer_size
+        _akkado_pack_midi_sources_buffer
+        _akkado_get_midi_sources_buffer_size
+        _akkado_pack_block_table_buffer
+        _akkado_get_block_table_buffer_size
+        _akkado_get_main_instruction_count
         # Akkado compiler
         _akkado_compile
         _akkado_get_bytecode
