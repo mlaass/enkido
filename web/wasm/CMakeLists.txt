@@ -100,6 +100,12 @@ if(EMSCRIPTEN)
         _cedar_wavetable_count
         # State initialization
         _cedar_apply_state_inits
+        # Buffer-based state init (PRD prd-compile-off-audio-thread §5)
+        _cedar_set_block_table
+        _cedar_apply_state_inits_from_buffer
+        _akkado_resolve_sample_ids_from_buffer
+        _cedar_apply_midi_sources_from_buffer
+        _akkado_patch_sample_ids_in_bytecode_from_buffer
         # Akkado compiler
         _akkado_compile
         _akkado_get_bytecode

@@ -20,6 +20,7 @@
 #include <akkado/sample_registry.hpp>
 #include <akkado/pattern_debug.hpp>
 #include <akkado/shape_index.hpp>
+#include <akkado/state_init_buffer.hpp>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -1294,6 +1295,92 @@ WASM_EXPORT uint32_t cedar_apply_midi_sources() {
         count++;
     }
     return count;
+}
+
+// ============================================================================
+// Buffer-based State Init API (PRD prd-compile-off-audio-thread §5)
+//
+// These exports replace the in-WASM g_compile_result indirection used by
+// cedar_apply_state_inits / cedar_apply_midi_sources / akkado_resolve_sample_ids
+// / akkado_patch_sample_ids_in_bytecode. Each consumes a self-describing
+// packed buffer produced by the compile worker (or by the C++ packer in
+// akkado/include/akkado/state_init_buffer.hpp for tests / native hosts).
+// ============================================================================
+
+/**
+ * Stage the FOREACH_EVENT subprogram table for the next cedar_load_program
+ * call. Mirrors today's load_program path that reads g_compile_result.
+ * block_table. Empty table is fine (entry_count == 0).
+ */
+WASM_EXPORT void cedar_set_block_table(const uint8_t* entries_buf,
+                                       uint32_t entry_count,
+                                       uint32_t main_instruction_count) {
+    if (!g_vm) return;
+    if (entry_count == 0 || !entries_buf) {
+        g_vm->set_block_table({}, main_instruction_count);
+        return;
+    }
+    auto* entries = reinterpret_cast<const cedar::BlockEntry*>(entries_buf);
+    g_vm->set_block_table({entries, entry_count}, main_instruction_count);
+}
+
+/**
+ * Parse stateInitsBuf (akkado::state_init_buffer §5.1-5.3) and route each
+ * StateInit (kind=0) record to the matching VM::init_*_state call.
+ * Sample-mapping records (kind=1, 2) are validated but not applied here.
+ * @return # of state-init records applied, or -1 on malformed buffer.
+ */
+WASM_EXPORT int32_t cedar_apply_state_inits_from_buffer(const uint8_t* buf,
+                                                        uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::apply_state_inits(*g_vm, buf, byte_count);
+}
+
+/**
+ * Walk SequenceSampleMapping records (kind=1) in stateInitsBuf and patch
+ * Event::values[slot] = bank.get_sample_id(name) for each. Must run AFTER
+ * cedar_apply_state_inits_from_buffer (so events exist in the arena) and
+ * AFTER the sample bank is populated.
+ * @return # of mappings patched, or -1 on malformed buffer.
+ */
+WASM_EXPORT int32_t akkado_resolve_sample_ids_from_buffer(const uint8_t* buf,
+                                                          uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::resolve_sample_ids(*g_vm, buf, byte_count);
+}
+
+/**
+ * Parse midiSourcesBuf (§5.6) and call VM::init_midi_queue_state for each
+ * record. Must run AFTER cedar_load_program (new program's state pool active).
+ * @return # of MidiQueueStates initialized, or -1 on malformed buffer.
+ */
+WASM_EXPORT int32_t cedar_apply_midi_sources_from_buffer(const uint8_t* buf,
+                                                         uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::apply_midi_sources(*g_vm, buf, byte_count);
+}
+
+/**
+ * Patch sample-id placeholder constants in `bytecode` using ScalarSampleMapping
+ * records (kind=2) from a stateInitsBuf. Equivalent to
+ * akkado_patch_sample_ids_in_bytecode but sources the mappings from a caller-
+ * provided buffer instead of g_compile_result.
+ * @return # of instructions patched, or -1 on malformed input.
+ */
+WASM_EXPORT int32_t akkado_patch_sample_ids_in_bytecode_from_buffer(
+    uint8_t* bytecode_ptr, uint32_t bytecode_byte_count,
+    const uint8_t* mappings_buf, uint32_t mappings_byte_count) {
+    if (!g_vm || !bytecode_ptr) return -1;
+    if (bytecode_byte_count == 0 ||
+        (bytecode_byte_count % sizeof(cedar::Instruction)) != 0) {
+        return -1;
+    }
+    return akkado::state_init_buffer::patch_sample_ids_in_bytecode(
+        *g_vm,
+        reinterpret_cast<cedar::Instruction*>(bytecode_ptr),
+        bytecode_byte_count / sizeof(cedar::Instruction),
+        mappings_buf,
+        mappings_byte_count);
 }
 
 // ============================================================================
