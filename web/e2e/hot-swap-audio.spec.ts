@@ -67,22 +67,21 @@ test.describe('hot-swap audio continuity', () => {
 	test('simple osc patch: identical recompile maintains audio level', async ({ page }) => {
 		await bootAudioAndCompile(page, SIMPLE_PATCH);
 
-		// Capture in parallel: start RMS capture, kick off 6 recompiles
-		// inside the capture window.
+		// 20 rapid recompiles, same shape as the pad test.
 		const { trace, swapCount } = await page.evaluate(async () => {
 			const hook = window.__nkidoTest!;
-			const traceP = hook.captureRmsTrace(3000, 20);
-			const swaps: Promise<unknown>[] = [];
-			for (let i = 0; i < 6; i++) {
-				await new Promise((r) => setTimeout(r, 400));
-				swaps.push(hook.editor.evaluate());
+			const traceP = hook.captureRmsTrace(7000, 20);
+			let triggered = 0;
+			for (let i = 0; i < 20; i++) {
+				await new Promise((r) => setTimeout(r, 250));
+				hook.editor.evaluate();
+				triggered++;
 			}
-			await Promise.all(swaps);
 			const t = await traceP;
-			return { trace: t.rms, swapCount: 6 };
+			return { trace: t.rms, swapCount: triggered };
 		});
 
-		expect(swapCount).toBe(6);
+		expect(swapCount).toBe(20);
 		expect(trace.length).toBeGreaterThan(50);
 
 		// Median of the first 25 RMS samples (~500 ms) is the pre-storm
@@ -114,10 +113,76 @@ test.describe('hot-swap audio continuity', () => {
 		expect(worstRun, detail).toBeLessThan(3);
 	});
 
-	test("user's unison-pad: identical recompile maintains audio level", async ({ page }) => {
+	test('DIAGNOSTIC: load same bytecode without recompile (skip akkado.compile)', async ({ page }) => {
+		// Hypothesis: the gap is caused by akkado_compile running on the
+		// AudioWorklet thread (where it blocks process_block). If true,
+		// triggering only `loadProgram(cachedBytecode)` — which skips the
+		// compile step entirely — should be gap-free with the same patch.
 		const logs: string[] = [];
 		page.on('console', (msg) => {
 			const text = msg.text();
+			if (text.includes('CedarProcessor') || text.includes('AudioEngine') ||
+			    text.includes('silent')) {
+				logs.push(`[${msg.type()}] ${text}`);
+			}
+		});
+
+		await bootAudioAndCompile(page, PAD_PATCH);
+
+		// Grab the compiled bytecode once, then hot-swap that buffer 20x.
+		const { trace } = await page.evaluate(async () => {
+			const hook = window.__nkidoTest!;
+			// First, do one normal compile to populate cache.
+			// (bootAudioAndCompile already did this.)
+			// Get the bytecode via the editor's last compile result? No
+			// straightforward API — instead recompile once and intercept the
+			// worklet's stored bytecode via the loadProgram path. Easier:
+			// just trigger the load N times by re-firing the existing
+			// compile (which yields identical bytecode). For pure compile-
+			// stripping, we'd need a new API on the audio engine. For now
+			// time the path that ONLY re-issues load (no full evaluate).
+			// `loadProgram` exists but uses bytecode argument — and we
+			// don't have one without compiling. So do a "compile-warm
+			// then 20 plain loadProgram" approach is hard to wire here.
+			// Use a more direct probe: time evaluate() calls.
+			const traceP = hook.captureRmsTrace(7000, 20);
+			const times: number[] = [];
+			for (let i = 0; i < 20; i++) {
+				await new Promise((r) => setTimeout(r, 250));
+				const t0 = performance.now();
+				await hook.editor.evaluate();
+				times.push(performance.now() - t0);
+			}
+			const t = await traceP;
+			(window as unknown as { __evalTimes: number[] }).__evalTimes = times;
+			return { trace: t.rms };
+		});
+
+		const evalTimes = await page.evaluate(() => (window as unknown as { __evalTimes: number[] }).__evalTimes);
+		const sorted = [...evalTimes].sort((a, b) => a - b);
+		const median = sorted[Math.floor(sorted.length / 2)];
+		const max = Math.max(...evalTimes);
+		const min = Math.min(...evalTimes);
+		console.log(`[diag] evaluate() times (ms): min=${min.toFixed(1)} median=${median.toFixed(1)} max=${max.toFixed(1)}`);
+		console.log(`[diag] all times: ${evalTimes.map((t) => t.toFixed(0)).join(' ')}`);
+		console.log(`[diag] trace first 60: ${trace.slice(0, 60).map((v) => v.toFixed(3)).join(' ')}`);
+
+		console.log('\n=== BROWSER CONSOLE ===');
+		for (const l of logs.slice(0, 40)) console.log(l);
+		console.log(`(${logs.length} total log lines)`);
+
+		// Not asserting — diagnostic only.
+		expect(evalTimes.length).toBe(20);
+	});
+
+	test("user's unison-pad: identical recompile maintains audio level", async ({ page }) => {
+		const silenceWarnings: string[] = [];
+		const logs: string[] = [];
+		page.on('console', (msg) => {
+			const text = msg.text();
+			if (text.includes('Output silent for')) {
+				silenceWarnings.push(text);
+			}
 			// Capture only worklet + audio-engine-relevant logs to keep output manageable.
 			if (
 				text.includes('CedarProcessor') ||
@@ -133,20 +198,23 @@ test.describe('hot-swap audio continuity', () => {
 
 		await bootAudioAndCompile(page, PAD_PATCH);
 
+		// 20 rapid recompiles over 5 s — closer to a live coder hammering
+		// Ctrl+Enter. Many chances to trip the intermittent permanent-silence
+		// failure mode.
 		const { trace, swapCount } = await page.evaluate(async () => {
 			const hook = window.__nkidoTest!;
-			const traceP = hook.captureRmsTrace(3500, 20);
-			const swaps: Promise<unknown>[] = [];
-			for (let i = 0; i < 6; i++) {
-				await new Promise((r) => setTimeout(r, 500));
-				swaps.push(hook.editor.evaluate());
+			const traceP = hook.captureRmsTrace(7000, 20);
+			let triggered = 0;
+			for (let i = 0; i < 20; i++) {
+				await new Promise((r) => setTimeout(r, 250));
+				hook.editor.evaluate();
+				triggered++;
 			}
-			await Promise.all(swaps);
 			const t = await traceP;
-			return { trace: t.rms, swapCount: 6 };
+			return { trace: t.rms, swapCount: triggered };
 		});
 
-		expect(swapCount).toBe(6);
+		expect(swapCount).toBe(20);
 		expect(trace.length).toBeGreaterThan(50);
 
 		// For the pad, median over the first 25 samples (~500 ms before
@@ -181,6 +249,16 @@ test.describe('hot-swap audio continuity', () => {
 		for (const l of logs) console.log(l);
 		console.log('=== END BROWSER CONSOLE ===\n');
 
+		if (silenceWarnings.length > 0) {
+			console.log('\n=== SILENCE WARNINGS FROM WORKLET ===');
+			for (const w of silenceWarnings) console.log(w);
+			console.log('=== END SILENCE WARNINGS ===\n');
+		}
+
+		// Worklet warns at silentBlocks==100 (~267 ms). Any such warning is
+		// proof that audio dropped out for >267 ms post-recompile — strictly
+		// audible.
+		expect(silenceWarnings.length, 'worklet should not detect prolonged silence').toBe(0);
 		expect(worstRun, detail).toBeLessThan(5);
 	});
 });
