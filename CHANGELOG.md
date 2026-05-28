@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-05-29
+
+### Fixed
+
+- **Compile no longer blocks the audio thread.** Recompiling a patch
+  used to stall `process()` for the full duration of `akkado_compile`
+  (~110 ms median, ~158 ms peak on heavy patches like the unison-pad),
+  causing audible silence on every hot-swap. Compile now runs in a
+  dedicated Web Worker that owns its own WASM instance; the
+  AudioWorklet only receives pre-packed bytecode + state-init buffers
+  via the new `loadProgram` message.
+
+### Changed
+
+- **Rapid recompiles supersede-by-newest.** Holding Ctrl+Enter no
+  longer queues a long backlog of compiles; every new compile gets a
+  monotonic generation tag and stale results are silently dropped, so
+  only the latest source ever lands in the worklet.
+- **Compile worker recovers from crashes.** If the worker is killed
+  (WASM trap, OOM, browser kill), the next `compile()` surfaces a
+  "worker crashed — restarting" diagnostic and the call after that
+  respawns the worker and succeeds — no page reload required.
+
 ## [0.4.2] - 2026-05-28
 
 ### Added
