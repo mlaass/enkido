@@ -397,15 +397,15 @@ fn my_chorus(sig, rate = 0.5, depth = 0.5) -> {
 **Proposed syntax:**
 ```akkado
 // Current
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel
+n"c4 e4 g4" as e |> sine(e.freq) |> % * e.vel
 
 // With destructuring
-n"c4 e4 g4" as {freq, vel} |> osc("sin", freq) |> % * vel
+n"c4 e4 g4" as {freq, vel} |> sine(freq) |> % * vel
 
 // In match arms
 fn process(event) -> match(event) {
-    {freq, vel} if vel > 0.5: osc("sin", freq) * vel
-    {freq, vel}: osc("tri", freq) * vel * 0.5
+    {freq, vel} if vel > 0.5: sine(freq) * vel
+    {freq, vel}: tri(freq) * vel * 0.5
     _: 0.0
 }
 ```

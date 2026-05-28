@@ -13,7 +13,7 @@ mix = kick * 0.8 + snare * 0.5 + hat * 0.3
 out(mix, mix)
 `;
 
-const HUNDRED_LINE = Array.from({ length: 100 }, (_, i) => `// line ${i}: osc("sin", ${440 + i})`).join('\n');
+const HUNDRED_LINE = Array.from({ length: 100 }, (_, i) => `// line ${i}: sine(${440 + i})`).join('\n');
 
 // ~16 KB: 1024 * 16-byte lines
 const SIXTEEN_KB = Array.from({ length: 1024 }, (_, i) => `x${i.toString().padStart(13, '0')}\n`).join('');
@@ -34,7 +34,7 @@ describe('encodeInlineUrl / decodeInlineHash round-trip', () => {
 	}
 
 	it('round-trips Unicode (multi-byte UTF-8)', () => {
-		const code = '// ñ é ø 中文 🎵\nosc("sin", 440)';
+		const code = '// ñ é ø 中文 🎵\nsine(440)';
 		const { url } = encodeInlineUrl(code, BASE);
 		expect(decodeInlineHash('#' + url.split('#')[1])).toBe(code);
 	});

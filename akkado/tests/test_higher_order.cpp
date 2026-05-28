@@ -97,7 +97,7 @@ float render_peak(const akkado::CompileResult& r, int blocks) {
 
 TEST_CASE("poly() compiles to FOREACH_EVENT + a subprogram block", "[L3][poly]") {
     auto r = akkado::compile(R"(
-        fn lead({freq, gate, vel}) -> osc("sin", freq)
+        fn lead({freq, gate, vel}) -> sine(freq)
         n"c4" |> poly(@, lead, 4) |> out(@)
     )");
     REQUIRE(r.success);
@@ -128,7 +128,7 @@ TEST_CASE("poly() compiles to FOREACH_EVENT + a subprogram block", "[L3][poly]")
 
 TEST_CASE("poly() still renders audio through the FOREACH_EVENT path", "[L3][poly]") {
     auto r = akkado::compile(R"(
-        fn lead({freq, gate, vel}) -> osc("sin", freq) * ar(gate, 0.01, 0.3) * vel
+        fn lead({freq, gate, vel}) -> sine(freq) * ar(gate, 0.01, 0.3) * vel
         n"c4 e4 g4" |> poly(@, lead, 8) |> out(@)
     )");
     REQUIRE(r.success);

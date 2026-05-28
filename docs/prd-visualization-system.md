@@ -31,8 +31,8 @@ n"c4 e4 g4" |> pianoroll(@, "melody")
 n"c4 e4 g4" |> pianoroll(@, "melody", {height: 64, scale: "chromatic"})
 
 // Oscilloscope (beat-aligned waveform cycles)
-osc("saw", 220) |> oscilloscope(@, "osc1")
-osc("saw", 220) |> oscilloscope(@, "osc1", {width: 400, beats: 2})
+saw(220) |> oscilloscope(@, "osc1")
+saw(220) |> oscilloscope(@, "osc1", {width: 400, beats: 2})
 
 // Continuous waveform display (scrolling)
 signal |> waveform(@, "output")

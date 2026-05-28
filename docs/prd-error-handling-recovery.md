@@ -80,13 +80,13 @@ The infrastructure is solid — the problems are in the details:
 
 Before:
 ```
-osc("sin", 440) |> ou(@, @)
+sine(440) |> ou(@, @)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~  (entire line underlined)
 ```
 
 After:
 ```
-osc("sin", 440) |> ou(@, @)
+sine(440) |> ou(@, @)
                     ~~        (only 'ou' underlined)
 ```
 
@@ -135,7 +135,7 @@ Note: the colon is intentionally dropped from "Unknown function" and "Undefined 
 │                                                          │
 │  E004  Ln 5, Col 21  Unknown function 'ou';              │
 │  │                    did you mean 'out'?                 │
-│  │ osc("sin", 440) |> ou(@, @)                           │
+│  │ sine(440) |> ou(@, @)                           │
 │  │                     ~~                                 │
 │                                                          │
 │  E005  Ln 7, Col 1   Undefined identifier 'freqq';       │
@@ -553,7 +553,7 @@ Stable order is preserved (lex → parse → semantic), so the first occurrence 
 2. Implement `suggest_similar()` that searches user symbols + `BUILTIN_FUNCTIONS` map
 3. Update error messages at `analyzer.cpp:1202` (E004), `analyzer.cpp:1469` (E005), `codegen.cpp:479` (E102), `codegen.cpp:979` (E107)
 
-**Verify**: Compile `osc("sin", 440) |> ou(@, @)` → message says `Unknown function 'ou'; did you mean 'out'?`
+**Verify**: Compile `sine(440) |> ou(@, @)` → message says `Unknown function 'ou'; did you mean 'out'?`
 
 ### Phase 4: Multi-Stage Error Collection
 
@@ -711,8 +711,8 @@ TEST_CASE("Dedup keeps distinct messages at same position", "[diagnostics]") {
 ### 10.2 Web Integration Tests (Manual)
 
 1. **Precise underline**: Type `x = @` → only `@` is underlined, not the whole line
-2. **Contextual message**: Type `osc("sin", 440 |> out(@, @)` (missing `)`) → message says what was expected and found
-3. **Did you mean**: Type `osc("sin", 440) |> ou(@, @)` → panel shows suggestion
+2. **Contextual message**: Type `sine(440 |> out(@, @)` (missing `)`) → message says what was expected and found
+3. **Did you mean**: Type `sine(440) |> ou(@, @)` → panel shows suggestion
 4. **Multi-stage**: Type source with lex error + semantic error → both shown simultaneously
 5. **Click-to-jump**: Click error in panel → editor scrolls, cursor placed, highlight flashes
 6. **Error code badge**: Error codes (L001, P002, E005) shown as colored badges in panel

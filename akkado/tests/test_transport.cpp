@@ -54,37 +54,37 @@ bool has_error(const akkado::CompileResult& result, std::string_view code) {
 TEST_CASE("transport(): PRD syntax examples compile", "[transport][codegen]") {
     SECTION("basic — step on each trigger") {
         auto result = akkado::compile(
-            R"(transport(n"c4 e4 g4", trigger(2)) as e |> osc("sin", e.freq) |> out(@))");
+            R"(transport(n"c4 e4 g4", trigger(2)) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 
     SECTION("custom step size") {
         auto result = akkado::compile(
-            R"(transport(n"c4 e4 g4", trigger(4), 0.5) as e |> osc("sin", e.freq) |> out(@))");
+            R"(transport(n"c4 e4 g4", trigger(4), 0.5) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 
     SECTION("cross-pattern triggers") {
         auto result = akkado::compile(
-            R"(transport(n"c4 e4 g4", n"x x x x".trig) as e |> osc("sin", e.freq) |> out(@))");
+            R"(transport(n"c4 e4 g4", n"x x x x".trig) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 
     SECTION("pipe style — @ is the pattern") {
         auto result = akkado::compile(
-            R"(n"c4 e4 g4" |> transport(@, trigger(2)) as e |> osc("sin", e.freq) |> out(@))");
+            R"(n"c4 e4 g4" |> transport(@, trigger(2)) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 
     SECTION("negative step — reverse playback") {
         auto result = akkado::compile(
-            R"(transport(n"c4 e4 g4", trigger(2), -1.0) as e |> osc("sin", e.freq) |> out(@))");
+            R"(transport(n"c4 e4 g4", trigger(2), -1.0) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 
     SECTION("with reset trigger (4th arg)") {
         auto result = akkado::compile(
-            R"(transport(n"c4 e4 g4", trigger(2), 1.0, trigger(0.5)) as e |> osc("sin", e.freq) |> out(@))");
+            R"(transport(n"c4 e4 g4", trigger(2), 1.0, trigger(0.5)) as e |> sine(e.freq) |> out(@))");
         CHECK(result.success);
     }
 }
@@ -95,7 +95,7 @@ TEST_CASE("transport(): PRD syntax examples compile", "[transport][codegen]") {
 
 TEST_CASE("transport(): emits SEQPAT_TRANSPORT", "[transport][codegen]") {
     auto result = akkado::compile(
-        R"(transport(n"c4 e4 g4", trigger(2)) as e |> osc("sin", e.freq) |> out(@))");
+        R"(transport(n"c4 e4 g4", trigger(2)) as e |> sine(e.freq) |> out(@))");
     REQUIRE(result.success);
 
     auto insts = get_instructions(result);

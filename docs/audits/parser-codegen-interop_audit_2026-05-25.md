@@ -239,7 +239,7 @@ Four switches enumerating the same operator set.
 ### F7. Pratt right-associativity for `^` is silently broken — *High*
 
 > **WITHDRAWN 2026-05-25** — Phase 0 verification (commit `b203e2e`)
-> compiled fixture `06_power_op.ak` (`osc("sin", 2^3^2 * 100) |> out(@)`)
+> compiled fixture `06_power_op.ak` (`sine(2^3^2 * 100) |> out(@)`)
 > and the snapshot at `akkado/tests/snapshots/06_power_op.disasm` shows
 > the outer `POW` reading the inner `POW`'s result, i.e. `2^(3^2) = 512`.
 > The audit's reading at "Site" below was wrong: the right-assoc branch

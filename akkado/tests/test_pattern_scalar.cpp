@@ -157,17 +157,17 @@ TEST_CASE("Mini-parser Value mode accepts numeric atoms", "[mini_parser][value]"
 
 TEST_CASE("v\"…\" compiles to a Pattern signal", "[codegen][value]") {
     SECTION("v\"…\" feeds osc as freq directly (no mtof)") {
-        auto result = compile(R"(osc("sin", v"<220 440 880>") |> out(%, %))");
+        auto result = compile(R"(sine(v"<220 440 880>") |> out(%, %))");
         REQUIRE(result.success);
     }
 
     SECTION("v\"…\" with negatives and decimals") {
-        auto result = compile(R"(osc("sin", 440 + v"<0 0.5 -0.5>" * 100) |> out(%, %))");
+        auto result = compile(R"(sine(440 + v"<0 0.5 -0.5>" * 100) |> out(%, %))");
         REQUIRE(result.success);
     }
 
     SECTION("note pattern as scalar feeds osc freq slot") {
-        auto result = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
+        auto result = compile(R"(sine(n"c4 e4 g4") |> out(%, %))");
         REQUIRE(result.success);
     }
 }
@@ -178,17 +178,17 @@ TEST_CASE("v\"…\" compiles to a Pattern signal", "[codegen][value]") {
 
 TEST_CASE("scalar() cast", "[codegen][scalar]") {
     SECTION("scalar() on a note pattern yields a Signal usable as freq") {
-        auto result = compile(R"(osc("sin", scalar(n"c4 e4 g4")) |> out(%, %))");
+        auto result = compile(R"(sine(scalar(n"c4 e4 g4")) |> out(%, %))");
         REQUIRE(result.success);
     }
 
     SECTION("scalar() on a value pattern works") {
-        auto result = compile(R"(osc("sin", scalar(v"<220 440>")) |> out(%, %))");
+        auto result = compile(R"(sine(scalar(v"<220 440>")) |> out(%, %))");
         REQUIRE(result.success);
     }
 
     SECTION("scalar() on a polyphonic chord pattern errors E161") {
-        auto result = compile(R"(osc("sin", scalar(c"Am")) |> out(%, %))");
+        auto result = compile(R"(sine(scalar(c"Am")) |> out(%, %))");
         CHECK_FALSE(result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -198,14 +198,14 @@ TEST_CASE("scalar() cast", "[codegen][scalar]") {
     }
 
     SECTION("scalar() is idempotent on a Signal") {
-        auto result = compile(R"(osc("sin", scalar(440)) |> out(%, %))");
+        auto result = compile(R"(sine(scalar(440)) |> out(%, %))");
         REQUIRE(result.success);
     }
 }
 
 TEST_CASE("Polyphonic chord pattern rejected at scalar slot", "[codegen][coerce][E160]") {
     SECTION("chord pattern in osc freq slot errors E160") {
-        auto result = compile(R"(osc("sin", c"Am") |> out(%, %))");
+        auto result = compile(R"(sine(c"Am") |> out(%, %))");
         CHECK_FALSE(result.success);
         bool found_e160 = false;
         for (const auto& d : result.diagnostics) {
@@ -215,12 +215,12 @@ TEST_CASE("Polyphonic chord pattern rejected at scalar slot", "[codegen][coerce]
     }
 
     SECTION("monophonic note pattern is fine") {
-        auto result = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
+        auto result = compile(R"(sine(n"c4 e4 g4") |> out(%, %))");
         REQUIRE(result.success);
     }
 
     SECTION("monophonic value pattern is fine") {
-        auto result = compile(R"(osc("sin", v"<440 880>") |> out(%, %))");
+        auto result = compile(R"(sine(v"<440 880>") |> out(%, %))");
         REQUIRE(result.success);
     }
 }
@@ -233,7 +233,7 @@ TEST_CASE("Phase F: cross-phase smoke acceptance", "[codegen][smoke]") {
     SECTION("flagship: pattern-driven oscillator + filter + bend depth") {
         auto result = compile(R"(
             n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
-              |> osc("saw", e.freq + v"<0 -10 10>")
+              |> saw(e.freq + v"<0 -10 10>")
               |> lp(%, 200 + e.cutoff * 4000, v"<0.3 0.7>")
               |> % * v"<0.5 1.0 0.7>"
               |> out(%, %)
@@ -244,14 +244,14 @@ TEST_CASE("Phase F: cross-phase smoke acceptance", "[codegen][smoke]") {
     SECTION("pattern-driven bend on a separate voice") {
         auto result = compile(R"(
             n"c4 e4 g4 b4" |> bend(%, v"<0 0.25 -0.25 0>") as e
-              |> osc("sin", e.freq + e.bend * 12)
+              |> sine(e.freq + e.bend * 12)
               |> out(%, %)
         )");
         CHECK(result.success);
     }
 
     SECTION("negative coerce path: chord pattern in scalar slot errors E160") {
-        auto result = compile(R"(osc("sin", c"Am C G") |> out(%, %))");
+        auto result = compile(R"(sine(c"Am C G") |> out(%, %))");
         CHECK_FALSE(result.success);
         bool found = false;
         for (const auto& d : result.diagnostics) {
@@ -264,34 +264,34 @@ TEST_CASE("Phase F: cross-phase smoke acceptance", "[codegen][smoke]") {
 TEST_CASE("Custom-property accessor (e.cutoff) coerces to Signal",
           "[codegen][custom_property]") {
     SECTION("e.cutoff feeds lp() cutoff slot") {
-        auto result = compile(R"(n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e |> osc("saw", e.freq) |> lp(%, 200 + e.cutoff * 4000) |> out(%, %))");
+        auto result = compile(R"(n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e |> saw(e.freq) |> lp(%, 200 + e.cutoff * 4000) |> out(%, %))");
         CHECK(result.success);
     }
 
     SECTION("e.bend custom property compiles") {
-        auto result = compile(R"(n"c4{bend:0.0} e4{bend:0.5} g4{bend:-0.5}" as e |> osc("sin", e.freq + e.bend * 100) |> out(%, %))");
+        auto result = compile(R"(n"c4{bend:0.0} e4{bend:0.5} g4{bend:-0.5}" as e |> sine(e.freq + e.bend * 100) |> out(%, %))");
         CHECK(result.success);
     }
 }
 
 TEST_CASE("Pattern-arg bend / aftertouch / dur", "[codegen][pattern_args]") {
     SECTION("bend(notes, v\"…\") compiles") {
-        auto result = compile(R"(n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = compile(R"(n"c4 e4 g4" |> bend(%, v"<0 0.5 -0.5>") |> sine(%.freq) |> out(%, %))");
         CHECK(result.success);
     }
 
     SECTION("aftertouch(notes, v\"…\") compiles") {
-        auto result = compile(R"(n"c4 e4 g4 b4" |> aftertouch(%, v"<0 0.25 0.5 1.0>") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = compile(R"(n"c4 e4 g4 b4" |> aftertouch(%, v"<0 0.25 0.5 1.0>") |> sine(%.freq) |> out(%, %))");
         CHECK(result.success);
     }
 
     SECTION("dur(notes, v\"…\") compiles") {
-        auto result = compile(R"(n"c4 e4 g4" |> dur(%, v"<0.5 0.75 1.0>") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = compile(R"(n"c4 e4 g4" |> dur(%, v"<0.5 0.75 1.0>") |> sine(%.freq) |> out(%, %))");
         CHECK(result.success);
     }
 
     SECTION("constant arg still works for bend") {
-        auto result = compile(R"(n"c4 e4 g4" |> bend(%, 0.5) |> osc("sin", %.freq) |> out(%, %))");
+        auto result = compile(R"(n"c4 e4 g4" |> bend(%, 0.5) |> sine(%.freq) |> out(%, %))");
         CHECK(result.success);
     }
 
@@ -300,7 +300,7 @@ TEST_CASE("Pattern-arg bend / aftertouch / dur", "[codegen][pattern_args]") {
         // values with E160. The stdlib `fn bend(events: stream, b)` has no
         // type guard on its second arg, so this nonsensical pairing now
         // compiles silently. Documented in PRD §8 as a known regression.
-        auto result = compile(R"(n"c4 e4" |> bend(%, s"bd sd") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = compile(R"(n"c4 e4" |> bend(%, s"bd sd") |> sine(%.freq) |> out(%, %))");
         CHECK(result.success);
     }
 }
@@ -311,15 +311,15 @@ TEST_CASE("Pattern-arg bend / aftertouch / dur", "[codegen][pattern_args]") {
 
 TEST_CASE("Typed prefix MiniLiteral carries mode tag", "[parser][prefixes]") {
     SECTION("v\"…\" parses to a MiniLiteral marked 'value'") {
-        auto result = compile(R"(v"<0 0.5 -0.5>" |> osc("sin", %))");
+        auto result = compile(R"(v"<0 0.5 -0.5>" |> sine(%))");
         // We don't strictly assert the marker contents here — just that the
         // typed prefix successfully forms a usable expression.
         REQUIRE(result.success);
     }
 
     SECTION("n\"…\" works in the freq slot identical to n\"…\"") {
-        auto a = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
-        auto b = compile(R"(osc("sin", n"c4 e4 g4") |> out(%, %))");
+        auto a = compile(R"(sine(n"c4 e4 g4") |> out(%, %))");
+        auto b = compile(R"(sine(n"c4 e4 g4") |> out(%, %))");
         REQUIRE(a.success);
         REQUIRE(b.success);
     }

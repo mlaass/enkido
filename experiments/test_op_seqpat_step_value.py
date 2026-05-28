@@ -6,7 +6,7 @@ PRD prd-patterns-as-scalar-values §10.3 acceptance:
 "verify v\"…\"-driven osc modulation produces stepped Hz output matching
 the parsed atoms across 300+ seconds of simulated audio."
 
-Approach: render osc("sin", v"<220 440 880 660>") for 320 s via
+Approach: render sine(v"<220 440 880 660>") for 320 s via
 `nkido render`. Each cycle (4 beats @ 120 BPM = 2 s) the freq buffer
 should step through 220, 440, 880, 660 Hz with no mtof applied. Across
 160 cycles the output spectrum must remain dominated by exactly those
@@ -53,7 +53,7 @@ BPM = 120.0
 # exactly four spectral bins.
 EXPECTED_FREQS = (220.0, 440.0, 880.0, 660.0)
 AKK_SRC = """
-osc("sin", v"<220 440 880 660>") * 0.2 |> out(%, %)
+sine(v"<220 440 880 660>") * 0.2 |> out(%, %)
 """
 
 
@@ -120,7 +120,7 @@ def _peak_freqs(audio: np.ndarray, sr: int, n_peaks: int) -> list[float]:
 
 def test_value_pattern_long_window_stability():
     """
-    Render osc("sin", v"<220 440 880 660>") for 320 s and verify the
+    Render sine(v"<220 440 880 660>") for 320 s and verify the
     raw scalar atoms reach the freq buffer unchanged across the full run.
 
     Listening cue: a stable four-tone arpeggio at 220/440/880/660 Hz,

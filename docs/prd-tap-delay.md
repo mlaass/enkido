@@ -49,15 +49,15 @@ The TAP and WRITE share the same `state_id`, operating on the same delay buffer.
 
 ```akkado
 // Simple delay with lowpass filter in feedback (time in seconds)
-osc("saw", 110) |> tap_delay(@, 0.3, 0.7, (x) -> lp(x, 1000))
+saw(110) |> tap_delay(@, 0.3, 0.7, (x) -> lp(x, 1000))
 
 // Multi-stage feedback processing
-osc("saw", 110) |> tap_delay(@, 0.5, 0.6, (x) ->
+saw(110) |> tap_delay(@, 0.5, 0.6, (x) ->
     lp(x, 2000) |> saturate(@, 0.2) |> hp(@, 80)
 )
 
 // Using milliseconds variant for precise timing
-osc("saw", 110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000))
+saw(110) |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000))
 
 // Using samples variant for comb filtering effects
 noise() |> tap_delay_smp(@, 100, 0.9, (x) -> x)  // ~480Hz resonance at 48kHz
@@ -86,7 +86,7 @@ tap_delay_smp(input, time_smp, feedback, processor) // Time in samples (direct c
 
 ```akkado
 // Modulated delay time for tape-style wow/flutter
-vocal |> tap_delay(@, 0.4 + osc("sin", 0.3) * 0.005, 0.6, (x) -> lp(x, 2000))
+vocal |> tap_delay(@, 0.4 + sine(0.3) * 0.005, 0.6, (x) -> lp(x, 2000))
 ```
 
 **Choosing the right variant:**
@@ -99,7 +99,7 @@ vocal |> tap_delay(@, 0.4 + osc("sin", 0.3) * 0.005, 0.6, (x) -> lp(x, 2000))
 Wet/dry mixing is handled externally for flexibility:
 
 ```akkado
-dry = osc("saw", 110)
+dry = saw(110)
 wet = tap_delay(dry, 300, 0.7, (x) -> lp(x, 1000))
 dry * 0.3 + wet * 0.7 |> out(@, @)
 ```
@@ -107,7 +107,7 @@ dry * 0.3 + wet * 0.7 |> out(@, @)
 Or using a mix helper (if available):
 
 ```akkado
-osc("saw", 110) as dry
+saw(110) as dry
 |> tap_delay(@, 300, 0.7, (x) -> lp(x, 1000))
 |> mix(dry, @, 0.7)  // 70% wet
 |> out(@, @)
@@ -235,7 +235,7 @@ This ensures:
 
 **Input:**
 ```akkado
-osc("saw", 220) |> tap_delay(@, 300, 0.6, (x) -> lp(x, 800) |> saturate(@, 0.3)) |> out(@, @)
+saw(220) |> tap_delay(@, 300, 0.6, (x) -> lp(x, 800) |> saturate(@, 0.3)) |> out(@, @)
 ```
 
 **Output Bytecode:**
@@ -561,7 +561,7 @@ TEST_CASE("Tap delay state isolation") {
 ```cpp
 TEST_CASE("tap_delay compilation") {
     auto code = R"(
-        osc("saw", 220) |> tap_delay(@, 300, 0.6, (x) -> lp(x, 1000)) |> out(@, @)
+        saw(220) |> tap_delay(@, 300, 0.6, (x) -> lp(x, 1000)) |> out(@, @)
     )";
 
     auto program = compile(code);

@@ -31,8 +31,8 @@ These are extracted into audio-rate buffers by `SEQPAT_STEP`/`SEQPAT_GATE`/`SEQP
 
 ### Named Bindings and Destructuring
 ```akkado
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel
-n"c4 e4 g4" as {freq, vel} |> osc("sin", freq) |> % * vel
+n"c4 e4 g4" as e |> sine(e.freq) |> % * e.vel
+n"c4 e4 g4" as {freq, vel} |> sine(freq) |> % * vel
 ```
 
 ### Compile-Time Pattern Transforms
@@ -171,7 +171,7 @@ p.set_freq(1, chord_notes[1])
 p.set_freq(2, chord_notes[2])
 p.set_freq(3, chord_notes[3])
 
-p as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+p as e |> sine(e.freq) |> % * e.vel |> out(%, %)
 ```
 
 **How it works at the VM level**:
@@ -207,7 +207,7 @@ pitch_table.set(2, 329.6)  // E4
 
 // Pattern references table indices, not literal pitches
 n"0 2 4 7".lookup(pitch_table) as e
-  |> osc("sin", e.freq)
+  |> sine(e.freq)
   |> out(%, %)
 
 // Later: mutate the table to change what the pattern plays
@@ -244,7 +244,7 @@ melody = lfo("sah", 1) * 500 + 200  // random S&H melody
 
 // At each trigger, SEQPAT_STEP captures the current value of melody
 p.sample_freq(melody) as e
-  |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+  |> sine(e.freq) |> % * e.vel |> out(%, %)
 ```
 
 **How it works at the VM level**:
@@ -282,7 +282,7 @@ loud = events |> map(%, e -> {..e, vel: 1.0})
 high_only = events |> filter(%, e -> e.note > 62)
 
 // Recompose
-pattern(loud) |> osc("sin", %.freq) |> out(%, %)
+pattern(loud) |> sine(%.freq) |> out(%, %)
 ```
 
 **Why this is complementary, not primary**: All operations are compile-time — no runtime dynamism. But it's the foundation for programmatic pattern *generation*. You'd use this to algorithmically construct the initial pattern structure, then use Approaches A/B/C to make it dynamic at runtime.

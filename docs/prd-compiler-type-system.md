@@ -53,7 +53,7 @@ Built-in, not user-extendable. Eight types:
 
 | Type | Representation | Examples |
 |------|---------------|----------|
-| **Signal** | Single audio-rate buffer | `osc("sin", 440)`, `@ * 0.5` |
+| **Signal** | Single audio-rate buffer | `sine(440)`, `@ * 0.5` |
 | **Number** | Compile-time constant (float) | `440`, `0.5`, `2 * pi` |
 | **Pattern** | Record of {freq, vel, trig, gate, type} + SequenceState ref + cycle_length | `n"c4 e4 g4"`, `seq("x _ x _")` |
 | **Record** | Named fields → TypedValue | `{freq: 440, vel: 0.8}` |
@@ -308,7 +308,7 @@ into one bounded pass:
 
 ### Closure parameters
 
-`n"c4" |> ((f) -> osc("sin", f.freq))` — the analyzer rewrites pipe-to-closure by substituting `@` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
+`n"c4" |> ((f) -> sine(f.freq))` — the analyzer rewrites pipe-to-closure by substituting `@` as today. But codegen propagates the pipe source's TypedValue to the parameter symbol.
 
 - `handle_closure()` receives the incoming TypedValue to type the parameter
 - `f.freq` resolves via the propagated Pattern type, not via map probing
@@ -337,7 +337,7 @@ When an Array TypedValue is passed to a builtin parameter expecting Signal, the 
 3. One instruction is emitted per array element, each wired to the corresponding element's buffer
 4. Only the **first** Array argument triggers expansion (existing limitation, documented not changed)
 
-Example: `[osc("sin", 220), osc("sin", 330), osc("sin", 440)] |> filter_lp(@, 1000)` clones the filter instruction 3 times.
+Example: `[sine(220), sine(330), sine(440)] |> filter_lp(@, 1000)` clones the filter instruction 3 times.
 
 ## Relationship to SymbolKind
 
@@ -356,13 +356,13 @@ All arms of a `match` expression must produce the same `ValueType`. If arms disa
 ```akkado
 // OK: all arms produce Signal
 match mode {
-    "sin" -> osc("sin", 440),
-    "saw" -> osc("saw", 440),
+    "sin" -> sine(440),
+    "saw" -> saw(440),
 }
 
 // Error: arm 1 is Signal, arm 2 is Pattern
 match mode {
-    "osc" -> osc("sin", 440),
+    "osc" -> sine(440),
     "pat" -> n"c4 e4",       // type error
 }
 ```

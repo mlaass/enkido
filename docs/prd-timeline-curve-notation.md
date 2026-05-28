@@ -159,22 +159,22 @@ t"''''____"       // high-low
 
 ```akkado
 // Filter sweep on a pad
-osc("saw", 220) |> lp(@, t"__/''\\__" * 3000 + 200) |> out(@, @)
+saw(220) |> lp(@, t"__/''\\__" * 3000 + 200) |> out(@, @)
 
 // Tremolo
-osc("sin", 440) * t"['^]*8" |> out(@, @)
+sine(440) * t"['^]*8" |> out(@, @)
 
 // Sidechain-style ducking (4 pumps per cycle)
 drums = s"bd _ _ _"
-synth = osc("saw", C4') * t"[_/'']*4" |> out(@, @)
+synth = saw(C4') * t"[_/'']*4" |> out(@, @)
 
 // Panning automation
-sig = osc("saw", 220)
+sig = saw(220)
 sig |> out(sig * t"_/'\\__", sig * t"__/'\\_ ")
 
 // Envelope on pluck
 n"c4 e4 g4" as e |>
-    osc("sin", e.freq) * t"'/\\___" * e.vel |>
+    sine(e.freq) * t"'/\\___" * e.vel |>
     out(@, @)
 ```
 
@@ -712,7 +712,7 @@ t"____" |> out(@, @)    // Should produce ~0.0 for all samples
 t"''''" * 440 |> out(@, @)  // Should produce ~440.0
 
 // Integration with audio graph
-osc("sin", 440) * t"''''____" |> out(@, @)  // Gated sine
+sine(440) * t"''''____" |> out(@, @)  // Gated sine
 ```
 
 ### 8.7 Build & Run

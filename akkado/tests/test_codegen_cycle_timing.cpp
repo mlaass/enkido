@@ -343,7 +343,7 @@ TEST_CASE("cycle_timing: chord pattern with top-level /N (user-reported bug)",
     // polyphonic chord output has a consumer. chord() / c"…" both go
     // through handle_chord_call which also picks up cycle_length() now.
     auto result = akkado::compile(
-        R"(c"<E5 Cm5 Am4 Dm5>/4" |> poly(@, ({freq}) -> osc("sin", freq)) |> out(@, @))");
+        R"(c"<E5 Cm5 Am4 Dm5>/4" |> poly(@, ({freq}) -> sine(freq)) |> out(@, @))");
     REQUIRE(result.success);
     const auto* si = find_seq_init(result);
     REQUIRE(si != nullptr);

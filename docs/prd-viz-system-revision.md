@@ -40,10 +40,10 @@ Overhaul the visualization system across three revisions: (1) add a spectral wat
 
 ```akkado
 // Basic waterfall with defaults (angle: 180, speed: 40, fft: 1024, gradient: "magma")
-osc("saw", 220) |> waterfall(@, "harmonics") |> out(@, @)
+saw(220) |> waterfall(@, "harmonics") |> out(@, @)
 
 // Fully configured waterfall
-osc("saw", 220) |> waterfall(@, "harmonics", {
+saw(220) |> waterfall(@, "harmonics", {
     angle: 270,          // scroll direction in degrees (0=right, 90=up, 180=left, 270=down)
     speed: 60,           // scroll speed in pixels per second
     fft: 2048,           // FFT resolution (power of 2: 256, 512, 1024, 2048)
@@ -56,7 +56,7 @@ osc("saw", 220) |> waterfall(@, "harmonics", {
 signal |> waterfall(@, "full-width", {width: "100%", height: 150})
 
 // Multiple waterfalls with different configs
-dry = osc("saw", 220)
+dry = saw(220)
 dry |> waterfall(@, "pre-filter", {gradient: "thermal", fft: 512})
 dry |> filter_lp(@, 2000, 0.7) |> waterfall(@, "post-filter", {gradient: "magma", fft: 512})
 |> out(@, @)
@@ -389,7 +389,7 @@ Add `import './waterfall';` to `web/src/lib/visualizations/index.ts`.
 ## Data Flow
 
 ```
-Source: osc("saw", 220) |> waterfall(@, "spec", {fft: 1024, gradient: "magma"})
+Source: saw(220) |> waterfall(@, "spec", {fft: 1024, gradient: "magma"})
 
                     Compile Time                          Runtime
                     ──────────                            ───────
@@ -531,7 +531,7 @@ CompileResult                                    ▼
 
 Test program:
 ```akkado
-osc("saw", 220) |> waterfall(@, "saw-harmonics", {
+saw(220) |> waterfall(@, "saw-harmonics", {
     angle: 90, speed: 40, fft: 1024, gradient: "magma", width: 400, height: 150
 }) |> out(@, @)
 ```

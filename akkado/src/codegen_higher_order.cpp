@@ -14,7 +14,7 @@
 //
 // Event-record lambda parameter: the per-event parameter `n` is a Record whose
 // fields (`n.freq`, `n.vel`, `n.gate`, …) resolve to convention-slot buffers.
-// Bare use of the parameter (`v` in `osc("sin", v)`) still reads the primary
+// Bare use of the parameter (`v` in `sine(v)`) still reads the primary
 // freq buffer, so the pre-L3 single-signal form keeps compiling unchanged.
 
 #include "akkado/codegen.hpp"

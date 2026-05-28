@@ -860,7 +860,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
 
     // Math - Trigonometric (radians)
     // NOTE: sin(x) is the mathematical sine function, NOT a sine oscillator!
-    // Use osc("sin", freq) for a sine wave oscillator.
+    // Use sine(freq) for a sine wave oscillator.
     {"sin",     {cedar::Opcode::MATH_SIN,  1, 0, false,
                  {"x", "", "", "", "", ""},
                  {NAN, NAN, NAN},
@@ -1388,7 +1388,7 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // Phase 3 (prd-runtime-event-transforms): fast/slow lower to a runtime
     // EVENT_RATE_SCALE opcode that feeds the upstream SEQPAT_QUERY's
     // external-clock input. Factor accepts constants OR signal-rate
-    // buffers (e.g. `n"c d e".fast(osc("sin", 0.2) + 2)`).
+    // buffers (e.g. `n"c d e".fast(sine(0.2) + 2)`).
     {"slow",    {cedar::Opcode::NOP, 2, 0, false,
                  {"pattern", "factor", "", "", "", ""},
                  {NAN, NAN, NAN},

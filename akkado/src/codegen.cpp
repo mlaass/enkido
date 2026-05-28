@@ -1489,7 +1489,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 //
                 // The genuine footgun is a polyphonic non-sample pattern
                 // (chord, multi-voice note pattern): without a coerce
-                // reject, `osc("sin", c"Am")` would silently emit only
+                // reject, `sine(c"Am")` would silently emit only
                 // voice-0's freq, dropping the chord's other voices.
                 // Reject those at the slot with E160 so the user opts
                 // into poly() / scalar() / a voice index explicitly.

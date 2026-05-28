@@ -64,7 +64,7 @@ func _ready():
         vol = param("volume", 0.8)
         cutoff = param("filter", 2000, 100, 8000)
 
-        bass = osc("saw", 55) |> lpf(@, cutoff) * vol
+        bass = saw(55) |> lpf(@, cutoff) * vol
         bass |> out(@, @)
     '''
 
@@ -91,7 +91,7 @@ When an `NkidoPlayer` node is selected:
 ├─────────────────────────────────────────┤
 │ Source                                  │
 │ ┌─────────────────────────────────────┐ │
-│ │ osc("saw", 220) |> out(@, @)        │ │
+│ │ saw(220) |> out(@, @)        │ │
 │ └─────────────────────────────────────┘ │
 │                                         │
 │ Source File: [                      ] ◉ │
@@ -136,7 +136,7 @@ func _ready():
         hat = sample("hat") * seq("..x...x...x...x.")
 
         // Synth layers - crossfade based on intensity
-        pad = osc("saw", 110) |> lpf(@, 200 + intensity * 2000)
+        pad = saw(110) |> lpf(@, 200 + intensity * 2000)
         lead = osc("square", 440) |> delay(@, 0.3) * intensity
 
         // Mix based on intensity
@@ -1476,7 +1476,7 @@ drums = kick + snare + hat
 
 // Bass synth - responds to filter param
 bass_freq = 55 * (1 + intensity * 0.5)  // Pitch rises with intensity
-bass = osc("saw", bass_freq) |> lpf(@, filter, 0.3)
+bass = saw(bass_freq) |> lpf(@, filter, 0.3)
 
 // Pad - fades in with intensity
 pad_freq = 220
@@ -1510,7 +1510,7 @@ TEST_CASE("NkidoPlayer extracts parameters") {
     NkidoPlayer player;
     player.set_source(R"(
         vol = param("volume", 0.8, 0, 1)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     )");
 
     player.compile();
@@ -1569,7 +1569,7 @@ func test_parameter_binding():
 
     player.source = """
         vol = param("volume", 0.5, 0, 1)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     """
     player.compile()
 

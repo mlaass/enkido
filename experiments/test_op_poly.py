@@ -468,11 +468,11 @@ def test_field_bank_phase_plumbing():
     plain_src = OUT_DIR / "phase2_plain.akk"
     phased_src = OUT_DIR / "phase2_phased.akk"
     plain_src.write_text(
-        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> osc("sin", freq) * 0.3) |> out(@)\n'
+        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> sine(freq) * 0.3) |> out(@)\n'
     )
     phased_src.write_text(
         'n"c4 e4 g4 b4" |> poly(@, ({freq, note, dur, phase}) ->\n'
-        '    osc("sin", freq) * 0.3 * (1 - phase)) |> out(@)\n'
+        '    sine(freq) * 0.3 * (1 - phase)) |> out(@)\n'
     )
 
     plain_wav = str(OUT_DIR / "phase2_plain.wav")
@@ -530,9 +530,9 @@ def test_custom_field_plumbing():
     destructure default applies per-event when a note omits the field.
 
     Three >=300s renders of a 4-note pattern (one note per cycle):
-    - plain   = osc("saw", freq) * 0.3                       (no custom field)
-    - custom  = osc("saw", freq) * 0.3 * cutoff, every note {cutoff:0.8}
-    - default = osc("saw", freq) * 0.3 * cutoff, no note sets cutoff,
+    - plain   = saw(freq) * 0.3                       (no custom field)
+    - custom  = saw(freq) * 0.3 * cutoff, every note {cutoff:0.8}
+    - default = saw(freq) * 0.3 * cutoff, no note sets cutoff,
                 callback declares `{cutoff = 0.6}`
 
     If `cutoff` were stuck at the old constant-0 buffer, custom and default
@@ -550,17 +550,17 @@ def test_custom_field_plumbing():
     custom_src = OUT_DIR / "phase3_custom.akk"
     default_src = OUT_DIR / "phase3_default.akk"
     plain_src.write_text(
-        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> osc("saw", freq) * 0.3)'
+        'n"c4 e4 g4 b4" |> poly(@, ({freq}) -> saw(freq) * 0.3)'
         ' |> out(@)\n'
     )
     custom_src.write_text(
         'n"c4{cutoff:0.8} e4{cutoff:0.8} g4{cutoff:0.8} b4{cutoff:0.8}"'
-        ' |> poly(@, ({freq, cutoff}) -> osc("saw", freq) * 0.3 * cutoff)'
+        ' |> poly(@, ({freq, cutoff}) -> saw(freq) * 0.3 * cutoff)'
         ' |> out(@)\n'
     )
     default_src.write_text(
         'n"c4 e4 g4 b4" |> poly(@, ({freq, cutoff = 0.6}) ->'
-        ' osc("saw", freq) * 0.3 * cutoff) |> out(@)\n'
+        ' saw(freq) * 0.3 * cutoff) |> out(@)\n'
     )
 
     plain_wav = str(OUT_DIR / "phase3_plain.wav")

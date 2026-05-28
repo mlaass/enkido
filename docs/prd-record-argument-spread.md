@@ -175,7 +175,7 @@ synth(440, ..config)  // Same result
 // Spread result is the receiver for dot-call
 config = {freq: 440}
 {..config, wave: "saw"}.osc("sin") |> out(@, @)
-// Equivalent to: osc("sin", 440) |> out(@, @)
+// Equivalent to: sine(440) |> out(@, @)
 // (osc is called with the spread record's first buffer as the implicit receiver)
 ```
 
@@ -718,7 +718,7 @@ This is consistent with how non-record dot-calls work today.
 |-------|-------------------|
 | `r = {a: 1}; g = (x) -> x; g(..r)` | Record spread applies to closure call. |
 | `arr = [1]; g = (x) -> x; g(..arr)` | Array spread applies to closure call. |
-| `n"c4" \|> {..r, freq: 440} as cfg \|> osc("sin", cfg.freq)` | Record spread in pipe binding works (existing feature). |
+| `n"c4" \|> {..r, freq: 440} as cfg \|> sine(cfg.freq)` | Record spread in pipe binding works (existing feature). |
 
 ### 9.5 Spread with Pattern as Source
 
@@ -827,7 +827,7 @@ TEST_CASE("user fn spread with named matching") {
     auto result = akkado::compile(R"(
         config = {cutoff: 1000, res: 0.7}
         fn my_filter(in, cutoff, res) -> lp(in, cutoff, res)
-        my_filter(osc("sin", 440), ..config)
+        my_filter(sine(440), ..config)
     )");
     CHECK(result.success);
 }
@@ -836,7 +836,7 @@ TEST_CASE("array spread in function call") {
     auto result = akkado::compile(R"(
         args = [1000, 0.7]
         fn filter(in, cutoff, res) -> lp(in, cutoff, res)
-        filter(osc("sin", 440), ..args)
+        filter(sine(440), ..args)
     )");
     CHECK(result.success);
 }

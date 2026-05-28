@@ -25,7 +25,7 @@ updates without recompiling:
 
 ```akk
 // A delay locked to one beat — follows the Transport tempo live
-osc("saw", 220)
+saw(220)
     |> delay(@, spb, 0.5)
     |> out(@)
 ```

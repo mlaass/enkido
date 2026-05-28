@@ -11,7 +11,7 @@ subfeatures:
   - name: Poly
     anchor: poly
     tagline: Polyphonic voice allocation.
-    snippet: 'n"c4 e4 g4 b4" |> poly(@, ({freq, vel}) -> osc("sin", freq) * vel, 8)'
+    snippet: 'n"c4 e4 g4 b4" |> poly(@, ({freq, vel}) -> sine(freq) * vel, 8)'
   - name: Mono
     anchor: mono
     tagline: Monophonic last-note priority.
@@ -21,7 +21,7 @@ subfeatures:
   - name: Spread
     anchor: spread
     tagline: Stereo spread across voices.
-    snippet: 'osc("saw", spread(5, [220, 220.7, 219.3, 221.4, 218.6]))'
+    snippet: 'saw(spread(5, [220, 220.7, 219.3, 221.4, 218.6]))'
 ---
 
 # Polyphony
@@ -55,7 +55,7 @@ chord("C Em Am G") |> poly(@, stab) |> out(@)
 ```akk
 // Lower voice count if you want predictable stealing
 n"c4 e4 g4 b4"
-    |> poly(@, ({freq, vel}) -> osc("sin", freq) * vel, 8)
+    |> poly(@, ({freq, vel}) -> sine(freq) * vel, 8)
     |> out(@)
 ```
 
@@ -157,7 +157,7 @@ n"c2 e2 g2 c3"
 
 ```akk
 // Detuned saw stack, 5 oscillators across the array
-osc("saw", spread(5, [220, 220.7, 219.3, 221.4, 218.6])) |> out(@)
+saw(spread(5, [220, 220.7, 219.3, 221.4, 218.6])) |> out(@)
 ```
 
 ## voice

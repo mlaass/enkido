@@ -112,9 +112,9 @@ def test_constant_fast_doubles_event_rate() -> bool:
     print("\n=== fast(p, 2): event rate doubles ===")
     # 4-note pattern. Default cycle = 1 beat (= 0.5 s at 120 BPM).
     base_src = ('n"c4 e4 g4 a4" |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
     fast_src = ('n"c4 e4 g4 a4".fast(2) |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
 
     base_wav = render("base_4notes", base_src, RENDER_SECONDS)
     fast_wav = render("fast_2x", fast_src, RENDER_SECONDS)
@@ -152,9 +152,9 @@ def test_constant_slow_halves_event_rate() -> bool:
     """slow(p, 2) should fire approximately 0.5x events per second."""
     print("\n=== slow(p, 2): event rate halves ===")
     base_src = ('n"c4 e4 g4 a4" |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
     slow_src = ('n"c4 e4 g4 a4".slow(2) |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
 
     base_wav = render("base_4notes_slow", base_src, RENDER_SECONDS)
     slow_wav = render("slow_2x", slow_src, RENDER_SECONDS)
@@ -189,8 +189,8 @@ def test_signal_rate_factor_stable() -> bool:
     non-deterministic) — just confirm output is finite, non-silent, and the
     RMS envelope doesn't run away."""
     print("\n=== fast(p, signal): renders stably over 300s ===")
-    src = ('n"c4 e4 g4 a4".fast(osc("sin", 0.1) * 1.5 + 2) |> '
-           'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+    src = ('n"c4 e4 g4 a4".fast(sine(0.1) * 1.5 + 2) |> '
+           'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
     wav = render("fast_signal", src, RENDER_SECONDS)
     d = load_wav(wav)
     mono = d[:, 0] if d.ndim == 2 else d
@@ -220,9 +220,9 @@ def test_composition_fast_slow() -> bool:
     """fast(slow(p, 2), 3) — net 1.5x speed."""
     print("\n=== fast(slow(p, 2), 3): net 1.5x speed ===")
     base_src = ('n"c4 e4 g4 a4" |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
     comp_src = ('fast(slow(n"c4 e4 g4 a4", 2), 3) |> '
-                'osc("sin", @.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
+                'sine(@.freq) * ar(@.trig, 0.001, 0.01) |> out(@)')
 
     base_wav = render("base_4notes_comp", base_src, RENDER_SECONDS)
     comp_wav = render("comp_fastslow", comp_src, RENDER_SECONDS)

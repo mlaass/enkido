@@ -308,9 +308,9 @@ pipe statement:
 | `<>(N)`  | `\|> bus(N, @)`  | route to bus `N`         |
 
 ```akkado
-osc("saw", 220) <>            // ≡  osc("saw", 220) |> out(@)
+saw(220) <>            // ≡  saw(220) |> out(@)
 kick            <>(1)         // ≡  kick |> bus(1, @)
-n"c4 e4 g4" as e |> osc("saw", e.freq) <>(2)
+n"c4 e4 g4" as e |> saw(e.freq) <>(2)
 ```
 
 Rules:
@@ -515,7 +515,7 @@ implementation; placeholder names below):
 ### 8.1 Default — nothing to do
 
 ```akkado
-osc("saw", 220) <>
+saw(220) <>
 // implicit: master((s) -> softclip(s, 0.9)) + forced NaN/clamp safety
 ```
 
@@ -528,7 +528,7 @@ master((s) -> s
 )
 
 n"c4 e4 g4" as e
-    |> osc("saw", e.freq)
+    |> saw(e.freq)
     |> @ * e.vel
     <>
 ```

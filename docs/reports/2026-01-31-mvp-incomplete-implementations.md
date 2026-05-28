@@ -66,11 +66,11 @@ outer.x.b     // 22
 
 ```akkado
 // All of these now compile to the same bytecode as their functional form:
-osc("saw", 440).lp(800).abs() |> out(%, %)          // == abs(lp(osc(...), 800))
+saw(440).lp(800).abs() |> out(%, %)          // == abs(lp(osc(...), 800))
 n"c4 e4 g4".slow(2)                              // == slow(n"c4 e4 g4", 2)
 n"c4 e4".fast(2).slow(4)                         // == slow(fast(n"c4 e4", 2), 4)
-osc("saw", 440) |> %.lp(800) |> out(%, %)            // dot-call on hole
-osc("saw", 440) as q |> q.lp(800) |> out(%, %)       // dot-call on as-binding
+saw(440) |> %.lp(800) |> out(%, %)            // dot-call on hole
+saw(440) as q |> q.lp(800) |> out(%, %)       // dot-call on as-binding
 ```
 
 The analyzer's `desugar_method_call()` rewrites `a.f(b)` → `f(a, b)` during the lowering pass. The codegen `E113` branch at `codegen.cpp:1511` now only functions as a defensive guard for un-rewritten `MethodCall` nodes — which shouldn't occur in practice.

@@ -101,7 +101,7 @@ internal slot, but you read and write the whole record as a unit:
 voice = state({freq: 440, vel: 0.5, gate: 0})
 
 // get(cell) returns the whole record; field access works as usual.
-osc("sin", get(voice).freq) * get(voice).vel * get(voice).gate
+sine(get(voice).freq) * get(voice).vel * get(voice).gate
 
 // set(cell, new_record) replaces the whole record. The new
 // value's field names must exactly match the cell's declared shape.
@@ -118,7 +118,7 @@ are observably equivalent, but the surface is much shorter:
 voice = state({freq: 440, vel: 0.5, gate: 0})
 
 // Read sugar: cell.field is shorthand for get(cell).field.
-tone = osc("sin", voice.freq) * voice.vel * voice.gate
+tone = sine(voice.freq) * voice.vel * voice.gate
 out(tone, tone)
 
 // Write sugar: cell.field = expr is shorthand for

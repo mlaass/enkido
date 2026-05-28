@@ -33,7 +33,7 @@ The current system has three separate, incompatible polyphony mechanisms:
 ```akkado
 // Define instrument as a function
 fn lead(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
 
 // Explicit polyphonic (default 64 voices)
 n"C4' Am7' G4'" |> poly(@, lead) |> out(@, @)
@@ -81,7 +81,7 @@ POLY outputs a mixed signal — effects chain naturally after it:
 
 ```akkado
 fn pad(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, 1000) |> @ * adsr(gate, 0.1, 0.2, 0.6, 0.5) * vel
+    saw(freq) |> lp(@, 1000) |> @ * adsr(gate, 0.1, 0.2, 0.6, 0.5) * vel
 
 n"C4' Am7' G7' F4'"
 |> poly(@, pad, 8)    // 8 voices, mixed to mono
@@ -96,7 +96,7 @@ Instrument functions take exactly `(freq, gate, vel)`. Additional parameters are
 ```akkado
 cutoff = param("cutoff", 2000)
 fn lead(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, cutoff * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, cutoff * adsr(gate)) |> @ * vel
 
 n"C4'" |> poly(@, lead, 8) |> out(@, @)
 ```
@@ -404,7 +404,7 @@ Instrument functions take exactly `(freq, gate, vel)`:
 
 ```akkado
 fn lead(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
 ```
 
 The compiler maps these positionally:
@@ -661,23 +661,23 @@ Files to modify:
 
 ```akkado
 // Basic polyphonic chord (verify 3 voices mix)
-fn pad(f, g, v) = osc("saw", f) |> lp(@, 1000) |> @ * adsr(g, 0.1, 0.2, 0.6, 0.5) * v
+fn pad(f, g, v) = saw(f) |> lp(@, 1000) |> @ * adsr(g, 0.1, 0.2, 0.6, 0.5) * v
 n"C4' Am7' G7' F4'" |> poly(@, pad, 8) |> out(@, @) * 0.3
 
 // Mono lead (verify only 1 voice at a time)
-fn lead(f, g, v) = osc("saw", f) |> lp(@, 3000) |> @ * adsr(g, 0.01, 0.1, 0.8, 0.2)
+fn lead(f, g, v) = saw(f) |> lp(@, 3000) |> @ * adsr(g, 0.01, 0.1, 0.8, 0.2)
 n"c4 e4 g4 c5 g4 e4" |> mono(@, lead) |> out(@, @) * 0.5
 
 // Old monophonic pattern (verify still works without poly())
-n"c4 e4 g4" |> osc("sin", @.freq) |> out(@, @)
+n"c4 e4 g4" |> sine(@.freq) |> out(@, @)
 
 // Voice stealing — exceed 4 voices with 7th chord
-fn simple(f, g, v) = osc("sin", f) * adsr(g) * v
+fn simple(f, g, v) = sine(f) * adsr(g) * v
 n"Am7' CM9'" |> poly(@, simple, 4) |> out(@, @) * 0.3
 
 // Closure capture for extra params
 cutoff = param("cutoff", 2000)
-fn filtered(f, g, v) = osc("saw", f) |> lp(@, cutoff * adsr(g)) |> @ * v
+fn filtered(f, g, v) = saw(f) |> lp(@, cutoff * adsr(g)) |> @ * v
 n"C4' Am7'" |> poly(@, filtered, 8) |> out(@, @) * 0.3
 ```
 

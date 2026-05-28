@@ -479,7 +479,7 @@ sound |> lp(@, 4000, 0.7) |> out(@, @)
 `tablePos` modulation, e.g. with an LFO:
 ```akkado
 wt_load("Basic Shapes", "wavetables/basic_shapes.wav")
-morph = osc("sin", 0.2) * 0.5 + 0.5         // [0, 1]
+morph = sine(0.2) * 0.5 + 0.5         // [0, 1]
 sound = smooch(220, 0, morph * 31)
 sound |> out(@, @)
 ```

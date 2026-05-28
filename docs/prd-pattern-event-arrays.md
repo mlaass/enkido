@@ -22,7 +22,7 @@ This PRD surfaces the chord array as a first-class **dynamic array** value type 
 - **`notes(e)` and `freqs(e)` are added as builtins** that accept a pattern event and return a dynamic array of MIDI numbers / frequencies respectively. With UFCS (from state PRD), `e.notes` and `e.freqs` work as method-style sugar.
 - **Existing scalar accessors stay** — `e.freq`, `e.note`, `e.vel`, `e.gate`, `e.trig` continue to return the first chord note's value (or the event's single value), preserving backward compatibility for monophonic patches. Array-form companions (`vels(e)`, `gates(e)`, `trigs(e)`) are scheduled but not load-bearing for v1; v1 ships only `notes(e)` and `freqs(e)`.
 - **Dynamic arrays are a new value-type variant.** Their length is a runtime signal, not a compile-time constant. `len()` becomes polymorphic: compile-time on static arrays (existing behavior), runtime on dynamic arrays.
-- **Stateful UGens cannot auto-fan-out over dynamic arrays.** `osc("sin", freqs(e))` is a compile error with a directive to use `poly()`. Compile-time fan-out (the existing multi-buffer machinery) requires a static, known-at-compile-time arity. For dynamic-arity polyphonic synthesis, the user composes with the existing `poly()` allocator.
+- **Stateful UGens cannot auto-fan-out over dynamic arrays.** `sine(freqs(e))` is a compile error with a directive to use `poly()`. Compile-time fan-out (the existing multi-buffer machinery) requires a static, known-at-compile-time arity. For dynamic-arity polyphonic synthesis, the user composes with the existing `poly()` allocator.
 - **`ChordLit` (the `'` suffix) is removed entirely** — token type, AST node, lexer paths, parser branch, codegen branch, and ~30 lexer test cases. It is unused in `web/static/patches/` and adds no value once chord data is array-typed via patterns.
 - **One new opcode** is added to fill the array buffer per block from `OutputEvent.values[]`. The exact mechanism (new `SEQPAT_VALUES` opcode vs. mode-extension on `SEQPAT_QUERY`) is captured as Open Question Q1 — both are feasible; pick during implementation.
 
@@ -61,7 +61,7 @@ The closest existing surface — `e.freq` — is locked to the first chord note.
 | Stateful chord transforms require new C++ opcodes | Userspace closures over `notes(e)` + `step()` + `map()` |
 | `ChordLit` (`C4'`) is dead syntax (unused, root-only) | Removed |
 | `len(arr)` is always compile-time | `len()` polymorphic: const for static arrays, signal for dynamic |
-| `osc("sin", chord_data)` not expressible (chord data not exposed) | `osc("sin", freqs(e))` is a compile error pointing at `poly()` |
+| `sine(chord_data)` not expressible (chord data not exposed) | `sine(freqs(e))` is a compile error pointing at `poly()` |
 
 ---
 
@@ -73,7 +73,7 @@ The closest existing surface — `e.freq` — is locked to the first chord note.
 2. **Add a dynamic-array value-type variant.** Distinct from static `Array` TypedValues, dynamic arrays carry a per-block runtime length signal alongside the data buffer.
 3. **Make `len()` polymorphic.** `len(static_arr)` continues to lower to `PUSH_CONST` (compile-time). `len(dynamic_arr)` lowers to a signal read of the array's length buffer (runtime).
 4. **Make `arr[i]` work on dynamic arrays.** `ARRAY_INDEX` already supports a runtime length input (`inputs[2][0]` in `arrays.hpp:37`); wire dynamic arrays to use it. Wrap-by-default behavior preserved.
-5. **Reject auto-fan-out over dynamic arrays with a clear error.** `osc("sin", freqs(e))` errors at compile time with `E???: Stateful operators cannot auto-expand over dynamic arrays. Wrap with poly() for runtime polyphony.`
+5. **Reject auto-fan-out over dynamic arrays with a clear error.** `sine(freqs(e))` errors at compile time with `E???: Stateful operators cannot auto-expand over dynamic arrays. Wrap with poly() for runtime polyphony.`
 6. **Remove `ChordLit` entirely.** Lexer, parser, AST node, codegen branch, ~30 test cases in `test_lexer.cpp`. Sweep `web/static/patches/` (currently zero usages) and docs for any remaining references.
 7. **Demo patches.** Ship `web/static/patches/arpeggio-demo.akk` (chord arpeggiator) and `web/static/patches/harmonizer-demo.akk` (interval harmonization) using only the new primitives + state PRD.
 8. **Zero regressions on existing scalar accessors.** `e.freq`, `e.note`, `e.vel`, `e.gate`, `e.trig` and existing patches like `web/static/patches/rock-groove.akk` (the only patch using these accessors) compile and produce bit-identical output.
@@ -110,7 +110,7 @@ len(e.notes)   // dynamic signal: 3, then 1, then 2
 n"[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]" as e
   |> e.notes.step(trigger(8))   // UFCS from state PRD: step(notes(e), trigger(8))
   |> note(@)                    // MIDI → Hz
-  |> osc("sin", @)
+  |> sine(@)
   |> out(@, @)
 ```
 
@@ -122,7 +122,7 @@ n"[c4, e4, g4] [a3, c4, e4] g3 [b3, d4, f#4]" as e
 // Add a 3rd and 5th to every melody note; play the chord with poly
 n"c4 e4 g4 e4" as e
   |> map([0, 4, 7], (i) -> e.note + i)   // [n, n+4, n+7] — a static array of 3 elements
-  |> poly(@, (f, g, v) -> osc("sin", note(f)) * ar(g, 0.01, 0.3) * v)
+  |> poly(@, (f, g, v) -> sine(note(f)) * ar(g, 0.01, 0.3) * v)
   |> out(@, @)
 ```
 
@@ -144,10 +144,10 @@ len(e.notes)           // signal: 3 for first event, 2 for second event
 
 ```akkado
 n"[c4, e4, g4]" as e
-osc("sin", e.freqs)
+sine(e.freqs)
 // E???: Stateful operators cannot auto-expand over dynamic arrays
 //       (chord size varies per pattern event). Wrap with poly() for runtime polyphony:
-//       e |> poly(@, (f, g, v) -> osc("sin", f) * ar(g, 0.01, 0.3) * v)
+//       e |> poly(@, (f, g, v) -> sine(f) * ar(g, 0.01, 0.3) * v)
 ```
 
 ---
@@ -349,7 +349,7 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
 - [ ] Regenerate opcode metadata if Q1 chose new opcode (`bun run build:opcodes`)
 - [ ] Tests: `notes(e)` returns expected MIDI array per event; `freqs(e)` returns Hz; UFCS sugar (`e.notes`) works
 - [ ] Verify: `len(e.notes)` returns 3 for chord events, 1 for monophonic, varying per event
-- [ ] Verify: `osc("sin", freqs(e))` errors at compile time with correct message
+- [ ] Verify: `sine(freqs(e))` errors at compile time with correct message
 
 ### Phase 4 — Demos + docs
 
@@ -380,8 +380,8 @@ This PRD's most compelling demos rely on `step()`, `state()`, `counter()`, and U
 | `len(e.notes)` between events (block boundary) | Length signal updates per event boundary; per-block constant otherwise | Matches the per-block stability of all pattern fields |
 | `e.notes[counter(trig)]` where `counter` exceeds chord length | Wraps via `ARRAY_INDEX` default-wrap mode | Existing `((j % len) + len) % len` math works with runtime length |
 | Empty event (`num_values == 0`, e.g. silence) | `len(e.notes) == 0`; `arr[i]` returns 0.0 | Matches existing degenerate-array path in `arrays.hpp:44` |
-| `osc("sin", freqs(e))` (stateful fan-out over DynArray) | Compile error pointing at `poly()` | Compile-time fan-out requires static arity |
-| `osc("sin", [60, 64, 67])` (stateful fan-out over static Array) | Unchanged — fans out to 3 oscillators with stable per-element state IDs | Static arrays preserve existing behavior |
+| `sine(freqs(e))` (stateful fan-out over DynArray) | Compile error pointing at `poly()` | Compile-time fan-out requires static arity |
+| `sine([60, 64, 67])` (stateful fan-out over static Array) | Unchanged — fans out to 3 oscillators with stable per-element state IDs | Static arrays preserve existing behavior |
 | `map(e.notes, fn)` (dynamic array through a stateless map) | **Open** — does map auto-iterate up to current `len`? Or also reject? | Likely allowed since `map` is stateless; documented in implementation notes |
 | `e.freq` on a chord event (existing accessor) | Returns first chord note's frequency (today's behavior, unchanged) | Backward compatibility for monophonic patches |
 | Pattern with mixed monophonic + chord events (e.g. `n"c4 [e4,g4] a4"`) | `e.notes` length signal is `1, 2, 1` per event in turn | Naturally falls out of the per-event fill |
@@ -427,8 +427,8 @@ Akkado tests in `akkado/tests/test_dynarray_len.cpp`:
 - len(static_array) compiles to PUSH_CONST (no instruction beyond const)
 - len(dyn_array) returns a Signal whose buffer is the DynArray's len_buffer
 - arr[i] on DynArray uses dyn_array's len_buffer for wrap
-- osc("sin", dyn_array) raises compile error E??? with poly() directive in message
-- osc("sin", static_array) continues to fan out (unchanged behavior)
+- sine(dyn_array) raises compile error E??? with poly() directive in message
+- sine(static_array) continues to fan out (unchanged behavior)
 ```
 
 Use a synthetic-DynArray test fixture (no pattern integration yet) to exercise the type system in isolation.
@@ -489,5 +489,5 @@ bun run check
 - Zero `ChordLit` (`'`-suffix) syntax remains in code, tests, patches, or docs.
 - Exactly one new opcode (or one mode-extension on `SEQPAT_QUERY`) added — Q1 documents the chosen mechanism in the implementation PR.
 - `len()` is polymorphic with documented compile-time-vs-runtime dispatch.
-- `osc("sin", freqs(e))` errors at compile time with the `poly()` directive message.
+- `sine(freqs(e))` errors at compile time with the `poly()` directive message.
 - The `web/wasm/nkido_wasm.cpp` and `tools/nkido/bytecode_dump.cpp` builds pass after `bun run build:opcodes`.

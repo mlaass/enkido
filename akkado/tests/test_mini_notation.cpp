@@ -2038,7 +2038,7 @@ TEST_CASE("tune() compiles end-to-end", "[tuning]") {
     }
 
     SECTION("tune() in full pipeline with pipe") {
-        auto result = akkado::compile(R"(tune("31edo", n"a4 a^4 a^^4") |> ((f) -> osc("sin", f)) |> out(%, %))");
+        auto result = akkado::compile(R"(tune("31edo", n"a4 a^4 a^^4") |> ((f) -> sine(f)) |> out(%, %))");
         INFO("Diagnostics:");
         for (const auto& d : result.diagnostics) {
             INFO("  " << d.code << ": " << d.message);
@@ -2254,11 +2254,11 @@ TEST_CASE("BP tuning uses 13 equal divisions of the tritave", "[tuning][bp]") {
 
 TEST_CASE("tune(\"ji\") and tune(\"bp\") compile end-to-end", "[tuning][ji_bp]") {
     SECTION("ji compiles") {
-        auto result = akkado::compile(R"(tune("ji", n"c4 e4 g4") |> ((f) -> osc("sin", f)) |> out(%, %))");
+        auto result = akkado::compile(R"(tune("ji", n"c4 e4 g4") |> ((f) -> sine(f)) |> out(%, %))");
         CHECK(result.success);
     }
     SECTION("bp compiles") {
-        auto result = akkado::compile(R"(tune("bp", n"c4 c^4 c^^4") |> ((f) -> osc("sin", f)) |> out(%, %))");
+        auto result = akkado::compile(R"(tune("bp", n"c4 c^4 c^^4") |> ((f) -> sine(f)) |> out(%, %))");
         CHECK(result.success);
     }
 }

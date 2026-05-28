@@ -67,7 +67,7 @@ fn osc(type = "sin", freq = 440) -> match(type) {
 }
 
 osc(440)              // type defaults to "sin"
-osc("saw", 440)       // explicit type
+saw(440)       // explicit type
 ```
 
 #### Rules
@@ -87,7 +87,7 @@ The primary use case for string defaults is the `match(type)` pattern. When `osc
 2. The default string literal is added to `param_literals_`
 3. `match(type)` resolves at compile time -- only the `"sin"` branch is emitted
 
-This is identical to how `osc("sin", 440)` works today, except the string comes from the default rather than the call site.
+This is identical to how `sine(440)` works today, except the string comes from the default rather than the call site.
 
 #### Data Structure Changes
 
@@ -803,7 +803,7 @@ fn osc(type = "sin", freq = 440) -> match(type) {
     _: freq * 0.5
 }
 osc(100)           // type="sin" -> 100.0
-osc("saw", 100)    // type="saw" -> 200.0
+saw(100)    // type="saw" -> 200.0
 
 // Feature 2: Named args
 fn f(a, b = 5, c = 10) -> a + b + c

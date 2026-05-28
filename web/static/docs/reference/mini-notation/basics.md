@@ -11,7 +11,7 @@ subfeatures:
   - name: Sequences
     anchor: sequences
     tagline: Bracketed step sequences.
-    snippet: 'n"c4 e4 g4 c5" |> ((f) -> osc("sin", f) * ar(trigger(4)))'
+    snippet: 'n"c4 e4 g4 c5" |> ((f) -> sine(f) * ar(trigger(4)))'
   - name: Polyrhythms
     anchor: polyrhythms
     tagline: Stacked patterns at different lengths.
@@ -62,7 +62,7 @@ Top-level spaces play one element per cycle. **One cycle equals one beat by defa
 ```akk
 // One note per cycle (= one note per beat)
 n"c4 e4 g4 c5"
-    |> ((f) -> osc("sin", f) * ar(trigger(1)))
+    |> ((f) -> sine(f) * ar(trigger(1)))
     |> out(@)
 ```
 
@@ -205,7 +205,7 @@ s"bd sn"/2     // This divides the SIGNAL by 2, not the pattern!
 Basic pattern playback:
 
 ```akk
-n"c4 e4 g4" |> ((f) -> osc("sin", f)) |> out(@)
+n"c4 e4 g4" |> ((f) -> sine(f)) |> out(@)
 ```
 
 ## Practical examples
@@ -213,21 +213,21 @@ n"c4 e4 g4" |> ((f) -> osc("sin", f)) |> out(@)
 ```akk
 // Simple melody
 n"c4 e4 g4 e4" |> ((f) ->
-    osc("saw", f) |> lp(@, 1500) * ar(trigger(4))
+    saw(f) |> lp(@, 1500) * ar(trigger(4))
 ) |> out(@)
 ```
 
 ```akk
 // Chord progression
 chord("C Em Am G") |> ((f) ->
-    osc("saw", f) |> lp(@, 800) * ar(trigger(1), 0.1, 0.5)
+    saw(f) |> lp(@, 800) * ar(trigger(1), 0.1, 0.5)
 ) |> out(@)
 ```
 
 ```akk
 // Rhythmic pattern with rests
 n"c4 ~ e4 ~ g4 ~ e4 ~" |> ((f) ->
-    osc("tri", f) * ar(trigger(8), 0.01, 0.1)
+    tri(f) * ar(trigger(8), 0.01, 0.1)
 ) |> out(@)
 ```
 

@@ -40,15 +40,15 @@ fn transpose(events: evs, n) ->
 
 // Explicit sig annotation — makes today's voice-0 coerce explicit
 fn wobble(rate: sig, depth) ->
-    osc("sin", rate) * depth
+    sine(rate) * depth
 
 // num — strict compile-time numeric constant
 fn unison(freq: sig, voices: num) =
-    each(range(voices), (i) -> osc("saw", freq * (1 + i * 0.01)))
+    each(range(voices), (i) -> saw(freq * (1 + i * 0.01)))
 
 // rec — Record or Pattern (Pattern is structurally a record)
 fn arpinst(e: rec) =
-    osc("saw", e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel
+    saw(e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel
 
 // arr — compile-time Array literal
 fn mixer(channels: arr, gain: sig) = sum(channels) * gain
@@ -149,11 +149,11 @@ fn xp(events: evs, n) ->
     event_map(events, (e) -> {note: e.note + n})
 
 // Mono path — three transposed notes, c4+7=g4, e4+7=b4, g4+7=d5.
-n"c4 e4 g4".xp(7) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".xp(7) |> sine(@.freq) |> out(@)
 
 // Polyphonic chord path — Am transposed up a fifth.
 c"Am".xp(7)
-  |> poly(@, (f, g, v) -> osc("sin", f) * v, 3)
+  |> poly(@, (f, g, v) -> sine(f) * v, 3)
   |> out(@)
 ```
 
@@ -163,7 +163,7 @@ Without the `: evs` annotation, the second line fires `E160` (polyphonic pattern
 
 - **Closure parameters** (`(e: evs) -> …`). Closures inline; types flow through naturally without grammar work, so the closure-arrow form doesn't enforce annotations yet. Use a named `fn` if you want a typed boundary.
 - **Destructure and rest parameter annotations** (`{x,y}: rec`, `...args: sig`). Both fire `E104` today. Track demand in a follow-up PRD.
-- **Body-side type checking.** The annotation is a precondition at the call boundary. Misuse inside the body (`fn f(e: evs) -> osc("sin", e)`) is caught downstream by the builtin's own `param_types` diagnostic, not by this mechanism.
+- **Body-side type checking.** The annotation is a precondition at the call boundary. Misuse inside the body (`fn f(e: evs) -> sine(e)`) is caught downstream by the builtin's own `param_types` diagnostic, not by this mechanism.
 - **Inference.** A parameter used only in stream-shaped positions is NOT auto-annotated. Explicit `: evs` is required.
 - **`: dynarr` annotation.** `DynArray` flows through un-annotated today; an explicit annotation is filed as a Phase 3 candidate.
 - **Long-form aliases for the Phase 2 keywords.** `number`, `record`, `array`, `string`, `function` are NOT reserved — only the abbreviated forms work. If demand emerges, long-form aliases can be added in a follow-up PRD.

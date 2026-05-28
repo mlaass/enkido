@@ -97,7 +97,7 @@ Akkado source:
 cutoff = param("cutoff", 800, 100, 8000)   // mapped to KEY1 (step ±100 per press)
 hit    = button("trigger")                  // KEY2 momentary
 mute   = toggle("mute", false)              // KEY3 latching
-osc("saw", 110) |> filter_lp(@, cutoff, 0.7, 1.0, 1.0) |> out(@, @)
+saw(110) |> filter_lp(@, cutoff, 0.7, 1.0, 1.0) |> out(@, @)
 ```
 
 Key mapping is compiled into the bytecode's parameter metadata (first N `param`/`toggle`/`button` declarations → KEY1..KEY6 in declaration order). Overflow declarations are unreachable on device.

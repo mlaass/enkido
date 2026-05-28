@@ -51,7 +51,7 @@ SR = 48000
 # attack/release on the trigger) keeps each note audible without bleed.
 AKK_SRC = """
 arp = n"c4 e4 g4 b4".iter(4)
-mtof(arp) |> osc("sin", %) * 0.2 |> out(%, %)
+mtof(arp) |> sine(%) * 0.2 |> out(%, %)
 """
 
 

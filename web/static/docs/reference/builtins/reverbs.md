@@ -11,15 +11,15 @@ subfeatures:
   - name: Freeverb
     anchor: freeverb
     tagline: Schroeder-style room reverb.
-    snippet: 'osc("saw", 220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5)'
+    snippet: 'saw(220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5)'
   - name: Dattorro
     anchor: dattorro
     tagline: Plate reverb, lush mid-decay.
-    snippet: 'osc("saw", 220) * ar(trigger(2)) |> dattorro(@, 0.8, 30)'
+    snippet: 'saw(220) * ar(trigger(2)) |> dattorro(@, 0.8, 30)'
   - name: FDN
     anchor: fdn
     tagline: Feedback delay network, deep tails.
-    snippet: 'osc("saw", 55) * ar(trigger(0.5)) |> fdn(@, 0.9, 0.4)'
+    snippet: 'saw(55) * ar(trigger(0.5)) |> fdn(@, 0.9, 0.4)'
 ---
 
 # Reverbs
@@ -50,24 +50,24 @@ A classic reverb algorithm with a smooth, natural sound. Higher room values prod
 
 ```akk
 // Medium room reverb
-osc("saw", 220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5) |> out(@)
+saw(220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5) |> out(@)
 ```
 
 ```akk
 // Large hall
-osc("saw", 110) * ar(trigger(1)) |> freeverb(@, 0.9, 0.3) |> out(@)
+saw(110) * ar(trigger(1)) |> freeverb(@, 0.9, 0.3) |> out(@)
 ```
 
 ```akk
 // Damped small room
-osc("noise") * ar(trigger(4), 0.001, 0.05)
+noise() * ar(trigger(4), 0.001, 0.05)
     |> freeverb(@, 0.2, 0.8)
     |> out(@)
 ```
 
 ```akk
 // Custom room character (more density, longer baseline decay)
-osc("saw", 220) * ar(trigger(2))
+saw(220) * ar(trigger(2))
     |> freeverb(@, 0.5, 0.5, 0.35, 0.8)
     |> out(@)
 ```
@@ -101,24 +101,24 @@ The Dattorro plate reverb produces long, shimmering tails well-suited to vocals 
 
 ```akk
 // Lush plate reverb
-osc("saw", 220) * ar(trigger(2)) |> dattorro(@, 0.8, 30) |> out(@)
+saw(220) * ar(trigger(2)) |> dattorro(@, 0.8, 30) |> out(@)
 ```
 
 ```akk
 // Short bright plate
-osc("tri", 440) * ar(trigger(4)) |> dattorro(@, 0.5, 10) |> out(@)
+tri(440) * ar(trigger(4)) |> dattorro(@, 0.5, 10) |> out(@)
 ```
 
 ```akk
 // High diffusion for pad-like washes
-osc("saw", 220) * ar(trigger(2))
+saw(220) * ar(trigger(2))
     |> dattorro(@, 0.9, 50, 0.9, 0.8)
     |> out(@)
 ```
 
 ```akk
 // Dark, modulated tail
-osc("saw", 220) * ar(trigger(2))
+saw(220) * ar(trigger(2))
     |> dattorro(@, 0.9, 40, damping: 0.6, mod_depth: 0.4, lfo_rate: 0.8)
     |> out(@)
 ```
@@ -145,12 +145,12 @@ A matrix-based reverb using multiple delay lines with cross-feedback. Creates de
 
 ```akk
 // Dense ambient reverb
-osc("saw", 55) * ar(trigger(0.5)) |> fdn(@, 0.9, 0.4) |> out(@)
+saw(55) * ar(trigger(0.5)) |> fdn(@, 0.9, 0.4) |> out(@)
 ```
 
 ```akk
 // Tight room
-osc("noise") * ar(trigger(8), 0.001, 0.02)
+noise() * ar(trigger(8), 0.001, 0.02)
     |> fdn(@, 0.4, 0.6)
     |> out(@)
 ```

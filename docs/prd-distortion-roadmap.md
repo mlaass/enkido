@@ -23,7 +23,7 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, n)` dispatcher mo
 - **Stdlib-first.** New stateless shapers ship as userspace `fn` definitions in `akkado/include/akkado/stdlib.hpp`, not new opcodes. Stdlib `fn`s are fully inlined at every call site (per `docs/agent-guide-userspace-functions.md`), so a userspace `hardclip(sig, thresh) -> clamp(sig, -thresh, thresh)` compiles to a single `CLAMP` opcode with no function-call overhead. Only stateful / ADAA / polynomial-fit shapers earn an opcode.
 - **No unified `shape(in, drive, mode)` opcode.** An early design considered consolidating multiple shapers into one mode-dispatched opcode. The Plan-mode review pushed back: stdlib `fn` inlining already eliminates the runtime branch a multiplexer opcode would re-introduce. A `match(algo)` dispatcher in stdlib gives users the same named-mode UX without any per-sample switch.
 - **`dist(algo, sig, ...)` mirrors `osc(type, freq, ...)`.** Same compile-time `match()` pattern. Drive is the always-present second runtime param; `n` is the optional secondary param (asym bias, bitcrush rate, tube bias). All existing distortion opcodes are exposed through `dist` for uniformity.
-- **No `sine` or `cosine` stdlib shapers.** `sine` collides with `osc("sin", ...)`; `cosine` is `cos(x) * scale`, too thin to justify a named slot. Both were dropped from the initial brain-dump after user review.
+- **No `sine` or `cosine` stdlib shapers.** `sine` collides with `sine(...)`; `cosine` is `cos(x) * scale`, too thin to justify a named slot. Both were dropped from the initial brain-dump after user review.
 - **Filter-feedback saturation is opt-in.** Adding `tanh` to SVF/Formant feedback changes their impulse response. Gate behind an `ExtendedParams<1> fb_sat` (default 0=off) so existing patches and regression tests stay bit-identical.
 - **ADAA upgrade scoped to `tube` only.** `tape`, `xfmr`, `excite` already use 2× oversampling with ~24 dB aliasing headroom; the visible win is `tube` at extreme drive (per `prd-squelch-engine.md` §4). Defer the others until a user actually hits aliasing.
 - **Polynomial Chebyshev, not LUT, for the generic shaper.** Lookup tables would require a bank registry analog to wavetables (`cedar/include/cedar/opcodes/oscillators.hpp`), which is a significant infra lift. Polynomials fit `ExtendedParams<8>` directly and have closed-form ADAA (antiderivative of degree-N is degree-N+1).
@@ -69,7 +69,7 @@ This PRD also introduces a polymorphic `dist(algo, sig, drive, n)` dispatcher mo
 - **LUT-driven generic waveshaper** — requires a transfer-function bank registry analog to wavetables; defer until a user asks.
 - **`tape`/`xfmr`/`excite` ADAA upgrades** — 2× oversampling already buys enough headroom for current use cases.
 - **True Linkwitz-Riley alignment in `multiband3fx`** — defer until phase coherence becomes a user complaint.
-- **`sine` / `cosine` stdlib shapers** — `sine` collides with `osc("sin", ...)`; `cosine` is too thin to justify a named slot.
+- **`sine` / `cosine` stdlib shapers** — `sine` collides with `sine(...)`; `cosine` is too thin to justify a named slot.
 
 ---
 

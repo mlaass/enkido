@@ -35,7 +35,7 @@ Displays a real-time oscilloscope view of the signal. The trigger stabilizes the
 
 ```akk
 // Basic oscilloscope
-osc("sin", 440) |> oscilloscope(@) |> out(@)
+sine(440) |> oscilloscope(@) |> out(@)
 ```
 
 ## rising
@@ -44,7 +44,7 @@ Trigger on a rising edge (signal crossing the threshold from below to above). Th
 
 ```akk
 // Named with trigger at zero-crossing
-osc("saw", 110)
+saw(110)
     |> oscilloscope(@, "saw wave", {
         triggerLevel: 0,
         triggerEdge: "rising"
@@ -58,7 +58,7 @@ Trigger on a falling edge (signal crossing the threshold from above to below). U
 
 ```akk
 // Wide display with falling edge trigger
-osc("sqr", 220)
+sqr(220)
     |> oscilloscope(@, "square", {
         width: 400,
         triggerEdge: "falling"
@@ -72,7 +72,7 @@ The amplitude threshold the signal must cross to start a frame. `0` is the typic
 
 ```akk
 // Trigger at +0.3 amplitude
-osc("sin", 220) |> oscilloscope(@, {triggerLevel: 0.3}) |> out(@)
+sine(220) |> oscilloscope(@, {triggerLevel: 0.3}) |> out(@)
 ```
 
 ## triggerEdge

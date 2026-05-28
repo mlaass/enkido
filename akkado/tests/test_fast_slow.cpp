@@ -122,7 +122,7 @@ std::unique_ptr<RenderHost> render(const akkado::CompileResult& r, int blocks) {
 
 TEST_CASE("fast(p, 2) emits ERS + RateScale init; cycle_length runtime = 0.5",
           "[fast-slow][phase3]") {
-    auto r = akkado::compile(R"(n"c4 e4".fast(2) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(n"c4 e4".fast(2) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     auto insts = get_instructions(r);
@@ -140,7 +140,7 @@ TEST_CASE("fast(p, 2) emits ERS + RateScale init; cycle_length runtime = 0.5",
 
 TEST_CASE("slow(p, 2) emits ERS + RateScale init; cycle_length runtime = 2.0",
           "[fast-slow][phase3]") {
-    auto r = akkado::compile(R"(n"c4 e4".slow(2) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(n"c4 e4".slow(2) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     auto insts = get_instructions(r);
@@ -159,8 +159,8 @@ TEST_CASE("fast with signal-rate factor compiles + emits ERS",
           "[fast-slow][phase3]") {
     // The factor here is a runtime signal (osc * 1.5 + 2).
     auto r = akkado::compile(R"(
-        rate = osc("sin", 0.2) * 1.5 + 2
-        n"c4 e4".fast(rate) |> osc("sin", @.freq) |> out(@)
+        rate = sine(0.2) * 1.5 + 2
+        n"c4 e4".fast(rate) |> sine(@.freq) |> out(@)
     )");
     REQUIRE(r.success);
 
@@ -182,8 +182,8 @@ TEST_CASE("slow with signal-rate factor compiles + emits ERS + DIV",
           "[fast-slow][phase3]") {
     // slow(p, sg) → rate = 1.0 / sg at runtime → codegen emits a DIV.
     auto r = akkado::compile(R"(
-        rate = osc("sin", 0.2) + 2
-        n"c4 e4".slow(rate) |> osc("sin", @.freq) |> out(@)
+        rate = sine(0.2) + 2
+        n"c4 e4".slow(rate) |> sine(@.freq) |> out(@)
     )");
     REQUIRE(r.success);
 
@@ -199,7 +199,7 @@ TEST_CASE("fast(slow(p, 2), 3) composes — runtime cycle_length ≈ 0.667 (1.5x
     // compile_pattern_for_transform's recursive case applies the inner slow's
     // compile-time `*= 2` mutation: cycle_length = 2. Outer fast's ERS runs
     // at runtime: cycle_length = 2 / 3.
-    auto r = akkado::compile(R"(fast(slow(n"c4 e4", 2), 3) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(fast(slow(n"c4 e4", 2), 3) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     // Only ONE EVENT_RATE_SCALE — the outer one. The inner slow used the
@@ -254,7 +254,7 @@ TEST_CASE("fast(p, N) for N>1 fires the right number of triggers (wrap-detect re
     // they didn't render the pattern + check actual onset count, missing
     // this bug entirely. This test renders + counts.
     auto r = akkado::compile(
-        R"(n"c4 e4 g4 a4".fast(4) |> osc("sin", @.freq) * ar(@.trig, 0.001, 0.005) |> out(@))");
+        R"(n"c4 e4 g4 a4".fast(4) |> sine(@.freq) * ar(@.trig, 0.001, 0.005) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, /*blocks=*/static_cast<int>(48000 / cedar::BLOCK_SIZE));
 
@@ -320,7 +320,7 @@ TEST_CASE("fast()/slow() on euclid() emits targeted hint about dur parameter",
 
     SECTION("euclid with explicit dur arg compiles cleanly") {
         auto r = akkado::compile(R"(
-            osc("sin", 110) * ar(euclid(3, 8, 0, 8), 0.005, 0.4) |> out(@)
+            sine(110) * ar(euclid(3, 8, 0, 8), 0.005, 0.4) |> out(@)
         )");
         if (!r.success) {
             for (const auto& d : r.diagnostics) {
@@ -339,8 +339,8 @@ TEST_CASE("fast applied to a Pattern-bound identifier emits ERS",
     // so the two rates don't interfere.
     auto r = akkado::compile(R"(
         f = n"c4 e4"
-        slow(f, 2) |> osc("sin", @.freq) |> out(@)
-        fast(f, 3) |> osc("sin", @.freq) |> out(@)
+        slow(f, 2) |> sine(@.freq) |> out(@)
+        fast(f, 3) |> sine(@.freq) |> out(@)
     )");
     REQUIRE(r.success);
 

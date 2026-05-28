@@ -38,7 +38,7 @@ noise() |> sah(@, trigger(1)) |> out(@)
 ```akk
 // Trigger an envelope on every rising edge of an LFO
 gate = gateup(lfo(2))
-ar(gate, 0.01, 0.3) * osc("sin", 880) |> out(@)
+ar(gate, 0.01, 0.3) * sine(880) |> out(@)
 ```
 
 ## gatedown

@@ -38,7 +38,7 @@ Key design decisions made in question rounds:
 
 | Scenario | Expected | Actual today |
 |----------|----------|--------------|
-| `osc("saw", 110) \|> dattorro(@, 0.85, 30) \|> out(@)` | Stereo reverb tail (mono in widens) | Mono reverb, no width — Dattorro's L/R tanks are summed and discarded |
+| `saw(110) \|> dattorro(@, 0.85, 30) \|> out(@)` | Stereo reverb tail (mono in widens) | Mono reverb, no width — Dattorro's L/R tanks are summed and discarded |
 | `stereo_sig \|> freeverb(@, 0.9, 0.5)` | Real stereo reverb with cross-coupling | Two independent mono Freeverbs (auto-lift), 2× CPU, no inter-channel coupling |
 | `mono_sig \|> chorus(@, 0.5, 0.5)` | Stereo chorus via offset L/R LFO | Mono chorus; user must `\|> stereo()` first to even get auto-lifted double-mono |
 | `mono_sig \|> filter_lp(@, ...) \|> out(stereo_wet, mono_dry)` | Sensible compile or auto-mix | E185: stereo and mono mixed on out — defensive `stereo()` wrap required |
@@ -94,7 +94,7 @@ The original PRD §13 acknowledged this gap and pointed at a never-written compa
 
 ```akkado
 // Mono in → stereo reverb tail (no `stereo()` wrapper needed)
-osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)
+saw(110) |> dattorro(@, 0.85, 30) |> out(@)
 // Today: mono tail. After: stereo tail with figure-8 cross-coupling.
 
 // Stereo in → cross-coupled stereo reverb (not double-mono)
@@ -103,7 +103,7 @@ in() |> dattorro(@, 0.85, 30) |> out(@)
 // After: one Dattorro instance, L feeds R-tank and vice-versa, stereo native.
 
 // Reverb wet/dry mix is unchanged
-dry = osc("saw", 220)
+dry = saw(220)
 wet = dry |> freeverb(@, 0.9, 0.5)        // Mono dry → stereo wet (auto-escalates)
 dry * 0.3 + wet * 0.7 |> out(@)            // Mono+Stereo broadcast, stereo out
 ```
@@ -112,11 +112,11 @@ dry * 0.3 + wet * 0.7 |> out(@)            // Mono+Stereo broadcast, stereo out
 
 ```akkado
 // Mono synth, stereo modulation FX
-osc("saw", 220) |> chorus(@, 0.5, 0.4) |> out(@)
+saw(220) |> chorus(@, 0.5, 0.4) |> out(@)
 // L-channel and R-channel use 90°-offset LFO phases (true stereo chorus,
 // not double-mono). Mono input automatically broadcast.
 
-osc("saw", 220) |> phaser(@, 0.7, 4) |> out(@)
+saw(220) |> phaser(@, 0.7, 4) |> out(@)
 // Same pattern: L/R LFOs offset for stereo width.
 ```
 
@@ -136,7 +136,7 @@ in() |> filter_lp(@, 800, 0.5)
 
 ```akkado
 // Was E185: out(L, R) with stereo as one of the slots
-some_stereo |> out(@, osc("sin", 440))
+some_stereo |> out(@, sine(440))
 // After: auto-escalates. The mono sine broadcasts; the stereo signal feeds out().
 // Equivalent to today's: out(stereo_to_left, stereo_to_right + mono_sine_broadcast).
 
@@ -391,8 +391,8 @@ Files that explicitly **do not change**:
 - Decide Freeverb topology (OQ1) before Phase 2.
 
 **Verification**:
-- `osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)` produces stereo output (correlation < 1.0 between L and R).
-- `osc("saw", 110) |> stereo() |> dattorro(@, 0.85, 30)` cross-couples (different from naive double-mono — measure with phase-inverted L+R sum).
+- `saw(110) |> dattorro(@, 0.85, 30) |> out(@)` produces stereo output (correlation < 1.0 between L and R).
+- `saw(110) |> stereo() |> dattorro(@, 0.85, 30)` cross-couples (different from naive double-mono — measure with phase-inverted L+R sum).
 - Existing mono test cases unchanged.
 
 ### Phase 1 — Codegen + builtin signature plumbing
@@ -556,11 +556,11 @@ Plus the **bit-identity gate**: a curated set of mono-only Akkado programs (osci
 
 ```akkado
 // L1 — Reverb tail width
-osc("saw", 110) |> dattorro(@, 0.85, 30) |> out(@)
+saw(110) |> dattorro(@, 0.85, 30) |> out(@)
 // Listen for: stereo width in the tail, not centred mono
 
 // L2 — Chorus on mono synth
-osc("saw", 220) |> chorus(@, 0.5, 0.4) |> out(@)
+saw(220) |> chorus(@, 0.5, 0.4) |> out(@)
 // Listen for: shimmer that moves between L and R
 
 // L3 — Stereo input through reverb (cross-coupling)

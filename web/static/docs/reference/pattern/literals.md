@@ -22,7 +22,7 @@ Patterns can be written as typed string prefixes that disambiguate parse semanti
 A numeric pattern produces stepped raw scalars at each event boundary. Atoms must be numeric literals; note names, sample names, and chord symbols are rejected with `E163`.
 
 ```akk
-osc("sin", v"<220 440 880>")        // raw Hz, no mtof
+sine(v"<220 440 880>")        // raw Hz, no mtof
 lp(sig, v"<200 800 2000>", 0.7)     // pattern-driven cutoff
 sig * v"<0.2 0.5 1.0 0.5>"          // amplitude envelope
 ```
@@ -38,8 +38,8 @@ v"-0.5 0.25 1e3 -1.25e-2"
 Note names and bare integers both map to Hz via `mtof`. Rejects sample-name fallback.
 
 ```akk
-osc("sin", n"c4 e4 g4")
-osc("sin", n"60 64 67")            // bare ints = MIDI notes
+sine(n"c4 e4 g4")
+sine(n"60 64 67")            // bare ints = MIDI notes
 ```
 
 ## s"…" sample patterns
@@ -57,7 +57,7 @@ Atoms are chord symbols (`Am`, `C7`, `Fmaj7`, …). Multi-voice; consume via `po
 
 ```akk
 c"Am C G Em"
-    |> poly(@, ({freq, trig}) -> osc("saw", freq) * ar(trig), 4)
+    |> poly(@, ({freq, trig}) -> saw(freq) * ar(trig), 4)
     |> out(@)
 // `trig` is the per-note pulse for AR. Use `gate` instead
 // if the instrument is an ADSR that should sustain across the
@@ -71,9 +71,9 @@ A chord pattern in a scalar slot errors `E160`. Silently dropping voices is not 
 When a `Pattern` value reaches a slot that expects a `Signal`, the compiler implicitly extracts the pattern's primary value buffer (the `freq` field). This makes patterns first-class as scalar values:
 
 ```akk
-osc("sin", n"c4 e4 g4")          // Pattern freq → osc freq (Signal)
+sine(n"c4 e4 g4")          // Pattern freq → osc freq (Signal)
 lp(sig, v"<200 800>", 0.7)       // Pattern → cutoff slot (Signal)
-osc("saw", n"c4 e4" + v"<0 12>") // Pattern + Pattern arithmetic
+saw(n"c4 e4" + v"<0 12>") // Pattern + Pattern arithmetic
 ```
 
 The coerce only fires for monophonic, non-sample patterns. Polyphonic patterns (chord, multi-voice) error `E160` with a hint to `poly()`, since silently emitting voice 0 is rarely what you want. Sample patterns route through `SAMPLE_PLAY` and produce audio output rather than a scalar; use `out()` directly.
@@ -95,7 +95,7 @@ The `as e` pipe binding does not coerce. `e` remains a Pattern, and `e.freq`, `e
 
 ```akk
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
-  |> osc("saw", e.freq)
+  |> saw(e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@)
 ```

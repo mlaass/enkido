@@ -41,9 +41,9 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 |----------|-----------|-------------|
 | **Oscillators** | | |
 | `osc` | `osc(type, freq)` | Generic oscillator (`"sin"`, `"tri"`, `"saw"`, `"sqr"`) |
-| `tri` | `tri(freq)` | Triangle oscillator (alias for `osc("tri", freq)`) |
-| `saw` | `saw(freq)` | Sawtooth oscillator (alias for `osc("saw", freq)`) |
-| `sqr` | `sqr(freq)` | Square oscillator (alias for `osc("sqr", freq)`) |
+| `tri` | `tri(freq)` | Triangle oscillator (alias for `tri(freq)`) |
+| `saw` | `saw(freq)` | Sawtooth oscillator (alias for `saw(freq)`) |
+| `sqr` | `sqr(freq)` | Square oscillator (alias for `sqr(freq)`) |
 | `ramp` | `ramp(freq)` | Ramp oscillator (0→1) |
 | `phasor` | `phasor(freq)` | Phase accumulator (0-1) |
 | `noise` | `noise()` | White noise |
@@ -111,9 +111,9 @@ Built-in functions are parsed as regular function calls. The semantic analyzer r
 | `seq_step` | `seq_step(speed)` | Step sequencer |
 | `timeline` | `timeline()` | Breakpoint automation |
 
-Aliases: `sine`→`osc("sin", ...)`, `triangle`→`tri`, `sawtooth`→`saw`, `square`→`sqr`, `lowpass`→`lp`, `highpass`→`hp`, `bandpass`→`bp`, `svflp`→`lp`, `svfhp`→`hp`, `svfbp`→`bp`, `moogladder`→`moog`, `output`→`out`, `envelope`→`adsr`, `reverb`→`freeverb`, `plate`→`dattorro`, `room`→`fdn`, `distort`→`saturate`, `crush`→`bitcrush`, `wavefold`→`fold`, `compress`→`comp`, `compressor`→`comp`, `limit`→`limiter`, `noisegate`→`gate`
+Aliases: `sine`→`sine(...)`, `triangle`→`tri`, `sawtooth`→`saw`, `square`→`sqr`, `lowpass`→`lp`, `highpass`→`hp`, `bandpass`→`bp`, `svflp`→`lp`, `svfhp`→`hp`, `svfbp`→`bp`, `moogladder`→`moog`, `output`→`out`, `envelope`→`adsr`, `reverb`→`freeverb`, `plate`→`dattorro`, `room`→`fdn`, `distort`→`saturate`, `crush`→`bitcrush`, `wavefold`→`fold`, `compress`→`comp`, `compressor`→`comp`, `limit`→`limiter`, `noisegate`→`gate`
 
-**Note:** `sin(x)` is now a pure math function (trigonometric sine). For a sine oscillator, use `osc("sin", freq)`.
+**Note:** `sin(x)` is now a pure math function (trigonometric sine). For a sine oscillator, use `sine(freq)`.
 
 ### 2.3 Literals
 
@@ -191,7 +191,7 @@ Examples:
 - `[1, 2, 3]` — numeric array
 - `[c4, e4, g4]` — pitch array (variables)
 - `[220, 330, 440]` — frequency array
-- `[osc("sin", 220), osc("saw", 330)]` — expression array
+- `[sine(220), saw(330)]` — expression array
 
 ### 2.4 Operators and Delimiters
 
@@ -282,7 +282,7 @@ Named arguments use `name: value` syntax. Follows Python conventions:
 
 Examples:
 ```
-osc("saw", 440)                    // positional only
+saw(440)                    // positional only
 lp(%, 1000, 0.7)                   // positional only
 lp(in: %, cut: 1000)               // named only (q uses default 0.707)
 ar(gate, release: 0.5)             // mixed: 1 positional, 1 named
@@ -299,7 +299,7 @@ Methods bind tighter than all binary operators. Methods chain left-to-right.
 
 Examples:
 ```
-p.map(hz -> osc("saw", hz))
+p.map(hz -> saw(hz))
 signal.map(f).filter(g).take(4)
 %.map(x -> x * 0.5)
 ```
@@ -366,7 +366,7 @@ The string contains mini-notation (see Section 9). The optional closure receives
 Examples:
 ```
 s"bd sd bd sd"
-seq("c4 e4 g4", (t, v, p) -> osc("saw", p) * v)
+seq("c4 e4 g4", (t, v, p) -> saw(p) * v)
 ```
 
 ## 4. Pipe Semantics
@@ -395,7 +395,7 @@ LHS |> RHS    →    let $temp = LHS in RHS[% → $temp]
 The `%` symbol references the left-hand side of the enclosing pipe.
 
 ```
-osc("saw", 440) |> lp(%, 1000)     // % is the saw output
+saw(440) |> lp(%, 1000)     // % is the saw output
          |> delay(%, 0.5)   // % is the filtered output
          |> % * 0.5         // % is the delayed output
 ```
@@ -403,7 +403,7 @@ osc("saw", 440) |> lp(%, 1000)     // % is the saw output
 **Multiple Holes:** All `%` in a pipe stage receive the **same** value (evaluated once).
 
 ```
-osc("saw", 440) |> lp(%, sin(%))   // both % are the same saw output
+saw(440) |> lp(%, sin(%))   // both % are the same saw output
 ```
 
 ### 4.4 Pipes in Arguments and Closures
@@ -412,10 +412,10 @@ Pipes can appear anywhere an expression is valid:
 
 ```
 // Pipe as function argument
-reverb(osc("saw", 440) |> lp(%, 1000))
+reverb(saw(440) |> lp(%, 1000))
 
 // Pipe in closure body (closure is greedy)
-p.map(hz -> osc("saw", hz) |> lp(%, 1000))
+p.map(hz -> saw(hz) |> lp(%, 1000))
 
 // Pipe the closure itself (needs parens)
 ((x) -> x * 2) |> apply(%, 42)
@@ -476,7 +476,7 @@ Arrays can contain any expression type:
 []                                    // empty array
 [1, 2, 3]                             // numeric array
 [220, 330, 440]                       // frequency array
-[osc("sin", 220), osc("saw", 330)]    // expression array
+[sine(220), saw(330)]    // expression array
 [[1, 2], [3, 4]]                      // nested arrays
 ```
 
@@ -571,10 +571,10 @@ Match against a value with literal patterns:
 
 ```
 fn waveform(type) -> match(type) {
-    "sin": osc("sin", 440),
-    "saw": osc("saw", 440),
-    "tri": osc("tri", 440),
-    _: osc("sqr", 440)
+    "sin": sine(440),
+    "saw": saw(440),
+    "tri": tri(440),
+    _: sqr(440)
 }
 ```
 
@@ -593,7 +593,7 @@ fn velocity_voice(note, vel) -> match(note) {
     'c4' && vel > 0.8: loud_osc('c4'),
     'c4' && vel > 0.5: medium_osc('c4'),
     'c4': quiet_osc('c4'),
-    _: osc("sin", mtof(note)) * vel
+    _: sine(mtof(note)) * vel
 }
 ```
 
@@ -647,8 +647,8 @@ pick("a")  // Only emits: 1
 gate = saw(1)
 match(gate) {
     0: silence(),
-    1: osc("sin", 440),
-    _: osc("saw", 220)
+    1: sine(440),
+    _: saw(220)
 }
 // Emits all branches + nested select() calls
 ```
@@ -810,7 +810,7 @@ When passed to a UGen expecting a scalar:
 3. Use `map()` for custom per-voice processing:
    ```
    freqs = C4'
-   map(freqs, hz -> osc("saw", hz) |> lp(%, 1000))
+   map(freqs, hz -> saw(hz) |> lp(%, 1000))
    ```
 
 ## 12. Complete Example
@@ -820,14 +820,14 @@ bpm = 120
 
 pad = seq("c3e3g3b3:4 g3b3d4:4 a3c4e4:4 f3a3c4:4", (t, v, p) -> {
     env = ar(attack: 0.5, release: 2, trig: t)
-    p.map(hz -> osc("saw", hz)) * env * v * 0.1
+    p.map(hz -> saw(hz)) * env * v * 0.1
 })
 |> svflp(in: %, cut: 400 + 300 * co, q: 0.7)
 |> delay(in: %, time: 0.375, fb: 0.4) * 0.5 + %
 |> out(L: %, R: %)
 ```
 
-**Note:** The example above uses `osc("saw", hz)` for oscillators. The `osc()` function is the standard interface for all waveform types: `osc("sin", freq)`, `osc("saw", freq)`, `osc("tri", freq)`, and `osc("sqr", freq)`. Note that `sin(x)` is a pure trigonometric math function.
+**Note:** The example above uses `saw(hz)` for oscillators. The `osc()` function is the standard interface for all waveform types: `sine(freq)`, `saw(freq)`, `tri(freq)`, and `sqr(freq)`. Note that `sin(x)` is a pure trigonometric math function.
 
 ## 13. Grammar Summary (Complete EBNF)
 

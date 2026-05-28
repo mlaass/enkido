@@ -106,7 +106,7 @@ sites and the audit becomes unwieldy.
    fn name (str)       -> str
    rec_local = {a: 1}            // identifier `rec_local` is fine today; add
    evs       = pat("c4 d4")      // simple binding to `evs`
-   sig       = osc("sin", 440)   // binding to `sig`
+   sig       = sine(440)   // binding to `sig`
    ```
 2. Annotated forms still work:
    ```akkado

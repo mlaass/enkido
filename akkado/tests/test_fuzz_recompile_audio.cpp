@@ -290,7 +290,7 @@ std::vector<LocalizedClick> render_and_localize(
 TEST_CASE("recompile-audio: localize click — tonal program",
           "[.localize][diag]") {
     const char* src =
-        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+        R"(n"c4 e4 g4 b4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -333,7 +333,7 @@ TEST_CASE("recompile-audio: localize click — fixed-freq osc (no pattern)",
     // If clicks still appear, the bug is in the OSC opcode's reaction to
     // hot-swap (state lost / phase reset). If clean, the pattern->osc
     // freq-buffer path is somehow involved.
-    const char* src = R"(osc("sin", 220) |> out(% * 0.3, % * 0.3))";
+    const char* src = R"(sine(220) |> out(% * 0.3, % * 0.3))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -363,7 +363,7 @@ TEST_CASE("recompile-audio: localize click — sustained reverb",
     // Sustained sine into freeverb. With state pool + arena deep copy,
     // reverb output should be perfectly continuous across swap. Any
     // clicks here point at something my deep copy still misses.
-    const char* src = R"(osc("sin", 330) * 0.3 |> reverb(@) |> out(@, @))";
+    const char* src = R"(sine(330) * 0.3 |> reverb(@) |> out(@, @))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -396,7 +396,7 @@ TEST_CASE("recompile-audio: localize click — crossfade=0 (isolation)",
     // crossfade mixing path is the source. If they remain, the click is
     // in the swap/rebind itself or in the program-execution boundary.
     const char* src =
-        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+        R"(n"c4 e4 g4 b4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))";
     auto cr = akkado::compile(src);
     REQUIRE(cr.success);
 
@@ -430,11 +430,11 @@ TEST_CASE("recompile-audio: continuity over rapid same-source swaps",
     // state; the audio should look like a single uninterrupted render.
     static const char* sources[] = {
         // single sine through a pattern of pitches
-        R"(n"c4 e4 g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"c4 e4 g4 b4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))",
         // alternation — exercises the sequence step-counter we just fixed
-        R"(n"<c4 e4> g4 b4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"<c4 e4> g4 b4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))",
         // group + repeat
-        R"(n"[c4 e4] g4 c4*2" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+        R"(n"[c4 e4] g4 c4*2" |> sine(%.freq) |> out(% * 0.3, % * 0.3))",
         // chord via soundfont — exercises poly + sample paths
         R"(c"<[Am Am7] [Dm7 Dm] G CM>" |> soundfont(@, "gm", 0) |> out(@ * 0.4))",
     };
@@ -827,7 +827,7 @@ TEST_CASE("recompile-audio: beat position monotonic across many swaps",
     // counter corruption, a seek mid-fuzz, or block-counter mis-tracking
     // during the swap path. We assert strict monotonicity.
     auto cr = akkado::compile(
-        R"(n"c4 e4 g4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))");
+        R"(n"c4 e4 g4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))");
     REQUIRE(cr.success);
 
     StressConfig cfg;
@@ -848,9 +848,9 @@ TEST_CASE("recompile-audio: long-tail false-positive check (baseline only)",
     // 50x+ block-to-block ratios and the test is too sensitive — not a
     // recompile bug. If no, the swap path IS introducing real bursts.
     static const char* sources[] = {
-        R"(osc("sin", 220) * adsr(beat(2), 0.01, 0.05, 0.0, 0.05)
+        R"(sine(220) * adsr(beat(2), 0.01, 0.05, 0.0, 0.05)
              |> delay(@, 0.25, 0.6) |> out(@ * 0.4, @ * 0.4))",
-        R"(osc("sin", 330) * adsr(beat(2), 0.01, 0.05, 0.0, 0.05)
+        R"(sine(330) * adsr(beat(2), 0.01, 0.05, 0.0, 0.05)
              |> reverb(@) |> out(@ * 0.4, @ * 0.4))",
     };
     for (const char* src : sources) {
@@ -886,8 +886,8 @@ TEST_CASE("recompile-audio: long-tail effect doesn't burst or go silent on swap"
     // false-positive the energy check independent of any recompile bug
     // (verified via the [.tail-baseline] diagnostic above).
     static const char* sources[] = {
-        R"(osc("sin", 220) * 0.3 |> delay(@, 0.25, 0.6) |> out(@, @))",
-        R"(osc("sin", 330) * 0.3 |> reverb(@) |> out(@, @))",
+        R"(sine(220) * 0.3 |> delay(@, 0.25, 0.6) |> out(@, @))",
+        R"(sine(330) * 0.3 |> reverb(@) |> out(@, @))",
     };
 
     for (const char* src : sources) {
@@ -949,7 +949,7 @@ TEST_CASE("recompile-audio: random-program stress over many seeds",
         for (int i = 1; i < n; ++i) body += " " + note_atom(rng);
         std::ostringstream os;
         os << "n\"" << body
-           << R"(" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))";
+           << R"(" |> sine(%.freq) |> out(% * 0.3, % * 0.3))";
         return os.str();
     };
 
@@ -1010,7 +1010,7 @@ TEST_CASE("recompile-audio corpus: known regressions",
          R"(n"c4 c4 c4 c4" |> %.trig |> out(%, %))",
          trig_cfg},
         {"user-alternating-osc",
-         R"(n"<c4 e4> g4" |> osc("sin", %.freq) |> out(% * 0.3, % * 0.3))",
+         R"(n"<c4 e4> g4" |> sine(%.freq) |> out(% * 0.3, % * 0.3))",
          audio_cfg},
     };
 
@@ -1267,17 +1267,17 @@ std::string check_state_preservation_repeated(const char* src,
 // 48 kHz / 128 BLOCK_SIZE = 0.533s = ~1.06 cycles at 120 BPM.
 constexpr const char* STATE_PRESERVE_SOURCES[] = {
     // Top-level alternation note pattern (4 cycles to cycle the alt).
-    R"(n"c4 d4 e4 f4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+    R"(n"c4 d4 e4 f4" |> sine(@.freq) |> out(@ * 0.3, @ * 0.3))",
     // In-cycle subdivision via brackets (single cycle covers all events).
-    R"(n"[c4 d4 e4 f4]" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+    R"(n"[c4 d4 e4 f4]" |> sine(@.freq) |> out(@ * 0.3, @ * 0.3))",
     // Chord pattern via poly (E410 requires poly() wrapping for multi-voice
     // chords into a mono synth — see reference/mini-notation/chords.md).
-    R"(fn lead({freq, gate, vel}) -> osc("sin", freq) * vel * 0.05
+    R"(fn lead({freq, gate, vel}) -> sine(freq) * vel * 0.05
        c"<Am Em F G>" |> poly(@, lead, 4) |> out(@))",
     // Value pattern modulating amplitude (no osc-on-pattern needed).
-    R"(v"<0.2 0.5 0.8 0.5>" * osc("sin", 220) |> out(@, @))",
+    R"(v"<0.2 0.5 0.8 0.5>" * sine(220) |> out(@, @))",
     // Nested alternation — stresses sub-sequence step counters.
-    R"(n"<[c4 e4] [g4 b4]>" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))",
+    R"(n"<[c4 e4] [g4 b4]>" |> sine(@.freq) |> out(@ * 0.3, @ * 0.3))",
 };
 
 }  // namespace
@@ -1329,9 +1329,9 @@ TEST_CASE("recompile state: SequenceState preserved across same-structure "
     // restoration condition at state_pool.hpp:947 is more fragile than
     // num_sequences-equality.
     constexpr const char* src_a =
-        R"(n"c4 d4 e4 f4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))";
+        R"(n"c4 d4 e4 f4" |> sine(@.freq) |> out(@ * 0.3, @ * 0.3))";
     constexpr const char* src_b =
-        R"(n"c4 d4 e4 g4" |> osc("sin", @.freq) |> out(@ * 0.3, @ * 0.3))";
+        R"(n"c4 d4 e4 g4" |> sine(@.freq) |> out(@ * 0.3, @ * 0.3))";
 
     auto cr_a = akkado::compile(src_a);
     REQUIRE(cr_a.success);

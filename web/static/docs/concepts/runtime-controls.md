@@ -33,7 +33,7 @@ The controls are extracted at compile time. The IDE reads their metadata and ren
 
 ```akk
 cutoff = param("cutoff", 800, 100, 5000)
-osc("saw", 220)
+saw(220)
     |> lp(@, cutoff)
     |> out(@)
 ```
@@ -66,7 +66,7 @@ Press "Hit!" in the IDE to fire the kick sample on demand.
 
 ```akk
 bypass = toggle("bypass", 0)
-dry = osc("saw", 220)
+dry = saw(220)
 wet = dry |> freeverb(@, 0.6, 0.5)
 out(dry * bypass + wet * (1 - bypass))
 ```
@@ -110,7 +110,7 @@ freq = note_freq
 voices = saw(freq) + saw(freq * 1.005) + saw(freq * 0.997)
 
 // LFO modulates the cutoff around the slider value
-swept = cutoff + osc("sin", lfo_rate) * cutoff * lfo_depth * 0.6
+swept = cutoff + sine(lfo_rate) * cutoff * lfo_depth * 0.6
 
 voices * 0.2
     |> moog(@, swept, resonance, _, drive)

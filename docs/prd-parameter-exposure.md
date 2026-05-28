@@ -46,12 +46,12 @@ Add language builtins (`param()`, `button()`, `toggle()`, `select()`) that:
 ```akkado
 // Basic volume control with slider
 vol = param("volume", 0.8, 0, 1)
-osc("saw", 220) * vol |> out(@, @)
+saw(220) * vol |> out(@, @)
 
 // Filter with frequency range
 cutoff = param("cutoff", 2000, 100, 8000)
 res = param("resonance", 0.5, 0, 1)
-osc("saw", 110) |> lpf(@, cutoff, res) |> out(@, @)
+saw(110) |> lpf(@, cutoff, res) |> out(@, @)
 
 // Momentary trigger for one-shot sounds
 kick_hit = button("kick")
@@ -59,7 +59,7 @@ sample("kick") * kick_hit |> out(@, @)
 
 // Toggle for mute/unmute
 mute = toggle("mute", 0)
-master = osc("saw", 220) * (1 - mute)
+master = saw(220) * (1 - mute)
 
 // Waveform selection
 wave = select("waveform", "sine", "saw", "square", "triangle")
@@ -89,7 +89,7 @@ When values change:
 func _ready():
     player.source = '''
         vol = param("volume", 0.8, 0, 1)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     '''
     player.compile()
     player.play()
@@ -114,7 +114,7 @@ func _ready():
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Akkado Source                               │
 │   vol = param("volume", 0.8, 0, 1)                                  │
-│   osc("saw", 220) * vol |> out(@, @)                                │
+│   saw(220) * vol |> out(@, @)                                │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                                 ▼
@@ -1076,7 +1076,7 @@ export const paramsStore = createParamsStore();
 TEST_CASE("param() generates ENV_GET and records declaration", "[codegen][params]") {
     auto result = akkado::compile(R"(
         vol = param("volume", 0.8, 0, 1)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     )");
 
     REQUIRE(result.success);
@@ -1175,7 +1175,7 @@ test('param sliders auto-generate after compilation', async ({ page }) => {
     // Enter code with params
     await page.fill('[data-testid="editor"]', `
         vol = param("volume", 0.8, 0, 1)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     `);
 
     // Compile
@@ -1193,7 +1193,7 @@ test('parameter values preserved across hot-swap', async ({ page }) => {
     // Initial compile
     await page.fill('[data-testid="editor"]', `
         vol = param("volume", 0.5)
-        osc("saw", 220) * vol |> out(@, @)
+        saw(220) * vol |> out(@, @)
     `);
     await page.click('[data-testid="compile"]');
 
@@ -1203,7 +1203,7 @@ test('parameter values preserved across hot-swap', async ({ page }) => {
     // Recompile (hot-swap)
     await page.fill('[data-testid="editor"]', `
         vol = param("volume", 0.5)
-        osc("saw", 440) * vol |> out(@, @)
+        saw(440) * vol |> out(@, @)
     `);
     await page.click('[data-testid="compile"]');
 

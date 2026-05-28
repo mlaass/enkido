@@ -139,7 +139,7 @@ The simplest form (no reset, no start) using the new `counter` builtin and the e
 step = (arr, trig) -> arr[wrap(counter(trig), 0, len(arr))]
 
 // Usage
-[60, 64, 67, 72].step(trigger(4)) |> note(%) |> osc("sin", %) |> out(%, %)
+[60, 64, 67, 72].step(trigger(4)) |> note(%) |> sine(%) |> out(%, %)
 ```
 
 > **Note:** `ARRAY_INDEX` already wraps by default (`cedar/include/cedar/opcodes/arrays.hpp:55`, `((j % length) + length) % length` when `inst.rate == 0`), so `arr[counter(trig)]` would also work without `wrap()`. The explicit `wrap(..., 0, len(arr))` is used here for clarity and to mirror the bounds semantics of `step_dir` below.

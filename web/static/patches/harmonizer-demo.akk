@@ -17,4 +17,4 @@ triad = map([0, 4, 7], (i) -> e.note + i)   // static 3-element array
 triad.mtof().saw().sum()
   |> lp(@, 2000, 2)                          // soften the stack
   |> @ * ar(e.trig, 0.012, 0.35)             // shared pluck envelope
-  |> out(@*0.5)
+  |> out(@ * 0.5)

@@ -161,11 +161,11 @@ Chord patterns produce events with multiple voices per step. How those voices re
 
   ```akk
   // ✗ E410 — chord into a mono synth has no voice allocator
-  c"CM Am Dm G" |> osc("saw", @freq) |> out(@)
+  c"CM Am Dm G" |> saw(@freq) |> out(@)
 
   // ✓ poly() wraps the synth in N parallel voices
   fn lead({freq, gate, vel}) ->
-    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
   c"CM Am Dm G" |> poly(@, lead, 8) |> out(@)
   ```
 
@@ -196,7 +196,7 @@ fn step (arr, trig) -> arr[counter(trig)]
 
 n"[c4,e4,g4] [a3,c4,e4] g3 [b3,d4,f#4]" as e
 e.notes.step(trigger(8))     // walk the current chord on each 8th
-  |> mtof(@) |> osc("saw", @) |> out(@)
+  |> mtof(@) |> saw(@) |> out(@)
 ```
 
 `map()` over a dynamic array transposes every chord note and stays dynamic:
@@ -205,11 +205,11 @@ e.notes.step(trigger(8))     // walk the current chord on each 8th
 map(e.notes, (v) -> v + 7)   // the chord up a fifth — still a dynamic array
 ```
 
-Dynamic arrays cannot auto-fan-out across a stateful UGen (the chord size is not known at compile time): `osc("sin", e.freqs)` is a compile error (**E181**) directing you to `poly()`. For a *fixed*-size transform, map over a **static** array instead — that fans out at compile time:
+Dynamic arrays cannot auto-fan-out across a stateful UGen (the chord size is not known at compile time): `sine(e.freqs)` is a compile error (**E181**) directing you to `poly()`. For a *fixed*-size transform, map over a **static** array instead — that fans out at compile time:
 
 ```akk
 n"c4 e4 g4" as e
-sum(osc("saw", mtof(map([0, 4, 7], (i) -> e.note + i))))   // every note → a triad
+sum(saw(mtof(map([0, 4, 7], (i) -> e.note + i))))   // every note → a triad
 ```
 
 ## anchor
@@ -234,7 +234,7 @@ chord("Am C G F").anchor("c4")
 // Voice-led progression, top note ≤ c4
 chord("Am C G F").anchor("c4").mode("below")
   |> mtof(@)
-  |> osc("saw", @)
+  |> saw(@)
   |> out(@)
 ```
 

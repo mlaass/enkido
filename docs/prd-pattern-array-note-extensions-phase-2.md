@@ -109,7 +109,7 @@ s"bd hh sd hh".swingBy(0.4, 4) // custom delay amount
 ```akkado
 // run(n): integer sequence 0..n-1 as evenly-spaced events
 run(8)                            // 0,1,2,3,4,5,6,7
-run(8) |> mtof(@ + 60) |> osc("saw", @)   // ascending chromatic
+run(8) |> mtof(@ + 60) |> saw(@)   // ascending chromatic
 
 // binary(n): trigger pattern from binary representation of n
 binary(0b1010)                    // 4 steps: 1, 0, 1, 0
@@ -119,7 +119,7 @@ binary(170) |> sampler(@, "kick") // 170 = 0b10101010, 8 steps
 binaryN(5, 8)                     // 0b00000101 = 0,0,0,0,0,1,0,1
 
 // Generators chain via dot-call (free, via desugaring)
-run(16).fast(2).rev() |> mtof(@ + 48) |> osc("sin", @)
+run(16).fast(2).rev() |> mtof(@ + 48) |> sine(@)
 binary(0b11010010).slow(2).ply(2) |> sampler(@, "hh")
 ```
 
@@ -175,7 +175,7 @@ n"c4{vel:0.8, cutoff:0.3} e4{cutoff:0.7}"
 // The `cutoff` value lands in PatternEvent.properties as ("cutoff", 0.3).
 // Reachable from synth code via record field access on the bound event:
 n"c4{cutoff:0.3} e4{cutoff:0.7}" as e
-  |> osc("saw", e.freq)
+  |> saw(e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
 
@@ -499,7 +499,7 @@ Staged so each sub-phase ships independently. Earlier phases unblock later ones 
 - Mini-notation test: parse `n"c4{vel:0.8,bend:0.2}"`, assert resulting `PatternEvent.velocity == 0.8` and `event.bend == 0.2`.
 - Custom property test: `n"c4{cutoff:0.3}" as e |> lp(@, 200 + e.cutoff * 4000)` compiles to the expected cutoff.
 
-**Acceptance:** `n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)` audibly bends.
+**Acceptance:** `n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> sine(@)` audibly bends.
 
 ### Phase E — Cross-Phase Smoke Acceptance
 
@@ -517,7 +517,7 @@ chord("Am C G F").anchor("c4").mode("below") as ch
 // 2. Time-modified pattern (Phase A)
 n"c4 e4 g4 b4".early(0.125).palindrome() as p
   |> mtof(p)
-  |> osc("saw", @)
+  |> saw(@)
   |> out(@, @)
 
 // 3. Generator-driven sample pattern (Phase B)
@@ -525,7 +525,7 @@ binary(0b10110010) |> sampler(@, "hh") |> out(@, @)
 
 // 4. Bend + aftertouch + custom-property pattern (Phase D)
 n"c4{vel:0.8, bend:0.2, cutoff:0.3} e4{vel:1.0, cutoff:0.7}" as e
-  |> osc("saw", e.freq)
+  |> saw(e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
 ```
@@ -606,7 +606,7 @@ This phase blocks PRD closure — no Phase A–D claim is "done" until they all 
 - `n"c4 e4 g4 b4".early(0.25).palindrome()` — chained transforms produce expected event list.
 - `run(8).fast(2)` — generator + transform composition.
 - `chord("Am C G F").anchor("c4").mode("below")` — voicing produces expected MIDI notes.
-- `n"c4{vel:0.8,bend:0.2}" as e |> osc("sin", e.freq + e.bend * 100)` — full pipeline compiles and runs.
+- `n"c4{vel:0.8,bend:0.2}" as e |> sine(e.freq + e.bend * 100)` — full pipeline compiles and runs.
 
 ### 10.3 Experiments (Cedar runtime)
 
@@ -665,7 +665,7 @@ up as a Phase 2.1 follow-up.
 **Acceptance test (unblocked by this work):**
 ```akkado
 n"c4{vel:0.8, cutoff:0.3} e4{vel:1.0, cutoff:0.7}" as e
-  |> osc("saw", e.freq)
+  |> saw(e.freq)
   |> lp(@, 200 + e.cutoff * 4000)
   |> out(@, @)
 ```
@@ -694,7 +694,7 @@ runtime fields not added.
 
 **Acceptance test (unblocked by this work):**
 ```akkado
-n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @) |> out(@, @)
+n"c4 e4 g4".bend("<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> sine(@) |> out(@, @)
 ```
 
 ### 11.3 Implementation sequencing

@@ -10,7 +10,7 @@ keywords: [event-transforms, event_map, event_filter, transpose, velocity, dur, 
 A pattern modifier in Akkado is a function that takes an **event stream** — a `Pattern` or a MIDI `EventSource` — and returns a new one with per-event fields rewritten. They compose with the pipe operator and chain freely.
 
 ```akkado
-n"c4 e4 g4".transpose(7).velocity(0.4) |> osc("sin", @.freq) * @.vel |> out(@)
+n"c4 e4 g4".transpose(7).velocity(0.4) |> sine(@.freq) * @.vel |> out(@)
 ```
 
 Under the hood every per-field modifier is a **one-line stdlib `fn`** sitting on top of two primitive builtins: `event_map` and `event_filter`. The mapping is direct — `transpose(p, n)` *is* `event_map(p, (e) -> {note: e.note + n})`. You can read the actual definitions in [`akkado/stdlib/event_transforms.ak`](https://github.com/) (one file, ~15 lines).
@@ -50,7 +50,7 @@ fn arp_up(events: evs, steps) -> {
     event_map(events, (e) -> {note: e.note + (cycle_count() mod steps) * 12})
 }
 
-n"c4 g4".arp_up(3) |> osc("saw", @.freq) |> out(@)
+n"c4 g4".arp_up(3) |> saw(@.freq) |> out(@)
 ```
 
 The `events: evs` annotation is part of [parameter type annotations](parameter-type-annotations). Without it, a user `fn` parameter that receives a polyphonic Pattern would error with `E160`; the annotation tells the analyzer this fn is an event-stream consumer.
@@ -77,8 +77,8 @@ Structural transforms (`rev`, `palindrome`, `ply`, `linger`, `zoom`, `segment`, 
 
 ```akkado
 n"c d e f".fast(2)                              // constant — 2x speed
-n"c d e f".fast(osc("sin", 0.1) * 1.5 + 2)      // signal — speed wobbles with LFO
-n"c d e f".slow(osc("sin", 0.2) + 2)            // signal slow — wobble-stretched
+n"c d e f".fast(sine(0.1) * 1.5 + 2)      // signal — speed wobbles with LFO
+n"c d e f".slow(sine(0.2) + 2)            // signal slow — wobble-stretched
 ```
 
 **How it works.** Each `fast`/`slow` call recompiles its inner pattern into its own `SequenceState` (so two transforms applied to the same pattern stay independent) and emits an `EVENT_RATE_SCALE` opcode. Each block the opcode writes `cycle_length = original / rate` into the upstream `SequenceState`; every `SEQPAT_*` opcode reads `cycle_length` when scaling event times, so a single-field write covers the entire downstream pipeline.
@@ -103,7 +103,7 @@ fn transpose(events: evs, deg) -> {
     event_map(events, (e) -> {note: e.note + scale[deg]})
 }
 
-n"c4 e4 g4".transpose(2) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".transpose(2) |> sine(@.freq) |> out(@)
 ```
 
 This overrides the stdlib definition for the rest of the file.

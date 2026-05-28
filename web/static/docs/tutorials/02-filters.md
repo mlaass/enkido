@@ -15,12 +15,12 @@ The lowpass filter (`lp`) is the most common. It passes low frequencies and cuts
 
 ```akk
 // Raw sawtooth - bright and buzzy
-osc("saw", 110) |> out(@)
+saw(110) |> out(@)
 ```
 
 ```akk
 // Filtered sawtooth - warmer and darker
-osc("saw", 110)
+saw(110)
     |> lp(@, 800)
     |> out(@)
 ```
@@ -37,14 +37,14 @@ Lower cutoffs sound darker. Higher cutoffs sound brighter:
 
 ```akk
 // Very dark - cutoff at 200 Hz
-osc("saw", 110)
+saw(110)
     |> lp(@, 200)
     |> out(@)
 ```
 
 ```akk
 // Bright - cutoff at 2000 Hz
-osc("saw", 110)
+saw(110)
     |> lp(@, 2000)
     |> out(@)
 ```
@@ -55,21 +55,21 @@ The third parameter adds **resonance**, a boost at the cutoff frequency:
 
 ```akk
 // Q of 0.707 (default) - no resonance
-osc("saw", 110)
+saw(110)
     |> lp(@, 800, 0.707)
     |> out(@)
 ```
 
 ```akk
 // Q of 4 - noticeable peak
-osc("saw", 110)
+saw(110)
     |> lp(@, 800, 4)
     |> out(@)
 ```
 
 ```akk
 // Q of 10 - strong resonance
-osc("saw", 110)
+saw(110)
     |> lp(@, 800, 10)
     |> out(@)
 ```
@@ -80,8 +80,8 @@ Modulate the cutoff with an LFO for the classic synth sweep:
 
 ```akk
 // Slow sweep using an LFO
-osc("saw", 110)
-    |> lp(@, 400 + osc("sin", 0.5) * 800)
+saw(110)
+    |> lp(@, 400 + sine(0.5) * 800)
     |> out(@)
 ```
 
@@ -93,7 +93,7 @@ For percussive sounds, use an envelope to control the filter:
 
 ```akk
 // Filter opens on each trigger, then closes
-osc("saw", 110)
+saw(110)
     |> lp(@, 200 + ar(trigger(2)) * 2000)
     |> out(@)
 ```
@@ -104,7 +104,7 @@ The highpass (`hp`) does the opposite: it removes low frequencies:
 
 ```akk
 // Remove the bass
-osc("saw", 110)
+saw(110)
     |> hp(@, 500)
     |> out(@)
 ```
@@ -113,7 +113,7 @@ Useful for hi-hats and thinning out sounds:
 
 ```akk
 // Hi-hat from filtered noise
-osc("noise")
+noise()
     |> hp(@, 8000)
     * ar(trigger(8), 0.001, 0.05)
     |> out(@)
@@ -125,14 +125,14 @@ The Moog ladder is the classic 24-dB analog filter — fatter than `lp`, with ch
 
 ```akk
 // Classic Moog bass
-osc("saw", 55)
+saw(55)
     |> moog(@, 400, 2)
     |> out(@)
 ```
 
 ```akk
 // Self-oscillating filter - acts as an oscillator
-osc("noise") * 0.01
+noise() * 0.01
     |> moog(@, 440, 3.9)
     |> out(@)
 ```
@@ -143,7 +143,7 @@ Multiple filters in series:
 
 ```akk
 // Remove lows and highs
-osc("saw", 110)
+saw(110)
     |> hp(@, 200)
     |> lp(@, 2000)
     |> out(@)

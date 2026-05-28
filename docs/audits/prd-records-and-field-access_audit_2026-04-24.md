@@ -43,7 +43,7 @@
 ## Findings
 
 ### Unmet Goals
-None outright unmet. G1 is partial but the core scenario from the PRD motivating example (`n"c4 e4 g4" |> osc("sin", %.freq) * %.vel * ar(%.trig, 0.01, 0.1)`) works — only the extended fields table (§3.2) and unified event model (§3.3) fields are absent.
+None outright unmet. G1 is partial but the core scenario from the PRD motivating example (`n"c4 e4 g4" |> sine(%.freq) * %.vel * ar(%.trig, 0.01, 0.1)`) works — only the extended fields table (§3.2) and unified event model (§3.3) fields are absent.
 
 ### Stubs
 None.

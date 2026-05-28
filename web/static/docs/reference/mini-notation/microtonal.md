@@ -43,12 +43,12 @@ n"Bbv4"   // Bb4 - one EDO step
 ```akk
 // 31-EDO: each ^ step = 38.7 cents
 tune("31edo", n"c4 c^4 c^^4")
-    |> ((f) -> osc("sin", f) * ar(trigger(3)))
+    |> ((f) -> sine(f) * ar(trigger(3)))
     |> out(@)
 
 // 24-EDO: each ^ step = 50 cents (quarter tone)
 tune("24edo", n"a4 a^4 a^^4")
-    |> ((f) -> osc("sin", f) * ar(trigger(3)))
+    |> ((f) -> sine(f) * ar(trigger(3)))
     |> out(@)
 ```
 
@@ -95,7 +95,7 @@ The E-D# trill spans exactly 100 cents:
 
 ```akk
 n"e5 d#5 e5 d#5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2 ~ e4 g#4 b4 c5@2"
-    |> ((f) -> osc("tri", f) * ar(trigger(20), 0.005, 0.3))
+    |> ((f) -> tri(f) * ar(trigger(20), 0.005, 0.3))
     |> out(@)
 ```
 
@@ -106,7 +106,7 @@ In 17-EDO the semitone shrinks to 70.6 cents. D#-to-E becomes tighter and more r
 ```akk
 m = n"e5 d#5 e5 d#5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2 ~ e4 g#4 b4 c5@2"
 tune("17edo", m)
-    |> ((f) -> osc("tri", f) * ar(trigger(20), 0.005, 0.3))
+    |> ((f) -> tri(f) * ar(trigger(20), 0.005, 0.3))
     |> out(@)
 ```
 
@@ -114,7 +114,7 @@ Add micro-step ornaments for a xenharmonic flavor. `e^5` and `ev5` nudge notes b
 
 ```akk
 tune("17edo", n"e5 d#5 e^5 d#5 ev5 d#5 e5 b4 d5 c5 a4@2")
-    |> ((f) -> osc("tri", f) * ar(trigger(12), 0.005, 0.3))
+    |> ((f) -> tri(f) * ar(trigger(12), 0.005, 0.3))
     |> out(@)
 ```
 
@@ -124,7 +124,7 @@ In 31-EDO each step is 38.7 cents. Instead of a binary E/D# trill, replace it wi
 
 ```akk
 tune("31edo", n"e5 ev5 evv5 ev5 e5 b4 d5 c5 a4@2 ~ c4 e4 a4 b4@2")
-    |> ((f) -> osc("tri", f) * ar(trigger(14), 0.005, 0.3))
+    |> ((f) -> tri(f) * ar(trigger(14), 0.005, 0.3))
     |> out(@)
 ```
 
@@ -132,7 +132,7 @@ Deeper cascade with three micro-steps, a glide spanning ~116 cents:
 
 ```akk
 tune("31edo", n"e5 ev5 evv5 evvv5 evv5 ev5 e5 b4 d5 c5 a4@2")
-    |> ((f) -> osc("tri", f) * ar(trigger(11), 0.005, 0.3))
+    |> ((f) -> tri(f) * ar(trigger(11), 0.005, 0.3))
     |> out(@)
 ```
 
@@ -143,21 +143,21 @@ Minimal examples to hear the difference in trill character:
 ```akk
 // 12-EDO: 100-cent trill (standard semitone)
 n"e5 d#5 e5 d#5 e5 d#5 e5 d#5"
-    |> ((f) -> osc("sin", f) * ar(trigger(8), 0.005, 0.1))
+    |> ((f) -> sine(f) * ar(trigger(8), 0.005, 0.1))
     |> out(@)
 ```
 
 ```akk
 // 17-EDO: 70.6-cent trill (narrow, restless)
 tune("17edo", n"e5 d#5 e5 d#5 e5 d#5 e5 d#5")
-    |> ((f) -> osc("sin", f) * ar(trigger(8), 0.005, 0.1))
+    |> ((f) -> sine(f) * ar(trigger(8), 0.005, 0.1))
     |> out(@)
 ```
 
 ```akk
 // 31-EDO: 38.7-cent micro-step shimmer
 tune("31edo", n"e5 ev5 e5 ev5 e5 ev5 e5 ev5")
-    |> ((f) -> osc("sin", f) * ar(trigger(8), 0.005, 0.1))
+    |> ((f) -> sine(f) * ar(trigger(8), 0.005, 0.1))
     |> out(@)
 ```
 

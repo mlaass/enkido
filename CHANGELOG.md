@@ -165,7 +165,7 @@ for the planned Strudel-style scale-quantize transform
   array stays dynamic. Combined with `step()` / `counter()` this makes
   arpeggiators and harmonizers userspace closures — no new C++ opcode
   per musical operator. A stateful UGen cannot auto-fan-out over a
-  dynamic array (`osc("sin", e.freqs)` → E181, use `poly()`). New
+  dynamic array (`sine(e.freqs)` → E181, use `poly()`). New
   `SEQPAT_VALUES` opcode; demo patches `arpeggio-demo` and
   `harmonizer-demo`.
 - **Unified `dry`/`wet` convention across every effect builtin** — all 33

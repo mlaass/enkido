@@ -97,7 +97,7 @@ Both stay shipped after this PRD. Docs cross-reference them.
 
 ```akkado
 // ADSR-equivalent via zenv: attack 10 ms, decay 100 ms, sustain 0.5, release 300 ms
-osc("sin", 440) * zenv(button("g"),
+sine(440) * zenv(button("g"),
     levels: [0, 1.0, 0.5, 0],
     times:  [0.01, 0.1, 0.3],
     curves: ["exp", "log", "log"],
@@ -633,7 +633,7 @@ All sub-tests render at least 300 s of audio per the CLAUDE.md mandate for seque
 ```cpp
 SECTION("zenv minimal valid call") {
     auto src = R"(
-        osc("sin", 440) * zenv(button("g"),
+        sine(440) * zenv(button("g"),
             levels: [0, 1, 0],
             times:  [0.01, 0.1],
             curves: [0, 0],
@@ -691,7 +691,7 @@ SECTION("zenv runtime rate modulation") {
 
 ```bash
 ./build/bin/akkado -e \
-  'osc("sin", 220) * zenv(button("g"), levels:[0,1,0.5,0], times:[0.01,0.2,0.3], curves:[0.5,0,-0.5], loop:[2,2]) |> out(@)' \
+  'sine(220) * zenv(button("g"), levels:[0,1,0.5,0], times:[0.01,0.2,0.3], curves:[0.5,0,-0.5], loop:[2,2]) |> out(@)' \
   > /tmp/zenv-smoke.cbc
 
 ./build/bin/nkido /tmp/zenv-smoke.cbc --seconds 5

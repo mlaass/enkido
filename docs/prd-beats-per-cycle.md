@@ -124,7 +124,7 @@ Last writer wins when several appear at top level (see §6 OQ-2).
 fn beats(n) -> {n / beats_per_cycle}      // n beats expressed in cycles
 fn bars(n)  -> {n * 4 / beats_per_cycle}  // 1 bar = 4 beats (see OQ-1)
 
-osc("saw", 220) |> delay_sync(@, beats(1))   // 1-beat delay at any bpc
+saw(220) |> delay_sync(@, beats(1))   // 1-beat delay at any bpc
 ```
 
 ### 3.5 Web

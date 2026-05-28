@@ -229,14 +229,14 @@ builtin-mismatch diagnostics.
 ```akkado
 // : num — strict compile-time constant
 fn unison_spread(freq: sig, voices: num, detune: sig) =
-    each(range(voices), (i) -> osc("saw", freq * (1 + (i - voices/2) * detune)))
+    each(range(voices), (i) -> saw(freq * (1 + (i - voices/2) * detune)))
 
 unison_spread(220, 5, 0.01)         // OK — voices is a constant
 unison_spread(220, lfo, 0.01)       // E184 — Number expected, got Signal
 
 // : rec — Record or Pattern (matches builtin precedent)
 fn arpinst(e: rec) =
-    osc("saw", e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel
+    saw(e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel
 
 n"c4 e4 g4" |> arpinst(@) |> out(@)       // Pattern argument — OK
 arpinst({freq: 440, gate: 1, vel: 0.8})    // Record argument — OK
@@ -244,7 +244,7 @@ arpinst({freq: 440, gate: 1, vel: 0.8})    // Record argument — OK
 // : arr — compile-time Array only
 fn mixer(channels: arr, gain: sig) = sum(channels) * gain
 
-mixer([osc("sin", 220), osc("sin", 330)], 0.5)   // OK
+mixer([sine(220), sine(330)], 0.5)   // OK
 mixer(notes(e), 0.5)                              // E184 — DynArray, not Array
 
 // : str — compile-time String only
@@ -294,7 +294,7 @@ pick([220, 440, 880], lfo)
 ```akkado
 fn echo_chain(stages: num, in: sig) = ...
 
-echo_chain("3", osc("sin", 220))
+echo_chain("3", sine(220))
 // E184: parameter 'stages' of fn 'echo_chain' expects Number, got String —
 //       no coercion path
 ```
@@ -782,7 +782,7 @@ canonical accepted-type case plus 2–3 rejected-type cases:
 | Annotation | Case                                                              | Expectation                                                          |
 |------------|-------------------------------------------------------------------|----------------------------------------------------------------------|
 | `: num`    | `fn f(x: num) = x` called with `5`                                | no `E184`; body binds `x` to constant-5 buffer                       |
-| `: num`    | `fn f(x: num) = x` called with `osc("sin", 1)` (Signal)           | `E184` "expects Number, got Signal"                                  |
+| `: num`    | `fn f(x: num) = x` called with `sine(1)` (Signal)           | `E184` "expects Number, got Signal"                                  |
 | `: num`    | `fn f(x: num) = x` called with `n"c4 e4"` (Pattern)               | `E184` "expects Number, got Pattern"                                 |
 | `: num`    | `fn f(x: num) = x` called with `"text"` (String)                  | `E184` "expects Number, got String"                                  |
 | `: rec`    | `fn f(r: rec) = r.freq` called with `{freq: 440}`                 | no `E184`; field-extraction binds `freq`                             |
@@ -834,7 +834,7 @@ Acceptance:
 
 ```akkado
 fn play_event(e: rec, mix: sig) =
-    osc("saw", e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel * mix
+    saw(e.freq) * adsr(e.gate, 0.01, 0.1, 0.5, 0.2) * e.vel * mix
 
 n"c4 e4 g4" |> play_event(@, 0.7) |> out(@)
 ```
@@ -850,7 +850,7 @@ Acceptance:
 ```akkado
 fn pick(opts: arr, idx: num) = opts[idx]
 
-pick([220, 440, 880], osc("sin", 1))   // idx is Signal, not Number
+pick([220, 440, 880], sine(1))   // idx is Signal, not Number
 ```
 
 Acceptance: emits `E184` at the second argument's source location,

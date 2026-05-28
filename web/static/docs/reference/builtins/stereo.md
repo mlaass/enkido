@@ -27,10 +27,10 @@ automatically, so you don't have to duplicate a chain for L and R.
 
 ```akk
 // Duplicate a mono signal into stereo
-osc("saw", 220) |> stereo() |> out(@)
+saw(220) |> stereo() |> out(@)
 
 // Build a stereo image from two oscillators
-stereo(osc("saw", 218), osc("saw", 222)) |> out(@)
+stereo(saw(218), saw(222)) |> out(@)
 ```
 
 ---
@@ -63,7 +63,7 @@ back to the monophonic voice-manager form: `mono(instrument)`.)
 **Channel extraction** from a stereo signal.
 
 ```akk
-s = stereo(osc("sin", 220), osc("sin", 330))
+s = stereo(sine(220), sine(330))
 left(s)   // → Mono
 right(s)  // → Mono
 ```
@@ -83,10 +83,10 @@ Position is `-1` (hard left) … `0` (centre, -3 dB) … `+1` (hard right).
 
 ```akk
 // Mono → stereo pan
-osc("saw", 220) |> pan(@, lfo(0.25)) |> out(@)
+saw(220) |> pan(@, lfo(0.25)) |> out(@)
 
 // Stereo balance on a stereo bus
-stereo(osc("saw", 218), osc("saw", 222))
+stereo(saw(218), saw(222))
   |> pan(@, 0.3)
   |> out(@)
 ```
@@ -146,12 +146,12 @@ pre-0.5.0 behaviour where the wet signal was added at full level on top of
 the dry source.
 
 ```akk
-osc("saw", 110)
+saw(110)
   |> stereo()
   |> pingpong(@, 0.375, 0.6)            // defaults: dry=1, wet=0.5
   |> out(@)
 
-osc("saw", 110)
+saw(110)
   |> stereo()
   |> pingpong(@, 0.375, 0.6, wet: 1.0)  // legacy-loud echo tail
   |> out(@)
@@ -169,7 +169,7 @@ no `stereo()` wrapper needed.
 
 ```akk
 // One instruction per effect; each handles L and R in one dispatch.
-osc("saw", 220)               // mono — widens automatically
+saw(220)               // mono — widens automatically
     |> lp(@, 500, 0.7)        // stereo lowpass, per-channel state
     |> delay(@, 0.25, 0.5)    // stereo delay lines per channel
     |> freeverb(@, 0.85, 0.5) // stereo reverb with cross-coupling

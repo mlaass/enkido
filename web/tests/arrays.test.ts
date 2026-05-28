@@ -57,7 +57,7 @@ describe('Array Compilation', () => {
 	it('compiles array indexing with dynamic index arr[lfo()]', () => {
 		const source = `
 			arr = [220, 330, 440, 550]
-			arr[lfo(1) * 3.99] |> osc("sin", %) |> out(%, %)
+			arr[lfo(1) * 3.99] |> sine(%) |> out(%, %)
 		`;
 		const result = nkido.akkado_compile(source);
 		expect(result).toBe(1);

@@ -77,7 +77,7 @@ Pattern events are records with fields accessible via `@`:
 
 Example with pipe binding:
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
+pat("c4 e4 g4") as e |> sine(e.freq) |> @ * e.vel |> out(@)
 ```
 
 ### Chord Expansion (Strudel-compatible)
@@ -411,10 +411,10 @@ channel. Two category-based defaults:
   one parameter away by setting `dry>0`.
 
 ```akkado
-osc("saw", 220) |> chorus(@, 0.5, 0.5) |> out(@)           // default dry=1, wet=0.5
-osc("saw", 220) |> chorus(@, 0.5, 0.5, wet: 1.0) |> out(@) // fully wet
-osc("saw", 220) |> lp(@, 800) |> out(@)                    // default dry=0, wet=1 (pure filter)
-osc("saw", 220) |> comp(@, -12, 4, dry: 0.5) |> out(@)     // parallel compression
+saw(220) |> chorus(@, 0.5, 0.5) |> out(@)           // default dry=1, wet=0.5
+saw(220) |> chorus(@, 0.5, 0.5, wet: 1.0) |> out(@) // fully wet
+saw(220) |> lp(@, 800) |> out(@)                    // default dry=0, wet=1 (pure filter)
+saw(220) |> comp(@, -12, 4, dry: 0.5) |> out(@)     // parallel compression
 ```
 
 Slot strategy per builtin:

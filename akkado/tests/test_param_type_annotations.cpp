@@ -107,7 +107,7 @@ TEST_CASE(": evs accepts Pattern arguments (mono and polyphonic)",
     SECTION("mono Pattern passes through without E160") {
         auto r = akkado::compile(R"(
             fn id(e: evs) -> e.freq
-            n"c4 e4 g4" |> id(@) |> osc("sin", @) |> out(@)
+            n"c4 e4 g4" |> id(@) |> sine(@) |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
         CHECK_FALSE(has_diagnostic(r, "E184"));
@@ -148,7 +148,7 @@ TEST_CASE(": evs rejects non-Pattern / non-EventSource args with E184",
     SECTION("Signal → E184") {
         auto r = akkado::compile(R"(
             fn id(e: evs) -> e
-            id(osc("sin", 440))
+            id(sine(440))
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
     }
@@ -180,7 +180,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
           "[type-annotation][codegen]") {
     SECTION("Number arg accepted (today's behavior, made explicit)") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> osc("sin", rate)
+            fn w(rate: signal) -> sine(rate)
             w(220) |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -189,7 +189,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
 
     SECTION("mono Pattern arg silently voice-0 coerces") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> osc("sin", rate)
+            fn w(rate: signal) -> sine(rate)
             w(n"c4 e4") |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -198,7 +198,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
 
     SECTION("polyphonic Pattern fires E160 (preserved reject from PRD §4.2)") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> osc("sin", rate)
+            fn w(rate: signal) -> sine(rate)
             w(c"Am")
         )");
         CHECK(has_diagnostic_for_param(r, "E160", "'rate'"));
@@ -207,7 +207,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
     SECTION("String arg fires E184 (no coercion path)") {
         // String → Signal has no defensible coerce path per PRD §4.2.
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> osc("sin", rate)
+            fn w(rate: signal) -> sine(rate)
             w("text")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'rate'"));
@@ -228,7 +228,7 @@ TEST_CASE(": evs-annotated param exposes Pattern field access in the body",
     // pre-PRD behavior collapsed Pattern → voice-0 scalar and lost the
     // field-accessor map.
     auto r = akkado::compile(R"(
-        fn carrier(events: evs) -> osc("sin", events.freq)
+        fn carrier(events: evs) -> sine(events.freq)
         n"c4 e4 g4" |> carrier(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -266,7 +266,7 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for mono Pattern",
         fn xp(events: evs, n) ->
             event_map(events, (e) -> {note: e.note + n})
 
-        n"c4 e4 g4".xp(7) |> osc("sin", @.freq) |> out(@)
+        n"c4 e4 g4".xp(7) |> sine(@.freq) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
     CHECK_FALSE(has_diagnostic(r, "E184"));
@@ -283,7 +283,7 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for chord-stack pattern",
             event_map(events, (e) -> {note: e.note + n})
 
         n"[c4,e4,g4]".xp(7)
-          |> poly(@, (f, g, v) -> osc("sin", f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3)
+          |> poly(@, (f, g, v) -> sine(f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3)
           |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -303,7 +303,7 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) accepts true polyphonic chord pattern"
             event_map(events, (e) -> {note: e.note + n})
 
         c"Am".xp(7)
-          |> poly(@, (f, g, v) -> osc("sin", f) * v, 3)
+          |> poly(@, (f, g, v) -> sine(f) * v, 3)
           |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -349,7 +349,7 @@ TEST_CASE(": num rejects non-Number args with E184",
     SECTION("Signal → E184") {
         auto r = akkado::compile(R"(
             fn pickn(x: num) -> x
-            pickn(osc("sin", 1))
+            pickn(sine(1))
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'x'"));
     }
@@ -388,7 +388,7 @@ TEST_CASE(": rec accepts Pattern argument and exposes field access",
     // so `r.freq` resolves via the Pattern's per-field buffers.
     auto r = akkado::compile(R"(
         fn freqof(r: rec) -> r.freq
-        n"c4 e4" |> freqof(@) |> osc("sin", @) |> out(@)
+        n"c4 e4" |> freqof(@) |> sine(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
     CHECK_FALSE(has_diagnostic(r, "E184"));
@@ -419,7 +419,7 @@ TEST_CASE(": arr accepts Array literal",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
         fn pick0(a: arr) -> a[0]
-        pick0([220, 440, 880]) |> osc("sin", @) |> out(@)
+        pick0([220, 440, 880]) |> sine(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
 }
@@ -519,7 +519,7 @@ TEST_CASE(": sig alias behaves identically to : signal",
     // alias surfaces no new diagnostics.
     SECTION("Number arg accepted via : sig") {
         auto r = akkado::compile(R"(
-            fn w(rate: sig) -> osc("sin", rate)
+            fn w(rate: sig) -> sine(rate)
             w(220) |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -527,7 +527,7 @@ TEST_CASE(": sig alias behaves identically to : signal",
     }
     SECTION("polyphonic Pattern fires E160 via : sig (parity with : signal)") {
         auto r = akkado::compile(R"(
-            fn w(rate: sig) -> osc("sin", rate)
+            fn w(rate: sig) -> sine(rate)
             w(c"Am")
         )");
         CHECK(has_diagnostic_for_param(r, "E160", "'rate'"));

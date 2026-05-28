@@ -11,15 +11,15 @@ subfeatures:
   - name: Delay
     anchor: delay
     tagline: Beat-synced feedback delay.
-    snippet: 'osc("saw", 220) |> delay(@, 0.5, 0.4)'
+    snippet: 'saw(220) |> delay(@, 0.5, 0.4)'
   - name: Delay (ms)
     anchor: delay_ms
     tagline: Time-domain delay with millisecond control.
-    snippet: 'osc("saw", 220) |> delay_ms(@, 300, 0.4)'
+    snippet: 'saw(220) |> delay_ms(@, 300, 0.4)'
   - name: Tap Delay
     anchor: tap_delay
     tagline: Multi-tap with feedback processor.
-    snippet: 'osc("saw", 110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500))'
+    snippet: 'saw(110) |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500))'
 ---
 
 # Delays
@@ -52,22 +52,22 @@ explicitly.
 
 ```akk
 // Simple echo at quarter note (120 BPM = 0.5s)
-osc("saw", 220) |> delay(@, 0.5, 0.4) |> out(@)
+saw(220) |> delay(@, 0.5, 0.4) |> out(@)
 ```
 
 ```akk
 // Classic delay pedal: dry passthrough with wet echoes
-osc("saw", 220) |> delay(@, 0.5, 0.4, 1.0, 0.6) |> out(@)
+saw(220) |> delay(@, 0.5, 0.4, 1.0, 0.6) |> out(@)
 ```
 
 ```akk
 // Slapback delay for thickening
-osc("saw", 110) |> delay(@, 0.08, 0.3, 0.7, 0.5) |> out(@)
+saw(110) |> delay(@, 0.08, 0.3, 0.7, 0.5) |> out(@)
 ```
 
 ```akk
 // Ping-pong style stereo delay
-osc("saw", 110) |> (delay(@, 0.3, 0.5), delay(@, 0.45, 0.5)) |> out(@)
+saw(110) |> (delay(@, 0.3, 0.5), delay(@, 0.45, 0.5)) |> out(@)
 ```
 
 ## delay_ms
@@ -84,12 +84,12 @@ osc("saw", 110) |> (delay(@, 0.3, 0.5), delay(@, 0.45, 0.5)) |> out(@)
 
 ```akk
 // 300ms delay
-osc("saw", 220) |> delay_ms(@, 300, 0.4) |> out(@)
+saw(220) |> delay_ms(@, 300, 0.4) |> out(@)
 ```
 
 ```akk
 // 50/50 mix
-osc("saw", 220) |> delay_ms(@, 300, 0.4, 0.5, 0.5) |> out(@)
+saw(220) |> delay_ms(@, 300, 0.4, 0.5, 0.5) |> out(@)
 ```
 
 ## delay_smp
@@ -137,14 +137,14 @@ The optional `dry` and `wet` parameters control the output mix. Defaults (dry=0,
 
 ```akk
 // Dub-style delay with lowpass filter in feedback
-osc("saw", 110)
+saw(110)
     |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500))
     |> out(@)
 ```
 
 ```akk
 // Degrading tape delay with dry/wet mix
-osc("saw", 110) |> tap_delay(@, 0.4, 0.65, (x) ->
+saw(110) |> tap_delay(@, 0.4, 0.65, (x) ->
     lp(x, 3000) |> saturate(@, 0.1),
     0.3, 0.7
 ) |> out(@)
@@ -152,7 +152,7 @@ osc("saw", 110) |> tap_delay(@, 0.4, 0.65, (x) ->
 
 ```akk
 // Classic delay pedal: full dry signal with softer echoes
-osc("saw", 110)
+saw(110)
     |> tap_delay(@, 0.375, 0.7, (x) -> lp(x, 1500), 1.0, 0.5)
     |> out(@)
 ```
@@ -172,14 +172,14 @@ osc("saw", 110)
 
 ```akk
 // 300ms delay with feedback filtering
-osc("saw", 110)
+saw(110)
     |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000))
     |> out(@)
 ```
 
 ```akk
 // 300ms delay with mix control
-osc("saw", 110)
+saw(110)
     |> tap_delay_ms(@, 300, 0.7, (x) -> lp(x, 1000), 0.5, 0.5)
     |> out(@)
 ```

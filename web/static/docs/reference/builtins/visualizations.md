@@ -21,7 +21,7 @@ All visualization functions accept an optional name string and an options record
 Time-domain waveform display with trigger stabilization. See [oscilloscope](oscilloscope) for the full reference.
 
 ```akk
-osc("sin", 440) |> oscilloscope(@) |> out(@)
+sine(440) |> oscilloscope(@) |> out(@)
 ```
 
 ## waveform
@@ -29,7 +29,7 @@ osc("sin", 440) |> oscilloscope(@) |> out(@)
 Time-domain envelope display showing min/max amplitude. See [waveform](waveform) for the full reference.
 
 ```akk
-osc("saw", 110) |> waveform(@) |> out(@)
+saw(110) |> waveform(@) |> out(@)
 ```
 
 ## spectrum
@@ -37,7 +37,7 @@ osc("saw", 110) |> waveform(@) |> out(@)
 Frequency-domain FFT display. See [spectrum](spectrum) for the full reference.
 
 ```akk
-osc("saw", 220) |> spectrum(@) |> out(@)
+saw(220) |> spectrum(@) |> out(@)
 ```
 
 ## waterfall
@@ -45,7 +45,7 @@ osc("saw", 220) |> spectrum(@) |> out(@)
 Scrolling spectrogram. Time-frequency display with color-mapped amplitude. See [waterfall](waterfall) for the full reference.
 
 ```akk
-osc("saw", 220) |> waterfall(@) |> out(@)
+saw(220) |> waterfall(@) |> out(@)
 ```
 
 ## pianoroll

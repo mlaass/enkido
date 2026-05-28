@@ -99,13 +99,13 @@ Users typing `@.freq` reach across the dot every time. Patches end up
 visually noisy:
 
 ```akkado
-n"c4 e4 g4" |> osc("sin", @.freq) * @.vel * ar(@.trig, 0.01, 0.1)
+n"c4 e4 g4" |> sine(@.freq) * @.vel * ar(@.trig, 0.01, 0.1)
 ```
 
 vs. the proposed:
 
 ```akkado
-n"c4 e4 g4" |> osc("sin", @freq) * @vel * ar(@trig, 0.01, 0.1)
+n"c4 e4 g4" |> sine(@freq) * @vel * ar(@trig, 0.01, 0.1)
 ```
 
 The corpus is small (6 patches, 3 doc files, a handful of test strings —
@@ -160,19 +160,19 @@ see §5.4) so the corpus migration is mechanical.
 
 ```akkado
 // Today
-n"c4 e4 g4" |> osc("sin", @.freq) * @.vel |> out(@, @)
+n"c4 e4 g4" |> sine(@.freq) * @.vel |> out(@, @)
 
 // After (canonical dotless form)
-n"c4 e4 g4" |> osc("sin", @freq) * @vel |> out(@, @)
+n"c4 e4 g4" |> sine(@freq) * @vel |> out(@, @)
 
 // Legacy `%` alias accepts the same shorthand
-n"c4 e4 g4" |> osc("sin", %freq) * %vel |> out(%, %)
+n"c4 e4 g4" |> sine(%freq) * %vel |> out(%, %)
 ```
 
 ### 3.2 Aliases work the same
 
 ```akkado
-n"c4" |> osc("sin", @f) * @v * ar(@t, 0.01, 0.1)
+n"c4" |> sine(@f) * @v * ar(@t, 0.01, 0.1)
 //                       │     │       │
 //                       │     │       └─ @t → trig
 //                       │     └─ @v → vel
@@ -182,7 +182,7 @@ n"c4" |> osc("sin", @f) * @v * ar(@t, 0.01, 0.1)
 ### 3.3 User records on holes via `as`
 
 ```akkado
-fn make_voice(freq) -> {sig: osc("saw", freq), env: ar(1, 0.01, 0.3)}
+fn make_voice(freq) -> {sig: saw(freq), env: ar(1, 0.01, 0.3)}
 make_voice(440) as v |> lp(v.sig, 1000) * v.env |> out(@, @)
 ```
 
@@ -195,7 +195,7 @@ Whitespace defeats the shorthand, so `@ as e` keeps its today-meaning:
 
 ```akkado
 // Bare hole + pipe binding — still works.
-n"c4 e4" as e |> osc("sin", e.freq) |> @ as raw |> raw * 0.5 + reverb(raw)
+n"c4 e4" as e |> sine(e.freq) |> @ as raw |> raw * 0.5 + reverb(raw)
 //                                          └─ space between @ and `as` → bare hole, then binding
 
 // Field shorthand named `as` (rare but possible).
@@ -209,10 +209,10 @@ must equal column of the hole + 1.
 
 ```akkado
 // Hypothetical nested record on a pattern event.
-n"c4" as e |> osc("sin", e.osc.freq)   // works today
+n"c4" as e |> sine(e.osc.freq)   // works today
 
 // Dotless equivalent via hole — chains naturally.
-n"c4" |> osc("sin", @osc.freq)
+n"c4" |> sine(@osc.freq)
 //                       └────┴─ (@osc).freq
 ```
 
@@ -222,9 +222,9 @@ chains are parsed by the existing field-access postfix machinery.
 ### 3.6 Method calls (unchanged)
 
 ```akkado
-osc("saw", 440) |> @.lp(800) |> out(@, @)        // ✓ today, ✓ after
-osc("saw", 440) |> @.lp(800).hp(2000) |> out(@)  // ✓ today, ✓ after
-osc("saw", 440) |> @lp(800)                       // ✗ parse error E108
+saw(440) |> @.lp(800) |> out(@, @)        // ✓ today, ✓ after
+saw(440) |> @.lp(800).hp(2000) |> out(@)  // ✓ today, ✓ after
+saw(440) |> @lp(800)                       // ✗ parse error E108
 ```
 
 `@lp(800)` triggers a new parse error:
@@ -579,7 +579,7 @@ when adjacent. Without adjacency, the keyword token retains its keyword
 meaning:
 
 ```akkado
-n"c4" as e |> osc("sin", e.freq)   // `as` here is the pipe-binding keyword
+n"c4" as e |> sine(e.freq)   // `as` here is the pipe-binding keyword
 ```
 
 ### 8.4 `@ as e` keeps working as bare-hole pipe binding
@@ -646,7 +646,7 @@ the hole stays bare.
 ### 8.10 Mixed dotted and dotless in the same expression
 
 ```akkado
-n"c4" |> osc("sin", @freq) * @.vel    // both forms; both compile
+n"c4" |> sine(@freq) * @.vel    // both forms; both compile
 ```
 
 Mixed usage is legal; W201 (under `--strict`) fires once per dotted site.

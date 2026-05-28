@@ -196,10 +196,10 @@ TEST_CASE("Recompile is deterministic: simpler chord patterns", "[determinism][h
 
 TEST_CASE("Recompile is deterministic: non-chord patterns", "[determinism][hot_swap]") {
     SECTION("note pattern") {
-        check_deterministic(R"(n"c4 e4 g4" |> osc("sin", %.freq) |> out(%, %))");
+        check_deterministic(R"(n"c4 e4 g4" |> sine(%.freq) |> out(%, %))");
     }
     SECTION("alternation in note pattern") {
-        check_deterministic(R"(n"<c4 e4 g4 b4>" |> osc("sin", %.freq) |> out(%, %))");
+        check_deterministic(R"(n"<c4 e4 g4 b4>" |> sine(%.freq) |> out(%, %))");
     }
 }
 
@@ -415,7 +415,7 @@ TEST_CASE("VM hot-swap preserves alternation across recompile", "[determinism][h
     // playback must continue from where it left off — not restart the `<...>`
     // alternation counter.
     constexpr const char* kSrc =
-        R"(n"<c4 e4 g4 b4>" |> osc("sin", %.freq) |> out(%, %))";
+        R"(n"<c4 e4 g4 b4>" |> sine(%.freq) |> out(%, %))";
 
     auto cr = akkado::compile(kSrc);
     REQUIRE(cr.success);

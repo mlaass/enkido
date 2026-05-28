@@ -38,7 +38,7 @@ Mod-wheel (CC 1) to filter cutoff:
 cutoff = param("cutoff", 800, 100, 8000)
 midi_cc("cutoff", {cc: 1, min: 100, max: 8000})
 
-osc("saw", 220) |> lp(@, cutoff, 0.7) |> out(@)
+saw(220) |> lp(@, cutoff, 0.7) |> out(@)
 ```
 
 Pitch-bend wheel to ±2 semitones:
@@ -47,7 +47,7 @@ Pitch-bend wheel to ±2 semitones:
 bend = param("bend", 0, -2, 2)
 midi_cc("bend", {pb: true, min: -2, max: 2})
 
-osc("saw", 440 * pow(2, bend / 12)) |> out(@)
+saw(440 * pow(2, bend / 12)) |> out(@)
 ```
 
 Channel-aftertouch to filter resonance:
@@ -56,7 +56,7 @@ Channel-aftertouch to filter resonance:
 res = param("res", 0.5, 0, 1)
 midi_cc("res", {at: true, min: 0, max: 1})
 
-osc("saw", 220) |> lp(@, 2000, res) |> out(@)
+saw(220) |> lp(@, 2000, res) |> out(@)
 ```
 
 Channel-filtered CC (only listen to channel 1):

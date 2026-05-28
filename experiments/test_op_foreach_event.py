@@ -47,20 +47,20 @@ PATCHES = [
     (
         "each_voice",
         'n"c4 e4 g4 a4 g4 e4" |> '
-        'each_voice(@, (n) -> osc("sin", n.freq) * ar(n.trig, 0.01, 0.25) * 0.4) '
+        'each_voice(@, (n) -> sine(n.freq) * ar(n.trig, 0.01, 0.25) * 0.4) '
         '|> out(@)',
         "a clean six-note melody, each note plucked by its own AR envelope",
     ),
     (
         "each",
         'n"c4 e4 g4" |> '
-        'each(@, (n) -> osc("saw", n.freq) * ar(n.trig, 0.005, 0.2) * 0.25 |> out(@))',
+        'each(@, (n) -> saw(n.freq) * ar(n.trig, 0.005, 0.2) * 0.25 |> out(@))',
         "a three-note saw arpeggio — the lambda body calls out() itself",
     ),
     (
         "reduce",
         'n"c2 c3 c4" |> reduce(@, (acc, n) -> acc + n.freq, 0.0) as sumf |> '
-        'osc("sin", sumf * 0.05) |> @ * 0.3 |> out(@)',
+        'sine(sumf * 0.05) |> @ * 0.3 |> out(@)',
         "a sine whose pitch tracks the running sum of event frequencies",
     ),
 ]

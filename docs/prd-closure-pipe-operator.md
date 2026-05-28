@@ -255,7 +255,7 @@ closure. To reach an **outer** closure's record, name it with `as name` on the c
 
 ```akkado
 n"C4'"
-  |> poly(@) as v ->> ( map(harmonics) ->> osc("sin", @.val * v.freq) )
+  |> poly(@) as v ->> ( map(harmonics) ->> sine(@.val * v.freq) )
   |> out(@, @)
 ```
 
@@ -611,7 +611,7 @@ array-op handlers already accept.
   - `tap_delay(sig, 0.5, 0.3) ->> @ * 0.5` → `tap_delay(sig, 0.5, 0.3, processor: (x) -> x * 0.5)`
   - `when(c) ->> then: a ->> else: b` → `when(c, then: …, else: …)`
   - `poly(input: pat) ->> saw(@.freq)` — mixed named + positional
-  - nested: `poly(@) as v ->> (map(h) ->> osc("sin", @.val * v.freq))`
+  - nested: `poly(@) as v ->> (map(h) ->> sine(@.val * v.freq))`
   - `@` after `|>` in a body is left for `rewrite_pipes`
 
 ### Phase 4 — Integration & Error Tests
@@ -635,7 +635,7 @@ array-op handlers already accept.
 ### 9.1 Nested `->>` (now supported)
 
 ```akkado
-poly(@) as v ->> ( map(harmonics) ->> osc("sin", @.val * v.freq) )
+poly(@) as v ->> ( map(harmonics) ->> sine(@.val * v.freq) )
 ```
 
 **Expected:** Works. Inner `->>` desugars recursively; `@.val` is `map`'s innermost

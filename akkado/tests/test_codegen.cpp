@@ -1617,7 +1617,7 @@ TEST_CASE("Codegen: transpose() lowers to a runtime EVENT_MAP",
 
     SECTION("chord: transpose still emits a single EVENT_MAP") {
         auto result = akkado::compile(
-            R"(chord("C") |> transpose(@, 12) |> poly(@, ({freq}) -> osc("sin", freq)) |> out(@, @))");
+            R"(chord("C") |> transpose(@, 12) |> poly(@, ({freq}) -> sine(freq)) |> out(@, @))");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
         CHECK(count_instructions(insts, cedar::Opcode::EVENT_MAP) == 1);
@@ -1964,10 +1964,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call with arguments: osc(\"saw\", 440).lp(800, 0.707)") {
         auto dot = akkado::compile(R"(
-            osc("saw", 440).lp(800, 0.707) |> out(%, %)
+            saw(440).lp(800, 0.707) |> out(%, %)
         )");
         auto direct = akkado::compile(R"(
-            lp(osc("saw", 440), 800, 0.707) |> out(%, %)
+            lp(saw(440), 800, 0.707) |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
@@ -1979,10 +1979,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         // through another stereo-aware opcode (hp) for syntactic-equivalence
         // verification.
         auto dot = akkado::compile(R"(
-            osc("saw", 440).lp(800).hp(2000) |> out(%)
+            saw(440).lp(800).hp(2000) |> out(%)
         )");
         auto direct = akkado::compile(R"(
-            hp(lp(osc("saw", 440), 800), 2000) |> out(%)
+            hp(lp(saw(440), 800), 2000) |> out(%)
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
@@ -1992,11 +1992,11 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
     SECTION("dot-call on user-defined function") {
         auto dot = akkado::compile(R"(
             fn gain(sg, amt) -> sg * amt
-            osc("sin", 440).gain(0.5) |> out(%, %)
+            sine(440).gain(0.5) |> out(%, %)
         )");
         auto direct = akkado::compile(R"(
             fn gain(sg, amt) -> sg * amt
-            gain(osc("sin", 440), 0.5) |> out(%, %)
+            gain(sine(440), 0.5) |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
@@ -2005,10 +2005,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call mixed with pipe operator") {
         auto dot = akkado::compile(R"(
-            osc("saw", 440).lp(800) |> % * 0.5 |> out(%, %)
+            saw(440).lp(800) |> % * 0.5 |> out(%, %)
         )");
         auto pipe = akkado::compile(R"(
-            osc("saw", 440) |> lp(%, 800) |> % * 0.5 |> out(%, %)
+            saw(440) |> lp(%, 800) |> % * 0.5 |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
@@ -2017,11 +2017,11 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call on expression result") {
         auto dot = akkado::compile(R"(
-            x = osc("sin", 440)
+            x = sine(440)
             x.abs() |> out(%, %)
         )");
         auto direct = akkado::compile(R"(
-            x = osc("sin", 440)
+            x = sine(440)
             abs(x) |> out(%, %)
         )");
         REQUIRE(dot.success);
@@ -2044,7 +2044,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call produces correct opcodes") {
         auto result = akkado::compile(R"(
-            osc("saw", 440).lp(800) |> out(%, %)
+            saw(440).lp(800) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -2071,10 +2071,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call on hole: |> %.f(args)") {
         auto dot = akkado::compile(R"(
-            osc("saw", 440) |> %.lp(800) |> out(%, %)
+            saw(440) |> %.lp(800) |> out(%, %)
         )");
         auto pipe = akkado::compile(R"(
-            osc("saw", 440) |> lp(%, 800) |> out(%, %)
+            saw(440) |> lp(%, 800) |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
@@ -2083,10 +2083,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call on hole with multiple args") {
         auto dot = akkado::compile(R"(
-            osc("saw", 440) |> %.lp(800, 2.0) |> out(%, %)
+            saw(440) |> %.lp(800, 2.0) |> out(%, %)
         )");
         auto pipe = akkado::compile(R"(
-            osc("saw", 440) |> lp(%, 800, 2.0) |> out(%, %)
+            saw(440) |> lp(%, 800, 2.0) |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
@@ -2096,10 +2096,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
     SECTION("chained dot-calls on hole") {
         // lp is stereo-native (Phase 4a); chain through hp instead of abs.
         auto dot = akkado::compile(R"(
-            osc("saw", 440) |> %.lp(800).hp(2000) |> out(%)
+            saw(440) |> %.lp(800).hp(2000) |> out(%)
         )");
         auto pipe = akkado::compile(R"(
-            osc("saw", 440) |> hp(lp(%, 800), 2000) |> out(%)
+            saw(440) |> hp(lp(%, 800), 2000) |> out(%)
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
@@ -2108,10 +2108,10 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
 
     SECTION("dot-call on as-binding: as q |> q.f(args)") {
         auto dot = akkado::compile(R"(
-            osc("saw", 440) as q |> q.lp(800) |> out(%, %)
+            saw(440) as q |> q.lp(800) |> out(%, %)
         )");
         auto direct = akkado::compile(R"(
-            osc("saw", 440) as q |> lp(q, 800) |> out(%, %)
+            saw(440) as q |> lp(q, 800) |> out(%, %)
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
@@ -2783,7 +2783,7 @@ TEST_CASE("Phase 2.1: SEQPAT_PROP emitted for custom property",
     // The §11.1 example must compile and emit SEQPAT_PROP for `cutoff`.
     auto result = akkado::compile(R"(
         n"[c4{cutoff:0.3} e4{cutoff:0.7}]" as e
-          |> osc("saw", e.freq)
+          |> saw(e.freq)
           |> lp(%, 200 + e.cutoff * 4000)
           |> out(%, %)
     )");
@@ -2800,7 +2800,7 @@ TEST_CASE("Phase 2.1: SEQPAT_PROP emitted for custom property",
 TEST_CASE("Phase 2.1: e.unknownkey lists custom fields in error",
           "[codegen][patterns][phase21][custom_property]") {
     auto result = akkado::compile(R"(
-        n"c4{cutoff:0.5}" as e |> osc("sin", e.unknownkey) |> out(%, %)
+        n"c4{cutoff:0.5}" as e |> sine(e.unknownkey) |> out(%, %)
     )");
     REQUIRE_FALSE(result.success);
     bool found = false;
@@ -2821,7 +2821,7 @@ TEST_CASE("Phase 2.1: pattern with > 4 custom properties keeps first 4",
     // experiment freely; if buffer plumbing for >4 keys is ever needed it's
     // a separate enhancement.
     auto result = akkado::compile(
-        R"(n"[c4{a:1, b:2, c:3, d:4, e:5}]" as p |> osc("sin", p.a) |> out(%, %))");
+        R"(n"[c4{a:1, b:2, c:3, d:4, e:5}]" as p |> sine(p.a) |> out(%, %))");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
     // Four custom keys take slots 0..3; the 5th is dropped. Expect exactly
@@ -2852,7 +2852,7 @@ TEST_CASE("Phase 2.1: bend() result reachable via e.bend pipe-binding",
     // Standalone bend() registers slot keyed by "bend"; e.bend resolves via
     // pattern_field() fallthrough to payload->custom_fields["bend"].
     auto result = akkado::compile(R"(
-        bend(n"[c4 e4]", 0.3) as e |> osc("sin", e.freq + e.bend) |> out(%, %)
+        bend(n"[c4 e4]", 0.3) as e |> sine(e.freq + e.bend) |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -4092,7 +4092,7 @@ TEST_CASE("Pattern transforms accept identifier-bound patterns",
         // so a Signal-typed identifier hits the `: stream` annotation check
         // and emits E184 instead of the pre-2b handler's E133.
         auto result = akkado::compile(R"(
-            x = osc("sin", 440)
+            x = sine(440)
             transpose(x, 5)
         )");
         REQUIRE_FALSE(result.success);
@@ -4851,7 +4851,7 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
 
     SECTION("destructure with all defaults — caller passes empty record") {
         auto result = akkado::compile(R"(
-            fn synth({freq = 440, q = 0.7}) -> osc("sin", freq) * q
+            fn synth({freq = 440, q = 0.7}) -> sine(freq) * q
             sg = synth({})
             out(sg, sg)
         )");
@@ -4860,7 +4860,7 @@ TEST_CASE("Codegen: fn-param destructure", "[codegen][destructure]") {
 
     SECTION("destructure mixed with regular params") {
         auto result = akkado::compile(R"(
-            fn lp_voice(freq, {cutoff = 1000, q = 0.7}) -> osc("saw", freq)
+            fn lp_voice(freq, {cutoff = 1000, q = 0.7}) -> saw(freq)
             sg = lp_voice(220, {cutoff: 500})
             out(sg, sg)
         )");
@@ -5171,7 +5171,7 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 
     SECTION("E136 lists the new canonical names") {
-        auto r = akkado::compile(R"(n"c4" |> osc("sin", %.bogus))");
+        auto r = akkado::compile(R"(n"c4" |> sine(%.bogus))");
         REQUIRE_FALSE(r.success);
         bool saw_e136 = false;
         for (const auto& d : r.diagnostics) {
@@ -5188,7 +5188,7 @@ TEST_CASE("Codegen: Extended pattern fields", "[codegen][records]") {
     }
 
     SECTION("SEQPAT_FIELD and SEQPAT_PHASE opcodes are emitted") {
-        auto r = akkado::compile(R"(n"c4" |> osc("sin", %.freq))");
+        auto r = akkado::compile(R"(n"c4" |> sine(%.freq))");
         REQUIRE(r.success);
         auto insts = get_instructions(r);
         // SEQPAT_FIELD appears five times (DUR, CHANCE, TIME, NOTE, SAMPLE_ID).
@@ -5292,7 +5292,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
     SECTION("SEQPAT opcodes emitted on transformed pattern") {
         // The transform path (emit_pattern_with_state) must now emit the same
         // 5 SEQPAT_FIELD instructions + 1 SEQPAT_PHASE as the bare-pat path.
-        auto r = akkado::compile(R"(fast(n"[c4 e4 g4]", 2) |> osc("sin", %.note) |> out(%, %))");
+        auto r = akkado::compile(R"(fast(n"[c4 e4 g4]", 2) |> sine(%.note) |> out(%, %))");
         REQUIRE(r.success);
         auto insts = get_instructions(r);
         CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_FIELD) == 5);
@@ -5302,7 +5302,7 @@ TEST_CASE("Codegen: Extended pattern fields on transforms", "[codegen][records-e
     }
 
     SECTION("E136 lists canonical names from transformed pattern context") {
-        auto r = akkado::compile(R"(fast(n"c4", 2) |> osc("sin", %.bogus) |> out(%, %))");
+        auto r = akkado::compile(R"(fast(n"c4", 2) |> sine(%.bogus) |> out(%, %))");
         REQUIRE_FALSE(r.success);
         bool saw_e136 = false;
         for (const auto& d : r.diagnostics) {
@@ -5444,7 +5444,7 @@ TEST_CASE("Codegen: Extended pattern fields on typed prefixes", "[codegen][recor
         // After the fix, n"60 64 67" and n"[60 64 67]" should emit the
         // same SEQPAT-family instruction counts: 1×STEP + 1×GATE + 1×TYPE +
         // 5×FIELD + 1×PHASE + 1×QUERY for a monophonic non-sample pattern.
-        auto r = akkado::compile(R"(n"60 64 67" |> osc("sin", %.note) |> out(%, %))");
+        auto r = akkado::compile(R"(n"60 64 67" |> sine(%.note) |> out(%, %))");
         REQUIRE(r.success);
         auto insts = get_instructions(r);
         CHECK(count_instructions(insts, cedar::Opcode::SEQPAT_QUERY) == 1);
@@ -5459,7 +5459,7 @@ TEST_CASE("Codegen: Extended pattern fields on typed prefixes", "[codegen][recor
         // The polyphony pivot replaced auto-sum with explicit poly()/sampler()
         // wrapping. Bare c"…" used as a scalar must error so a silent
         // voice-dropping regression can't sneak in.
-        auto r = akkado::compile(R"(c"Cmaj7" |> osc("sin", %.freq) |> out(%, %))");
+        auto r = akkado::compile(R"(c"Cmaj7" |> sine(%.freq) |> out(%, %))");
         REQUIRE_FALSE(r.success);
         bool saw_polyphony_reject = false;
         for (const auto& d : r.diagnostics) {
@@ -5476,7 +5476,7 @@ TEST_CASE("Codegen: Extended pattern fields on typed prefixes", "[codegen][recor
         // e.freq / e.note errors E061. Per-voice field access is intentionally
         // deferred to a separate PRD; this SECTION is the regression marker
         // that will need to flip if that PRD lands.
-        auto r = akkado::compile(R"(poly(c"Cmaj7", (e) -> osc("sin", e.note)) |> out(%, %))");
+        auto r = akkado::compile(R"(poly(c"Cmaj7", (e) -> sine(e.note)) |> out(%, %))");
         REQUIRE_FALSE(r.success);
         bool saw_e061 = false;
         for (const auto& d : r.diagnostics) {
@@ -5970,17 +5970,17 @@ TEST_CASE("Mini-notation chord lexer no longer truncates extended qualities",
     };
 
     SECTION("chord(\"CM7\") emits a 4-voice chord pattern") {
-        auto result = akkado::compile(R"(chord("CM7") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(chord("CM7") |> sine(%.freq) |> out(%, %))");
         CHECK(e410_voice_count(result) == 4);
     }
 
     SECTION("chord(\"Cm9\") emits a 5-voice chord pattern") {
-        auto result = akkado::compile(R"(chord("Cm9") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(chord("Cm9") |> sine(%.freq) |> out(%, %))");
         CHECK(e410_voice_count(result) == 5);
     }
 
     SECTION("chord(\"C13\") emits a 6-voice chord pattern") {
-        auto result = akkado::compile(R"(chord("C13") |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(chord("C13") |> sine(%.freq) |> out(%, %))");
         CHECK(e410_voice_count(result) == 6);
     }
 
@@ -5988,7 +5988,7 @@ TEST_CASE("Mini-notation chord lexer no longer truncates extended qualities",
         // Mixed-arity chord pattern. Previously every voice count would
         // collapse to 3 because of the lexer's partial table; max across
         // the pattern now matches the largest chord (C13 = 6 voices).
-        auto result = akkado::compile(R"(c"CM7 Cm9 C13" |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(c"CM7 Cm9 C13" |> sine(%.freq) |> out(%, %))");
         CHECK(e410_voice_count(result) == 6);
     }
 
@@ -6201,7 +6201,7 @@ TEST_CASE("Codegen: Chord function", "[codegen]") {
     }
 
     SECTION("chord pattern without poly is error") {
-        auto result = akkado::compile(R"(n"C4'" |> osc("sin", %.freq) |> out(%, %))");
+        auto result = akkado::compile(R"(n"C4'" |> sine(%.freq) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -6928,7 +6928,7 @@ TEST_CASE("Codegen: mono() downmix", "[codegen][stereo][mono]") {
 
     SECTION("mono(fn) still dispatches to voice manager") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"[c4 e4 g4]" |> mono(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7298,7 +7298,7 @@ TEST_CASE("Codegen: Pattern string prefix", "[codegen][pattern-prefix]") {
     }
 
     SECTION("n\"...\" works in pipeline") {
-        auto result = akkado::compile(R"(n"c4 e4 g4" |> osc("sin", %.freq))");
+        auto result = akkado::compile(R"(n"c4 e4 g4" |> sine(%.freq))");
         REQUIRE(result.success);
 
         auto insts = get_instructions(result);
@@ -7367,7 +7367,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
 
     SECTION("POLY_BEGIN carries the STEREO_OUTPUT flag") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
@@ -7382,7 +7382,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
         // A mono body (osc, no pan) still yields a stereo poly: codegen emits
         // two COPYs into the adjacent voice-out pair (L and L+1).
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
@@ -7414,7 +7414,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
 
     SECTION("poly output is stereo — out(%) receives an adjacent L/R pair") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
@@ -7429,7 +7429,7 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
 
     SECTION("stereo voice body (pan) keeps both channels through poly") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq) |> pan(%, 0.5)
+            fn lead(freq, gate, vel) -> sine(freq) |> pan(%, 0.5)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
@@ -7450,7 +7450,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // single stereo arg. (out(%, %) would auto-escalate per W185 and emit
         // two OUTPUTs.)
         auto result = compile_raw(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"c4" |> poly(%, lead, 4) |> out(%)
         )");
         REQUIRE(result.success);
@@ -7486,7 +7486,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("mono desugars to poly with mode=1") {
         auto result = akkado::compile(R"(
-            fn synth(f, g, v) -> osc("sin", f)
+            fn synth(f, g, v) -> sine(f)
             mono(synth) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7508,7 +7508,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("legato desugars to poly with mode=2") {
         auto result = akkado::compile(R"(
-            fn synth(f, g, v) -> osc("sin", f)
+            fn synth(f, g, v) -> sine(f)
             legato(synth) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7528,7 +7528,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("poly with piped pattern input") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"[c4 e4 g4]" |> poly(%, lead, 8) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7551,7 +7551,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("poly with inline closure") {
         auto result = akkado::compile(R"(
-            n"c4" |> poly(%, (f, g, v) -> osc("sin", f) * v, 4) |> out(%, %)
+            n"c4" |> poly(%, (f, g, v) -> sine(f) * v, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7569,21 +7569,21 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("callback: 1 positional param (freq) compiles") {
         auto result = akkado::compile(R"(
-            n"c4 e4 g4" |> poly(@, (freq) -> osc("sin", freq)) |> out(@, @)
+            n"c4 e4 g4" |> poly(@, (freq) -> sine(freq)) |> out(@, @)
         )");
         CHECK(result.success);
     }
 
     SECTION("callback: historical (freq, gate, vel) still compiles") {
         auto result = akkado::compile(R"(
-            n"c4 e4 g4" |> poly(@, (f, g, v) -> osc("sin", f) * v * g, 4) |> out(@, @)
+            n"c4 e4 g4" |> poly(@, (f, g, v) -> sine(f) * v * g, 4) |> out(@, @)
         )");
         CHECK(result.success);
     }
 
     SECTION("callback: empty param list compiles") {
         auto result = akkado::compile(R"(
-            n"c4 e4 g4" |> poly(@, () -> osc("sin", 220)) |> out(@, @)
+            n"c4 e4 g4" |> poly(@, () -> sine(220)) |> out(@, @)
         )");
         CHECK(result.success);
     }
@@ -7591,7 +7591,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("callback: record destructure compiles") {
         auto result = akkado::compile(R"(
             n"c4 e4 g4" |> poly(@, ({freq, vel, gate}) ->
-                osc("sin", freq) * vel * gate) |> out(@, @)
+                sine(freq) * vel * gate) |> out(@, @)
         )");
         CHECK(result.success);
     }
@@ -7599,7 +7599,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("callback: mixed positional + destructure compiles") {
         auto result = akkado::compile(R"(
             n"c4 e4 g4" |> poly(@, (freq, gate, {vel}) ->
-                osc("sin", freq) * vel * gate) |> out(@, @)
+                sine(freq) * vel * gate) |> out(@, @)
         )");
         CHECK(result.success);
     }
@@ -7607,14 +7607,14 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
     SECTION("callback: rest param compiles") {
         auto result = akkado::compile(R"(
             n"c4 e4 g4" |> poly(@, (...e) ->
-                osc("sin", e.freq) * e.vel * e.gate) |> out(@, @)
+                sine(e.freq) * e.vel * e.gate) |> out(@, @)
         )");
         CHECK(result.success);
     }
 
     SECTION("callback: fn-defined destructure instrument compiles") {
         auto result = akkado::compile(R"(
-            fn inst({freq, gate, vel}) -> osc("sin", freq) * vel * gate
+            fn inst({freq, gate, vel}) -> sine(freq) * vel * gate
             n"c4 e4 g4" |> poly(@, inst, 4) |> out(@, @)
         )");
         CHECK(result.success);
@@ -7622,7 +7622,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("error E415: more than 11 positional params") {
         auto result = akkado::compile(R"(
-            n"c4" |> poly(@, (a,b,c,d,e,f,g,h,i,j,k,l) -> osc("sin", a)) |> out(@, @)
+            n"c4" |> poly(@, (a,b,c,d,e,f,g,h,i,j,k,l) -> sine(a)) |> out(@, @)
         )");
         REQUIRE_FALSE(result.success);
         CHECK(has_code(result, "E415"));
@@ -7633,7 +7633,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // is caught earlier by E188, but an alias collision only the
         // field-resolution check can see surfaces E416.
         auto result = akkado::compile(R"(
-            n"c4" |> poly(@, (freq, {pitch}) -> osc("sin", freq)) |> out(@, @)
+            n"c4" |> poly(@, (freq, {pitch}) -> sine(freq)) |> out(@, @)
         )");
         REQUIRE_FALSE(result.success);
         CHECK(has_code(result, "E416"));
@@ -7641,7 +7641,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("(freq, {freq}) literal duplicate is rejected (E188)") {
         auto result = akkado::compile(R"(
-            n"c4" |> poly(@, (freq, {freq}) -> osc("sin", freq)) |> out(@, @)
+            n"c4" |> poly(@, (freq, {freq}) -> sine(freq)) |> out(@, @)
         )");
         CHECK_FALSE(result.success);
     }
@@ -7650,14 +7650,14 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // The parser enforces rest-must-be-last; codegen's E417 is a defensive
         // guard behind that. Either way the shape never compiles.
         auto result = akkado::compile(R"(
-            n"c4" |> poly(@, (...e, freq) -> osc("sin", freq)) |> out(@, @)
+            n"c4" |> poly(@, (...e, freq) -> sine(freq)) |> out(@, @)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("destructure combined with rest param is rejected (parser P001)") {
         auto result = akkado::compile(R"(
-            n"c4" |> poly(@, ({freq}, ...e) -> osc("sin", freq)) |> out(@, @)
+            n"c4" |> poly(@, ({freq}, ...e) -> sine(freq)) |> out(@, @)
         )");
         CHECK_FALSE(result.success);
     }
@@ -7675,14 +7675,14 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // compile_raw: the master-bus epilogue would add ~4 more buffers and
         // this program is deliberately calibrated to the 255-buffer limit.
         auto result = compile_raw(R"(
-            n"c4" |> poly(@, ({freq}) -> osc("sin", freq)) |> @ +
-            (n"d4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"e4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"f4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"g4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"a4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"b4" |> poly(@, ({freq}) -> osc("sin", freq))) +
-            (n"c5" |> poly(@, ({freq}) -> osc("sin", freq))) |> out(@, @)
+            n"c4" |> poly(@, ({freq}) -> sine(freq)) |> @ +
+            (n"d4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"e4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"f4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"g4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"a4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"b4" |> poly(@, ({freq}) -> sine(freq))) +
+            (n"c5" |> poly(@, ({freq}) -> sine(freq))) |> out(@, @)
         )");
         REQUIRE(result.success);
         CHECK_FALSE(has_code(result, "E101"));
@@ -7693,7 +7693,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // inputs[1..3] are unused; inputs[4] is the voice-out L sink.
         auto result = akkado::compile(R"(
             n"c4 e4 g4" |> poly(@, ({freq, note, dur, phase}) ->
-                osc("sin", freq) * (1 - phase)) |> out(@, @)
+                sine(freq) * (1 - phase)) |> out(@, @)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -7713,7 +7713,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("poly with default voice count (no voices arg)") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"[c4 e4 g4]" |> poly(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7730,7 +7730,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("error: 1-arg form not supported") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             poly(lead) |> out(%, %)
         )");
         CHECK(!result.success);
@@ -7747,7 +7747,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
     SECTION("mono with piped pattern") {
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq)
+            fn lead(freq, gate, vel) -> sine(freq)
             n"[c4 e4 g4]" |> mono(%, lead) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7765,7 +7765,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Verified end-to-end via FFT: both 261.6 Hz (c4) and 329.6 Hz (e4)
         // are present at near-equal magnitude when rendered.
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.3
+            fn lead(freq, gate, vel) -> sine(freq) * gate * 0.3
             n"[c4, e4]" |> poly(%, lead, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7809,7 +7809,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // e4/g4/b4 thirds. POLY_BEGIN picks up all four events; FFT-verified
         // peaks for c4/e4/g4/b4 all present in the rendered audio.
         auto result = akkado::compile(R"(
-            fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.25
+            fn lead(freq, gate, vel) -> sine(freq) * gate * 0.25
             n"[c4, [e4 g4 b4]]" |> poly(%, lead, 4) |> out(%, %)
         )");
         REQUIRE(result.success);
@@ -7947,7 +7947,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
     SECTION("declared custom field compiles and sets poly_prop_count") {
         auto result = akkado::compile(R"(
             n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, ({freq, gate, cutoff}) ->
-                osc("saw", freq) * gate * cutoff) |> out(@, @)
+                saw(freq) * gate * cutoff) |> out(@, @)
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -7963,7 +7963,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
     SECTION("no custom fields keeps poly_prop_count at 0") {
         auto result = akkado::compile(R"(
             n"c4 e4" |> poly(@, ({freq, gate}) ->
-                osc("saw", freq) * gate) |> out(@, @)
+                saw(freq) * gate) |> out(@, @)
         )");
         REQUIRE(result.success);
         for (const auto& init : result.state_inits) {
@@ -7978,7 +7978,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
         // default buffer rather than a field-bank slot.
         auto result = akkado::compile(R"(
             n"c4 e4" |> poly(@, ({freq, gate, wobble = 0.5}) ->
-                osc("saw", freq) * gate * wobble) |> out(@, @)
+                saw(freq) * gate * wobble) |> out(@, @)
         )");
         REQUIRE(result.success);
         for (const auto& init : result.state_inits) {
@@ -7992,7 +7992,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
             "prop_defaults") {
         auto result = akkado::compile(R"(
             n"c4{cutoff:0.9} e4" |> poly(@, ({freq, gate, cutoff = 0.5}) ->
-                osc("saw", freq) * gate * cutoff) |> out(@, @)
+                saw(freq) * gate * cutoff) |> out(@, @)
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8009,8 +8009,8 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
     SECTION("non-constant destructure default → E419") {
         auto result = akkado::compile(R"(
             n"c4{cutoff:0.9}" |> poly(@,
-                ({freq, gate, cutoff = osc("sin", 440)}) ->
-                osc("saw", freq) * gate * cutoff) |> out(@, @)
+                ({freq, gate, cutoff = sine(440)}) ->
+                saw(freq) * gate * cutoff) |> out(@, @)
         )");
         REQUIRE_FALSE(result.success);
         CHECK(has_code(result, "E419"));
@@ -8019,7 +8019,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
     SECTION("rest param exposes custom fields — e.cutoff compiles") {
         auto result = akkado::compile(R"(
             n"c4{cutoff:0.9} e4{cutoff:0.3}" |> poly(@, (...e) ->
-                osc("saw", e.freq) * e.gate * e.cutoff) |> out(@, @)
+                saw(e.freq) * e.gate * e.cutoff) |> out(@, @)
         )");
         CHECK(result.success);
     }
@@ -8028,7 +8028,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
         auto result = akkado::compile(R"(
             n"c4{cutoff:0.9, res:0.2} e4{cutoff:0.3, res:0.8}"
               |> poly(@, ({freq, gate, cutoff, res}) ->
-                osc("saw", freq) * gate * cutoff * res) |> out(@, @)
+                saw(freq) * gate * cutoff * res) |> out(@, @)
         )");
         REQUIRE(result.success);
         for (const auto& init : result.state_inits) {
@@ -8043,12 +8043,12 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
         // SEQPAT_PROP buffer per poly() — a heavier footprint than the plain
         // 8× guard above. Six custom-field poly() calls still fit.
         auto result = akkado::compile(R"(
-            n"c4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff) |> @ +
-            (n"d4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
-            (n"e4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
-            (n"f4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
-            (n"g4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) +
-            (n"a4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> osc("sin", freq) * cutoff)) |> out(@, @)
+            n"c4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff) |> @ +
+            (n"d4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff)) +
+            (n"e4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff)) +
+            (n"f4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff)) +
+            (n"g4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff)) +
+            (n"a4{cutoff:0.5}" |> poly(@, ({freq, cutoff}) -> sine(freq) * cutoff)) |> out(@, @)
         )");
         REQUIRE(result.success);
         CHECK_FALSE(has_code(result, "E101"));
@@ -8204,14 +8204,14 @@ TEST_CASE("Codegen: mono/legato callback parity",
         // mono/legato also accept the instrument as the sole argument
         // (no piped pattern input).
         auto r = akkado::compile(R"(
-            mono(({freq, gate}) -> osc("sin", freq) * gate) |> out(@, @)
+            mono(({freq, gate}) -> sine(freq) * gate) |> out(@, @)
         )");
         CHECK(r.success);
     }
 
     SECTION("legato 1-arg instrument-only form accepts rest-param callback") {
         auto r = akkado::compile(R"(
-            legato((...e) -> osc("sin", e.freq) * e.gate) |> out(@, @)
+            legato((...e) -> sine(e.freq) * e.gate) |> out(@, @)
         )");
         CHECK(r.success);
     }
@@ -8261,7 +8261,7 @@ TEST_CASE("Codegen: Record spreading", "[codegen][records]") {
         auto result = akkado::compile(R"(
             base = {freq: 440, vel: 0.8}
             r = {..base, freq: 880}
-            osc("sin", r.freq) |> % * r.vel |> out(%, %)
+            sine(r.freq) |> % * r.vel |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8339,7 +8339,7 @@ TEST_CASE("Codegen: Record spread interactions", "[codegen][records]") {
     SECTION("spread + as-binding in pipe") {
         auto result = akkado::compile(R"(
             base = {freq: 440, vel: 0.8}
-            {..base, vel: 0.5} as r |> osc("sin", r.freq) |> % * r.vel |> out(%, %)
+            {..base, vel: 0.5} as r |> sine(r.freq) |> % * r.vel |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8348,7 +8348,7 @@ TEST_CASE("Codegen: Record spread interactions", "[codegen][records]") {
         auto result = akkado::compile(R"(
             base = {freq: 440, vel: 0.8}
             r = {..base, freq: 880}
-            osc("sin", r.freq).lp(1000) |> % * r.vel |> out(%, %)
+            sine(r.freq).lp(1000) |> % * r.vel |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8367,7 +8367,7 @@ TEST_CASE("Codegen: Record spread interactions", "[codegen][records]") {
         auto result = akkado::compile(R"(
             base = {freq: 440, vel: 0.8}
             r = {..base, freq: 880, vel: 0.5}
-            osc("sin", r.freq) |> % * r.vel |> out(%, %)
+            sine(r.freq) |> % * r.vel |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8430,7 +8430,7 @@ TEST_CASE("Codegen: Expression default interactions", "[codegen][fn]") {
     SECTION("expression default + pipe body") {
         auto result = akkado::compile(R"(
             fn f(x, gain = 1 + 1) -> x |> % * gain |> out(%, %)
-            osc("sin", 440) |> f(%) |> out(%, %)
+            sine(440) |> f(%) |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8438,7 +8438,7 @@ TEST_CASE("Codegen: Expression default interactions", "[codegen][fn]") {
     SECTION("expression default + as-binding") {
         auto result = akkado::compile(R"(
             fn amp(x, gain = 2 * 0.25) -> x * gain
-            osc("sin", 440) as sg |> amp(sg) |> out(%, %)
+            sine(440) as sg |> amp(sg) |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8458,7 +8458,7 @@ TEST_CASE("Codegen: Expression default interactions", "[codegen][fn]") {
     SECTION("expression default + dot-call") {
         auto result = akkado::compile(R"(
             fn amp(sg, gain = 1 + 1) -> sg * gain
-            osc("sin", 440).amp() |> out(%, %)
+            sine(440).amp() |> out(%, %)
         )");
         CHECK(result.success);
     }
@@ -8655,7 +8655,7 @@ TEST_CASE("Timeline function call form compiles", "[timeline_e2e]") {
 TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
     SECTION("basic waterfall with default fft size") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "test") |> out(%, %)
+            saw(220) |> waterfall(%, "test") |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -8666,7 +8666,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
 
     SECTION("waterfall with fft: 512") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "test", {fft: 512}) |> out(%, %)
+            saw(220) |> waterfall(%, "test", {fft: 512}) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -8677,7 +8677,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
 
     SECTION("waterfall with fft: 2048") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "test", {fft: 2048}) |> out(%, %)
+            saw(220) |> waterfall(%, "test", {fft: 2048}) |> out(%, %)
         )");
         REQUIRE(result.success);
         auto insts = get_instructions(result);
@@ -8688,7 +8688,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
 
     SECTION("waterfall with string gradient option") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "test", {gradient: "viridis"}) |> out(%, %)
+            saw(220) |> waterfall(%, "test", {gradient: "viridis"}) |> out(%, %)
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8703,7 +8703,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
 
     SECTION("waterfall creates Waterfall viz decl") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> waterfall(%, "my-spectrogram") |> out(%, %)
+            saw(220) |> waterfall(%, "my-spectrogram") |> out(%, %)
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8721,7 +8721,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
 TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
     SECTION("boolean true") {
         auto result = akkado::compile(R"(
-            osc("saw", 220) |> spectrum(%, "s", {logScale: true}) |> out(%, %)
+            saw(220) |> spectrum(%, "s", {logScale: true}) |> out(%, %)
         )");
         REQUIRE(result.success);
         bool found = false;
@@ -8781,7 +8781,7 @@ TEST_CASE("Codegen: extract_options preserves recognized fields in source order"
           "[codegen][viz][options-helper]") {
     // Waterfall schema declares fft and gradient; both should round-trip.
     auto result = akkado::compile(R"(
-        osc("saw", 220) |> waterfall(%, "w", {fft: 1024, gradient: "viridis"}) |> out(%, %)
+        saw(220) |> waterfall(%, "w", {fft: 1024, gradient: "viridis"}) |> out(%, %)
     )");
     REQUIRE(result.success);
     bool found = false;
@@ -8806,7 +8806,7 @@ TEST_CASE("Codegen: extract_options drops unknown fields silently",
     // unknown_fields list on OptionsPayload reserves this name for a future
     // W160 warning pass once the spread PRD lands W160 infrastructure.
     auto result = akkado::compile(R"(
-        osc("saw", 220) |> waterfall(%, "w", {fft: 1024, nonsense: 7}) |> out(%, %)
+        saw(220) |> waterfall(%, "w", {fft: 1024, nonsense: 7}) |> out(%, %)
     )");
     REQUIRE(result.success);
     bool found = false;
@@ -8826,7 +8826,7 @@ TEST_CASE("Codegen: extract_options yields empty JSON for empty record",
     // string. The web UI relies on the empty string as a "no options supplied"
     // marker — the helper preserves that.
     auto result = akkado::compile(R"(
-        osc("saw", 220) |> waterfall(%, "w", {}) |> out(%, %)
+        saw(220) |> waterfall(%, "w", {}) |> out(%, %)
     )");
     REQUIRE(result.success);
     bool found = false;
@@ -8889,7 +8889,7 @@ TEST_CASE("Codegen: spectrum/waterfall fft default applies when fft absent",
     // No fft field on the record — payload.get_number returns nullopt and
     // fft_log2_from_payload falls back to 10 (=> 1024 bins).
     auto result = akkado::compile(R"(
-        osc("saw", 220) |> waterfall(%, "w", {gradient: "viridis"}) |> out(%, %)
+        saw(220) |> waterfall(%, "w", {gradient: "viridis"}) |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -8900,7 +8900,7 @@ TEST_CASE("Codegen: spectrum/waterfall fft default applies when fft absent",
 
 TEST_CASE("Codegen: spectrum() now emits FFT_PROBE", "[codegen][viz]") {
     auto result = akkado::compile(R"(
-        osc("saw", 220) |> spectrum(%, "fft") |> out(%, %)
+        saw(220) |> spectrum(%, "fft") |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -10469,7 +10469,7 @@ TEST_CASE("chord pattern pipes directly into soundfont", "[chord-soundfont]") {
         // Regression guard: the strict 'wrap in poly()' rule must still fire
         // for anything that doesn't have its own voice allocator.
         auto result = akkado::compile(
-            R"(c"CM Am Dm G" |> osc("saw", @.freq) |> out(@, @))");
+            R"(c"CM Am Dm G" |> saw(@.freq) |> out(@, @))");
         // Either E410 fires (preferred) or some other error — but the rule
         // is that a chord chord into a mono UGen must NOT silently work.
         bool has_e410 = false;

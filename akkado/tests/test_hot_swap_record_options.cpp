@@ -136,9 +136,9 @@ TEST_CASE("hot-swap: freeverb wet:0.5 -> wet:0 via record-options silences audio
     // Use saw oscillator as a non-trivial audio source so silence is clearly
     // distinguishable from passthrough.
     constexpr const char* kSrcAudible =
-        R"(osc("saw", 220) |> freeverb(@, ..{dry: 1, wet: 0.5}) |> out(@))";
+        R"(saw(220) |> freeverb(@, ..{dry: 1, wet: 0.5}) |> out(@))";
     constexpr const char* kSrcSilent =
-        R"(osc("saw", 220) |> freeverb(@, ..{dry: 0, wet: 0}) |> out(@))";
+        R"(saw(220) |> freeverb(@, ..{dry: 0, wet: 0}) |> out(@))";
 
     akkado::CompileResult crA, crB;
     compile_and_print("audible", kSrcAudible, crA);
@@ -205,20 +205,20 @@ TEST_CASE("hot-swap: record-options silence works across builtin families",
           "[hot_swap][options][family_sweep]") {
     const OptionsCase cases[] = {
         {"dattorro",
-         R"(osc("saw", 220) |> dattorro(@, ..{dry: 1, wet: 0.5}) |> out(@))",
-         R"(osc("saw", 220) |> dattorro(@, ..{dry: 0, wet: 0}) |> out(@))"},
+         R"(saw(220) |> dattorro(@, ..{dry: 1, wet: 0.5}) |> out(@))",
+         R"(saw(220) |> dattorro(@, ..{dry: 0, wet: 0}) |> out(@))"},
         {"chorus",
-         R"(osc("saw", 220) |> chorus(@, ..{dry: 1, wet: 0.5}) |> out(@))",
-         R"(osc("saw", 220) |> chorus(@, ..{dry: 0, wet: 0}) |> out(@))"},
+         R"(saw(220) |> chorus(@, ..{dry: 1, wet: 0.5}) |> out(@))",
+         R"(saw(220) |> chorus(@, ..{dry: 0, wet: 0}) |> out(@))"},
         {"phaser",
-         R"(osc("saw", 220) |> phaser(@, ..{dry: 1, wet: 0.5}) |> out(@))",
-         R"(osc("saw", 220) |> phaser(@, ..{dry: 0, wet: 0}) |> out(@))"},
+         R"(saw(220) |> phaser(@, ..{dry: 1, wet: 0.5}) |> out(@))",
+         R"(saw(220) |> phaser(@, ..{dry: 0, wet: 0}) |> out(@))"},
         {"flanger",
-         R"(osc("saw", 220) |> flanger(@, ..{dry: 1, wet: 0.5}) |> out(@))",
-         R"(osc("saw", 220) |> flanger(@, ..{dry: 0, wet: 0}) |> out(@))"},
+         R"(saw(220) |> flanger(@, ..{dry: 1, wet: 0.5}) |> out(@))",
+         R"(saw(220) |> flanger(@, ..{dry: 0, wet: 0}) |> out(@))"},
         {"moog",
-         R"(osc("saw", 220) |> moog(@, 800) |> @ * 1.0 |> moog(@, 800, ..{dry: 1, wet: 0.5}) |> out(@))",
-         R"(osc("saw", 220) |> moog(@, 800) |> @ * 1.0 |> moog(@, 800, ..{dry: 0, wet: 0}) |> out(@))"},
+         R"(saw(220) |> moog(@, 800) |> @ * 1.0 |> moog(@, 800, ..{dry: 1, wet: 0.5}) |> out(@))",
+         R"(saw(220) |> moog(@, 800) |> @ * 1.0 |> moog(@, 800, ..{dry: 0, wet: 0}) |> out(@))"},
     };
 
     for (const auto& tc : cases) {
@@ -253,9 +253,9 @@ std::uint32_t find_first_state_id_for_opcode(const akkado::CompileResult& cr,
 TEST_CASE("hot-swap: freeverb state_id is stable across record-options changes",
           "[hot_swap][options][state_id]") {
     constexpr const char* kSrcA =
-        R"(osc("saw", 220) |> freeverb(@, ..{dry: 1, wet: 0.5}) |> out(@))";
+        R"(saw(220) |> freeverb(@, ..{dry: 1, wet: 0.5}) |> out(@))";
     constexpr const char* kSrcB =
-        R"(osc("saw", 220) |> freeverb(@, ..{dry: 0, wet: 0}) |> out(@))";
+        R"(saw(220) |> freeverb(@, ..{dry: 0, wet: 0}) |> out(@))";
 
     akkado::CompileResult crA, crB;
     compile_and_print("A", kSrcA, crA);

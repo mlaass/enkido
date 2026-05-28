@@ -17,7 +17,7 @@ Today, the only way to feed musical events into `poly()` is a pattern
 **`midi() |> poly(piano, 8)` is a drop-in replacement for**
 **`n"…" |> poly(...)`**, and Phase 7 extends the same drop-in equivalence
 to `soundfont(...)` and to monophonic pipelines
-(`midi() as e |> osc("saw", e.freq) |> @ * adsr(e.gate) |> out`). The source
+(`midi() as e |> saw(e.freq) |> @ * adsr(e.gate) |> out`). The source
 is selected explicitly via a record literal: bare `midi()` opens the default
 live device; `midi({device: "..."})` opens a named device;
 `midi({file: "..."})` plays back an SMF. Passing both `file:` and `device:`
@@ -173,7 +173,7 @@ opens the host's default live device.
 
 ```akkado
 fn lead(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, 2000 * adsr(gate)) |> @ * vel
 
 // Default live device (set via UI dropdown or --midi-in)
 midi() |> poly(lead, 8) |> out
@@ -208,7 +208,7 @@ cutoff = param("cutoff", 1000, 50, 5000)
 midi_cc("cutoff", {cc: 74, min: 50, max: 5000})
 
 fn synth(freq, gate, vel) =
-    osc("saw", freq) |> lp(@, cutoff * adsr(gate)) |> @ * vel
+    saw(freq) |> lp(@, cutoff * adsr(gate)) |> @ * vel
 
 midi() |> poly(synth, 8) |> out
 // Turn CC74 on your keyboard → cutoff sweeps live
@@ -1230,7 +1230,7 @@ previous "TODO" in this section.
 "[midi-soundfont]" "[midi-hotswap]" "[midi-mono]" "[midi-file-cc]"
 "[poly-release]"` all pass (850 assertions / 48 test cases);
 `midi() |> soundfont("piano.sf2", 0) |> out` and
-`midi() as e |> osc("saw", e.freq) |> lp(@, 2000) |> @ * adsr(e.gate)
+`midi() as e |> saw(e.freq) |> lp(@, 2000) |> @ * adsr(e.gate)
 |> out` audibly play in both CLI and web; held chord survives
 hot-edit of the instrument; `release: 0.3` on `poly` removes the
 note-off click.

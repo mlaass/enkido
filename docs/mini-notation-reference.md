@@ -387,7 +387,7 @@ n"c4 e4 g4 b4".dur(2)
 
 **Example:**
 ```akkado
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%)
+n"c4 e4 g4" as e |> sine(e.freq) |> % * e.vel |> out(%)
 ```
 
 ## Chord Qualities

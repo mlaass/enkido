@@ -48,7 +48,7 @@ fn osc(type = "sin", freq = 440) -> match(type) {
 }
 
 osc(440)              // type defaults to "sin"
-osc("saw", 440)       // explicit type
+saw(440)       // explicit type
 ```
 
 String defaults participate in compile-time `match()` resolution — when the default is used, only the matching arm is emitted into bytecode. String-defaulted params are **only meaningful inside a `match()` scrutinee**; using them as audio signals (e.g. `type * 2`) is undefined.
@@ -111,7 +111,7 @@ fn my_osc(type, freq) -> match(type) {
 }
 ```
 
-When called with a string literal (`my_osc("saw", 440)`), the match resolves at **compile time** — only the winning branch is emitted. Commas between arms are optional.
+When called with a string literal (`my_saw440)`), the match resolves at **compile time** — only the winning branch is emitted. Commas between arms are optional.
 
 ### Match with guards
 
@@ -199,10 +199,10 @@ Functions work naturally in `|>` chains with `%` and `as`:
 voice(440) |> reverb(%) |> out(%, %)
 
 // Function receiving pipe input via %
-osc("saw", 220) |> my_filter(%, 1000)
+saw(220) |> my_filter(%, 1000)
 
 // Pipe binding with `as` for multi-field access
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> % * e.vel |> out(%, %)
+n"c4 e4 g4" as e |> sine(e.freq) |> % * e.vel |> out(%, %)
 ```
 
 Functions can also appear inside closures:

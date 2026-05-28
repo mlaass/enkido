@@ -168,7 +168,7 @@ n"c2 c6" |> saw(mono(glide(@.freq, 0.2, "ease_out", "log"))) |> out(@)
 
 // Glide a parameter slider for smoother knob response
 cutoff = param("cutoff", 1000, 100, 8000)
-osc("saw", 220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
+saw(220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
 
 // Glide a velocity for smoother accents (velocity is a scalar multiplier,
 // so the stereo result is fine downstream of the saw)

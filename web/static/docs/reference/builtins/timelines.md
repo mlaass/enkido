@@ -39,7 +39,7 @@ Creates smooth automation curves between breakpoints. The string is parsed at co
 
 ```akk
 // Volume swell synced to one cycle
-osc("saw", 220) * timeline("__/''") |> out(@)
+saw(220) * timeline("__/''") |> out(@)
 ```
 
 ## breakpoint
@@ -48,7 +48,7 @@ A **breakpoint** is one (time, value) pair in the curve. Each character in the c
 
 ```akk
 // Four breakpoints over one cycle
-osc("sin", 220) * timeline("_/''\\") |> out(@)
+sine(220) * timeline("_/''\\") |> out(@)
 ```
 
 ## curve
@@ -57,7 +57,7 @@ The **curve string** is an ASCII sketch of the envelope shape. See [Curve Notati
 
 ```akk
 // Filter sweep envelope
-osc("saw", 110)
+saw(110)
     |> lp(@, 200 + timeline("__/''__\\__") * 2000)
     |> out(@)
 ```
@@ -68,7 +68,7 @@ A timeline is **automation**: a parameter value over time. Useful for amp envelo
 
 ```akk
 // Long amp envelope
-osc("saw", 220) * timeline("_/''----\\__") |> out(@)
+saw(220) * timeline("_/''----\\__") |> out(@)
 ```
 
 ## sync

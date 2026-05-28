@@ -11,15 +11,15 @@ subfeatures:
   - name: Compressor
     anchor: comp
     tagline: Feedforward compressor.
-    snippet: 'osc("saw", 110) * ar(trigger(2)) |> comp(@, -12, 4)'
+    snippet: 'saw(110) * ar(trigger(2)) |> comp(@, -12, 4)'
   - name: Limiter
     anchor: limiter
     tagline: Brick-wall ceiling.
-    snippet: 'osc("saw", 110) * 2 |> limiter(@, -0.1, 0.1)'
+    snippet: 'saw(110) * 2 |> limiter(@, -0.1, 0.1)'
   - name: Gate
     anchor: gate
     tagline: Threshold-based noise gate.
-    snippet: 'osc("noise") * ar(trigger(8), 0.001, 0.05) |> gate(@, -20, 10)'
+    snippet: 'noise() * ar(trigger(8), 0.001, 0.05) |> gate(@, -20, 10)'
 ---
 
 # Dynamics
@@ -50,22 +50,22 @@ Reduces the level of signals that exceed the threshold. Higher ratios create mor
 
 ```akk
 // Basic compression
-osc("saw", 110) * ar(trigger(2)) |> comp(@, -12, 4) |> out(@)
+saw(110) * ar(trigger(2)) |> comp(@, -12, 4) |> out(@)
 ```
 
 ```akk
 // Slow, transparent leveling
-osc("saw", 110) * ar(trigger(2)) |> comp(@, -12, 4, attack: 30, release: 250) |> out(@)
+saw(110) * ar(trigger(2)) |> comp(@, -12, 4, attack: 30, release: 250) |> out(@)
 ```
 
 ```akk
 // Heavy compression (limiting-like)
-osc("saw", 55) * ar(trigger(4)) |> comp(@, -20, 10) |> out(@)
+saw(55) * ar(trigger(4)) |> comp(@, -20, 10) |> out(@)
 ```
 
 ```akk
 // Gentle leveling
-osc("noise") * ar(trigger(1)) |> comp(@, -6, 2) |> out(@)
+noise() * ar(trigger(1)) |> comp(@, -6, 2) |> out(@)
 ```
 
 Related: [limiter](#limiter), [gate](#gate)
@@ -93,17 +93,17 @@ A limiter is an extreme compressor (infinite ratio) that prevents the signal fro
 
 ```akk
 // Master limiter
-osc("saw", 110) * 2 |> limiter(@, -0.1, 0.1) |> out(@)
+saw(110) * 2 |> limiter(@, -0.1, 0.1) |> out(@)
 ```
 
 ```akk
 // Limiter with lookahead for cleaner peak control
-osc("saw", 110) * 2 |> limiter(@, -0.1, 0.1, lookahead: 1) |> out(@)
+saw(110) * 2 |> limiter(@, -0.1, 0.1, lookahead: 1) |> out(@)
 ```
 
 ```akk
 // Aggressive limiting for loudness
-osc("saw", 55) * ar(trigger(4)) * 3 |> limiter(@, -1, 0.05) |> out(@)
+saw(55) * ar(trigger(4)) * 3 |> limiter(@, -1, 0.05) |> out(@)
 ```
 
 Related: [comp](#comp)
@@ -135,26 +135,26 @@ The `close_time` parameter controls how quickly the gate fades out when closing,
 
 ```akk
 // Basic noise gate
-(osc("saw", 110) + osc("noise") * 0.1) * ar(trigger(2))
+(saw(110) + noise() * 0.1) * ar(trigger(2))
     |> gate(@, -30, 6)
     |> out(@)
 ```
 
 ```akk
 // Tight gate for percussive sounds
-osc("noise") * ar(trigger(8), 0.001, 0.05)
+noise() * ar(trigger(8), 0.001, 0.05)
     |> gate(@, -20, 10)
     |> out(@)
 ```
 
 ```akk
 // Slow fade-out gate
-osc("saw", 110) * ar(trigger(2)) |> gate(@, -30, 6, 20) |> out(@)
+saw(110) * ar(trigger(2)) |> gate(@, -30, 6, 20) |> out(@)
 ```
 
 ```akk
 // Long hold keeps the gate open through short gaps
-osc("noise") * ar(trigger(4)) |> gate(@, -30, -40, hold: 120, release: 80) |> out(@)
+noise() * ar(trigger(4)) |> gate(@, -30, -40, hold: 120, release: 80) |> out(@)
 ```
 
 Related: [comp](#comp)

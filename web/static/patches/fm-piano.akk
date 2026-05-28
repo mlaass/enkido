@@ -12,12 +12,12 @@ ep = ({freq, gate, vel}) -> {
     // Modulator at double frequency, scaled by an AR envelope so the
     // FM index is high at attack and decays toward zero.
     mod_env = ar(gate, 0.001, 0.6)
-    mod = tri( freq) * mod_env * freq * 1.2
+    mod = tri(freq) * mod_env * freq * 1.2
     // Carrier reads the modulator on its frequency input.
-    sine( (freq/2 + mod) ) * ar(gate, 0.005, 1.4) * vel
+    sine(freq/2.005 + mod) * ar(gate, 0.005, 1.4) * vel
 }
 
 chord("Cmaj7 Am9 Dm9 G13")
     |> poly(@, ep) * 0.2
-    |> @*.5 + reverb(@, 0.4, 0.6) * 0.4
+    |> reverb(@, 0.4, 0.6)
     |> out(@)

@@ -73,7 +73,7 @@ The stereo overload is DAW-style balance — `L_out = L * cos θ`, `R_out = R * 
 Every audio effect is **stereo-native**: it processes both channels in a single dispatch with one per-channel state struct. A **mono** input automatically widens — the opcode reads it once and uses it for both the L and R lanes — so you never have to duplicate a chain or insert `stereo()` to get a stereo result.
 
 ```akkado
-bus = osc("saw", 220)           // Mono — widens automatically
+bus = saw(220)           // Mono — widens automatically
 
 bus
     |> lp(@, 500, 0.7)   // Stereo: per-channel filter state
@@ -84,7 +84,7 @@ bus
 For channel-independent effects (filters, distortion, EQ, plain delays) this is exactly equivalent to writing:
 
 ```akkado
-sig = osc("saw", 220)
+sig = saw(220)
 
 left_out = sig
     |> lp(@, 500, 0.7)
@@ -105,17 +105,17 @@ Identical state handling, identical audio. Stateless effects (`saturate`, `softc
 
 ```akkado
 // Default: 90° offset, classic stereo chorus
-osc("saw", 220)
+saw(220)
     |> chorus(@, 0.5, 0.4)
     |> out(@)
 
 // 0 = mono-equivalent (L = R); 0.5 = anti-phase
 // (max width, may collapse on mono-summing)
-osc("saw", 220)
+saw(220)
     |> chorus(@, 0.5, 0.4, lfo_phase: 0.5)
     |> out(@)
 
-osc("saw", 110)
+saw(110)
     |> phaser(@, 0.3, 0.8, lfo_phase: 0)
     |> out(@)
 ```
@@ -135,7 +135,7 @@ osc("saw", 110)
 `+`, `-`, `*`, `/` on a **mono** and a **stereo** operand broadcast the mono side across both channels:
 
 ```akkado
-dry = osc("saw", 220)               // Mono
+dry = saw(220)               // Mono
 
 // Stereo — freeverb auto-widens
 wet = dry |> freeverb(@, 0.9, 0.5)
@@ -150,7 +150,7 @@ Mono on mono stays mono. Stereo on stereo stays stereo (L op L, R op R). There's
 
 ## Patterns and Signals
 
-Patterns (`n"…"`, `v"…"`, `c"…"`, `s"…"`) carry a primary value buffer that doubles as a Signal. When you pass a pattern to a slot that expects a Signal — `osc("sin", n"c4 e4 g4")`, `lp(sig, v"<200 800>", 0.7)` — the compiler implicitly extracts that buffer.
+Patterns (`n"…"`, `v"…"`, `c"…"`, `s"…"`) carry a primary value buffer that doubles as a Signal. When you pass a pattern to a slot that expects a Signal — `sine(n"c4 e4 g4")`, `lp(sig, v"<200 800>", 0.7)` — the compiler implicitly extracts that buffer.
 
 The **Pattern → Signal coerce** rule:
 
