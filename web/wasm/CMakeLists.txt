@@ -75,7 +75,6 @@ if(EMSCRIPTEN)
         _cedar_push_midi_event
         _cedar_set_default_midi_device
         _cedar_get_default_midi_device
-        _cedar_apply_midi_sources
         _cedar_load_midi_file
         # MIDI file CC playback (prd-midi-input §7.4)
         _cedar_drain_pending_file_ccs
@@ -98,8 +97,6 @@ if(EMSCRIPTEN)
         _cedar_has_wavetable
         _cedar_wavetable_find_id
         _cedar_wavetable_count
-        # State initialization
-        _cedar_apply_state_inits
         # Buffer-based state init (PRD prd-compile-off-audio-thread §5)
         _cedar_set_block_table
         _cedar_apply_state_inits_from_buffer
@@ -127,8 +124,6 @@ if(EMSCRIPTEN)
         # Required samples
         _akkado_get_required_samples_count
         _akkado_get_required_sample
-        _akkado_resolve_sample_ids
-        _akkado_patch_sample_ids_in_bytecode
         # Required SoundFonts
         _akkado_get_required_soundfonts_count
         _akkado_get_required_soundfont_filename

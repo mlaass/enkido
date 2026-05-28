@@ -1604,27 +1604,6 @@ function createAudioEngine() {
 	}
 
 	/**
-	 * Load bytecode into the Cedar VM (legacy - prefer compile())
-	 */
-	function loadProgram(bytecode: Uint8Array) {
-		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load program - worklet not initialized');
-			return;
-		}
-
-		console.log('[AudioEngine] Loading program, bytecode size:', bytecode.length);
-
-		// Clone the bytecode since we're transferring the buffer
-		const bytecodeClone = bytecode.slice();
-
-		// Transfer bytecode to worklet
-		workletNode.port.postMessage(
-			{ type: 'loadProgram', bytecode: bytecodeClone.buffer },
-			[bytecodeClone.buffer]
-		);
-	}
-
-	/**
 	 * Set an external parameter
 	 */
 	function setParam(name: string, value: number, slewMs?: number) {
@@ -2740,7 +2719,6 @@ function createAudioEngine() {
 		setVolume,
 		toggleVisualizations,
 		compile,
-		loadProgram,
 		setParam,
 		getAnalyserNode,
 		getAudioContext,
