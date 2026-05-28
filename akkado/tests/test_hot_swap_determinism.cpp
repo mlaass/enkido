@@ -280,6 +280,111 @@ void live_load(cedar::VM& vm, const akkado::CompileResult& cr,
     apply_seq_state_inits(vm, cr, seq_storage);
 }
 
+// Per-event voice-fire counter. The "voice retriggered or released" check in
+// the existing tests is too coarse: it passes if any one voice fires. This
+// helper verifies the stronger property — the count of voice allocations per
+// block equals the number of NoteOn onsets the pattern emits in that block's
+// sample window, summing the chord notes (`evt.num_values`) for chord events.
+//
+// Detection rule for "voice fired this block": after process_block returns,
+// any voice with `active && age == 1` was just allocated this block (poly's
+// tick() increments age once per block; allocate_voice sets age=0, so a fresh
+// allocation lands at age=1 post-tick).
+//
+// Caveat: pattern queries (SEQPAT_QUERY) refresh `output.events` per cycle.
+// For chord patterns (the focus of these tests) the events are stable across
+// cycles, so reading output.events after each block is safe. ALTERNATE
+// patterns would need a different approach.
+struct VoiceFireCounter {
+    cedar::VM* vm = nullptr;
+    std::uint32_t poly_id = 0;
+    std::uint32_t seq_id = 0;
+    // Counter state.
+    std::uint32_t total_expected_fires = 0;
+    std::uint32_t total_observed_fires = 0;
+    std::uint32_t blocks_with_underfire = 0;
+    std::uint32_t blocks_with_overfire = 0;
+    std::ostringstream first_underfire;
+    std::ostringstream first_overfire;
+
+    void step() {
+        const auto* poly = vm->states().template get_if<cedar::PolyAllocState>(poly_id);
+        const auto* seq  = vm->states().template get_if<cedar::SequenceState>(seq_id);
+        if (!poly || !poly->voices || !seq || seq->output.num_events == 0) {
+            return;
+        }
+        // Count fires this block: active voices with age==1 (one tick since
+        // allocate_voice set age=0).
+        std::uint32_t observed = 0;
+        for (std::uint16_t v = 0; v < poly->max_voices; ++v) {
+            const auto& voice = poly->voices[v];
+            if (voice.active && voice.age == 1) ++observed;
+        }
+        total_observed_fires += observed;
+
+        // Expected fires: walk output.events, sum num_values for events whose
+        // onset (e.time, beats from cycle start) falls inside this block's
+        // sample window. Mirrors cedar/src/vm/vm.cpp:compute_block_timing —
+        // double-precision beat math + boundary-epsilon snap so cycle-end
+        // events fire in the SAME block as run_voice_pool decided to fire
+        // them. Drift between this counter and the VM would produce false
+        // "underfire" reports.
+        constexpr double CYCLE_BOUNDARY_EPSILON = 1e-9;
+        const double sr_d = static_cast<double>(vm->context().sample_rate);
+        const double bpm_d = static_cast<double>(vm->context().bpm);
+        const double spb_d = (60.0 / bpm_d) * sr_d;
+        const double cycle_length_d = static_cast<double>(seq->cycle_length);
+        if (spb_d <= 0.0 || cycle_length_d <= 0.0) return;
+        const std::uint64_t global = vm->context().global_sample_counter;
+        if (global < cedar::BLOCK_SIZE) return;  // not enough history yet
+        const std::uint64_t block_start_sample = global - cedar::BLOCK_SIZE;
+        const double beat_start_d =
+            static_cast<double>(block_start_sample) / spb_d;
+        double cycle_pos_raw = std::fmod(beat_start_d, cycle_length_d);
+        if (cycle_pos_raw < CYCLE_BOUNDARY_EPSILON) cycle_pos_raw = 0.0;
+        const double cycle_pos_d = cycle_pos_raw;
+        const double block_beats_d =
+            static_cast<double>(cedar::BLOCK_SIZE) / spb_d;
+        double block_end_pos_raw = cycle_pos_d + block_beats_d;
+        if (std::abs(block_end_pos_raw - cycle_length_d) < CYCLE_BOUNDARY_EPSILON) {
+            block_end_pos_raw = cycle_length_d;
+        }
+        // Narrow to float to match the VM's event-time comparison precision.
+        const float cycle_pos = static_cast<float>(cycle_pos_d);
+        const float block_end_pos = static_cast<float>(block_end_pos_raw);
+        const float cycle_length = static_cast<float>(cycle_length_d);
+        std::uint32_t expected = 0;
+        for (std::uint32_t i = 0; i < seq->output.num_events; ++i) {
+            const auto& e = seq->output.events[i];
+            const bool in_block = (e.time >= cycle_pos && e.time < block_end_pos);
+            const bool in_wrap = (block_end_pos > cycle_length) &&
+                                 (e.time < block_end_pos - cycle_length);
+            if (in_block || in_wrap) {
+                expected += e.num_values > 0 ? e.num_values : 1;
+            }
+        }
+        total_expected_fires += expected;
+        if (observed < expected) {
+            ++blocks_with_underfire;
+            if (first_underfire.tellp() == 0) {
+                first_underfire << "underfire @block_start_sample=" << block_start_sample
+                                << " cycle_pos=" << cycle_pos
+                                << " expected=" << expected
+                                << " observed=" << observed;
+            }
+        }
+        if (observed > expected) {
+            ++blocks_with_overfire;
+            if (first_overfire.tellp() == 0) {
+                first_overfire << "overfire @block_start_sample=" << block_start_sample
+                               << " cycle_pos=" << cycle_pos
+                               << " expected=" << expected
+                               << " observed=" << observed;
+            }
+        }
+    }
+};
+
 // Walk every SequenceState in the pool and return the highest seq.step
 // observed. The simplest cross-pattern progress indicator: as long as
 // playback is advancing the alternation counter, this is monotonically
@@ -534,9 +639,11 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
         bool observed_voice_retrigger_or_release = false;
         bool observed_pattern_advance = false;
         bool observed_releasing_flag = false;
+        VoiceFireCounter fires{&vm, poly_state_id, seq_state_id};
         for (std::size_t i = 0; i < blocks_b; ++i) {
             vm.process_block(left.data(), right.data());
             for (float s : left) mono_out.push_back(s);
+            fires.step();
 
             auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
             if (seq_now && seq_now->cycle_index > cycle_pre) {
@@ -638,6 +745,20 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
         CHECK(observed_pattern_advance);
         // (B) Voices retrigger or release at least once in post-swap window.
         CHECK(observed_voice_retrigger_or_release);
+
+        // Layer A: per-event voice-fire count over the post-swap window.
+        // The "any voice retriggered" check above passes if even one voice
+        // fires once; this aggregate check makes sure the count of voice
+        // allocations matches the count of NoteOn onsets the pattern emits.
+        INFO("post-B voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
 
         // (C) Audio is not a stuck periodic tone. Two non-overlapping
         // 512-sample windows ≥ 0.5 s apart must differ. A frozen voice
@@ -812,9 +933,11 @@ TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
         mono_out.reserve(blocks_b * cedar::BLOCK_SIZE);
         bool observed_voice_retrigger_or_release = false;
         bool observed_pattern_advance = false;
+        VoiceFireCounter fires{&vm, poly_state_id, seq_state_id};
         for (std::size_t i = 0; i < blocks_b; ++i) {
             vm.process_block(left.data(), right.data());
             for (float s : left) mono_out.push_back(s);
+            fires.step();
 
             auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
             if (seq_now && (seq_now->cycle_index > cycle_pre ||
@@ -875,6 +998,21 @@ TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
 
         CHECK(observed_pattern_advance);
         CHECK(observed_voice_retrigger_or_release);
+
+        // Layer A: per-event voice-fire count. Every event onset that lands
+        // inside the post-swap window must allocate `event.num_values` voices.
+        // Catches "half the unison cluster died", "gate-off arrived early",
+        // "events stopped firing mid-window" — all of which slip past the
+        // RMS-variance check below.
+        INFO("post-B voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
 
         const std::size_t half_sec =
             static_cast<std::size_t>(vm.context().sample_rate) / 2;
@@ -993,6 +1131,12 @@ TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
         std::uint32_t seq_id =
             find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
 
+        // Aggregate voice-fire counter spanning all edits in the chain.
+        // Catches the "drone forever" symptom: if any edit kills the voice
+        // pool, observed_fires falls to zero while expected_fires keeps
+        // climbing — the aggregate inequality fails loudly.
+        VoiceFireCounter fires{&vm, poly_id, seq_id};
+
         for (std::size_t e = 1; e < sizeof(edits) / sizeof(edits[0]); ++e) {
             INFO("crossfade_blocks=" << crossfade_blocks
                  << " edit #" << e << ": " << edits[e].desc);
@@ -1025,6 +1169,7 @@ TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
             for (std::size_t i = 0; i < blocks; ++i) {
                 vm.process_block(left.data(), right.data());
                 for (float s : left) mono.push_back(s);
+                fires.step();
             }
 
             auto* poly_after = vm.states().get_if<cedar::PolyAllocState>(poly_id);
@@ -1053,6 +1198,21 @@ TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
             INFO("edit #" << e << " RMS mean=" << mean << " stddev=" << stddev);
             CHECK(stddev > 0.02 * std::max(mean, 1e-6));
         }
+
+        // Layer A: aggregate fire count across all chain edits. If any edit
+        // sticks the voice pool, observed will fall behind expected here.
+        // Per-block strict underfire is appropriate too — each edit is
+        // followed by ~250 blocks of render, plenty of time for SEQPAT_QUERY
+        // to refresh and voices to allocate normally.
+        INFO("chain voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
     };
 
     SECTION("crossfade disabled — chain") {
@@ -1116,6 +1276,16 @@ TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
         std::uint32_t seq_id =
             find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
 
+        // Aggregate voice-fire counter spanning the edit storm + the tail.
+        // The user's failure mode here is "the tail goes silent" — i.e.
+        // observed_fires collapses to ~0 after the rapid-fire burst. The
+        // aggregate inequality catches that cleanly. We do NOT assert
+        // blocks_with_underfire == 0: with only 1-4 blocks between swaps,
+        // SEQPAT_QUERY may legitimately have a stale cache for one block
+        // around the swap boundary, producing a transient under-fire that
+        // does not indicate the bug.
+        VoiceFireCounter fires{&vm, poly_id, seq_id};
+
         // 20 micro-edits to the ADSR attack, each separated by only a few blocks.
         // Total sim time: 20 * blocks_between_swaps blocks ≈ 20 * 0.0027 s
         // ≈ 0.05 s — emulates a user holding down a slider for 50 ms.
@@ -1129,6 +1299,7 @@ TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
             for (std::size_t i = 0; i < blocks_between_swaps; ++i) {
                 vm.process_block(left.data(), right.data());
                 for (float s : left) mono.push_back(s);
+                fires.step();
             }
         }
 
@@ -1137,6 +1308,7 @@ TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
         for (std::size_t i = 0; i < blocks_per_sec * 4; ++i) {
             vm.process_block(left.data(), right.data());
             for (float s : left) mono.push_back(s);
+            fires.step();
         }
 
         auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_id);
@@ -1171,6 +1343,20 @@ TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
         const double stddev = std::sqrt(var / rms.size());
         INFO("tail RMS mean=" << mean << " stddev=" << stddev);
         CHECK(stddev > 0.02 * std::max(mean, 1e-6));
+
+        // Layer A (aggregate-only for rapid-fire): if the tail goes silent
+        // observed_fires stops growing while expected_fires keeps climbing
+        // with the pattern's cycle queries. Per-block strictness is dropped
+        // because the rapid-fire timing legitimately straddles SEQPAT_QUERY
+        // cache invalidations.
+        INFO("rapid-fire voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
     };
 
     SECTION("crossfade=0, 1 block between swaps") {
