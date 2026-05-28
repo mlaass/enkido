@@ -237,6 +237,35 @@ cd web/wasm && ./build_debug.sh
 
 ### Web Architecture
 
+**Worklet thread contract**: The AudioWorklet processor
+(`web/static/worklet/cedar-processor.js`) runs on the audio thread.
+`process()` fires every 2.67 ms (128 samples @ 48 kHz); a single
+blocking message handler starves the audio output for its full duration.
+To keep that from happening, the worklet may only execute:
+
+- `_cedar_process_block` (audio rendering)
+- `_cedar_set_block_table` + `_cedar_load_program` (fast, fixed-cost)
+- the four `*_from_buffer` apply paths
+  (`cedar_apply_state_inits_from_buffer`,
+  `akkado_resolve_sample_ids_from_buffer`,
+  `cedar_apply_midi_sources_from_buffer`,
+  `akkado_patch_sample_ids_in_bytecode_from_buffer`)
+- parameter / MIDI / CC poke-throughs
+
+Anything CPU-heavy — `akkado_compile`, metadata extraction, fetch /
+decode, string parsing, JSON walking — runs in the **compile worker**
+(`web/src/lib/audio/compile.worker.ts`). The worker owns its own
+`nkido.wasm` instance, runs compilation, packs the four wire-format
+buffers (bytecode, stateInitsBuf, midiSourcesBuf, blockTable) and posts
+them to the main thread; the main thread runs the existing sample / SF2
+/ MIDI loaders and forwards the packed buffers to the worklet via
+`loadProgram`. See `docs/prd-compile-off-audio-thread.md` for the full
+design + wire format.
+
+Do not reintroduce a `'compile'` handler on the worklet. If a new code
+path needs the audio thread to do work beyond the list above, it almost
+certainly belongs in the worker or on the main thread.
+
 **State Management**: Uses Svelte 5 runes with singleton store pattern.
 
 Stores in `src/lib/stores/`:
