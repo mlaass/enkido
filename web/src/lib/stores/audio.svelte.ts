@@ -406,6 +406,13 @@ function createAudioEngine() {
 	// of seeing workletNode still null and bailing out.
 	let initPromise: Promise<void> | null = null;
 
+	// Compile worker (PRD prd-compile-off-audio-thread §4). Owns its own
+	// nkido.wasm instance; runs akkado_compile and all metadata extraction
+	// off the AudioWorklet thread. Spawned during initialize(). Commit 2
+	// just boots the worker; commit 5 routes compile() through it.
+	let compileWorker: Worker | null = null;
+	let compileWorkerReady: Promise<void> | null = null;
+
 	// Currently connected live-input source (audio-input PRD §4.5).
 	// Null = no input attached; in() then returns silence.
 	let activeInput: ActiveInputSource | null = null;
@@ -576,6 +583,12 @@ function createAudioEngine() {
 			workletNode.connect(gainNode);
 			gainNode.connect(analyserNode);
 			analyserNode.connect(audioContext.destination);
+
+			// Spawn the compile worker alongside the worklet. The worker uses
+			// the same nkido.wasm bytes already fetched above, so there's no
+			// second network round-trip. We await `ready` so subsequent
+			// compile() calls don't have to special-case boot.
+			spawnCompileWorker();
 
 			state.isInitialized = true;
 			console.log('[AudioEngine] Initialized with AudioWorklet');
@@ -939,6 +952,40 @@ function createAudioEngine() {
 		// Send the JS code and binary to the worklet
 		// Clone the binary since we want to keep a copy
 		workletNode.port.postMessage({
+			type: 'init',
+			jsCode: wasmJsCode,
+			wasmBinary: wasmBinary.slice(0)
+		});
+	}
+
+	function spawnCompileWorker() {
+		if (compileWorker) return;
+		if (!wasmJsCode || !wasmBinary) {
+			console.error('[AudioEngine] Cannot spawn compile worker — WASM not loaded');
+			return;
+		}
+
+		compileWorker = new Worker(new URL('../audio/compile.worker.ts', import.meta.url), {
+			type: 'module'
+		});
+
+		compileWorkerReady = new Promise((resolve, reject) => {
+			const onMessage = (event: MessageEvent) => {
+				const msg = event.data;
+				if (msg?.type === 'ready') {
+					console.log('[AudioEngine] Compile worker ready');
+					compileWorker?.removeEventListener('message', onMessage);
+					resolve();
+				} else if (msg?.type === 'initError') {
+					console.error('[AudioEngine] Compile worker init failed:', msg.message);
+					compileWorker?.removeEventListener('message', onMessage);
+					reject(new Error(String(msg.message)));
+				}
+			};
+			compileWorker?.addEventListener('message', onMessage);
+		});
+
+		compileWorker.postMessage({
 			type: 'init',
 			jsCode: wasmJsCode,
 			wasmBinary: wasmBinary.slice(0)
