@@ -183,11 +183,17 @@ async function initFromCode(jsCode: string, wasmBinary: ArrayBuffer) {
 function copyBytes(ptr: number, byteCount: number): Uint8Array {
     const out = new Uint8Array(byteCount);
     if (byteCount === 0) return out;
-    if (wasm.HEAPU8) {
-        out.set(wasm.HEAPU8.subarray(ptr, ptr + byteCount));
-    } else if (wasm.wasmMemory) {
+    // Always source a FRESH typed-array view from wasmMemory; the
+    // module-cached HEAPU8 / HEAPF32 views are invalidated by every
+    // WASM call that may have grown memory (std::vector::resize inside
+    // the C++ packers is a common trigger). Reading from a stale view
+    // returns zeros for any pages beyond the old buffer's extent —
+    // silent data corruption with the same shape as a successful copy.
+    if (wasm.wasmMemory) {
         const heap = new Uint8Array(wasm.wasmMemory.buffer);
         out.set(heap.subarray(ptr, ptr + byteCount));
+    } else if (wasm.HEAPU8) {
+        out.set(wasm.HEAPU8.subarray(ptr, ptr + byteCount));
     } else {
         for (let i = 0; i < byteCount; i++) {
             out[i] = wasm.getValue(ptr + i, 'i8') & 0xff;
