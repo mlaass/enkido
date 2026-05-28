@@ -37,6 +37,14 @@ export interface NkidoTestHooks {
 		rms: number[];
 		sampleIntervalMs: number;
 	}>;
+
+	/**
+	 * Force-terminate the compile worker. The next compile() call must
+	 * surface a synthetic "worker crashed" diagnostic and then respawn the
+	 * worker, so the call after that succeeds. Used by the worker-recovery
+	 * e2e test.
+	 */
+	terminateCompileWorker(): void;
 }
 
 declare global {
@@ -86,6 +94,7 @@ export function installTestHooks() {
 		editor: editorStore,
 		readTimeDomain,
 		readRms,
-		captureRmsTrace
+		captureRmsTrace,
+		terminateCompileWorker: () => audioEngine.terminateCompileWorker()
 	};
 }

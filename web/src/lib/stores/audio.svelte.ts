@@ -901,6 +901,30 @@ function createAudioEngine() {
 		});
 	}
 
+	/**
+	 * Test-only: simulate a worker crash by force-terminating the worker.
+	 * Verifies that the next compile() surfaces the synthetic diagnostic
+	 * and the one after respawns and succeeds.
+	 */
+	function terminateCompileWorker() {
+		if (!compileWorker) return;
+		compileWorker.terminate();
+		// Trip the same path that an unexpected onerror takes — without
+		// dispatching an actual ErrorEvent (terminate() doesn't emit one).
+		compileWorker = null;
+		compileWorkerReady = null;
+		compileWorkerDead = true;
+		for (const resolve of pendingCompileResolves.values()) {
+			resolve({
+				success: false,
+				diagnostics: [
+					{ severity: 2, message: 'Compile worker crashed — restarting on next compile', line: 1, column: 1 }
+				]
+			});
+		}
+		pendingCompileResolves.clear();
+	}
+
 	function spawnCompileWorker() {
 		if (compileWorker) return;
 		if (!wasmJsCode || !wasmBinary) {
@@ -2861,6 +2885,7 @@ function createAudioEngine() {
 		setVolume,
 		toggleVisualizations,
 		compile,
+		terminateCompileWorker,
 		setParam,
 		getAnalyserNode,
 		getAudioContext,
