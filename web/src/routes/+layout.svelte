@@ -4,6 +4,7 @@
 	import { initializeDocs } from '$lib/docs';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { audioEngine } from '$lib/stores/audio.svelte';
+	import { installTestHooks } from '$lib/test-hooks';
 
 	let { children } = $props();
 
@@ -18,6 +19,9 @@
 		audioEngine.initialize().catch((err) => {
 			console.error('[AudioEngine] Eager init failed:', err);
 		});
+		// `window.__nkidoTest` for Playwright e2e tests. No-op in production
+		// (still exposed — the surface is read-only debug accessors).
+		installTestHooks();
 	});
 </script>
 
