@@ -294,6 +294,100 @@ TEST_CASE("midi sources buffer round-trip", "[state_init_codec]") {
     REQUIRE(s1->tempo_mode     == cedar::MidiQueueState::TempoMode::File);
 }
 
+// Hot-swap regression — applies state inits via the BUFFER codec on every
+// swap, mirroring what the browser does on recompile. Pinned against the
+// no-swap baseline. If this passes but the e2e fails, the bug is in the
+// browser host wiring, not the codec.
+TEST_CASE("buffer-codec hot-swap is bit-perfect on user pad shape", "[state_init_codec][hot_swap_buffer]") {
+    const char* src = R"(
+bpm = 135
+fn pad_voice(freq, gate, vel, ext) ->
+    saw(freq, ext.phase) * adsr(gate, 0.5, 0.6, 0.7, 1.2) * vel
+    |> lp(@, 2800)
+
+fn fat({freq, gate, vel}) ->
+    unison(freq, gate, vel, pad_voice,
+           voices: 3, detune: 0.3, width: .7, phase: 0.2)
+
+c"Cmaj9 Am11@2 Fmaj7 G9@2".slow(2).transpose(-12)
+    |> poly(@, fat, 8, 3) * 0.2
+    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})
+    |> out(@)
+)";
+
+    auto cr = akkado::compile(src);
+    REQUIRE(cr.success);
+
+    const std::size_t inst_size = sizeof(cedar::Instruction);
+    const auto* instructions =
+        reinterpret_cast<const cedar::Instruction*>(cr.bytecode.data());
+    const std::size_t inst_count = cr.bytecode.size() / inst_size;
+    std::span<const cedar::Instruction> insts(instructions, inst_count);
+
+    auto buf = akkado::state_init_buffer::pack_state_inits(
+        cr.state_inits, cr.scalar_sample_mappings);
+
+    auto render = [&](bool do_swaps, std::vector<float>& out_audio) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(3);
+        if (!cr.block_table.empty()) {
+            vm.set_block_table(cr.block_table, cr.main_instruction_count);
+        }
+        REQUIRE(vm.load_program(insts) == cedar::VM::LoadResult::Success);
+        REQUIRE(akkado::state_init_buffer::apply_state_inits(
+                    vm, buf.data(),
+                    static_cast<std::uint32_t>(buf.size())) >= 0);
+
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        auto render_n = [&](std::uint32_t n) {
+            for (std::uint32_t b = 0; b < n; ++b) {
+                vm.process_block(L.data(), R.data());
+                out_audio.insert(out_audio.end(), L.begin(), L.end());
+            }
+        };
+        render_n(200);
+        for (std::uint32_t s = 0; s < 6; ++s) {
+            if (do_swaps) {
+                cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
+                for (int retry = 0; retry < 64; ++retry) {
+                    if (!cr.block_table.empty()) {
+                        vm.set_block_table(cr.block_table, cr.main_instruction_count);
+                    }
+                    res = vm.load_program(insts);
+                    if (res == cedar::VM::LoadResult::Success) break;
+                    render_n(1);
+                }
+                REQUIRE(res == cedar::VM::LoadResult::Success);
+                REQUIRE(akkado::state_init_buffer::apply_state_inits(
+                            vm, buf.data(),
+                            static_cast<std::uint32_t>(buf.size())) >= 0);
+            }
+            render_n(120);
+        }
+    };
+
+    std::vector<float> audio_swap;
+    std::vector<float> audio_base;
+    render(/*do_swaps=*/true,  audio_swap);
+    render(/*do_swaps=*/false, audio_base);
+
+    const std::size_t diff_start = 200 * cedar::BLOCK_SIZE;
+    const std::size_t end = std::min(audio_swap.size(), audio_base.size());
+    double sumsq_diff = 0.0;
+    double sumsq_ref  = 0.0;
+    for (std::size_t i = diff_start; i < end; ++i) {
+        const float d = audio_swap[i] - audio_base[i];
+        sumsq_diff += static_cast<double>(d) * d;
+        sumsq_ref  += static_cast<double>(audio_base[i]) * audio_base[i];
+    }
+    const double rmse    = std::sqrt(sumsq_diff / std::max<std::size_t>(1, end - diff_start));
+    const double rms_ref = std::sqrt(sumsq_ref  / std::max<std::size_t>(1, end - diff_start));
+    REQUIRE(rms_ref > 1e-6);
+    const double ratio = rmse / rms_ref;
+    INFO("rmse=" << rmse << " rms_ref=" << rms_ref << " ratio=" << ratio);
+    CHECK(ratio < 1e-3);
+}
+
 TEST_CASE("block table memcpy round-trip", "[state_init_codec]") {
     std::vector<cedar::BlockEntry> table;
     table.push_back(cedar::BlockEntry{1, 8, 3, 1, 0, 16, 4});

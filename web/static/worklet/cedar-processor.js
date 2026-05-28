@@ -465,8 +465,11 @@ class CedarProcessor extends AudioWorkletProcessor {
 			}
 		}
 
-		// Stage the FOREACH_EVENT subprogram table BEFORE cedar_load_program.
-		// The VM consumes-and-clears the staged table during the next load.
+		// Stage the FOREACH_EVENT / BLOCK_CALL subprogram table BEFORE
+		// cedar_load_program. The VM consumes-and-clears the staged table
+		// during the next load. We always stage so the main/body boundary
+		// (mainInstCount) is the source of truth — even when the table is
+		// empty, the boundary fixes the dispatch loop bounds.
 		const blockEntryCount = blockTable && blockTable.byteLength > 0
 			? blockTable.byteLength / 12
 			: 0;
