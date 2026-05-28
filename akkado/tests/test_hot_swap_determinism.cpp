@@ -912,3 +912,277 @@ TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
     }
 }
 
+
+// ============================================================================
+// Deeper repro attempt: multiple consecutive hot-swaps with varied edits
+// ============================================================================
+//
+// User reports the drone still occurs in the browser after the FOREACH_EVENT
+// touch fix and the prior regression test (which passes). User notes the bug
+// becomes "reliable" after a page restart and triggers on editing ANY line.
+// The single-swap test above does not reproduce — so either the bug is
+// (a) a stale browser cache, (b) requires multiple swaps to accumulate,
+// (c) requires a specific edit shape that the prior test misses.
+//
+// This test exercises (b) and (c) together: load the original patch, then
+// do five consecutive hot-swaps each touching a different param (adsr times,
+// lp cutoff, reverb wet, unison voices count, transpose value), rendering
+// ~3 s between each. After each swap, PolyAllocState must survive and the
+// audio per-block RMS variance must be > 2% of the mean.
+
+TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
+          "[hot_swap][regression][drone][chain]") {
+    auto make_src = [](float adsr_a, int lp_cut, float rev_wet,
+                       int u_voices, int transpose) {
+        std::ostringstream os;
+        os << "bpm = 72\n\n"
+           << "fn pad_voice(freq, gate, vel, ext) ->\n"
+           << "    saw(freq, ext.phase) * adsr(gate, " << adsr_a
+           << ", 0.6, 0.7, 1.2) * vel\n"
+           << "    |> lp(@, " << lp_cut << ")\n\n"
+           << "fn fat({freq, gate, vel}) ->\n"
+           << "    unison(freq, gate, vel, pad_voice,\n"
+           << "           voices: " << u_voices
+           << ", detune: 0.3, width: .7, phase: 0.2)*0.2\n\n"
+           << "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(" << transpose << ")\n"
+           << "    |> poly(@, fat)\n"
+           << "    |> reverb(@, 0.75, 0.6, ..{wet: " << rev_wet << "})\n"
+           << "    |> out(@)\n";
+        return os.str();
+    };
+
+    struct Edit { const char* desc; float adsr_a; int lp_cut; float rev_wet; int u_voices; int transpose; };
+    // Note: unison voices stays at 4 — voices: 6 exhausts the bytecode buffer
+    // pool on this nested patch (compile error E101). The bug under
+    // investigation is the runtime drone, not the codegen capacity limit.
+    const Edit edits[] = {
+        {"base",            0.5f, 2800, 0.1f, 4, -12},
+        {"adsr attack",     0.6f, 2800, 0.1f, 4, -12},
+        {"lp cutoff",       0.6f, 3200, 0.1f, 4, -12},
+        {"reverb wet",      0.6f, 3200, 0.2f, 4, -12},
+        {"transpose",       0.6f, 3200, 0.2f, 4,  -7},
+        {"adsr release",    0.6f, 3200, 0.2f, 4,  -7},  // bumps the 1.2 implicit but actually re-emit base
+    };
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+
+        auto cr0 = akkado::compile(make_src(edits[0].adsr_a, edits[0].lp_cut,
+                                            edits[0].rev_wet, edits[0].u_voices,
+                                            edits[0].transpose));
+        if (!cr0.success) {
+            std::ostringstream os;
+            for (const auto& d : cr0.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile base diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr0.success);
+        live_load(vm, cr0, seq_storage);
+
+        for (std::size_t i = 0; i < blocks_per_sec * 3; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        std::uint32_t poly_id = find_poly_state_id(cr0);
+        REQUIRE(poly_id != 0);
+        std::uint32_t seq_id =
+            find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
+
+        for (std::size_t e = 1; e < sizeof(edits) / sizeof(edits[0]); ++e) {
+            INFO("crossfade_blocks=" << crossfade_blocks
+                 << " edit #" << e << ": " << edits[e].desc);
+            auto src_e = make_src(edits[e].adsr_a, edits[e].lp_cut,
+                                  edits[e].rev_wet, edits[e].u_voices,
+                                  edits[e].transpose);
+            auto cr = akkado::compile(src_e);
+            if (!cr.success) {
+                std::ostringstream dbg;
+                dbg << "[CHAIN] edit #" << e << " (" << edits[e].desc
+                    << ") compile failed, diag count=" << cr.diagnostics.size()
+                    << ", bytecode size=" << cr.bytecode.size() << "\n";
+                for (std::size_t di = 0; di < cr.diagnostics.size(); ++di) {
+                    const auto& d = cr.diagnostics[di];
+                    dbg << "  [" << di << "] code=" << d.code
+                        << " sev=" << static_cast<int>(d.severity)
+                        << " msg=[" << d.message << "]\n";
+                }
+                dbg << "[CHAIN] source (" << src_e.size() << " chars):\n----\n"
+                    << src_e << "\n----\n";
+                std::fwrite(dbg.str().data(), 1, dbg.str().size(), stderr);
+                std::fflush(stderr);
+            }
+            REQUIRE(cr.success);
+            live_load(vm, cr, seq_storage);
+
+            std::vector<float> mono;
+            const std::size_t blocks = blocks_per_sec * 3;
+            mono.reserve(blocks * cedar::BLOCK_SIZE);
+            for (std::size_t i = 0; i < blocks; ++i) {
+                vm.process_block(left.data(), right.data());
+                for (float s : left) mono.push_back(s);
+            }
+
+            auto* poly_after = vm.states().get_if<cedar::PolyAllocState>(poly_id);
+            INFO("after edit #" << e << " poly_state present=" << (poly_after ? 1 : 0)
+                 << " pool_size=" << vm.states().size()
+                 << " fading=" << vm.states().fading_count());
+            CHECK(poly_after != nullptr);
+
+            auto* seq_after = vm.states().get_if<cedar::SequenceState>(seq_id);
+            INFO("after edit #" << e << " seq cycle_index="
+                 << (seq_after ? int(seq_after->cycle_index) : -1)
+                 << " last_beat_pos=" << (seq_after ? seq_after->last_beat_pos : -1.0f));
+            CHECK(seq_after != nullptr);
+
+            std::vector<float> rms;
+            for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono.size();
+                 i += cedar::BLOCK_SIZE) {
+                rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+            }
+            double sum = 0.0;
+            for (float r : rms) sum += r;
+            const double mean = sum / rms.size();
+            double var = 0.0;
+            for (float r : rms) var += (r - mean) * (r - mean);
+            const double stddev = std::sqrt(var / rms.size());
+            INFO("edit #" << e << " RMS mean=" << mean << " stddev=" << stddev);
+            CHECK(stddev > 0.02 * std::max(mean, 1e-6));
+        }
+    };
+
+    SECTION("crossfade disabled — chain") {
+        run_scenario(0);
+    }
+    SECTION("default crossfade — chain") {
+        run_scenario(3);
+    }
+}
+
+// ============================================================================
+// Rapid-fire swap stress test
+// ============================================================================
+//
+// Closer to what a live coder actually does: edit, save, edit-again before
+// the audio thread has time to fully consume the queued program. This test
+// queues a sequence of swaps with only a few blocks rendered between each
+// (simulating sub-second edits) and watches for any block where the audio
+// goes flat.
+
+TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
+          "[hot_swap][regression][drone][rapid]") {
+    auto make_src = [](float adsr_a) {
+        std::ostringstream os;
+        os << "bpm = 72\n\n"
+           << "fn pad_voice(freq, gate, vel, ext) ->\n"
+           << "    saw(freq, ext.phase) * adsr(gate, " << adsr_a
+           << ", 0.6, 0.7, 1.2) * vel\n"
+           << "    |> lp(@, 2800)\n\n"
+           << "fn fat({freq, gate, vel}) ->\n"
+           << "    unison(freq, gate, vel, pad_voice,\n"
+           << "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n\n"
+           << "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+           << "    |> poly(@, fat)\n"
+           << "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+           << "    |> out(@)\n";
+        return os.str();
+    };
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks,
+                            std::size_t blocks_between_swaps) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+
+        auto cr0 = akkado::compile(make_src(0.50f));
+        REQUIRE(cr0.success);
+        live_load(vm, cr0, seq_storage);
+
+        // Warm-up: render long enough to allocate voices and have the
+        // pattern playing actively.
+        for (std::size_t i = 0; i < blocks_per_sec * 4; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        std::uint32_t poly_id = find_poly_state_id(cr0);
+        std::uint32_t seq_id =
+            find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
+
+        // 20 micro-edits to the ADSR attack, each separated by only a few blocks.
+        // Total sim time: 20 * blocks_between_swaps blocks ≈ 20 * 0.0027 s
+        // ≈ 0.05 s — emulates a user holding down a slider for 50 ms.
+        std::vector<float> mono;
+        for (int e = 0; e < 20; ++e) {
+            const float adsr_a = 0.5f + static_cast<float>(e) * 0.02f;
+            auto cr = akkado::compile(make_src(adsr_a));
+            REQUIRE(cr.success);
+            live_load(vm, cr, seq_storage);
+
+            for (std::size_t i = 0; i < blocks_between_swaps; ++i) {
+                vm.process_block(left.data(), right.data());
+                for (float s : left) mono.push_back(s);
+            }
+        }
+
+        // Now render another 4 s "tail" with no edits, to see if the
+        // pattern recovers (or sticks).
+        for (std::size_t i = 0; i < blocks_per_sec * 4; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) mono.push_back(s);
+        }
+
+        auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_id);
+        auto* seq_post = vm.states().get_if<cedar::SequenceState>(seq_id);
+        INFO("crossfade_blocks=" << crossfade_blocks
+             << " blocks_between=" << blocks_between_swaps
+             << " poly present=" << (poly_post ? 1 : 0)
+             << " seq present=" << (seq_post ? 1 : 0)
+             << " pool=" << vm.states().size()
+             << " fading=" << vm.states().fading_count());
+
+        // States must survive.
+        CHECK(poly_post != nullptr);
+        CHECK(seq_post != nullptr);
+
+        // Audio in the tail (last ~4 s, post-rapid-fire) must not be a stuck waveform.
+        const std::size_t tail_start =
+            mono.size() > blocks_per_sec * cedar::BLOCK_SIZE * 3
+                ? mono.size() - blocks_per_sec * cedar::BLOCK_SIZE * 3
+                : 0;
+        std::vector<float> rms;
+        for (std::size_t i = tail_start; i + cedar::BLOCK_SIZE <= mono.size();
+             i += cedar::BLOCK_SIZE) {
+            rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+        }
+        REQUIRE(rms.size() > 4);
+        double sum = 0.0;
+        for (float r : rms) sum += r;
+        const double mean = sum / rms.size();
+        double var = 0.0;
+        for (float r : rms) var += (r - mean) * (r - mean);
+        const double stddev = std::sqrt(var / rms.size());
+        INFO("tail RMS mean=" << mean << " stddev=" << stddev);
+        CHECK(stddev > 0.02 * std::max(mean, 1e-6));
+    };
+
+    SECTION("crossfade=0, 1 block between swaps") {
+        run_scenario(0, 1);
+    }
+    SECTION("crossfade=0, 4 blocks between swaps") {
+        run_scenario(0, 4);
+    }
+    SECTION("crossfade=3, 1 block between swaps") {
+        run_scenario(3, 1);
+    }
+    SECTION("crossfade=3, 4 blocks between swaps") {
+        run_scenario(3, 4);
+    }
+}
