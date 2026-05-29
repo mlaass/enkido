@@ -25,7 +25,7 @@ const LEGACY_CODE_KEY = 'nkido-editor-code';
 // initial mirror value before `init()` swaps in the active draft's code.
 export const FALLBACK_CODE = `// new sketch
 
-osc("sin", 440) * 0.3 |> out(@)
+sine(440) * 0.3 |> out(@)
 `;
 
 function pickWelcome(): string {

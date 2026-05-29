@@ -11,7 +11,7 @@ This PRD makes the callback parameter list a first-class, flexible thing — con
 - **Positional form, take-the-prefix-you-need.** `(freq) ->`, `(freq, gate) ->`, `(freq, gate, vel) ->` … up to all eleven fixed fields, in a fixed canonical order. The historical `(freq, gate, vel)` callback keeps compiling unchanged — it is just the 3-prefix of the canonical order.
 - **Record-destructure form.** `({note, vel, cutoff}) -> …` pulls named fields (fixed *or* custom) straight off the event record. This is the "catchall with names" — variadic by name.
 - **Mixed form.** `(freq, gate, {cutoff, dur}) -> …` — leading positionals plus a trailing destructure, both reading the same event.
-- **Rest-param escape hatch.** `(...e) -> osc("sin", e.freq) * e.vel` binds the whole event record to one name.
+- **Rest-param escape hatch.** `(...e) -> sine(e.freq) * e.vel` binds the whole event record to one name.
 - **All eleven fixed fields + custom fields** are exposed. Missing fields bind to `0` (no error); an explicit destructure default (`{cutoff = 0.5}`) is honoured when the field is absent.
 - **Custom fields are per-voice.** Today every custom field is a per-event scalar (mini-notation record suffixes like `c4{cutoff:0.8}`, stored in `OutputEvent::prop_vals[]`, max 4 per pattern). Each voice sees its own note's value. There is no signal-valued custom-field path in the current implementation, so the per-voice/shared distinction collapses to "always per-voice".
 
@@ -69,11 +69,11 @@ The rest of the language already treats every pattern event as an 11-field recor
 n"c4 e4 g4" |> poly(@, (freq) -> saw(freq)) |> out(@)
 
 // 3 params — the historical form, still valid verbatim
-n"c4 e4 g4 b4" |> poly(@, (freq, gate, vel) -> osc("sin", freq) * vel * gate, 8) |> out(@)
+n"c4 e4 g4 b4" |> poly(@, (freq, gate, vel) -> sine(freq) * vel * gate, 8) |> out(@)
 
 // More positionals — canonical order continues past vel
 n"c4 e4 g4" |> poly(@, (freq, gate, vel, trig, type, note) ->
-    osc("sin", freq) * ar(trig, 0.01, 0.3) * vel) |> out(@)
+    sine(freq) * ar(trig, 0.01, 0.3) * vel) |> out(@)
 ```
 
 **Canonical positional order** (positions 1…11):
@@ -93,14 +93,14 @@ chord("C Em Am G") |> poly(@, ({freq, vel, gate}) ->
 
 // Reach fields that positional users never could
 n"c4 e4 g4" |> poly(@, ({freq, note, dur, phase}) ->
-    osc("sin", freq) * (1 - phase) * (dur > 0.5 ? 1 : 0.6)) |> out(@)
+    sine(freq) * (1 - phase) * (dur > 0.5 ? 1 : 0.6)) |> out(@)
 
 // Custom per-note fields straight off mini-notation record suffixes
 n"c4{cutoff:0.9} e4{cutoff:0.3} g4{cutoff:0.6}" |> poly(@, ({freq, gate, cutoff}) ->
     saw(freq) |> lp(@, cutoff * 4000) |> @ * ar(gate, 0.01, 0.3)) |> out(@)
 
 // Aliases resolve like everywhere else (pitch → freq, n → note, …)
-n"c4 e4 g4" |> poly(@, ({pitch, v}) -> osc("sin", pitch) * v) |> out(@)
+n"c4 e4 g4" |> poly(@, ({pitch, v}) -> sine(pitch) * v) |> out(@)
 ```
 
 ### 2.3 Mixed — positional prefix + trailing destructure
@@ -121,11 +121,11 @@ The leading params consume positions 1…k of the canonical order; the trailing 
 // (AR retriggers on rising edges of `.gate`; for one-shot pulse semantics
 // use `e.trig`. The two are distinct fields, not aliases.)
 chord("C Em Am G") |> poly(@, (...e) ->
-    osc("sin", e.freq) * e.vel * ar(e.gate, 0.02, 0.5))
+    sine(e.freq) * e.vel * ar(e.gate, 0.02, 0.5))
     |> out(@)
 
 // Rest may follow positionals too
-n"c4 e4 g4" |> poly(@, (freq, ...e) -> osc("saw", freq) * e.vel) |> out(@)
+n"c4 e4 g4" |> poly(@, (freq, ...e) -> saw(freq) * e.vel) |> out(@)
 ```
 
 ### 2.5 Defaults for absent fields
@@ -487,7 +487,7 @@ form did not compile.
 | Input | Expected behaviour |
 |---|---|
 | `(v) -> v` | `v` is **freq** (positional position 1), not the event record. Documented footgun. |
-| `() -> osc("sin", 220)` | Legal — voice ignores the event entirely. |
+| `() -> sine(220)` | Legal — voice ignores the event entirely. |
 | `({frqe}) -> …` (typo) | `frqe` binds to `0` silently (decision #4). No diagnostic. |
 | `(a, b, c) -> …` | Identical to `(freq, gate, vel) -> …` — positional names are ignored. |
 | `(freq, {freq}) -> …` | `E408` — `freq` bound both positionally and in the destructure. |

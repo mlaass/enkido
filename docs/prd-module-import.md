@@ -103,11 +103,11 @@ import "filters" as f      // namespaced — access via f.lp(), f.hp()
 ```akkado
 // Direct injection — names available unqualified
 import "synths"
-osc("saw", 440) |> out(@, @)
+saw(440) |> out(@, @)
 
 // Namespaced — names require qualifier
 import "effects" as fx
-osc("saw", 440) |> fx.chorus(@, 0.5, 0.3) |> out(@, @)
+saw(440) |> fx.chorus(@, 0.5, 0.3) |> out(@, @)
 
 // Multiple imports
 import "synths"
@@ -192,10 +192,10 @@ Definitions from the imported module are only accessible via
 import "effects" as fx
 
 // fx.chorus is accessible
-osc("saw", 440) |> fx.chorus(@, 0.5, 0.3)
+saw(440) |> fx.chorus(@, 0.5, 0.3)
 
 // chorus alone is NOT accessible
-osc("saw", 440) |> chorus(@, 0.5, 0.3)  // ERROR: undefined 'chorus'
+saw(440) |> chorus(@, 0.5, 0.3)  // ERROR: undefined 'chorus'
 ```
 
 ### Circular Imports
@@ -525,7 +525,7 @@ passing.
 
 ```akkado
 // Stdlib via bundled scheme
-osc("saw", 440) |> out(@, @)        // osc() resolved from bundled://std/osc.ak
+saw(440) |> out(@, @)        // osc() resolved from bundled://std/osc.ak
 
 // Explicit bundled import
 import "bundled://std/filters"

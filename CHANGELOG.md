@@ -5,7 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.3] - 2026-05-29
+
+### Fixed
+
+- **Compile no longer blocks the audio thread.** Recompiling a patch
+  used to stall `process()` for the full duration of `akkado_compile`
+  (~110 ms median, ~158 ms peak on heavy patches like the unison-pad),
+  causing audible silence on every hot-swap. Compile now runs in a
+  dedicated Web Worker that owns its own WASM instance; the
+  AudioWorklet only receives pre-packed bytecode + state-init buffers
+  via the new `loadProgram` message.
+
+### Changed
+
+- **Rapid recompiles supersede-by-newest.** Holding Ctrl+Enter no
+  longer queues a long backlog of compiles; every new compile gets a
+  monotonic generation tag and stale results are silently dropped, so
+  only the latest source ever lands in the worklet.
+- **Compile worker recovers from crashes.** If the worker is killed
+  (WASM trap, OOM, browser kill), the next `compile()` surfaces a
+  "worker crashed — restarting" diagnostic and the call after that
+  respawns the worker and succeeds — no page reload required.
+
+## [0.4.2] - 2026-05-28
+
+### Added
+
+- **`_` placeholder in specialized call handlers.** The `_` argument
+  placeholder now works inside builtins routed through specialized
+  codegen call handlers, not just generic calls.
+- **Growable chunked BufferPool.** Cedar's `BufferPool` now backs its
+  registers with up to 64 lazily-allocated 256-buffer slabs (default
+  cap raised from 256 to 16384 total). Slab pointers are stable across
+  growth, so the audio thread's in-flight reads survive a hot-swap
+  that armed new slabs on the compile thread. Hosts (nkido CLI play /
+  serve / ui / render and the web/wasm worklet) call
+  `pool.ensure_capacity(required_buffers)` off-cycle before publishing
+  the new bytecode.
+- **`CompileResult::required_buffers`.** Codegen now reports the peak
+  distinct buffer indices used by the program so hosts can size the
+  pool exactly. Backwards compatible: hosts that ignore the field still
+  work for programs that fit in the default slab.
+
+### Changed
+
+- **Codegen sum/mix accumulator.** `sum()` and `mean()` over arrays now
+  emit one accumulator buffer + N-1 in-place ADD instructions instead
+  of an N-1-buffer linear chain. Programs that fan out wide (e.g.
+  `unison(..., voices: 8)` summed under `poly`) no longer exhaust the
+  pool on the per-voice sum. Bit-identical output.
+- **`BufferAllocator` reuses freed indices.** Codegen now has a
+  `BufferAllocator::release(idx)` that puts indices back into a LIFO
+  free list. `reset_to(mark)` drains free-list entries past the mark.
+  Used by the sum/mix accumulator and reserved for future
+  refcount-driven release across general opcodes.
+- **`cedar::MAX_BUFFERS` semantics.** Previously the size of a single
+  flat buffer array (256). Now the total addressable buffer index
+  space (16384 by default). Per-slab size lives in
+  `cedar::SLAB_BUFFERS`. The `CEDAR_MAX_BUFFERS` build flag still
+  works; it must be a positive multiple of `SLAB_BUFFERS`.
+- **`BUFFER_ZERO` is now an explicit constant.** Pinned at 255 (last
+  slot of slab 0) so it stays in the pre-allocated slab regardless of
+  any future cap changes.
+
+### Fixed
+
+- **Live IDE deep links 404'd on `live.nkido.cc`.** Opening a shared
+  patch (`/p#code=…`) or any non-prerendered route returned Netlify's
+  "Page not found". The deploy never applied the repo's `netlify.toml`,
+  so the SPA fallback rewrite, `SharedArrayBuffer` COOP/COEP headers,
+  and immutable-asset caching were all missing in production. The deploy
+  now applies `netlify.toml` and also ships `_redirects` / `_headers` in
+  the build artifact.
+- **`scales` dispatcher compile failure on a non-literal scrutinee.**
+  Selecting a scale with a runtime (non-literal) argument no longer
+  fails to compile.
 
 ## [0.4.1] - 2026-05-28
 
@@ -129,7 +204,7 @@ for the planned Strudel-style scale-quantize transform
   array stays dynamic. Combined with `step()` / `counter()` this makes
   arpeggiators and harmonizers userspace closures — no new C++ opcode
   per musical operator. A stateful UGen cannot auto-fan-out over a
-  dynamic array (`osc("sin", e.freqs)` → E181, use `poly()`). New
+  dynamic array (`sine(e.freqs)` → E181, use `poly()`). New
   `SEQPAT_VALUES` opcode; demo patches `arpeggio-demo` and
   `harmonizer-demo`.
 - **Unified `dry`/`wet` convention across every effect builtin** — all 33

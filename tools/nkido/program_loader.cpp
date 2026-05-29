@@ -421,6 +421,14 @@ bool load_and_prepare_immediate(cedar::VM& vm,
         (void)prepare_program_assets(vm, opts, empty, err);
     }
 
+    // Grow the buffer pool to fit the program's peak buffer use BEFORE
+    // load — running on the load thread, not the audio thread, so heap
+    // allocation here is safe. Chunked slabs make growth pointer-stable
+    // for any reads still in flight from a previous program.
+    if (load.compile_result && load.compile_result->required_buffers > 0) {
+        vm.buffers().ensure_capacity(load.compile_result->required_buffers);
+    }
+
     // PRD L3: a program with FOREACH_EVENT blocks carries a subprogram table
     // that must be loaded alongside the instruction stream.
     bool loaded = false;

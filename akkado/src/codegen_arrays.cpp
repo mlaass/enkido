@@ -408,29 +408,35 @@ TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
         return cache_and_return(node, TypedValue::signal(o.l));
     }
 
-    // Mono path — bit-identical to the legacy sum(array) ADD chain.
+    // In-place accumulator pattern. `op_add` reads each sample before
+    // writing the output, so emitting `ADD acc, acc, x` is correctness-
+    // preserving and avoids burning N-1 temp buffers for an N-operand sum
+    // (the dominant source of buffer-pool exhaustion in wide unison/poly
+    // patches).
+    auto emit_add = [&](std::uint16_t out, std::uint16_t in0, std::uint16_t in1) {
+        cedar::Instruction add_inst{};
+        add_inst.opcode = cedar::Opcode::ADD;
+        add_inst.out_buffer = out;
+        add_inst.inputs[0] = in0;
+        add_inst.inputs[1] = in1;
+        add_inst.inputs[2] = 0xFFFF;
+        add_inst.inputs[3] = 0xFFFF;
+        add_inst.state_id = 0;
+        emit(add_inst);
+    };
+
+    // Mono path — single accumulator.
     if (!any_stereo) {
-        std::uint16_t result = operands[0].l;
-        for (std::size_t i = 1; i < operands.size(); ++i) {
-            std::uint16_t sum_buf = buffers_.allocate();
-            if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                return TypedValue::void_val();
-            }
-
-            cedar::Instruction add_inst{};
-            add_inst.opcode = cedar::Opcode::ADD;
-            add_inst.out_buffer = sum_buf;
-            add_inst.inputs[0] = result;
-            add_inst.inputs[1] = operands[i].l;
-            add_inst.inputs[2] = 0xFFFF;
-            add_inst.inputs[3] = 0xFFFF;
-            add_inst.state_id = 0;
-            emit(add_inst);
-
-            result = sum_buf;
+        std::uint16_t acc = buffers_.allocate();
+        if (acc == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::void_val();
         }
-        return cache_and_return(node, TypedValue::signal(result));
+        emit_add(acc, operands[0].l, operands[1].l);
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            emit_add(acc, acc, operands[i].l);
+        }
+        return cache_and_return(node, TypedValue::signal(acc));
     }
 
     // Stereo path — sum L and R independently into an adjacent output pair.
@@ -446,40 +452,12 @@ TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    auto emit_add = [&](std::uint16_t out, std::uint16_t in0, std::uint16_t in1) {
-        cedar::Instruction add_inst{};
-        add_inst.opcode = cedar::Opcode::ADD;
-        add_inst.out_buffer = out;
-        add_inst.inputs[0] = in0;
-        add_inst.inputs[1] = in1;
-        add_inst.inputs[2] = 0xFFFF;
-        add_inst.inputs[3] = 0xFFFF;
-        add_inst.state_id = 0;
-        emit(add_inst);
-    };
-
-    // ADD-chain one channel; the final ADD writes into `final_out` so the
-    // result lands in the adjacent (out_left, out_right) pair.
-    auto sum_channel = [&](std::uint16_t final_out, bool right) -> bool {
-        auto pick = [&](std::size_t i) {
-            return right ? operands[i].r : operands[i].l;
-        };
-        std::uint16_t acc = pick(0);
-        for (std::size_t i = 1; i + 1 < operands.size(); ++i) {
-            std::uint16_t tmp = buffers_.allocate();
-            if (tmp == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                return false;
-            }
-            emit_add(tmp, acc, pick(i));
-            acc = tmp;
-        }
-        emit_add(final_out, acc, pick(operands.size() - 1));
-        return true;
-    };
-
-    if (!sum_channel(out_left, /*right=*/false)) return TypedValue::void_val();
-    if (!sum_channel(out_right, /*right=*/true)) return TypedValue::void_val();
+    emit_add(out_left,  operands[0].l, operands[1].l);
+    emit_add(out_right, operands[0].r, operands[1].r);
+    for (std::size_t i = 2; i < operands.size(); ++i) {
+        emit_add(out_left,  out_left,  operands[i].l);
+        emit_add(out_right, out_right, operands[i].r);
+    }
 
     register_stereo(node, out_left, out_right);
     return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
@@ -1144,14 +1122,34 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
         return cache_and_return(node, TypedValue::signal(elem_bufs[0]));
     }
 
-    // Sum all elements
-    std::uint16_t sum_buf = elem_bufs[0];
-    for (std::size_t i = 1; i < elem_bufs.size(); ++i) {
-        sum_buf = emit_binary_op(*this, buffers_, cedar::Opcode::ADD, sum_buf, elem_bufs[i]);
-        if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            return TypedValue::void_val();
-        }
+    // Sum all elements with an in-place accumulator (see handle_sum_call
+    // for the rationale).
+    std::uint16_t sum_buf = buffers_.allocate();
+    if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", n.location);
+        return TypedValue::void_val();
+    }
+    {
+        cedar::Instruction add_inst{};
+        add_inst.opcode = cedar::Opcode::ADD;
+        add_inst.out_buffer = sum_buf;
+        add_inst.inputs[0] = elem_bufs[0];
+        add_inst.inputs[1] = elem_bufs[1];
+        add_inst.inputs[2] = 0xFFFF;
+        add_inst.inputs[3] = 0xFFFF;
+        add_inst.state_id = 0;
+        emit(add_inst);
+    }
+    for (std::size_t i = 2; i < elem_bufs.size(); ++i) {
+        cedar::Instruction add_inst{};
+        add_inst.opcode = cedar::Opcode::ADD;
+        add_inst.out_buffer = sum_buf;
+        add_inst.inputs[0] = sum_buf;
+        add_inst.inputs[1] = elem_bufs[i];
+        add_inst.inputs[2] = 0xFFFF;
+        add_inst.inputs[3] = 0xFFFF;
+        add_inst.state_id = 0;
+        emit(add_inst);
     }
 
     // Divide by length

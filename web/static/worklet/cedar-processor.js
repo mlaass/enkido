@@ -4,6 +4,24 @@
  * Runs in the AudioWorklet thread and processes audio using the Cedar VM WASM module.
  * The WASM module code and binary are sent from the main thread since AudioWorklets
  * have limited API access (no fetch, no importScripts for cross-origin).
+ *
+ * Worklet thread contract — see docs/prd-compile-off-audio-thread.md §1.
+ * The audio thread runs `process()` every 2.67 ms (128 samples @ 48 kHz); a
+ * single blocking message handler starves the audio output for its full
+ * duration. To keep that from happening, this worklet may only execute:
+ *
+ *   - `_cedar_process_block` (audio rendering)
+ *   - `_cedar_set_block_table` + `_cedar_load_program` (fast, fixed-cost)
+ *   - the four `*_from_buffer` apply paths and
+ *     `_akkado_patch_sample_ids_in_bytecode_from_buffer`
+ *   - parameter / MIDI / CC poke-throughs
+ *
+ * Anything CPU-heavy — `akkado_compile`, metadata extraction, fetch /
+ * decode, string parsing, JSON walking — runs in the compile worker
+ * (web/src/lib/audio/compile.worker.ts). Do not reintroduce a compile
+ * handler here. If a new code path needs the AudioWorklet to do work
+ * beyond the list above, it almost certainly belongs in the worker or
+ * on the main thread.
  */
 
 class CedarProcessor extends AudioWorkletProcessor {
@@ -20,9 +38,12 @@ class CedarProcessor extends AudioWorkletProcessor {
 		this.inputLeftPtr = 0;
 		this.inputRightPtr = 0;
 		this.blockSize = 128;
-		this.pendingProgram = null; // Pre-extracted compile result for loadCompiledProgram()
-		this.pendingLoadRetry = false; // Set when load hit SlotBusy; retried from process() each block
-		this.pendingLoadRefreshId = 0; // ID of the latest refresh request awaiting load
+		// Set when _cedar_load_program returned SlotBusy. Holds the JS-side
+		// buffers (bytecode, stateInits, midiSources, blockTable) so the
+		// next process() block can replay loadProgram() once the swap slot
+		// frees up. Presence of pendingProgram is the retry signal; we no
+		// longer keep a separate pendingLoadRetry flag.
+		this.pendingProgram = null;
 
 		// PRD prd-midi-input §7.4: file-CC dispatch plan, pushed by the main
 		// thread via `setFileCcPlan` whenever apply_midi_route_plan runs. We
@@ -150,16 +171,12 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 	handleMessage(msg) {
 		switch (msg.type) {
-			case 'compile':
-				this.compile(msg.source);
-				break;
-
-			case 'loadCompiledProgram':
-				this.loadCompiledProgram(msg.refreshId);
-				break;
-
 			case 'loadProgram':
-				this.loadProgram(msg.bytecode);
+				// New (PRD prd-compile-off-audio-thread): packed buffers
+				// produced by the compile worker travel as transferable
+				// typed arrays. The legacy 'compile' / 'loadCompiledProgram'
+				// flow is intentionally gone — compile lives in the worker.
+				this.loadProgram(msg);
 				break;
 
 			case 'setBpm':
@@ -323,193 +340,12 @@ class CedarProcessor extends AudioWorkletProcessor {
 		}
 	}
 
-	/**
-	 * Get required sample names from the compile result (legacy simple names)
-	 * @returns {string[]} Array of sample names used in the compiled code
-	 */
-	getRequiredSamples() {
-		const count = this.module._akkado_get_required_samples_count();
-		const samples = [];
-		for (let i = 0; i < count; i++) {
-			const ptr = this.module._akkado_get_required_sample(i);
-			if (ptr) {
-				samples.push(this.module.UTF8ToString(ptr));
-			}
-		}
-		return samples;
-	}
-
-	/**
-	 * Get required samples with extended info (bank, name, variant)
-	 * @returns {Array<{bank: string|null, name: string, variant: number, qualifiedName: string}>}
-	 */
-	getRequiredSamplesExtended() {
-		// Check if extended API is available
-		if (!this.module._akkado_get_required_samples_extended_count) {
-			return [];
-		}
-
-		const count = this.module._akkado_get_required_samples_extended_count();
-		const samples = [];
-		for (let i = 0; i < count; i++) {
-			// Get bank name (may be null for default bank)
-			const bankPtr = this.module._akkado_get_required_sample_bank(i);
-			const bank = bankPtr ? this.module.UTF8ToString(bankPtr) : null;
-
-			// Get sample name
-			const namePtr = this.module._akkado_get_required_sample_name(i);
-			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
-
-			// Get variant
-			const variant = this.module._akkado_get_required_sample_variant(i);
-
-			// Get qualified name for Cedar lookup
-			const qualifiedPtr = this.module._akkado_get_required_sample_qualified(i);
-			const qualifiedName = qualifiedPtr ? this.module.UTF8ToString(qualifiedPtr) : name;
-
-			samples.push({ bank, name, variant, qualifiedName });
-		}
-		return samples;
-	}
-
-	/**
-	 * Get required input source strings (one per in() call) from the compile
-	 * result. Empty string means the call had no argument; the host should
-	 * fall back to its UI default. Returns [] when the program does not use in().
-	 * @returns {string[]}
-	 */
-	getRequiredInputSources() {
-		if (!this.module._akkado_get_required_input_sources_count) {
-			return [];
-		}
-		const count = this.module._akkado_get_required_input_sources_count();
-		const sources = [];
-		for (let i = 0; i < count; i++) {
-			const ptr = this.module._akkado_get_required_input_source(i);
-			sources.push(ptr ? this.module.UTF8ToString(ptr) : '');
-		}
-		return sources;
-	}
-
-	/**
-	 * Get the list of midi() call sites from the compile result
-	 * (prd-midi-input §4.7). One entry per call; the host turns this into
-	 * a route table that maps device events → cedar_push_midi_event(state_id).
-	 * @returns {Array<{stateId: number, kind: number, name: string, channel: number, loop: boolean, tempo: number}>}
-	 */
-	getRequiredMidiSources() {
-		if (!this.module._akkado_get_required_midi_sources_count) {
-			return [];
-		}
-		const count = this.module._akkado_get_required_midi_sources_count();
-		const sources = [];
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_required_midi_source_name(i);
-			sources.push({
-				stateId: this.module._akkado_get_required_midi_source_state_id(i) >>> 0,
-				kind: this.module._akkado_get_required_midi_source_kind(i),
-				name: namePtr ? this.module.UTF8ToString(namePtr) : '',
-				channel: this.module._akkado_get_required_midi_source_channel(i),
-				loop: this.module._akkado_get_required_midi_source_loop(i) === 1,
-				tempo: this.module._akkado_get_required_midi_source_tempo(i)
-			});
-		}
-		return sources;
-	}
-
-	/**
-	 * Get the list of midi_cc() routes from the compile result
-	 * (prd-midi-input §4.8). One entry per call site; the host turns this into
-	 * a per-device route table that maps incoming CC/PB/AT events →
-	 * cedar_set_param_slew(name, value, slew_ms). cc_num sentinels: 0..127 =
-	 * MIDI CC#; -1 = pitch-bend; -2 = channel aftertouch.
-	 * @returns {Array<{paramName: string, ccNum: number, channel: number,
-	 *                  scale: number, bias: number, slewMs: number}>}
-	 */
-	getRequiredMidiCcRoutes() {
-		if (!this.module._akkado_get_required_midi_cc_routes_count) {
-			return [];
-		}
-		const count = this.module._akkado_get_required_midi_cc_routes_count();
-		const routes = [];
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_required_midi_cc_route_name(i);
-			routes.push({
-				paramName: namePtr ? this.module.UTF8ToString(namePtr) : '',
-				ccNum:   this.module._akkado_get_required_midi_cc_route_cc(i) | 0,
-				channel: this.module._akkado_get_required_midi_cc_route_channel(i) | 0,
-				scale:   this.module._akkado_get_required_midi_cc_route_scale(i),
-				bias:    this.module._akkado_get_required_midi_cc_route_bias(i),
-				slewMs:  this.module._akkado_get_required_midi_cc_route_slew_ms(i)
-			});
-		}
-		return routes;
-	}
-
-	/**
-	 * Get required SoundFont files from the compile result
-	 * @returns {Array<{filename: string, preset: number}>}
-	 */
-	getRequiredSoundFonts() {
-		if (!this.module._akkado_get_required_soundfonts_count) {
-			return [];
-		}
-
-		const count = this.module._akkado_get_required_soundfonts_count();
-		const soundfonts = [];
-		for (let i = 0; i < count; i++) {
-			const filenamePtr = this.module._akkado_get_required_soundfont_filename(i);
-			const filename = filenamePtr ? this.module.UTF8ToString(filenamePtr) : '';
-			const preset = this.module._akkado_get_required_soundfont_preset(i);
-			soundfonts.push({ filename, preset });
-		}
-		return soundfonts;
-	}
-
-	/**
-	 * Get required wavetable banks from the compile result. The compiler
-	 * assigns sequential bank IDs in source order (the index here matches
-	 * the runtime registry's slot ID after the host loads them in this
-	 * same order).
-	 * @returns {Array<{name: string, path: string, id: number}>}
-	 */
-	getRequiredWavetables() {
-		if (!this.module._akkado_get_required_wavetables_count) {
-			return [];
-		}
-		const count = this.module._akkado_get_required_wavetables_count();
-		const wavetables = [];
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_required_wavetable_name(i);
-			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
-			const pathPtr = this.module._akkado_get_required_wavetable_path(i);
-			const path = pathPtr ? this.module.UTF8ToString(pathPtr) : '';
-			wavetables.push({ name, path, id: i });
-		}
-		return wavetables;
-	}
-
-	/**
-	 * Get URI declarations from the compile result. The kind tag mirrors
-	 * akkado::UriKind: 0=SampleBank, 1=SoundFont, 2=Wavetable, 3=Sample.
-	 * The host iterates this list in order and dispatches each URI to the
-	 * appropriate registry; bytecode swap blocks until every URI resolves.
-	 * @returns {Array<{uri: string, kind: number}>}
-	 */
-	getRequiredUris() {
-		if (!this.module._akkado_get_required_uri_count) {
-			return [];
-		}
-		const count = this.module._akkado_get_required_uri_count();
-		const uris = [];
-		for (let i = 0; i < count; i++) {
-			const uriPtr = this.module._akkado_get_required_uri(i);
-			const uri = uriPtr ? this.module.UTF8ToString(uriPtr) : '';
-			const kind = this.module._akkado_get_required_uri_kind(i);
-			uris.push({ uri, kind });
-		}
-		return uris;
-	}
+	// getRequiredSamples / getRequiredSamplesExtended / getRequiredSoundFonts
+	// / getRequiredWavetables / getRequiredUris / getRequiredInputSources /
+	// getRequiredMidiSources / getRequiredMidiCcRoutes lived here pre-PRD
+	// prd-compile-off-audio-thread. They walked g_compile_result, which is
+	// now owned by the compile worker's WASM instance — see
+	// web/src/lib/audio/compile.worker.ts. Do not reintroduce them.
 
 	/**
 	 * Extract a float array from WASM memory, making a copy.
@@ -578,472 +414,169 @@ class CedarProcessor extends AudioWorkletProcessor {
 	}
 
 	/**
-	 * Extract all parameter declarations from compile result into JS objects.
-	 * Must be called immediately after compilation, before any memory growth.
+	 * Load a compiled program from the four packed buffers produced by the
+	 * compile worker (PRD prd-compile-off-audio-thread §4.2):
+	 *   bytecode       — cedar::Instruction[]
+	 *   stateInitsBuf  — kind=0/1/2 records (state inits + sample mappings)
+	 *   midiSourcesBuf — RequiredMidiSource[] records
+	 *   blockTable     — cedar::BlockEntry[] (memcpy)
+	 *   mainInstCount  — main/body boundary inside the bytecode stream
+	 *   builtinVarOverrides — `bpm = …` etc. applied to the live VM
+	 *
+	 * The worklet stages the block table, patches scalar sample IDs into the
+	 * bytecode, calls cedar_load_program, then applies state inits, resolves
+	 * sequence sample IDs into arena events and applies MIDI sources. If
+	 * load_program returns SlotBusy (other crossfade still in flight) the
+	 * JS-side buffers are parked in this.pendingProgram and the next
+	 * process() block retries — single per-block retry, no multi-attempt
+	 * state machine. A fresh loadProgram message that arrives while a
+	 * previous one is parked supersedes it (newest wins, matching the main
+	 * thread's supersede-by-newest queueing).
 	 */
-	extractParamDecls() {
-		const count = this.module._akkado_get_param_decl_count();
-		const paramDecls = [];
-
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_param_name(i);
-			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
-			const type = this.module._akkado_get_param_type(i);
-			const defaultValue = this.module._akkado_get_param_default(i);
-			const min = this.module._akkado_get_param_min(i);
-			const max = this.module._akkado_get_param_max(i);
-			const sourceOffset = this.module._akkado_get_param_source_offset(i);
-			const sourceLength = this.module._akkado_get_param_source_length(i);
-
-			// Extract options for Select type
-			const options = [];
-			if (type === 3) { // Select
-				const optCount = this.module._akkado_get_param_option_count(i);
-				for (let j = 0; j < optCount; j++) {
-					const optPtr = this.module._akkado_get_param_option(i, j);
-					if (optPtr) {
-						options.push(this.module.UTF8ToString(optPtr));
-					}
-				}
-			}
-
-			paramDecls.push({
-				name,
-				type,  // 0=Continuous, 1=Button, 2=Toggle, 3=Select
-				defaultValue,
-				min,
-				max,
-				options,
-				sourceOffset,
-				sourceLength
-			});
-		}
-
-		return paramDecls;
-	}
-
-	/**
-	 * Extract all visualization declarations from compile result into JS objects.
-	 * Must be called immediately after compilation, before any memory growth.
-	 */
-	extractVizDecls() {
-		const count = this.module._akkado_get_viz_count ? this.module._akkado_get_viz_count() : 0;
-		const vizDecls = [];
-
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_viz_name(i);
-			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
-			const type = this.module._akkado_get_viz_type(i);
-			const stateId = this.module._akkado_get_viz_state_id(i);
-			const sourceOffset = this.module._akkado_get_viz_source_offset(i);
-			const sourceLength = this.module._akkado_get_viz_source_length(i);
-			const patternIndex = this.module._akkado_get_viz_pattern_index(i);
-
-			// Extract options JSON if present
-			let options = null;
-			const optionsPtr = this.module._akkado_get_viz_options ? this.module._akkado_get_viz_options(i) : null;
-			if (optionsPtr) {
-				const optionsStr = this.module.UTF8ToString(optionsPtr);
-				try {
-					options = JSON.parse(optionsStr);
-				} catch (e) {
-					console.warn('[CedarProcessor] Failed to parse viz options:', e);
-				}
-			}
-
-			vizDecls.push({
-				name,
-				type,  // 0=PianoRoll, 1=Oscilloscope, 2=Waveform, 3=Spectrum
-				stateId,
-				sourceOffset,
-				sourceLength,
-				patternIndex,  // Index into stateInits array for piano roll, or -1
-				options
-			});
-		}
-
-		return vizDecls;
-	}
-
-	/**
-	 * Extract builtin variable overrides from compile result into JS objects.
-	 * Must be called immediately after compilation, before any memory growth.
-	 */
-	extractBuiltinVarOverrides() {
-		if (!this.module._akkado_get_builtin_var_override_count) return [];
-		const count = this.module._akkado_get_builtin_var_override_count();
-		const overrides = [];
-		for (let i = 0; i < count; i++) {
-			const namePtr = this.module._akkado_get_builtin_var_override_name(i);
-			const name = namePtr ? this.module.UTF8ToString(namePtr) : '';
-			const value = this.module._akkado_get_builtin_var_override_value(i);
-			overrides.push({ name, value });
-		}
-		return overrides;
-	}
-
-	/**
-	 * Extract all state initialization data from compile result into JS objects.
-	 * Must be called immediately after compilation, before any memory growth.
-	 */
-	extractStateInits() {
-		const count = this.module._akkado_get_state_init_count();
-		const stateInits = [];
-
-		for (let i = 0; i < count; i++) {
-			const stateId = this.module._akkado_get_state_init_id(i);
-			const type = this.module._akkado_get_state_init_type(i);
-			const cycleLength = this.module._akkado_get_state_init_cycle_length(i);
-
-			stateInits.push({
-				stateId,
-				type,
-				cycleLength
-			});
-		}
-
-		return stateInits;
-	}
-
-	/**
-	 * Get sample ID by name (helper for resolving sample names in state inits)
-	 */
-	getSampleId(name) {
-		const nameLen = this.module.lengthBytesUTF8(name) + 1;
-		const namePtr = this.module._nkido_malloc(nameLen);
-		if (!namePtr) return 0;
-
-		try {
-			this.module.stringToUTF8(name, namePtr, nameLen);
-			return this.module._cedar_get_sample_id(namePtr);
-		} finally {
-			this.module._nkido_free(namePtr);
-		}
-	}
-
-	/**
-	 * Compile source code (does not load into VM)
-	 * Returns required samples so runtime can load them before calling loadCompiledProgram
-	 */
-	compile(source) {
-		console.log('[CedarProcessor] compile() ENTRY');
-
-		// CRITICAL: Always send 'compiled' response to prevent main thread hang
+	loadProgram(msg) {
 		if (!this.module) {
-			this.port.postMessage({
-				type: 'compiled',
-				success: false,
-				diagnostics: [{ severity: 2, message: 'Module not initialized', line: 1, column: 1 }]
-			});
+			this.port.postMessage({ type: 'error', message: 'Module not initialized', refreshId: msg?.refreshId });
 			return;
 		}
 
+		// Newest-wins: drop any earlier parked load. We held only JS refs,
+		// so there are no WASM allocations to free.
+		this.pendingProgram = null;
+
+		const {
+			refreshId,
+			bytecode,
+			stateInitsBuf,
+			midiSourcesBuf,
+			blockTable,
+			mainInstCount,
+			builtinVarOverrides
+		} = msg;
+
+		// Apply builtin variable overrides (bpm, env-map entries the compiler
+		// resolved at compile time). bpm goes through the dedicated setter so
+		// the cycle clock picks it up; everything else lands in the EnvMap.
+		if (builtinVarOverrides) {
+			for (const override of builtinVarOverrides) {
+				if (override.name === 'bpm') {
+					this.module._cedar_set_bpm(override.value);
+				}
+				this.setParam('__' + override.name, override.value);
+			}
+		}
+
+		// Stage the FOREACH_EVENT / BLOCK_CALL subprogram table BEFORE
+		// cedar_load_program. The VM consumes-and-clears the staged table
+		// during the next load. We always stage so the main/body boundary
+		// (mainInstCount) is the source of truth — even when the table is
+		// empty, the boundary fixes the dispatch loop bounds.
+		const blockEntryCount = blockTable && blockTable.byteLength > 0
+			? blockTable.byteLength / 12
+			: 0;
+		let blockTablePtr = 0;
+		if (blockEntryCount > 0) {
+			blockTablePtr = this.module._nkido_malloc(blockTable.byteLength);
+			if (blockTablePtr === 0) {
+				this.port.postMessage({ type: 'error', message: 'malloc(blockTable) failed', refreshId });
+				return;
+			}
+			this.writeByteArray(blockTablePtr, blockTable);
+		}
+		this.module._cedar_set_block_table(blockTablePtr, blockEntryCount, mainInstCount || 0);
+		if (blockTablePtr) this.module._nkido_free(blockTablePtr);
+
+		// All remaining WASM allocations are released before this method
+		// returns (success, hard error, or SlotBusy retry). On SlotBusy the
+		// JS-side typed-array refs in this.pendingProgram are what survive;
+		// the retry re-allocates and re-copies into the WASM heap.
+		this.runProgramLoad(bytecode, stateInitsBuf, midiSourcesBuf, refreshId);
+	}
+
+	runProgramLoad(bytecode, stateInitsBuf, midiSourcesBuf, refreshId) {
+		const bcPtr = this.module._nkido_malloc(bytecode.byteLength);
+		if (bcPtr === 0) {
+			this.port.postMessage({ type: 'error', message: 'malloc(bytecode) failed', refreshId });
+			return;
+		}
+
+		let siPtr = 0;
+		let midiPtr = 0;
+
 		try {
-			// Clear any previous compile result and pending program
-			console.log('[CedarProcessor] Before _akkado_clear_result');
-			this.module._akkado_clear_result();
-			console.log('[CedarProcessor] After _akkado_clear_result');
-			this.pendingProgram = null;
+			this.writeByteArray(bcPtr, new Uint8Array(bytecode.buffer, bytecode.byteOffset, bytecode.byteLength));
 
-			// Get actual UTF-8 byte length (not JS string length which counts UTF-16 code units)
-			const utf8ByteLen = this.module.lengthBytesUTF8(source);
-			const allocLen = utf8ByteLen + 1; // +1 for null terminator
+			// stateInitsBuf is non-empty whenever any record exists; if a
+			// program has no sequences / state inits / sample mappings the
+			// worker still ships an 8-byte header.
+			if (stateInitsBuf && stateInitsBuf.byteLength > 0) {
+				siPtr = this.module._nkido_malloc(stateInitsBuf.byteLength);
+				if (siPtr === 0) {
+					this.port.postMessage({ type: 'error', message: 'malloc(stateInits) failed', refreshId });
+					return;
+				}
+				this.writeByteArray(siPtr, stateInitsBuf);
+			}
 
-			console.log('[CedarProcessor] Compiling source, utf8 bytes:', utf8ByteLen);
+			// Patch scalar sample("name") PUSH_CONST immediates in the
+			// bytecode using kind=2 mapping records from stateInitsBuf.
+			// The helper returns the # of patches; negative on bad input,
+			// which we log and ignore (other types may still be valid).
+			if (siPtr) {
+				this.module._akkado_patch_sample_ids_in_bytecode_from_buffer(
+					bcPtr, bytecode.byteLength, siPtr, stateInitsBuf.byteLength);
+			}
 
-			// Allocate source string in WASM memory
-			const sourcePtr = this.module._nkido_malloc(allocLen);
-			if (sourcePtr === 0) {
-				this.port.postMessage({ type: 'compiled', success: false, diagnostics: [{ severity: 2, message: 'Failed to allocate memory', line: 1, column: 1 }] });
+			const loadResult = this.module._cedar_load_program(bcPtr, bytecode.byteLength);
+
+			if (loadResult === 1) {
+				// SlotBusy: park the JS buffers and bail; the next process()
+				// block retries once the audio thread has finished its
+				// in-flight crossfade.
+				this.pendingProgram = { bytecode, stateInitsBuf, midiSourcesBuf, refreshId };
 				return;
 			}
 
-			try {
-				this.module.stringToUTF8(source, sourcePtr, allocLen);
-
-				// Compile - pass actual UTF-8 byte length, not JS string length
-				const success = this.module._akkado_compile(sourcePtr, utf8ByteLen);
-
-				if (success) {
-					// Extract ALL data immediately, before any memory growth can happen
-
-					// Extract bytecode as Uint8Array using fresh heap view
-					const bytecodePtr = this.module._akkado_get_bytecode();
-					const bytecodeSize = this.module._akkado_get_bytecode_size();
-					const bytecode = new Uint8Array(bytecodeSize);
-					if (this.module.wasmMemory) {
-						// Always get fresh heap view - stale views cause corruption after memory growth
-						const heap = new Uint8Array(this.module.wasmMemory.buffer);
-						for (let i = 0; i < bytecodeSize; i++) {
-							bytecode[i] = heap[bytecodePtr + i];
-						}
-					} else if (this.module.HEAPU8) {
-						for (let i = 0; i < bytecodeSize; i++) {
-							bytecode[i] = this.module.HEAPU8[bytecodePtr + i];
-						}
-					} else if (this.module.getValue) {
-						for (let i = 0; i < bytecodeSize; i++) {
-							bytecode[i] = this.module.getValue(bytecodePtr + i, 'i8') & 0xFF;
-						}
-					}
-
-					// Extract required sample names (both legacy and extended)
-					const requiredSamples = this.getRequiredSamples();
-					const requiredSamplesExtended = this.getRequiredSamplesExtended();
-					const requiredSoundfonts = this.getRequiredSoundFonts();
-					const requiredWavetables = this.getRequiredWavetables();
-					const requiredUris = this.getRequiredUris();
-					const requiredInputSources = this.getRequiredInputSources();
-					const requiredMidiSources = this.getRequiredMidiSources();
-					const requiredMidiCcRoutes = this.getRequiredMidiCcRoutes();
-
-					// Extract all state initialization data
-					const stateInits = this.extractStateInits();
-
-					// Extract parameter declarations for UI generation
-					const paramDecls = this.extractParamDecls();
-
-					// Extract visualization declarations for UI generation
-					const vizDecls = this.extractVizDecls();
-
-					// Extract builtin variable overrides (bpm, sr)
-					const builtinVarOverrides = this.extractBuiltinVarOverrides();
-
-					// CRITICAL: Clear the compile result NOW, before returning
-					// This ensures we don't have stale pointers when memory grows
-					this.module._akkado_clear_result();
-
-					// Apply builtin variable overrides
-					for (const override of builtinVarOverrides) {
-						if (override.name === 'bpm') {
-							this.module._cedar_set_bpm(override.value);
-						}
-						// Write to EnvMap so ENV_GET reads the value
-						this.setParam('__' + override.name, override.value);
-					}
-
-					// Extract disassembly for debug panel
-					let disassembly = null;
-					if (this.module._akkado_get_disassembly) {
-						const disasmPtr = this.module._akkado_get_disassembly();
-						if (disasmPtr) {
-							disassembly = this.module.UTF8ToString(disasmPtr);
-							try {
-								disassembly = JSON.parse(disassembly);
-							} catch (e) {
-								console.warn('[CedarProcessor] Failed to parse disassembly JSON:', e);
-								disassembly = null;
-							}
-						}
-					}
-
-					// Store extracted data for loadCompiledProgram()
-					this.pendingProgram = { bytecode, stateInits, requiredSamples, requiredSamplesExtended };
-
-					console.log('[CedarProcessor] Compiled successfully, bytecode size:', bytecodeSize,
-						'required samples:', requiredSamples, 'extended samples:', requiredSamplesExtended.length,
-						'required soundfonts:', requiredSoundfonts.length,
-						'required wavetables:', requiredWavetables.length,
-						'state inits:', stateInits.length,
-						'param decls:', paramDecls.length, 'viz decls:', vizDecls.length,
-						'unique states:', disassembly?.summary?.uniqueStateIds ?? 'N/A');
-
-					this.port.postMessage({
-						type: 'compiled',
-						success: true,
-						bytecodeSize,
-						requiredSamples,
-						requiredSamplesExtended,
-						requiredSoundfonts,
-						requiredWavetables,
-						requiredUris,
-						requiredInputSources,
-						requiredMidiSources,
-						requiredMidiCcRoutes,
-						paramDecls,
-						vizDecls,
-						builtinVarOverrides,
-						disassembly
-					});
-				} else {
-					// Extract diagnostics
-					const diagnostics = this.extractDiagnostics();
-					console.log('[CedarProcessor] Compilation failed:', diagnostics);
-					this.port.postMessage({
-						type: 'compiled',
-						success: false,
-						diagnostics
-					});
-					// Clear result on failure
-					this.module._akkado_clear_result();
-				}
-			} finally {
-				this.module._nkido_free(sourcePtr);
-			}
-		} catch (err) {
-			// CRITICAL: Catch any exception and send error response
-			// Without this, the Promise in audio.svelte.ts hangs forever
-			console.error('[CedarProcessor] Compile error:', err);
-			this.port.postMessage({
-				type: 'compiled',
-				success: false,
-				diagnostics: [{ severity: 2, message: 'Internal error: ' + String(err), line: 1, column: 1 }]
-			});
-		}
-	}
-
-	/**
-	 * Load the compiled program after samples are ready.
-	 * Uses pre-extracted data from compile() - no WASM compile result access needed.
-	 */
-	loadCompiledProgram(refreshId) {
-		if (!this.module) {
-			this.port.postMessage({ type: 'error', message: 'Module not initialized', refreshId });
-			return;
-		}
-
-		if (refreshId !== undefined) {
-			this.pendingLoadRefreshId = refreshId;
-		}
-
-		if (!this.pendingProgram) {
-			this.port.postMessage({ type: 'error', message: 'No pending program to load', refreshId: this.pendingLoadRefreshId });
-			return;
-		}
-
-		const { bytecode, stateInits } = this.pendingProgram;
-
-		console.log('[CedarProcessor] Loading program, bytecode size:', bytecode.length,
-			'state inits:', stateInits.length);
-
-		// Allocate and copy bytecode to WASM memory
-		let bytecodePtr = this.module._nkido_malloc(bytecode.length);
-		if (bytecodePtr === 0) {
-			this.port.postMessage({ type: 'error', message: 'Failed to allocate bytecode', refreshId: this.pendingLoadRefreshId });
-			return;
-		}
-
-		try {
-			this.writeByteArray(bytecodePtr, bytecode);
-
-			// Patch direct sample("name") references in the bytecode using the
-			// currently loaded sample bank. Codegen emits a PUSH_CONST 0 placeholder
-			// for each such call and records its instruction index; this walks the
-			// scalar_sample_mappings ledger and writes the resolved sample ID into
-			// each PUSH_CONST's state_id immediate before the VM sees the program.
-			if (this.module._akkado_patch_sample_ids_in_bytecode) {
-				this.module._akkado_patch_sample_ids_in_bytecode(bytecodePtr, bytecode.length);
-			}
-
-			// Load program into Cedar VM
-			const result = this.module._cedar_load_program(bytecodePtr, bytecode.length);
-
-			if (result === 1) {
-				// SlotBusy - all slots are occupied (crossfade in progress).
-				// Keep pendingProgram and arm a retry from process(); the audio
-				// thread is the only thing that can free a slot.
-				this.module._nkido_free(bytecodePtr);
-				bytecodePtr = 0; // Prevent double-free in finally
-				this.pendingLoadRetry = true;
+			if (loadResult !== 0) {
+				console.error('[CedarProcessor] cedar_load_program failed with code', loadResult);
+				this.port.postMessage({ type: 'error', message: `Load failed with code ${loadResult}`, refreshId });
 				return;
 			}
 
-			if (result !== 0) {
-				console.error('[CedarProcessor] Load failed with code:', result);
-				this.pendingProgram = null; // Clear on permanent error
-				this.pendingLoadRetry = false;
-				this.port.postMessage({ type: 'error', message: `Load failed with code ${result}`, refreshId: this.pendingLoadRefreshId });
-				return;
+			// Order matters: apply state inits before resolve_sample_ids so
+			// the events live in the arena when we look up bank IDs. midi
+			// sources go last (they touch the new program's state pool).
+			if (siPtr) {
+				const applied = this.module._cedar_apply_state_inits_from_buffer(siPtr, stateInitsBuf.byteLength);
+				if (applied < 0) console.error('[CedarProcessor] state-inits apply returned', applied);
+				const resolved = this.module._akkado_resolve_sample_ids_from_buffer(siPtr, stateInitsBuf.byteLength);
+				if (resolved < 0) console.error('[CedarProcessor] resolve sample ids returned', resolved);
 			}
 
-			// Apply state initializations using WASM function
-			// First resolve sample names to IDs (uses samples already loaded in sample bank)
-			this.module._akkado_resolve_sample_ids();
-			// Then apply all state inits (SequenceProgram types)
-			const stateInitsApplied = this.module._cedar_apply_state_inits();
-			if (stateInitsApplied > 0) {
-				console.log('[CedarProcessor] Applied', stateInitsApplied, 'state initializations');
-			}
-			// Initialize one MidiQueueState per midi() call site
-			// (prd-midi-input §4.7). Must run after load_program so the new
-			// program's state pool is the active one.
-			if (this.module._cedar_apply_midi_sources) {
-				const midiApplied = this.module._cedar_apply_midi_sources();
-				if (midiApplied > 0) {
-					console.log('[CedarProcessor] Initialized', midiApplied, 'MIDI queue states');
+			if (midiSourcesBuf && midiSourcesBuf.byteLength > 0) {
+				midiPtr = this.module._nkido_malloc(midiSourcesBuf.byteLength);
+				if (midiPtr) {
+					this.writeByteArray(midiPtr, midiSourcesBuf);
+					const m = this.module._cedar_apply_midi_sources_from_buffer(midiPtr, midiSourcesBuf.byteLength);
+					if (m < 0) console.error('[CedarProcessor] midi-sources apply returned', m);
 				}
 			}
 
-			// Diagnostic logging after load
-			const hasPendingSwap = this.module._cedar_debug_has_pending_swap?.() ?? 'N/A';
-			const swapCount = this.module._cedar_debug_swap_count?.() ?? 'N/A';
-			const currentInst = this.module._cedar_debug_current_slot_instruction_count?.() ?? 'N/A';
-			console.log(`[CedarProcessor] Program loaded successfully: pendingSwap=${hasPendingSwap} swapCount=${swapCount} instructions=${currentInst}`);
-			this.pendingProgram = null; // Clear only on success
-			this.pendingLoadRetry = false;
-			this.port.postMessage({ type: 'programLoaded', refreshId: this.pendingLoadRefreshId });
-
+			this.port.postMessage({ type: 'programLoaded', refreshId });
 		} finally {
-			// Guard against double-free (bytecodePtr set to 0 on SlotBusy)
-			if (bytecodePtr) {
-				this.module._nkido_free(bytecodePtr);
-			}
-			// Note: pendingProgram is cleared on success, NOT here
-			// This preserves it for retry on SlotBusy
+			if (bcPtr) this.module._nkido_free(bcPtr);
+			if (siPtr) this.module._nkido_free(siPtr);
+			if (midiPtr) this.module._nkido_free(midiPtr);
 		}
 	}
 
-	/**
-	 * Extract compilation diagnostics from WASM
-	 */
-	extractDiagnostics() {
-		const count = this.module._akkado_get_diagnostic_count();
-		const diagnostics = [];
-		for (let i = 0; i < count; i++) {
-			const messagePtr = this.module._akkado_get_diagnostic_message(i);
-			diagnostics.push({
-				severity: this.module._akkado_get_diagnostic_severity(i),
-				message: this.module.UTF8ToString(messagePtr),
-				line: this.module._akkado_get_diagnostic_line(i),
-				column: this.module._akkado_get_diagnostic_column(i)
-			});
-		}
-		return diagnostics;
-	}
-
-	loadProgram(bytecodeBuffer) {
-		if (!this.module) {
-			this.port.postMessage({ type: 'error', message: 'Module not initialized' });
-			return;
-		}
-
-		const bytecode = new Uint8Array(bytecodeBuffer);
-		console.log('[CedarProcessor] Loading program, bytecode size:', bytecode.length);
-
-		// Allocate bytecode in WASM memory
-		const ptr = this.module._nkido_malloc(bytecode.length);
-		if (ptr === 0) {
-			this.port.postMessage({ type: 'error', message: 'Failed to allocate bytecode' });
-			return;
-		}
-
-		try {
-			// Copy bytecode to WASM memory using fresh heap view
-			this.writeByteArray(ptr, bytecode);
-
-			// Load program into Cedar VM
-			const result = this.module._cedar_load_program(ptr, bytecode.length);
-
-			if (result === 0) {
-				console.log('[CedarProcessor] Program loaded successfully');
-				this.port.postMessage({ type: 'programLoaded' });
-			} else {
-				console.error('[CedarProcessor] Load failed with code:', result);
-				this.port.postMessage({ type: 'error', message: `Load failed with code ${result}` });
-			}
-		} finally {
-			this.module._nkido_free(ptr);
-		}
+	tryParkedLoad() {
+		if (!this.pendingProgram || !this.module) return;
+		const p = this.pendingProgram;
+		// Clear before retry so a recursive bail clears cleanly. If load
+		// returns SlotBusy again, runProgramLoad re-parks via the same
+		// "pendingProgram" assignment.
+		this.pendingProgram = null;
+		this.runProgramLoad(p.bytecode, p.stateInitsBuf, p.midiSourcesBuf, p.refreshId);
 	}
 
 	/**
@@ -1304,9 +837,10 @@ class CedarProcessor extends AudioWorkletProcessor {
 
 	/**
 	 * Load a `.mid` file (prd-midi-input Phase 5). Parses the bytes in the
-	 * VM's name-keyed registry; subsequent cedar_apply_midi_sources() calls
-	 * (run inside loadCompiledProgram) attach the parsed sequence to each
-	 * matching MidiQueueState. Mirrors loadSoundFont's lifecycle.
+	 * VM's name-keyed registry; subsequent
+	 * _cedar_apply_midi_sources_from_buffer calls (run inside loadProgram)
+	 * attach the parsed sequence to each matching MidiQueueState. Mirrors
+	 * loadSoundFont's lifecycle.
 	 */
 	loadMidiFile(name, audioData) {
 		if (!this.module) {
@@ -1904,9 +1438,8 @@ class CedarProcessor extends AudioWorkletProcessor {
 		// Retry a SlotBusy load. The audio thread is the only thing that can
 		// free a slot (by advancing the crossfade), so retry from here every
 		// block until the load succeeds. Crossfades complete in 3-5 blocks.
-		if (this.pendingLoadRetry && this.pendingProgram) {
-			this.pendingLoadRetry = false;
-			this.loadCompiledProgram();
+		if (this.pendingProgram) {
+			this.tryParkedLoad();
 		}
 
 		// Initialize diagnostic counters

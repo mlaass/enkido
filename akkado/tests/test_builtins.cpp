@@ -77,17 +77,23 @@ TEST_CASE("scales.ak dispatchers resolve through the loader",
         )");
         REQUIRE(r.success);
     }
-    SECTION("non-literal scrutinee exhausts the buffer pool (documented constraint)") {
+    SECTION("non-literal scrutinee materializes every branch but fits in the grown pool") {
         // The dispatcher is intentionally literal-only — match codegen
         // can't fold the branches when `name` is a runtime binding, so
-        // every branch's array literal would need a buffer. Commit F
-        // routes around this by making `key`/`scale` themselves the
-        // outer match, so the literal lives at the user's call site.
+        // every branch's array literal still gets a buffer. Pre-Phase-B
+        // (256-buffer cap) this exhausted the pool and compile failed;
+        // the chunked BufferPool now absorbs the inefficient codegen.
+        // Commit F still routes around the inefficiency by making
+        // `key`/`scale` themselves the outer match, so the literal lives
+        // at the user's call site.
         auto r = akkado::compile(R"(
             name = "minor"
             x = scale_intervals(name)[2]
         )");
-        REQUIRE_FALSE(r.success);
+        REQUIRE(r.success);
+        // The inefficient codegen still demands far more than the old
+        // 256-buffer cap — proving every branch is materialized.
+        CHECK(r.required_buffers > 256);
     }
 }
 

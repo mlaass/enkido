@@ -11,7 +11,7 @@ tagline: Live MIDI device or .mid file as an event source.
 
 # MIDI Input
 
-`midi()` exposes runtime MIDI events the same way typed pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`) expose baked pattern events. Drop it into the same pipe stages — `midi() |> poly(@, synth, 8) |> out(@)` for polyphony, or `midi() as e |> osc("saw", e.freq) ...` for monophonic field access. The source is either a live device (USB keyboard, virtual port) or a `.mid` file.
+`midi()` exposes runtime MIDI events the same way typed pattern literals (`n"…"`/`v"…"`/`s"…"`/`c"…"`) expose baked pattern events. Drop it into the same pipe stages — `midi() |> poly(@, synth, 8) |> out(@)` for polyphony, or `midi() as e |> saw(e.freq) ...` for monophonic field access. The source is either a live device (USB keyboard, virtual port) or a `.mid` file.
 
 ## midi
 
@@ -102,7 +102,7 @@ Only `freq`, `gate`, `vel`, and `trig` are synthesised. Accessing pattern-only f
 
 ```akk
 chord_pad = ({freq, gate, vel}) ->
-    osc("saw", freq) * adsr(gate, 0.05, 0.3, 0.7, 0.4) * vel
+    saw(freq) * adsr(gate, 0.05, 0.3, 0.7, 0.4) * vel
         |> lp(@, 1600)
 
 midi() |> poly(@, chord_pad, 12) |> out(@)

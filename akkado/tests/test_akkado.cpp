@@ -474,7 +474,7 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         auto result = akkado::compile(R"(
             preset = {freq: 220}
             {freq, q = 0.7} = preset
-            osc("sin", freq) * q |> out(%, %)
+            sine(freq) * q |> out(%, %)
         )");
         REQUIRE(result.success);
     }
@@ -492,7 +492,7 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
     SECTION("fn-param destructure mixed with regular params (Phase 3b)") {
         auto result = akkado::compile(R"(
             fn lp_voice(freq, {cutoff = 1000, q = 0.7}) ->
-                osc("saw", freq)
+                saw(freq)
             sg = lp_voice(330, {cutoff: 800})
             sg |> out(%, %)
         )");
@@ -590,7 +590,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
                 "saw": saw(freq)
                 _: saw(freq)
             }
-            my_osc("saw", 440)
+            my_saw(440)
         )");
 
         REQUIRE(result.success);
@@ -814,7 +814,7 @@ static size_t count_opcode(const std::vector<std::uint8_t>& bytecode, cedar::Opc
 
 TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
     SECTION("stdlib osc() with sin type") {
-        auto result = akkado::compile(R"(osc("sin", 440))");
+        auto result = akkado::compile(R"(sine(440))");
 
         REQUIRE(result.success);
         // stdlib osc() produces: PUSH_CONST(freq), PUSH_CONST(pwm default), OSC_SIN
@@ -822,21 +822,21 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
     }
 
     SECTION("stdlib osc() with saw type") {
-        auto result = akkado::compile(R"(osc("saw", 440))");
+        auto result = akkado::compile(R"(saw(440))");
 
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
     }
 
     SECTION("stdlib osc() with sqr type") {
-        auto result = akkado::compile(R"(osc("sqr", 440))");
+        auto result = akkado::compile(R"(sqr(440))");
 
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SQR));
     }
 
     SECTION("stdlib osc() with tri type") {
-        auto result = akkado::compile(R"(osc("tri", 440))");
+        auto result = akkado::compile(R"(tri(440))");
 
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
@@ -873,7 +873,7 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
     }
 
     SECTION("stdlib osc() with noise type") {
-        auto result = akkado::compile(R"(osc("noise", 0))");
+        auto result = akkado::compile(R"(noise(0))");
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST, NOISE
@@ -943,7 +943,7 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
         // Define a custom osc() that always returns a saw
         auto result = akkado::compile(R"(
             fn osc(type, freq, pwm = 0.5) -> saw(freq)
-            osc("sin", 440)
+            sine(440)
         )");
 
         REQUIRE(result.success);
@@ -954,7 +954,7 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
     }
 
     SECTION("stdlib osc() works in pipe chain") {
-        auto result = akkado::compile(R"(osc("saw", 440) |> lp(%, 1000, 0.7) |> out(%, %))");
+        auto result = akkado::compile(R"(saw(440) |> lp(%, 1000, 0.7) |> out(%, %))");
 
         REQUIRE(result.success);
         // Should have OSC_SAW, FILTER_SVF_LP, and OUTPUT
@@ -1719,7 +1719,7 @@ TEST_CASE("String default parameters", "[akkado][fn][string-defaults]") {
                 "tri": tri(freq)
                 _: saw(freq)
             }
-            my_osc("tri", 880)
+            my_tri(880)
         )");
 
         REQUIRE(result.success);
@@ -1928,7 +1928,7 @@ TEST_CASE("Partial application", "[akkado][fn][partial]") {
 TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]") {
     SECTION("builtin: _ skips optional parameter with default") {
         auto result = akkado::compile(R"(
-            lp(osc("sin", 440), 5000, _) |> out(%, %)
+            lp(sine(440), 5000, _) |> out(%, %)
         )");
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
@@ -1936,10 +1936,10 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
 
     SECTION("builtin: _ equivalent to omitting trailing arg") {
         auto r1 = akkado::compile(R"(
-            lp(osc("sin", 440), 5000, _) |> out(%, %)
+            lp(sine(440), 5000, _) |> out(%, %)
         )");
         auto r2 = akkado::compile(R"(
-            lp(osc("sin", 440), 5000) |> out(%, %)
+            lp(sine(440), 5000) |> out(%, %)
         )");
         REQUIRE(r1.success);
         REQUIRE(r2.success);
@@ -1948,7 +1948,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
 
     SECTION("builtin: multiple _ skip middle params") {
         auto result = akkado::compile(R"(
-            delay(osc("sin", 440), 0.25, _, _, 0.8) |> out(%, %)
+            delay(sine(440), 0.25, _, _, 0.8) |> out(%, %)
         )");
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::DELAY));
@@ -1983,7 +1983,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
     SECTION("partial application still works for required params") {
         auto result = akkado::compile(R"(
             low_pass = lp(_, 1000)
-            osc("saw", 440) |> low_pass(%) |> out(%, %)
+            saw(440) |> low_pass(%) |> out(%, %)
         )");
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
@@ -1993,11 +1993,76 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
         // lp(signal, 5000, _) — third param 'q' has a default
         // Should compile directly, not create a closure
         auto result = akkado::compile(R"(
-            osc("saw", 440) |> lp(%, 5000, _) |> out(%, %)
+            saw(440) |> lp(%, 5000, _) |> out(%, %)
         )");
         REQUIRE(result.success);
         CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
         CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+    }
+
+    // PRD §10 Addendum: specialized handlers (poly, tap_delay, bus, mixer) must
+    // honor `_` the same as the generic builtin path. Each section below
+    // exercises a slot that previously rejected `_` with a "must be a number
+    // literal" error (E402/E406 for poly; unbound-identifier visit() for
+    // tap_delay).
+    SECTION("specialized: poly with _ for voices uses default 64") {
+        auto result = akkado::compile(R"(
+            fn pad(f, g, v) -> saw(f) * adsr(g, 0.01, 0.1, 0.7, 0.5) * v
+            n"c4 e4 g4" |> poly(@, pad, _, 2.5) |> out(@)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+    }
+
+    SECTION("specialized: poly with _ for release uses default 0") {
+        auto result = akkado::compile(R"(
+            fn pad(f, g, v) -> saw(f) * adsr(g, 0.01, 0.1, 0.7, 0.5) * v
+            n"c4 e4 g4" |> poly(@, pad, 32, _) |> out(@)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+    }
+
+    SECTION("specialized: poly with both optionals as _") {
+        auto result = akkado::compile(R"(
+            fn pad(f, g, v) -> saw(f) * adsr(g, 0.01, 0.1, 0.7, 0.5) * v
+            n"c4 e4 g4" |> poly(@, pad, _, _) |> out(@)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+    }
+
+    SECTION("specialized: tap_delay with _ for dry") {
+        auto result = akkado::compile(R"(
+            tap_delay(sine(220), 0.25, 0.5, (x) -> lp(x, 2000), _, 0.8) |> out(@)
+        )");
+        REQUIRE(result.success);
+        CHECK(find_opcode(result.bytecode, cedar::Opcode::DELAY_TAP));
+    }
+
+    // Regression: prior to PRD §10 the poly/mono/legato BuiltinInfo entries
+    // misindexed their `defaults[]` arrays (NaN at the required-slot prefix
+    // instead of pure optional-slot indexing). `has_default(idx)` therefore
+    // returned false for voices/release, so the analyzer routed `_` to
+    // partial application and the handler never saw the default. This pins
+    // the metadata so the helper above can find the right substitution.
+    SECTION("metadata: poly/mono/legato declare defaults at the right index") {
+        const akkado::BuiltinInfo* poly_bi = akkado::lookup_builtin("poly");
+        REQUIRE(poly_bi != nullptr);
+        REQUIRE(poly_bi->has_default(2));   // voices
+        CHECK(poly_bi->get_default(2) == 64.0f);
+        REQUIRE(poly_bi->has_default(3));   // release
+        CHECK(poly_bi->get_default(3) == 0.0f);
+
+        const akkado::BuiltinInfo* mono_bi = akkado::lookup_builtin("mono");
+        REQUIRE(mono_bi != nullptr);
+        REQUIRE(mono_bi->has_default(2));   // release (input_count=1, release is 3rd param)
+        CHECK(mono_bi->get_default(2) == 0.0f);
+
+        const akkado::BuiltinInfo* legato_bi = akkado::lookup_builtin("legato");
+        REQUIRE(legato_bi != nullptr);
+        REQUIRE(legato_bi->has_default(2));
+        CHECK(legato_bi->get_default(2) == 0.0f);
     }
 }
 

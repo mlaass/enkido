@@ -29,7 +29,7 @@ Key design decisions made in question rounds:
 
 | Scenario | Expected | Actual |
 |----------|----------|--------|
-| `osc("saw", 220) \|> stereo() \|> filter_lp(@, 500, 0.7) \|> out(@)` | Stereo lowpass applied, stereo output | Silent failure or incorrect behaviour: `filter_lp` reads `inputs[0]` (left buffer only), right channel is dropped |
+| `saw(220) \|> stereo() \|> filter_lp(@, 500, 0.7) \|> out(@)` | Stereo lowpass applied, stereo output | Silent failure or incorrect behaviour: `filter_lp` reads `inputs[0]` (left buffer only), right channel is dropped |
 | `sig \|> freeverb(@, 0.8, 0.5)` where `sig` is stereo | Stereo reverb tail | Right channel dropped; reverb runs mono on left |
 | User wants stereo delay on a mono source | Single call: `sig \|> stereo() \|> delay(@, 0.3, 0.5)` | Must duplicate chain: `sig \|> (delay(@, 0.3, 0.5), delay(@, 0.3, 0.5)) \|> out(@, @)` |
 | Mix stereo signal down to mono | Canonical `sig \|> mono(@)` | No function exists; user writes `(left(sig) + right(sig)) * 0.5` manually |
@@ -81,7 +81,7 @@ Stereo is tracked only as **codegen-side metadata** (`CodeGenerator::stereo_outp
 
 ```akkado
 // Mono → stereo: duplicate channels (L = R = input)
-osc("saw", 220) |> stereo() |> out(@)
+saw(220) |> stereo() |> out(@)
 
 // Stereo → mono: sum-to-mono with 0.5 gain  (L+R) * 0.5
 stereo_sig |> mono() |> filter_lp(@, 500, 0.7) |> out(@)
@@ -91,14 +91,14 @@ stereo_sig |> left(@)    // → Mono
 stereo_sig |> right(@)   // → Mono
 
 // Explicit stereo construction from two mono signals (unchanged)
-stereo(osc("sin", 440), osc("sin", 442))   // → Stereo with distinct L/R
+stereo(sine(440), sine(442))   // → Stereo with distinct L/R
 ```
 
 ### 4.2 Auto-Lift
 
 ```akkado
 // Mono effect on stereo input: auto-lifts to stereo effect
-sig = osc("saw", 220) |> stereo()    // Stereo
+sig = saw(220) |> stereo()    // Stereo
 sig |> filter_lp(@, 500, 0.7)        // Stereo (per-channel independent filter state)
     |> delay(@, 0.25, 0.5, 1.0, 0.5) // Stereo (per-channel independent delay line)
     |> out(@)                         // Explicit stereo signal: L and R routed
@@ -107,7 +107,7 @@ sig |> filter_lp(@, 500, 0.7)        // Stereo (per-channel independent filter s
 Equivalent explicit form users can still write:
 
 ```akkado
-sig = osc("saw", 220)
+sig = saw(220)
 left_out  = sig |> filter_lp(@, 500, 0.7) |> delay(@, 0.25, 0.5, 1.0, 0.5)
 right_out = sig |> filter_lp(@, 500, 0.7) |> delay(@, 0.25, 0.5, 1.0, 0.5)
 out(left_out, right_out)
@@ -119,13 +119,13 @@ Auto-lift is purely syntactic sugar for this explicit form — identical state h
 
 ```akkado
 // Ping-pong stereo chain
-osc("saw", 110)
+saw(110)
   |> stereo()
   |> pingpong(@, 0.375, 0.6)
   |> out(@)
 
 // Mono synth, stereo FX bus
-synth = osc("saw", 220) |> filter_lp(@, 800, 0.5)    // Mono
+synth = saw(220) |> filter_lp(@, 800, 0.5)    // Mono
 synth |> stereo()
       |> width(@, 1.4)                                 // Stereo widen
       |> freeverb(@, 0.85, 0.5)                        // Auto-lifted stereo reverb
@@ -135,7 +135,7 @@ synth |> stereo()
 sc_env = stereo_drums |> mono() |> env_follower(@)     // Mono control
 
 // Dry/wet mix with mixed channel types (see §5.3 rule 4)
-dry = osc("saw", 220)                                  // Mono
+dry = saw(220)                                  // Mono
 wet = dry |> stereo() |> freeverb(@, 0.9, 0.5)         // Stereo
 dry * 0.3 + wet * 0.7 |> out(@)                        // Mono + Stereo → Stereo
 // Equivalent to broadcasting dry across both channels of wet.
@@ -150,7 +150,7 @@ in() |> filter_lp(@, 2000, 0.7) |> out(@)              // Stereo in → stereo f
 
 ```akkado
 // Error: out(L, R) needs two mono signals; one of them is stereo
-some_stereo |> out(@, osc("sin", 440))
+some_stereo |> out(@, sine(440))
 // → E2xx at col N: 'out' expects Mono for argument 1, got Stereo.
 //   Use `out(stereo_sig)` or `out(left(stereo_sig), right(stereo_sig))`.
 
@@ -415,7 +415,7 @@ Verification:
 Verification:
 - Python experiment passes; WAV file sounds correct
 - `stereo_sig |> mono() |> left(@)` compiles? (It shouldn't — left requires stereo. Test the error.)
-- `stereo(osc("sin", 440), osc("sin", 440)) |> mono()` equals original sine at unity gain
+- `stereo(sine(440), sine(440)) |> mono()` equals original sine at unity gain
 
 ### Phase 3 — VM `STEREO_INPUT` Flag
 **Goal**: VM can run any opcode twice for stereo input.
@@ -520,7 +520,7 @@ Run in the web app with audible listening for each case:
 
 ```akkado
 // E2E 1: Stereo reverb
-osc("saw", 110) |> stereo() |> freeverb(@, 0.9, 0.5) |> out(@)
+saw(110) |> stereo() |> freeverb(@, 0.9, 0.5) |> out(@)
 // Expect: full stereo reverb tail, clearly wider than mono version
 
 // E2E 2: Auto-lifted stereo delay chain
@@ -529,13 +529,13 @@ drums |> stereo() |> delay(@, 0.3, 0.5, 1.0, 0.5) |> out(@)
 // Expect: stereo delays with independent per-channel decay, not mono-duplicated
 
 // E2E 3: Downmix for sidechain
-src = osc("saw", 220) |> stereo() |> filter_lp(@, 800, 0.5)
+src = saw(220) |> stereo() |> filter_lp(@, 800, 0.5)
 env = src |> mono() |> env_follower(@)
 src |> @ * env |> out(@)
 // Expect: compiles; sidechain ducks the stereo signal via mono-derived env
 
 // E2E 4: Error messages
-stereo_sig |> out(@, osc("sin", 440))
+stereo_sig |> out(@, sine(440))
 // Expect: E2XX with clear message pointing to argument 1
 ```
 

@@ -20,6 +20,7 @@
 #include <akkado/sample_registry.hpp>
 #include <akkado/pattern_debug.hpp>
 #include <akkado/shape_index.hpp>
+#include <akkado/state_init_buffer.hpp>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -137,6 +138,15 @@ WASM_EXPORT int cedar_load_program(const uint8_t* bytecode, uint32_t byte_count)
 
     size_t inst_count = byte_count / INST_SIZE;
     auto instructions = reinterpret_cast<const cedar::Instruction*>(bytecode);
+
+    // Grow the buffer pool to fit the new program's peak before the load
+    // crossfade arms. JS host calls this on the main thread, not the
+    // AudioWorklet processor — heap allocation is safe here, and the
+    // chunked BufferPool keeps existing slab pointers stable for any
+    // reads still in flight from the previous program.
+    if (g_compile_result.required_buffers > 0) {
+        g_vm->buffers().ensure_capacity(g_compile_result.required_buffers);
+    }
 
     // PRD prd-runtime-functions-control-flow L3: if the most recent compile
     // produced FOREACH_EVENT subprogram blocks, stage their table for this
@@ -1011,97 +1021,6 @@ WASM_EXPORT float akkado_get_required_midi_cc_route_slew_ms(uint32_t index) {
     return g_compile_result.required_midi_cc_routes[index].slew_ms;
 }
 
-/**
- * Resolve sample IDs in state_inits using currently loaded samples.
- * Call this AFTER loading required samples, BEFORE cedar_apply_state_inits().
- * This maps sample names to IDs in the sample bank.
- *
- * For bank samples, the qualified name format is: "bank_name_variant" (e.g., "TR808_bd_0")
- * The TypeScript side must load samples with these qualified names.
- */
-WASM_EXPORT void akkado_resolve_sample_ids() {
-    if (!g_vm) return;
-
-    for (auto& init : g_compile_result.state_inits) {
-        // Handle SequenceProgram type (sample mappings)
-        // Events are stored in sequence_events vectors
-        for (const auto& mapping : init.sequence_sample_mappings) {
-            if (mapping.seq_idx < init.sequence_events.size()) {
-                auto& events = init.sequence_events[mapping.seq_idx];
-                if (mapping.event_idx < events.size()) {
-                    // Build qualified name for bank samples
-                    std::string lookup_name;
-                    if (mapping.bank.empty() || mapping.bank == "default") {
-                        // Default bank - use simple name with variant suffix if non-zero
-                        lookup_name = mapping.variant > 0
-                            ? mapping.sample_name + ":" + std::to_string(mapping.variant)
-                            : mapping.sample_name;
-                    } else {
-                        // Custom bank - use qualified name format: bank_name_variant
-                        lookup_name = mapping.bank + "_" + mapping.sample_name + "_" + std::to_string(mapping.variant);
-                    }
-                    auto id = g_vm->sample_bank().get_sample_id(lookup_name);
-                    auto& ev = events[mapping.event_idx];
-                    std::uint8_t slot = mapping.value_slot;
-                    if (slot < cedar::MAX_VALUES_PER_EVENT) {
-                        ev.values[slot] = static_cast<float>(id);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Patch sample-id placeholder constants in the bytecode buffer using the
- * currently loaded sample bank. Walks `g_compile_result.scalar_sample_mappings`
- * (populated by codegen for `sample(trig, pitch, "name")` calls), looks up each
- * sample's qualified name in the bank, and overwrites the recorded PUSH_CONST
- * instruction's `state_id` immediate (which is bit_cast'd to a float at run
- * time) with the resolved sample ID.
- *
- * Call AFTER the sample bank has been populated and BEFORE
- * `cedar_load_program(bytecode_ptr, ...)` so the loaded program reflects the
- * patches.
- *
- * `bytecode_ptr` and `byte_count` describe the in-WASM bytecode buffer that is
- * about to be passed to `cedar_load_program`. The buffer is interpreted as a
- * contiguous array of `cedar::Instruction`.
- *
- * Returns the number of instructions patched (or 0 if the VM is uninitialized
- * or the buffer is malformed).
- */
-WASM_EXPORT uint32_t akkado_patch_sample_ids_in_bytecode(uint8_t* bytecode_ptr,
-                                                          uint32_t byte_count) {
-    if (!g_vm || !bytecode_ptr) return 0;
-    if (byte_count == 0 || (byte_count % sizeof(cedar::Instruction)) != 0) return 0;
-
-    auto* instructions = reinterpret_cast<cedar::Instruction*>(bytecode_ptr);
-    uint32_t inst_count = byte_count / sizeof(cedar::Instruction);
-    uint32_t patched = 0;
-
-    for (const auto& m : g_compile_result.scalar_sample_mappings) {
-        if (m.instruction_index >= inst_count) continue;
-        cedar::Instruction& inst = instructions[m.instruction_index];
-        if (inst.opcode != cedar::Opcode::PUSH_CONST) continue;
-
-        std::string lookup;
-        if (m.bank.empty() || m.bank == "default") {
-            lookup = m.variant > 0
-                ? m.name + ":" + std::to_string(m.variant)
-                : m.name;
-        } else {
-            lookup = m.bank + "_" + m.name + "_" + std::to_string(m.variant);
-        }
-
-        std::uint32_t id = g_vm->sample_bank().get_sample_id(lookup);
-        float as_float = static_cast<float>(id);
-        std::memcpy(&inst.state_id, &as_float, sizeof(float));
-        ++patched;
-    }
-
-    return patched;
-}
 
 // ============================================================================
 // State Initialization API
@@ -1144,147 +1063,138 @@ WASM_EXPORT float akkado_get_state_init_cycle_length(uint32_t index) {
     return g_compile_result.state_inits[index].cycle_length;
 }
 
+// ============================================================================
+// Compile-result packers (PRD prd-compile-off-audio-thread §5)
+//
+// The compile worker calls these immediately after akkado_compile() to
+// receive the wire-format buffers it forwards to the main thread. Each
+// repacks on call; the returned pointer is valid until the next pack call
+// or akkado_clear_result(). Worker copies bytes out before either occurs.
+// ============================================================================
+
+static std::vector<std::uint8_t> g_state_inits_buf;
+static std::vector<std::uint8_t> g_midi_sources_buf;
+static std::vector<std::uint8_t> g_block_table_buf;
+
+WASM_EXPORT const uint8_t* akkado_pack_state_inits_buffer() {
+    g_state_inits_buf = akkado::state_init_buffer::pack_state_inits(
+        g_compile_result.state_inits,
+        g_compile_result.scalar_sample_mappings);
+    return g_state_inits_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_state_inits_buffer_size() {
+    return static_cast<uint32_t>(g_state_inits_buf.size());
+}
+
+WASM_EXPORT const uint8_t* akkado_pack_midi_sources_buffer() {
+    g_midi_sources_buf = akkado::state_init_buffer::pack_midi_sources(
+        g_compile_result.required_midi_sources);
+    return g_midi_sources_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_midi_sources_buffer_size() {
+    return static_cast<uint32_t>(g_midi_sources_buf.size());
+}
+
+WASM_EXPORT const uint8_t* akkado_pack_block_table_buffer() {
+    g_block_table_buf = akkado::state_init_buffer::pack_block_table(
+        g_compile_result.block_table);
+    return g_block_table_buf.data();
+}
+
+WASM_EXPORT uint32_t akkado_get_block_table_buffer_size() {
+    return static_cast<uint32_t>(g_block_table_buf.size());
+}
+
+WASM_EXPORT uint32_t akkado_get_main_instruction_count() {
+    return g_compile_result.main_instruction_count;
+}
+
+// ============================================================================
+// Buffer-based State Init API (PRD prd-compile-off-audio-thread §5)
+//
+// These exports replace the in-WASM g_compile_result indirection used by
+// cedar_apply_state_inits / cedar_apply_midi_sources / akkado_resolve_sample_ids
+// / akkado_patch_sample_ids_in_bytecode. Each consumes a self-describing
+// packed buffer produced by the compile worker (or by the C++ packer in
+// akkado/include/akkado/state_init_buffer.hpp for tests / native hosts).
+// ============================================================================
+
 /**
- * Apply all state initializations from compile result to the VM
- * Should be called after cedar_load_program for correct pattern playback
- * @return Number of states initialized
+ * Stage the FOREACH_EVENT subprogram table for the next cedar_load_program
+ * call. Mirrors today's load_program path that reads g_compile_result.
+ * block_table. Empty table is fine (entry_count == 0).
  */
-WASM_EXPORT uint32_t cedar_apply_state_inits() {
-    if (!g_vm) return 0;
-
-    uint32_t count = 0;
-    for (const auto& init : g_compile_result.state_inits) {
-        if (init.type == akkado::StateInitData::Type::SequenceProgram) {
-            // Set up sequence event pointers before passing to VM
-            // The sequences need their event pointers to point to the sequence_events data
-            std::vector<cedar::Sequence> seq_copy = init.sequences;
-            for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
-                if (!init.sequence_events[i].empty()) {
-                    seq_copy[i].events = const_cast<cedar::Event*>(init.sequence_events[i].data());
-                    seq_copy[i].num_events = static_cast<std::uint32_t>(init.sequence_events[i].size());
-                    seq_copy[i].capacity = static_cast<std::uint32_t>(init.sequence_events[i].size());
-                }
-            }
-
-            // Initialize sequence-based pattern (arena allocates and copies)
-            g_vm->init_sequence_program_state(
-                init.state_id,
-                seq_copy.data(),
-                seq_copy.size(),
-                init.cycle_length,
-                init.is_sample_pattern,
-                init.total_events
-            );
-            // PRD prd-runtime-event-transforms Phase 4 Commit C: iter()/
-            // iterBack() lower to EVENT_REORDER(ITER); no per-SequenceState
-            // iter init call.
-            count++;
-        }
-        else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
-            g_vm->init_poly_state(
-                init.state_id,
-                init.poly_seq_state_id,
-                init.poly_max_voices,
-                init.poly_mode,
-                init.poly_steal_strategy,
-                init.poly_release_seconds,
-                init.poly_prop_count,
-                init.poly_prop_defaults
-            );
-            count++;
-        }
-        else if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
-            // PRD L3: FOREACH_EVENT instance config (poly/each_voice/fold).
-            g_vm->init_foreach_state(
-                init.state_id,
-                init.foreach_allocator_kind,
-                init.foreach_block_id,
-                init.foreach_event_src_state_id,
-                init.foreach_max_iterations,
-                init.poly_max_voices,
-                init.poly_mode,
-                init.poly_steal_strategy,
-                init.poly_release_seconds,
-                init.poly_prop_count,
-                init.poly_prop_defaults
-            );
-            count++;
-        }
-#ifndef CEDAR_NO_SOUNDFONT
-        else if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
-            g_vm->init_soundfont_voice_event_state(
-                init.state_id, init.sf_seq_state_id, init.sf_preset_idx);
-            count++;
-        }
-#endif
-        else if (init.type == akkado::StateInitData::Type::ExtendedParams) {
-            g_vm->init_extended_params(
-                init.state_id,
-                init.ext_constants.data(),
-                init.ext_buffer_indices.data(),
-                init.ext_count
-            );
-            count++;
-        }
-        else if (init.type == akkado::StateInitData::Type::Timeline) {
-            auto& state = g_vm->states().get_or_create<cedar::TimelineState>(init.state_id);
-            state.num_points = std::min(
-                static_cast<std::uint32_t>(init.timeline_breakpoints.size()),
-                static_cast<std::uint32_t>(cedar::TimelineState::MAX_BREAKPOINTS));
-            for (std::uint32_t i = 0; i < state.num_points; ++i) {
-                state.points[i] = init.timeline_breakpoints[i];
-            }
-            state.loop = init.timeline_loop;
-            state.loop_length = init.timeline_loop_length;
-            count++;
-        }
-        else if (init.type == akkado::StateInitData::Type::EventTransform ||
-                 init.type == akkado::StateInitData::Type::Reorder ||
-                 init.type == akkado::StateInitData::Type::Fanout) {
-            // PRD prd-runtime-event-transforms Phase 1/4: transform-owned
-            // SequenceState filled at runtime by EVENT_MAP / EVENT_FILTER /
-            // EVENT_REORDER / EVENT_FANOUT.
-            g_vm->init_event_transform_state(init.state_id, init.cycle_length,
-                                             init.is_sample_pattern,
-                                             init.total_events);
-            count++;
-        }
-        else if (init.type == akkado::StateInitData::Type::RateScale) {
-            // PRD prd-runtime-event-transforms Phase 3: EVENT_RATE_SCALE
-            // beat-position integrator. No payload — just allocate + reset.
-            g_vm->init_event_rate_scale_state(init.state_id);
-            count++;
-        }
+WASM_EXPORT void cedar_set_block_table(const uint8_t* entries_buf,
+                                       uint32_t entry_count,
+                                       uint32_t main_instruction_count) {
+    if (!g_vm) return;
+    if (entry_count == 0 || !entries_buf) {
+        g_vm->set_block_table({}, main_instruction_count);
+        return;
     }
-    return count;
+    auto* entries = reinterpret_cast<const cedar::BlockEntry*>(entries_buf);
+    g_vm->set_block_table({entries, entry_count}, main_instruction_count);
 }
 
 /**
- * Initialize one MidiQueueState per required_midi_sources entry. The
- * CLI's `apply_midi_route_plan` (audio_engine.cpp) calls
- * `vm.init_midi_queue_state` directly; on web the WASM heap is private to
- * this module, so the JS host calls this single function instead. Must be
- * invoked AFTER cedar_load_program — initialization writes into the new
- * program's state pool. Phase 5 (file playback) will load `.mid` bytes
- * separately and patch the file pointer on each MidiQueueState; Phase 4
- * leaves File-kind entries silent.
- *
- * @return Number of MidiQueueStates initialized.
+ * Parse stateInitsBuf (akkado::state_init_buffer §5.1-5.3) and route each
+ * StateInit (kind=0) record to the matching VM::init_*_state call.
+ * Sample-mapping records (kind=1, 2) are validated but not applied here.
+ * @return # of state-init records applied, or -1 on malformed buffer.
  */
-WASM_EXPORT uint32_t cedar_apply_midi_sources() {
-    if (!g_vm) return 0;
-    uint32_t count = 0;
-    for (const auto& src : g_compile_result.required_midi_sources) {
-        g_vm->init_midi_queue_state(
-            src.state_id,
-            src.kind,
-            src.name_or_path.empty() ? nullptr : src.name_or_path.c_str(),
-            src.channel_filter,
-            src.loop,
-            src.tempo_mode);
-        count++;
+WASM_EXPORT int32_t cedar_apply_state_inits_from_buffer(const uint8_t* buf,
+                                                        uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::apply_state_inits(*g_vm, buf, byte_count);
+}
+
+/**
+ * Walk SequenceSampleMapping records (kind=1) in stateInitsBuf and patch
+ * Event::values[slot] = bank.get_sample_id(name) for each. Must run AFTER
+ * cedar_apply_state_inits_from_buffer (so events exist in the arena) and
+ * AFTER the sample bank is populated.
+ * @return # of mappings patched, or -1 on malformed buffer.
+ */
+WASM_EXPORT int32_t akkado_resolve_sample_ids_from_buffer(const uint8_t* buf,
+                                                          uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::resolve_sample_ids(*g_vm, buf, byte_count);
+}
+
+/**
+ * Parse midiSourcesBuf (§5.6) and call VM::init_midi_queue_state for each
+ * record. Must run AFTER cedar_load_program (new program's state pool active).
+ * @return # of MidiQueueStates initialized, or -1 on malformed buffer.
+ */
+WASM_EXPORT int32_t cedar_apply_midi_sources_from_buffer(const uint8_t* buf,
+                                                         uint32_t byte_count) {
+    if (!g_vm) return -1;
+    return akkado::state_init_buffer::apply_midi_sources(*g_vm, buf, byte_count);
+}
+
+/**
+ * Patch sample-id placeholder constants in `bytecode` using ScalarSampleMapping
+ * records (kind=2) from a stateInitsBuf. Equivalent to
+ * akkado_patch_sample_ids_in_bytecode but sources the mappings from a caller-
+ * provided buffer instead of g_compile_result.
+ * @return # of instructions patched, or -1 on malformed input.
+ */
+WASM_EXPORT int32_t akkado_patch_sample_ids_in_bytecode_from_buffer(
+    uint8_t* bytecode_ptr, uint32_t bytecode_byte_count,
+    const uint8_t* mappings_buf, uint32_t mappings_byte_count) {
+    if (!g_vm || !bytecode_ptr) return -1;
+    if (bytecode_byte_count == 0 ||
+        (bytecode_byte_count % sizeof(cedar::Instruction)) != 0) {
+        return -1;
     }
-    return count;
+    return akkado::state_init_buffer::patch_sample_ids_in_bytecode(
+        *g_vm,
+        reinterpret_cast<cedar::Instruction*>(bytecode_ptr),
+        bytecode_byte_count / sizeof(cedar::Instruction),
+        mappings_buf,
+        mappings_byte_count);
 }
 
 // ============================================================================
@@ -2227,9 +2137,10 @@ WASM_EXPORT int32_t cedar_load_soundfont(const char* name, const uint8_t* data, 
 
 /**
  * Load a `.mid` file from memory into the VM's name-keyed midi sequence
- * registry. Subsequent cedar_apply_midi_sources() calls will attach the
- * parsed sequence to any MidiQueueState whose RequiredMidiSource.name_or_path
- * matches `name`. Mirrors cedar_load_soundfont's contract.
+ * registry. Subsequent cedar_apply_midi_sources_from_buffer() calls will
+ * attach the parsed sequence to any MidiQueueState whose
+ * RequiredMidiSource.name_or_path matches `name`. Mirrors cedar_load_soundfont's
+ * contract.
  *
  * @param name Display name / lookup key (must match the akkado source
  *             reference, typically the file basename)

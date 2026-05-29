@@ -54,17 +54,17 @@ A state-variable lowpass filter. Higher Q values add resonance at the cutoff fre
 
 ```akk
 // Basic lowpass at 800 Hz
-osc("saw", 220) |> lp(@, 800) |> out(@)
+saw(220) |> lp(@, 800) |> out(@)
 ```
 
 ```akk
 // Envelope-controlled filter sweep
-osc("saw", 110) |> lp(@, 200 + ar(trigger(4)) * 2000) |> out(@)
+saw(110) |> lp(@, 200 + ar(trigger(4)) * 2000) |> out(@)
 ```
 
 ```akk
 // Resonant filter
-osc("saw", 110) |> lp(@, 500, 8) |> out(@)
+saw(110) |> lp(@, 500, 8) |> out(@)
 ```
 
 Related: [hp](#hp), [bp](#bp), [moog](#moog)
@@ -89,12 +89,12 @@ Removes low frequencies. Useful for thinning out sounds or creating transitions.
 
 ```akk
 // Remove sub frequencies
-osc("saw", 110) |> hp(@, 200) |> out(@)
+saw(110) |> hp(@, 200) |> out(@)
 ```
 
 ```akk
 // Hi-hat from noise
-osc("noise") |> hp(@, 8000) * ar(trigger(8), 0.001, 0.05) |> out(@)
+noise() |> hp(@, 8000) * ar(trigger(8), 0.001, 0.05) |> out(@)
 ```
 
 Related: [lp](#lp), [bp](#bp)
@@ -119,12 +119,12 @@ Isolates a band of frequencies. Higher Q values create a narrower, more resonant
 
 ```akk
 // Telephone effect
-osc("saw", 220) |> bp(@, 1000, 4) |> out(@)
+saw(220) |> bp(@, 1000, 4) |> out(@)
 ```
 
 ```akk
 // Vocal formant
-osc("saw", 110) |> bp(@, 500, 10) |> out(@)
+saw(110) |> bp(@, 500, 10) |> out(@)
 ```
 
 Related: [lp](#lp), [hp](#hp)
@@ -151,24 +151,24 @@ The Moog ladder filter, known for its warm, creamy sound. At high resonance valu
 
 ```akk
 // Classic Moog bass
-osc("saw", 55) |> moog(@, 400, 2) |> out(@)
+saw(55) |> moog(@, 400, 2) |> out(@)
 ```
 
 ```akk
 // Filter sweep with high resonance
-osc("saw", 110)
-    |> moog(@, 100 + osc("sin", 0.5) * 1000, 3.5)
+saw(110)
+    |> moog(@, 100 + sine(0.5) * 1000, 3.5)
     |> out(@)
 ```
 
 ```akk
 // Self-oscillating filter (use as oscillator)
-osc("noise") * 0.01 |> moog(@, 440, 3.9) |> out(@)
+noise() * 0.01 |> moog(@, 440, 3.9) |> out(@)
 ```
 
 ```akk
 // Hot input with more saturation
-osc("saw", 110) |> moog(@, 800, 2, 4.0, 0.8) |> out(@)
+saw(110) |> moog(@, 800, 2, 4.0, 0.8) |> out(@)
 ```
 
 Related: [lp](#lp)
@@ -195,19 +195,19 @@ Based on the Korg MS-20 filter topology with diode clipping in the feedback path
 
 ```akk
 // Classic MS-20 bass
-osc("saw", 55) |> sallenkey(@, 600, 3) |> out(@)
+saw(55) |> sallenkey(@, 600, 3) |> out(@)
 ```
 
 ```akk
 // Screaming resonance
-osc("saw", 110)
-    |> sallenkey(@, 400 + osc("sin", 0.2) * 800, 3.8)
+saw(110)
+    |> sallenkey(@, 400 + sine(0.2) * 800, 3.8)
     |> out(@)
 ```
 
 ```akk
 // Highpass mode
-osc("saw", 110) |> sallenkey(@, 500, 2, 1.0) |> out(@)
+saw(110) |> sallenkey(@, 500, 2, 1.0) |> out(@)
 ```
 
 Related: [moog](#moog), [diode](#diode)

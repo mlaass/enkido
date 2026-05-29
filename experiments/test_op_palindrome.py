@@ -47,7 +47,7 @@ SR = 48000
 
 AKK_SRC = """
 melody = n"c4 e4 g4 b4".palindrome()
-mtof(melody) |> osc("sin", %) * 0.2 |> out(%, %)
+mtof(melody) |> sine(%) * 0.2 |> out(%, %)
 """
 
 # c4=261.63, e4=329.63, g4=392.00, b4=493.88 (12-TET, A4=440)

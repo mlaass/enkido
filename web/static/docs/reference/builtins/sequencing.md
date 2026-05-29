@@ -11,19 +11,19 @@ subfeatures:
   - name: Clock
     anchor: clock
     tagline: Master tempo source.
-    snippet: 'osc("saw", 110) |> delay(@, clock() / 4, 0.4)'
+    snippet: 'saw(110) |> delay(@, clock() / 4, 0.4)'
   - name: LFO
     anchor: lfo
     tagline: Bipolar low-frequency oscillator.
-    snippet: 'osc("sin", 220 + lfo(5) * 10)'
+    snippet: 'sine(220 + lfo(5) * 10)'
   - name: Trigger
     anchor: trigger
     tagline: Edge-triggered gate generator.
-    snippet: 'osc("sin", 55) * ar(trigger(1), 0.01, 0.2)'
+    snippet: 'sine(55) * ar(trigger(1), 0.01, 0.2)'
   - name: Euclidean
     anchor: euclid
     tagline: Euclidean rhythm generator.
-    snippet: 'osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15)'
+    snippet: 'sine(55) * ar(euclid(3, 8), 0.01, 0.15)'
   - name: Pattern Transforms
     anchor: pattern-transforms
     tagline: early, late, swing, palindrome, ply.
@@ -31,7 +31,7 @@ subfeatures:
   - name: Pattern Generators
     anchor: pattern-generators
     tagline: binary, run, iter, iterBack.
-    snippet: 'run(8) |> mtof(@ + 60) |> osc("saw", @)'
+    snippet: 'run(8) |> mtof(@ + 60) |> saw(@)'
 ---
 
 # Sequencing & Timing
@@ -52,7 +52,7 @@ Returns the current position in the clock cycle. Use with other timing functions
 
 ```akk
 // Use clock for tempo-synced effects
-osc("saw", 110) |> delay(@, clock() / 4, 0.4) |> out(@)
+saw(110) |> delay(@, clock() / 4, 0.4) |> out(@)
 ```
 
 Related: [trigger](#trigger), [lfo](#lfo)
@@ -72,17 +72,17 @@ A low-frequency oscillator for modulation. The duty parameter controls the pulse
 
 ```akk
 // Vibrato
-osc("sin", 220 + lfo(5) * 10) |> out(@)
+sine(220 + lfo(5) * 10) |> out(@)
 ```
 
 ```akk
 // Tremolo
-osc("saw", 220) * (0.5 + lfo(4) * 0.5) |> out(@)
+saw(220) * (0.5 + lfo(4) * 0.5) |> out(@)
 ```
 
 ```akk
 // Filter sweep
-osc("saw", 110) |> lp(@, 500 + lfo(0.2) * 1500) |> out(@)
+saw(110) |> lp(@, 500 + lfo(0.2) * 1500) |> out(@)
 ```
 
 Related: [clock](#clock), [trigger](#trigger)
@@ -101,18 +101,18 @@ Generates short impulses at regular intervals. A div of 4 means 4 triggers per b
 
 ```akk
 // Kick drum on quarter notes
-osc("sin", 55) * ar(trigger(1), 0.01, 0.2) |> out(@)
+sine(55) * ar(trigger(1), 0.01, 0.2) |> out(@)
 ```
 
 ```akk
 // Hi-hat on 8th notes
-osc("noise") |> hp(@, 8000) * ar(trigger(2), 0.001, 0.05) |> out(@)
+noise() |> hp(@, 8000) * ar(trigger(2), 0.001, 0.05) |> out(@)
 ```
 
 ```akk
 // Fast arpeggio triggers
 n"c4 e4 g4 c5"
-    |> ((f) -> osc("saw", f) * ar(trigger(8)))
+    |> ((f) -> saw(f) * ar(trigger(8)))
     |> out(@)
 ```
 
@@ -141,22 +141,22 @@ so you can modulate it with an LFO or pattern.
 
 ```akk
 // Tresillo pattern (3 hits over 1 bar)
-osc("sin", 55) * ar(euclid(3, 8), 0.01, 0.15) |> out(@)
+sine(55) * ar(euclid(3, 8), 0.01, 0.15) |> out(@)
 ```
 
 ```akk
 // West African bell
-osc("noise") |> hp(@, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(@)
+noise() |> hp(@, 6000) * ar(euclid(5, 8), 0.001, 0.03) |> out(@)
 ```
 
 ```akk
 // Rotated pattern
-osc("saw", 110) * ar(euclid(5, 16, 2)) |> lp(@, 800) |> out(@)
+saw(110) * ar(euclid(5, 16, 2)) |> lp(@, 800) |> out(@)
 ```
 
 ```akk
 // Stretched pattern: 5 hits over 2 bars (8 cycles)
-osc("sin", 110) * ar(euclid(5, 16, 0, 8), 0.005, 0.4) |> out(@)
+sine(110) * ar(euclid(5, 16, 0, 8), 0.005, 0.4) |> out(@)
 ```
 
 > **Note:** `.fast(N)` / `.slow(N)` are *pattern* transforms and do **not** apply
@@ -244,7 +244,7 @@ Pattern constructors that emit an event stream directly from numeric input. Comp
 
 ```akk
 // ascending chromatic from C4
-run(8) |> mtof(@ + 60) |> osc("saw", @)
+run(8) |> mtof(@ + 60) |> saw(@)
 ```
 
 ### binary

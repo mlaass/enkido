@@ -453,7 +453,7 @@ TEST_CASE("e2e: n\"c4 d4 e4 f4\" alternates one note per cycle",
 
 TEST_CASE("e2e VM: n\"c4 d4 e4 f4\" through process_block emits one note per cycle",
           "[codegen][patterns][e2e][alternation][vm]") {
-    auto result = akkado::compile(R"(n"c4 d4 e4 f4" |> osc("sin", @) |> out(@))");
+    auto result = akkado::compile(R"(n"c4 d4 e4 f4" |> sine(@) |> out(@))");
     REQUIRE(result.success);
     auto host = vm_render_setup(result);
     REQUIRE(host->pattern_state_id != 0);
@@ -471,7 +471,7 @@ TEST_CASE("e2e VM: n\"c4 d4 e4 f4\" through process_block emits one note per cyc
 
 TEST_CASE("e2e VM: n\"e4 ~ ~ b3 ~ ~ g4 ~\" through process_block",
           "[codegen][patterns][e2e][alternation][vm]") {
-    auto result = akkado::compile(R"(n"e4 ~ ~ b3 ~ ~ g4 ~" |> osc("sin", @) |> out(@))");
+    auto result = akkado::compile(R"(n"e4 ~ ~ b3 ~ ~ g4 ~" |> sine(@) |> out(@))");
     REQUIRE(result.success);
     auto host = vm_render_setup(result);
     REQUIRE(host->pattern_state_id != 0);
@@ -629,7 +629,7 @@ TEST_CASE("e2e VM: s\"bd [bd ~] sd [bd <sd hh>]\" through process_block",
 TEST_CASE("e2e VM trig signal: n\"c4 ~ ~ ~\" fires trig exactly once per 4 cycles",
           "[codegen][patterns][e2e][rest_trig][vm]") {
     auto result = akkado::compile(
-        R"(n"c4 ~ ~ ~" |> osc("sin", @freq) * ar(@trig, 0.001, 0.1) |> out(@))");
+        R"(n"c4 ~ ~ ~" |> sine(@freq) * ar(@trig, 0.001, 0.1) |> out(@))");
     REQUIRE(result.success);
     auto host = vm_render_setup(result);
     REQUIRE(host->pattern_state_id != 0);

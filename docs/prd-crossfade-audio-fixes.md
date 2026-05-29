@@ -274,7 +274,7 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
 
 **Testing**:
 1. Catch2 test: Create VM, load a program that outputs DC 1.0, load a second identical program, process blocks through full crossfade. Assert that output level never exceeds ~1.5x (equal-power peak for correlated signals) at any point. Before fix: peaks at ~4x.
-2. Manual: Open web app, write `osc("saw", 220) |> out(@, @)`, play, change frequency to 440, listen for click. Before fix: loud pop. After fix: smooth transition.
+2. Manual: Open web app, write `saw(220) |> out(@, @)`, play, change frequency to 440, listen for click. Before fix: loud pop. After fix: smooth transition.
 
 **Verification command**:
 ```bash
@@ -354,7 +354,7 @@ cmake --build build --target cedar_tests && ./build/cedar/tests/cedar_tests "[cr
    - `SamplerState` — voice buffers (if arena-allocated)
 
 **Testing**:
-1. Catch2 test: Load program with `osc("sin", 440)`, swap to same program, capture oscillator phase before and after crossfade. Assert phase advanced by exactly `crossfade_duration * block_size` samples worth, not 2x.
+1. Catch2 test: Load program with `sine(440)`, swap to same program, capture oscillator phase before and after crossfade. Assert phase advanced by exactly `crossfade_duration * block_size` samples worth, not 2x.
 2. Catch2 test: Load program with delay, swap to same program, verify delay buffer contents are preserved correctly across crossfade.
 3. Manual: Play a patch with reverb and delay, live-reload, listen for pitch warble or resonance distortion during crossfade.
 
@@ -456,7 +456,7 @@ cmake --build build --target cedar_tests && ./build/cedar/tests/cedar_tests "[cr
 
 ### Manual Verification
 
-1. Open web app, write `osc("saw", 220) |> out(@, @)`, press play
+1. Open web app, write `saw(220) |> out(@, @)`, press play
 2. Change `220` to `440`, observe live reload — no click
 3. Add `|> lp(1000, 1)` after the oscillator, reload — no click
 4. Add `|> delay(0.25, 0.5, 1, 0)` — reload — no click, delay tail continuous

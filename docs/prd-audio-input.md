@@ -75,7 +75,7 @@ in() |> lp(@, 2000, 0.7) |> out
 in() |> delay(@, 0.25, 0.5, 0.5, 0.5) |> out
 
 // Mix with a synth
-s = osc("saw", 220) * 0.3
+s = saw(220) * 0.3
 in() + s |> out
 ```
 

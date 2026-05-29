@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <akkado/codegen.hpp>
+#include <cedar/dsp/constants.hpp>
+
+#include <set>
+#include <vector>
 
 using namespace akkado;
 
@@ -69,41 +73,41 @@ TEST_CASE("BufferAllocator basic operations", "[buffer_allocator]") {
 TEST_CASE("BufferAllocator edge cases", "[buffer_allocator][edge]") {
     BufferAllocator alloc;
 
-    SECTION("allocate exactly MAX_ALLOCATABLE times") {
-        for (int i = 0; i < BufferAllocator::MAX_ALLOCATABLE; ++i) {
+    SECTION("allocate fills the address space, skipping BUFFER_ZERO") {
+        // The allocator hands out every index in [0, MAX_ALLOCATABLE)
+        // EXCEPT cedar::BUFFER_ZERO (= 255), which is reserved.
+        std::vector<std::uint16_t> seen;
+        seen.reserve(BufferAllocator::MAX_ALLOCATABLE);
+        for (int i = 0; i + 1 < BufferAllocator::MAX_ALLOCATABLE; ++i) {
             std::uint16_t idx = alloc.allocate();
-            CHECK(idx != BufferAllocator::BUFFER_UNUSED);
-            CHECK(idx == static_cast<std::uint16_t>(i));
+            REQUIRE(idx != BufferAllocator::BUFFER_UNUSED);
+            REQUIRE(idx != cedar::BUFFER_ZERO);
+            seen.push_back(idx);
         }
-
-        CHECK(alloc.count() == BufferAllocator::MAX_ALLOCATABLE);
+        std::set<std::uint16_t> unique(seen.begin(), seen.end());
+        CHECK(unique.size() == seen.size());
         CHECK_FALSE(alloc.has_available());
     }
 
-    SECTION("next allocation after MAX_ALLOCATABLE returns BUFFER_UNUSED") {
-        // Fill up
-        for (int i = 0; i < BufferAllocator::MAX_ALLOCATABLE; ++i) {
+    SECTION("next allocation after exhaustion returns BUFFER_UNUSED") {
+        for (int i = 0; i + 1 < BufferAllocator::MAX_ALLOCATABLE; ++i) {
             (void)alloc.allocate();
         }
 
-        // Next should fail
         std::uint16_t overflow = alloc.allocate();
         CHECK(overflow == BufferAllocator::BUFFER_UNUSED);
     }
 
     SECTION("multiple overflow allocations return BUFFER_UNUSED") {
-        // Fill up
-        for (int i = 0; i < BufferAllocator::MAX_ALLOCATABLE; ++i) {
+        for (int i = 0; i + 1 < BufferAllocator::MAX_ALLOCATABLE; ++i) {
             (void)alloc.allocate();
         }
 
-        // Multiple overflow attempts
         for (int i = 0; i < 10; ++i) {
             std::uint16_t overflow = alloc.allocate();
             CHECK(overflow == BufferAllocator::BUFFER_UNUSED);
         }
 
-        // Count should still be MAX_ALLOCATABLE
         CHECK(alloc.count() == BufferAllocator::MAX_ALLOCATABLE);
     }
 
@@ -112,31 +116,33 @@ TEST_CASE("BufferAllocator edge cases", "[buffer_allocator][edge]") {
         CHECK(alloc.has_available());
     }
 
-    SECTION("allocate at boundary") {
-        // Allocate MAX_ALLOCATABLE - 1
-        for (int i = 0; i < BufferAllocator::MAX_ALLOCATABLE - 1; ++i) {
-            (void)alloc.allocate();
+    SECTION("BUFFER_ZERO slot is never handed out") {
+        // Burn the first 256 allocations: 0..254 then skip to 256.
+        std::uint16_t last_before_skip = BufferAllocator::BUFFER_UNUSED;
+        std::uint16_t first_after_skip = BufferAllocator::BUFFER_UNUSED;
+        for (std::uint16_t i = 0; i < 256; ++i) {
+            std::uint16_t idx = alloc.allocate();
+            REQUIRE(idx != BufferAllocator::BUFFER_UNUSED);
+            REQUIRE(idx != cedar::BUFFER_ZERO);
+            if (i == cedar::BUFFER_ZERO) first_after_skip = idx;
+            if (i == cedar::BUFFER_ZERO - 1) last_before_skip = idx;
         }
-
-        CHECK(alloc.has_available());
-
-        // Allocate the last one
-        std::uint16_t last = alloc.allocate();
-        CHECK(last == BufferAllocator::MAX_ALLOCATABLE - 1);
-        CHECK_FALSE(alloc.has_available());
+        CHECK(last_before_skip == cedar::BUFFER_ZERO - 1);
+        CHECK(first_after_skip == cedar::BUFFER_ZERO + 1);
     }
 
     SECTION("BUFFER_UNUSED constant value") {
         CHECK(BufferAllocator::BUFFER_UNUSED == 0xFFFF);
     }
 
-    SECTION("MAX_BUFFERS constant value") {
-        CHECK(BufferAllocator::MAX_BUFFERS == 256);
+    SECTION("MAX_BUFFERS matches cedar capacity") {
+        CHECK(BufferAllocator::MAX_BUFFERS == cedar::MAX_BUFFERS);
     }
 
-    SECTION("MAX_ALLOCATABLE constant value") {
-        // Buffer 255 is reserved for BUFFER_ZERO (constant zero buffer)
-        CHECK(BufferAllocator::MAX_ALLOCATABLE == 255);
+    SECTION("MAX_ALLOCATABLE equals MAX_BUFFERS") {
+        // The allocator can address every slot; BUFFER_ZERO is excluded
+        // by allocate()'s skip-logic, not by capping the cursor early.
+        CHECK(BufferAllocator::MAX_ALLOCATABLE == BufferAllocator::MAX_BUFFERS);
     }
 }
 
@@ -172,6 +178,101 @@ TEST_CASE("BufferAllocator stress test", "[buffer_allocator][stress]") {
                 CHECK(got == expected);
             }
         }
+    }
+}
+
+// ============================================================================
+// Free-list reuse (release + reallocate)
+// ============================================================================
+
+TEST_CASE("BufferAllocator release + reuse", "[buffer_allocator][release]") {
+    SECTION("released index is returned by next allocate") {
+        BufferAllocator alloc;
+        std::uint16_t a = alloc.allocate();
+        std::uint16_t b = alloc.allocate();
+        CHECK(alloc.count() == 2);
+
+        alloc.release(a);
+        std::uint16_t reused = alloc.allocate();
+        CHECK(reused == a);
+        CHECK(alloc.count() == 2);
+        CHECK(b == 1);
+    }
+
+    SECTION("multiple releases drain LIFO") {
+        BufferAllocator alloc;
+        std::uint16_t a = alloc.allocate();
+        std::uint16_t b = alloc.allocate();
+        std::uint16_t c = alloc.allocate();
+
+        alloc.release(a);
+        alloc.release(b);
+        alloc.release(c);
+
+        CHECK(alloc.allocate() == c);
+        CHECK(alloc.allocate() == b);
+        CHECK(alloc.allocate() == a);
+        CHECK(alloc.allocate() == 3);
+        CHECK(alloc.count() == 4);
+    }
+
+    SECTION("release(BUFFER_UNUSED) is a no-op") {
+        BufferAllocator alloc;
+        std::uint16_t a = alloc.allocate();
+        alloc.release(BufferAllocator::BUFFER_UNUSED);
+        std::uint16_t b = alloc.allocate();
+        CHECK(b == 1);
+        CHECK(a == 0);
+    }
+
+    SECTION("release rejects indices >= MAX_ALLOCATABLE") {
+        BufferAllocator alloc;
+        std::uint16_t a = alloc.allocate();
+        alloc.release(BufferAllocator::MAX_ALLOCATABLE);
+        alloc.release(BufferAllocator::MAX_ALLOCATABLE + 100);
+        CHECK(alloc.allocate() == 1);
+        CHECK(a == 0);
+    }
+
+    SECTION("release rejects indices >= next_ (never handed out)") {
+        BufferAllocator alloc;
+        (void)alloc.allocate();
+        alloc.release(17);
+        CHECK(alloc.allocate() == 1);
+    }
+}
+
+TEST_CASE("BufferAllocator reset_to drains stale free-list entries",
+          "[buffer_allocator][reset_to]") {
+    SECTION("entries past the mark are dropped from the free list") {
+        BufferAllocator alloc;
+        (void)alloc.allocate();
+        std::uint16_t b = alloc.allocate();
+        std::uint16_t c = alloc.allocate();
+        (void)alloc.allocate();
+
+        alloc.release(c);
+        alloc.release(3);
+
+        alloc.reset_to(2);
+        CHECK(alloc.count() == 2);
+
+        CHECK(alloc.allocate() == 2);
+        CHECK(alloc.allocate() == 3);
+        (void)b;
+    }
+
+    SECTION("entries before the mark survive reset_to") {
+        BufferAllocator alloc;
+        std::uint16_t a = alloc.allocate();
+        (void)alloc.allocate();
+        (void)alloc.allocate();
+
+        alloc.release(a);
+        alloc.reset_to(2);
+
+        CHECK(alloc.allocate() == 0);
+        CHECK(alloc.allocate() == 2);
     }
 }
 
@@ -231,14 +332,15 @@ TEST_CASE("BufferAllocator in codegen context", "[buffer_allocator]") {
     }
 
     SECTION("detect buffer exhaustion during codegen") {
-        // Simulate a program that needs too many buffers
         bool exhausted = false;
 
         for (int i = 0; i < BufferAllocator::MAX_ALLOCATABLE + 10; ++i) {
             std::uint16_t idx = alloc.allocate();
             if (idx == BufferAllocator::BUFFER_UNUSED) {
                 exhausted = true;
-                CHECK(i == BufferAllocator::MAX_ALLOCATABLE);
+                // Allocator exhausts after handing out every slot except
+                // BUFFER_ZERO: MAX_ALLOCATABLE - 1 successful calls.
+                CHECK(i == BufferAllocator::MAX_ALLOCATABLE - 1);
                 break;
             }
         }

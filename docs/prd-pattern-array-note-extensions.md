@@ -25,10 +25,10 @@ Extend Akkado with Strudel-compatible patterns, first-class arrays, chord notati
 
 ```akkado
 // Explicit (always works)
-map([c4, e4, g4], x => osc("saw", x)) |> mix(@) |> out(@, @)
+map([c4, e4, g4], x => saw(x)) |> mix(@) |> out(@, @)
 
 // Sugar (expands at compile time)
-osc("saw", [c4, e4, g4]) |> out(@, @)  // Equivalent to above
+saw([c4, e4, g4]) |> out(@, @)  // Equivalent to above
 ```
 
 ### 2.2 Voice System
@@ -86,7 +86,7 @@ chord("Am")  // → [57, 60, 64] (A3, C4, E4 as MIDI)
 chord("Am C G F")
   .anchor("c5")
   .mode("below")
-  |> mtof(@) |> osc("saw", @)
+  |> mtof(@) |> saw(@)
 ```
 
 | Function | Description |
@@ -186,7 +186,7 @@ drums.slow(2).rev() |> sampler(@) |> out(@, @)
 ```
 - `[1, 2, 3]` parses to ArrayLit node
 - `map([1,2,3], x => x*2)` produces `[2,4,6]`
-- `[c4, e4, g4] |> mtof(@) |> osc("saw", @)` produces 3 oscillators
+- `[c4, e4, g4] |> mtof(@) |> saw(@)` produces 3 oscillators
 
 ### Phase 2: Pattern Objects & Method Chaining
 
@@ -259,7 +259,7 @@ drums.slow(2).rev() |> out(@, @)
 **Verification**:
 - `chord("Am")` → `[57, 60, 64]`
 - `chord("C7")` → `[48, 52, 55, 58]`
-- Listen: `chord("Am") |> mtof(@) |> osc("saw", @)` sounds like A minor
+- Listen: `chord("Am") |> mtof(@) |> saw(@)` sounds like A minor
 
 ### Phase 4: Voicing System — DEFERRED to Phase 2 PRD
 
@@ -444,7 +444,7 @@ Edge cases where valid mini-notation could also be a valid string:
 
 ### Phase 3 Complete When:
 - All common chord symbols parse correctly
-- `chord("Am C F G") |> mtof(@) |> osc("saw", @)` plays correct progression
+- `chord("Am C F G") |> mtof(@) |> saw(@)` plays correct progression
 
 ### Full System Complete When:
 - Strudel code examples work with minimal modification

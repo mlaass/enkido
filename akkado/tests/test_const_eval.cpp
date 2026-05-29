@@ -76,7 +76,7 @@ TEST_CASE("Const: power right-associativity (F7)", "[const][F7]") {
 TEST_CASE("Const: use const variable in expression", "[const]") {
     auto result = akkado::compile(R"(
         const base = 440
-        osc("sin", base)
+        sine(base)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -105,7 +105,7 @@ TEST_CASE("Const: nested const references", "[const]") {
 TEST_CASE("Const fn: simple function", "[const]") {
     auto result = akkado::compile(R"(
         const fn double_it(x) -> x * 2
-        osc("sin", double_it(220))
+        sine(double_it(220))
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -125,7 +125,7 @@ TEST_CASE("Const fn: simple function", "[const]") {
 TEST_CASE("Const fn: mtof conversion", "[const]") {
     auto result = akkado::compile(R"(
         const fn mtof(n) -> 440 * pow(2, (n - 69) / 12)
-        osc("sin", mtof(69))
+        sine(mtof(69))
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -165,7 +165,7 @@ TEST_CASE("Const fn: with const variable argument", "[const]") {
 TEST_CASE("Const fn: with default parameter", "[const]") {
     auto result = akkado::compile(R"(
         const fn scale(x, factor = 2) -> x * factor
-        osc("sin", scale(220))
+        sine(scale(220))
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -237,7 +237,7 @@ TEST_CASE("Const: random accepts const variable", "[const]") {
 
 TEST_CASE("Const fn: rejects non-pure operations", "[const]") {
     auto result = akkado::compile(R"(
-        const fn bad(x) -> osc("sin", x)
+        const fn bad(x) -> sine(x)
     )");
     CHECK_FALSE(result.success);
 }
@@ -264,7 +264,7 @@ TEST_CASE("Const: rejects non-pure rhs", "[const]") {
 TEST_CASE("Const fn: uses math builtins", "[const]") {
     auto result = akkado::compile(R"(
         const fn db_to_amp(db) -> pow(10, db / 20)
-        osc("sin", 440) |> % * db_to_amp(-6)
+        sine(440) |> % * db_to_amp(-6)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -661,7 +661,7 @@ TEST_CASE("Const: pitch literal in const", "[const]") {
     // Pitch literals in Akkado use quotes: 'C4'
     auto result = akkado::compile(R"(
         const freq = 'C4'
-        osc("sin", freq)
+        sine(freq)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -739,7 +739,7 @@ TEST_CASE("Const: mod not a builtin (fails E004)", "[const]") {
 TEST_CASE("Const: used as osc frequency", "[const]") {
     auto result = akkado::compile(R"(
         const f = 440
-        osc("sin", f) |> out(%, %)
+        sine(f) |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -749,7 +749,7 @@ TEST_CASE("Const: used as osc frequency", "[const]") {
 TEST_CASE("Const: used in multiply", "[const]") {
     auto result = akkado::compile(R"(
         const gain = 0.5
-        osc("sin", 440) |> % * gain |> out(%, %)
+        sine(440) |> % * gain |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -764,7 +764,7 @@ TEST_CASE("Const: array used as osc input", "[const]") {
     // the program needs a `sum()` step to be well-typed.)
     auto result = akkado::compile(R"(
         const freqs = [220, 440, 660]
-        osc("sin", freqs) |> sum(%) |> out(%, %)
+        sine(freqs) |> sum(%) |> out(%, %)
     )");
     REQUIRE(result.success);
     auto insts = get_instructions(result);
@@ -777,7 +777,7 @@ TEST_CASE("Const fn: with runtime arg falls back to inline", "[const]") {
     auto result = akkado::compile(R"(
         const fn dbl(x) -> x * 2
         f = param("f", 440)
-        osc("sin", dbl(f)) |> out(%, %)
+        sine(dbl(f)) |> out(%, %)
     )");
     REQUIRE(result.success);
 }

@@ -30,10 +30,42 @@ using codegen::emit_sample_chain;
 CodeGenerator::CodeGenerator(CompileContext& ctx) : ctx_(&ctx) {}
 
 std::uint16_t BufferAllocator::allocate() {
+    // LIFO drain of the free list keeps recently-released buffers hot in
+    // cache and minimises perturbation of the high-water mark.
+    if (!free_list_.empty()) {
+        std::uint16_t idx = free_list_.back();
+        free_list_.pop_back();
+        return idx;
+    }
+    // BUFFER_ZERO is reserved as the always-zero scratch slot; never hand it out.
+    if (next_ == cedar::BUFFER_ZERO) {
+        ++next_;
+    }
     if (next_ >= MAX_ALLOCATABLE) {
         return BUFFER_UNUSED;
     }
     return next_++;
+}
+
+void BufferAllocator::release(std::uint16_t idx) {
+    // Releasing a never-allocated, the sentinel, or BUFFER_ZERO (255) is a
+    // no-op — keeps callers free to release defensively without checks.
+    if (idx == BUFFER_UNUSED) return;
+    if (idx >= MAX_ALLOCATABLE) return;
+    if (idx >= next_) return;
+    free_list_.push_back(idx);
+}
+
+void BufferAllocator::reset_to(std::uint16_t mark) {
+    if (mark > next_) return;
+    next_ = mark;
+    // Drop free-list entries that referred to indices the cursor reset
+    // has now reclaimed; otherwise a later allocate() could hand out an
+    // index that overlaps with whatever the caller emits past the mark.
+    free_list_.erase(
+        std::remove_if(free_list_.begin(), free_list_.end(),
+                       [mark](std::uint16_t idx) { return idx >= mark; }),
+        free_list_.end());
 }
 
 void CodeGenerator::emit_extended_params_init(std::uint32_t state_id,
@@ -207,6 +239,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     result.builtin_var_overrides = std::move(builtin_var_overrides_);
     result.required_wavetables = std::move(required_wavetables_);
     result.required_uris = std::move(required_uris_);
+    result.required_buffers = buffers_.peak_count();
     result.success = success;
     return result;
 }
@@ -1456,7 +1489,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 //
                 // The genuine footgun is a polyphonic non-sample pattern
                 // (chord, multi-voice note pattern): without a coerce
-                // reject, `osc("sin", c"Am")` would silently emit only
+                // reject, `sine(c"Am")` would silently emit only
                 // voice-0's freq, dropping the chord's other voices.
                 // Reject those at the slot with E160 so the user opts
                 // into poly() / scalar() / a voice index explicitly.
@@ -2495,6 +2528,14 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
         args.push_back(c);
     }
 
+    // Resolve `_` placeholders against this builtin's defaults (PRD §10
+    // Addendum). out()/bus() have no numeric defaults today so this is a
+    // no-op; it locks in the architectural rule for future edits.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
+    }
+
     // Resolve the bus index. out(...) targets bus 0; bus(N, ...) takes a
     // compile-time non-negative integer literal as its first argument.
     int bus_index = 0;
@@ -2632,6 +2673,14 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
     for (NodeIndex c = n.first_child; c != NULL_NODE;
          c = ast_->arena[c].next_sibling) {
         args.push_back(c);
+    }
+
+    // Resolve `_` placeholders against this builtin's defaults (PRD §10
+    // Addendum). master()/mixer() have no numeric defaults today; the call
+    // is a no-op but locks in the architectural rule for future edits.
+    if (const BuiltinInfo* bi = lookup_builtin(func_name)) {
+        codegen::resolve_underscore_defaults(
+            const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
     }
 
     // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a

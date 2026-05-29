@@ -123,12 +123,12 @@ def test_transpose_frequency() -> bool:
     print("\n=== transpose: dominant frequency ===")
     ok = True
     cases = [
-        ("ref",       'n"c4" |> osc("sin", @.freq) |> out(@)',           C4_HZ),
-        ("octave",    'n"c4".transpose(12) |> osc("sin", @.freq) |> out(@)',
+        ("ref",       'n"c4" |> sine(@.freq) |> out(@)',           C4_HZ),
+        ("octave",    'n"c4".transpose(12) |> sine(@.freq) |> out(@)',
                                                                   C4_HZ * OCTAVE),
-        ("fifth",     'n"c4".transpose(7) |> osc("sin", @.freq) |> out(@)',
+        ("fifth",     'n"c4".transpose(7) |> sine(@.freq) |> out(@)',
                                                                   C4_HZ * FIFTH),
-        ("down_oct",  'n"c4".transpose(-12) |> osc("sin", @.freq) |> out(@)',
+        ("down_oct",  'n"c4".transpose(-12) |> sine(@.freq) |> out(@)',
                                                                   C4_HZ / OCTAVE),
     ]
     for name, src, expect_hz in cases:
@@ -148,7 +148,7 @@ def test_transpose_frequency() -> bool:
             print(f"  ✓ PASS: {name} dominant {got:.1f} Hz "
                   f"(expected {expect_hz:.1f} Hz)")
     listen = render("transpose_octave_listen",
-                    'n"c4 e4 g4 a4".transpose(12) |> osc("sin", @.freq) |> out(@)',
+                    'n"c4 e4 g4 a4".transpose(12) |> sine(@.freq) |> out(@)',
                     LISTEN_SECONDS)
     print(f"  Saved {listen} - Listen for: a 4-note melody an octave above c4")
     return ok
@@ -160,10 +160,10 @@ def test_velocity_scaling() -> bool:
     # Keep both renders well under the master-bus soft-clip threshold (0.9)
     # so the RMS ratio reflects velocity() alone, not clipping compression.
     full = render("velocity_full",
-                   'n"c4" |> osc("sin", @.freq) * @.vel * 0.4 |> out(@)',
+                   'n"c4" |> sine(@.freq) * @.vel * 0.4 |> out(@)',
                    RENDER_SECONDS)
     half = render("velocity_half",
-                   'n"c4".velocity(0.5) |> osc("sin", @.freq) * @.vel * 0.4 |> out(@)',
+                   'n"c4".velocity(0.5) |> sine(@.freq) * @.vel * 0.4 |> out(@)',
                    RENDER_SECONDS)
     df = load_wav(full)
     dh = load_wav(half)
@@ -186,7 +186,7 @@ def test_chained_stability() -> bool:
     """A chained velocity().transpose() must render stably over 300s."""
     print("\n=== chained velocity().transpose(): stability ===")
     src = ('n"c4 e4 g4 a4 g4 e4".velocity(0.8).transpose(7) |> '
-           'osc("saw", @.freq) * @.vel * 0.3 |> out(@)')
+           'saw(@.freq) * @.vel * 0.3 |> out(@)')
     wav = render("chained", src, RENDER_SECONDS)
     d = load_wav(wav)
     mono = d[:, 0] if d.ndim == 2 else d
@@ -213,11 +213,11 @@ def test_event_map_closure_frequency() -> bool:
     ok = True
     cases = [
         ("octave",   'event_map(n"c4", (e) -> {note: e.note + 12}) |> '
-                     'osc("sin", @.freq) |> out(@)',           C4_HZ * OCTAVE),
+                     'sine(@.freq) |> out(@)',           C4_HZ * OCTAVE),
         ("fifth",    'event_map(n"c4", (e) -> {note: e.note + 7}) |> '
-                     'osc("sin", @.freq) |> out(@)',           C4_HZ * FIFTH),
+                     'sine(@.freq) |> out(@)',           C4_HZ * FIFTH),
         ("down_oct", 'event_map(n"c4", (e) -> {note: e.note - 12}) |> '
-                     'osc("sin", @.freq) |> out(@)',           C4_HZ / OCTAVE),
+                     'sine(@.freq) |> out(@)',           C4_HZ / OCTAVE),
     ]
     for name, src, expect_hz in cases:
         wav = render(f"closure_{name}", src, RENDER_SECONDS)
@@ -236,7 +236,7 @@ def test_event_map_closure_frequency() -> bool:
                   f"(expected {expect_hz:.1f} Hz)")
     listen = render("closure_chord_listen",
                     'event_map(c"CM", (e) -> {note: e.note + 12}) |> '
-                    'poly(@, (f, g, v) -> osc("sin", f) * v * 0.3, 6) |> out(@)',
+                    'poly(@, (f, g, v) -> sine(f) * v * 0.3, 6) |> out(@)',
                     LISTEN_SECONDS)
     print(f"  Saved {listen} - Listen for: a C major chord, one octave up")
     return ok
@@ -251,7 +251,7 @@ def test_event_filter_drops_events() -> bool:
     # to e.note > 63 keeps e4(64) and g4(67) and drops c4(60). After 300 s
     # the spectrum must concentrate at the kept frequencies, not at c4.
     src = ('event_filter(n"c4 e4 g4", (e) -> e.note > 63) |> '
-           'osc("sin", @.freq) * @.vel * 0.3 |> out(@)')
+           'sine(@.freq) * @.vel * 0.3 |> out(@)')
     wav = render("filter_keep_high", src, RENDER_SECONDS)
     d = load_wav(wav)
     mono = d[:, 0] if d.ndim == 2 else d
@@ -288,7 +288,7 @@ def test_closure_chained_stability() -> bool:
     src = (
         'event_map(event_map(n"c4 e4 g4 a4 g4 e4", (e) -> {vel: e.vel * 0.8}), '
         '          (e) -> {note: e.note + 7}) |> '
-        'osc("saw", @.freq) * @.vel * 0.3 |> out(@)')
+        'saw(@.freq) * @.vel * 0.3 |> out(@)')
     wav = render("closure_chained", src, RENDER_SECONDS)
     d = load_wav(wav)
     mono = d[:, 0] if d.ndim == 2 else d

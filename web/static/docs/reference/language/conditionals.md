@@ -39,12 +39,12 @@ Sample-by-sample mux. There is no infix ternary syntax; use `select(cond, a, b)`
 ```akk
 // Switch oscillators on a gate pattern
 gate = n"1 0 1 0"
-select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@)
+select(gate, saw(440), sqr(220)) |> out(@)
 ```
 
 ```akk
 // Apply distortion only when the input is loud
-sig = osc("saw", 110)
+sig = saw(110)
 select(sig > 0.5, dist(sig, 4), sig) |> out(@)
 ```
 
@@ -63,7 +63,7 @@ Equivalent to the `>` operator.
 
 ```akk
 // Square wave from a sine via threshold
-osc("sin", 440) > 0 |> out(@)
+sine(440) > 0 |> out(@)
 ```
 
 ---
@@ -82,7 +82,7 @@ Equivalent to the `<` operator.
 ```akk
 // Open the filter only on quiet sections
 freq = lfo(0.25) * 2000 + 200
-osc("saw", 110) |> lp(@, freq * (freq < 1000)) |> out(@)
+saw(110) |> lp(@, freq * (freq < 1000)) |> out(@)
 ```
 
 ---
@@ -102,7 +102,7 @@ Equivalent to the `>=` operator.
 // Hold a gate above a threshold
 amp = lfo(0.5)
 gate = gte(amp, 0.5)
-osc("sin", 440) * gate |> out(@)
+sine(440) * gate |> out(@)
 ```
 
 ---
@@ -119,7 +119,7 @@ osc("sin", 440) * gate |> out(@)
 Equivalent to the `<=` operator.
 
 ```akk
-osc("sin", 440) * lte(lfo(0.5), 0) |> out(@)
+sine(440) * lte(lfo(0.5), 0) |> out(@)
 ```
 
 ---
@@ -157,7 +157,7 @@ Equivalent to the `!=` operator. The exact inverse of `eq` (same epsilon).
 ```akk
 // Drop a voice on the rest steps only
 freq = n"c4 ~ g4 c5" |> @freq
-voice = osc("saw", freq) * neq(freq, 0)
+voice = saw(freq) * neq(freq, 0)
 voice |> out(@)
 ```
 
@@ -217,7 +217,7 @@ Equivalent to the prefix `!` operator.
 // Inverse gate, sustain when no trigger
 gate = trigger(4)
 sustain = bnot(gate)
-osc("sin", 220) * sustain |> out(@)
+sine(220) * sustain |> out(@)
 ```
 
 ---

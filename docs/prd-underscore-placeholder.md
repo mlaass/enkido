@@ -315,3 +315,116 @@ cmake --build build --target akkado_tests
 - `_` in named argument produces E107
 - `_` in non-call contexts (assignment, match, array) is unaffected — remains a normal identifier
 - No regressions in existing `match` wildcard behavior
+
+---
+
+## 10. Addendum: Specialized Handler Retrofit (2026-05-28)
+
+### Problem
+
+The codegen has two paths that already honored `_` correctly:
+
+- the generic builtin path at `akkado/src/codegen.cpp:1352-1398` via the
+  `CallSlot::Underscore` branch, and
+- the user-function path at `akkado/src/codegen_functions.cpp:460-509`
+  reading `FunctionParamInfo` defaults.
+
+But several builtins compile through **specialized C++ handlers** that
+extract args via `codegen::extract_call_args` and then read AST nodes
+positionally. None of them knew about `_`:
+
+- `handle_poly_call` (poly / mono / legato) — required `NodeType::NumberLit`
+  for `voices` (E402) and `release` (E406).
+- `handle_tap_delay_call` (tap_delay / _ms / _smp) — called `visit()` on
+  `dry` / `wet` directly, so `_` was looked up as an unbound identifier.
+- `handle_bus_call`, `handle_mixer_call` — no optional params today, but
+  any future addition would silently regress.
+
+`poly(@, instr, _, 2.5)` therefore failed with E402 even though the
+BuiltinInfo declared `voices=64`, `release=0`.
+
+### Fix
+
+A single shared helper in `akkado/include/akkado/codegen/arrays.hpp`:
+
+```cpp
+void resolve_underscore_defaults(AstArena& arena,
+                                 const StringInterner& interner,
+                                 std::vector<NodeIndex>& args,
+                                 const BuiltinInfo& builtin);
+```
+
+Walks `args` in place. For each entry that unwraps to `Identifier("_")`
+and whose slot has a numeric default in `builtin`, allocates a synthetic
+`NumberLit` node in `arena` and overwrites the entry. Numeric defaults
+only — no specialized handler today reads a string-defaulted optional via
+`extract_call_args`.
+
+The predicate (`Identifier` + `IdentifierData` + view-equals "_") is
+identical to the one used by `analyzer.cpp::is_placeholder_node` and the
+generic `CallSlot::Underscore` branch; any future change to `_`'s
+lexical form must update all three sites.
+
+The arena passed in is taken via `const_cast<AstArena&>(ast_->arena)`
+inside each handler. The arena was never strictly read-only by contract,
+only by convention; the alternative was to relax const across every
+internal codegen helper, which would have been much noisier.
+
+### Handlers updated
+
+- `handle_poly_call` — calls the helper between `extract_call_args` and
+  arg parsing, looking up the BuiltinInfo for the **active mode**
+  (`poly` / `mono` / `legato`) because each has a distinct
+  `optional_count`. The E402 / E406 checks downstream stay as defensive
+  guards for non-`_` non-literal expressions.
+- `handle_tap_delay_call` — also migrated from a hand-rolled arg-walk to
+  `extract_call_args(arena, child, 4, 6)`. Helper runs before the
+  `visit(args[4])` / `visit(args[5])` calls so dry/wet `_` resolve cleanly.
+- `handle_bus_call`, `handle_mixer_call` — invoke the helper as a no-op
+  today (no defaults), locking in the architectural rule for future
+  BuiltinInfo edits.
+
+`handle_compose_call` and `handle_function_value_call` were already
+correct: the former has no optional params; the latter routes back
+through the user-function path that already handles `_`.
+
+### Bug fix in BuiltinInfo metadata
+
+The `defaults[]` array for `poly`, `mono`, and `legato` was indexed by
+**absolute parameter position** (NaN padding for required slots up
+front) rather than the project's convention of **optional-slot
+indexing**. `BuiltinInfo::has_default(idx)` therefore returned `false`
+for `voices` / `release`, which (a) made the analyzer pre-pass route any
+`_` on those slots into partial application and (b) reported wrong
+defaults through `builtins_json` (the editor autocomplete source).
+
+Corrected (numeric defaults moved to the start of the `defaults` array,
+matching `delay`, `lp`, every other builtin):
+
+- `poly`:    `{NAN, NAN, 64.0f, 0.0f, NAN}` → `{64.0f, 0.0f, NAN, NAN, NAN}`
+- `mono`:    `{NAN, NAN, 0.0f,  NAN,  NAN}` → `{NAN,   0.0f, NAN, NAN, NAN}`
+- `legato`:  `{NAN, NAN, 0.0f,  NAN,  NAN}` → `{NAN,   0.0f, NAN, NAN, NAN}`
+
+A `metadata: poly/mono/legato declare defaults at the right index`
+section in `test_akkado.cpp` pins the new layout against future
+regressions.
+
+### Architectural rule going forward
+
+Any **new specialized call handler** that does its own arg extraction
+(does not route through the generic `CallSlot` dispatcher) MUST call
+`codegen::resolve_underscore_defaults()` immediately after
+`extract_call_args()`, passing the BuiltinInfo for the specific call
+mode. Defensive "must be a number literal" checks downstream stay — `_`
+simply no longer reaches them.
+
+### Tests
+
+Added to `akkado/tests/test_akkado.cpp` under the existing
+`TEST_CASE("Underscore placeholder default-filling")`:
+
+- `specialized: poly with _ for voices uses default 64`
+- `specialized: poly with _ for release uses default 0`
+- `specialized: poly with both optionals as _`
+- `specialized: tap_delay with _ for dry`
+- `metadata: poly/mono/legato declare defaults at the right index`

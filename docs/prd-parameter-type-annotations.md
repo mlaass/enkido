@@ -169,7 +169,7 @@ fn transpose(events: stream, n) =
 
 // Explicit signal annotation — makes today's default-coerce behavior explicit
 fn wobble(rate: signal, depth) =
-    osc("sin", rate) * depth
+    sine(rate) * depth
 
 // Combined with a default value (annotation precedes default)
 fn velocity(events: stream, v: signal = 1.0) =
@@ -201,7 +201,7 @@ transpose(440, 7)
 ```
 
 ```akkado
-fn wobble(rate: signal, depth) = osc("sin", rate) * depth
+fn wobble(rate: signal, depth) = sine(rate) * depth
 
 wobble(n"c4 e4 g4 c5", 0.5)         // polyphonic pattern — keeps existing E160 reject
 // E160: user function parameter 'rate' cannot accept a polyphonic pattern
@@ -210,7 +210,7 @@ wobble(n"c4 e4 g4 c5", 0.5)         // polyphonic pattern — keeps existing E16
 ```
 
 ```akkado
-fn wobble(rate: signal, depth) = osc("sin", rate) * depth
+fn wobble(rate: signal, depth) = sine(rate) * depth
 
 wobble(n"c4 e4 g4", 0.5)            // monophonic pattern — silently voice-0 (unchanged)
 ```
@@ -481,7 +481,7 @@ the migration note in §6 covers the user-facing breakage.
 ### 8.4 `: stream`-annotated param used in a Signal-expecting builtin
 
 ```akkado
-fn bad(events: stream) = osc("sin", events)    // events is a Pattern, osc expects Signal
+fn bad(events: stream) = sine(events)    // events is a Pattern, osc expects Signal
 ```
 
 No new diagnostic from this PRD. The existing `param_types` check on
@@ -587,7 +587,7 @@ follow-up PRD authored once Phase 1 ships.
 | Case | Expectation |
 |---|---|
 | `fn f(events: stream) = events` | parses; `params[0].annotated_type == Stream` |
-| `fn f(rate: signal, depth) = osc("sin", rate) * depth` | parses; mixed annotated + un-annotated |
+| `fn f(rate: signal, depth) = sine(rate) * depth` | parses; mixed annotated + un-annotated |
 | `fn f(events: stream = ???)` | parses (annotation precedes default); compile-time default-eval will error later via existing `E105` |
 | `fn f({x, y}: record) = x + y` | `E104` — annotation on destructure |
 | `fn f(...args: signal) = sum(args)` | `E104` — annotation on rest |
@@ -605,9 +605,9 @@ follow-up PRD authored once Phase 1 ships.
 | `fn id(e: stream) = e` called with `"text"` (String) | `E184` |
 | `fn id(p) = p` (un-annotated) called with `n"[c4,e4,g4]"` (polyphonic) | `E160` (unchanged) |
 | `fn id(p) = p` called with `n"c4 e4"` (monophonic) | no error, voice-0 coerce (unchanged) |
-| `fn w(rate: signal) = osc("sin", rate)` called with `220` (Number) | no error, behaves like today's un-annotated default |
-| `fn w(rate: signal) = osc("sin", rate)` called with `n"[c4,e4]"` (polyphonic) | `E160` (preserved) |
-| `fn w(rate: signal) = osc("sin", rate)` called with `midi("ctrl1")` (EventSource) | `E184` — no coercion path Signal ← EventSource |
+| `fn w(rate: signal) = sine(rate)` called with `220` (Number) | no error, behaves like today's un-annotated default |
+| `fn w(rate: signal) = sine(rate)` called with `n"[c4,e4]"` (polyphonic) | `E160` (preserved) |
+| `fn w(rate: signal) = sine(rate)` called with `midi("ctrl1")` (EventSource) | `E184` — no coercion path Signal ← EventSource |
 
 ### 10.3 End-to-end verification examples
 
@@ -617,7 +617,7 @@ follow-up PRD authored once Phase 1 ships.
 fn transpose(events: stream, n) =
     event_map(events, (e) -> {note: e.note + n})
 
-n"c4 e4 g4".transpose(7) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".transpose(7) |> sine(@.freq) |> out(@)
 ```
 
 Acceptance:
@@ -636,7 +636,7 @@ Acceptance:
 fn transpose(events: stream, n) =
     event_map(events, (e) -> {note: e.note + n})
 
-n"[c4,e4,g4]".transpose(7) |> poly(@, (f, g, v) -> osc("sin", f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3) |> out(@)
+n"[c4,e4,g4]".transpose(7) |> poly(@, (f, g, v) -> sine(f) * adsr(g, 0.01, 0.1, 0.5, 0.2) * v, 3) |> out(@)
 ```
 
 Acceptance:

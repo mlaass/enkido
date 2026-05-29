@@ -34,7 +34,7 @@ This limits pattern-based audio programming where decisions need to happen at au
 
 | Operator | Function | Description | Example |
 |----------|----------|-------------|---------|
-| `>` | `gt(a, b)` | Greater than | `osc("sin", 1) > 0` |
+| `>` | `gt(a, b)` | Greater than | `sine(1) > 0` |
 | `<` | `lt(a, b)` | Less than | `freq < 1000` |
 | `>=` | `gte(a, b)` | Greater or equal | `amp >= 0.5` |
 | `<=` | `lte(a, b)` | Less or equal | `x <= y` |
@@ -67,13 +67,13 @@ This limits pattern-based audio programming where decisions need to happen at au
 ```akkado
 // Switch between oscillators based on gate
 gate = n"1 0 1 0"
-select(gate, osc("saw", 440), osc("sqr", 220)) |> out(@, @)
+select(gate, saw(440), sqr(220)) |> out(@, @)
 ```
 
 ### 2. Threshold-based effects
 ```akkado
 // Apply distortion only when signal is loud
-sig = osc("saw", 110)
+sig = saw(110)
 loud = sig > 0.5
 select(loud, dist(sig, 4), sig) |> out(@, @)
 ```
@@ -89,7 +89,7 @@ combined = gate1 || gate2  // "1 0 1 0"
 ### 4. Signal-rate square wave from sine
 ```akkado
 // Convert sine to square via comparison
-osc("sin", 440) > 0 |> out(@, @)
+sine(440) > 0 |> out(@, @)
 ```
 
 ### 5. Range detection
@@ -354,7 +354,7 @@ TEST_CASE("Signal-rate conditionals", "[conditionals]") {
 - [x] Add precedence tests
 - [x] Add runtime value tests (akkado source → VM execution → buffer assertions, including epsilon equality and negative-falsy `select`; see `akkado/tests/test_codegen.cpp` `[conditionals][runtime]`)
 - [x] Add direct opcode unit tests (`cedar/tests/test_vm.cpp` `[opcodes][logic]`)
-- [x] Add signal-rate square-wave test (`osc("sin", 1) > 0` over a full 1 Hz period, asserting binary samples + ~50% duty cycle; `test_codegen.cpp` `Runtime: osc(sin, 1) > 0 produces a square wave`)
+- [x] Add signal-rate square-wave test (`sine(1) > 0` over a full 1 Hz period, asserting binary samples + ~50% duty cycle; `test_codegen.cpp` `Runtime: osc(sin, 1) > 0 produces a square wave`)
 - [x] Run full test suite
 
 ### Phase 5: Documentation

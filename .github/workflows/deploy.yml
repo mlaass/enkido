@@ -76,6 +76,7 @@ jobs:
         uses: nwtgck/actions-netlify@v3
         with:
           publish-dir: './web/build'
+          netlify-config-path: ./netlify.toml
           production-deploy: true
           deploy-message: "Dev: ${{ github.sha }}"
         env:
@@ -87,6 +88,7 @@ jobs:
         uses: nwtgck/actions-netlify@v3
         with:
           publish-dir: './web/build'
+          netlify-config-path: ./netlify.toml
           production-deploy: true
           deploy-message: "${{ steps.tag.outputs.kind == 'web' && 'Web deploy' || 'Release' }}: ${{ github.ref_name }}"
         env:

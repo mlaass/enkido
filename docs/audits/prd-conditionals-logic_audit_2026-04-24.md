@@ -50,7 +50,7 @@ None. Files changed since base (`akkado/tests/test_codegen.cpp`, `docs/MVP-INCOM
 ### Suggestions
 1. Resolve the `Status: DONE` vs 21 unchecked boxes contradiction by either checking them off or downgrading Status.
 2. Convert codegen-presence tests into value-comparison tests (0.0/1.0 outputs, negative-falsy `select`, epsilon equality).
-3. Add a signal-rate test for `osc("sin", 1) > 0` producing a square wave as the Test Plan demanded.
+3. Add a signal-rate test for `sine(1) > 0` producing a square wave as the Test Plan demanded.
 4. Add docs page/section and F1 lookup entries for the ten new builtins + five new operators, then re-run `bun run build:docs`.
 
 ## PRD Status
@@ -68,7 +68,7 @@ None. Files changed since base (`akkado/tests/test_codegen.cpp`, `docs/MVP-INCOM
 - **Epsilon behavior** — `akkado/tests/test_codegen.cpp:5520-5542` (`Runtime: eq/neq with epsilon`) verifies `eq(0.1 + 0.2, 0.3) == 1.0`, `neq(0.1 + 0.2, 0.3) == 0.0`, and that differences > epsilon (1e-3 vs. 1e-6) compare not-equal. Mirrored at the opcode level by `cedar/tests/test_vm.cpp:1859-1895` (`VM CMP_EQ uses LOGIC_EPSILON`), which uses a `static_assert(LOGIC_EPSILON == 1e-6f)` to force test-author review on epsilon changes.
 
 ### Missing Tests — RESOLVED
-- **Signal-rate square-wave (`osc("sin", 1) > 0`)** — `akkado/tests/test_codegen.cpp:5640-5689` (`Runtime: osc(sin, 1) > 0 produces a square wave`). Runs 400 blocks at 48 kHz (one full 1 Hz period plus margin), asserts every output sample is exactly 0.0 or 1.0, asserts duty cycle is 45–55%, and asserts at least two transitions occurred. (51200 binary-output assertions per run.)
+- **Signal-rate square-wave (`sine(1) > 0`)** — `akkado/tests/test_codegen.cpp:5640-5689` (`Runtime: osc(sin, 1) > 0 produces a square wave`). Runs 400 blocks at 48 kHz (one full 1 Hz period plus margin), asserts every output sample is exactly 0.0 or 1.0, asserts duty cycle is 45–55%, and asserts at least two transitions occurred. (51200 binary-output assertions per run.)
 - **Runtime `select` value tests including negative-falsy** — `akkado/tests/test_codegen.cpp:5574-5589` (`Runtime: select picks the right branch`). Covers truthy → `a`, zero → `b`, negative → `b` (the audit-flagged case).
 - **Runtime value assertions for comparisons/logic** —
   - `Runtime: gt/lt/gte/lte produce 0.0 or 1.0` (`test_codegen.cpp:5492-5518`) — true/false/equal cases for all four.

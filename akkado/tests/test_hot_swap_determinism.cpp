@@ -196,10 +196,10 @@ TEST_CASE("Recompile is deterministic: simpler chord patterns", "[determinism][h
 
 TEST_CASE("Recompile is deterministic: non-chord patterns", "[determinism][hot_swap]") {
     SECTION("note pattern") {
-        check_deterministic(R"(n"c4 e4 g4" |> osc("sin", %.freq) |> out(%, %))");
+        check_deterministic(R"(n"c4 e4 g4" |> sine(%.freq) |> out(%, %))");
     }
     SECTION("alternation in note pattern") {
-        check_deterministic(R"(n"<c4 e4 g4 b4>" |> osc("sin", %.freq) |> out(%, %))");
+        check_deterministic(R"(n"<c4 e4 g4 b4>" |> sine(%.freq) |> out(%, %))");
     }
 }
 
@@ -280,6 +280,111 @@ void live_load(cedar::VM& vm, const akkado::CompileResult& cr,
     apply_seq_state_inits(vm, cr, seq_storage);
 }
 
+// Per-event voice-fire counter. The "voice retriggered or released" check in
+// the existing tests is too coarse: it passes if any one voice fires. This
+// helper verifies the stronger property — the count of voice allocations per
+// block equals the number of NoteOn onsets the pattern emits in that block's
+// sample window, summing the chord notes (`evt.num_values`) for chord events.
+//
+// Detection rule for "voice fired this block": after process_block returns,
+// any voice with `active && age == 1` was just allocated this block (poly's
+// tick() increments age once per block; allocate_voice sets age=0, so a fresh
+// allocation lands at age=1 post-tick).
+//
+// Caveat: pattern queries (SEQPAT_QUERY) refresh `output.events` per cycle.
+// For chord patterns (the focus of these tests) the events are stable across
+// cycles, so reading output.events after each block is safe. ALTERNATE
+// patterns would need a different approach.
+struct VoiceFireCounter {
+    cedar::VM* vm = nullptr;
+    std::uint32_t poly_id = 0;
+    std::uint32_t seq_id = 0;
+    // Counter state.
+    std::uint32_t total_expected_fires = 0;
+    std::uint32_t total_observed_fires = 0;
+    std::uint32_t blocks_with_underfire = 0;
+    std::uint32_t blocks_with_overfire = 0;
+    std::ostringstream first_underfire;
+    std::ostringstream first_overfire;
+
+    void step() {
+        const auto* poly = vm->states().template get_if<cedar::PolyAllocState>(poly_id);
+        const auto* seq  = vm->states().template get_if<cedar::SequenceState>(seq_id);
+        if (!poly || !poly->voices || !seq || seq->output.num_events == 0) {
+            return;
+        }
+        // Count fires this block: active voices with age==1 (one tick since
+        // allocate_voice set age=0).
+        std::uint32_t observed = 0;
+        for (std::uint16_t v = 0; v < poly->max_voices; ++v) {
+            const auto& voice = poly->voices[v];
+            if (voice.active && voice.age == 1) ++observed;
+        }
+        total_observed_fires += observed;
+
+        // Expected fires: walk output.events, sum num_values for events whose
+        // onset (e.time, beats from cycle start) falls inside this block's
+        // sample window. Mirrors cedar/src/vm/vm.cpp:compute_block_timing —
+        // double-precision beat math + boundary-epsilon snap so cycle-end
+        // events fire in the SAME block as run_voice_pool decided to fire
+        // them. Drift between this counter and the VM would produce false
+        // "underfire" reports.
+        constexpr double CYCLE_BOUNDARY_EPSILON = 1e-9;
+        const double sr_d = static_cast<double>(vm->context().sample_rate);
+        const double bpm_d = static_cast<double>(vm->context().bpm);
+        const double spb_d = (60.0 / bpm_d) * sr_d;
+        const double cycle_length_d = static_cast<double>(seq->cycle_length);
+        if (spb_d <= 0.0 || cycle_length_d <= 0.0) return;
+        const std::uint64_t global = vm->context().global_sample_counter;
+        if (global < cedar::BLOCK_SIZE) return;  // not enough history yet
+        const std::uint64_t block_start_sample = global - cedar::BLOCK_SIZE;
+        const double beat_start_d =
+            static_cast<double>(block_start_sample) / spb_d;
+        double cycle_pos_raw = std::fmod(beat_start_d, cycle_length_d);
+        if (cycle_pos_raw < CYCLE_BOUNDARY_EPSILON) cycle_pos_raw = 0.0;
+        const double cycle_pos_d = cycle_pos_raw;
+        const double block_beats_d =
+            static_cast<double>(cedar::BLOCK_SIZE) / spb_d;
+        double block_end_pos_raw = cycle_pos_d + block_beats_d;
+        if (std::abs(block_end_pos_raw - cycle_length_d) < CYCLE_BOUNDARY_EPSILON) {
+            block_end_pos_raw = cycle_length_d;
+        }
+        // Narrow to float to match the VM's event-time comparison precision.
+        const float cycle_pos = static_cast<float>(cycle_pos_d);
+        const float block_end_pos = static_cast<float>(block_end_pos_raw);
+        const float cycle_length = static_cast<float>(cycle_length_d);
+        std::uint32_t expected = 0;
+        for (std::uint32_t i = 0; i < seq->output.num_events; ++i) {
+            const auto& e = seq->output.events[i];
+            const bool in_block = (e.time >= cycle_pos && e.time < block_end_pos);
+            const bool in_wrap = (block_end_pos > cycle_length) &&
+                                 (e.time < block_end_pos - cycle_length);
+            if (in_block || in_wrap) {
+                expected += e.num_values > 0 ? e.num_values : 1;
+            }
+        }
+        total_expected_fires += expected;
+        if (observed < expected) {
+            ++blocks_with_underfire;
+            if (first_underfire.tellp() == 0) {
+                first_underfire << "underfire @block_start_sample=" << block_start_sample
+                                << " cycle_pos=" << cycle_pos
+                                << " expected=" << expected
+                                << " observed=" << observed;
+            }
+        }
+        if (observed > expected) {
+            ++blocks_with_overfire;
+            if (first_overfire.tellp() == 0) {
+                first_overfire << "overfire @block_start_sample=" << block_start_sample
+                               << " cycle_pos=" << cycle_pos
+                               << " expected=" << expected
+                               << " observed=" << observed;
+            }
+        }
+    }
+};
+
 // Walk every SequenceState in the pool and return the highest seq.step
 // observed. The simplest cross-pattern progress indicator: as long as
 // playback is advancing the alternation counter, this is monotonically
@@ -310,7 +415,7 @@ TEST_CASE("VM hot-swap preserves alternation across recompile", "[determinism][h
     // playback must continue from where it left off — not restart the `<...>`
     // alternation counter.
     constexpr const char* kSrc =
-        R"(n"<c4 e4 g4 b4>" |> osc("sin", %.freq) |> out(%, %))";
+        R"(n"<c4 e4 g4 b4>" |> sine(%.freq) |> out(%, %))";
 
     auto cr = akkado::compile(kSrc);
     REQUIRE(cr.success);
@@ -434,6 +539,63 @@ float block_rms(std::span<const float> samples) {
     return static_cast<float>(std::sqrt(acc / samples.size()));
 }
 
+// Single-bin DFT magnitude via the standard Goertzel recurrence. Used by
+// Layer B (canonical reference test) for cheap per-band energy comparison —
+// linking kissfft into the akkado test target is more dependency churn than
+// a 25-line hand-roll is worth.
+double goertzel_magnitude(std::span<const float> samples,
+                          double freq_hz,
+                          double sample_rate) {
+    if (samples.empty() || sample_rate <= 0.0) return 0.0;
+    const double omega = 2.0 * M_PI * freq_hz / sample_rate;
+    const double coeff = 2.0 * std::cos(omega);
+    double s_prev = 0.0, s_prev2 = 0.0;
+    for (float x : samples) {
+        const double s = static_cast<double>(x) + coeff * s_prev - s_prev2;
+        s_prev2 = s_prev;
+        s_prev = s;
+    }
+    const double real = s_prev - s_prev2 * std::cos(omega);
+    const double imag = s_prev2 * std::sin(omega);
+    return std::sqrt(real * real + imag * imag);
+}
+
+// Per-block RMS series for a mono buffer.
+std::vector<float> per_block_rms(std::span<const float> mono) {
+    std::vector<float> rms;
+    rms.reserve(mono.size() / cedar::BLOCK_SIZE);
+    for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono.size();
+         i += cedar::BLOCK_SIZE) {
+        rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+    }
+    return rms;
+}
+
+// Pearson correlation between two equal-length float sequences. Returns 1.0
+// when the sequences move in lockstep (musically the same envelope), 0.0
+// when uncorrelated, -1.0 when anti-correlated. Returns 0.0 for trivial
+// constant sequences (no variance to correlate).
+double pearson_correlation(std::span<const float> a, std::span<const float> b) {
+    if (a.size() != b.size() || a.empty()) return 0.0;
+    double sum_a = 0.0, sum_b = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        sum_a += a[i];
+        sum_b += b[i];
+    }
+    const double mean_a = sum_a / a.size();
+    const double mean_b = sum_b / b.size();
+    double cov = 0.0, var_a = 0.0, var_b = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double da = a[i] - mean_a;
+        const double db = b[i] - mean_b;
+        cov += da * db;
+        var_a += da * da;
+        var_b += db * db;
+    }
+    if (var_a < 1e-12 || var_b < 1e-12) return 0.0;
+    return cov / std::sqrt(var_a * var_b);
+}
+
 }  // namespace
 
 TEST_CASE("Hot-swap inside poly body must not stick voices",
@@ -534,9 +696,11 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
         bool observed_voice_retrigger_or_release = false;
         bool observed_pattern_advance = false;
         bool observed_releasing_flag = false;
+        VoiceFireCounter fires{&vm, poly_state_id, seq_state_id};
         for (std::size_t i = 0; i < blocks_b; ++i) {
             vm.process_block(left.data(), right.data());
             for (float s : left) mono_out.push_back(s);
+            fires.step();
 
             auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
             if (seq_now && seq_now->cycle_index > cycle_pre) {
@@ -639,6 +803,20 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
         // (B) Voices retrigger or release at least once in post-swap window.
         CHECK(observed_voice_retrigger_or_release);
 
+        // Layer A: per-event voice-fire count over the post-swap window.
+        // The "any voice retriggered" check above passes if even one voice
+        // fires once; this aggregate check makes sure the count of voice
+        // allocations matches the count of NoteOn onsets the pattern emits.
+        INFO("post-B voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
+
         // (C) Audio is not a stuck periodic tone. Two non-overlapping
         // 512-sample windows ≥ 0.5 s apart must differ. A frozen voice
         // playing a band-limited saw eventually settles to a periodic
@@ -685,3 +863,781 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
     }
 }
 
+// ============================================================================
+// Regression: hot-swap inside a unison()/poly() body with ADSR + reverb
+// ============================================================================
+//
+// Second user report after the first fix (commit 1fd6c95) landed: editing
+// ANY value in the patch below — ADSR times, reverb wet, lp cutoff, even
+// just whitespace inside the closure body — causes the same drone-forever
+// symptom. This patch is more nested than the first repro:
+//
+//   chord("...").transpose(N)  ->  EVENT_REORDER / EVENT_MAP transform state
+//          |> poly(@, fat)     ->  FOREACH_EVENT(VOICE_POOL) PolyAllocState
+//          |> reverb(@, ...)   ->  DattorroState (or whichever reverb opcode)
+//
+// fat() is a named userspace fn whose body calls unison() — a stdlib fn that
+// statically fans pad_voice() into N detuned voices. So the inner saw/adsr/lp
+// states live behind BLOCK_CALL with per-voice + per-call-site state_id_xor.
+//
+// Test contract is the same as the prior poly() drone test: pattern must
+// advance, voices must retrigger/release, audio must not be a stuck periodic
+// waveform.
+
+TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
+          "[hot_swap][regression][drone][adsr]") {
+    constexpr const char* kSrcA =
+        "bpm = 72\n"
+        "\n"
+        "fn pad_voice(freq, gate, vel, ext) ->\n"
+        "    saw(freq, ext.phase) * adsr(gate, 0.5, 0.6, 0.7, 1.2) * vel\n"
+        "    |> lp(@, 2800)\n"
+        "\n"
+        "fn fat({freq, gate, vel}) ->\n"
+        "    unison(freq, gate, vel, pad_voice,\n"
+        "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n"
+        "\n"
+        "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+        "    |> poly(@, fat)\n"
+        "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+        "    |> out(@)\n";
+    // Program B: same as A but with the ADSR attack time changed
+    // (0.5 -> 0.6). This is the exact kind of "edit anything" the user
+    // reports as triggering the drone.
+    constexpr const char* kSrcB =
+        "bpm = 72\n"
+        "\n"
+        "fn pad_voice(freq, gate, vel, ext) ->\n"
+        "    saw(freq, ext.phase) * adsr(gate, 0.6, 0.6, 0.7, 1.2) * vel\n"
+        "    |> lp(@, 2800)\n"
+        "\n"
+        "fn fat({freq, gate, vel}) ->\n"
+        "    unison(freq, gate, vel, pad_voice,\n"
+        "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n"
+        "\n"
+        "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+        "    |> poly(@, fat)\n"
+        "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+        "    |> out(@)\n";
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks) {
+        auto cr_a = akkado::compile(kSrcA);
+        if (!cr_a.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_a.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile A diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_a.success);
+        auto cr_b = akkado::compile(kSrcB);
+        if (!cr_b.success) {
+            std::ostringstream os;
+            for (const auto& d : cr_b.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile B diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr_b.success);
+
+        const std::uint32_t seq_state_id =
+            find_state_init_id(cr_a, akkado::StateInitData::Type::SequenceProgram);
+        const std::uint32_t poly_state_id = find_poly_state_id(cr_a);
+        REQUIRE(seq_state_id != 0);
+        REQUIRE(poly_state_id != 0);
+
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_a, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+
+        // The chord pattern has @2 duration modifiers, total cycle length =
+        // 6 beats. At 72 BPM that's 5 s per cycle. Run program A for ~6 s
+        // so we cross a cycle boundary and voices have allocated and aged.
+        const std::size_t blocks_a = blocks_per_sec * 6;
+        for (std::size_t i = 0; i < blocks_a; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        auto* seq_pre = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        REQUIRE(seq_pre != nullptr);
+        const std::uint32_t cycle_pre = seq_pre->cycle_index;
+        const float last_beat_pre = seq_pre->last_beat_pos;
+        INFO("crossfade_blocks=" << crossfade_blocks
+             << " cycle_index after A: " << cycle_pre
+             << " last_beat_pos after A: " << last_beat_pre);
+        // Pattern must have at least started — last_beat_pos > 0 even within
+        // cycle 0. Use this rather than cycle_index since cycle_length is 6.
+        REQUIRE(last_beat_pre > 0.0f);
+
+        auto* poly_pre = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        REQUIRE(poly_pre != nullptr);
+        REQUIRE(poly_pre->voices != nullptr);
+        std::array<std::uint32_t, cedar::PolyAllocState::MAX_VOICES> pre_age{};
+        std::array<bool, cedar::PolyAllocState::MAX_VOICES> pre_active{};
+        for (std::uint16_t v = 0; v < poly_pre->max_voices; ++v) {
+            pre_age[v] = poly_pre->voices[v].age;
+            pre_active[v] = poly_pre->voices[v].active;
+        }
+
+        // Hot-swap to program B.
+        live_load(vm, cr_b, seq_storage);
+
+        // Render another ~6 s — long enough to cross at least one cycle
+        // boundary after the swap, ensuring all chord events fire.
+        const std::size_t blocks_b = blocks_per_sec * 6;
+        std::vector<float> mono_out;
+        mono_out.reserve(blocks_b * cedar::BLOCK_SIZE);
+        bool observed_voice_retrigger_or_release = false;
+        bool observed_pattern_advance = false;
+        VoiceFireCounter fires{&vm, poly_state_id, seq_state_id};
+        for (std::size_t i = 0; i < blocks_b; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) mono_out.push_back(s);
+            fires.step();
+
+            auto* seq_now = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+            if (seq_now && (seq_now->cycle_index > cycle_pre ||
+                            seq_now->last_beat_pos > last_beat_pre + 0.5f)) {
+                observed_pattern_advance = true;
+            }
+            auto* poly_now = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+            if (poly_now && poly_now->voices) {
+                for (std::uint16_t v = 0; v < poly_now->max_voices; ++v) {
+                    const auto& voice = poly_now->voices[v];
+                    if (voice.releasing) observed_voice_retrigger_or_release = true;
+                    if (pre_active[v] && voice.active && voice.age < pre_age[v]) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                    if (pre_active[v] && !voice.active) {
+                        observed_voice_retrigger_or_release = true;
+                    }
+                }
+            }
+        }
+
+        // Diagnostics for failure analysis.
+        auto* seq_post = vm.states().get_if<cedar::SequenceState>(seq_state_id);
+        auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_state_id);
+        INFO("post-B cycle_index: "
+             << (seq_post ? static_cast<int>(seq_post->cycle_index) : -1)
+             << " last_queried_cycle: "
+             << (seq_post ? seq_post->last_queried_cycle : -1.0f)
+             << " last_beat_pos: "
+             << (seq_post ? seq_post->last_beat_pos : -1.0f)
+             << " output.num_events: "
+             << (seq_post ? static_cast<int>(seq_post->output.num_events) : -1)
+             << " pool_size: " << vm.states().size()
+             << " fading: " << vm.states().fading_count());
+        std::ostringstream voice_os;
+        if (poly_post == nullptr) {
+            voice_os << "(poly_post=null)";
+        } else if (poly_post->voices == nullptr) {
+            voice_os << "(voices=null)";
+        } else {
+            voice_os << "max_voices=" << int(poly_post->max_voices) << " ";
+            for (std::uint16_t v = 0; v < poly_post->max_voices; ++v) {
+                const auto& vc = poly_post->voices[v];
+                if (vc.active || vc.releasing) {
+                    voice_os << "v" << v << "{a=" << vc.active << " r=" << vc.releasing
+                             << " g=" << vc.gate << " freq=" << vc.freq << "} ";
+                }
+            }
+        }
+        INFO("post-B voices: " << voice_os.str());
+        // Dump every cr_b state_init for cross-reference if assertions fail.
+        std::ostringstream all_inits_os;
+        for (const auto& init : cr_b.state_inits) {
+            all_inits_os << "{type=" << static_cast<int>(init.type)
+                         << " id=" << init.state_id << "} ";
+        }
+        INFO("post-B cr_b state_inits: " << all_inits_os.str());
+
+        CHECK(observed_pattern_advance);
+        CHECK(observed_voice_retrigger_or_release);
+
+        // Layer A: per-event voice-fire count. Every event onset that lands
+        // inside the post-swap window must allocate `event.num_values` voices.
+        // Catches "half the unison cluster died", "gate-off arrived early",
+        // "events stopped firing mid-window" — all of which slip past the
+        // RMS-variance check below.
+        INFO("post-B voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
+
+        const std::size_t half_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / 2;
+        const std::size_t win = 512;
+        REQUIRE(mono_out.size() >= half_sec + win + cedar::BLOCK_SIZE);
+        std::span<const float> w0(mono_out.data() + cedar::BLOCK_SIZE, win);
+        std::span<const float> w1(mono_out.data() + half_sec + cedar::BLOCK_SIZE, win);
+        bool windows_bit_identical = (w0.size() == w1.size()) &&
+            std::memcmp(w0.data(), w1.data(), w0.size() * sizeof(float)) == 0;
+        CHECK_FALSE(windows_bit_identical);
+
+        std::vector<float> per_block_rms;
+        per_block_rms.reserve(mono_out.size() / cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono_out.size();
+             i += cedar::BLOCK_SIZE) {
+            per_block_rms.push_back(
+                block_rms({mono_out.data() + i, cedar::BLOCK_SIZE}));
+        }
+        REQUIRE(per_block_rms.size() > 4);
+        double sum = 0.0;
+        for (float r : per_block_rms) sum += r;
+        const double mean = sum / per_block_rms.size();
+        double var = 0.0;
+        for (float r : per_block_rms) var += (r - mean) * (r - mean);
+        const double stddev = std::sqrt(var / per_block_rms.size());
+        INFO("post-B per-block RMS mean=" << mean << " stddev=" << stddev);
+        CHECK(stddev > 0.05 * std::max(mean, 1e-6));
+    };
+
+    SECTION("crossfade disabled") {
+        run_scenario(0);
+    }
+    SECTION("default crossfade") {
+        run_scenario(3);
+    }
+}
+
+
+// ============================================================================
+// Deeper repro attempt: multiple consecutive hot-swaps with varied edits
+// ============================================================================
+//
+// User reports the drone still occurs in the browser after the FOREACH_EVENT
+// touch fix and the prior regression test (which passes). User notes the bug
+// becomes "reliable" after a page restart and triggers on editing ANY line.
+// The single-swap test above does not reproduce — so either the bug is
+// (a) a stale browser cache, (b) requires multiple swaps to accumulate,
+// (c) requires a specific edit shape that the prior test misses.
+//
+// This test exercises (b) and (c) together: load the original patch, then
+// do five consecutive hot-swaps each touching a different param (adsr times,
+// lp cutoff, reverb wet, unison voices count, transpose value), rendering
+// ~3 s between each. After each swap, PolyAllocState must survive and the
+// audio per-block RMS variance must be > 2% of the mean.
+
+TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
+          "[hot_swap][regression][drone][chain]") {
+    auto make_src = [](float adsr_a, int lp_cut, float rev_wet,
+                       int u_voices, int transpose) {
+        std::ostringstream os;
+        os << "bpm = 72\n\n"
+           << "fn pad_voice(freq, gate, vel, ext) ->\n"
+           << "    saw(freq, ext.phase) * adsr(gate, " << adsr_a
+           << ", 0.6, 0.7, 1.2) * vel\n"
+           << "    |> lp(@, " << lp_cut << ")\n\n"
+           << "fn fat({freq, gate, vel}) ->\n"
+           << "    unison(freq, gate, vel, pad_voice,\n"
+           << "           voices: " << u_voices
+           << ", detune: 0.3, width: .7, phase: 0.2)*0.2\n\n"
+           << "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(" << transpose << ")\n"
+           << "    |> poly(@, fat)\n"
+           << "    |> reverb(@, 0.75, 0.6, ..{wet: " << rev_wet << "})\n"
+           << "    |> out(@)\n";
+        return os.str();
+    };
+
+    struct Edit { const char* desc; float adsr_a; int lp_cut; float rev_wet; int u_voices; int transpose; };
+    // Note: unison voices stays at 4 — voices: 6 exhausts the bytecode buffer
+    // pool on this nested patch (compile error E101). The bug under
+    // investigation is the runtime drone, not the codegen capacity limit.
+    const Edit edits[] = {
+        {"base",            0.5f, 2800, 0.1f, 4, -12},
+        {"adsr attack",     0.6f, 2800, 0.1f, 4, -12},
+        {"lp cutoff",       0.6f, 3200, 0.1f, 4, -12},
+        {"reverb wet",      0.6f, 3200, 0.2f, 4, -12},
+        {"transpose",       0.6f, 3200, 0.2f, 4,  -7},
+        {"adsr release",    0.6f, 3200, 0.2f, 4,  -7},  // bumps the 1.2 implicit but actually re-emit base
+    };
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+
+        auto cr0 = akkado::compile(make_src(edits[0].adsr_a, edits[0].lp_cut,
+                                            edits[0].rev_wet, edits[0].u_voices,
+                                            edits[0].transpose));
+        if (!cr0.success) {
+            std::ostringstream os;
+            for (const auto& d : cr0.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+            INFO("Compile base diagnostics:\n" << os.str());
+        }
+        REQUIRE(cr0.success);
+        live_load(vm, cr0, seq_storage);
+
+        for (std::size_t i = 0; i < blocks_per_sec * 3; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        std::uint32_t poly_id = find_poly_state_id(cr0);
+        REQUIRE(poly_id != 0);
+        std::uint32_t seq_id =
+            find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
+
+        // Aggregate voice-fire counter spanning all edits in the chain.
+        // Catches the "drone forever" symptom: if any edit kills the voice
+        // pool, observed_fires falls to zero while expected_fires keeps
+        // climbing — the aggregate inequality fails loudly.
+        VoiceFireCounter fires{&vm, poly_id, seq_id};
+
+        for (std::size_t e = 1; e < sizeof(edits) / sizeof(edits[0]); ++e) {
+            INFO("crossfade_blocks=" << crossfade_blocks
+                 << " edit #" << e << ": " << edits[e].desc);
+            auto src_e = make_src(edits[e].adsr_a, edits[e].lp_cut,
+                                  edits[e].rev_wet, edits[e].u_voices,
+                                  edits[e].transpose);
+            auto cr = akkado::compile(src_e);
+            if (!cr.success) {
+                std::ostringstream dbg;
+                dbg << "[CHAIN] edit #" << e << " (" << edits[e].desc
+                    << ") compile failed, diag count=" << cr.diagnostics.size()
+                    << ", bytecode size=" << cr.bytecode.size() << "\n";
+                for (std::size_t di = 0; di < cr.diagnostics.size(); ++di) {
+                    const auto& d = cr.diagnostics[di];
+                    dbg << "  [" << di << "] code=" << d.code
+                        << " sev=" << static_cast<int>(d.severity)
+                        << " msg=[" << d.message << "]\n";
+                }
+                dbg << "[CHAIN] source (" << src_e.size() << " chars):\n----\n"
+                    << src_e << "\n----\n";
+                std::fwrite(dbg.str().data(), 1, dbg.str().size(), stderr);
+                std::fflush(stderr);
+            }
+            REQUIRE(cr.success);
+            live_load(vm, cr, seq_storage);
+
+            std::vector<float> mono;
+            const std::size_t blocks = blocks_per_sec * 3;
+            mono.reserve(blocks * cedar::BLOCK_SIZE);
+            for (std::size_t i = 0; i < blocks; ++i) {
+                vm.process_block(left.data(), right.data());
+                for (float s : left) mono.push_back(s);
+                fires.step();
+            }
+
+            auto* poly_after = vm.states().get_if<cedar::PolyAllocState>(poly_id);
+            INFO("after edit #" << e << " poly_state present=" << (poly_after ? 1 : 0)
+                 << " pool_size=" << vm.states().size()
+                 << " fading=" << vm.states().fading_count());
+            CHECK(poly_after != nullptr);
+
+            auto* seq_after = vm.states().get_if<cedar::SequenceState>(seq_id);
+            INFO("after edit #" << e << " seq cycle_index="
+                 << (seq_after ? int(seq_after->cycle_index) : -1)
+                 << " last_beat_pos=" << (seq_after ? seq_after->last_beat_pos : -1.0f));
+            CHECK(seq_after != nullptr);
+
+            std::vector<float> rms;
+            for (std::size_t i = 0; i + cedar::BLOCK_SIZE <= mono.size();
+                 i += cedar::BLOCK_SIZE) {
+                rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+            }
+            double sum = 0.0;
+            for (float r : rms) sum += r;
+            const double mean = sum / rms.size();
+            double var = 0.0;
+            for (float r : rms) var += (r - mean) * (r - mean);
+            const double stddev = std::sqrt(var / rms.size());
+            INFO("edit #" << e << " RMS mean=" << mean << " stddev=" << stddev);
+            CHECK(stddev > 0.02 * std::max(mean, 1e-6));
+        }
+
+        // Layer A: aggregate fire count across all chain edits. If any edit
+        // sticks the voice pool, observed will fall behind expected here.
+        // Per-block strict underfire is appropriate too — each edit is
+        // followed by ~250 blocks of render, plenty of time for SEQPAT_QUERY
+        // to refresh and voices to allocate normally.
+        INFO("chain voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.blocks_with_underfire == 0u);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
+    };
+
+    SECTION("crossfade disabled — chain") {
+        run_scenario(0);
+    }
+    SECTION("default crossfade — chain") {
+        run_scenario(3);
+    }
+}
+
+// ============================================================================
+// Rapid-fire swap stress test
+// ============================================================================
+//
+// Closer to what a live coder actually does: edit, save, edit-again before
+// the audio thread has time to fully consume the queued program. This test
+// queues a sequence of swaps with only a few blocks rendered between each
+// (simulating sub-second edits) and watches for any block where the audio
+// goes flat.
+
+TEST_CASE("Hot-swap rapid-fire — small edits between blocks must not drone",
+          "[hot_swap][regression][drone][rapid]") {
+    auto make_src = [](float adsr_a) {
+        std::ostringstream os;
+        os << "bpm = 72\n\n"
+           << "fn pad_voice(freq, gate, vel, ext) ->\n"
+           << "    saw(freq, ext.phase) * adsr(gate, " << adsr_a
+           << ", 0.6, 0.7, 1.2) * vel\n"
+           << "    |> lp(@, 2800)\n\n"
+           << "fn fat({freq, gate, vel}) ->\n"
+           << "    unison(freq, gate, vel, pad_voice,\n"
+           << "           voices: 4, detune: 0.3, width: .7, phase: 0.2)*0.2\n\n"
+           << "chord(\"Cmaj9 Am11@2 Fmaj7 G9@2\").transpose(-12)\n"
+           << "    |> poly(@, fat)\n"
+           << "    |> reverb(@, 0.75, 0.6, ..{wet: 0.1})\n"
+           << "    |> out(@)\n";
+        return os.str();
+    };
+
+    auto run_scenario = [&](std::uint32_t crossfade_blocks,
+                            std::size_t blocks_between_swaps) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+
+        const std::size_t blocks_per_sec =
+            static_cast<std::size_t>(vm.context().sample_rate) / cedar::BLOCK_SIZE;
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+
+        auto cr0 = akkado::compile(make_src(0.50f));
+        REQUIRE(cr0.success);
+        live_load(vm, cr0, seq_storage);
+
+        // Warm-up: render long enough to allocate voices and have the
+        // pattern playing actively.
+        for (std::size_t i = 0; i < blocks_per_sec * 4; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+
+        std::uint32_t poly_id = find_poly_state_id(cr0);
+        std::uint32_t seq_id =
+            find_state_init_id(cr0, akkado::StateInitData::Type::SequenceProgram);
+
+        // Aggregate voice-fire counter spanning the edit storm + the tail.
+        // The user's failure mode here is "the tail goes silent" — i.e.
+        // observed_fires collapses to ~0 after the rapid-fire burst. The
+        // aggregate inequality catches that cleanly. We do NOT assert
+        // blocks_with_underfire == 0: with only 1-4 blocks between swaps,
+        // SEQPAT_QUERY may legitimately have a stale cache for one block
+        // around the swap boundary, producing a transient under-fire that
+        // does not indicate the bug.
+        VoiceFireCounter fires{&vm, poly_id, seq_id};
+
+        // 20 micro-edits to the ADSR attack, each separated by only a few blocks.
+        // Total sim time: 20 * blocks_between_swaps blocks ≈ 20 * 0.0027 s
+        // ≈ 0.05 s — emulates a user holding down a slider for 50 ms.
+        std::vector<float> mono;
+        for (int e = 0; e < 20; ++e) {
+            const float adsr_a = 0.5f + static_cast<float>(e) * 0.02f;
+            auto cr = akkado::compile(make_src(adsr_a));
+            REQUIRE(cr.success);
+            live_load(vm, cr, seq_storage);
+
+            for (std::size_t i = 0; i < blocks_between_swaps; ++i) {
+                vm.process_block(left.data(), right.data());
+                for (float s : left) mono.push_back(s);
+                fires.step();
+            }
+        }
+
+        // Now render another 4 s "tail" with no edits, to see if the
+        // pattern recovers (or sticks).
+        for (std::size_t i = 0; i < blocks_per_sec * 4; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) mono.push_back(s);
+            fires.step();
+        }
+
+        auto* poly_post = vm.states().get_if<cedar::PolyAllocState>(poly_id);
+        auto* seq_post = vm.states().get_if<cedar::SequenceState>(seq_id);
+        INFO("crossfade_blocks=" << crossfade_blocks
+             << " blocks_between=" << blocks_between_swaps
+             << " poly present=" << (poly_post ? 1 : 0)
+             << " seq present=" << (seq_post ? 1 : 0)
+             << " pool=" << vm.states().size()
+             << " fading=" << vm.states().fading_count());
+
+        // States must survive.
+        CHECK(poly_post != nullptr);
+        CHECK(seq_post != nullptr);
+
+        // Audio in the tail (last ~4 s, post-rapid-fire) must not be a stuck waveform.
+        const std::size_t tail_start =
+            mono.size() > blocks_per_sec * cedar::BLOCK_SIZE * 3
+                ? mono.size() - blocks_per_sec * cedar::BLOCK_SIZE * 3
+                : 0;
+        std::vector<float> rms;
+        for (std::size_t i = tail_start; i + cedar::BLOCK_SIZE <= mono.size();
+             i += cedar::BLOCK_SIZE) {
+            rms.push_back(block_rms({mono.data() + i, cedar::BLOCK_SIZE}));
+        }
+        REQUIRE(rms.size() > 4);
+        double sum = 0.0;
+        for (float r : rms) sum += r;
+        const double mean = sum / rms.size();
+        double var = 0.0;
+        for (float r : rms) var += (r - mean) * (r - mean);
+        const double stddev = std::sqrt(var / rms.size());
+        INFO("tail RMS mean=" << mean << " stddev=" << stddev);
+        CHECK(stddev > 0.02 * std::max(mean, 1e-6));
+
+        // Layer A (aggregate-only for rapid-fire): if the tail goes silent
+        // observed_fires stops growing while expected_fires keeps climbing
+        // with the pattern's cycle queries. Per-block strictness is dropped
+        // because the rapid-fire timing legitimately straddles SEQPAT_QUERY
+        // cache invalidations.
+        INFO("rapid-fire voice fires expected=" << fires.total_expected_fires
+             << " observed=" << fires.total_observed_fires
+             << " blocks_with_underfire=" << fires.blocks_with_underfire
+             << " blocks_with_overfire=" << fires.blocks_with_overfire
+             << " first_underfire=" << fires.first_underfire.str()
+             << " first_overfire=" << fires.first_overfire.str());
+        REQUIRE(fires.total_expected_fires > 0);
+        CHECK(fires.total_observed_fires >= fires.total_expected_fires);
+    };
+
+    SECTION("crossfade=0, 1 block between swaps") {
+        run_scenario(0, 1);
+    }
+    SECTION("crossfade=0, 4 blocks between swaps") {
+        run_scenario(0, 4);
+    }
+    SECTION("crossfade=3, 1 block between swaps") {
+        run_scenario(3, 1);
+    }
+    SECTION("crossfade=3, 4 blocks between swaps") {
+        run_scenario(3, 4);
+    }
+}
+
+// ============================================================================
+// Canonical reference comparison: hot-swap audio vs clean B-from-scratch
+// ============================================================================
+//
+// The other [hot_swap] tests prove "the bug 1fd6c95 fixed has not regressed."
+// They do NOT prove "the audio after a swap is musically correct" — a stuck
+// periodic drone passes the RMS-variance check, and the new VoiceFireCounter
+// only verifies voice ALLOCATIONS, not the actual audio output. This test
+// fills that gap by comparing the post-swap audio against a reference
+// rendering of program B alone, aligned on global_sample_counter.
+//
+// Layer B catches two related failure modes:
+//   1. Voice GC eviction (the 1fd6c95 class) — swap_buf shows ~zero onsets
+//      and ~zero band energy while ref_buf shows full energy + onsets.
+//   2. Silent-reverb-on-poly-chain (separately reported by the user) — when
+//      reverb is wired into a poly chain in some structural shapes, the
+//      WHOLE output goes to zero. Reverb is included in this test pattern
+//      to keep that code path exercised.
+
+namespace {
+
+constexpr float kSampleRate = 48000.0f;
+
+// Pattern shape: simple chord pad (no unison wrapper, no nested fn) so the
+// reverb-vs-no-reverb structural divergence is minimal and the spectral
+// metrics remain meaningful. A and B differ only in the lp cutoff — pure
+// constant edit, no structural change, no state_id shift.
+const char* canonical_src(int lp_cut) {
+    static std::string buf;
+    std::ostringstream os;
+    os << "bpm = 110\n\n"
+       << "fn pad(freq, gate, vel) ->\n"
+       << "    saw(freq) * adsr(gate, 0.02, 0.15, 0.7, 0.3) * vel\n"
+       << "    |> lp(@, " << lp_cut << ")\n\n"
+       << "c\"Cmaj7 Fmaj7 Gmaj7 Am7\"\n"
+       << "    |> poly(@, pad) * 0.3\n"
+       << "    |> reverb(@, 0.6, 0.5, ..{wet: 0.1})\n"
+       << "    |> out(@)\n";
+    buf = os.str();
+    return buf.c_str();
+}
+
+}  // namespace
+
+TEST_CASE("Hot-swap audio matches a clean reference rendering",
+          "[hot_swap][regression][canonical]") {
+    auto cr_a = akkado::compile(canonical_src(2400));
+    if (!cr_a.success) {
+        std::ostringstream os;
+        for (const auto& d : cr_a.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+        INFO("Compile A diagnostics:\n" << os.str());
+    }
+    REQUIRE(cr_a.success);
+    auto cr_b = akkado::compile(canonical_src(2200));
+    if (!cr_b.success) {
+        std::ostringstream os;
+        for (const auto& d : cr_b.diagnostics) os << "  " << d.code << ": " << d.message << "\n";
+        INFO("Compile B diagnostics:\n" << os.str());
+    }
+    REQUIRE(cr_b.success);
+
+    // Block budget: pattern plays one chord per cycle (cycle_length = 1 beat
+    // = ~0.545 s at 110 BPM, top-level alternation). 6 s warmup gets the
+    // reverb tail and lp filter close to steady state; 4 s window crosses
+    // ~7 chord onsets — enough RMS variance for the correlation check to
+    // have meaningful resolution.
+    constexpr std::size_t kSr = 48000;
+    constexpr std::size_t kWarmupBlocks = (kSr * 6) / cedar::BLOCK_SIZE;
+    constexpr std::size_t kWindowBlocks = (kSr * 4) / cedar::BLOCK_SIZE;
+    // Skip the first ~20 ms of each captured window: this absorbs both any
+    // crossfade transient (when crossfade > 0) and the leading edge of an
+    // onset that straddles the window boundary. Same skip applied to both
+    // sides so the comparison stays apples-to-apples.
+    constexpr std::size_t kSkipBlocks = 8;
+
+    auto render_swap = [&](std::uint32_t crossfade_blocks) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(crossfade_blocks);
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_a, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        for (std::size_t i = 0; i < kWarmupBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+        }
+        const std::uint64_t swap_global =
+            vm.context().global_sample_counter;
+
+        // Hot-swap into B.
+        live_load(vm, cr_b, seq_storage);
+
+        std::vector<float> out;
+        out.reserve(kWindowBlocks * cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i < kWindowBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) out.push_back(s);
+        }
+        return std::make_pair(out, swap_global);
+    };
+
+    auto render_reference = [&](std::uint64_t target_global) {
+        cedar::VM vm;
+        vm.set_crossfade_blocks(0);  // no crossfade on a cold start
+        std::vector<std::vector<cedar::Sequence>> seq_storage;
+        live_load(vm, cr_b, seq_storage);
+
+        std::array<float, cedar::BLOCK_SIZE> left{}, right{};
+        // Pre-roll exactly to target_global so the captured window starts
+        // at the same global_sample_counter as the hot-swap path — pattern
+        // phase and cycle index align bit-for-bit between the two runs.
+        while (vm.context().global_sample_counter < target_global) {
+            vm.process_block(left.data(), right.data());
+        }
+        REQUIRE(vm.context().global_sample_counter == target_global);
+
+        std::vector<float> out;
+        out.reserve(kWindowBlocks * cedar::BLOCK_SIZE);
+        for (std::size_t i = 0; i < kWindowBlocks; ++i) {
+            vm.process_block(left.data(), right.data());
+            for (float s : left) out.push_back(s);
+        }
+        return out;
+    };
+
+    auto run = [&](std::uint32_t crossfade_blocks) {
+        const auto [swap_buf, swap_global] = render_swap(crossfade_blocks);
+        const auto ref_buf = render_reference(swap_global);
+        REQUIRE(swap_buf.size() == ref_buf.size());
+
+        const std::size_t skip_samples = kSkipBlocks * cedar::BLOCK_SIZE;
+        REQUIRE(swap_buf.size() > skip_samples);
+        std::span<const float> swap_window(swap_buf.data() + skip_samples,
+                                           swap_buf.size() - skip_samples);
+        std::span<const float> ref_window(ref_buf.data() + skip_samples,
+                                          ref_buf.size() - skip_samples);
+
+        const float ref_rms = block_rms(ref_window);
+        const float swap_rms = block_rms(swap_window);
+        INFO("crossfade=" << crossfade_blocks
+             << " ref_rms=" << ref_rms << " swap_rms=" << swap_rms);
+        // Sanity: reference must have audible signal — else the pattern
+        // didn't render at all and the rest of the comparison is meaningless.
+        REQUIRE(ref_rms > 1e-3f);
+
+        // ------------------------------------------------------------------
+        // Assertion 1: aggregate RMS equivalence (±25%)
+        // ------------------------------------------------------------------
+        // The hot-swap path preserves stateful node memory; the reference
+        // starts cold. Despite that, average signal energy over a 4 s
+        // window should match closely — the "silent reverb" or "voices
+        // vanish" failure modes collapse swap_rms to near zero.
+        const float rms_rel_delta = std::abs(swap_rms - ref_rms) / ref_rms;
+        INFO("rms_rel_delta=" << rms_rel_delta);
+        CHECK(rms_rel_delta <= 0.25f);
+
+        // ------------------------------------------------------------------
+        // Assertion 2: per-block RMS correlation (≥ 0.9)
+        // ------------------------------------------------------------------
+        // The chord progression's per-block envelope (chord-onset attacks,
+        // ADSR sustains, release tails) traces the same shape in both
+        // buffers when the swap is musically correct. Pearson correlation
+        // collapses to ~0 if the swap path produces a different envelope
+        // (frozen drone, voice subset firing, wrong attack timing).
+        auto ref_rms_series = per_block_rms(ref_window);
+        auto swap_rms_series = per_block_rms(swap_window);
+        REQUIRE(ref_rms_series.size() == swap_rms_series.size());
+        REQUIRE(ref_rms_series.size() > 16);
+        const double rms_correlation = pearson_correlation(
+            std::span<const float>(ref_rms_series.data(), ref_rms_series.size()),
+            std::span<const float>(swap_rms_series.data(), swap_rms_series.size()));
+        INFO("rms_correlation=" << rms_correlation);
+        CHECK(rms_correlation >= 0.9);
+
+        // ------------------------------------------------------------------
+        // Assertion 3: three-band Goertzel energy match (±25%)
+        // ------------------------------------------------------------------
+        // Hot-swap preserves stateful node memory (lp filter, ADSR phase,
+        // reverb tail) while the reference starts cold — bit-equal
+        // waveforms are not expected. But the chord progression, register,
+        // and reverb wet level are identical, so per-band energy averaged
+        // over the 4 s window should match within 25 %. The "voices
+        // vanish" / "silent reverb" failure collapses ALL bands to ~0.
+        constexpr std::array<double, 3> kBands = {250.0, 1000.0, 4000.0};
+        constexpr double kBandTolerance = 0.25;
+        for (double band_hz : kBands) {
+            const double ref_mag = goertzel_magnitude(
+                ref_window, band_hz, static_cast<double>(kSampleRate));
+            const double swap_mag = goertzel_magnitude(
+                swap_window, band_hz, static_cast<double>(kSampleRate));
+            // Normalize by window length so the magnitudes are comparable
+            // across different window sizes.
+            const double ref_norm = ref_mag /
+                static_cast<double>(ref_window.size());
+            const double swap_norm = swap_mag /
+                static_cast<double>(swap_window.size());
+            const double rel_delta = ref_norm > 1e-9
+                ? std::abs(swap_norm - ref_norm) / ref_norm
+                : 0.0;
+            INFO("band=" << band_hz << " Hz"
+                 << " ref_mag=" << ref_norm
+                 << " swap_mag=" << swap_norm
+                 << " rel_delta=" << rel_delta);
+            // Reference must have audible energy in this band — sanity.
+            REQUIRE(ref_norm > 1e-5);
+            CHECK(rel_delta <= kBandTolerance);
+        }
+    };
+
+    SECTION("crossfade disabled") { run(0); }
+    SECTION("default crossfade") { run(3); }
+}

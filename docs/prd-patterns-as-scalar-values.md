@@ -36,8 +36,8 @@ This PRD makes patterns usable **anywhere a scalar `Signal` is accepted**. Two c
 
 Patterns are second-class:
 
-- `osc("sin", n"c4 e4 g4")` works (osc-freq is hand-wired to accept patterns).
-- `osc("sin", n"c4 e4 g4")` works (auto-detect gives a note pattern).
+- `sine(n"c4 e4 g4")` works (osc-freq is hand-wired to accept patterns).
+- `sine(n"c4 e4 g4")` works (auto-detect gives a note pattern).
 - `bend(notes, "<0 0.5 -0.5>")` **does not work**. `bend`'s second arg is a scalar slot, and a string literal is not a pattern in scalar context.
 - `bend(notes, n"<0 0.5 -0.5>")` **does not work**. `n"…"` produces a `Pattern`, but `bend`'s codegen has no path that consumes `Pattern` as a scalar value.
 - `lp(sig, n"<200 800 2000>", 0.7)` **does not work** for the same reason — the cutoff slot expects `Signal`.
@@ -116,20 +116,20 @@ These shipped as part of f8dca4d but only by accepting per-event constants or by
 bend("<0 0.5 -0.5>")  // standalone, no host pattern — semantic? Probably error.
 
 // Concrete usage (the actual user story):
-n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> osc("sin", @)
+n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> mtof(@ + bend(@) * 12) |> sine(@)
 
 // Functional form:
 bend(n"c4 e4 g4", v"<0 0.5 -0.5>")
 
 // In a record / pipe-binding:
-n"c4 e4 g4" as e |> osc("sin", e.freq + v"<0 -10 10 0>")  // detune scalar pattern
+n"c4 e4 g4" as e |> sine(e.freq + v"<0 -10 10 0>")  // detune scalar pattern
 ```
 
 ### 4.3 Patterns as scalars in arithmetic and DSP slots
 
 ```akkado
 // v"" patterns work in any Signal slot:
-osc("sin", v"<220 440 880>")            // raw Hz values, no mtof
+sine(v"<220 440 880>")            // raw Hz values, no mtof
 lp(sig, v"<200 800 2000>", v"<0.7 0.5>")  // cutoff and Q both pattern-driven
 sig * v"<0.2 0.5 1.0 0.5>"              // amplitude envelope per cycle
 
@@ -138,7 +138,7 @@ v"<0 0.5 -0.5>" * 12       // → Signal carrying 0/6/-6 stepped over the cycle
 v"<60 64 67>" + v"<0 0 0 12>"  // chromatic + octave-shift overlay; emits sum at sample rate
 
 // Using note + value patterns together:
-osc("saw", n"c4 e4 g4" + v"<0 0 12 0>")  // octave displaces the third event
+saw(n"c4 e4 g4" + v"<0 0 12 0>")  // octave displaces the third event
 ```
 
 ### 4.4 Explicit `scalar()` cast
@@ -147,7 +147,7 @@ osc("saw", n"c4 e4 g4" + v"<0 0 12 0>")  // octave displaces the third event
 // Sugar for .freq on note/midi/chord patterns:
 scalar(n"c4 e4 g4")        // Signal carrying mtof(c4), mtof(e4), mtof(g4) stepped
 scalar(n"c4 e4 g4") * 2    // 2× freq, same pattern timing
-osc("sin", scalar(n"c4 e4 g4"))   // identical to osc("sin", n"c4 e4 g4") — auto-coerce already does this
+sine(scalar(n"c4 e4 g4"))   // identical to sine(n"c4 e4 g4") — auto-coerce already does this
 
 // Errors:
 scalar(s"bd sd")           // E161: cannot cast sample pattern to scalar
@@ -161,11 +161,11 @@ n"c4 e4 g4".scalar()       // identical to scalar(n"c4 e4 g4")
 
 ```akkado
 // Binding preserves Pattern type:
-v"<0.3 0.5 0.7>" as e |> osc("saw", 440 + e.freq * 100)
+v"<0.3 0.5 0.7>" as e |> saw(440 + e.freq * 100)
 //   ^^ e is bound as Pattern; e.freq is a Signal pulled from the value buffer.
 //   e.vel, e.trig, e.gate also accessible.
 
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> @ * e.vel |> out(@, @)
+n"c4 e4 g4" as e |> sine(e.freq) |> @ * e.vel |> out(@, @)
 //   identical to today's behavior; n"" doesn't change pipe-binding semantics.
 ```
 
@@ -173,7 +173,7 @@ n"c4 e4 g4" as e |> osc("sin", e.freq) |> @ * e.vel |> out(@, @)
 
 ```akkado
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
-  |> osc("saw", e.freq)
+  |> saw(e.freq)
   |> lp(@, 200 + e.cutoff * 4000)   // e.cutoff is Signal pulled from SEQPAT_PROP buffer
   |> out(@, @)
 ```
@@ -330,7 +330,7 @@ The operator visit branch resolves types using these rules (applies to `+`, `-`,
 - `let y = v"<0 0.5>" + sig` — RHS is `Signal`, so result is `Signal`. `y` has `ValueType::Signal`.
 - `let z = v"<0 0.5>" + n"c4 e4"` — both Pattern, result is `Pattern`. Synthetic combined pattern.
 - `lp(sig, v"<200 800>" * 2, 0.7)` — `v"…" * 2` is `Pattern` (Pattern + Number); `lp`'s cutoff slot expects `Signal`, so coerce fires at the `lp` call site, not at the `*`.
-- `osc("sin", v"<0 0.5>" * stereoCarrier)` — **Error E165**: stereo operand on Pattern. Diagnostic points to `stereo(scalar(...))` workaround.
+- `sine(v"<0 0.5>" * stereoCarrier)` — **Error E165**: stereo operand on Pattern. Diagnostic points to `stereo(scalar(...))` workaround.
 
 **`PatternPayload` flag changes.** Add two booleans referenced by the coerce hook:
 
@@ -433,7 +433,7 @@ The transforms already exist as Phase 2.1 dispatch handlers, but they only accep
 
 ```akkado
 x = v"<0 0.5 -0.5>"        // x has ValueType::Pattern
-osc("sin", x)              // auto-coerce at osc-freq slot — emits Signal usage
+sine(x)              // auto-coerce at osc-freq slot — emits Signal usage
 y = x.vel                  // x stays Pattern, .vel still works
 ```
 
@@ -566,10 +566,10 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 6. Implement `handle_scalar_call` for the explicit cast.
 
 **Verification:**
-- `osc("sin", v"<220 440>")` compiles and produces audible alternating frequencies.
+- `sine(v"<220 440>")` compiles and produces audible alternating frequencies.
 - `lp(sig, v"<200 800>", 0.7)` compiles; cutoff buffer matches v-pattern values.
-- `osc("sin", c"Am")` errors E160 with a helpful message.
-- `osc("sin", s"bd sd")` errors E160.
+- `sine(c"Am")` errors E160 with a helpful message.
+- `sine(s"bd sd")` errors E160.
 - `scalar(s"bd")` errors E161.
 - `scalar(n"c4 e4 g4")` returns a Signal carrying mtof'd freqs.
 - `v"<0 0.5>" * 12` produces a Signal carrying 0/6 stepped.
@@ -615,18 +615,18 @@ The binding `let` / `=` does not coerce. Coerce fires only at the consumer site.
 ```akkado
 // Pattern-driven oscillator, filter, and bend depth, plus per-event cutoff
 n"c4{cutoff:0.3} e4{cutoff:0.7} g4{cutoff:0.5}" as e
-  |> osc("saw", e.freq + v"<0 -10 10>")          // detune via scalar pattern
+  |> saw(e.freq + v"<0 -10 10>")          // detune via scalar pattern
   |> lp(@, 200 + e.cutoff * 4000, v"<0.3 0.7>")  // cutoff custom-property + Q v-pattern
   |> @ * v"<0.5 1.0 0.7>"                        // amplitude pattern
   |> out(@, @)
 
 // Pattern-driven bend on a separate voice
 n"c4 e4 g4 b4".bend(v"<0 0.25 -0.25 0>") as e
-  |> osc("sin", mtof(e.freq + e.bend * 12))      // bend is a per-event property
+  |> sine(mtof(e.freq + e.bend * 12))      // bend is a per-event property
   |> out(@, @)
 
 // Negative coerce path: chord pattern in scalar slot must error
-// osc("sin", c"Am C G")  // E160 expected
+// sine(c"Am C G")  // E160 expected
 ```
 
 **Acceptance:** First two stanzas compile clean and render audibly correct for ≥ 30 s in `nkido render`. Commented-out third line, when uncommented in a separate test program, produces E160 with the documented message.
@@ -686,14 +686,14 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 
 ### 9.3 Auto-coerce
 
-- **Pattern bound to a name and used twice.** `let x = v"<0 0.5>"; osc("sin", x); lp(sig, x, 0.7)` — coerce fires at each consumer site. Both consumers see `Signal::signal(x.freq_buf)`. No re-evaluation; both share the same buffer (idempotent). `x` itself stays typed `ValueType::Pattern`; coerce never mutates the binding.
+- **Pattern bound to a name and used twice.** `let x = v"<0 0.5>"; sine(x); lp(sig, x, 0.7)` — coerce fires at each consumer site. Both consumers see `Signal::signal(x.freq_buf)`. No re-evaluation; both share the same buffer (idempotent). `x` itself stays typed `ValueType::Pattern`; coerce never mutates the binding.
 - **Operator on Pattern + Number.** `let y = v"<0 0.5>" + 12` — RHS is `Number`, result is `Pattern` (per §5.3.1). `y.vel`, `y.trig`, etc. still accessible.
 - **Operator on Pattern + Signal.** `let z = v"<0 0.5>" + sig` — RHS is `Signal`, result is `Signal`. Pattern coerces; `z` is `ValueType::Signal`. Field access on `z` errors.
 - **Pattern + Stereo Signal.** `v"<0 0.5>" * stereoSig` — **error E165**. User must wrap: `stereo(scalar(v"<0 0.5>")) * stereoSig`.
 - **Pattern fed to a pattern transform.** `slow(v"<0 0.5>", 2)` — slow's first arg is `Pattern` (not Signal); no coerce. Result remains a `Pattern`.
-- **Chord pattern in pipe-binding.** `c"Am" as e |> osc("sin", e.freq)` does **not** auto-expand. `e.freq` on a multi-voice pattern returns the voice-0 buffer only (mono Signal); the other voices are dropped silently — likely surprising. Users who want all voices must pipe through `poly()` explicitly: `c"Am" |> poly(@ as e |> osc("sin", e.freq))`. Document this in the literals reference page; a future PRD will add `e.freq[i]` voice indexing or implicit poly-expansion in pipe-binding context.
+- **Chord pattern in pipe-binding.** `c"Am" as e |> sine(e.freq)` does **not** auto-expand. `e.freq` on a multi-voice pattern returns the voice-0 buffer only (mono Signal); the other voices are dropped silently — likely surprising. Users who want all voices must pipe through `poly()` explicitly: `c"Am" |> poly(@ as e |> sine(e.freq))`. Document this in the literals reference page; a future PRD will add `e.freq[i]` voice indexing or implicit poly-expansion in pipe-binding context.
 - **Sample pattern in non-Signal slot.** `s"bd sd" |> sampler(@, ...)` — `sampler` is pattern-aware (`args_are_signal = false`). No coerce. Works as today.
-- **Empty value pattern.** `v""` produces a pattern with `freq` buffer initialized to 0.0. `osc("sin", v"")` produces a 0 Hz oscillator (silent). No error.
+- **Empty value pattern.** `v""` produces a pattern with `freq` buffer initialized to 0.0. `sine(v"")` produces a 0 Hz oscillator (silent). No error.
 
 ### 9.4 `scalar()` cast
 
@@ -744,14 +744,14 @@ This phase blocks PRD closure — no Phase A–E claim is "done" until they all 
 - `Value` mode generator-call rejection: `v"run(8)"` rejects at parse with E163 — `run` is a top-level builtin, not a mini-notation atom. Documented workaround in error message: call `run(8)` at the top level outside the string.
 
 **Codegen (`akkado/tests/test_pattern_prefixes.cpp`, `akkado/tests/test_pattern_scalar.cpp`):**
-- `osc("sin", v"<220 440>")` compiles; emitted bytecode shows `osc` reading the freq buffer of the value pattern.
-- `osc("sin", c"Am")` errors with E160_PatternToScalarPolyphonic.
-- `osc("sin", s"bd")` errors with E160_PatternToScalarSample.
+- `sine(v"<220 440>")` compiles; emitted bytecode shows `osc` reading the freq buffer of the value pattern.
+- `sine(c"Am")` errors with E160_PatternToScalarPolyphonic.
+- `sine(s"bd")` errors with E160_PatternToScalarSample.
 - `scalar(n"c4 e4")` returns a Signal-typed `TypedValue` with the freq buffer.
 - `scalar(s"bd")` errors with E161.
 - `v"<0 0.5>" * 12` compiles; result is a Signal carrying scaled values.
 - `let x = v"<0 0.5>"; x.freq` works; `x` still typed Pattern at the binding.
-- `let x = v"<0 0.5>"; osc("sin", x); lp(sig, x, 0.7)` — both consumers see the same coerced Signal buffer.
+- `let x = v"<0 0.5>"; sine(x); lp(sig, x, 0.7)` — both consumers see the same coerced Signal buffer.
 
 **Phase 2.1 transforms with pattern args (`akkado/tests/test_pattern_event.cpp`):**
 - `n"c4 e4 g4".bend(v"<0 0.5 -0.5>")` — events have `bend` ∈ {0, 0.5, -0.5} per their host trigger time.
@@ -776,7 +776,7 @@ Per `docs/dsp-experiment-methodology.md` and the long-window guidance in `CLAUDE
 ### 10.4 Manual Audition
 
 - The user's example: `n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> ...` should audibly bend the third event by -0.5 (a downward bend depth applied per voice).
-- `osc("sin", v"<220 440 880>")` should cycle three pitches.
+- `sine(v"<220 440 880>")` should cycle three pitches.
 - `lp(sig, v"<200 800 2000>", 0.7)` should produce a clearly modulated filter sweep.
 
 ### 10.5 Build & Lint
@@ -793,8 +793,8 @@ These are blocking acceptance criteria — the PRD is not closed until each land
 
 - `web/static/docs/reference/pattern/literals.md` — covers all five prefixes (`v`/`n`/`s`/`c`/`n`), the auto-coerce mental model, and the `scalar()` cast. Includes side-by-side examples that distinguish `n"…"` (mtof'd) from `v"…"` (raw). Frontmatter `keywords` includes `pattern, literal, prefix, value, note, sample, chord, scalar, coerce`.
 - `web/static/docs/tutorials/06-pattern-modulation.md` — narrative tutorial. Required sections:
-  1. *Patterns are values* — introduce the typed prefixes with simple `osc("sin", n"c4 e4 g4")` examples.
-  2. *Numeric patterns with `v"…"`* — `osc("sin", v"<220 440>")`, `lp(sig, v"<200 800>", 0.7)`.
+  1. *Patterns are values* — introduce the typed prefixes with simple `sine(n"c4 e4 g4")` examples.
+  2. *Numeric patterns with `v"…"`* — `sine(v"<220 440>")`, `lp(sig, v"<200 800>", 0.7)`.
   3. *The flagship: per-event modulation* — `n"c4 e4 g4" |> bend(@, v"<0 0.5 -0.5>") |> ...`.
   4. *Custom-property accessor* — `n"c4{cutoff:0.3} e4{cutoff:0.7}" as e |> lp(@, e.cutoff * 4000 + 200)`.
   5. *Scalar arithmetic* — `v"<60 64 67>" + 12` (still Pattern), `v"<0 0.5>" + sig` (now Signal).

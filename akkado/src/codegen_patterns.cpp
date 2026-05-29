@@ -5453,7 +5453,7 @@ TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
 //
 // Returns a TypedValue::Pattern with `is_runtime_event_source = true`. Both
 // shapes work downstream:
-//   * `midi() as e |> osc("sin", e.freq) |> @ * adsr(e.gate)` reads the
+//   * `midi() as e |> sine(e.freq) |> @ * adsr(e.gate)` reads the
 //     mono-baked buffers via pattern field access.
 //   * `midi() |> poly(@, synth, 8)` and (Phase 7.1) `midi() |> soundfont(...)`
 //     read the polyphonic OutputEvents via state_pool_.resolve_output_events.

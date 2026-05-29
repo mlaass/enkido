@@ -96,7 +96,7 @@ The user, relayed from earlier exploration: "`payload->voice_fields` is never po
 ### End-to-end FFT verification
 
 ```
-fn lead(freq, gate, vel) -> osc("sin", freq) * gate * 0.3
+fn lead(freq, gate, vel) -> sine(freq) * gate * 0.3
 n"[c4, e4]" |> poly(%, lead, 4) |> out(%, %)
 ```
 
@@ -121,7 +121,7 @@ The exploration agent saw:
 2. The `voice_fields` field existed on `PatternPayload`.
 3. The buffers were never copied into `voice_fields`.
 
-Conclusion *appeared* to be: "the wiring step is missing." The piece nobody read was the runtime — `POLY_BEGIN` doesn't go through `voice_fields`. The per-voice `SEQPAT_STEP` buffers are wired up to support pitch-pattern-as-control-signal use cases (e.g., `n"c4 e4" |> osc("sin", %)`), where each voice's frequency drives an oscillator. Removing them would break those uses; they just don't talk to `poly()`.
+Conclusion *appeared* to be: "the wiring step is missing." The piece nobody read was the runtime — `POLY_BEGIN` doesn't go through `voice_fields`. The per-voice `SEQPAT_STEP` buffers are wired up to support pitch-pattern-as-control-signal use cases (e.g., `n"c4 e4" |> sine(%)`), where each voice's frequency drives an oscillator. Removing them would break those uses; they just don't talk to `poly()`.
 
 The lesson: when the diagnosis is "X is missing in the codegen," confirm by tracing the *consumer* in the runtime. A field declared but never read is dead code, not a wiring bug.
 

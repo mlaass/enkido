@@ -64,6 +64,7 @@ add_executable(akkado_tests
     test_hot_swap_record_options.cpp
     test_fuzz_determinism.cpp
     test_fuzz_recompile_audio.cpp
+    test_hot_swap_event_transforms.cpp
 )
 
 target_link_libraries(akkado_tests

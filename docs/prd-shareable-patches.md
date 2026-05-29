@@ -686,7 +686,7 @@ PATCHES
   <main>
     <h1>moody bass</h1>
     <p>tweak @.cutoff to taste</p>
-    <pre><code>osc("saw", 80) |> lp(@, 400, 6) |> out(@, @)</code></pre>
+    <pre><code>saw(80) |> lp(@, 400, 6) |> out(@, @)</code></pre>
     <a href="https://live.nkido.cc/p/k7gp2x">Open in editor →</a>
   </main>
 </body>

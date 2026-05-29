@@ -45,7 +45,7 @@ pos.y                     // 2
 Inside a pipe, the hole `@` carries the upstream value. When the upstream is a record (e.g. a pattern event), `@field` reads off it:
 
 ```akk
-n"c4 e4 g4" |> osc("sin", @freq) |> out(@)
+n"c4 e4 g4" |> sine(@freq) |> out(@)
 ```
 
 > **Both forms work.** `@field` (canonical) and `@.field` (legacy dotted form) compile to the same code. The dot is optional only when the field name is *immediately adjacent* to the hole — whitespace defeats the shorthand so `@ as e` still parses as a bare hole followed by a pipe binding. Method calls always require the dot: `@.method()`.
@@ -76,14 +76,14 @@ Spread is positional: fields written after the spread override fields from the s
 `as` binds the upstream value to a name so multiple downstream stages can read off it:
 
 ```akk
-n"c4 e4 g4" as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
+n"c4 e4 g4" as e |> sine(e.freq) |> @ * e.vel |> out(@)
 ```
 
 Inline destructure inside `as` lifts the named fields directly into scope:
 
 ```akk
 n"c4 e4 g4" as {freq, vel}
-    |> osc("sin", freq)
+    |> sine(freq)
     |> @ * vel
     |> out(@)
 ```
@@ -116,7 +116,7 @@ This composes with regular params:
 
 ```akk
 fn lp_voice(freq, {cutoff, q}) ->
-    osc("saw", freq) |> lp(@, cutoff, q)
+    saw(freq) |> lp(@, cutoff, q)
 
 lp_voice(440, {cutoff: 2000, q: 0.7})
 ```
@@ -163,7 +163,7 @@ r2 = {..r, x: 5}          // r2 = {x: 5}, r unchanged
 
 ```akk
 voice = state({freq: 440, gate: 0})
-osc("sin", voice.freq) * voice.gate |> out(@)
+sine(voice.freq) * voice.gate |> out(@)
 // sugar over set(voice, {..get(voice), gate: 1})
 voice.gate = 1
 ```
@@ -190,22 +190,22 @@ Examples — every field works in pipes and after transforms:
 
 ```akk
 // @dur picks up event duration; great for pitch-from-velocity tricks
-n"c4 e4 g4" |> osc("sin", @freq) * @vel * @gate |> out(@)
+n"c4 e4 g4" |> sine(@freq) * @vel * @gate |> out(@)
 
 // Event-scoped phase ramps 0→1 once per note — perfect for envelopes
 fast(n"c4 e4 g4", 2)
-    |> osc("sin", @freq) * (1 - @phase)
+    |> sine(@freq) * (1 - @phase)
     |> out(@)
 
 // MIDI note number flows through transforms
-slow(n"c4 e4 g4", 2) |> osc("sin", mtof(@note)) |> out(@)
+slow(n"c4 e4 g4", 2) |> sine(mtof(@note)) |> out(@)
 ```
 
 Custom fields attached via `.set("name", value)` chains live alongside these and are visible in autocomplete:
 
 ```akk
 beat = n"c4 e4".set("cutoff", saw(0.5)).set("res", 0.7)
-beat |> lp(osc("sin", @freq), @cutoff, @res) |> out(@)
+beat |> lp(sine(@freq), @cutoff, @res) |> out(@)
 ```
 
 A custom field that collides with one of the fixed names is silently shadowed by the fixed slot — `n"c4".set("freq", x)` will not change what `@freq` reads. The editor's autocomplete deduplicates by name so the suggestions never mislead.
@@ -215,7 +215,7 @@ A custom field that collides with one of the fixed names is silently shadowed by
 When a builtin needs more than three or four parameters, the convention is to take a record literal in the last positional slot. Each option is a named field with a declared type and default. This is how the visualizers work today; the same convention is recommended for samplers, filters, and delays.
 
 ```akk
-osc("saw", 220)
+saw(220)
     |> waterfall(@, "scope", {fft: 1024, gradient: "viridis"})
     |> out(@)
 ```

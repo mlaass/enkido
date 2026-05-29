@@ -193,7 +193,7 @@ def _render_pipeline(voice: EmittedVoice, soundfont: str, instrument: str) -> st
     # osc fallback — saw + ADSR, works today without the soundfont path.
     return (
         f'{pattern_call} as e\n'
-        f'  |> osc("saw", e.freq)\n'
+        f'  |> saw(e.freq)\n'
         f'  |> % * adsr(e.gate, 0.01, 0.1, 0.6, 0.3)\n'
         f'  |> % * e.vel'
     )

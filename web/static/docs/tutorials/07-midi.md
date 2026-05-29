@@ -14,7 +14,7 @@ Plug in a keyboard and play through your patch. This tutorial walks from a one-l
 The shortest playable MIDI patch is one line:
 
 ```akk
-midi() |> poly(@, ({freq, gate, vel}) -> osc("sin", freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel, 8) |> out(@)
+midi() |> poly(@, ({freq, gate, vel}) -> sine(freq) * adsr(gate, 0.01, 0.2, 0.7, 0.3) * vel, 8) |> out(@)
 ```
 
 Bare `midi()` opens the host's default MIDI input. On the web, the Files panel has a MIDI tab that lists every visible device and asks for browser permission on first use. On the CLI, run `nkido --list-midi-devices` to see what's connected, then pass `--midi-in "Name"` (substring match) to pick one.
@@ -29,7 +29,7 @@ env_amount  = param("env",   1800, 0, 6000)
 res         = param("res",    0.4, 0, 1)
 
 fn lead({freq, gate, vel}) ->
-    osc("saw", freq) * 0.6 + osc("sqr", freq * 0.5) * 0.3
+    saw(freq) * 0.6 + sqr(freq * 0.5) * 0.3
         |> lp(@, cutoff_base + env_amount * vel * ar(gate, 0.005, 0.4), res)
         |> @ * adsr(gate, 0.05, 0.2, 0.7, 0.3) * vel
 
@@ -44,7 +44,7 @@ For solo lines, swap `poly()` for monophonic field access:
 
 ```akk
 midi() as e
-    |> osc("saw", e.freq) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3) * e.vel
+    |> saw(e.freq) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3) * e.vel
     |> lp(@, 1800, 0.7)
     |> out(@)
 ```
@@ -56,7 +56,7 @@ midi() as e
 ```akk
 glide_time = param("glide", 0.05, 0, 0.5)
 midi() as e
-    |> osc("saw", glide(e.freq, glide_time)) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3)
+    |> saw(glide(e.freq, glide_time)) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3)
     |> out(@)
 ```
 
@@ -71,7 +71,7 @@ cutoff = param("cutoff", 1200, 100, 8000)
 midi_cc("cutoff", {cc: 1, min: 100, max: 8000})
 
 midi() as e
-    |> osc("saw", e.freq) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3)
+    |> saw(e.freq) * adsr(e.gate, 0.01, 0.2, 0.7, 0.3)
     |> lp(@, cutoff, 0.7)
     |> out(@)
 ```
@@ -82,7 +82,7 @@ The slider still shows the saved default; the wheel takes over as soon as it mov
 bend = param("bend", 0, -2, 2)
 midi_cc("bend", {pb: true, min: -2, max: 2})
 
-osc("saw", 440 * pow(2, bend / 12)) |> out(@)
+saw(440 * pow(2, bend / 12)) |> out(@)
 ```
 
 See `static/patches/midi-cc-filtermono.akk` for a five-route patch (cutoff, resonance, PWM, glide, pitch-bend) you can drop into the editor and play.
@@ -118,7 +118,7 @@ Hold a chord. Edit the instrument body. Recompile. The notes stay sounding throu
 midi() |> poly(@, lead, 8) |> out(@)
 ```
 
-Change `osc("saw", ...)` to `osc("sqr", ...)` in `lead`, recompile, and the held chord switches timbre without dropping. Notes only cut when the `midi()` call itself disappears between programs.
+Change `saw(...)` to `sqr(...)` in `lead`, recompile, and the held chord switches timbre without dropping. Notes only cut when the `midi()` call itself disappears between programs.
 
 If you hear a click on note-off, the gate is multiplying out the instrument's ADSR release before it can finish. Add a `release:` window on the voice manager so the tail decays naturally:
 

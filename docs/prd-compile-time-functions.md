@@ -212,7 +212,7 @@ banks = $samples()
 $print("loaded {banks:s}")    // 's' specifier formats as a string
 ```
 
-These bindings live in a compile-time-only scope. They cannot be referenced inside runtime expressions (e.g., `osc("sin", banks)` is an error). They can only be re-printed or fed to other compile-time functions.
+These bindings live in a compile-time-only scope. They cannot be referenced inside runtime expressions (e.g., `sine(banks)` is an error). They can only be re-printed or fed to other compile-time functions.
 
 ### 4.7 Reserved-but-unused (Phase 2 hook)
 
@@ -245,7 +245,7 @@ $print(42)              // error E683: $print expects a string literal as first 
 $print("{}")            // error E684: empty interpolation
 $print("{x:.2z}")       // error E685: unknown format spec '.2z'
 foo(x) = { $print("inside fn") }  // error E686: $print is only allowed at top-level
-osc("sin", $samples())  // error E687: compile-time call '$samples' cannot be used in a runtime expression
+sine($samples())  // error E687: compile-time call '$samples' cannot be used in a runtime expression
 ```
 
 ---
@@ -331,7 +331,7 @@ Allowed positions in the grammar:
 Disallowed positions:
 
 - Inside any function body or lambda (analyzer error E686).
-- Inside any runtime expression (e.g., `osc("sin", $samples())`) — analyzer error E687.
+- Inside any runtime expression (e.g., `sine($samples())`) — analyzer error E687.
 - Inside a pattern, mini-notation string, or chord — same as E687.
 
 The analyzer enforces these rules in `validate_compile_time_calls()`, which runs as part of the analysis pass before codegen.
@@ -792,7 +792,7 @@ Each phase ends with a deployable, demo-able artifact.
 - `$print("typo: {missing}")` → stdout has `typo: <undefined: missing>`, stderr has W310.
 - `$print(42)` → stderr has E683, exit nonzero.
 - `foo(x) = { $print("nope") }` → stderr has E686.
-- `osc("sin", $samples())` → stderr has E687.
+- `sine($samples())` → stderr has E687.
 - All `[compile-time]` and `[format]` Catch2 tests pass.
 
 ### Phase 2 — Web IDE integration
@@ -892,11 +892,11 @@ Each phase ends with a deployable, demo-able artifact.
 - **`$print` inside a lambda:** E686 (same code).
 - **`$print` inside an `if` arm:** E686 — though if/else doesn't exist as an Akkado runtime construct yet, this is forward-compatible.
 - **`$print` at the end of a chained `|>`:** E687 — the pipe is a runtime expression.
-- **`$samples()` inside `osc("sin", ...)`:** E687.
-- **`names = $samples()` followed by `osc("sin", names)`:** E687 on the `names` reference (typed as compile-time list, not signal).
+- **`$samples()` inside `sine(...)`:** E687.
+- **`names = $samples()` followed by `sine(names)`:** E687 on the `names` reference (typed as compile-time list, not signal).
 - **`names = $samples()` followed by `$print("{names}")`:** works.
 - **`x = 1 + 2` (runtime const) then `$print("{x}")`:** works — `ConstEvaluator` folds it; the compile-time pass sees the folded value.
-- **`x = osc("sin", 440)` then `$print("{x}")`:** renders `<signal mono>`; no error.
+- **`x = sine(440)` then `$print("{x}")`:** renders `<signal mono>`; no error.
 
 ### 10.5 Multiple compiles / hot-swap
 
@@ -959,7 +959,7 @@ Each phase ends with a deployable, demo-able artifact.
 | `$print("a {n:d}")` with `n = 3.7` | text == `"a 3"` |
 | `$print("a {n:x}")` with `n = 255` | text == `"a ff"` |
 | `$print("a {missing}")` | text == `"a <undefined: missing>"`; one Warning W310 |
-| `$print("a {sig}")` with `sig = osc("sin", 440)` | text == `"a <signal mono>"` |
+| `$print("a {sig}")` with `sig = sine(440)` | text == `"a <signal mono>"` |
 | `$print("{$samples()}")` with default registry | text contains `"bd, kick, sd, snare, hh, ..."` |
 | `$samples()` (statement form) | not allowed as a statement (no value to do anything with); warning W313 |
 | `names = $samples()` then `$print("{names}")` | works; text == joined names |
@@ -972,7 +972,7 @@ Each phase ends with a deployable, demo-able artifact.
 | `$print("{}")` | error E684 |
 | `$print("{x:.5z}")` | error E685 |
 | `foo(x) = { $print("inside") }` | error E686 |
-| `osc("sin", $samples())` | error E687 |
+| `sine($samples())` | error E687 |
 | `$nonexistent()` | error E682 |
 | `$ print("hi")` (whitespace after $) | lexer error |
 | `$print("a") $print("b")` | two log entries in source order |

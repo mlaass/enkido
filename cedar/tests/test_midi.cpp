@@ -946,7 +946,7 @@ TEST_CASE("twinkle.mid drives poly voice allocation for ~300 sec", "[midi-poly]"
 // ============================================================================
 // PRD prd-midi-input §7.5: monophonic per-block buffer synthesis
 //
-// `midi() as e |> osc("sin", e.freq)` works because op_midi_query bakes the
+// `midi() as e |> sine(e.freq)` works because op_midi_query bakes the
 // runtime event stream into mono gate/freq/vel/trig buffers using
 // last-note-wins with held-stack fallback. These tests drive the SPSC ring
 // directly and inspect the four mono buffers via vm.states().

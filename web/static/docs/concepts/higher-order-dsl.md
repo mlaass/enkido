@@ -26,7 +26,7 @@ error (`E242`).
 ## `each_voice` — mix a signal per event
 
 ```akkado
-n"c4 e4 g4" |> each_voice(@, (n) -> osc("sin", n.freq) * ar(n.trig, 0.01, 0.3))
+n"c4 e4 g4" |> each_voice(@, (n) -> sine(n.freq) * ar(n.trig, 0.01, 0.3))
             |> out(@)
 ```
 
@@ -36,7 +36,7 @@ stereo signal.
 ## `each` — side-effecting per-event sink
 
 ```akkado
-n"c4 e4 g4" |> each(@, (n) -> osc("saw", n.freq) * 0.25 |> out(@))
+n"c4 e4 g4" |> each(@, (n) -> saw(n.freq) * 0.25 |> out(@))
 ```
 
 `each` does not aggregate a result — the lambda body calls `out()` itself, and

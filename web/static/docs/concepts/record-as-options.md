@@ -13,7 +13,7 @@ When a builtin needs more parameters than fit comfortably in positional slots, a
 
 ```akkado
 // Last positional argument is a record. Each field is a named option.
-osc("saw", 220) |> waterfall(@, "scope", {
+saw(220) |> waterfall(@, "scope", {
     fft: 1024,
     gradient: "viridis",
     angle: 270,

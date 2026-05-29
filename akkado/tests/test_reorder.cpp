@@ -126,7 +126,7 @@ std::unique_ptr<RenderHost> render(const akkado::CompileResult& r, int blocks) {
 TEST_CASE("rev(p) emits EVENT_REORDER(REV) + Reorder init",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(rev(n"[c4 e4 g4 a4]") |> osc("sin", @.freq) |> out(@))");
+        R"(rev(n"[c4 e4 g4 a4]") |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     auto insts = get_instructions(r);
@@ -150,7 +150,7 @@ TEST_CASE("rev(p) emits EVENT_REORDER(REV) + Reorder init",
 TEST_CASE("rev(p) runtime: OutputEvents on transform state are time-reversed",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(rev(n"[c4 e4 g4 a4]") |> osc("sin", @.freq) |> out(@))");
+        R"(rev(n"[c4 e4 g4 a4]") |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, /*blocks=*/1);
 
@@ -171,7 +171,7 @@ TEST_CASE("rev(p) runtime: OutputEvents on transform state are time-reversed",
 TEST_CASE("palindrome(p) emits EVENT_REORDER(PALINDROME) with 2x cycle_length",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(palindrome(n"[c4 e4]") |> osc("sin", @.freq) |> out(@))");
+        R"(palindrome(n"[c4 e4]") |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     auto insts = get_instructions(r);
@@ -189,7 +189,7 @@ TEST_CASE("palindrome(p) emits EVENT_REORDER(PALINDROME) with 2x cycle_length",
 TEST_CASE("palindrome(p) runtime: OutputEvents doubled and time-mirrored",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(palindrome(n"[c4 e4]") |> osc("sin", @.freq) |> out(@))");
+        R"(palindrome(n"[c4 e4]") |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
 
@@ -205,7 +205,7 @@ TEST_CASE("palindrome(p) runtime: OutputEvents doubled and time-mirrored",
 TEST_CASE("zoom(p, 0.25, 0.75) emits EVENT_REORDER(ZOOM)",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(zoom(n"[c4 e4 g4 a4]", 0.25, 0.75) |> osc("sin", @.freq) |> out(@))");
+        R"(zoom(n"[c4 e4 g4 a4]", 0.25, 0.75) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -215,7 +215,7 @@ TEST_CASE("zoom(p, 0.25, 0.75) emits EVENT_REORDER(ZOOM)",
 TEST_CASE("zoom(p, 0.25, 0.75) runtime: middle events remapped to [0,1)",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(zoom(n"[c4 e4 g4 a4]", 0.25, 0.75) |> osc("sin", @.freq) |> out(@))");
+        R"(zoom(n"[c4 e4 g4 a4]", 0.25, 0.75) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
 
@@ -243,7 +243,7 @@ TEST_CASE("zoom rejects reversed constant range with E132",
 TEST_CASE("compress(p, 0.25, 0.75) emits EVENT_REORDER(COMPRESS)",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(compress(n"[c4 e4]", 0.25, 0.75) |> osc("sin", @.freq) |> out(@))");
+        R"(compress(n"[c4 e4]", 0.25, 0.75) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -252,7 +252,7 @@ TEST_CASE("compress(p, 0.25, 0.75) emits EVENT_REORDER(COMPRESS)",
 TEST_CASE("compress(p, 0.25, 0.75) runtime: events rescaled into [s,e)",
           "[reorder][phase4]") {
     auto r = akkado::compile(
-        R"(compress(n"[c4 e4]", 0.25, 0.75) |> osc("sin", @.freq) |> out(@))");
+        R"(compress(n"[c4 e4]", 0.25, 0.75) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
 
@@ -292,7 +292,7 @@ TEST_CASE("rev(transpose(p, 5)) composes: EVENT_MAP feeds EVENT_REORDER",
     // it's still a builtin). The form below uses the direct-call style
     // `rev(transpose(...))` which is the test surface.
     auto r = akkado::compile(
-        R"(rev(transpose(n"[c4 e4]", 5)) |> osc("sin", @.freq) |> out(@))");
+        R"(rev(transpose(n"[c4 e4]", 5)) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 
     auto insts = get_instructions(r);
@@ -338,7 +338,7 @@ TEST_CASE("dot-call form: n\"…\".rev() lowers identically to rev(n\"…\")",
 
 TEST_CASE("ply(p, 3) emits EVENT_FANOUT(PLY) + Fanout init",
           "[reorder][phase4][fanout]") {
-    auto r = akkado::compile(R"(ply(n"[c4 e4]", 3) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(ply(n"[c4 e4]", 3) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
@@ -353,7 +353,7 @@ TEST_CASE("ply(p, 3) emits EVENT_FANOUT(PLY) + Fanout init",
 
 TEST_CASE("ply(p, 2) runtime: 4 events with quartered durations",
           "[reorder][phase4][fanout]") {
-    auto r = akkado::compile(R"(ply(n"[c4 e4]", 2) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(ply(n"[c4 e4]", 2) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
     auto xform_id = first_state_id(r, akkado::StateInitData::Type::Fanout);
@@ -376,7 +376,7 @@ TEST_CASE("ply rejects n < 1 with E131",
 TEST_CASE("linger(p, 0.5) emits EVENT_FANOUT(LINGER) with halved cycle_length",
           "[reorder][phase4][fanout]") {
     auto r = akkado::compile(
-        R"(linger(n"[c4 e4 g4 b4]", 0.5) |> osc("sin", @.freq) |> out(@))");
+        R"(linger(n"[c4 e4 g4 b4]", 0.5) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
@@ -390,7 +390,7 @@ TEST_CASE("linger(p, 0.5) emits EVENT_FANOUT(LINGER) with halved cycle_length",
 TEST_CASE("linger(p, 0.5) runtime: drops second half, halves cycle_length",
           "[reorder][phase4][fanout]") {
     auto r = akkado::compile(
-        R"(linger(n"[c4 e4 g4 b4]", 0.5) |> osc("sin", @.freq) |> out(@))");
+        R"(linger(n"[c4 e4 g4 b4]", 0.5) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
     auto xform_id = first_state_id(r, akkado::StateInitData::Type::Fanout);
@@ -406,8 +406,8 @@ TEST_CASE("linger(p, 0.5) runtime: drops second half, halves cycle_length",
 TEST_CASE("linger with signal-rate frac compiles",
           "[reorder][phase4][fanout][signal]") {
     auto r = akkado::compile(
-        R"(mod_sig = osc("sin", 0.5)
-           linger(n"[c4 e4 g4 b4]", mod_sig * 0.25 + 0.5) |> osc("sin", @.freq) |> out(@))");
+        R"(mod_sig = sine(0.5)
+           linger(n"[c4 e4 g4 b4]", mod_sig * 0.25 + 0.5) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
@@ -416,7 +416,7 @@ TEST_CASE("linger with signal-rate frac compiles",
 TEST_CASE("segment(p, 8) emits EVENT_FANOUT(SEGMENT)",
           "[reorder][phase4][fanout]") {
     auto r = akkado::compile(
-        R"(segment(n"[c4 e4]", 8) |> osc("sin", @.freq) |> out(@))");
+        R"(segment(n"[c4 e4]", 8) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
@@ -425,7 +425,7 @@ TEST_CASE("segment(p, 8) emits EVENT_FANOUT(SEGMENT)",
 TEST_CASE("segment(p, 4) runtime: 4 grid points",
           "[reorder][phase4][fanout]") {
     auto r = akkado::compile(
-        R"(segment(n"[c4 e4]", 4) |> osc("sin", @.freq) |> out(@))");
+        R"(segment(n"[c4 e4]", 4) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
     auto xform_id = first_state_id(r, akkado::StateInitData::Type::Fanout);
@@ -448,7 +448,7 @@ TEST_CASE("segment rejects n < 1 with E131",
 
 TEST_CASE("iter(p, 4) emits EVENT_REORDER(ITER) (no legacy iter_n on SequenceProgram)",
           "[reorder][phase4][iter]") {
-    auto r = akkado::compile(R"(iter(n"[c4 e4 g4 a4]", 4) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(iter(n"[c4 e4 g4 a4]", 4) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -460,7 +460,7 @@ TEST_CASE("iter(p, 4) emits EVENT_REORDER(ITER) (no legacy iter_n on SequencePro
 TEST_CASE("iter(p, 4) runtime: cycle 0 plays unchanged, cycle 1 rotates by 1/4",
           "[reorder][phase4][iter]") {
     auto r = akkado::compile(
-        R"(iter(n"[c4 e4 g4 a4]", 4) |> osc("sin", @.freq) |> out(@))");
+        R"(iter(n"[c4 e4 g4 a4]", 4) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);  // 1 block (sample 0, cycle 0)
     auto xform_id = first_state_id(r, akkado::StateInitData::Type::Reorder);
@@ -476,7 +476,7 @@ TEST_CASE("iter(p, 4) runtime: cycle 0 plays unchanged, cycle 1 rotates by 1/4",
 TEST_CASE("iterBack(p, 4) emits EVENT_REORDER(ITER_BACK)",
           "[reorder][phase4][iter]") {
     auto r = akkado::compile(
-        R"(iterBack(n"[c4 e4 g4 a4]", 4) |> osc("sin", @.freq) |> out(@))");
+        R"(iterBack(n"[c4 e4 g4 a4]", 4) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -497,7 +497,7 @@ TEST_CASE("iter(p, 4) | transpose composition: rotation reads transposed OutputE
     // now iter reads EVENT_MAP's downstream OutputEvents at runtime, so the
     // transpose survives even though iter operates per-block.
     auto r = akkado::compile(
-        R"(iter(transpose(n"[c4 e4]", 5), 2) |> osc("sin", @.freq) |> out(@))");
+        R"(iter(transpose(n"[c4 e4]", 5), 2) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
 }
 
@@ -508,8 +508,8 @@ TEST_CASE("zoom with signal-rate endpoint compiles",
     // covered by the long-form Python experiment; here we just confirm the
     // compile-time path produces an EVENT_REORDER + Reorder init.
     auto r = akkado::compile(
-        R"(mod_sig = osc("sin", 0.5)
-           zoom(n"[c4 e4 g4 a4]", 0.0, mod_sig * 0.25 + 0.5) |> osc("sin", @.freq) |> out(@))");
+        R"(mod_sig = sine(0.5)
+           zoom(n"[c4 e4 g4 a4]", 0.0, mod_sig * 0.25 + 0.5) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -534,7 +534,7 @@ TEST_CASE("rev(palindrome(p)) chains two EVENT_REORDERs",
     // The outer reads inner's downstream OutputEvents (4 events at the
     // 2x-cycle), then reverses them.
     auto r = akkado::compile(
-        R"(rev(palindrome(n"[c4 e4]")) |> osc("sin", @.freq) |> out(@))");
+        R"(rev(palindrome(n"[c4 e4]")) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     // The outer rev's compile_pattern_for_transform folds inner palindrome at
@@ -552,7 +552,7 @@ TEST_CASE("velocity(rev(p), 0.5) — rev under runtime EVENT_MAP",
     // OutputEvents and writes its own; the resulting playback has reversed
     // event order AND scaled velocities.
     auto r = akkado::compile(
-        R"(n"[c4 e4 g4 a4]".rev().velocity(0.5) |> osc("sin", @.freq) |> out(@))");
+        R"(n"[c4 e4 g4 a4]".rev().velocity(0.5) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -567,7 +567,7 @@ TEST_CASE("rev(fast(p, 2)) folds inner fast at compile time, emits only EVENT_RE
     // emits a runtime opcode. This matches Phase 3 nesting semantics — see
     // PRD prd-runtime-event-transforms §3.3 "compile-time fallback".
     auto r = akkado::compile(
-        R"(rev(fast(n"[c4 e4 g4 a4]", 2)) |> osc("sin", @.freq) |> out(@))");
+        R"(rev(fast(n"[c4 e4 g4 a4]", 2)) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
@@ -584,7 +584,7 @@ TEST_CASE("rev(fast(p, 2)) folds inner fast at compile time, emits only EVENT_RE
 TEST_CASE("ply(rev(p), 3) — EVENT_FANOUT on top of EVENT_REORDER",
           "[reorder][phase4][composition][fanout]") {
     auto r = akkado::compile(
-        R"(ply(rev(n"[c4 e4]"), 3) |> osc("sin", @.freq) |> out(@))");
+        R"(ply(rev(n"[c4 e4]"), 3) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     // Outer ply emits FANOUT; inner rev is folded by compile_pattern_for_transform.
     auto insts = get_instructions(r);
@@ -596,7 +596,7 @@ TEST_CASE("transpose(p, 5).palindrome() runtime: chord stays transposed",
     // PRD regression: runtime EVENT_MAP (transpose) feeds EVENT_REORDER
     // (palindrome). The reversed-half events must carry the transposed note.
     auto r = akkado::compile(
-        R"(n"[c4 e4]".transpose(5).palindrome() |> osc("sin", @.freq) |> out(@))");
+        R"(n"[c4 e4]".transpose(5).palindrome() |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto host = render(r, 1);
     auto xform_id = first_state_id(r, akkado::StateInitData::Type::Reorder);

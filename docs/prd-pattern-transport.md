@@ -24,22 +24,22 @@ These are fundamental for polyrhythmic composition, pattern-based sequencing of 
 
 ```akkado
 // Basic: step through pattern on each trigger, 1 beat per step
-transport(n"c4 e4 g4", trigger(2)) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2)) as e |> sine(e.freq)
 
 // Custom step size: advance 0.5 beats per trigger
-transport(n"c4 e4 g4", trigger(4), 0.5) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(4), 0.5) as e |> sine(e.freq)
 
 // Cross-pattern triggers: one pattern drives another
-transport(n"c4 e4 g4", n"x x x x".trig) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", n"x x x x".trig) as e |> sine(e.freq)
 
 // Pipe style (@ is Pattern thanks to type system)
-n"c4 e4 g4" |> transport(@, trigger(2)) as e |> osc("sin", e.freq)
+n"c4 e4 g4" |> transport(@, trigger(2)) as e |> sine(e.freq)
 
 // Negative step: reverse playback
-transport(n"c4 e4 g4", trigger(2), -1.0) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2), -1.0) as e |> sine(e.freq)
 
 // With reset trigger (4th arg)
-transport(n"c4 e4 g4", trigger(2), 1.0, trigger(0.5)) as e |> osc("sin", e.freq)
+transport(n"c4 e4 g4", trigger(2), 1.0, trigger(0.5)) as e |> sine(e.freq)
 ```
 
 ### Arguments

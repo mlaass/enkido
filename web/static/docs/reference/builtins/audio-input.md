@@ -41,7 +41,7 @@ Mix live input with a synth voice:
 
 ```akk
 sig = in()
-osc = osc("saw", 220) * 0.3
+osc = saw(220) * 0.3
 sig + stereo(osc) |> out(@)
 ```
 

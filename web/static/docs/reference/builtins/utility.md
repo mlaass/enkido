@@ -28,17 +28,17 @@ Every Akkado patch needs an `out()` to produce sound. Pass one signal for mono, 
 
 ```akk
 // Mono output (same signal to both speakers)
-osc("sin", 440) |> out(@)
+sine(440) |> out(@)
 ```
 
 ```akk
 // Stereo output (different signals)
-osc("sin", 440) |> out(@, osc("sin", 442))
+sine(440) |> out(@, sine(442))
 ```
 
 ```akk
 // Panned signal
-osc("sin", 440) * 0.7 |> out(@, @ * 0.3)
+sine(440) * 0.7 |> out(@, @ * 0.3)
 ```
 
 `out` is an alias for `bus(0, …)` — it routes to the master bus. See the
@@ -146,12 +146,12 @@ integer literal; `<>(0)` is identical to bare `<>`.
 
 ```akk
 // Route to the master bus
-osc("saw", 220) |> lp(@, 800) <>
+saw(220) |> lp(@, 800) <>
 ```
 
 ```akk
 // Route to bus 2
-n"c4 e4 g4" as e |> osc("saw", e.freq) <>(2)
+n"c4 e4 g4" as e |> saw(e.freq) <>(2)
 ```
 
 ---
@@ -178,7 +178,7 @@ sin(mtof(69)) |> out(@)
 
 ```akk
 // Chromatic scale using modulation
-sin(mtof(48 + osc("phasor", 2) * 12)) |> out(@)
+sin(mtof(48 + phasor(2) * 12)) |> out(@)
 ```
 
 ---
@@ -195,7 +195,7 @@ Outputs a constant value. Useful for mixing with signals or providing a static p
 
 ```akk
 // Use as constant multiplier
-osc("sin", 440) * dc(0.5) |> out(@)
+sine(440) * dc(0.5) |> out(@)
 ```
 
 ---
@@ -221,12 +221,12 @@ Rate-limited smoothing. Good for taming param sliders, slewing CVs, and audio-ra
 
 ```akk
 // Smoothed pitch sweep (rate-limited)
-sin(slew(mtof(48 + osc("sqr", 2) * 12), 10)) |> out(@)
+sin(slew(mtof(48 + sqr(2) * 12), 10)) |> out(@)
 ```
 
 ```akk
 // Smooth filter sweep
-saw(110) |> lp(@, slew(200 + osc("sqr", 0.5) * 2000, 5)) |> out(@)
+saw(110) |> lp(@, slew(200 + sqr(0.5) * 2000, 5)) |> out(@)
 ```
 
 See also: [glide](#glide), [interp](#interp).
@@ -266,7 +266,7 @@ n"c2 c6" |> saw(mono(glide(@freq, 0.2, "ease_out", "log"))) |> out(@)
 ```akk
 // Smoother param-slider response
 cutoff = param("cutoff", 1000, 100, 8000)
-osc("saw", 220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
+saw(220) |> lp(@, mono(glide(cutoff, 0.03))) |> out(@)
 ```
 
 See also: [interp](#interp) (primitive form), [slew](#slew) (rate-based), [Glide & Interpolation](../../concepts/glide-and-interpolation.md).
@@ -360,13 +360,13 @@ Samples the input signal each time the trigger fires and holds that value until 
 
 ```akk
 // Random pitches
-sin(mtof(48 + sah(osc("noise") * 24, trigger(4)))) |> out(@)
+sin(mtof(48 + sah(noise() * 24, trigger(4)))) |> out(@)
 ```
 
 ```akk
 // Stepped filter
 saw(110)
-    |> lp(@, 200 + sah(osc("noise") * 2000, trigger(2)))
+    |> lp(@, 200 + sah(noise() * 2000, trigger(2)))
     |> out(@)
 ```
 

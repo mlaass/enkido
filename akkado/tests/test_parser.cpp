@@ -1095,7 +1095,7 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
 
     SECTION("destructure mixed with regular params") {
         auto ast = parse_ok(R"(
-            fn lp_voice(freq, {cutoff, q = 0.7}) -> osc("saw", freq)
+            fn lp_voice(freq, {cutoff, q = 0.7}) -> saw(freq)
         )");
         NodeIndex fn_node = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[fn_node].type == NodeType::FunctionDef);
@@ -1120,7 +1120,7 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
 TEST_CASE("Parser rejects deferred destructure forms", "[parser][destructure]") {
     SECTION("defaults in pipe-binding `as {x = 1}` is a parse error") {
         auto [tokens, lex_diags] = lex(R"(
-            n"c4" as {freq = 440} |> osc("sin", freq)
+            n"c4" as {freq = 440} |> sine(freq)
         )");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");

@@ -69,8 +69,8 @@ All five sites now exit with the same `PatternPayload` shape, so `%.note`/`%.dur
 | `./build/akkado/tests/akkado_tests "[records]"` | Pass | All previously-green records cases still green. |
 | `./build/akkado/tests/akkado_tests "[records-extended]"` | Pass — **1 / 1** (126 assertions) | New bucket: every field × six transform paths + opcode-emission check + chained-transform regression. |
 | `./build/cedar/tests/cedar_tests` | Pass — **184 / 185** | One pre-existing skip, unrelated. |
-| `akkado-cli --check` loop over `n"c4 e4 g4" \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | Bare-pat path. |
-| `akkado-cli --check` loop over `fast(n"c4 e4 g4", 2) \|> osc("sin", %.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | This was the failing case in the 2026-05-05 audit. |
+| `akkado-cli --check` loop over `n"c4 e4 g4" \|> sine(%.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | Bare-pat path. |
+| `akkado-cli --check` loop over `fast(n"c4 e4 g4", 2) \|> sine(%.<field>) \|> out(%, %)` for all 28 names+aliases | All exit 0 | This was the failing case in the 2026-05-05 audit. |
 | `akkado-cli --check` on `velocity(...)`, `bank(s"...")`, `variant(s"...")` with `%.note`/`%.dur`/`%.gate`/`%.sample_id`/`%.phase` | All exit 0 | Each of the four formerly-broken transform paths verified individually. |
 
 ## Findings

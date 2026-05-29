@@ -11,11 +11,11 @@ subfeatures:
   - name: ADSR
     anchor: adsr
     tagline: Attack, decay, sustain, release.
-    snippet: 'osc("sin", 440) * adsr(trigger(2), 0.01, 0.2)'
+    snippet: 'sine(440) * adsr(trigger(2), 0.01, 0.2)'
   - name: AR
     anchor: ar
     tagline: Compact attack/release.
-    snippet: 'osc("sin", 55) * ar(trigger(4), 0.001, 0.2)'
+    snippet: 'sine(55) * ar(trigger(4), 0.001, 0.2)'
 ---
 
 # Envelopes
@@ -38,19 +38,19 @@ The classic ADSR envelope. When the gate goes high, the envelope attacks to full
 
 ```akk
 // Basic synth voice with ADSR
-osc("sin", 440) * adsr(trigger(2), 0.01, 0.2) |> out(@)
+sine(440) * adsr(trigger(2), 0.01, 0.2) |> out(@)
 ```
 
 ```akk
 // Plucky sound (short attack and decay)
-osc("saw", 330) * adsr(trigger(4), 0.001, 0.1)
+saw(330) * adsr(trigger(4), 0.001, 0.1)
     |> lp(@, 2000)
     |> out(@)
 ```
 
 ```akk
 // Pad sound (slow attack)
-osc("saw", 220) * adsr(trigger(0.5), 0.5, 0.3)
+saw(220) * adsr(trigger(0.5), 0.5, 0.3)
     |> lp(@, 1000)
     |> out(@)
 ```
@@ -73,17 +73,17 @@ A simpler two-stage envelope. On trigger, attacks to full level then immediately
 
 ```akk
 // Kick drum
-osc("sin", 55) * ar(trigger(4), 0.001, 0.2) |> out(@)
+sine(55) * ar(trigger(4), 0.001, 0.2) |> out(@)
 ```
 
 ```akk
 // Hi-hat
-osc("noise") |> hp(@, 8000) * ar(trigger(8), 0.001, 0.05) |> out(@)
+noise() |> hp(@, 8000) * ar(trigger(8), 0.001, 0.05) |> out(@)
 ```
 
 ```akk
 // Pluck
-osc("saw", 440) * ar(trigger(4), 0.001, 0.1) |> lp(@, 2000) |> out(@)
+saw(440) * ar(trigger(4), 0.001, 0.1) |> lp(@, 2000) |> out(@)
 ```
 
 Related: [adsr](#adsr), [trigger](#trigger)

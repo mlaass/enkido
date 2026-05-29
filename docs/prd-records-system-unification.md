@@ -163,7 +163,7 @@ prd-record-argument-spread.md  ----> | prd-records-system-       |
 
 ```akkado
 // 1. Builtin option fields (static schema)
-osc("saw", 220) |> waterfall(%, "harmonics", {
+saw(220) |> waterfall(%, "harmonics", {
     grad|       // ← editor suggests: gradient, …
     fft: 1024,
     angle|      // ← editor suggests: angle (already typed), height, width, speed
@@ -174,14 +174,14 @@ synth_cfg = {wave: "saw", cutoff: 2000, q: 0.7}
 synth_cfg.|     // ← editor suggests: wave, cutoff, q
 
 // 3. Pattern fields, fixed (analyzer dump)
-n"c4 e4" |> osc("sin", %.|)    // ← suggests: freq, vel, trig, gate, type,
+n"c4 e4" |> sine(%.|)    // ← suggests: freq, vel, trig, gate, type,
                                    //   note, dur, chance, time, phase, sample_id
                                    //   (plus aliases: pitch/f, velocity/v,
                                    //   trigger/t, midi/n, sample/s, frequency, p)
 
 // 4. Pattern fields including custom_fields (analyzer dump)
 beat = n"c4 e4".set("cutoff", saw(0.5)).set("res", 0.7)
-beat |> lp(osc("sin", %.freq), %.|)   // ← suggests: all 11 fixed fields above
+beat |> lp(sine(%.freq), %.|)   // ← suggests: all 11 fixed fields above
                                       //   plus cutoff, res (custom fields from
                                       //   .set() calls)
 
@@ -197,7 +197,7 @@ samples("my-bank", ..preset, |)       // ← editor suggests remaining unfilled
 // Bind multiple fields at once
 pos = {x: 1.0, y: 2.0}
 {x, y} = pos
-osc("sin", x * 100) + osc("sin", y * 100)
+sine(x * 100) + sine(y * 100)
 
 // Useful for unpacking function returns
 fn make_adsr(a, d) -> {attack: a, decay: d, sustain: 0.7, release: 0.3}
@@ -221,7 +221,7 @@ synth(..config)      // identical when caller spreads (post-spread-PRD)
 
 // Mixed with regular params
 fn lp_voice(freq, {cutoff, q}) ->
-    osc("saw", freq) |> lp(%, cutoff, q)
+    saw(freq) |> lp(%, cutoff, q)
 lp_voice(440, {cutoff: 2000, q: 0.7})
 ```
 
@@ -267,8 +267,8 @@ delay(sig, 0.5, {feedback: 0.6, dry: 0.3, wet: 0.7, mode: "ping"})  // future
 voice = state({freq: 440, vel: 0.5, gate: 0})
 
 // READ — bare field access on the cell desugars to get(cell).field
-osc("sin", voice.freq) * voice.vel * voice.gate
-// equivalent to: osc("sin", get(voice).freq) * get(voice).vel * get(voice).gate
+sine(voice.freq) * voice.vel * voice.gate
+// equivalent to: sine(get(voice).freq) * get(voice).vel * get(voice).gate
 
 // WRITE — field assignment on the cell desugars to set(cell, {..get(cell), field: value})
 on_note = button("note")
@@ -759,7 +759,7 @@ Revisit deferred items (nested-field write, pipe-position write, `modify`) only 
 **Verification:**
 - Unit tests for `ShapeIndexBuilder` covering: simple record, nested record, pattern with `.set()`-derived custom fields, partial source after parse error.
 - Manual: define `cfg = {a: 1, b: 2}` in editor; type `cfg.|`; popup shows `a` and `b`.
-- Manual: define `beat = n"c4".set("cutoff", saw(0.5))`; type `beat |> osc("sin", %.|`; popup shows `freq, vel, trig, gate, type, cutoff` (+ aliases).
+- Manual: define `beat = n"c4".set("cutoff", saw(0.5))`; type `beat |> sine(%.|`; popup shows `freq, vel, trig, gate, type, cutoff` (+ aliases).
 
 ### Phase 3 — Destructuring (4–6 days)
 
@@ -960,7 +960,7 @@ TEST_CASE("record-valued state cell update") {
     auto result = akkado::compile(R"(
         v = state({freq: 440, gate: 0})
         button("note") |> set(v, {..get(v), gate: 1})
-        osc("sin", get(v).freq) * get(v).gate |> out(%, %)
+        sine(get(v).freq) * get(v).gate |> out(%, %)
     )");
     CHECK(result.success);
 }
@@ -977,11 +977,11 @@ TEST_CASE("record-valued state cell shape mismatch") {
 TEST_CASE("state cell read sugar matches get()") {
     auto sugared = akkado::compile(R"(
         v = state({freq: 440, vel: 0.5})
-        out(osc("sin", v.freq) * v.vel, %)
+        out(sine(v.freq) * v.vel, %)
     )");
     auto explicit_ = akkado::compile(R"(
         v = state({freq: 440, vel: 0.5})
-        out(osc("sin", get(v).freq) * get(v).vel, %)
+        out(sine(get(v).freq) * get(v).vel, %)
     )");
     CHECK(sugared.success);
     CHECK(explicit_.success);
@@ -1024,7 +1024,7 @@ TEST_CASE("nested-field write is deferred") {
 
 1. Run dev server (`cd web && bun run dev`), open editor.
 2. Type `cfg = {a: 1, b: 2}` then on a new line `cfg.` — popup must show `a` and `b`.
-3. Type `n"c4".set("foo", 1) as e |> osc("sin", e.` — popup must include `freq`, `vel`, …, plus `foo`.
+3. Type `n"c4".set("foo", 1) as e |> sine(e.` — popup must include `freq`, `vel`, …, plus `foo`.
 4. Type `waterfall(sig, "x", { gra` — popup must show `gradient`.
 5. Define `synth = fn({freq = 440, wave = "saw"}) -> osc(wave, freq)`; call `synth({})` — should compile and produce a saw at 440 Hz.
 6. Define a button-triggered state-cell update; verify audio responds and that hot-reloading the patch preserves the cell value.

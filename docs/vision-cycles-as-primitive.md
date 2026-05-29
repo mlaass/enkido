@@ -60,10 +60,10 @@ The vast majority of patterns are `{value: Cycle}`. Velocity, pan, and other per
 `mtof`, scale quantization, tuning systems, transpose, and similar concerns become **userspace stdlib transforms** over event streams. The compiler stops privileging 12-TET equal temperament. Microtonal tuning, just intonation, scale-quantized patterns, and exotic temperaments fall out for free because the cycle data is just numbers — the user gets to decide what they mean:
 
 ```akkado
-n"c4 e4 g4" |> mtof(@) |> osc("sin", @)              // 12-TET sugar
-n"0 2 4 5"  |> scale(@, "major", "c4") |> mtof(@) |> osc("sin", @)
-n"c4 e4 g4" |> tuning(@, "just") |> osc("sin", @)    // JI in userspace
-n"60 60.5 61" |> mtof(@) |> osc("sin", @)            // microtonal direct
+n"c4 e4 g4" |> mtof(@) |> sine(@)              // 12-TET sugar
+n"0 2 4 5"  |> scale(@, "major", "c4") |> mtof(@) |> sine(@)
+n"c4 e4 g4" |> tuning(@, "just") |> sine(@)    // JI in userspace
+n"60 60.5 61" |> mtof(@) |> sine(@)            // microtonal direct
 ```
 
 This subsumes the open `prd-microtonal-extension.md`, `prd-scale-quantize.md`, and the music-theory portions of `prd-runtime-event-transforms.md`.

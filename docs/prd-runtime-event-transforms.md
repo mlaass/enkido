@@ -386,7 +386,7 @@ Whole-pattern transforms (`rev`, `palindrome`, `ply`, `linger`, `segment`, `zoom
 ### 4.1 Static transpose (constant)
 
 ```akkado
-n"c4 e4 g4".transpose(7) |> osc("sin", @.freq) |> out(@)
+n"c4 e4 g4".transpose(7) |> sine(@.freq) |> out(@)
 ```
 
 Codegen:
@@ -398,8 +398,8 @@ Codegen:
 ### 4.2 Signal-driven transpose
 
 ```akkado
-lfo = osc("sin", 0.2) * 6
-n"c4 e4 g4".transpose(lfo) |> osc("sin", @.freq) |> out(@)
+lfo = sine(0.2) * 6
+n"c4 e4 g4".transpose(lfo) |> sine(@.freq) |> out(@)
 ```
 
 Closure body becomes `(e) -> {note: e.note + lfo[event_offset]}`. The runtime `EVENT_MAP` opcode, for each event firing at sample-offset `t`, reads `lfo[t]` and adds it to the event's note before writing.
@@ -415,7 +415,7 @@ midi("ctrl1").transpose(12).velocity(0.7) |> poly(@, instr, 8)
 ### 4.4 Continuous rate scaling
 
 ```akkado
-n"c d e f g".fast(osc("sin", 0.1) * 1.5 + 2) |> ...
+n"c d e f g".fast(sine(0.1) * 1.5 + 2) |> ...
 ```
 
 `fast(p, sig)` lowers to `EVENT_RATE_SCALE` which produces a modulated phase signal that replaces `SEQPAT_QUERY`'s clock input (uses the existing external-clock path at `sequencing.hpp:372-380`).
@@ -426,7 +426,7 @@ n"c d e f g".fast(osc("sin", 0.1) * 1.5 + 2) |> ...
 fn arp_up(events, steps) =
   event_map(events, (e) -> {note: e.note + (cycle_count() mod steps) * 12})
 
-n"c4 g4".arp_up(3) |> osc("saw", @.freq) |> out(@)
+n"c4 g4".arp_up(3) |> saw(@.freq) |> out(@)
 ```
 
 Userland-defined modifier in 1 line, working on patterns or MIDI.
@@ -559,9 +559,9 @@ End-to-end checks once Phase 5 lands:
 
 - `cmake --build build && ./build/cedar/tests/cedar_tests "[event-transform]" && ./build/akkado/tests/akkado_tests "[event-map]" "[scale]" "[key]"` — all unit tests pass.
 - `cd experiments && ./run_all.sh` — every `test_op_event_*.py` produces a clean WAV and a green pass; new ≥300 s renders for `scale`/`key`/`voice`/`invert`.
-- **Manual** (web dev server): paste `n"c4 e4 g4".transpose(7).velocity(0.8) |> osc("sin", @.freq) * @.vel |> out(@)`, verify transposed playback.
+- **Manual** (web dev server): paste `n"c4 e4 g4".transpose(7).velocity(0.8) |> sine(@.freq) * @.vel |> out(@)`, verify transposed playback.
 - **Manual MIDI parity**: `midi("ctrl1").transpose(12) |> poly(@, instr, 8)` — confirms MIDI parity.
-- **Manual scale quantize**: `n"c4 c#4 d4 d#4 e4 f4 f#4 g4" |> key("d:minor") |> osc("sin", @.freq) |> out(@)` — confirms quantization.
+- **Manual scale quantize**: `n"c4 c#4 d4 d#4 e4 f4 f#4 g4" |> key("d:minor") |> sine(@.freq) |> out(@)` — confirms quantization.
 - **Manual chord voicing**: `n"c4 e4 g4" |> voice([0, 3, 7]) |> poly(@, instr, 8)` — confirms chord-array write from `event_map` closure.
 - **Manual composability**: a user-defined akkado modifier (`fn arp_up(events, steps) = ...`) compiles, runs on patterns AND MIDI.
 

@@ -106,6 +106,9 @@ TEST_CASE("Cross-class memory stress: VM simulation", "[stress]") {
 TEST_CASE("Cross-class memory stress: Arena + BufferPool interaction", "[stress]") {
     AudioArena arena(1024 * 1024);  // 1MB
     BufferPool pool;
+    // Pre-grow so random indices in [0, MAX_BUFFERS) all hit live slabs;
+    // get() before fill() would otherwise return the fallback pointer.
+    pool.ensure_capacity(MAX_BUFFERS);
 
     SECTION("interleaved usage pattern") {
         std::mt19937 rng(123);

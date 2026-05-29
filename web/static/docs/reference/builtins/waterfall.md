@@ -39,7 +39,7 @@ The default size is 300×150 (larger than the other visualizations).
 
 ```akk
 // Basic waterfall
-osc("saw", 220) |> waterfall(@) |> out(@)
+saw(220) |> waterfall(@) |> out(@)
 ```
 
 ## gradient
@@ -48,8 +48,8 @@ Color gradient preset. Available presets: `"magma"` (default), `"viridis"`, `"in
 
 ```akk
 // Viridis gradient
-osc("saw", 110)
-    |> lp(@, 1000 + osc("sin", 0.5) * 2000)
+saw(110)
+    |> lp(@, 1000 + sine(0.5) * 2000)
     |> waterfall(@, "sweep", {gradient: "viridis"})
     |> out(@)
 ```
@@ -84,7 +84,7 @@ Scroll speed in pixels per second. Lower values give a longer history; higher va
 
 ```akk
 // Slow scroll, large display
-osc("saw", 55)
+saw(55)
     |> waterfall(@, "bass", {
         speed: 15,
         width: 500,

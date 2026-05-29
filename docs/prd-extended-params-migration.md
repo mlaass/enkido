@@ -80,7 +80,7 @@ Every signature below ends with the new extended params. Required-positional and
 // comp: attack & release surface (were hidden in inst.rate)
 comp(in, thresh, ratio, attack?, release?)
 // attack default = 0.1ms (current rate=0 decode), release default = 10ms
-osc("saw", 220) |> comp(@, -12, 4, attack: 5, release: 100)
+saw(220) |> comp(@, -12, 4, attack: 5, release: 100)
 
 // limiter: explicit `lookahead` replaces the rate-field boolean
 limiter(in, ceiling, release, lookahead?)

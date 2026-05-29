@@ -145,7 +145,7 @@ TEST_CASE("event-map: transpose() lowers to closure EVENT_MAP (NOTE write-mask)"
     // Phase 2b: transpose is now a stdlib `fn` over event_map, so it lowers
     // through the closure path (flags |= EVENT_CLOSURE, write-mask bit for
     // NOTE set, rate = closure block_id).
-    auto r = akkado::compile(R"(n"c4" |> transpose(@, 12) |> osc("sin", @.freq) |> out(@))");
+    auto r = akkado::compile(R"(n"c4" |> transpose(@, 12) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
@@ -631,7 +631,7 @@ TEST_CASE("event-map: signal-valued transpose is rejected in Phase 1",
     // Phase 1 is constants-only; a signal parameter is an E131 (Phase 3 wires
     // the signal-rate path).
     auto r = akkado::compile(
-        R"(lfo = osc("sin", 1)
+        R"(lfo = sine(1)
            n"c4".transpose(lfo))");
     CHECK_FALSE(r.success);
 }
@@ -870,7 +870,7 @@ TEST_CASE("event-map (Phase 2b): transpose then dur chains as two EVENT_MAPs",
 TEST_CASE("event-map: event_map() lowers to a closure EVENT_MAP + subprogram",
           "[event-map]") {
     auto r = akkado::compile(
-        R"(event_map(n"c4", (e) -> {note: e.note + 12}) |> osc("sin", @.freq) |> out(@))");
+        R"(event_map(n"c4", (e) -> {note: e.note + 12}) |> sine(@.freq) |> out(@))");
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
@@ -1026,7 +1026,7 @@ TEST_CASE("event-map: event_map closure not returning a record is rejected",
 TEST_CASE("event-map: event_map on a non-pattern argument is rejected",
           "[event-map]") {
     auto r = akkado::compile(
-        R"(event_map(osc("sin", 440), (e) -> {note: e.note}))");
+        R"(event_map(sine(440), (e) -> {note: e.note}))");
     CHECK_FALSE(r.success);  // E242 — first argument must be an event source
 }
 
@@ -1054,7 +1054,7 @@ TEST_CASE("event-map: BLOCK_CALL from an event_map closure dispatches",
 fn snap(n) -> floor(n + 0.5)
 snap(0.5) + (n"c4"
   |> event_map(@, (e) -> {note: snap(e.note + 0.5)})
-  |> osc("sin", @.freq)) |> out(@)
+  |> sine(@.freq)) |> out(@)
 )";
     auto r = akkado::compile(src);
     REQUIRE(r.success);
@@ -1079,7 +1079,7 @@ TEST_CASE("event-map: BLOCK_CALL from an event_filter closure dispatches",
 fn pos(n) -> n + 1
 pos(0) + (n"[c4 e4]"
   |> event_filter(@, (e) -> pos(e.note))
-  |> osc("sin", @.freq)) |> out(@)
+  |> sine(@.freq)) |> out(@)
 )";
     auto r = akkado::compile(src);
     REQUIRE(r.success);
@@ -1104,7 +1104,7 @@ fn inner(n) -> n + 1
 fn outer(n) -> inner(n) + inner(0)
 inner(0) + outer(0) + (n"c4"
   |> event_map(@, (e) -> {note: outer(e.note)})
-  |> osc("sin", @.freq)) |> out(@)
+  |> sine(@.freq)) |> out(@)
 )";
     auto r = akkado::compile(src);
     REQUIRE(r.success);

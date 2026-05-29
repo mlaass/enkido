@@ -595,7 +595,7 @@ Each phase ends with: code merged, demo patch live, comparison tests passing, WA
 - All five voices have Akkado integration tests.
 - Demo patch `daisy-drums.akk` plays `ds_drum("bd:sd:hh:hh")` cleanly.
 - WASM bundle delta < 20 KB cumulative.
-- A/B comparison: `ds_drum("bd")` vs. an `osc("sin", 60) |> ar(...)` baseline. WAV files saved to `experiments/output/daisy_drums/`.
+- A/B comparison: `ds_drum("bd")` vs. an `sine(60) |> ar(...)` baseline. WAV files saved to `experiments/output/daisy_drums/`.
 
 ### Phase 3 — Physical modeling
 

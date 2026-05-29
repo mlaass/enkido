@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Regenerate web/src/lib/welcome-patches.generated.ts whenever any
+# web/static/patches/welcome/*.akk file is part of the staged commit,
+# then re-stage the generated file.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+WELCOME_DIR='web/static/patches/welcome/'
+GENERATED='web/src/lib/welcome-patches.generated.ts'
+
+if ! git diff --cached --name-only | grep -q "^${WELCOME_DIR}"; then
+    exit 0
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+    echo "pre-commit: bun not found in PATH; cannot regenerate ${GENERATED}." >&2
+    echo "pre-commit: install bun (https://bun.sh) or run 'bun run build:welcome' manually, then commit." >&2
+    exit 1
+fi
+
+echo "pre-commit: regenerating ${GENERATED} from welcome patches..."
+(cd "${REPO_ROOT}/web" && bun scripts/build-welcome-patches.ts >/dev/null)
+
+git add "${REPO_ROOT}/${GENERATED}"

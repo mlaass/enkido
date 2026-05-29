@@ -77,7 +77,7 @@ Pattern events are records with fields accessible via `@`:
 
 Example with pipe binding:
 ```akkado
-pat("c4 e4 g4") as e |> osc("sin", e.freq) |> @ * e.vel |> out(@)
+pat("c4 e4 g4") as e |> sine(e.freq) |> @ * e.vel |> out(@)
 ```
 
 ### Chord Expansion (Strudel-compatible)
@@ -152,6 +152,19 @@ cmake -B build-cedar cedar/
 cmake --build build-cedar
 ```
 
+### Git Hooks
+
+Tracked hooks live in `scripts/hooks/`. Each fresh clone needs a one-time:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+Current hooks:
+- `pre-commit` — regenerates `web/src/lib/welcome-patches.generated.ts`
+  (and re-stages it) whenever a commit touches anything under
+  `web/static/patches/welcome/`. Requires `bun` on `PATH`.
+
 ## Releases
 
 Version bumps go through `scripts/bump-version.sh` — **never edit `VERSION`
@@ -223,6 +236,35 @@ cd web/wasm && ./build_debug.sh
 ```
 
 ### Web Architecture
+
+**Worklet thread contract**: The AudioWorklet processor
+(`web/static/worklet/cedar-processor.js`) runs on the audio thread.
+`process()` fires every 2.67 ms (128 samples @ 48 kHz); a single
+blocking message handler starves the audio output for its full duration.
+To keep that from happening, the worklet may only execute:
+
+- `_cedar_process_block` (audio rendering)
+- `_cedar_set_block_table` + `_cedar_load_program` (fast, fixed-cost)
+- the four `*_from_buffer` apply paths
+  (`cedar_apply_state_inits_from_buffer`,
+  `akkado_resolve_sample_ids_from_buffer`,
+  `cedar_apply_midi_sources_from_buffer`,
+  `akkado_patch_sample_ids_in_bytecode_from_buffer`)
+- parameter / MIDI / CC poke-throughs
+
+Anything CPU-heavy — `akkado_compile`, metadata extraction, fetch /
+decode, string parsing, JSON walking — runs in the **compile worker**
+(`web/src/lib/audio/compile.worker.ts`). The worker owns its own
+`nkido.wasm` instance, runs compilation, packs the four wire-format
+buffers (bytecode, stateInitsBuf, midiSourcesBuf, blockTable) and posts
+them to the main thread; the main thread runs the existing sample / SF2
+/ MIDI loaders and forwards the packed buffers to the worklet via
+`loadProgram`. See `docs/prd-compile-off-audio-thread.md` for the full
+design + wire format.
+
+Do not reintroduce a `'compile'` handler on the worklet. If a new code
+path needs the audio thread to do work beyond the list above, it almost
+certainly belongs in the worker or on the main thread.
 
 **State Management**: Uses Svelte 5 runes with singleton store pattern.
 
@@ -398,10 +440,10 @@ channel. Two category-based defaults:
   one parameter away by setting `dry>0`.
 
 ```akkado
-osc("saw", 220) |> chorus(@, 0.5, 0.5) |> out(@)           // default dry=1, wet=0.5
-osc("saw", 220) |> chorus(@, 0.5, 0.5, wet: 1.0) |> out(@) // fully wet
-osc("saw", 220) |> lp(@, 800) |> out(@)                    // default dry=0, wet=1 (pure filter)
-osc("saw", 220) |> comp(@, -12, 4, dry: 0.5) |> out(@)     // parallel compression
+saw(220) |> chorus(@, 0.5, 0.5) |> out(@)           // default dry=1, wet=0.5
+saw(220) |> chorus(@, 0.5, 0.5, wet: 1.0) |> out(@) // fully wet
+saw(220) |> lp(@, 800) |> out(@)                    // default dry=0, wet=1 (pure filter)
+saw(220) |> comp(@, -12, 4, dry: 0.5) |> out(@)     // parallel compression
 ```
 
 Slot strategy per builtin:

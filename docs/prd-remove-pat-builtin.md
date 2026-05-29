@@ -133,12 +133,12 @@ literal piped into `poly()`:
 ```akkado
 // Before
 pat("c4 e4 g4 c5", (t, v, p) ->
-  osc("sin", p) * ar(t, 0.01, 0.3)
+  sine(p) * ar(t, 0.01, 0.3)
 )
 
 // After
 n"c4 e4 g4 c5" |> poly(1, fn (e) ->
-  osc("sin", e.freq) * ar(e.trig, 0.01, 0.3)
+  sine(e.freq) * ar(e.trig, 0.01, 0.3)
 )
 ```
 
@@ -160,7 +160,7 @@ After removal `pat` and `p` are ordinary identifiers:
 
 ```akkado
 pat = n"c4 e4"     // legal — `pat` is just a variable now
-p = osc("sin", 440) // legal
+p = sine(440) // legal
 p"foo"              // parse error: identifier `p` followed by string literal
 ```
 
@@ -314,7 +314,7 @@ parser error (two adjacent primary expressions). Acceptable per the "silent
 removal" decision — no special diagnostic.
 
 ### 6.2 `pat` / `p` as identifiers
-Both become ordinary identifiers. `pat = n"c4"` and `p = osc("sin", 440)`
+Both become ordinary identifiers. `pat = n"c4"` and `p = sine(440)`
 must compile. Any test that previously asserted `pat` lexes as a keyword
 (`test_lexer.cpp:734`) must be rewritten to assert it now lexes as
 `Identifier`.
@@ -453,7 +453,7 @@ separately-shippable states.
   `Identifier("p")` + `String("foo")`.
 - **Parser:** `p"…"` produces a parse error; no token maps to a removed
   `MiniParseMode::Auto`.
-- **Identifier reuse:** `pat = n"c4 e4"` and `p = osc("sin", 440)` compile
+- **Identifier reuse:** `pat = n"c4 e4"` and `p = sine(440)` compile
   and behave as plain bindings.
 - **Removed builtins:** `pat(…)`, `value(…)`, `note(…)` calls error as
   unknown builtins.

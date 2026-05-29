@@ -38,11 +38,37 @@ void VM::set_block_table(std::span<const BlockEntry> block_table,
     has_pending_blocks_ = true;
 }
 
+// Scan a bytecode block to find the highest buffer index it touches.
+// Used by load_program() to grow the chunked BufferPool on the compile/load
+// thread so the audio thread never reads from an un-armed slab. Cheap
+// (one pass over the instructions, just a couple of comparisons per inst).
+namespace {
+std::size_t max_buffer_index(std::span<const Instruction> bytecode) noexcept {
+    std::size_t hi = 0;
+    for (const auto& inst : bytecode) {
+        auto consider = [&](std::uint16_t idx) {
+            if (idx == BUFFER_UNUSED) return;
+            if (idx < MAX_BUFFERS && idx > hi) hi = idx;
+        };
+        consider(inst.out_buffer);
+        for (std::uint16_t in : inst.inputs) consider(in);
+    }
+    return hi;
+}
+}  // namespace
+
 VM::LoadResult VM::load_program(std::span<const Instruction> bytecode) {
     if (bytecode.size() > MAX_PROGRAM_SIZE) {
         has_pending_blocks_ = false;
         return LoadResult::TooLarge;
     }
+
+    // Grow the BufferPool to fit before the new program is published.
+    // load_program() is called from the compile/UI/serve thread (or — for
+    // wasm — the worklet thread off the per-block hot path), so heap
+    // allocation here is safe. Chunked slabs guarantee existing pointers
+    // the audio thread is reading stay valid across growth.
+    buffer_pool_.ensure_capacity(max_buffer_index(bytecode) + 1);
 
     bool ok;
     if (has_pending_blocks_) {
@@ -66,6 +92,10 @@ VM::LoadResult VM::load_program(std::span<const Instruction> bytecode) {
 bool VM::load_program_immediate(std::span<const Instruction> bytecode) {
     // Reset everything first
     reset();
+
+    // Same growth point as load_program() — initial program load is also
+    // off the audio cycle.
+    buffer_pool_.ensure_capacity(max_buffer_index(bytecode) + 1);
 
     // Load directly into current slot
     ProgramSlot* slot = swap_controller_.acquire_write_slot();

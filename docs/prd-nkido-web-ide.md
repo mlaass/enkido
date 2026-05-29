@@ -148,7 +148,7 @@ The editor is the primary view with inline visualizations. A collapsible side pa
 │  │             │   │                                          │
 │  │ [Knob 1]    │   │  bpm = 120                               │
 │  │ [Fader 2]   │   │                                          │
-│  │ [Toggle 3]  │   │  osc = osc("sin", 440)                          │
+│  │ [Toggle 3]  │   │  osc = sine(440)                          │
 │  │             │   │        ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅▄▃▂▁   │
 │  ├─────────────┤   │                                          │
 │  │ Settings    │   │  |> lp(@, 800 + 300 * co, 0.7)           │
@@ -219,7 +219,7 @@ Instead of a separate visualization panel, visualizations appear **inline** bene
 ┌─────────────────────────────────────────────────────────────┐
 │  bpm = 120                                                  │
 │                                                             │
-│  osc = osc("sin", 440)                                             │
+│  osc = sine(440)                                             │
 │        ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅▄▃▂▁  ← waveform         │
 │                                                             │
 │  |> lp(@, 800, 0.7)                                         │
@@ -308,7 +308,7 @@ Markdown files with embedded NKIDO widgets:
 The `sin()` function generates a sine wave oscillator.
 
 :::nkido
-osc("sin", 440) |> out(@, @)
+sine(440) |> out(@, @)
 :::
 
 Parameters:
@@ -531,7 +531,7 @@ implementation diverged from the original spec.
 ### Manual Verification Steps
 
 1. Load IDE in browser, verify WASM modules load
-2. Type simple program: `osc("sin", 440) |> out(@, @)`
+2. Type simple program: `sine(440) |> out(@, @)`
 3. Press Ctrl+Enter, verify audio output
 4. Modify frequency, verify hot-swap (no click)
 5. Check waveform visualization matches audio

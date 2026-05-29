@@ -160,7 +160,7 @@ def _check_basic_stability(audio: np.ndarray, label: str):
 # 440 / 540 / 640 Hz.
 BEND_AKK = """
 n"a4 a4 a4" |> bend(%, v"0 100 200") as e
-  |> osc("sin", e.freq + e.bend) * 0.2
+  |> sine(e.freq + e.bend) * 0.2
   |> out(%, %)
 """
 BEND_EXPECTED_FREQS = (440.0, 540.0, 640.0)
@@ -198,7 +198,7 @@ def test_bend_pattern_long_window():
 
 AFTERTOUCH_AKK = """
 n"a4 a4 a4" |> aftertouch(%, v"0.2 0.6 1.0") as e
-  |> osc("sin", e.freq) * e.aftertouch * 0.3
+  |> sine(e.freq) * e.aftertouch * 0.3
   |> out(%, %)
 """
 
@@ -220,7 +220,7 @@ def test_aftertouch_pattern_long_window():
 
 DUR_AKK = """
 n"a4 a4 a4" |> dur(%, v"0.25 0.5 1.0") as e
-  |> osc("sin", e.freq) * ar(e.trig, 0.005, 0.15) * 0.3
+  |> sine(e.freq) * ar(e.trig, 0.005, 0.15) * 0.3
   |> out(%, %)
 """
 

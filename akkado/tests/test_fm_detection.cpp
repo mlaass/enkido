@@ -36,8 +36,8 @@ static bool is_basic_osc(cedar::Opcode op) {
 }
 
 TEST_CASE("FM Detection: constant frequency uses basic oscillator", "[codegen][fm]") {
-    // NOTE: sin(x) is now a math function. Use osc("sin", freq) for oscillators.
-    auto instructions = compile_to_instructions(R"(osc("sin", 440))");
+    // NOTE: sin(x) is now a math function. Use sine(freq) for oscillators.
+    auto instructions = compile_to_instructions(R"(sine(440))");
 
     bool found_basic = false;
     for (const auto& inst : instructions) {
@@ -50,8 +50,8 @@ TEST_CASE("FM Detection: constant frequency uses basic oscillator", "[codegen][f
 }
 
 TEST_CASE("FM Detection: oscillator-modulated frequency uses 4x", "[codegen][fm]") {
-    // osc("sin", osc("sin", 100) * 1000 + 440) - classic FM
-    auto instructions = compile_to_instructions(R"(osc("sin", osc("sin", 100) * 1000 + 440))");
+    // sine(sine(100) * 1000 + 440) - classic FM
+    auto instructions = compile_to_instructions(R"(sine(sine(100) * 1000 + 440))");
 
     bool found_4x = false;
     int osc_count = 0;
@@ -72,7 +72,7 @@ TEST_CASE("FM Detection: oscillator-modulated frequency uses 4x", "[codegen][fm]
 
 TEST_CASE("FM Detection: nested FM upgrades outer oscillators", "[codegen][fm]") {
     // Deeply nested FM with osc() syntax
-    auto instructions = compile_to_instructions(R"(osc("sin", osc("sin", osc("sin", 50) * 200 + 100) * 1000 + 440))");
+    auto instructions = compile_to_instructions(R"(sine(sine(sine(50) * 200 + 100) * 1000 + 440))");
 
     int basic_count = 0;
     int upgraded_count = 0;
@@ -86,7 +86,7 @@ TEST_CASE("FM Detection: nested FM upgrades outer oscillators", "[codegen][fm]")
         }
     }
 
-    // Innermost osc("sin", 50) has constant freq -> basic
+    // Innermost sine(50) has constant freq -> basic
     // Middle osc uses inner osc output -> 4x
     // Outer osc uses middle osc output -> 4x
     REQUIRE(basic_count == 1);   // Only innermost
@@ -95,7 +95,7 @@ TEST_CASE("FM Detection: nested FM upgrades outer oscillators", "[codegen][fm]")
 
 TEST_CASE("FM Detection: arithmetic preserves FM status", "[codegen][fm]") {
     // Addition preserves FM status
-    auto instructions = compile_to_instructions(R"(osc("sin", osc("sin", 100) + 440))");
+    auto instructions = compile_to_instructions(R"(sine(sine(100) + 440))");
 
     bool found_4x_sin = false;
     for (const auto& inst : instructions) {
@@ -108,7 +108,7 @@ TEST_CASE("FM Detection: arithmetic preserves FM status", "[codegen][fm]") {
 
 TEST_CASE("FM Detection: saw and sqr also upgrade", "[codegen][fm]") {
     // saw with FM modulated frequency
-    auto instructions = compile_to_instructions(R"(saw(osc("sin", 100) * 500 + 200))");
+    auto instructions = compile_to_instructions(R"(saw(sine(100) * 500 + 200))");
 
     bool found_4x_saw = false;
     for (const auto& inst : instructions) {
@@ -121,7 +121,7 @@ TEST_CASE("FM Detection: saw and sqr also upgrade", "[codegen][fm]") {
 
 TEST_CASE("FM Detection: noise also triggers FM upgrade", "[codegen][fm]") {
     // Noise-modulated frequency
-    auto instructions = compile_to_instructions(R"(osc("sin", noise() * 100 + 440))");
+    auto instructions = compile_to_instructions(R"(sine(noise() * 100 + 440))");
 
     bool found_4x_sin = false;
     bool found_noise = false;
@@ -157,7 +157,7 @@ TEST_CASE("FM Detection: sqr_pwm with constant frequency uses basic opcode", "[c
 
 TEST_CASE("FM Detection: sqr_pwm with FM frequency upgrades to 4x", "[codegen][fm][pwm]") {
     // sqr_pwm with FM on frequency input
-    auto instructions = compile_to_instructions(R"(sqr_pwm(osc("sin", 100) * 500 + 200, 0.3))");
+    auto instructions = compile_to_instructions(R"(sqr_pwm(sine(100) * 500 + 200, 0.3))");
 
     bool found_4x = false;
     for (const auto& inst : instructions) {
@@ -170,7 +170,7 @@ TEST_CASE("FM Detection: sqr_pwm with FM frequency upgrades to 4x", "[codegen][f
 
 TEST_CASE("FM Detection: saw_pwm with FM frequency upgrades to 4x", "[codegen][fm][pwm]") {
     // saw_pwm with FM on frequency input
-    auto instructions = compile_to_instructions(R"(saw_pwm(osc("sin", 100) * 500 + 200, 0.5))");
+    auto instructions = compile_to_instructions(R"(saw_pwm(sine(100) * 500 + 200, 0.5))");
 
     bool found_4x = false;
     for (const auto& inst : instructions) {

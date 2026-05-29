@@ -33,13 +33,13 @@ out of the box.
 
 ```akkado
 // Reverb with default balanced mix
-osc("saw", 220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5) |> out(@)
+saw(220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5) |> out(@)
 
 // Fully wet for send/return
-osc("saw", 220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5, wet: 1.0, dry: 0.0) |> out(@)
+saw(220) * ar(trigger(2)) |> freeverb(@, 0.5, 0.5, wet: 1.0, dry: 0.0) |> out(@)
 
 // Subtle chorus over the dry signal
-osc("saw", 220) |> chorus(@, 0.5, 0.5) |> out(@)
+saw(220) |> chorus(@, 0.5, 0.5) |> out(@)
 ```
 
 ### Category B — Transform (in-line effects)
@@ -53,13 +53,13 @@ filter) is one keyword away:
 
 ```akkado
 // Pure filter (default — dry=0, wet=1)
-osc("saw", 220) |> lp(@, 800) |> out(@)
+saw(220) |> lp(@, 800) |> out(@)
 
 // Parallel ("New York") compression
-osc("saw", 220) |> comp(@, -12, 4, dry: 0.5) |> out(@)
+saw(220) |> comp(@, -12, 4, dry: 0.5) |> out(@)
 
 // Parallel distortion — mix some grit under the dry signal
-osc("saw", 220) |> fold(@, 1.2, dry: 0.7, wet: 0.4) |> out(@)
+saw(220) |> fold(@, 1.2, dry: 0.7, wet: 0.4) |> out(@)
 ```
 
 ## Quick reference
@@ -88,7 +88,7 @@ explicitly:
 
 ```akkado
 // Old behavior (fully wet, no direct signal in the delay return)
-osc("saw", 220) |> delay(@, 0.5, 0.4, dry: 0.0, wet: 1.0) |> out(@)
+saw(220) |> delay(@, 0.5, 0.4, dry: 0.0, wet: 1.0) |> out(@)
 ```
 
 See the changelog entry under

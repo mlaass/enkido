@@ -224,6 +224,21 @@ interface CompileResult {
 	paramDecls?: ParamDecl[];
 	vizDecls?: VizDecl[];
 	disassembly?: DisassemblyInfo;
+	// Whether this compile was superseded by a newer one before it landed.
+	// The store treats `superseded` as a no-op (no diagnostic, no UI churn).
+	superseded?: boolean;
+}
+
+// Internal shape of the worker's `compileResult` message — same as the
+// public CompileResult plus the four wire-format buffers and the
+// builtin-var overrides the worklet applies on load.
+interface CompileResultInternal extends CompileResult {
+	bytecode?: Uint8Array;
+	stateInitsBuf?: Uint8Array;
+	midiSourcesBuf?: Uint8Array;
+	blockTable?: Uint8Array;
+	mainInstCount?: number;
+	builtinVarOverrides?: Array<{ name: string; value: number }>;
 }
 
 // Builtins metadata from the compiler
@@ -406,6 +421,20 @@ function createAudioEngine() {
 	// of seeing workletNode still null and bailing out.
 	let initPromise: Promise<void> | null = null;
 
+	// Compile worker (PRD prd-compile-off-audio-thread §4). Owns its own
+	// nkido.wasm instance; runs akkado_compile and all metadata extraction
+	// off the AudioWorklet thread. Spawned during initialize(); recreated
+	// lazily on worker death.
+	let compileWorker: Worker | null = null;
+	let compileWorkerReady: Promise<void> | null = null;
+	let compileWorkerDead = false;
+	// Outstanding compile() promises keyed by generation. Supersede-by-newest
+	// drops stale results in compile() itself; the map exists so two compiles
+	// in flight don't trample each other's resolver.
+	const pendingCompileResolves = new Map<number, (r: CompileResultInternal) => void>();
+	let nextCompileGen = 0;
+	let latestRequestedCompileGen = 0;
+
 	// Currently connected live-input source (audio-input PRD §4.5).
 	// Null = no input attached; in() then returns silence.
 	let activeInput: ActiveInputSource | null = null;
@@ -425,8 +454,9 @@ function createAudioEngine() {
 	// because file sources need raw ArrayBuffers for ctx.decodeAudioData().
 	const inputFileBuffers = new Map<string, ArrayBuffer>();
 
-	// Compile result callback (resolved when worklet responds)
-	let compileResolve: ((result: CompileResult) => void) | null = null;
+	// Compile-result resolvers live in `pendingCompileResolves` (declared
+	// below alongside the compile worker state). The legacy single-slot
+	// `compileResolve` was removed when compile moved off the worklet.
 
 	// Monotonic ID for load requests; lets the worklet tag responses so
 	// overlapping refreshes resolve their own promises.
@@ -577,6 +607,12 @@ function createAudioEngine() {
 			gainNode.connect(analyserNode);
 			analyserNode.connect(audioContext.destination);
 
+			// Spawn the compile worker alongside the worklet. The worker uses
+			// the same nkido.wasm bytes already fetched above, so there's no
+			// second network round-trip. We await `ready` so subsequent
+			// compile() calls don't have to special-case boot.
+			spawnCompileWorker();
+
 			state.isInitialized = true;
 			console.log('[AudioEngine] Initialized with AudioWorklet');
 
@@ -644,89 +680,9 @@ function createAudioEngine() {
 				workletNode?.port.postMessage({ type: 'setBpm', bpm: state.bpm });
 				// Default samples load lazily when compile() needs them
 				break;
-			case 'compiled': {
-				// Compilation result from worklet
-				const result: CompileResult = {
-					success: msg.success as boolean,
-					bytecodeSize: msg.bytecodeSize as number | undefined,
-					diagnostics: msg.diagnostics as Diagnostic[] | undefined,
-					requiredSamples: msg.requiredSamples as string[] | undefined,
-					requiredSamplesExtended: msg.requiredSamplesExtended as RequiredSampleExtended[] | undefined,
-					requiredSoundfonts: msg.requiredSoundfonts as RequiredSoundFont[] | undefined,
-					requiredWavetables: msg.requiredWavetables as RequiredWavetable[] | undefined,
-					requiredUris: msg.requiredUris as UriRequest[] | undefined,
-					requiredInputSources: msg.requiredInputSources as string[] | undefined,
-					requiredMidiSources: msg.requiredMidiSources as RequiredMidiSource[] | undefined,
-					requiredMidiCcRoutes: msg.requiredMidiCcRoutes as RequiredMidiCcRoute[] | undefined,
-					paramDecls: msg.paramDecls as ParamDecl[] | undefined,
-					vizDecls: msg.vizDecls as VizDecl[] | undefined,
-					disassembly: msg.disassembly as DisassemblyInfo | undefined
-				};
-				if (result.success) {
-					console.log(
-						'[AudioEngine] Compiled successfully, bytecode size:',
-						result.bytecodeSize,
-						'required samples:',
-						result.requiredSamples,
-						'param decls:',
-						result.paramDecls?.length ?? 0,
-						'unique states:',
-						result.disassembly?.summary?.uniqueStateIds ?? 'N/A'
-					);
-					// Update param declarations and preserve values for existing params
-					if (result.paramDecls) {
-						updateParamDecls(result.paramDecls);
-					}
-					// Update visualization declarations
-					state.vizDecls = result.vizDecls ?? [];
-					// Apply builtin variable overrides (e.g., bpm from code)
-					const overrides = msg.builtinVarOverrides as
-						Array<{ name: string; value: number }> | undefined;
-					if (overrides) {
-						for (const override of overrides) {
-							if (override.name === 'bpm') {
-								state.bpm = override.value;
-							}
-						}
-					}
-					// Store disassembly for debug panel
-					state.disassembly = result.disassembly ?? null;
-				} else {
-					console.error('[AudioEngine] Compilation failed:', result.diagnostics);
-					state.disassembly = null;
-				}
-				// Update MIDI input routes from the new compile's
-				// midi() call sites. This is idempotent and safe even
-				// when access has not yet been granted — the controller
-				// late-resolves on permission grant / device plug-in.
-				if (result.success) {
-					lastRequiredMidiSources = result.requiredMidiSources ?? [];
-					lastRequiredMidiCcRoutes = result.requiredMidiCcRoutes ?? [];
-					midiInput.setRoutes(lastRequiredMidiSources, lastRequiredMidiCcRoutes);
-
-					// PRD prd-midi-input §7.4: publish the file-CC dispatch
-					// plan to the worklet. File-kind midi sources have no
-					// physical device, so their CC events are drained
-					// inside _cedar_process_block and routed through the
-					// same CC table the live-device path uses.
-					if (workletNode) {
-						const fileMidiStateIds = lastRequiredMidiSources
-							.filter((s) => s.kind === 2)
-							.map((s) => s.stateId);
-						workletNode.port.postMessage({
-							type: 'setFileCcPlan',
-							fileMidiStateIds,
-							fileCcRoutes: lastRequiredMidiCcRoutes
-						});
-					}
-				}
-				// Resolve pending compile promise
-				if (compileResolve) {
-					compileResolve(result);
-					compileResolve = null;
-				}
-				break;
-			}
+			// The legacy 'compiled' message from the worklet is gone —
+			// compile lives in the compile worker (see
+			// handleCompileWorkerMessage / applyCompileResult below).
 			case 'programLoaded':
 				state.hasProgram = true;
 				console.log('[AudioEngine] Program loaded');
@@ -943,6 +899,188 @@ function createAudioEngine() {
 			jsCode: wasmJsCode,
 			wasmBinary: wasmBinary.slice(0)
 		});
+	}
+
+	/**
+	 * Test-only: simulate a worker crash by force-terminating the worker.
+	 * Verifies that the next compile() surfaces the synthetic diagnostic
+	 * and the one after respawns and succeeds.
+	 */
+	function terminateCompileWorker() {
+		if (!compileWorker) return;
+		compileWorker.terminate();
+		// Trip the same path that an unexpected onerror takes — without
+		// dispatching an actual ErrorEvent (terminate() doesn't emit one).
+		compileWorker = null;
+		compileWorkerReady = null;
+		compileWorkerDead = true;
+		for (const resolve of pendingCompileResolves.values()) {
+			resolve({
+				success: false,
+				diagnostics: [
+					{ severity: 2, message: 'Compile worker crashed — restarting on next compile', line: 1, column: 1 }
+				]
+			});
+		}
+		pendingCompileResolves.clear();
+	}
+
+	function spawnCompileWorker() {
+		if (compileWorker) return;
+		if (!wasmJsCode || !wasmBinary) {
+			console.error('[AudioEngine] Cannot spawn compile worker — WASM not loaded');
+			return;
+		}
+
+		compileWorker = new Worker(new URL('../audio/compile.worker.ts', import.meta.url), {
+			type: 'module'
+		});
+		compileWorkerDead = false;
+
+		compileWorkerReady = new Promise((resolve, reject) => {
+			const w = compileWorker;
+			if (!w) {
+				reject(new Error('Compile worker null after spawn'));
+				return;
+			}
+			const onReadyMessage = (event: MessageEvent) => {
+				const msg = event.data;
+				if (msg?.type === 'ready') {
+					console.log('[AudioEngine] Compile worker ready');
+					w.removeEventListener('message', onReadyMessage);
+					resolve();
+				} else if (msg?.type === 'initError') {
+					console.error('[AudioEngine] Compile worker init failed:', msg.message);
+					w.removeEventListener('message', onReadyMessage);
+					reject(new Error(String(msg.message)));
+				}
+			};
+			w.addEventListener('message', onReadyMessage);
+		});
+
+		compileWorker.addEventListener('message', (event: MessageEvent) => {
+			handleCompileWorkerMessage(event.data);
+		});
+
+		const handleWorkerCrash = (reason: string) => {
+			if (compileWorkerDead) return;
+			compileWorkerDead = true;
+			console.error('[AudioEngine] Compile worker crashed:', reason);
+			compileWorker?.terminate();
+			compileWorker = null;
+			compileWorkerReady = null;
+			// Resolve every outstanding compile with a synthetic diagnostic.
+			for (const resolve of pendingCompileResolves.values()) {
+				resolve({
+					success: false,
+					diagnostics: [
+						{
+							severity: 2,
+							message: 'Compile worker crashed — restarting on next compile',
+							line: 1,
+							column: 1
+						}
+					]
+				});
+			}
+			pendingCompileResolves.clear();
+		};
+		compileWorker.addEventListener('error', (e) => {
+			handleWorkerCrash(e.message || 'worker error');
+		});
+		compileWorker.addEventListener('messageerror', () => {
+			handleWorkerCrash('worker messageerror');
+		});
+
+		compileWorker.postMessage({
+			type: 'init',
+			jsCode: wasmJsCode,
+			wasmBinary: wasmBinary.slice(0)
+		});
+	}
+
+	function handleCompileWorkerMessage(msg: { type?: string; [key: string]: unknown }) {
+		if (msg?.type !== 'compileResult') return;
+		const gen = msg.gen as number;
+		const resolver = pendingCompileResolves.get(gen);
+		if (!resolver) {
+			// Stale or unknown gen — drop. Most common cause is the worker
+			// crashed and respawned mid-flight; the resolvers were already
+			// drained synthetically in handleWorkerCrash.
+			return;
+		}
+		pendingCompileResolves.delete(gen);
+
+		const result: CompileResultInternal = {
+			success: msg.success as boolean,
+			bytecodeSize: msg.bytecodeSize as number | undefined,
+			diagnostics: msg.diagnostics as Diagnostic[] | undefined,
+			requiredSamples: msg.requiredSamples as string[] | undefined,
+			requiredSamplesExtended: msg.requiredSamplesExtended as
+				RequiredSampleExtended[] | undefined,
+			requiredSoundfonts: msg.requiredSoundfonts as RequiredSoundFont[] | undefined,
+			requiredWavetables: msg.requiredWavetables as RequiredWavetable[] | undefined,
+			requiredUris: msg.requiredUris as UriRequest[] | undefined,
+			requiredInputSources: msg.requiredInputSources as string[] | undefined,
+			requiredMidiSources: msg.requiredMidiSources as RequiredMidiSource[] | undefined,
+			requiredMidiCcRoutes: msg.requiredMidiCcRoutes as
+				RequiredMidiCcRoute[] | undefined,
+			paramDecls: msg.paramDecls as ParamDecl[] | undefined,
+			vizDecls: msg.vizDecls as VizDecl[] | undefined,
+			disassembly: msg.disassembly as DisassemblyInfo | undefined,
+			bytecode: msg.bytecode as Uint8Array | undefined,
+			stateInitsBuf: msg.stateInitsBuf as Uint8Array | undefined,
+			midiSourcesBuf: msg.midiSourcesBuf as Uint8Array | undefined,
+			blockTable: msg.blockTable as Uint8Array | undefined,
+			mainInstCount: msg.mainInstCount as number | undefined,
+			builtinVarOverrides: msg.builtinVarOverrides as
+				Array<{ name: string; value: number }> | undefined
+		};
+		resolver(result);
+	}
+
+	function applyCompileResult(result: CompileResultInternal) {
+		if (!result.success) {
+			console.error('[AudioEngine] Compilation failed:', result.diagnostics);
+			state.disassembly = null;
+			return;
+		}
+
+		console.log(
+			'[AudioEngine] Compiled successfully, bytecode size:',
+			result.bytecodeSize,
+			'required samples:',
+			result.requiredSamples,
+			'param decls:',
+			result.paramDecls?.length ?? 0,
+			'unique states:',
+			result.disassembly?.summary?.uniqueStateIds ?? 'N/A'
+		);
+
+		if (result.paramDecls) updateParamDecls(result.paramDecls);
+		state.vizDecls = result.vizDecls ?? [];
+
+		if (result.builtinVarOverrides) {
+			for (const override of result.builtinVarOverrides) {
+				if (override.name === 'bpm') state.bpm = override.value;
+			}
+		}
+		state.disassembly = result.disassembly ?? null;
+
+		lastRequiredMidiSources = result.requiredMidiSources ?? [];
+		lastRequiredMidiCcRoutes = result.requiredMidiCcRoutes ?? [];
+		midiInput.setRoutes(lastRequiredMidiSources, lastRequiredMidiCcRoutes);
+
+		if (workletNode) {
+			const fileMidiStateIds = lastRequiredMidiSources
+				.filter((s) => s.kind === 2)
+				.map((s) => s.stateId);
+			workletNode.port.postMessage({
+				type: 'setFileCcPlan',
+				fileMidiStateIds,
+				fileCcRoutes: lastRequiredMidiCcRoutes
+			});
+		}
 	}
 
 	async function play() {
@@ -1268,8 +1406,15 @@ function createAudioEngine() {
 	}
 
 	/**
-	 * Compile source code in the worklet and load into Cedar VM
-	 * This handles the full compile -> load samples -> load program flow
+	 * Compile source code in the worker and load into the worklet's Cedar VM.
+	 * Steps:
+	 *   1. Route source to the compile worker; await compileResult.
+	 *      Supersede-by-newest drops stale results so the user always sees
+	 *      the latest source applied.
+	 *   2. Apply UI-side metadata (paramDecls, vizDecls, MIDI routes, bpm).
+	 *   3. Load required samples / SF2s / wavetables / .mid files.
+	 *   4. Post `loadProgram` to the worklet with the four packed buffers
+	 *      and await `programLoaded`.
 	 */
 	async function compile(source: string): Promise<CompileResult> {
 		if (!workletNode) {
@@ -1279,26 +1424,77 @@ function createAudioEngine() {
 			};
 		}
 
-		console.log('[AudioEngine] Sending source for compilation, length:', source.length);
+		const gen = ++nextCompileGen;
+		latestRequestedCompileGen = gen;
 
-		// Step 1: Compile (fast, no sample loading)
-		const compilePromise = new Promise<CompileResult>((resolve) => {
-			compileResolve = resolve;
-			// Timeout after 5 seconds to prevent main thread hang if worklet crashes
+		console.log('[AudioEngine] Compile gen', gen, 'length', source.length);
+
+		// Lazy respawn after a worker crash. spawnCompileWorker() awaits WASM
+		// fetched in initialize(), so it cannot run before initialize() has
+		// resolved — callers are expected to call initialize() first.
+		if (compileWorkerDead || !compileWorker) {
+			spawnCompileWorker();
+		}
+
+		// Boot-time wait: if the worker hasn't reported {ready} yet, every
+		// pending compile() call awaits the same promise. Supersede-by-
+		// newest is enforced by the gen-vs-latestRequested check below, so
+		// the boot stream collapses naturally — only the last gen's result
+		// is applied; everything else returns `superseded:true` without
+		// touching the UI.
+		if (compileWorkerReady) {
+			try {
+				await compileWorkerReady;
+			} catch (err) {
+				return {
+					success: false,
+					diagnostics: [
+						{ severity: 2, message: 'Compile worker failed to init: ' + String(err), line: 1, column: 1 }
+					]
+				};
+			}
+		}
+
+		if (gen !== latestRequestedCompileGen) {
+			return { success: false, superseded: true };
+		}
+
+		if (!compileWorker || compileWorkerDead) {
+			return {
+				success: false,
+				diagnostics: [
+					{ severity: 2, message: 'Compile worker unavailable', line: 1, column: 1 }
+				]
+			};
+		}
+
+		const worker = compileWorker;
+		const compileInternal = await new Promise<CompileResultInternal>((resolve) => {
+			pendingCompileResolves.set(gen, resolve);
+			worker.postMessage({ type: 'compile', gen, source });
+			// 10s safety timeout — covers worker hang / crash. A real compile
+			// is ~110ms even on heavy patches.
 			setTimeout(() => {
-				if (compileResolve === resolve) {
-					compileResolve = null;
+				if (pendingCompileResolves.delete(gen)) {
 					resolve({
 						success: false,
-						diagnostics: [{ severity: 2, message: 'Compilation timeout - worklet may have crashed', line: 1, column: 1 }]
+						diagnostics: [
+							{ severity: 2, message: 'Compile worker unresponsive (timeout)', line: 1, column: 1 }
+						]
 					});
 				}
-			}, 5000);
+			}, 10000);
 		});
 
-		workletNode.port.postMessage({ type: 'compile', source });
-		const compileResult = await compilePromise;
+		// Supersede-by-newest: discard stale compiles silently. The store
+		// treats {superseded:true} as a no-op.
+		if (gen !== latestRequestedCompileGen) {
+			return { success: false, superseded: true };
+		}
 
+		applyCompileResult(compileInternal);
+
+		const compileResult: CompileResult = compileInternal;
 		if (!compileResult.success) {
 			return compileResult;
 		}
@@ -1522,6 +1718,11 @@ function createAudioEngine() {
 		const node = workletNode; // Capture for closure (TypeScript null-check)
 		const refreshId = ++loadRefreshCounter;
 
+		const bytecode = compileInternal.bytecode ?? new Uint8Array(0);
+		const stateInitsBuf = compileInternal.stateInitsBuf ?? new Uint8Array(0);
+		const midiSourcesBuf = compileInternal.midiSourcesBuf ?? new Uint8Array(0);
+		const blockTable = compileInternal.blockTable ?? new Uint8Array(0);
+
 		const loadResult = await new Promise<{ success: boolean; error?: string }>((resolve) => {
 			let timeout: ReturnType<typeof setTimeout>;
 			const handler = (event: MessageEvent) => {
@@ -1542,7 +1743,19 @@ function createAudioEngine() {
 				resolve({ success: false, error: 'Audio engine unresponsive (timeout)' });
 			}, 5000);
 			node.port.addEventListener('message', handler);
-			node.port.postMessage({ type: 'loadCompiledProgram', refreshId });
+			node.port.postMessage(
+				{
+					type: 'loadProgram',
+					refreshId,
+					bytecode,
+					stateInitsBuf,
+					midiSourcesBuf,
+					blockTable,
+					mainInstCount: compileInternal.mainInstCount ?? 0,
+					builtinVarOverrides: compileInternal.builtinVarOverrides ?? []
+				},
+				[bytecode.buffer, stateInitsBuf.buffer, midiSourcesBuf.buffer, blockTable.buffer]
+			);
 		});
 
 		if (loadResult.success) {
@@ -1554,27 +1767,6 @@ function createAudioEngine() {
 			success: false,
 			diagnostics: [{ severity: 2, message: loadResult.error || 'Load failed', line: 1, column: 1 }]
 		};
-	}
-
-	/**
-	 * Load bytecode into the Cedar VM (legacy - prefer compile())
-	 */
-	function loadProgram(bytecode: Uint8Array) {
-		if (!workletNode) {
-			console.warn('[AudioEngine] Cannot load program - worklet not initialized');
-			return;
-		}
-
-		console.log('[AudioEngine] Loading program, bytecode size:', bytecode.length);
-
-		// Clone the bytecode since we're transferring the buffer
-		const bytecodeClone = bytecode.slice();
-
-		// Transfer bytecode to worklet
-		workletNode.port.postMessage(
-			{ type: 'loadProgram', bytecode: bytecodeClone.buffer },
-			[bytecodeClone.buffer]
-		);
 	}
 
 	/**
@@ -2693,7 +2885,7 @@ function createAudioEngine() {
 		setVolume,
 		toggleVisualizations,
 		compile,
-		loadProgram,
+		terminateCompileWorker,
 		setParam,
 		getAnalyserNode,
 		getAudioContext,

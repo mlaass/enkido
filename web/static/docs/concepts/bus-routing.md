@@ -24,7 +24,7 @@ A **bus** is a stereo summing point identified by a non-negative integer.
 master bus. Every existing patch keeps working unchanged.
 
 ```akkado
-osc("saw", 220) |> out(@)        // route to the master
+saw(220) |> out(@)        // route to the master
 kick            |> bus(1, @)     // route to bus 1
 ```
 
@@ -123,9 +123,9 @@ of a pipe statement with a single token.
 | `<>(N)`  | `\|> bus(N, @)`  | route to bus `N`        |
 
 ```akkado
-osc("saw", 220) <>                              // ≡ osc("saw", 220) |> out(@)
+saw(220) <>                              // ≡ saw(220) |> out(@)
 kick            <>(1)                           // ≡ kick |> bus(1, @)
-n"c4 e4 g4" as e |> osc("saw", e.freq) <>(2)
+n"c4 e4 g4" as e |> saw(e.freq) <>(2)
 ```
 
 `<>` is a **statement terminator**. It binds looser than `|>`, so it always
@@ -150,7 +150,7 @@ hat   <>(1)
 mixer(1, (s) -> s |> comp(@, -8, 6))
 
 // A lead voice straight to the master
-n"c4 e4 g4 b4" as e |> osc("saw", e.freq) |> @ * e.vel <>
+n"c4 e4 g4 b4" as e |> saw(e.freq) |> @ * e.vel <>
 ```
 
 ## Reference

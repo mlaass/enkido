@@ -254,6 +254,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
     result.required_wavetables = std::move(gen.required_wavetables);
     result.required_uris = std::move(gen.required_uris);
     result.required_input_sources = std::move(gen.required_input_sources);
+    result.required_buffers = gen.required_buffers;
 
     // Copy parameter declarations for UI generation
     result.param_decls = std::move(gen.param_decls);

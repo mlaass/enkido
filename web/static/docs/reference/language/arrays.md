@@ -16,7 +16,7 @@ Arrays are ordered, fixed-size collections of values. They are the primary way t
 
 ```akk
 freqs = [220, 330, 440]
-map(freqs, (f) -> osc("sin", f)) |> sum(@) * 0.3 |> out(@)
+map(freqs, (f) -> sine(f)) |> sum(@) * 0.3 |> out(@)
 ```
 
 Arrays exist at compile time only; there is no runtime growable list type. `len(arr)`, `take(n, arr)`, and similar operations are evaluated when the patch is compiled, not while audio is running.
@@ -59,7 +59,7 @@ Compile-time indices (number literals) are resolved to a direct element referenc
 
 ```akk
 // Compile-time index, zero-cost lookup
-voices = [osc("sin", 220), osc("saw", 330), osc("tri", 440)]
+voices = [sine(220), saw(330), tri(440)]
 voices[0] |> out(@)
 
 // Runtime index, selects a voice from an LFO
@@ -74,7 +74,7 @@ Akkado does not auto-expand arrays into scalar functions today. To run an array 
 ```akk
 // Three sine voices summed into one output
 [220, 330, 440]
-  |> map(@, (f) -> osc("sin", f))
+  |> map(@, (f) -> sine(f))
   |> sum(@) * 0.3
   |> out(@)
 ```
@@ -93,7 +93,7 @@ Returns the number of elements as a constant signal. Errors if the argument is n
 
 ```akk
 n = len([1, 2, 3, 4])  // 4
-osc("sin", 220) * (1 / n) |> out(@)
+sine(220) * (1 / n) |> out(@)
 ```
 
 `len()` is **polymorphic**. On a static array it is a compile-time constant, as above. On a *dynamic* array — the per-event chord arrays returned by `notes()` / `freqs()` (see [Chords](../mini-notation/chords#notes)) — it is a **runtime signal** carrying the current event's chord size:
@@ -119,7 +119,7 @@ so stateful functions (oscillators, filters) get independent state per voice.
 ```akk
 // Three independent saw voices, summed
 [110, 220, 440]
-  |> map(@, (f) -> osc("saw", f) |> lp(@, 1200))
+  |> map(@, (f) -> saw(f) |> lp(@, 1200))
   |> sum(@) * 0.3
   |> out(@)
 ```
@@ -172,7 +172,7 @@ reduce([2, 3, 4], (a, b) -> a * b, 1)  // 24
 // Apply per-voice gains to a chord
 freqs = [220, 330, 440]
 gains = [1.0, 0.7, 0.5]
-zipWith(freqs, gains, (f, g) -> osc("sin", f) * g)
+zipWith(freqs, gains, (f, g) -> sine(f) * g)
   |> sum(@) * 0.3
   |> out(@)
 ```
@@ -242,7 +242,7 @@ yields zero; a single element passes through untouched.
 
 ```akk
 // Mix three voices (array form)
-[osc("sin", 220), osc("sin", 330), osc("sin", 440)]
+[sine(220), sine(330), sine(440)]
   |> sum(@) * 0.33
   |> out(@)
 ```
@@ -300,7 +300,7 @@ rotate([1, 2, 3, 4], 5)   // same as rotate(..., 1)
 ```akk
 // Same shuffle every compile, useful for stable variations
 shuffle([220, 330, 440, 550])
-  |> map(@, (f) -> osc("saw", f))
+  |> map(@, (f) -> saw(f))
   |> sum(@) * 0.25
   |> out(@)
 
@@ -427,13 +427,13 @@ detune = random(6, -50, 50)
 ```akk
 // Natural integer series (default)
 harmonics(110, 8)
-  |> map(@, (f) -> osc("sin", f) / (f / 110))
+  |> map(@, (f) -> sine(f) / (f / 110))
   |> sum(@) * 0.2
   |> out(@)
 
 // Slightly stretched, piano-like spectrum
 harmonics(110, 8, 1.05)
-  |> map(@, (f) -> osc("sin", f) / (f / 110))
+  |> map(@, (f) -> sine(f) / (f / 110))
   |> sum(@) * 0.2
   |> out(@)
 ```
@@ -448,7 +448,7 @@ When you need pattern-driven voice allocation rather than parallel processing of
 
 ```akk
 [110, 165, 220, 330]
-  |> map(@, (f) -> osc("saw", f) |> lp(@, f * 4))
+  |> map(@, (f) -> saw(f) |> lp(@, f * 4))
   |> sum(@) * 0.2
   |> out(@)
 ```
@@ -457,7 +457,7 @@ When you need pattern-driven voice allocation rather than parallel processing of
 
 ```akk
 linspace(220, 1100, 5)
-  |> map(@, (f) -> osc("sin", f))
+  |> map(@, (f) -> sine(f))
   |> sum(@) * 0.2
   |> out(@)
 ```
@@ -468,7 +468,7 @@ linspace(220, 1100, 5)
 base = 220
 detune = normalize(random(6), -5, 5)  // ±5 Hz spread
 detune
-  |> map(@, (d) -> osc("saw", base + d))
+  |> map(@, (d) -> saw(base + d))
   |> sum(@) * 0.15
   |> out(@)
 ```

@@ -355,7 +355,7 @@ TEST_CASE("map() applies function to each element", "[array][map]") {
 
     SECTION("map over chord without poly is error") {
         auto result = akkado::compile(
-            R"(chord("Am") |> mtof(%) |> map(%, (f) -> osc("tri", f)) |> sum(%) |> out(%, %))");
+            R"(chord("Am") |> mtof(%) |> map(%, (f) -> tri(f)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -396,7 +396,7 @@ TEST_CASE("sum() reduces array to single signal", "[array][sum]") {
 
     SECTION("sum with map over chord without poly is error") {
         auto result = akkado::compile(
-            R"(chord("C") |> mtof(%) |> map(%, (f) -> osc("sin", f)) |> sum(%) |> out(%, %))");
+            R"(chord("C") |> mtof(%) |> map(%, (f) -> sine(f)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -411,7 +411,7 @@ TEST_CASE("mtof() with chord without poly is error", "[array][mtof]") {
 TEST_CASE("map() voices have unique state_ids", "[array][map]") {
     // Uses array literal (not chord pattern) so no poly() needed
     auto result = akkado::compile(
-        R"([261.6, 329.6, 392.0] |> map(%, (f) -> osc("sin", f)) |> sum(%) |> out(%, %))");
+        R"([261.6, 329.6, 392.0] |> map(%, (f) -> sine(f)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
     auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
@@ -429,7 +429,7 @@ TEST_CASE("map() voices have unique state_ids", "[array][map]") {
 
 TEST_CASE("chord without poly produces error in pipeline", "[chord][polyphony]") {
     auto result = akkado::compile(R"(
-        chord("Am") |> mtof(%) |> map(%, (f) -> osc("tri", f)) |> sum(%) / 3 |> out(%, %)
+        chord("Am") |> mtof(%) |> map(%, (f) -> tri(f)) |> sum(%) / 3 |> out(%, %)
     )");
     CHECK_FALSE(result.success);
 }
@@ -437,7 +437,7 @@ TEST_CASE("chord without poly produces error in pipeline", "[chord][polyphony]")
 TEST_CASE("per-voice filter inside map() with array", "[array][map]") {
     // Uses array literal (not chord pattern) — no poly() needed
     auto result = akkado::compile(
-        R"([440, 550, 660] |> map(%, (f) -> osc("saw", f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
+        R"([440, 550, 660] |> map(%, (f) -> saw(f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
     auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
@@ -456,7 +456,7 @@ TEST_CASE("per-voice filter inside map() with array", "[array][map]") {
 
 TEST_CASE("array literal produces multi-buffer", "[array]") {
     auto result = akkado::compile(
-        R"([60, 64, 67] |> map(%, (n) -> mtof(n) |> osc("tri", %)) |> sum(%) |> out(%, %))");
+        R"([60, 64, 67] |> map(%, (n) -> mtof(n) |> tri(%)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
     auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
@@ -474,7 +474,7 @@ TEST_CASE("array literal produces multi-buffer", "[array]") {
 
 TEST_CASE("chord pattern without poly produces error", "[chord][pattern]") {
     auto result = akkado::compile(
-        R"(chord("Am C") |> mtof(%) |> map(%, (f) -> osc("tri", f)) |> sum(%) |> out(%, %))");
+        R"(chord("Am C") |> mtof(%) |> map(%, (f) -> tri(f)) |> sum(%) |> out(%, %))");
     CHECK_FALSE(result.success);
 }
 
@@ -592,19 +592,19 @@ TEST_CASE("n'…' with chord symbols produces E410", "[chord][seqpat][pat]") {
 TEST_CASE("chord integration with audio graph requires poly()", "[chord][seqpat][integration]") {
     SECTION("chord with osc and out without poly is error") {
         auto result = akkado::compile(
-            R"(chord("Am") |> mtof(%) |> map(%, (f) -> osc("sin", f)) |> sum(%) |> out(%, %))");
+            R"(chord("Am") |> mtof(%) |> map(%, (f) -> sine(f)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 
     SECTION("seventh chord with filter per voice without poly is error") {
         auto result = akkado::compile(
-            R"(chord("Cmaj7") |> mtof(%) |> map(%, (f) -> osc("saw", f) |> lp(2000, %)) |> sum(%) |> out(%, %))");
+            R"(chord("Cmaj7") |> mtof(%) |> map(%, (f) -> saw(f) |> lp(2000, %)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 
     SECTION("n'…' chord with processing without poly is error") {
         auto result = akkado::compile(
-            R"(n"C Am" |> map(%, (f) -> osc("tri", f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
+            R"(n"C Am" |> map(%, (f) -> tri(f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
         CHECK_FALSE(result.success);
     }
 }
@@ -667,7 +667,7 @@ TEST_CASE("multi-buffer through variable assignment", "[polyphony][variable]") {
     SECTION("array assigned to variable preserves multi-buffer for map") {
         auto result = akkado::compile(R"(
             x = [440, 550, 660]
-            map(x, (f) -> osc("sin", f)) |> sum(%) |> out(%, %)
+            map(x, (f) -> sine(f)) |> sum(%) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -684,7 +684,7 @@ TEST_CASE("multi-buffer through variable assignment", "[polyphony][variable]") {
     SECTION("chord through variable without poly is error") {
         auto result = akkado::compile(R"(
             ch = chord("Am")
-            map(ch, (f) -> osc("sin", f)) |> sum(%) |> out(%, %)
+            map(ch, (f) -> sine(f)) |> sum(%) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
@@ -693,14 +693,14 @@ TEST_CASE("multi-buffer through variable assignment", "[polyphony][variable]") {
 TEST_CASE("chord field access without poly produces error", "[polyphony][pipe_binding]") {
     SECTION("pat with chord via pipe binding without poly is error") {
         auto result = akkado::compile(R"(
-            n"C" as e |> osc("sin", e.freq) |> out(%, %)
+            n"C" as e |> sine(e.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("chord() via pipe binding without poly is error") {
         auto result = akkado::compile(R"(
-            chord("Am") as e |> osc("sin", e.freq) |> out(%, %)
+            chord("Am") as e |> sine(e.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
@@ -710,7 +710,7 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
     SECTION("pattern variable with monophonic pattern accesses .freq") {
         auto result = akkado::compile(R"(
             e = n"c4 e4 g4"
-            osc("sin", e.freq) |> out(%, %)
+            sine(e.freq) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -727,7 +727,7 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
     SECTION("pattern variable with chord without poly is error") {
         auto result = akkado::compile(R"(
             e = n"C"
-            osc("sin", e.freq) |> out(%, %)
+            sine(e.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
@@ -736,7 +736,7 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
 TEST_CASE("monophonic pattern field access via pipe", "[polyphony][field_access]") {
     SECTION("monophonic n'…' with .freq via % works") {
         auto result = akkado::compile(R"(
-            n"c4 e4 g4" |> osc("sin", %.freq) |> out(%, %)
+            n"c4 e4 g4" |> sine(%.freq) |> out(%, %)
         )");
         REQUIRE(result.success);
 
@@ -754,28 +754,28 @@ TEST_CASE("monophonic pattern field access via pipe", "[polyphony][field_access]
 TEST_CASE("polyphonic field access without poly produces error", "[polyphony][field_access]") {
     SECTION("pat with chord .freq without poly is error") {
         auto result = akkado::compile(R"(
-            n"Am" |> osc("sin", %.freq) |> out(%, %)
+            n"Am" |> sine(%.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("chord() .freq without poly is error") {
         auto result = akkado::compile(R"(
-            chord("Am") |> osc("tri", %.freq) |> out(%, %)
+            chord("Am") |> tri(%.freq) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("polyphonic .vel without poly is error") {
         auto result = akkado::compile(R"(
-            n"Am" |> osc("sin", %.freq) * %.vel |> out(%, %)
+            n"Am" |> sine(%.freq) * %.vel |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }
 
     SECTION("polyphonic .trig without poly is error") {
         auto result = akkado::compile(R"(
-            n"Am" |> osc("sin", %.freq) * adsr(%.trig, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
+            n"Am" |> sine(%.freq) * adsr(%.trig, 0.01, 0.1, 0.5, 0.3) |> out(%, %)
         )");
         CHECK_FALSE(result.success);
     }

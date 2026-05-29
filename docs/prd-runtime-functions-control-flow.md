@@ -17,7 +17,7 @@ This PRD generalizes that special case into a uniform "callable block" mechanism
 1. **Code reuse / size reduction** — a shared subprogram table lets one `fn` body back many call-sites.
 2. **Conditional graph topology** — forward `SKIP_IF` opcodes bypass whole instruction ranges when a control value is zero, instead of always-evaluating both branches and muxing with `SELECT`.
 3. **Recursive / self-similar structures** — *deferred to a follow-up PRD*; the design admits compile-time-unrolled recursion at a later phase.
-4. **Higher-order DSL** — `notes.each_voice(n => osc("sin", n.freq))` over dynamic event streams via a generalized `FOREACH_EVENT` opcode (POLY's algorithm, not its API). The `.map(...)` surface name is reserved for per-event *field rewrite* per the companion [prd-runtime-event-transforms.md](prd-runtime-event-transforms.md); see §13 for the disambiguation.
+4. **Higher-order DSL** — `notes.each_voice(n => sine(n.freq))` over dynamic event streams via a generalized `FOREACH_EVENT` opcode (POLY's algorithm, not its API). The `.map(...)` surface name is reserved for per-event *field rewrite* per the companion [prd-runtime-event-transforms.md](prd-runtime-event-transforms.md); see §13 for the disambiguation.
 
 Cedar's two load-bearing invariants are preserved: **bounded audio-callback time** and **zero allocation in the audio path**. The "RT for audio, non-RT for setup" relaxation is the key enabler — allocation, state-slot expansion, and per-callsite specialization happen at hot-swap/init time; the audio callback only executes a flat instruction stream.
 
@@ -57,7 +57,7 @@ The brainstorm exploration confirmed:
 | A reusable `fn` called from N sites | Per-site re-inlining | Bytecode and i-cache pressure grow linearly with N; state slot count multiplies; large patches blow past `MAX_STATES = 512` |
 | Bypass an effect chain when a toggle is off | `SELECT(toggle, sig * 0, sig \|> reverb(@))` | The reverb runs every block regardless; CPU not saved |
 | Tree-like / nested allpass / fractal feedback | Manually unroll, copy-paste body | Unreadable; state slot count explodes; depth must be statically chosen by hand |
-| `notes.each_voice(n => osc("sin", n.freq))` over a runtime event stream | Manually expand into a fixed-size POLY block | API doesn't compose with arbitrary higher-order operators |
+| `notes.each_voice(n => sine(n.freq))` over a runtime event stream | Manually expand into a fixed-size POLY block | API doesn't compose with arbitrary higher-order operators |
 
 ### 1.3 Why Now
 
@@ -402,8 +402,8 @@ These restrictions exist to keep v1 shippable; they can relax in follow-ups as u
 **Stdlib higher-order operators (all implemented via `FOREACH_EVENT`):**
 
 ```akkado
-notes.each_voice(n => osc("sin", n.freq) * 0.5) // PER_ITERATION allocator
-notes.each(n => osc("sin", n.freq) |> out(@))   // PER_ITERATION, no return
+notes.each_voice(n => sine(n.freq) * 0.5) // PER_ITERATION allocator
+notes.each(n => sine(n.freq) |> out(@))   // PER_ITERATION, no return
 notes.fold(0.0, (acc, n) => acc + n.freq)       // SHARED allocator, single accumulator slot
 ```
 
@@ -517,7 +517,7 @@ L1 only. For N independent stateful UGen instantiations, use L3 `each`:
 
 ```akkado
 freqs = [220, 330, 440, 550]
-freqs.each(f => osc("sin", f) * 0.25) |> out(@)
+freqs.each(f => sine(f) * 0.25) |> out(@)
 ```
 
 ### 7.5 Higher-Order DSL (L3)
@@ -525,10 +525,10 @@ freqs.each(f => osc("sin", f) * 0.25) |> out(@)
 ```akkado
 // each_voice: per-event UGen instantiation; mixed output of all per-event signals
 n"c4 e4 g4" as notes
-notes.each_voice((n) -> osc("sin", n.freq) * 0.5) |> out(@)
+notes.each_voice((n) -> sine(n.freq) * 0.5) |> out(@)
 
 // each: side-effecting, no return aggregation (each iteration calls out() itself)
-notes.each((n) -> osc("sin", n.freq) |> out(@))
+notes.each((n) -> sine(n.freq) |> out(@))
 
 // reduce: shared accumulator (arg order reduce(coll, fn, init))
 notes.reduce((acc, n) -> acc + n.freq, 0.0)
