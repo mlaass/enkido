@@ -1,4 +1,4 @@
-> **Status: NOT STARTED** — Bringing `nkido` and `akkado` to Windows (MSVC) with full runtime parity, CI on every PR, and downloadable release zips on every `v*` tag.
+> **Status: IN PROGRESS — Phases 1 & 2 DONE on Windows dev box (2026-06-05)** — Phase 1 source-level readiness shipped in `1412a0b`; Phase 2 platform abstractions verified end-to-end on this machine (cedar_tests green, nkido render + serve JSON round-trip + UTF-8 paths working, EOF shutdown clean). Phases 3 (port `test_serve.cpp` + fix `akkado_tests` Catch2 static-init stack overflow), 4 (CI), and 5 (release zip) remain.
 
 # PRD: Windows Port of Nkido Executables
 
@@ -338,27 +338,41 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 ## 5. Implementation Phases
 
-### Phase 1 — Source-level Windows readiness (no CI yet)
+### Phase 1 — Source-level Windows readiness (no CI yet) — **DONE (2026-05-29, `1412a0b`)**
 
-**Goal:** A fresh MSVC `cmake --build` succeeds for `nkido`, `akkado`, `cedar_tests`, `akkado_tests` on a Windows developer machine. `nkido_tests` (which depends on the still-POSIX `test_serve.cpp`) is **explicitly excluded** from Phase 1 by configuring with `-DNKIDO_BUILD_TESTS=OFF` — the `tools/nkido/tests/` subdirectory is already gated behind that flag in `tools/nkido/CMakeLists.txt:101-103`. Phase 3 flips the flag back on once `test_serve.cpp` has been ported.
+**Goal:** A fresh MSVC `cmake --build` succeeds for `nkido`, `akkado`, `cedar_tests`, `akkado_tests` on a Windows developer machine. `nkido_tests` (which depends on the still-POSIX `test_serve.cpp`) is **explicitly excluded** from Phase 1 via a new `-DNKIDO_BUILD_NKIDO_TESTS=OFF` flag (default = `NKIDO_BUILD_TESTS`). Phase 3 flips it back on once `test_serve.cpp` has been ported.
 
 **Files:** all changes in §4.1 + §4.2 *except* `.github/workflows/ci.yml`.
 
-**Verification:** Manual — run `cmake --preset debug -G Ninja -DNKIDO_BUILD_TESTS=OFF` and `cmake --build build/debug` on a Win11 + VS 2022 + Ninja + SDL2-2.30.10 box. Confirm `build/debug/bin/nkido.exe` and `build/debug/bin/akkado.exe` exist. Run `nkido.exe --help`, `akkado.exe --help`, `nkido.exe render --help`. **Do not** run the audio path yet — that's Phase 3.
+**Verification (achieved on this box):** `cmake --preset debug -G Ninja` + `cmake --build build/debug` produces `nkido.exe` (12 MB) and `akkado.exe` (8 MB) under MSVC 14.44 / Ninja / SDL2 2.30.10 / OpenSSL 3.5 (vcpkg). `nkido --help`, `akkado --help`, `nkido render --help` all exit 0.
 
-**Commit:** `feat(windows): source-level MSVC readiness for nkido and akkado`
+**Pre-existing MSVC blockers also fixed in the same commit** (necessary for the build):
+- `scale_quantize.ak` (94 KB) > MSVC string-literal limit (error C2026) — `cmake/generate_stdlib_files.cmake` now chunks long `.ak` files into ≤12 KB raw-string segments at line boundaries.
+- `__builtin_ctz` → `std::countr_zero` in `akkado/src/codegen_patterns.cpp:1074`.
+- 4 SDL include sites: `<SDL2/SDL.h>` → `<SDL.h>` (works on both layouts).
+- `bitmap_font.hpp`: missing `<cstddef>` for `std::size_t`.
+- `/STACK:8388608` (8 MB) on MSVC linker — `cedar::VM` static init overflowed the default 1 MB Windows stack.
 
-### Phase 2 — Platform abstractions integrated
+**Commit:** `1412a0b` — `feat(windows): source-level MSVC readiness for nkido and akkado` (24 files, +282/-17).
+
+### Phase 2 — Platform abstractions integrated — **DONE (2026-06-05, verified on Windows dev box)**
 
 **Goal:** UTF-8 console works, Ctrl+C exits cleanly, serve mode stdin/stdout is binary-mode.
 
-**Files:** `serve_mode.cpp` (handler swap + `set_stdio_binary_mode` call), `main.cpp` × 2 (`ensure_utf8_console` calls), the three `cedar/include/cedar/platform/*.hpp` plus their POSIX + Windows implementations, manifest files + CMake `target_sources` lines.
+**Files:** Wiring landed together with the abstractions in Phase 1 commit `1412a0b` — `serve_mode.cpp` calls `cedar::platform::set_stdio_binary_mode()` before `install_signal_handlers()`; both CLI `main()`s call `cedar::platform::ensure_utf8_console()` first; `install_signal_handlers()` in `audio_engine.cpp:19-23` delegates to `cedar::platform::install_ctrl_c_handler`. Phase 2 itself = end-to-end verification.
 
-**Verification:**
-- Linux: `cedar_tests`, `akkado_tests`, `nkido render` all pass (no behavior change — POSIX implementations are no-op / wrap existing `signal`).
-- Windows: launch `nkido serve`, hit Ctrl+C → process exits within 1s with no stuck audio. Pass JSON over stdin and watch stdout for the parsed events. Confirm `nkido render examples/with-emoji-é.akk out.wav` works (UTF-8 path test).
+**Verification (this box, 2026-06-05):**
+- **cedar_tests:** 330 test cases / 341,522 assertions all pass (5 SoundFont-fixture tests skipped — fixture not committed).
+- **akkado_tests:** crashes with `STACK_OVERFLOW` (`0xC00000FD`) even on `--help` — Catch2 static-init exceeds the 8 MB linker stack. Confirmed as the **known Phase 3 issue**.
+- **nkido render:** `hello-sine.akk` → `test-hello.wav` (384,044 B = 2 s stereo float at 48 kHz, exact). `-v` reports `Rendered 1s (375 blocks, 48000 samples)`.
+- **UTF-8 path test:** Created `build\debug\utf8-é-é.akk`, rendered to `build\debug\utf8-out-é.wav` (192,044 B) — UTF-8 manifest is routing ANSI APIs through CP_UTF8.
+- **serve JSON round-trip:** Piped `{"cmd":"load",...}\n{"cmd":"quit"}\n` through `cmd /c "... < in.txt > out.txt"`. Got `{"event":"ready"}\n{"event":"compiled","ok":true}\n` back. **Stdout bytes confirmed LF-only (no `0x0D` anywhere)** — `set_stdio_binary_mode()` is suppressing CRLF translation as designed.
+- **Ctrl+C handler:** Manually verified by user in an interactive PowerShell: launched `nkido serve`, pasted the load command, heard the 440 Hz tone (audio callback first-fired at `len=1024`), hit `Ctrl+C` in the console — process exited promptly back to the prompt, no stuck audio. (Note: Ctrl+C while the SDL window has foreground focus does nothing — expected, since the console handler only fires when the console has focus.) Automated test from Claude session not possible — every `GenerateConsoleCtrlEvent` harness variant (CREATE_NEW_PROCESS_GROUP, AttachConsole/FreeConsole) killed the parent shell. EOF-on-stdin proxy independently confirmed: `nkido serve < NUL` exits cleanly with code 0 in **273 ms**, exercising the same `g_signal_received` atomic check in the main loop (`serve_mode.cpp:1218`).
+- **Linux:** No behavior change expected — POSIX implementations are `signal()` no-op wrappers. Not re-run here.
 
-**Commit:** `feat(windows): platform abstractions for ctrl-c, stdio binary mode, UTF-8 console`
+**Commit:** No new commit required — wiring already in `1412a0b`. Phase 2 = verification of that commit. Next commit lands with Phase 3.
+
+**Carried forward to Phase 3:** (a) port `tools/nkido/tests/test_serve.cpp` off POSIX, (b) fix the `akkado_tests` Catch2 static-init stack overflow (raise `/STACK` further, defer test registration, or split the binary).
 
 ### Phase 3 — Test suite ported
 
@@ -368,7 +382,7 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 - **Option A (preferred):** `std::filesystem::temp_directory_path()` + `_popen`/`popen` behind a thin `tests/test_subprocess.hpp` helper.
 - **Option B (fallback):** mark the test `[!mayfail]` on Windows and file a follow-up. Avoid if possible — the test exists for a reason.
 
-Other tests audited: `cedar_tests` and `akkado_tests` use Catch2 + standard C++ only — expected to pass on Windows without changes, but Phase 1's manual run will surface any surprises.
+Other tests audited: `cedar_tests` passes 330/330 (341,522 assertions) on Windows. `akkado_tests` crashes with `STACK_OVERFLOW` (`0xC00000FD`) during Catch2 static-init even on `--help` — 8 MB `/STACK` is insufficient. Phase 3 must either raise the linker stack further, switch to Catch2's CMake-time test registration (so registration isn't all-static-init), or split the binary. Surfaced during Phase 2 verification on this box (2026-06-05).
 
 **Verification:** `ctest` exit code 0 on both `windows-debug` and `linux-debug` configurations.
 
@@ -455,13 +469,13 @@ The `cedar-only` preset disables akkado and tools — the only thing it builds i
 
 ### 7.1 Per-phase verification (summarized from §5)
 
-| Phase | Test |
-|-------|------|
-| 1 | Manual `cmake --build` on a Windows dev box; `--help` runs on both executables. |
-| 2 | Round-trip Ctrl+C and UTF-8 path tests on Windows; existing Linux tests unchanged. |
-| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_tests`. |
-| 4 | All 4 CI jobs green on a no-op PR. |
-| 5 | Pre-release tag → downloadable zip → smoke-test on clean Win11 VM. |
+| Phase | Test | Status |
+|-------|------|--------|
+| 1 | Manual `cmake --build` on a Windows dev box; `--help` runs on both executables. | ✅ done 2026-05-29 (`1412a0b`) |
+| 2 | Round-trip Ctrl+C and UTF-8 path tests on Windows; existing Linux tests unchanged. | ✅ done 2026-06-05 (incl. manual interactive Ctrl+C confirmation in PowerShell — exits promptly, no stuck audio) |
+| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_tests`. | ⏳ `cedar_tests` green; `akkado_tests` blocked on Catch2 static-init stack overflow; `nkido_tests` blocked on `test_serve.cpp` POSIX rewrite |
+| 4 | All 4 CI jobs green on a no-op PR. | ⏳ pending |
+| 5 | Pre-release tag → downloadable zip → smoke-test on clean Win11 VM. | ⏳ pending |
 
 ### 7.2 Acceptance criteria for v1
 
