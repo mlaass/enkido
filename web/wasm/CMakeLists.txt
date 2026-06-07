@@ -113,6 +113,7 @@ if(EMSCRIPTEN)
         _akkado_get_main_instruction_count
         # Akkado compiler
         _akkado_compile
+        _akkado_compile_bypass_master
         _akkado_get_bytecode
         _akkado_get_bytecode_size
         _akkado_get_diagnostic_count

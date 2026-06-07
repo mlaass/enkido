@@ -39,25 +39,26 @@ describe('Array Compilation', () => {
 		expect(pushConsts.length).toBeGreaterThanOrEqual(3);
 	});
 
-	it('compiles array indexing with constant index arr[0]', () => {
+	it('compiles array indexing with constant index xs[0]', () => {
+		// `arr` is a reserved type-annotation keyword; use `xs` as the binding.
 		const source = `
-			arr = [100, 200, 300]
-			arr[0] |> out(%, %)
+			xs = [100, 200, 300]
+			xs[0] |> out(%, %)
 		`;
 		const result = nkido.akkado_compile(source);
 		expect(result).toBe(1);
 
 		const disasm = getDisassembly(nkido);
 
-		// Should have OUTPUT instruction
+		// out(%, %) is stereo → one OUTPUT instruction per channel (L + R).
 		const outputs = disasm.instructions.filter((i) => i.opcode === 'OUTPUT');
-		expect(outputs.length).toBe(1);
+		expect(outputs.length).toBe(2);
 	});
 
-	it('compiles array indexing with dynamic index arr[lfo()]', () => {
+	it('compiles array indexing with dynamic index xs[lfo()]', () => {
 		const source = `
-			arr = [220, 330, 440, 550]
-			arr[lfo(1) * 3.99] |> sine(%) |> out(%, %)
+			xs = [220, 330, 440, 550]
+			xs[lfo(1) * 3.99] |> sine(%) |> out(%, %)
 		`;
 		const result = nkido.akkado_compile(source);
 		expect(result).toBe(1);
@@ -147,8 +148,8 @@ describe('Array Compilation', () => {
 
 	it('compiles len() of array', () => {
 		const source = `
-			arr = [10, 20, 30, 40, 50]
-			len(arr) |> out(%, %)
+			xs = [10, 20, 30, 40, 50]
+			len(xs) |> out(%, %)
 		`;
 		const result = nkido.akkado_compile(source);
 		expect(result).toBe(1);
@@ -251,7 +252,10 @@ describe('Array Error Handling', () => {
 	});
 
 	it('compiles empty array without error', () => {
-		const result = nkido.akkado_compile('[] |> out(%, %)');
+		// The empty-array literal itself must compile. (Piping it into out()
+		// is a separate, legitimate type error — out() expects a Signal, not
+		// an Array — so it is not part of what this test asserts.)
+		const result = nkido.akkado_compile('xs = []\nlen(xs) |> out(%, %)');
 		expect(result).toBe(1);
 	});
 });

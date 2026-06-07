@@ -602,6 +602,26 @@ WASM_EXPORT int akkado_compile(const char* source, uint32_t source_len) {
     return g_compile_result.success ? 1 : 0;
 }
 
+// Test-only: compile with the bus-routing master bus suppressed, so out()
+// writes straight to the device with no soft-clip / safety epilogue. Used by
+// measurement tests (e.g. web/tests/sample-velocity.test.ts) that need to read
+// linear signal amplitudes without the master DISTORT_SOFT saturator. NOT for
+// production playback — the normal akkado_compile keeps the safety stage, and
+// nothing in akkado *source* can reach this path.
+WASM_EXPORT int akkado_compile_bypass_master(const char* source, uint32_t source_len) {
+    if (!source) {
+        return 0;
+    }
+
+    std::string_view src{source, source_len};
+    akkado::CompileResult new_result = akkado::compile(
+        src, "<web-test>", /*sample_registry=*/nullptr, /*resolver=*/nullptr,
+        /*lint_strict=*/false, /*bypass_master=*/true);
+    std::swap(g_compile_result, new_result);
+
+    return g_compile_result.success ? 1 : 0;
+}
+
 /**
  * Get the compiled bytecode pointer
  * Only valid after successful akkado_compile()

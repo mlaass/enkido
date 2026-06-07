@@ -590,7 +590,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
                 "saw": saw(freq)
                 _: saw(freq)
             }
-            my_saw(440)
+            my_osc("saw", 440)
         )");
 
         REQUIRE(result.success);
@@ -943,7 +943,7 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
         // Define a custom osc() that always returns a saw
         auto result = akkado::compile(R"(
             fn osc(type, freq, pwm = 0.5) -> saw(freq)
-            sine(440)
+            osc("sin", 440)
         )");
 
         REQUIRE(result.success);
@@ -1719,7 +1719,7 @@ TEST_CASE("String default parameters", "[akkado][fn][string-defaults]") {
                 "tri": tri(freq)
                 _: saw(freq)
             }
-            my_tri(880)
+            my_osc("tri", 880)
         )");
 
         REQUIRE(result.success);
