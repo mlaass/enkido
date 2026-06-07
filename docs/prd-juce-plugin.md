@@ -40,9 +40,9 @@ A JUCE 8 plugin in a **separate, closed-source sibling repository**
   codebase instead of two parallel implementations.
 - **Syncs to host transport** (tempo + playhead), runs the engine off a
   ring-buffer adapter (the engine's fixed 128-sample blocks ↔ the DAW's
-  arbitrary block sizes), exposes a **fixed pool of 64 automatable parameter
-  slots** remapped to the code-defined `param()` set, and persists the Akkado
-  source + parameter values in the DAW session.
+  arbitrary block sizes), exposes a **fixed pool of 64 macro slots**
+  (host-automatable) remapped to the code-defined `param()` set, and persists
+  the Akkado source + parameter values in the DAW session.
 
 ### 1.3 Key Design Decisions (settled during planning)
 
@@ -61,14 +61,16 @@ A JUCE 8 plugin in a **separate, closed-source sibling repository**
 | Parity testing | **Web Playwright baseline + plugin validation** (pluginval + audio-render equivalence) | Lock site behavior before refactor; validate the plugin path independently. |
 | Licensing/DRM | **Out of scope for v1** | Architecture first; selling/activation is a separate concern. |
 | Open/closed line | **Only the JUCE wrapper is closed** | Shared UI core stays open in `nkido/web` (benefits the site too); the closed repo holds only the JUCE C++ plugin. |
+| Engine license | **MIT** (per `nkido/README.md`) | Permissive — embedding the open engine + UI bundle inside a closed paid binary is compatible. Housekeeping: add a top-level `LICENSE` file mirroring the README statement. |
 
 ### 1.4 Goals (v1)
 
 - A loadable **Linux VST3/CLAP/Standalone** plugin, in both synth and effect
   variants, that compiles Akkado source natively and produces audio in a host.
 - **Host-synced** transport: tempo + playhead drive Akkado's cycle/beat clock.
-- **64 automatable parameters** mapped to the user's `param()` declarations,
-  with names shown to the host and automation that survives code edits.
+- **64 macro slots** (host-automatable) mapped to the user's `param()`
+  declarations, with names shown to the host and automation that survives
+  code edits.
 - **Web UI in a WebView** as the editor: code editor, params, visualizations,
   state inspector, preset browser.
 - **Shared UI core** extracted in `nkido/web` with a `WasmAudioBackend` (site)
@@ -124,12 +126,12 @@ Akkado code as the input signal; the code processes and returns it.
 ```akkado
 // Effect: process the DAW's audio bus through Akkado
 mix = param("wet", 0.4, 0, 1)
-in_l |> chorus(@, 0.5, 0.5, wet: mix) |> out(@)
+in() |> chorus(@, 0.5, 0.5, wet: mix) |> out(@)
 ```
 
-(The exact builtin for "the host's input bus" — e.g. `in_l` / `in_r` or a
-dedicated builtin — reuses the existing audio-input mechanism from
-`prd-audio-input.md`; see **[OPEN QUESTION 11.1]**.)
+(`in()` is the shipped audio-input builtin from `prd-audio-input.md`; whether
+the plugin reuses it as-is or adds a dedicated host-bus variant is
+**[OPEN QUESTION 11.1]**.)
 
 ### 2.3 Editor (shared web UI in a WebView)
 
@@ -188,10 +190,9 @@ don't-diverge goal). The paid product is the native integration — the part tha
 makes it a real plugin. The `JuceAudioBackend` *JavaScript* adapter is open (it
 runs inside the open web UI); the *C++* native bridge it talks to is closed.
 
-> **[OPEN QUESTION 11.2]** Embedding the open-source UI bundle inside a closed
-> paid binary is fine under permissive licenses but must be confirmed against
-> the engine/web repo's actual license terms (copyleft would force the wrapper
-> open). Verify before shipping.
+The engine is **MIT-licensed** (per `nkido/README.md`), so embedding the open
+UI bundle inside a closed paid binary is compatible. Housekeeping: add a
+top-level `LICENSE` file mirroring the README statement.
 
 ### 3.2 Engine consumption
 
@@ -238,7 +239,7 @@ It directly owns the Web Audio graph, the `AudioWorklet`, and the compile
 import `audioEngine`, and **all call high-level methods only**. No component
 touches `AudioContext` / `AudioWorkletNode` / `Worker` / `port.postMessage`
 directly (those primitives appear only inside `audio.svelte.ts` and its helpers
-`input-source.ts`, `midi-input.svelte.ts`).
+`web/src/lib/audio/input-source.ts` and `web/src/lib/midi/midi-input.svelte.ts`).
 
 **Implication:** the public `audioEngine` shape is already a de-facto interface.
 Extraction touches **~1 production file** (split it); the ~33 consumers are
@@ -327,6 +328,27 @@ problem (the store flips from *owning and pushing* `isPlaying`/`bpm`/
 extraction or branching — but extraction keeps it from metastasizing across the
 file. Bidirectional params are likewise new and host-driven.
 
+### 5.6 Plugin-only UI panels
+
+Some UI surfaces don't exist on the site at all — they're plugin-specific by
+nature: a **drag-and-drop sample loader** that targets the host filesystem and
+a JUCE `FileChooser`, the **preset browser** (§6.7), host-driven transport
+indicators (§6.3), and (eventually) license-activation UI. The shared core
+(§5.2) covers the editor, params, visualizations, and inspectors; these
+plugin-only panels need a home that doesn't pollute the site bundle.
+
+Working assumption: keep one Svelte codebase under `nkido/web` and gate
+plugin-only components behind a build-time `IS_PLUGIN` flag (Vite `define`),
+producing two bundles — `web/` (site) and `web/plugin-ui/` (WebView). Plugin
+panels live in `web/src/lib/plugin/` and are tree-shaken out of the site
+build. The `JuceAudioBackend` already runs only when `window.__JUCE__` exists,
+so plugin code that imports it doesn't pull JUCE into the site bundle.
+
+> **[OPEN QUESTION 11.6]** Plugin-only UI architecture: single shared
+> codebase with `IS_PLUGIN` build flag (proposed), separate `plugin-ui/`
+> package consuming the shared core as a dependency, or runtime feature
+> detection only? Affects build, deploy, and CI surface.
+
 ---
 
 ## 6. Plugin Architecture (C++ / JUCE)
@@ -378,7 +400,7 @@ macros. Two targets are declared from the same sources:
 | | Synth target | Effect target |
 |---|---|---|
 | `IS_SYNTH` | `TRUE` | `FALSE` |
-| `NEEDS_MIDI_INPUT` | `TRUE` | `FALSE` (or `TRUE` for MIDI-controlled FX — **[OPEN 11.3]**) |
+| `NEEDS_MIDI_INPUT` | `TRUE` | `FALSE` (or `TRUE` for MIDI-controlled FX — **[OPEN 11.2]**) |
 | Bus layout | output-only (stereo) | input + output (stereo == stereo) |
 | `isBusesLayoutSupported` | accept mono/stereo out | require in-layout == out-layout |
 | AU main type | `MusicDevice` | `Effect` |
@@ -398,7 +420,7 @@ both.
 - Plugin UI transport controls become **read-only host indicators**; `play()`/
   `setBpm()` from the UI are no-ops or best-effort requests (the host is truth).
 
-> **[OPEN QUESTION 11.4]** Phase-alignment policy on loop/seek: hard re-anchor
+> **[OPEN QUESTION 11.3]** Phase-alignment policy on loop/seek: hard re-anchor
 > Akkado phase to `ppqPosition` every block (sample-accurate grid lock) vs.
 > free-run with re-anchor only on transport state change. Affects feel of
 > long/evolving patterns. Default proposed: re-anchor to `ppq` continuously.
@@ -419,13 +441,16 @@ the engine's zero-alloc audio path unchanged. If a buggy host exceeds
 
 ### 6.5 Background compile + lock-free swap
 
-Mirrors the engine's existing triple-buffer model. `akkado_compile` runs on a
-`juce::Thread`; the result (an immutable program: bytecode + block table +
-state-init buffers) is published to the audio thread by **atomic pointer swap**
-via a lock-free SPSC FIFO. The audio thread `acquire`-loads the program at the
-top of `processBlock`; the retired program pointer is pushed back to a GC thread
-so the **audio thread never frees memory**. The existing 5–10 ms micro-crossfade
-on structural change runs on the audio thread across a few blocks after the swap.
+Mirrors the engine's existing triple-buffer model — **the same off-audio-thread
+compile + atomic swap pattern shipped for the web in `prd-compile-off-audio-thread.md`
+(v0.4.3, 2026-05-29)**, run natively here on a `juce::Thread` instead of a
+web Worker. `akkado_compile` runs off-thread; the result (an immutable program:
+bytecode + block table + state-init buffers) is published to the audio thread
+by **atomic pointer swap** via a lock-free SPSC FIFO. The audio thread
+`acquire`-loads the program at the top of `processBlock`; the retired program
+pointer is pushed back to a GC thread so the **audio thread never frees memory**.
+The existing 5–10 ms micro-crossfade on structural change runs on the audio
+thread across a few blocks after the swap.
 `static_assert(std::atomic<Program*>::is_always_lock_free)`.
 
 ### 6.6 Parameter system (fixed pool of 64 macro slots)
@@ -438,7 +463,7 @@ on structural change runs on the audio thread across a few blocks after the swap
 - Push the human label/range to the host via `updateHostDisplay()` /
   `kParamTitlesChanged`. The param's `min`/`max` come from the `param()` decl.
 - `button()`/`toggle()`/`dropdown()` map onto slots too (toggle → 0/1 range,
-  dropdown → stepped). **[OPEN 11.5]:** are 64 slots enough; what happens when a
+  dropdown → stepped). **[OPEN 11.4]:** are 64 slots enough; what happens when a
   patch declares >64 params (proposed: bind first 64, surface a UI warning for
   the rest, still controllable in-UI but not host-automatable).
 - Host automation writing a slot → updates the engine param **and** the WebView
@@ -505,7 +530,7 @@ process).
 | Cloudflare share backend | **OUT** | Browser-only; not applicable in a plugin. |
 | Standalone "owns transport" controls | **OUT** (in plugin) | DAW owns transport; the **Standalone format** keeps a minimal owned transport. |
 
-> **[OPEN QUESTION 11.6]** Sample/SF2 loading UX in the plugin: reuse the web
+> **[OPEN QUESTION 11.5]** Sample/SF2 loading UX in the plugin: reuse the web
 > file-router with a native resolver behind it, or a dedicated JUCE-native asset
 > picker bridged into the UI? Affects how much of `web/src/lib/io/` and
 > `file-router.ts` is shared vs plugin-specific.
@@ -630,8 +655,8 @@ adds the other platforms' codepaths.
 | Host block exceeds `maximumExpectedSamplesPerBlock` | One-time reallocation (single glitch) rather than crash; never allocate in steady state. |
 | Compile error in user source | Keep last good program playing; surface diagnostics in the WebView; do **not** drop audio. |
 | Code edit while playing | Off-thread compile → atomic swap → 5–10 ms micro-crossfade; automation lanes survive via semantic-id rebind. |
-| Patch declares > 64 params | Bind first 64 to slots; remaining controllable in-UI but not host-automatable; UI warning (**[OPEN 11.5]**). |
-| Host loop / seek / locate | Re-anchor Akkado phase to `ppqPosition` so patterns stay on grid (**[OPEN 11.4]**). |
+| Patch declares > 64 params | Bind first 64 to slots; remaining controllable in-UI but not host-automatable; UI warning (**[OPEN 11.4]**). |
+| Host loop / seek / locate | Re-anchor Akkado phase to `ppqPosition` so patterns stay on grid (**[OPEN 11.3]**). |
 | Host transport stopped | Pattern clock stops; engine continues rendering tails/releases until silent. |
 | WebView2 runtime missing (Windows) | Editor fails to load; processor still runs audio. Installer should ship/detect the Evergreen runtime (signing-PRD scope). v1: documented limitation. |
 | `webkit2gtk` missing (Linux) | Editor unavailable; audio still works. Declared soft dependency. |
@@ -644,21 +669,24 @@ adds the other platforms' codepaths.
 
 ## 11. Open Questions
 
-- **11.1** Effect-variant input builtin: reuse `prd-audio-input.md`'s `in_l`/`in_r`
-  mechanism, or a dedicated host-input builtin? Confirm naming/semantics.
-- **11.2** License compatibility of embedding the open UI bundle in a closed paid
-  binary — verify the engine/web repo license is permissive (not copyleft).
-- **11.3** Does the **effect** variant accept MIDI (MIDI-controlled FX) in v1, or
+- **11.1** Effect-variant input builtin: reuse the shipped `in()` from
+  `prd-audio-input.md`, or add a dedicated host-bus variant with explicit
+  L/R access? Confirm naming/semantics.
+- **11.2** Does the **effect** variant accept MIDI (MIDI-controlled FX) in v1, or
   audio-only?
-- **11.4** Loop/seek phase-alignment policy (continuous re-anchor to `ppq` vs.
+- **11.3** Loop/seek phase-alignment policy (continuous re-anchor to `ppq` vs.
   re-anchor on transport change only).
-- **11.5** Is 64 automatable slots the right pool size? Overflow UX for patches
+- **11.4** Is 64 macro slots the right pool size? Overflow UX for patches
   with more params.
-- **11.6** Sample/SF2 loading UX: shared web file-router + native resolver vs.
+- **11.5** Sample/SF2 loading UX: shared web file-router + native resolver vs.
   dedicated JUCE-native picker; how much of `web/src/lib/io/` is shared.
+- **11.6** Plugin-only UI panels architecture (see §5.6): single shared
+  codebase with `IS_PLUGIN` build-time flag, separate `plugin-ui/` package
+  consuming the shared core, or runtime feature detection?
 - **11.7** Repo name: `nkido-juce-plugin` (assumed) — confirm.
-- **11.8** Product naming for the two variants (e.g. "Nkido" / "Nkido FX") and
-  distinct VST3/CLAP/AU plugin codes.
+- **11.8** Final marketing/product names beyond the working convention
+  "Nkido" (instrument) / "Nkido FX" (effect), plus distinct VST3/CLAP/AU
+  plugin codes.
 
 ---
 
@@ -694,8 +722,8 @@ adds the other platforms' codepaths.
 ```bash
 # plugin repo
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target NkidoSynth_VST3 NkidoFX_VST3 NkidoSynth_CLAP Nkido_Standalone
-pluginval --strictness-level 8 build/.../Nkido.vst3
+cmake --build build --target Nkido_VST3 NkidoFX_VST3 Nkido_CLAP NkidoFX_CLAP Nkido_Standalone
+pluginval --strictness-level 8 build/.../Nkido.vst3 build/.../NkidoFX.vst3
 
 # web (open repo)
 cd web && bun run check && bunx playwright test
@@ -711,6 +739,7 @@ cd web && bun run check && bunx playwright test
 | `tools/nkido`, `tools/akkado` | **Stays** | Same native API the plugin uses; reused for render-equivalence tests. |
 | `web/src/lib/stores/audio.svelte.ts` | **Modified** | Split into store shell + extracted backends (Phase 0). |
 | `web/src/lib/audio/*` | **New files** | `audio-backend.ts`, `wasm-backend.ts`, `juce-backend.ts`. |
+| `web/src/lib/plugin/*` | **New files** | Plugin-only UI panels (sample drag-drop, preset browser, host-transport indicators) gated by `IS_PLUGIN` build flag — see §5.6. |
 | ~33 web UI consumer files | **Stays** | Still import `audioEngine`; no changes. |
 | Web `compile.worker.ts`, worklet | **Stays** | Become web-only deps of `WasmAudioBackend`; the worklet's RPC surface is the contract the native bridge mirrors. |
 | `web/` Playwright tests | **New** | Parity baseline. |
