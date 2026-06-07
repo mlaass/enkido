@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS** — corrected scope as of 2026-05-24. Standalone sibling
+> **Status: IN FLIGHT** — corrected scope as of 2026-05-24. Standalone sibling
 > of [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
 > The original draft (2026-05-22) specced `scale` / `key` as a new
 > `EVENT_QUANTIZE` opcode. **That framing has been dropped.** Under the
