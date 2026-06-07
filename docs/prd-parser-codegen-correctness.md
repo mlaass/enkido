@@ -1,4 +1,4 @@
-> **Status: DONE — All 5 phases shipped (F7 withdrawn during Phase 0).**
+> **Status: DONE — all 5 phases shipped (2026-05-26).**
 > Filed 2026-05-25; closed 2026-05-26. All 5 in-scope critical
 > correctness findings (F1 / F2 / F8 / F12 / F14) from
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md)

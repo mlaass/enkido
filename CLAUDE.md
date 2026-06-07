@@ -189,6 +189,20 @@ The correct release order is: (1) write the CHANGELOG entry, (2) run
 `bump-version.sh`, (3) push. Tagging before the script runs leaves `VERSION`
 out of sync with the tag.
 
+## PRD Status Conventions
+
+PRDs (`docs/prd-*.md`) start with `> **Status: <VERDICT> — <note> (YYYY-MM-DD).**`;
+`scripts/list-prds.py` buckets them by keyword.
+
+- **complete**: `DONE`, `COMPLETE`, `SHIPPED`, `IMPLEMENTED`, `ALL PHASES DONE`
+- **in-progress**: `PARTIAL`, `MOSTLY SHIPPED`, `IN FLIGHT`, `PHASE N <verdict>`, `REVISION N IMPLEMENTED`
+- **not-started**: `NOT STARTED`, `TODO`, `DRAFT`, `PROPOSED`, `READY`
+- **on-hold**: `ON HOLD`, `DEFERRED`, `DESCOPED`
+
+Pitfall: the singular word `Phase` on the status line (e.g. `during Phase 0`)
+demotes to in-progress. Use plural `phases` or move the phase mention to the body.
+Verify with `python3 scripts/list-prds.py --all` — it prints the raw extracted keyword.
+
 ## Project Structure
 
 ```
