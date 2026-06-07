@@ -9,6 +9,7 @@
     "build:docs": "bun scripts/build-docs-index.ts",
     "build:welcome": "bun scripts/build-welcome-patches.ts",
     "build:opcodes": "bun scripts/generate-opcode-metadata.ts",
+    "build:state-init-codec": "bun scripts/build-state-init-codec.ts",
     "build:syntax": "bun scripts/generate-syntax-builtins.ts",
     "build:builtins-json": "bun scripts/generate-builtins-json.ts",
     "build:scales": "bun scripts/generate-scales.ts",

@@ -1,11 +1,27 @@
-> **Status: NOT STARTED** — design doc; ready for implementation.
-> Discovered & root-caused 2026-05-28 via the new e2e test
+> **Status: IMPLEMENTED 2026-05-29 (v0.4.3).** Compile runs in
+> `web/src/lib/audio/compile.worker.ts`; the worklet consumes pre-packed
+> buffers via `loadProgram` and the four `*_from_buffer` WASM exports.
+> Discovered & root-caused 2026-05-28 via the e2e test
 > [`web/e2e/hot-swap-audio.spec.ts`](../web/e2e/hot-swap-audio.spec.ts).
+>
+> **Deviation from the original design (§5.4):** the wire-format codec is
+> *not* an auto-generated TS packer. Pack **and** unpack live co-located in
+> C++ at `akkado/include/akkado/state_init_buffer.hpp`; the worker packs by
+> calling the WASM `_akkado_pack_*_buffer` exports and shipping the raw
+> bytes. Because both WASM builds memcpy the same structs, wire-format drift
+> is structurally impossible (the `WIRE_VERSION` header guards the
+> stale-browser-cache case). The TS side is a generated **validator** —
+> `web/src/lib/audio/state-init-codec.ts` (a decoder + size constants,
+> emitted by `web/scripts/build-state-init-codec.ts`) — cross-checked
+> against real C++-packed bytes by `web/tests/state-init-codec.test.ts`.
+> The C++ round-trip test `akkado/tests/test_state_init_buffer_codec.cpp`
+> is the primary byte-level guard. See §5.4 / §10.2.
+>
 > Reviewed 2026-05-28: wire format expanded to cover block_table,
 > MIDI sources, and sample mappings; SequenceProgram events memcpy
-> the raw `cedar::Event` struct; codec is auto-generated from C++
-> headers; SlotBusy retry is kept but simplified; the <5 ms target
-> reframed as the worklet load-step duration, not `evaluate()` E2E.
+> the raw `cedar::Event` struct; SlotBusy retry is kept but simplified;
+> the <5 ms target reframed as the worklet load-step duration, not
+> `evaluate()` E2E.
 
 # Compile Off the AudioWorklet Thread PRD
 
@@ -592,28 +608,55 @@ mappings source is the buffer parameter instead of `g_compile_result`.
 Worklet calls this after `_nkido_malloc + memcpy(bytecode)` and before
 `_cedar_load_program`, as today.
 
-### 5.4 Pack/unpack symmetry — codec generated from C++ headers
+### 5.4 Pack/unpack symmetry — co-located in C++, validated from TS
 
-`web/src/lib/audio/state-init-codec.ts` contains both the worker-side
-packer (TS) and a TS description of every record layout for
-unit-test sanity checks. To keep the wire format aligned with the C++
-side **at build time**, this file is **auto-generated** by a new
-script `web/scripts/build-state-init-codec.ts` (analogous to the
-existing `build:opcodes` and `build:docs` generators) which parses:
+> **As shipped, this differs from the original "generate a TS packer"
+> plan.** Packing was kept in C++ instead, which removes the drift risk
+> at its source; the generated TS artifact became a validator. Rationale
+> and the as-built shape follow.
 
-- `akkado/include/akkado/codegen.hpp` (`StateInitData`,
-  `SequenceSampleMapping`, `RequiredMidiSource`, `SubprogramDesc`)
-- `cedar/include/cedar/opcodes/sequence.hpp` (`Event`, `Sequence`,
-  `MAX_VALUES_PER_EVENT`, `MAX_PROPS_PER_EVENT`)
-- `cedar/include/cedar/opcodes/dsp_state.hpp` (`ExtendedParams<N>`,
-  `MAX_EXTENDED_PARAMS`)
-- `cedar/include/cedar/vm/vm.hpp` (`BlockEntry`)
+**Packer + unpacker live together in C++.** Both the `pack_*` and the
+`apply_*` / `resolve_*` halves of the wire format are defined in one
+header, `akkado/include/akkado/state_init_buffer.hpp`
+(`detail::Writer` / `detail::Reader`, `pack_state_inits` /
+`apply_state_inits`, `pack_midi_sources` / `apply_midi_sources`,
+`pack_block_table`). The worker WASM and the worklet WASM compile the
+**same** header from the **same** build, so every record's byte layout
+matches by construction — the worker's `packStateInits()` etc.
+(`compile.worker.ts`) just call the `_akkado_pack_*_buffer` exports and
+ship the raw bytes; no TS packing happens on the production path.
 
-…and emits a typed pack function per record, plus assertions that the
-emitted byte sizes match `sizeof(T)` from the WASM side. Run via
-`bun run build:state-init-codec`. Any layout change in the C++
-headers forces regeneration on the next build; CI fails if committed
-codec is out of date.
+Because there is no second (TS) implementation of the layout, the
+"keep the TS packer aligned with C++" problem the original §5.4
+solved **does not exist**. The `WIRE_VERSION` field in each buffer
+header still guards the one residual case — a stale browser cache
+serving an old worklet against a new worker after a deploy.
+
+**Drift guards (two layers):**
+
+1. **C++ round-trip test** — `akkado/tests/test_state_init_buffer_codec.cpp`
+   (`[state_init_codec]`) packs a real `CompileResult` and applies it to
+   a fresh VM, comparing against the legacy per-`init_*` path, plus a
+   bit-perfect hot-swap render of the user pad shape. This is the
+   primary byte-level guard. Struct sizes the wire format memcpy's are
+   pinned with `static_assert` (`sizeof(cedar::Event)`,
+   `TimelineState::Breakpoint`, and `BlockEntry` at its own definition).
+
+2. **Generated TS validator** — `web/scripts/build-state-init-codec.ts`
+   (a generator analogous to `build:opcodes` / `build:docs`, run via
+   `bun run build:state-init-codec`) parses the authoritative facts out
+   of the C++ headers — `MAGIC_*`, `WIRE_VERSION`, `RecordKind`
+   (`state_init_buffer.hpp`), `StateInitData::Type` (`codegen.hpp`),
+   and the `static_assert(sizeof(...))` pins for `Event` / `Breakpoint`
+   / `BlockEntry` — and emits `web/src/lib/audio/state-init-codec.ts`: a
+   **decoder** plus size constants (no packer). `web/tests/state-init-codec.test.ts`
+   loads the real `nkido.wasm`, compiles representative patches, asks the
+   C++ packer for the actual `stateInitsBuf` bytes, and walks them with
+   the generated decoder — stepping over `cedar::Event[]` via the
+   generated `EVENT_SIZE` and asserting the walk lands exactly on each
+   record's `payload_size` and on `buf.byteLength`. A wrong struct size
+   or field order fails this test. Regenerate after any wire-format
+   change; the regenerated file must be byte-identical (CI drift check).
 
 The worklet only consumes via the C-side WASM exports below — it
 never sees the JS objects, so no codec on the worklet side.
@@ -709,8 +752,11 @@ patches without `foreach()`/`iter()` have zero entries.
 | `web/wasm/CMakeLists.txt` | **Modified** | Update `NKIDO_EXPORTED_FUNCTIONS` list (add 4 new, remove 3 old). |
 | `web/static/worklet/cedar-processor.js` | **Modified** | Delete entire `'compile'` message handler + `extract*` helpers. Replace `'loadCompiledProgram'` with `'loadProgram'` taking pre-packed `{bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount}`. Keep a single per-`process_block` SlotBusy retry; drop today's multi-attempt `pendingLoadRetry` state machine. Add a top-of-file comment block stating the worklet-thread contract. |
 | `web/src/lib/audio/compile.worker.ts` | **New** | Owns compile WASM. Mirrors today's worklet `compile` handler, plus pack steps for stateInitsBuf, midiSourcesBuf, blockTable. Returns one big payload. Emits `{type:'ready'}` after WASM init. |
-| `web/src/lib/audio/state-init-codec.ts` | **New, auto-generated** | TS pack functions for every record type. Generated by `web/scripts/build-state-init-codec.ts` from the C++ headers (see §5.4). Don't hand-edit. |
-| `web/scripts/build-state-init-codec.ts` | **New** | Codec generator. Wires into `bun run build:state-init-codec` and runs as part of `bun run build:wasm` so the codec is regenerated whenever WASM is rebuilt. |
+| `akkado/include/akkado/state_init_buffer.hpp` | **New** | C++ wire-format codec (pack + unpack co-located), compiled into both WASM builds. Replaced the planned TS packer — see §5.4. |
+| `akkado/include/akkado/state_init_buffer.hpp` | **New** | The wire-format codec — pack **and** unpack co-located in C++ (`Writer`/`Reader`, `pack_*` / `apply_*` / `resolve_*`). Compiled into both the worker and worklet WASM. `static_assert` size pins for the memcpy'd structs. This replaced the planned TS packer (see §5.4). |
+| `web/src/lib/audio/state-init-codec.ts` | **New, auto-generated** | Wire-format **validator** (decoder + size constants), NOT a packer. Generated by `web/scripts/build-state-init-codec.ts` from the C++ headers (see §5.4). Don't hand-edit. |
+| `web/scripts/build-state-init-codec.ts` | **New** | Validator-codec generator. Run via `bun run build:state-init-codec` (standalone, like `build:opcodes`). |
+| `web/tests/state-init-codec.test.ts` | **New** | Cross-check: loads real `nkido.wasm`, packs via C++, decodes with the generated TS validator, asserts exact-byte walk. |
 | `web/src/lib/stores/audio.svelte.ts` | **Modified** | Spawn worker in `initialize()` with boot-time queueing (§4.3). Replace `compile()` body: post `compile` to worker (with generation tag), await `compileResult`, drop if superseded, then run existing sample-load pipeline, then post `loadProgram` with all four buffers. Surface worker error/death as a compile diagnostic; respawn lazily. |
 | `web/e2e/hot-swap-audio.spec.ts` | **Unchanged** | Same test, will go green. |
 | `akkado/tests/test_hot_swap_event_transforms.cpp` | **Unchanged** | CLI runtime test unaffected. |
@@ -725,8 +771,10 @@ patches without `foreach()`/`iter()` have zero entries.
 | File | Purpose |
 |------|---------|
 | `web/src/lib/audio/compile.worker.ts` | Web Worker entry point. Loads its own WASM instance. On WASM init, posts `{type:'ready'}`. Listens for `{type:'compile', gen, source}`. Calls `_akkado_compile`, extracts diagnostics + bytecode + state-init records + sample mappings + MIDI sources + block table, packs them via the §5 codecs, and posts back `{type:'compileResult', gen, success, ...payload}`. |
-| `web/src/lib/audio/state-init-codec.ts` | **Auto-generated.** Pack functions for every record type, plus TS layout assertions. Generated by `build-state-init-codec.ts` from C++ headers (§5.4). Don't hand-edit. |
-| `web/scripts/build-state-init-codec.ts` | Codec generator. Parses `akkado/include/akkado/codegen.hpp`, `cedar/include/cedar/opcodes/sequence.hpp`, `cedar/include/cedar/opcodes/dsp_state.hpp`, `cedar/include/cedar/vm/vm.hpp` for struct layouts; emits typed pack fns + size assertions into `state-init-codec.ts`. |
+| `akkado/include/akkado/state_init_buffer.hpp` | The C++ wire-format codec: `pack_*` (worker side) + `apply_*` / `resolve_*` (worklet side) in one header, shared by both WASM builds. Replaced the planned TS packer (§5.4). |
+| `web/src/lib/audio/state-init-codec.ts` | **Auto-generated.** Wire-format **validator** — a decoder + size constants (no packer). Generated by `build-state-init-codec.ts` from C++ headers (§5.4). Don't hand-edit. |
+| `web/scripts/build-state-init-codec.ts` | Validator-codec generator. Parses `akkado/include/akkado/state_init_buffer.hpp` (magics, `WIRE_VERSION`, `RecordKind`, `sizeof` pins) and `akkado/include/akkado/codegen.hpp` (`StateInitData::Type`); emits the decoder + size constants into `state-init-codec.ts`. |
+| `web/tests/state-init-codec.test.ts` | Vitest cross-check of the generated decoder against real C++-packed bytes from `nkido.wasm`. |
 
 ### 7.2 Files to modify
 
@@ -734,7 +782,7 @@ patches without `foreach()`/`iter()` have zero entries.
 |------|--------|
 | `web/wasm/nkido_wasm.cpp` | Add `cedar_set_block_table`, `cedar_apply_state_inits_from_buffer`, `akkado_resolve_sample_ids_from_buffer`, `cedar_apply_midi_sources_from_buffer`. Change `akkado_patch_sample_ids_in_bytecode` to take a mappings buffer arg. Delete `cedar_apply_state_inits`, `cedar_apply_midi_sources`, `akkado_resolve_sample_ids` (no callers). |
 | `web/wasm/CMakeLists.txt` | Update `NKIDO_EXPORTED_FUNCTIONS`: add the four new `*_from_buffer` / `_cedar_set_block_table` exports; remove the three deleted exports. |
-| `web/package.json` | Add `build:state-init-codec` script (wraps `build-state-init-codec.ts`); chain it into `build:wasm` so codec is regenerated on every WASM rebuild. |
+| `web/package.json` | Add `build:state-init-codec` script (wraps `build-state-init-codec.ts`). Standalone, run on demand like the other `build:*` codegen scripts. |
 | `web/static/worklet/cedar-processor.js` | Remove `case 'compile':`, the entire compile + extract helper stack (`extractStateInits`, `extractDiagnostics`, `extractParamDecls`, `extractVizDecls`, `extractBuiltinVarOverrides`, `getRequired*` helpers). Rename `loadCompiledProgram` → `loadProgram` and accept `{bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount}`. Keep a single per-`process_block` SlotBusy retry; drop today's multi-attempt `pendingLoadRetry` state machine. Add a top-of-file comment block stating the worklet-thread contract. |
 | `web/src/lib/stores/audio.svelte.ts` | In `initialize()`: spawn the compile worker, load its WASM, await `ready`. Replace `compile()` body: queue-then-send to worker (with generation tag), await `compileResult`, drop if superseded, then run existing sample-load pipeline, then post `loadProgram` with all four buffers. Surface worker error/death as a compile diagnostic; respawn lazily. |
 | `CLAUDE.md` (nkido project) | Add a "Web architecture: worklet thread contract" section: only `process_block` + `_cedar_set_block_table` + `_cedar_apply_*_from_buffer` + `_akkado_*_from_buffer` may run inside the worklet. Compile, parsing, codegen, fetch, decode — all forbidden on the worklet thread. Pointer to this PRD. |
@@ -766,12 +814,14 @@ verification step.
    call `_akkado_compile` on a dummy source, post the bytecode back.
    **Verify**: a tiny console-only test in `audio.svelte.ts` boot path,
    removed before merge.
-3. **State-init codec** — create `state-init-codec.ts` with the pack
-   function. Move every `extract*` helper from the worklet into the
-   worker (or into a shared helper module the worker imports).
-   **Verify**: snapshot the JS output of the OLD worklet `extractStateInits`
-   for a few patches, then check the NEW worker produces identical JS,
-   and that the packed buffer round-trips through the WASM unpacker.
+3. **State-init codec** — *(as shipped)* implement pack + unpack together
+   in C++ at `akkado/include/akkado/state_init_buffer.hpp` and expose the
+   `_akkado_pack_*_buffer` + `*_from_buffer` exports. Move every
+   `extract*` helper from the worklet into the worker. The generated TS
+   `state-init-codec.ts` is a decoder-only validator, not the worker
+   packer. **Verify**: `akkado/tests/test_state_init_buffer_codec.cpp`
+   round-trips real compiles through pack→apply; `web/tests/state-init-codec.test.ts`
+   decodes real C++-packed bytes with the generated TS validator.
 4. **Worklet rewire** — delete the compile handler + extract helpers.
    Replace `loadCompiledProgram` with
    `loadProgram({bytecode, stateInitsBuf, midiSourcesBuf, blockTable, mainInstCount})`.
@@ -897,16 +947,33 @@ cmake --build build --target akkado_tests
 The C++ runtime is unchanged; these are the safety net that catches any
 accidental regression in `cedar`/`akkado`.
 
-### 10.2 New WASM-API round-trip test (cedar level)
+### 10.2 Wire-format round-trip tests *(as shipped)*
 
-A C++ test in `cedar/tests/` or `akkado/tests/` that:
-1. Builds a state-init JS-equivalent object in memory.
-2. Hand-packs it into the §5 wire format.
-3. Calls `cedar_apply_state_inits_from_buffer` on a fresh VM.
-4. Asserts each state in `vm.states()` matches what
-   `apply_seq_state_inits` produces for the same input.
+**C++ (primary guard):** `akkado/tests/test_state_init_buffer_codec.cpp`
+(tag `[state_init_codec]`):
+1. `akkado::compile()` a real patch → `CompileResult`.
+2. `pack_state_inits()` into the §5 wire format.
+3. `apply_state_inits()` it onto a fresh VM.
+4. Asserts each state matches a control VM driven by the legacy
+   per-`init_*` path; plus `pack_midi_sources` / `pack_block_table`
+   round-trips, bad-magic rejection, and a bit-perfect hot-swap render
+   of the user pad shape (`ratio < 1e-3`).
 
-Locks down the wire format independently of the worker.
+```
+cmake --build build --target akkado_tests
+./build/akkado/tests/akkado_tests "[state_init_codec]"
+```
+
+**TS (validator cross-check):** `web/tests/state-init-codec.test.ts`
+loads the real `nkido.wasm`, packs via the C++ exports, and walks the
+bytes with the generated decoder (`state-init-codec.ts`), asserting the
+walk consumes the buffer exactly — catches any drift between the
+generated TS layout and the C++ wire format.
+
+```
+cd web && bun run build:state-init-codec   # regen (must be a clean diff)
+cd web && bun run test -- state-init-codec
+```
 
 ### 10.3 E2E test (must go green)
 

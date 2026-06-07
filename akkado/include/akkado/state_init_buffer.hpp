@@ -57,6 +57,19 @@ inline constexpr std::uint32_t MAGIC_STATE_INITS  = 0x494E4954u;  // "INIT"
 inline constexpr std::uint32_t MAGIC_MIDI_SOURCES = 0x4D494449u;  // "MIDI"
 inline constexpr std::uint16_t WIRE_VERSION       = 1;
 
+// Wire-format size tripwires. The SequenceProgram / Timeline payloads embed
+// these structs via raw memcpy, so any size change silently alters the wire
+// layout. Pinning here forces a deliberate WIRE_VERSION bump (and a refresh of
+// the generated TS validator in web/src/lib/audio/state-init-codec.ts) on the
+// same commit that changes a struct. cedar::BlockEntry is pinned at its own
+// definition (program_slot.hpp).
+static_assert(sizeof(cedar::Event) == 240,
+              "cedar::Event size changed — bump WIRE_VERSION and regenerate "
+              "the TS state-init codec");
+static_assert(sizeof(cedar::TimelineState::Breakpoint) == 12,
+              "TimelineState::Breakpoint size changed — bump WIRE_VERSION and "
+              "regenerate the TS state-init codec");
+
 enum class RecordKind : std::uint8_t {
     StateInit             = 0,
     SequenceSampleMapping = 1,
