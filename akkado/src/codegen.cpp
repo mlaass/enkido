@@ -1,6 +1,7 @@
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"  // Master include for all codegen helpers
 #include "akkado/builtins.hpp"
+#include "akkado/overload.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/source_map.hpp"
 #include "akkado/stdlib.hpp"
@@ -1269,6 +1270,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 return TypedValue::error_val();
             }
 
+            // Phase-1 overload resolution (PRD prd-builtin-overload-resolution):
+            // each builtin is one synthesized DispatchPattern mirroring its
+            // param_types/args_are_signal. The per-arg type check below resolves
+            // against this pattern via matches_arg(), replacing the old inline
+            // param_types ladder with the single declarative model.
+            const DispatchPattern call_pattern = make_builtin_pattern(*builtin);
+
             // Spread-expanded builtin calls reach codegen with named Argument
             // nodes still in the chain — the analyzer defers reordering for
             // spread calls (a `..record` source is only known after value
@@ -1550,25 +1558,26 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 if (arg_idx < MAX_BUILTIN_PARAMS &&
                     !arg_tv.error && arg_tv.type != ValueType::Void &&
                     arg_tv.type != ValueType::DynArray) {
-                    const ParamValueType expected = builtin->param_types[arg_idx];
-                    if (expected != ParamValueType::Any) {
-                        if (!type_compatible(arg_tv.type, expected)) {
+                    const ArgMatcher& matcher = call_pattern.params[arg_idx];
+                    ArgDescriptor ad;
+                    ad.type = arg_tv.type;
+                    if (!matches_arg(matcher, ad)) {
+                        if (matcher.kind == ArgMatcher::Kind::Type) {
+                            // EXPLICIT annotation mismatch.
                             error("E160", func_name + "() argument '" +
                                   std::string(builtin->param_names[arg_idx]) +
-                                  "' expects " + param_value_type_name(expected) +
+                                  "' expects " + param_value_type_name(matcher.type) +
                                   ", got " + value_type_name(arg_tv.type),
                                   diag_loc);
+                        } else {
+                            // IMPLICIT signal-coerce slot rejected Function/StateCell.
+                            error("E160", func_name + "() argument '" +
+                                  std::string(builtin->param_names[arg_idx]) +
+                                  "' expects a signal, got " +
+                                  value_type_name(arg_tv.type) +
+                                  " — no coercion path",
+                                  diag_loc);
                         }
-                    } else if (builtin->args_are_signal &&
-                               arg_idx < builtin->total_params() &&
-                               (arg_tv.type == ValueType::Function ||
-                                arg_tv.type == ValueType::StateCell)) {
-                        error("E160", func_name + "() argument '" +
-                              std::string(builtin->param_names[arg_idx]) +
-                              "' expects a signal, got " +
-                              value_type_name(arg_tv.type) +
-                              " — no coercion path",
-                              diag_loc);
                     }
                 }
             }

@@ -99,6 +99,7 @@ add_library(akkado STATIC
     src/builtins_json.cpp
     src/shape_index.cpp
     src/typed_value.cpp
+    src/overload.cpp
     src/ast_hash.cpp
     src/chord_parser.cpp
     src/voicing.cpp

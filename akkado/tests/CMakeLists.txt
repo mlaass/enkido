@@ -57,6 +57,7 @@ add_executable(akkado_tests
     test_fast_slow.cpp
     test_reorder.cpp
     test_param_type_annotations.cpp
+    test_overload.cpp
     test_pattern_scalar.cpp
     test_transport.cpp
     test_sample_emission_golden.cpp
