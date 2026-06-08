@@ -18,6 +18,10 @@ cmake-build-*/
 *.dll
 *.exe
 
+# Python
+__pycache__/
+*.pyc
+
 # CMake generated
 CMakeFiles/
 CMakeCache.txt
