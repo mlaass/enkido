@@ -65,7 +65,7 @@ init and immutable thereafter. It covers the full stack:
 |---|---|---|
 | **Variables** (`bpm`, `sr`, `spb`) | `BUILTIN_VARIABLES` static map (`builtins.hpp:1723`) + live `EnvMap*` on the context | Names are compile-time literals; no API to add one |
 | **Builtins** | `BUILTIN_FUNCTIONS` `inline const unordered_map<string_view, BuiltinInfo>` (`builtins.hpp:274`); keys are literals | `const`, baked in; string_view keys require static storage |
-| **Opcodes** | `Opcode` `uint8_t` enum + a ~224-case compile-time `switch` (`vm.cpp:1358`); state is a closed `std::variant` (`dsp_state.hpp:1530`) | Jump-table dispatch and the variant are both compile-time-fixed |
+| **Opcodes** | `Opcode` `uint8_t` enum + a ~149-case compile-time `switch` (`vm.cpp:1358`); state is a closed `std::variant` (`dsp_state.hpp:1530`) | Jump-table dispatch and the variant are both compile-time-fixed |
 
 ### 2.2 What embedders need (from the target PRDs)
 
@@ -117,6 +117,15 @@ this template (with **reject-on-collision** instead of last-wins).
 
 ## 4. Target API / User Experience
 
+The API spans three tiers of host extension, in increasing power:
+
+- **Tier 1 — Host variables** (§4.1–4.2): named host-fed signals (control-rate scalar or
+  audio-rate buffer). No new opcode; resolves like `bpm`.
+- **Tier 2 — Host functions over core opcodes** (§4.3): a host-named builtin that emits an
+  *existing* `Opcode` (alias/preset). Null `impl_fn`; no new runtime behavior.
+- **Tier 3 — Host opcodes** (§4.4): a genuinely new DSP node with a host-provided audio-thread
+  `impl_fn` and arena-backed state.
+
 ### 4.1 Host variables — control-rate scalar
 
 ```cpp
@@ -156,7 +165,8 @@ vm.process_block(L, R);
 ### 4.3 Host function → existing core opcode (null impl, Tier 2)
 
 ```cpp
-// Alias / preset: "wobble" is just a lowpass with a fixed Q.
+// Alias / preset: a named wrapper over the built-in Dattorro reverb with
+// host-chosen default size/decay — no new DSP code, just a new spelling.
 akkado::register_host_function({
     .name        = "myreverb_alias",
     .core_opcode = cedar::Opcode::REVERB_DATTORRO,  // emit an existing opcode
@@ -177,7 +187,11 @@ akkado::register_host_function({
 void op_hardware_bitcrush(cedar::ExecutionContext& ctx, const cedar::Instruction& inst) {
     float*       out = ctx.buffers->get(inst.out_buffer);
     const float* in  = ctx.buffers->get(inst.inputs[0]);
-    const float* bits = cedar::get_input_or_const(ctx, inst.inputs[1], 8.0f);
+    // Optional input: codegen already wired inst.inputs[1] to either the
+    // caller's buffer or a constant buffer holding the descriptor default
+    // (8.0f), exactly like core builtins. `get_input_or_zero` (oscillators.hpp)
+    // is the zero-fallback variant when a slot may be BUFFER_UNUSED.
+    const float* bits = ctx.buffers->get(inst.inputs[1]);
 
     // Arena-backed per-instance state (reserved at load; see §6.4):
     auto& st = ctx.states->get_or_create<cedar::HostOpState>(inst.state_id);
@@ -222,9 +236,9 @@ the reserved arena region; anything larger must be pre-reserved at registration 
 
 | Component | Status | Notes |
 |---|---|---|
-| `Opcode` enum (`instruction.hpp`) | **Modified** | Add one `HOST_OP` value (avoid DaisySP's reserved 210–254 and `INVALID=255`) |
+| `Opcode` enum (`instruction.hpp`) | **Modified** | Add one `HOST_OP` value in the free `201–209` gap (e.g. `209`). Avoid the in-use `210–223` band (control-flow + event opcodes, `SKIP_IF_ZERO`…`EVENT_FANOUT`) and `INVALID=255`; see §6.6 |
 | VM `execute()` switch (`vm.cpp:1358`) | **Modified** | One `case HOST_OP:` → indirect dispatch through the host op table |
-| `DSPState` variant (`dsp_state.hpp:1530`) | **Modified** | Add `HostOpState{ void* ptr; }` (pointer-sized; no slot bloat) |
+| `DSPState` variant (`dsp_state.hpp:1530`) | **Modified** | Add `HostOpState{ void* ptr; std::uint32_t bytes; }` (one pointer + size; far smaller than the largest existing variant member, so no slot bloat) |
 | `BuiltinInfo` / `lookup_builtin` (`builtins.hpp`) | **Modified** | `lookup_builtin` consults the host registry after the static map |
 | Codegen call path (`codegen.cpp:1265`) | **Modified** | Emit `HOST_OP` (rate = host index) for host opcodes; emit mapped core opcode for null-impl |
 | Builtin variable codegen (`prd-builtin-variables`) | **Modified** | Extend the `bpm/sr/spb` mechanism to host-registered names |
@@ -293,7 +307,7 @@ optimization. Host variables hook the identifier-resolution path the same way `b
 **State** is arena-backed to avoid inflating every StatePool slot. The variant gains:
 
 ```cpp
-struct HostOpState { void* ptr = nullptr; std::uint32_t bytes = 0; };  // pointer-sized
+struct HostOpState { void* ptr = nullptr; std::uint32_t bytes = 0; };  // ptr + reserved size (for GC/reclamation — §13-Q1)
 ```
 
 At program load (off the audio thread), for each `HOST_OP` with `requires_state`, the loader
@@ -303,20 +317,35 @@ keyed by `inst.state_id` — mirroring `DelayState::ensure_buffer(samples, arena
 
 ### 6.5 Host variables at runtime
 
-- **Control-rate scalar**: reuses the existing lock-free `EnvMap`/`set_param` path. The compiler
-  emits the same constant-buffer-per-block read used by `bpm/sr/spb`.
+- **Control-rate scalar**: reuses the existing lock-free `EnvMap`/`set_param` path. The registry
+  synthesizes a `BuiltinVarDef` for the name (reserved `env_key`, getter/setter — see §6.7), so the
+  analyzer desugars the identifier to the same `ENV_GET` read used by `bpm/sr/spb`. No new codegen
+  path; only the variable-resolution table gains the host entry.
 - **Audio-rate buffer**: the host registers a name and, each block, calls
   `vm.set_host_buffer(name, float* /*[128]*/)` before `process_block()`. The VM binds that pointer
   to the buffer index the compiler reserved for the variable. Buffer ownership stays with the host;
   the VM only reads it during the block. (Single-producer/single-consumer at the block boundary,
   matching the existing input-buffer contract `set_input_buffers`.)
 
-### 6.6 The `HOST_OP` enum slot vs. DaisySP
+### 6.6 The `HOST_OP` enum slot
 
-DaisySP (`prd-daisysp-integration.md`) plans static opcodes in **210–254**. To avoid scarce-enum
-contention, host extensibility uses **a single `HOST_OP` value** with a 256-wide `inst.rate` index
-— it consumes exactly one enum slot regardless of how many host ops exist. Proposed value: one
-reserved slot **below** the DaisySP range (e.g. `HOST_OP = 209`), with `INVALID = 255` untouched.
+The opcode enum is nearly full at the top. As of today the band **210–223 is already in use**
+by shipped opcodes — `SKIP_IF_ZERO=210`, `SKIP_IF_NONZERO=211`, `LOOP_STATIC=212`,
+`BLOCK_CALL=213`, `RET=214`, `FOREACH_EVENT=215`, `BLOCK_BIND=216`, `SEQPAT_VALUES=217`,
+`EVENT_MAP=218`, `EVENT_FILTER=219`, `FMOD=220`, `EVENT_RATE_SCALE=221`, `EVENT_REORDER=222`,
+`EVENT_FANOUT=223` (`instruction.hpp:217`+) — and `INVALID=255`. The actual free ranges are the
+**`201–209` gap** (`OSC_WAVETABLE=200` is the last value before the control-flow band) and
+**`224–254`**.
+
+To avoid scarce-enum contention, host extensibility uses **a single `HOST_OP` value** with a
+256-wide `inst.rate` index — it consumes exactly one enum slot regardless of how many host ops
+exist. Proposed value: **`HOST_OP = 209`**, which sits in the free `201–209` gap, with
+`INVALID = 255` untouched.
+
+> **Note:** `prd-daisysp-integration.md` proposes a DaisySP opcode range of `210–254`, but that
+> range *already collides* with the shipped `210–223` control-flow/event opcodes above. A single
+> source of truth for opcode-range allocation should reconcile this (see §13-Q4); it does not block
+> `HOST_OP=209`, which lives in a distinct free gap.
 
 ### 6.7 Data structures (sketch)
 
@@ -330,6 +359,16 @@ struct HostVariableDesc {
     float        default_val = 0.0f, min = 0.0f, max = 0.0f;
     HostVarRate  rate = HostVarRate::Control;
 };
+
+// Internally, a registered Control-rate host variable is materialized as a
+// `BuiltinVarDef` (the shipped bpm/sr/spb mechanism, builtins.hpp:1723) so it
+// reuses identifier→ENV_GET desugar unchanged:
+//   - env_key     := "__host_" + name   (reserved EnvMap key; collision-checked)
+//   - getter_name := "get_host_" + name
+//   - setter_name := "set_host_" + name (host vars are always writable via set_param)
+//   - default/min/max copied from the desc.
+// The registry owns these synthesized strings (process lifetime). `set_param(name, x)`
+// writes the env_key channel; the identifier resolves to ENV_GET on that key.
 
 struct HostFunctionDesc {
     std::string                     name;
@@ -359,7 +398,7 @@ Registry-owned `std::string`s back the names/param names; the compiler synthesiz
 
 | File | Change |
 |---|---|
-| `cedar/include/cedar/vm/instruction.hpp` | Add `HOST_OP` opcode value (below DaisySP 210–254) |
+| `cedar/include/cedar/vm/instruction.hpp` | Add `HOST_OP` opcode value in the free `201–209` gap (e.g. `209`); avoid the in-use `210–223` band — see §6.6 |
 | `cedar/include/cedar/vm/host_op_registry.hpp` | **New** — `HostOpRegistry` singleton, `HostOpFn` typedef, 256-entry table + `state_bytes` |
 | `cedar/src/vm/host_op_registry.cpp` | **New** — registry impl |
 | `cedar/include/cedar/opcodes/dsp_state.hpp` | Add `HostOpState` to the `DSPState` variant (`:1530`) |
@@ -517,6 +556,9 @@ cmake -B build-off -DCEDAR_HOST_EXTENSIONS=OFF && cmake --build build-off
    reallocates vs. an interning arena) without touching the static-map fast path.
 3. **Python-bindings exposure.** Should `register_host_function` be reachable from `cedar_core`
    for experiments/testing, or is a small native test harness sufficient for v1?
-4. **`HOST_OP` enum value.** Confirm `209` (or another slot) is free given the current enum and the
-   DaisySP 210–254 reservation; coordinate a single source of truth for opcode-range allocation.
+4. **`HOST_OP` enum value.** `209` is confirmed free today (it sits in the `201–209` gap between
+   `OSC_WAVETABLE=200` and `SKIP_IF_ZERO=210`). The open coordination item is that
+   `prd-daisysp-integration.md`'s proposed `210–254` range already collides with the shipped
+   `210–223` control-flow/event opcodes — establish a single source of truth for opcode-range
+   allocation so DaisySP and host ops don't both land on occupied slots.
 ```
