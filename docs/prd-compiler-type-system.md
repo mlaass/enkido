@@ -1,4 +1,5 @@
-> **Status: MOSTLY SHIPPED** — Phases 1–4 landed; only overload resolution deferred.
+> **Status: MOSTLY SHIPPED** — Phases 1–4 landed; overload resolution spun out
+> to its own PRD (`prd-builtin-overload-resolution.md`).
 >
 > - **Phase 1 — complete.** `TypedValue` struct, `ValueType` enum, and `visit()`
 >   returning `TypedValue` are implemented (`akkado/include/akkado/typed_value.hpp`).
@@ -25,8 +26,32 @@
 >   `Record`/`Array`/`String`/`Function`/`Stream`) — see
 >   `prd-parameter-type-annotations.md`.
 >
-> **Deferred:** builtin overload resolution keyed on argument `ValueType` — no
-> mechanism exists; it warrants its own PRD. See "Phase 4" below for context.
+> **Deferred → own PRD:** builtin overload resolution keyed on argument
+> `ValueType` has no mechanism here; it is now specified in
+> `prd-builtin-overload-resolution.md` (a declarative, first-match dispatch
+> model unifying builtins, operators, and user-fn overloading). See "Phase 4"
+> below for the context that motivated splitting it out.
+>
+> **Coverage-acceptance correction (2026-06-08).** The original Phase-4
+> acceptance — "every builtin has a non-`Any` `param_types` entry" — is
+> **intentionally not pursued**, because it does not hold up against how
+> `param_types` is actually enforced. The generic `param_types`→E160 check runs
+> only in the `visit_call` loop (`codegen.cpp:1529-1573`), which every
+> specific-typed builtin **bypasses via a custom handler** (`transport`→E133,
+> `midi`/visualizers→options-schema, `poly`→E403/E423, `sample`/`smooch`→E161/
+> E198, UI controls→E151–E157). On those builtins `param_types` is decorative;
+> the generic loop only meaningfully sees ordinary DSP builtins, whose slots
+> correctly ride the coerce-friendly `args_are_signal` fallback. So blanket-
+> annotating `Signal` would *tighten* ~400 builtins and break Record/String
+> coercion (locked in by `test_param_type_annotations.cpp:573/592`). Real
+> coverage therefore = coerce-friendly fallback + targeted specific-type
+> annotations + per-handler diagnostics. Unifying these two enforcement paths is
+> exactly the job of `prd-builtin-overload-resolution.md`.
+>
+> One concrete gap this audit *did* find and fix: `poly()`/`legato()` silently
+> accepted a non-pattern input (`handle_poly_call` left `seq_state_id=0`).
+> Now rejected with **E423**, with regression tests in
+> `test_param_type_annotations.cpp` (`[poly]`).
 
 # PRD: Akkado Compiler Type System
 
@@ -289,17 +314,25 @@ Phases 2 and 3 each shipped their core mechanism but stopped short of full
 coverage. Rather than leaving two PRD phases open-ended, fold the remaining work
 into one bounded pass:
 
-- **Annotate the remaining builtins.** Only ~9 of 187 `BuiltinInfo` entries set
-  `param_types`; the rest fall through as `Any` and are never checked. Sweep the
-  builtin table and annotate every entry. This is mechanical — each builtin's
-  parameter types are already documented in `param_names` and the description.
-- **Finish the Phase 3 type-driven features** that have not landed:
-  - `transport()` arg-0 Pattern check
-  - builtin overload resolution based on argument types
-  - match-arm `ValueType` agreement (see "Match Expression Types")
-- **Acceptance:** every builtin in the table has a non-`Any` `param_types` entry
-  for each declared parameter, and a type-mismatch test exists for at least one
-  representative builtin per `ParamValueType`. Existing tests must still pass.
+- **~~Annotate the remaining builtins.~~** *Superseded — see the
+  coverage-acceptance correction in the status block.* A blanket `param_types`
+  sweep was found to be either inert (specific-typed builtins are custom-handled
+  and bypass the generic check) or harmful (annotating pure-signal slots
+  `Signal` breaks Record/String coercion). Coverage is achieved via the
+  coerce-friendly fallback + targeted annotations + per-handler diagnostics, and
+  the two enforcement paths are unified by
+  `prd-builtin-overload-resolution.md`.
+- **Phase 3 type-driven features — landed:**
+  - `transport()` arg-0 Pattern check — **done** (E133, `codegen_patterns.cpp`)
+  - match-arm `ValueType` agreement — **done** (E160, `codegen_functions.cpp`)
+  - builtin overload resolution based on argument types — **spun out** to
+    `prd-builtin-overload-resolution.md`
+- **Acceptance (revised):** the type-driven Phase-3 features above are
+  implemented and tested; a type-mismatch test exists per `ParamValueType` that
+  is enforceable (Signal/Number/Pattern/Record/Array/String/Function via the
+  user-fn annotation path's E184 matrix and the builtin E160 path; Stream via
+  `poly()` E423); and existing tests still pass. The "annotate every builtin"
+  bar is explicitly retired (see status block).
 
 ## Type Propagation through Bindings
 

@@ -2658,6 +2658,23 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         if (pat_tv.pattern) {
             seq_state_id = pat_tv.pattern->state_id;
             poly_pattern = pat_tv.pattern;
+        } else if (!pat_tv.error && pat_tv.type != ValueType::Void) {
+            // The input drives runtime voice allocation, so it must be an
+            // event stream — a pattern (n"…"/pat()/seq()/chord()) or a
+            // midi() source, all of which carry a PatternPayload. A bare
+            // Signal/Number/Record/etc. has no events to allocate voices
+            // from; without this guard it silently compiled a dead voice
+            // manager (seq_state_id stayed 0). Enforce the Stream-typed
+            // input contract here — handle_poly_call returns before the
+            // generic visit_call type-check loop, so param_types cannot
+            // cover it (prd-compiler-type-system: Stream input enforcement).
+            error("E423", func_name + "() input must be a pattern or event "
+                  "stream (e.g. pat(...), n\"...\", chord(...), or midi()), got "
+                  + std::string(value_type_name(pat_tv.type)) +
+                  ". Pipe a pattern in: pat(...) |> " + func_name +
+                  "(@, instrument)",
+                  ast_->arena[pattern_arg].location);
+            return TypedValue::void_val();
         }
         // Consume polyphonic tracking — poly() handles voice allocation at runtime.
         polyphonic_pattern_nodes_.erase(pattern_arg);

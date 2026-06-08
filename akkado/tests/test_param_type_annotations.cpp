@@ -616,6 +616,59 @@ TEST_CASE("transport(): first argument must be a Pattern",
     }
 }
 
+// -----------------------------------------------------------------------------
+// poly()/legato() Stream-input enforcement (prd-compiler-type-system).
+//
+// poly() is custom-handled and returns before the generic visit_call
+// param_types loop, so the {Stream} contract cannot be enforced via
+// param_types — handle_poly_call checks it directly. Before E423 it silently
+// accepted a bare signal (seq_state_id stayed 0) and compiled a dead voice
+// manager. These are the regression guards for that fix.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("poly(): a bare Signal input is rejected with E423",
+          "[type-annotation][builtin-args][poly]") {
+    // sine(440) is a Signal, not an event stream — there are no events to
+    // allocate voices from.
+    auto r = akkado::compile(
+        R"(poly(sine(440), (f, g, v) -> sine(f) * v) |> out(@))");
+    CHECK_FALSE(r.success);
+    CHECK(has_diagnostic(r, "E423"));
+}
+
+TEST_CASE("poly(): a Number input is rejected with E423",
+          "[type-annotation][builtin-args][poly]") {
+    auto r = akkado::compile(
+        R"(poly(440, (f, g, v) -> sine(f) * v) |> out(@))");
+    CHECK(has_diagnostic(r, "E423"));
+}
+
+TEST_CASE("poly(): legato() also enforces the Stream input contract (E423)",
+          "[type-annotation][builtin-args][poly]") {
+    auto r = akkado::compile(
+        R"(legato(sine(440), (f, g, v) -> sine(f) * v) |> out(@))");
+    CHECK(has_diagnostic(r, "E423"));
+}
+
+TEST_CASE("poly(): valid event-stream inputs compile clean (no E423)",
+          "[type-annotation][builtin-args][poly]") {
+    SECTION("mini-notation pattern") {
+        auto r = akkado::compile(
+            R"(n"c4 e4 g4" |> poly(@, (f, g, v) -> sine(f) * v) |> out(@))");
+        CHECK_FALSE(has_diagnostic(r, "E423"));
+    }
+    SECTION("polyphonic chord pattern") {
+        auto r = akkado::compile(
+            R"(c"Am" |> poly(@, (f, g, v) -> sine(f) * v, 3) |> out(@))");
+        CHECK_FALSE(has_diagnostic(r, "E423"));
+    }
+    SECTION("midi() runtime event source") {
+        auto r = akkado::compile(
+            R"(midi() |> poly(@, (f, g, v) -> sine(f) * v) |> out(@))");
+        CHECK_FALSE(has_diagnostic(r, "E423"));
+    }
+}
+
 // =============================================================================
 // PRD prd-compiler-type-system Phase 4: runtime match-arm type agreement.
 // The SELECT chain merges every arm into one signal buffer, so arms must yield
