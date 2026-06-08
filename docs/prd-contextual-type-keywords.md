@@ -1,9 +1,20 @@
 # PRD: Contextual Type-Annotation Keywords
 
-> **Status: DRAFT** — filed 2026-05-27 alongside a rename fix for
+> **Status: RESOLVED (2026-06-08)** — superseded by the uppercase
+> PascalCase type-name change (see `prd-parameter-type-annotations.md`).
+> The annotation type names (`Signal`, `Number`, `Pattern`, `Record`,
+> `Array`, `String`, `Function`, `Stream`) are no longer in the lexer
+> keyword table at all — they lex as ordinary identifiers and are
+> resolved contextually by lexeme in `parse_optional_annotation`. The
+> abbreviations (`arr`, `num`, `sig`, …) were hard-removed, so the
+> reservation trap this PRD describes is gone entirely: any identifier,
+> including former keywords, is usable as a `fn` parameter / variable
+> name. The original draft (a contextual-keyword scheme that kept the
+> lowercase spellings) is retained below for history.
+>
+> _Original status: DRAFT — filed 2026-05-27 alongside a rename fix for
 > `web/static/patches/arpeggio-demo.akk` and `stepper-demo.akk`, which
-> both broke because they used `arr` as a `fn` parameter name. Rename
-> unblocks the patches; this PRD addresses the underlying trap.
+> both broke because they used `arr` as a `fn` parameter name._
 
 ## Executive Summary
 

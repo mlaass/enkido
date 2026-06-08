@@ -1,28 +1,32 @@
-> **Status: PARTIAL** — Phase 1 complete; Phases 2 and 3 partially landed.
+> **Status: MOSTLY SHIPPED** — Phases 1–4 landed; only overload resolution deferred.
 >
 > - **Phase 1 — complete.** `TypedValue` struct, `ValueType` enum, and `visit()`
 >   returning `TypedValue` are implemented (`akkado/include/akkado/typed_value.hpp`).
 >   All ad-hoc maps (`node_buffers_`, `multi_buffers_`, `record_fields_`,
 >   `polyphonic_fields_`, `array_lengths_`, `pattern_state_ids_`) are subsumed by
 >   `node_types_`. Only `stereo_outputs_` remains, as the PRD intended.
-> - **Phase 2 — core mechanism done, coverage incomplete.** `ParamValueType`
->   enum, `type_compatible()`, `param_types` on `BuiltinInfo`, and the
->   type-checking loop in `visit_call()` emitting `E160` diagnostics with source
->   locations (codegen.cpp:1361-1372) all exist and run. **Gap:** only ~9 of 187
->   builtin entries carry `param_types` annotations — the rest default to `Any`
->   (unchecked). A coarse `args_are_signal` blanket check and the E160
->   polyphonic-pattern reject cover some of the slack.
-> - **Phase 3 — partially landed.** `Symbol` carries `TypedValue` (so `as`
->   bindings propagate types), closures propagate types
->   (`codegen_functions.cpp`), and `EventSource` typing wires `midi()` →
->   `poly()`.
+> - **Phase 2 — complete.** `ParamValueType` enum, `type_compatible()`,
+>   `param_types` on `BuiltinInfo`, and the type-checking loop in `visit_call()`
+>   emitting `E160` diagnostics with source locations all exist and run.
+> - **Phase 3 — complete.** `Symbol` carries `TypedValue` (so `as` bindings
+>   propagate types), closures propagate types (`codegen_functions.cpp`), and
+>   `EventSource` typing wires `midi()` → `poly()`.
+> - **Phase 4 (Coverage) — shipped (2026-06-08).** Rather than spelling
+>   `{Signal, …}` on all ~186 entries, the `visit_call()` check now treats an
+>   unannotated slot on an `args_are_signal` builtin as **coerce-friendly
+>   Signal**: Signal/Number/Pattern/Array/Record/String all pass (they have a
+>   defensible signal/expansion/coerce path, per the live-coding philosophy);
+>   only Function/StateCell (no audio meaning) are rejected. Explicit
+>   annotations (out, visualizers, midi, each_voice/each Function slots,
+>   transport Pattern) stay strict. Phase-3 type-driven features finished:
+>   `transport()` arg-0 Pattern (via its E133 handler + the annotation) and
+>   runtime match-arm `ValueType` agreement (E160). Parameter-type annotations
+>   also moved to uppercase PascalCase names (`Signal`/`Number`/`Pattern`/
+>   `Record`/`Array`/`String`/`Function`/`Stream`) — see
+>   `prd-parameter-type-annotations.md`.
 >
-> **Recommendation:** the architecture has shipped — what remains is bounded,
-> mechanical coverage work. Close both gaps in a single consolidated **Phase 4
-> (Coverage)** rather than leaving Phases 2 and 3 open-ended: (a) annotate the
-> remaining ~178 builtins with `param_types`, (b) finish Phase 3 type-driven
-> features (`transport()` arg-0 Pattern check, overload resolution, match-arm
-> type agreement). See "Phase 4: Close the coverage gaps" below.
+> **Deferred:** builtin overload resolution keyed on argument `ValueType` — no
+> mechanism exists; it warrants its own PRD. See "Phase 4" below for context.
 
 # PRD: Akkado Compiler Type System
 

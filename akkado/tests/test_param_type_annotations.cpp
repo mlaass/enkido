@@ -1,15 +1,16 @@
 // Parameter type annotations for user-defined `fn` (PRD prd-parameter-type-annotations).
 //
-// Phase 1 ships two annotation keywords on fn parameter lists:
-//   - `: evs`  -- abstract supertype: Pattern OR EventSource
-//   - `: signal`  -- explicit form of today's implicit voice-0 coerce
+// Type names are uppercase PascalCase identifiers mirroring the C++ ValueType
+// enum: `Signal`, `Number`, `Pattern`, `Record`, `Array`, `String`,
+// `Function`, `Stream`. They are not keywords — they lex as identifiers and are
+// resolved contextually only in annotation position (after a `:`).
+//   - `: Stream`  -- abstract supertype: Pattern (incl. runtime event streams)
+//   - `: Pattern` -- strict Pattern
+//   - `: Signal`  -- explicit form of the implicit voice-0 coerce
 //
 // This file holds:
-//   [type-annotation] -- Commit A unit tests for the ParamValueType::Stream
-//                        compatibility matrix (§4.2 of the PRD).
-//
-// Later commits append parser-grammar and codegen-binding cases here under
-// the same tag.
+//   [type-annotation] -- unit tests for the type_compatible() matrix and the
+//                        codegen-side E184 boundary checks (§4.2 of the PRD).
 
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/akkado.hpp"
@@ -44,7 +45,7 @@ bool has_diagnostic_for_param(const akkado::CompileResult& r,
 
 TEST_CASE("type_compatible: ParamValueType::Stream accepts only Pattern",
           "[type-annotation][type-compat]") {
-    // §4.2 row: `: evs` accepts Pattern (mono + poly, MIDI-pattern, and
+    // §4.2 row: `: Stream` accepts Pattern (mono + poly, MIDI-pattern, and
     // runtime event streams via `is_runtime_event_source`). Phase 5 Commit I
     // collapsed the standalone EventSource discriminator into PatternPayload.
     CHECK(type_compatible(ValueType::Pattern, ParamValueType::Stream));
@@ -97,16 +98,16 @@ TEST_CASE("value_type_name and param_value_type_name include Stream",
 
 // =============================================================================
 // PRD prd-parameter-type-annotations §10.2: codegen-side tests for the new
-// `: evs` / `: signal` branches in handle_user_function_call. Verifies that
+// `: Stream` / `: Signal` branches in handle_user_function_call. Verifies that
 // the boundary check fires E184 / preserves E160 / bypasses E160 as designed
 // in §4.2.
 // =============================================================================
 
-TEST_CASE(": evs accepts Pattern arguments (mono and polyphonic)",
+TEST_CASE(": Stream accepts Pattern arguments (mono and polyphonic)",
           "[type-annotation][codegen]") {
     SECTION("mono Pattern passes through without E160") {
         auto r = akkado::compile(R"(
-            fn id(e: evs) -> e.freq
+            fn id(e: Stream) -> e.freq
             n"c4 e4 g4" |> id(@) |> sine(@) |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -114,11 +115,11 @@ TEST_CASE(": evs accepts Pattern arguments (mono and polyphonic)",
     }
 
     SECTION("polyphonic Pattern (chord) passes through — E160 bypass") {
-        // Headline behavior: without the `: evs` annotation, the same call
+        // Headline behavior: without the `: Stream` annotation, the same call
         // would fire E160 (and indeed does in the un-annotated test below).
         // `c"Am"` is the canonical chord-pattern source — max_voices=3.
         auto r = akkado::compile(R"(
-            fn id(e: evs) -> e
+            fn id(e: Stream) -> e
             id(c"Am")
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -126,11 +127,11 @@ TEST_CASE(": evs accepts Pattern arguments (mono and polyphonic)",
     }
 }
 
-TEST_CASE(": evs rejects non-Pattern / non-EventSource args with E184",
+TEST_CASE(": Stream rejects non-Pattern / non-EventSource args with E184",
           "[type-annotation][codegen]") {
     SECTION("Number → E184") {
         auto r = akkado::compile(R"(
-            fn id(e: evs) -> e
+            fn id(e: Stream) -> e
             id(440)
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
@@ -139,7 +140,7 @@ TEST_CASE(": evs rejects non-Pattern / non-EventSource args with E184",
 
     SECTION("String → E184") {
         auto r = akkado::compile(R"(
-            fn id(e: evs) -> e
+            fn id(e: Stream) -> e
             id("text")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
@@ -147,7 +148,7 @@ TEST_CASE(": evs rejects non-Pattern / non-EventSource args with E184",
 
     SECTION("Signal → E184") {
         auto r = akkado::compile(R"(
-            fn id(e: evs) -> e
+            fn id(e: Stream) -> e
             id(sine(440))
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'e'"));
@@ -176,11 +177,11 @@ TEST_CASE("un-annotated user-fn params keep existing E160 / coerce behavior",
     }
 }
 
-TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
+TEST_CASE(": Signal preserves E160 for poly Pattern, allows mono coerce",
           "[type-annotation][codegen]") {
     SECTION("Number arg accepted (today's behavior, made explicit)") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> sine(rate)
+            fn w(rate: Signal) -> sine(rate)
             w(220) |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -189,7 +190,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
 
     SECTION("mono Pattern arg silently voice-0 coerces") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> sine(rate)
+            fn w(rate: Signal) -> sine(rate)
             w(n"c4 e4") |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -198,7 +199,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
 
     SECTION("polyphonic Pattern fires E160 (preserved reject from PRD §4.2)") {
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> sine(rate)
+            fn w(rate: Signal) -> sine(rate)
             w(c"Am")
         )");
         CHECK(has_diagnostic_for_param(r, "E160", "'rate'"));
@@ -207,7 +208,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
     SECTION("String arg fires E184 (no coercion path)") {
         // String → Signal has no defensible coerce path per PRD §4.2.
         auto r = akkado::compile(R"(
-            fn w(rate: signal) -> sine(rate)
+            fn w(rate: Signal) -> sine(rate)
             w("text")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'rate'"));
@@ -220,7 +221,7 @@ TEST_CASE(": signal preserves E160 for poly Pattern, allows mono coerce",
     // separate codegen path to exercise here.
 }
 
-TEST_CASE(": evs-annotated param exposes Pattern field access in the body",
+TEST_CASE(": Stream-annotated param exposes Pattern field access in the body",
           "[type-annotation][codegen]") {
     // PRD §4.3: the Stream-annotated param preserves the caller's TypedValue
     // across the boundary so `events.freq` works inside the body — this is
@@ -228,7 +229,7 @@ TEST_CASE(": evs-annotated param exposes Pattern field access in the body",
     // pre-PRD behavior collapsed Pattern → voice-0 scalar and lost the
     // field-accessor map.
     auto r = akkado::compile(R"(
-        fn carrier(events: evs) -> sine(events.freq)
+        fn carrier(events: Stream) -> sine(events.freq)
         n"c4 e4 g4" |> carrier(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -260,10 +261,10 @@ TEST_CASE(": evs-annotated param exposes Pattern field access in the body",
 // builtin in this build (prd-runtime-event-transforms Phase 1) — shadowing
 // it from userspace conflicts with the existing definition.
 
-TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for mono Pattern",
+TEST_CASE("e2e §10.3: xp(events: Stream, n) compiles for mono Pattern",
           "[type-annotation][e2e]") {
     auto r = akkado::compile(R"(
-        fn xp(events: evs, n) ->
+        fn xp(events: Stream, n) ->
             event_map(events, (e) -> {note: e.note + n})
 
         n"c4 e4 g4".xp(7) |> sine(@.freq) |> out(@)
@@ -273,13 +274,13 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for mono Pattern",
     CHECK_FALSE(has_diagnostic(r, "E136"));
 }
 
-TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for chord-stack pattern",
+TEST_CASE("e2e §10.3: xp(events: Stream, n) compiles for chord-stack pattern",
           "[type-annotation][e2e]") {
     // PRD §10.3 second program (adapted). The point is that the user fn's
-    // `events: evs` param accepts a chord-stack pattern without an
+    // `events: Stream` param accepts a chord-stack pattern without an
     // E160 / E184 boundary diagnostic.
     auto r = akkado::compile(R"(
-        fn xp(events: evs, n) ->
+        fn xp(events: Stream, n) ->
             event_map(events, (e) -> {note: e.note + n})
 
         n"[c4,e4,g4]".xp(7)
@@ -291,15 +292,15 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) compiles for chord-stack pattern",
     CHECK_FALSE(has_diagnostic(r, "E136"));
 }
 
-TEST_CASE("e2e §10.3: xp(events: evs, n) accepts true polyphonic chord pattern",
+TEST_CASE("e2e §10.3: xp(events: Stream, n) accepts true polyphonic chord pattern",
           "[type-annotation][e2e]") {
     // Sharper version of the chord-stack test: c"Am" is a true polyphonic
     // chord (max_voices=3), so this is the exact scenario the un-annotated
-    // handle_user_function_call rejects with E160. With the `: evs`
+    // handle_user_function_call rejects with E160. With the `: Stream`
     // annotation, the bypass is the headline behavior — this test ships as a
     // regression guard.
     auto r = akkado::compile(R"(
-        fn xp(events: evs, n) ->
+        fn xp(events: Stream, n) ->
             event_map(events, (e) -> {note: e.note + n})
 
         c"Am".xp(7)
@@ -311,9 +312,8 @@ TEST_CASE("e2e §10.3: xp(events: evs, n) accepts true polyphonic chord pattern"
 }
 
 // =============================================================================
-// PRD prd-parameter-type-annotations-phase-2 §10.2: codegen-side tests for the
-// five new Phase 2 annotations (`: num`, `: rec`, `: arr`, `: str`, `: fn`)
-// plus the `: sig` alias.
+// PRD prd-parameter-type-annotations §10.2: codegen-side tests for the
+// `: Number`, `: Record`, `: Array`, `: String`, and `: Function` annotations.
 // =============================================================================
 
 TEST_CASE("type_compatible: ParamValueType::Number accepts only Number",
@@ -333,61 +333,61 @@ TEST_CASE("param_value_type_name includes Number",
     CHECK(std::string(param_value_type_name(ParamValueType::Number)) == "Number");
 }
 
-// ----- : num -----
+// ----- : Number -----
 
-TEST_CASE(": num accepts Number argument",
+TEST_CASE(": Number accepts Number argument",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn pickn(x: num) -> x
+        fn pickn(x: Number) -> x
         pickn(5)
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
 }
 
-TEST_CASE(": num rejects non-Number args with E184",
+TEST_CASE(": Number rejects non-Number args with E184",
           "[type-annotation][codegen]") {
     SECTION("Signal → E184") {
         auto r = akkado::compile(R"(
-            fn pickn(x: num) -> x
+            fn pickn(x: Number) -> x
             pickn(sine(1))
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'x'"));
     }
     SECTION("Pattern → E184") {
         auto r = akkado::compile(R"(
-            fn pickn(x: num) -> x
+            fn pickn(x: Number) -> x
             pickn(n"c4 e4")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'x'"));
     }
     SECTION("String → E184") {
         auto r = akkado::compile(R"(
-            fn pickn(x: num) -> x
+            fn pickn(x: Number) -> x
             pickn("text")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'x'"));
     }
 }
 
-// ----- : rec -----
+// ----- : Record -----
 
-TEST_CASE(": rec accepts Record argument",
+TEST_CASE(": Record accepts Record argument",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn freqof(r: rec) -> r.freq
+        fn freqof(r: Record) -> r.freq
         freqof({freq: 440, vel: 0.8})
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
     CHECK_FALSE(has_diagnostic(r, "E136"));
 }
 
-TEST_CASE(": rec accepts Pattern argument and exposes field access",
+TEST_CASE(": Record accepts Pattern argument and exposes field access",
           "[type-annotation][codegen]") {
     // PRD §8.6: Pattern is structurally a record. The binding-selection
     // branch (codegen_functions.cpp ~842) preserves the Pattern TypedValue
     // so `r.freq` resolves via the Pattern's per-field buffers.
     auto r = akkado::compile(R"(
-        fn freqof(r: rec) -> r.freq
+        fn freqof(r: Record) -> r.freq
         n"c4 e4" |> freqof(@) |> sine(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E160"));
@@ -395,39 +395,39 @@ TEST_CASE(": rec accepts Pattern argument and exposes field access",
     CHECK_FALSE(has_diagnostic(r, "E136"));
 }
 
-TEST_CASE(": rec rejects non-Record/non-Pattern args with E184",
+TEST_CASE(": Record rejects non-Record/non-Pattern args with E184",
           "[type-annotation][codegen]") {
     SECTION("Number → E184") {
         auto r = akkado::compile(R"(
-            fn freqof(r: rec) -> r.freq
+            fn freqof(r: Record) -> r.freq
             freqof(220)
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'r'"));
     }
     SECTION("Array → E184") {
         auto r = akkado::compile(R"(
-            fn freqof(r: rec) -> r.freq
+            fn freqof(r: Record) -> r.freq
             freqof([1, 2, 3])
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'r'"));
     }
 }
 
-// ----- : arr -----
+// ----- : Array -----
 
-TEST_CASE(": arr accepts Array literal",
+TEST_CASE(": Array accepts Array literal",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn pick0(a: arr) -> a[0]
+        fn pick0(a: Array) -> a[0]
         pick0([220, 440, 880]) |> sine(@) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
 }
 
-TEST_CASE(": arr rejects DynArray with E184 and DynArray-specific hint",
+TEST_CASE(": Array rejects DynArray with E184 and DynArray-specific hint",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn pick0(a: arr) -> a[0]
+        fn pick0(a: Array) -> a[0]
         n"c4 e4 g4" as ev |> pick0(notes(ev))
     )");
     CHECK(has_diagnostic_for_param(r, "E184", "'a'"));
@@ -442,94 +442,221 @@ TEST_CASE(": arr rejects DynArray with E184 and DynArray-specific hint",
     CHECK(has_dynarray_hint);
 }
 
-TEST_CASE(": arr rejects Record with E184",
+TEST_CASE(": Array rejects Record with E184",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn pick0(a: arr) -> a[0]
+        fn pick0(a: Array) -> a[0]
         pick0({x: 1, y: 2})
     )");
     CHECK(has_diagnostic_for_param(r, "E184", "'a'"));
 }
 
-// ----- : str -----
+// ----- : String -----
 
-TEST_CASE(": str accepts String literal",
+TEST_CASE(": String accepts String literal",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn osctype(kind: str, freq) -> osc(kind, freq)
+        fn osctype(kind: String, freq) -> osc(kind, freq)
         osctype("saw", 440) |> out(@)
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
 }
 
-TEST_CASE(": str rejects non-String args with E184",
+TEST_CASE(": String rejects non-String args with E184",
           "[type-annotation][codegen]") {
     SECTION("Number → E184") {
         auto r = akkado::compile(R"(
-            fn osctype(kind: str, freq) -> osc(kind, freq)
+            fn osctype(kind: String, freq) -> osc(kind, freq)
             osctype(220, 440)
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'kind'"));
     }
     SECTION("Pattern → E184") {
         auto r = akkado::compile(R"(
-            fn osctype(kind: str, freq) -> osc(kind, freq)
+            fn osctype(kind: String, freq) -> osc(kind, freq)
             osctype(n"c4", 440)
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'kind'"));
     }
 }
 
-// ----- : fn -----
+// ----- : Function -----
 
-TEST_CASE(": fn accepts a closure literal",
+TEST_CASE(": Function accepts a closure literal",
           "[type-annotation][codegen]") {
     auto r = akkado::compile(R"(
-        fn apply1(cb: fn) -> cb(1)
+        fn apply1(cb: Function) -> cb(1)
         apply1((x) -> x * 2)
     )");
     CHECK_FALSE(has_diagnostic(r, "E184"));
 }
 
-TEST_CASE(": fn rejects non-Function args with E184",
+TEST_CASE(": Function rejects non-Function args with E184",
           "[type-annotation][codegen]") {
     SECTION("Number → E184") {
         auto r = akkado::compile(R"(
-            fn apply1(cb: fn) -> cb(1)
+            fn apply1(cb: Function) -> cb(1)
             apply1(220)
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'cb'"));
     }
     SECTION("String → E184") {
         auto r = akkado::compile(R"(
-            fn apply1(cb: fn) -> cb(1)
+            fn apply1(cb: Function) -> cb(1)
             apply1("saw")
         )");
         CHECK(has_diagnostic_for_param(r, "E184", "'cb'"));
     }
 }
 
-// ----- : sig alias -----
+// ----- : Pattern (strict Pattern, distinct from Stream) -----
 
-TEST_CASE(": sig alias behaves identically to : signal",
+TEST_CASE(": Pattern accepts a Pattern argument",
           "[type-annotation][codegen]") {
-    // The `sig` keyword is a pure lexer alias for `signal` — both map to
-    // TokenType::Signal and resolve to ParamValueType::Signal. Phase 1
-    // codegen tests already cover the Signal path; this test confirms the
-    // alias surfaces no new diagnostics.
-    SECTION("Number arg accepted via : sig") {
+    // ParamValueType::Pattern is the strict form: accepts Pattern only (unlike
+    // Stream, which is the abstract supertype, or Signal, which voice-0
+    // coerces). A mono note pattern is the canonical accepted case.
+    auto r = akkado::compile(R"(
+        fn play(p: Pattern) -> p.freq
+        n"c4 e4 g4" |> play(@) |> sine(@) |> out(@)
+    )");
+    CHECK_FALSE(has_diagnostic(r, "E184"));
+    CHECK_FALSE(has_diagnostic(r, "E136"));
+}
+
+TEST_CASE(": Pattern rejects non-Pattern args with E184",
+          "[type-annotation][codegen]") {
+    SECTION("Number → E184") {
         auto r = akkado::compile(R"(
-            fn w(rate: sig) -> sine(rate)
-            w(220) |> out(@)
+            fn play(p: Pattern) -> p
+            play(440)
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'p'"));
+    }
+    SECTION("Signal → E184") {
+        auto r = akkado::compile(R"(
+            fn play(p: Pattern) -> p
+            play(sine(440))
+        )");
+        CHECK(has_diagnostic_for_param(r, "E184", "'p'"));
+    }
+}
+
+// =============================================================================
+// PRD prd-compiler-type-system Phase 4: builtin-argument type checking.
+//
+// Two modes:
+//   - Implicit (args_are_signal default): coerce-friendly. A signal slot
+//     accepts Signal/Number/Pattern/Array/Record/String — anything with a
+//     defensible signal interpretation ([[feedback_livecoding_coerce_dont_
+//     fail]]). Only Function / StateCell (no audio meaning) are rejected.
+//   - Explicit annotation (out, visualizers): strict — type_compatible decides.
+// =============================================================================
+
+TEST_CASE("builtin arg check: Function at an implicit signal slot is E160",
+          "[type-annotation][builtin-args]") {
+    // A bound function passed where a signal is expected has no coercion path.
+    auto r = akkado::compile(R"(
+        f = (x) -> x * 2
+        sine(f) |> out(@)
+    )");
+    CHECK(has_diagnostic(r, "E160"));
+}
+
+TEST_CASE("builtin arg check: coerce-friendly types pass at implicit signal slots",
+          "[type-annotation][builtin-args]") {
+    SECTION("String sample id passes (no false E160)") {
+        // sample()'s id slot legitimately accepts a String name.
+        auto r = akkado::compile(R"(sample(1.0, 1.0, "bd") |> out(@))");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+    }
+    SECTION("event Record used as a scalar coerces (no false E160)") {
+        // each_voice binds the lambda param to the event Record; using it
+        // directly as a frequency coerces to its .freq buffer.
+        auto r = akkado::compile(
+            R"(n"c4 e4 g4" |> each_voice(@, (v) -> osc("sin", v) * 0.3) |> out(@))");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+    }
+    SECTION("map-over-array expansion passes (no false E160)") {
+        // triad is a static Array; saw() clones per element (multi-buffer
+        // expansion), then sum() collapses. The Array is legitimate here.
+        auto r = akkado::compile(R"(
+            n"c4 e4 g4" as e
+            triad = map([0, 4, 7], (i) -> e.note + i)
+            triad.mtof().saw().sum() |> out(@)
         )");
         CHECK_FALSE(has_diagnostic(r, "E160"));
-        CHECK_FALSE(has_diagnostic(r, "E184"));
     }
-    SECTION("polyphonic Pattern fires E160 via : sig (parity with : signal)") {
+}
+
+TEST_CASE("builtin arg check: explicit Signal annotation stays strict (Array → E160)",
+          "[type-annotation][builtin-args]") {
+    // out() has an explicit {Signal, Signal} annotation, so an Array (which
+    // does not expand into out, a sink) is a hard type error — distinct from
+    // the coerce-friendly implicit path above.
+    auto r = akkado::compile("out([1, 2, 3])");
+    CHECK_FALSE(r.success);
+    CHECK(has_diagnostic(r, "E160"));
+}
+
+TEST_CASE("transport(): first argument must be a Pattern",
+          "[type-annotation][builtin-args]") {
+    // transport carries an explicit param_types[0] = Pattern. Its dedicated
+    // handler (handle_transport_call) rejects a non-pattern first arg with E133
+    // before the generic path; either way a Signal in slot 0 is a hard error.
+    SECTION("Signal first arg is rejected") {
+        auto r = akkado::compile("transport(sine(440), trigger(2)) |> out(@)");
+        CHECK_FALSE(r.success);
+        CHECK(has_diagnostic(r, "E133"));
+    }
+    SECTION("a real Pattern first arg compiles") {
+        auto r = akkado::compile(
+            R"(n"c4 e4 g4" |> transport(@, trigger(2)) |> sine(@) |> out(@))");
+        CHECK(r.success);
+    }
+}
+
+// =============================================================================
+// PRD prd-compiler-type-system Phase 4: runtime match-arm type agreement.
+// The SELECT chain merges every arm into one signal buffer, so arms must yield
+// the same kind of value. Signal / Number / Pattern are mutually compatible
+// (all reduce to a signal buffer); other types must match exactly.
+// =============================================================================
+
+TEST_CASE("match arms: mixing a Signal arm with a String arm is E160",
+          "[type-annotation][match-arms]") {
+    // Runtime match (non-const signal scrutinee `x`). One arm is a Signal, the
+    // other a String — incompatible kinds the SELECT chain cannot merge.
+    auto r = akkado::compile(R"(
+        x = saw(1)
+        match(x) {
+            0: sine(440),
+            _: "saw"
+        } |> out(@)
+    )");
+    CHECK(has_diagnostic(r, "E160"));
+}
+
+TEST_CASE("match arms: uniform signal-like arms compile clean",
+          "[type-annotation][match-arms]") {
+    SECTION("all Signal arms") {
         auto r = akkado::compile(R"(
-            fn w(rate: sig) -> sine(rate)
-            w(c"Am")
+            x = saw(1)
+            match(x) {
+                0: sine(440),
+                _: saw(220)
+            } |> out(@)
         )");
-        CHECK(has_diagnostic_for_param(r, "E160", "'rate'"));
+        CHECK_FALSE(has_diagnostic(r, "E160"));
+    }
+    SECTION("Signal and Number arms mix freely (both signal-like)") {
+        auto r = akkado::compile(R"(
+            x = saw(1)
+            match(x) {
+                0: sine(440),
+                _: 0
+            } |> out(@)
+        )");
+        CHECK_FALSE(has_diagnostic(r, "E160"));
     }
 }

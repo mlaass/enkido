@@ -971,47 +971,32 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
 	},
-	"evs": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"sig": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
 	"signal": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
 	},
-	"num": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"rec": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"arr": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"str": {
-		"slug": "parameter-type-annotations",
-		"category": "concepts",
-		"title": "Parameter Type Annotations"
-	},
-	"parameter": {
+	"number": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
 	},
 	"pattern": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"array": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"string": {
+		"slug": "parameter-type-annotations",
+		"category": "concepts",
+		"title": "Parameter Type Annotations"
+	},
+	"parameter": {
 		"slug": "parameter-type-annotations",
 		"category": "concepts",
 		"title": "Parameter Type Annotations"
@@ -2446,11 +2431,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "language",
 		"title": "Common patterns",
 		"anchor": "common-patterns"
-	},
-	"array": {
-		"slug": "arrays",
-		"category": "language",
-		"title": "Arrays"
 	},
 	"list": {
 		"slug": "arrays",
@@ -3984,7 +3964,7 @@ export const previews: Record<string, string> = {
 	"functions-and-inline": "A user  groups a reusable chunk of signal graph behind a name:",
 	"effect-parameters": "Every effect builtin in akkado — delays, reverbs, modulation, comb, filters, distortion, dynamics — exposes the same two mix parameters at the end...",
 	"glide-and-interpolation": "Pattern fields like  and  jump step-wise from one event to the next — they're sample-and-hold buffers.  smooths those jumps over a configurable...",
-	"parameter-type-annotations": "User  parameters can carry an optional type annotation: . Today the language ships seven annotation keywords — *,  (alias of ), , , , , and  — and...",
+	"parameter-type-annotations": "User  parameters can carry an optional type annotation: . The type names are uppercase PascalCase, mirroring the compiler's  enum — *, , , , , , ,...",
 	"signals": "Akkado has two kinds of audio signals: Mono (one channel) and Stereo (two channels, L and R). Channel count isn't a runtime property — it's a type...",
 	"05-testing-progression": "Work through each level in order. Report back which levels work, fail, or have issues.",
 	"03-synthesis": "Oscillators and filters give you tone. Envelopes give you notes — they decide when the sound starts and when it dies away.",

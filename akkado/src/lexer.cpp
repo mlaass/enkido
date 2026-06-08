@@ -17,17 +17,11 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
     {"as",       TokenType::As},
     {"const",    TokenType::Const},
     {"import",   TokenType::Import},
-    // Parameter type annotation keywords (PRD prd-parameter-type-annotations + Phase 2).
-    // `num`/`str` reuse the literal token types; parse_optional_annotation disambiguates
-    // by lexeme. `fn` reuses the existing declaration keyword token in annotation
-    // position (no separate entry needed).
-    {"evs",      TokenType::Evs},    // renamed from `stream`
-    {"signal",   TokenType::Signal},
-    {"sig",      TokenType::Signal}, // alias of signal
-    {"num",      TokenType::Number},
-    {"rec",      TokenType::Record},
-    {"arr",      TokenType::Array},
-    {"str",      TokenType::String},
+    // Parameter type annotations are NOT keywords. They are uppercase
+    // PascalCase identifiers (`Signal`, `Number`, `Pattern`, `Record`,
+    // `Array`, `String`, `Function`, `Stream`) resolved contextually in
+    // parse_optional_annotation by lexeme — so they stay usable as ordinary
+    // identifiers elsewhere. See PRD prd-parameter-type-annotations.
 };
 
 } // namespace

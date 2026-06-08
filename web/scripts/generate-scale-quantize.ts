@@ -221,7 +221,7 @@ function emitScaleQuantizeAk(): string {
   lines.push("// `keyDeltaTable`).");
   lines.push("// ----------------------------------------------------------------------------");
   lines.push("");
-  lines.push("fn key(events: evs, name) -> match(name) {");
+  lines.push("fn key(events: Stream, name) -> match(name) {");
 
   // Each branch:
   //   snap(e.note) + delta_table[ pc12(snap(e.note)) ]
@@ -259,7 +259,7 @@ function emitScaleQuantizeAk(): string {
   lines.push("// and \"d3:minor\" land on root MIDI 50.");
   lines.push("// ----------------------------------------------------------------------------");
   lines.push("");
-  lines.push("fn scale(events: evs, name) -> match(name) {");
+  lines.push("fn scale(events: Stream, name) -> match(name) {");
 
   // Per-branch:
   //   root_midi

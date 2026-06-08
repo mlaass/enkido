@@ -1,12 +1,19 @@
-> **Status: SHIPPED (2026-05-23)** — Phase 1 (`stream` + `signal`
-> annotations) landed via Commits A–E (599a692 → 4c2ca4c). All eight
-> §9 sub-steps (1.1–1.8) are complete: Stream/Signal lexer keywords +
-> type lattice (599a692, A), `name: type` parser grammar + analyzer
-> propagation (d579c3c, B), `handle_user_function_call` dispatch +
-> `E184` (4e9b618, C), end-to-end §10.3 verification examples
-> (ecbd317, D), and the web concept doc (4c2ca4c, E). Phase 2 (full
-> ValueType coverage: `number`, `record`, `array`, `string`,
-> `function`) remains deferred to a follow-up PRD.
+> **Status: SHIPPED (2026-05-23; names updated 2026-06-08)** — both phases
+> landed (`Stream`/`Signal` + full `Number`/`Record`/`Array`/`String`/`Function`
+> coverage). **Naming update (2026-06-08):** the annotation surface now uses
+> **uppercase PascalCase type names** mirroring the C++ `ValueType` enum —
+> `Signal`, `Number`, `Pattern`, `Record`, `Array`, `String`, `Function`,
+> `Stream`. The earlier lowercase abbreviations (`evs`/`sig`/`num`/`rec`/`arr`/
+> `str`/`fn` and the long form `signal`) were **hard-removed** (pre-release, no
+> external callers). Type names are NOT keywords — they lex as identifiers and
+> are resolved contextually only in annotation position (after a `:`), so they
+> stay usable as ordinary identifiers elsewhere. `Pattern` (strict Pattern) is
+> newly annotatable. **Examples below predate the rename** — read every lowercase
+> `: stream`/`: signal`/`: num`/… as its uppercase PascalCase form.
+>
+> _Original status:_ Phase 1 (`stream` + `signal`) landed via Commits A–E
+> (599a692 → 4c2ca4c); Phase 2 (`number`/`record`/`array`/`string`/`function`)
+> followed.
 
 # PRD: Akkado Parameter Type Annotations
 

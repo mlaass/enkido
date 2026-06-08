@@ -29,10 +29,9 @@ enum class TokenType : std::uint8_t {
     As,             // as (pipe binding)
     Const,          // const
     Import,         // import
-    Evs,            // evs (parameter type annotation; PRD prd-parameter-type-annotations-phase-2; renamed from `stream`)
-    Signal,         // signal / sig (parameter type annotation; PRD prd-parameter-type-annotations + Phase 2 alias)
-    Record,         // rec (parameter type annotation; PRD prd-parameter-type-annotations-phase-2)
-    Array,          // arr (parameter type annotation; PRD prd-parameter-type-annotations-phase-2)
+    // Note: parameter type annotations (Signal/Number/Pattern/Record/Array/
+    // String/Function/Stream) are NOT keyword tokens — they lex as
+    // Identifier and are resolved contextually in the parser.
 
     // Pattern types (used with mini-notation)
     Timeline,       // t"..." (timeline curve notation)
@@ -112,10 +111,6 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::As:           return "As";
         case TokenType::Const:        return "Const";
         case TokenType::Import:       return "Import";
-        case TokenType::Evs:          return "Evs";
-        case TokenType::Signal:       return "Signal";
-        case TokenType::Record:       return "Record";
-        case TokenType::Array:        return "Array";
         case TokenType::Timeline:     return "Timeline";
         case TokenType::ValuePat:     return "ValuePat";
         case TokenType::NotePat:      return "NotePat";

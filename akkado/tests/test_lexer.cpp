@@ -507,77 +507,29 @@ TEST_CASE("Lexer keywords", "[lexer]") {
         CHECK(tokens[2].type == TokenType::Identifier);
     }
 
-    // PRD prd-parameter-type-annotations + Phase 2 §6: `evs`, `sig`, `signal`,
-    // `num`, `rec`, `arr`, `str` are reserved keywords used in `fn` parameter
-    // annotations. `fn` was already reserved as the declaration keyword.
-    SECTION("evs and sig are reserved keywords") {
-        auto [tokens, diags] = lex("evs sig");
+    // PRD prd-parameter-type-annotations: parameter type names are uppercase
+    // PascalCase identifiers (Signal/Number/Pattern/Record/Array/String/
+    // Function/Stream), NOT keywords. They lex as plain Identifier tokens and
+    // are resolved contextually by the parser only in annotation position.
+    SECTION("uppercase type names lex as identifiers, not keywords") {
+        auto [tokens, diags] =
+            lex("Signal Number Pattern Record Array String Function Stream");
         REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 3);
+        REQUIRE(tokens.size() == 9);  // 8 names + EOF
 
-        CHECK(tokens[0].type == TokenType::Evs);
-        CHECK(tokens[1].type == TokenType::Signal);
+        for (std::size_t i = 0; i < 8; ++i) {
+            CHECK(tokens[i].type == TokenType::Identifier);
+        }
     }
 
-    SECTION("signal still tokenises (long-form alias of sig)") {
-        auto [tokens, diags] = lex("signal");
-        REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 2);
-
-        CHECK(tokens[0].type == TokenType::Signal);
-    }
-
-    SECTION("rec and arr lex to Record/Array tokens") {
-        auto [tokens, diags] = lex("rec arr");
-        REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 3);
-
-        CHECK(tokens[0].type == TokenType::Record);
-        CHECK(tokens[1].type == TokenType::Array);
-    }
-
-    SECTION("num keyword lexes to Number-typed token with empty value variant") {
-        auto [tokens, diags] = lex("num");
-        REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 2);
-
-        CHECK(tokens[0].type == TokenType::Number);
-        CHECK(tokens[0].lexeme == "num");
-        // The lexer keyword path does not populate the value variant — the
-        // parser disambiguates `num` (keyword) vs literal `42` (NumericValue)
-        // by inspecting tok.lexeme. Verify the variant is monostate.
-        CHECK(std::holds_alternative<std::monostate>(tokens[0].value));
-    }
-
-    SECTION("str keyword lexes to String-typed token with empty value variant") {
-        auto [tokens, diags] = lex("str");
-        REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 2);
-
-        CHECK(tokens[0].type == TokenType::String);
-        CHECK(tokens[0].lexeme == "str");
-        CHECK(std::holds_alternative<std::monostate>(tokens[0].value));
-    }
-
-    SECTION("stream no longer lexes as a keyword (PRD Phase 2 rename)") {
-        auto [tokens, diags] = lex("stream");
-        REQUIRE(diags.empty());
-        REQUIRE(tokens.size() == 2);
-
-        // After the Phase 2 rename, `stream` is no longer in the keyword
-        // table — it lexes as a plain identifier (and would surface as
-        // E185 / parse error if used in annotation position).
-        CHECK(tokens[0].type == TokenType::Identifier);
-    }
-
-    SECTION("evs/sig case sensitivity") {
-        auto [tokens, diags] = lex("Evs SIG StReAm");
+    SECTION("old abbreviations are no longer keywords") {
+        auto [tokens, diags] = lex("evs sig signal num rec arr str");
         REQUIRE(diags.empty());
 
-        // Case-mismatched forms remain identifiers.
-        CHECK(tokens[0].type == TokenType::Identifier);
-        CHECK(tokens[1].type == TokenType::Identifier);
-        CHECK(tokens[2].type == TokenType::Identifier);
+        // Every former annotation keyword now lexes as an ordinary identifier.
+        for (std::size_t i = 0; i + 1 < tokens.size(); ++i) {
+            CHECK(tokens[i].type == TokenType::Identifier);
+        }
     }
 }
 

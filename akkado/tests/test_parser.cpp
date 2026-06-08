@@ -1478,18 +1478,20 @@ TEST_CASE("Parser function definitions", "[parser]") {
 }
 
 // =============================================================================
-// PRD prd-parameter-type-annotations + Phase 2 §3.1: `name: type` annotation
-// grammar on fn parameter lists. Phase 2 ships `evs` (renamed from Phase 1
-// `stream`), `sig` (alias of `signal`), `num`, `rec`, `arr`, `str`, and `fn`.
-// Tests in this section cover the parser/AST surface (grammar, AST-node
-// promotion, E104/E185 diagnostics). Codegen-side behavior (E184 +
-// symbol-binding) is covered in test_param_type_annotations.cpp.
+// PRD prd-parameter-type-annotations §3.1: `name: type` annotation grammar on
+// fn parameter lists. Type names are uppercase PascalCase identifiers mirroring
+// the C++ ValueType enum: `Signal`, `Number`, `Pattern`, `Record`, `Array`,
+// `String`, `Function`, `Stream`. They are NOT keywords — they lex as plain
+// identifiers and are resolved contextually only in annotation position. Tests
+// in this section cover the parser/AST surface (grammar, AST-node promotion,
+// E104/E185 diagnostics). Codegen-side behavior (E184 + symbol-binding) is
+// covered in test_param_type_annotations.cpp.
 // =============================================================================
 
 TEST_CASE("Parser fn parameter type annotations: grammar",
           "[parser][type-annotation]") {
-    SECTION("simple : evs annotation parses and promotes to ClosureParamData") {
-        auto ast = parse_ok("fn transpose(events: evs, n) -> events");
+    SECTION("simple : Stream annotation parses and promotes to ClosureParamData") {
+        auto ast = parse_ok("fn transpose(events: Stream, n) -> events");
         NodeIndex fn = ast.arena[ast.root].first_child;
         REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
 
@@ -1508,56 +1510,56 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         CHECK(ident_text(ast.arena[p1].as_identifier()) == "n");
     }
 
-    SECTION(": signal annotation also parses (long-form alias)") {
-        auto ast = parse_ok("fn wobble(rate: signal, depth) -> depth");
+    SECTION(": Signal annotation parses to ParamValueType::Signal") {
+        auto ast = parse_ok("fn wobble(rate: Signal, depth) -> depth");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Signal);
     }
 
-    SECTION(": sig alias parses to same ParamValueType::Signal") {
-        auto ast = parse_ok("fn wobble(rate: sig, depth) -> depth");
+    SECTION(": Pattern annotation parses to ParamValueType::Pattern") {
+        auto ast = parse_ok("fn play(p: Pattern, gain) -> gain");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
-        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Signal);
+        CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Pattern);
     }
 
-    SECTION(": num annotation parses to ParamValueType::Number") {
-        auto ast = parse_ok("fn unison(freq, voices: num) -> freq");
+    SECTION(": Number annotation parses to ParamValueType::Number") {
+        auto ast = parse_ok("fn unison(freq, voices: Number) -> freq");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p1 = ast.arena[ast.arena[fn].first_child].next_sibling;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p1].data));
         CHECK(ast.arena[p1].as_closure_param().annotated_type == ParamValueType::Number);
     }
 
-    SECTION(": rec annotation parses to ParamValueType::Record") {
-        auto ast = parse_ok("fn arpinst(e: rec) -> e");
+    SECTION(": Record annotation parses to ParamValueType::Record") {
+        auto ast = parse_ok("fn arpinst(e: Record) -> e");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Record);
     }
 
-    SECTION(": arr annotation parses to ParamValueType::Array") {
-        auto ast = parse_ok("fn mixer(channels: arr, gain) -> gain");
+    SECTION(": Array annotation parses to ParamValueType::Array") {
+        auto ast = parse_ok("fn mixer(channels: Array, gain) -> gain");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::Array);
     }
 
-    SECTION(": str annotation parses to ParamValueType::String") {
-        auto ast = parse_ok("fn osctype(kind: str, freq) -> freq");
+    SECTION(": String annotation parses to ParamValueType::String") {
+        auto ast = parse_ok("fn osctype(kind: String, freq) -> freq");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
         CHECK(ast.arena[p0].as_closure_param().annotated_type == ParamValueType::String);
     }
 
-    SECTION(": fn annotation parses to ParamValueType::Function") {
-        auto ast = parse_ok("fn each_voice(voices, cb: fn) -> voices");
+    SECTION(": Function annotation parses to ParamValueType::Function") {
+        auto ast = parse_ok("fn each_voice(voices, cb: Function) -> voices");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p1 = ast.arena[ast.arena[fn].first_child].next_sibling;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p1].data));
@@ -1565,7 +1567,7 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
     }
 
     SECTION("annotation precedes default value") {
-        auto ast = parse_ok("fn f(rate: signal = 220) -> rate");
+        auto ast = parse_ok("fn f(rate: Signal = 220) -> rate");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
@@ -1575,8 +1577,8 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         CHECK_THAT(*cp.default_value, WithinRel(220.0));
     }
 
-    SECTION(": num + numeric default compose") {
-        auto ast = parse_ok("fn f(voices: num = 4) -> voices");
+    SECTION(": Number + numeric default compose") {
+        auto ast = parse_ok("fn f(voices: Number = 4) -> voices");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
@@ -1587,11 +1589,11 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
     }
 
     SECTION("annotation accepted before numeric default (eval errors deferred)") {
-        // The parser accepts the grammar `name : type = default`. A `: evs`
+        // The parser accepts the grammar `name : type = default`. A `: Stream`
         // default of `0` is semantically meaningless (PRD §8.9) but the
         // parser doesn't reject it — that's deferred to body-side usage
         // diagnostics. Verifies the token order `: type =`.
-        auto ast = parse_ok("fn t(events: evs = 0) -> events");
+        auto ast = parse_ok("fn t(events: Stream = 0) -> events");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         REQUIRE(std::holds_alternative<Node::ClosureParamData>(ast.arena[p0].data));
@@ -1600,8 +1602,9 @@ TEST_CASE("Parser fn parameter type annotations: grammar",
         REQUIRE(cp.default_value.has_value());
     }
 
-    SECTION("multiple annotated params (Phase 1 + Phase 2 mix)") {
-        auto ast = parse_ok("fn f(e: evs, r: sig, n: num, k: str, cb: fn) -> n");
+    SECTION("multiple annotated params") {
+        auto ast = parse_ok(
+            "fn f(e: Stream, r: Signal, n: Number, k: String, cb: Function) -> n");
         NodeIndex fn = ast.arena[ast.root].first_child;
         NodeIndex p0 = ast.arena[fn].first_child;
         NodeIndex p1 = ast.arena[p0].next_sibling;
@@ -1637,33 +1640,38 @@ TEST_CASE("Parser fn parameter type annotations: E185 unknown type name",
         for (const auto& d : parse_diags) {
             if (d.code == "E185") {
                 has_e185 = true;
-                // Diagnostic should enumerate the valid keywords as a hint.
-                CHECK(d.message.find("evs") != std::string::npos);
+                // Diagnostic should enumerate the valid type names as a hint.
+                CHECK(d.message.find("Signal") != std::string::npos);
             }
         }
         CHECK(has_e185);
     }
 
-    SECTION("E185 fires on the renamed `: stream` keyword (no longer valid)") {
-        // Phase 2 §3.1: `: stream` no longer parses. `stream` lexes as an
-        // Identifier, which falls through to the E185 path in the annotation
-        // lambda.
-        auto [tokens, lex_diags] = lex("fn f(events: stream) -> events");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        REQUIRE_FALSE(parse_diags.empty());
-        bool has_e185 = false;
-        for (const auto& d : parse_diags) {
-            if (d.code == "E185") has_e185 = true;
+    SECTION("E185 fires on lowercase type names (only PascalCase is valid)") {
+        // Type names are case-sensitive: `stream`/`signal`/`num` are NOT
+        // annotation type names — they lex as plain Identifiers and fall
+        // through to the E185 path in the annotation lambda. Only the
+        // uppercase forms (`Stream`, `Signal`, `Number`, …) are accepted.
+        for (const char* src : {"fn f(events: stream) -> events",
+                                 "fn f(rate: signal) -> rate",
+                                 "fn f(n: num) -> n"}) {
+            auto [tokens, lex_diags] = lex(src);
+            REQUIRE(lex_diags.empty());
+            auto [ast, parse_diags] = parse(std::move(tokens), "src");
+            REQUIRE_FALSE(parse_diags.empty());
+            bool has_e185 = false;
+            for (const auto& d : parse_diags) {
+                if (d.code == "E185") has_e185 = true;
+            }
+            CHECK(has_e185);
         }
-        CHECK(has_e185);
     }
 }
 
 TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
           "[parser][type-annotation]") {
     SECTION("E104 fires on destructure param annotation") {
-        auto [tokens, lex_diags] = lex("fn f({x, y}: rec) -> x + y");
+        auto [tokens, lex_diags] = lex("fn f({x, y}: Record) -> x + y");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
         REQUIRE_FALSE(parse_diags.empty());
@@ -1675,7 +1683,7 @@ TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
     }
 
     SECTION("E104 fires on rest param annotation") {
-        auto [tokens, lex_diags] = lex("fn f(...args: arr) -> args");
+        auto [tokens, lex_diags] = lex("fn f(...args: Array) -> args");
         REQUIRE(lex_diags.empty());
         auto [ast, parse_diags] = parse(std::move(tokens), "src");
         REQUIRE_FALSE(parse_diags.empty());
@@ -1687,66 +1695,34 @@ TEST_CASE("Parser fn parameter type annotations: E104 disallowed positions",
     }
 }
 
-TEST_CASE("Parser: Phase 2 type-name keywords are reserved",
+TEST_CASE("Parser: type names are not reserved identifiers",
           "[parser][type-annotation]") {
-    SECTION("top-level `stream = …` falls through to identifier path (post-rename)") {
-        // Phase 2 rename: `stream` is no longer a reserved keyword — it lexes
-        // as a plain Identifier. The expression-statement path may then accept
-        // or reject; the test just verifies no crash.
-        auto [tokens, lex_diags] = lex("stream = 5");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        (void)ast;
-        (void)parse_diags;
-        // Either parses (Identifier `stream`) or fails — both are acceptable.
-        // The critical bit is no std::bad_variant_access.
-        SUCCEED();
+    // PRD prd-parameter-type-annotations: type names (and the former
+    // abbreviations) are NOT keywords. They are ordinary identifiers and
+    // remain fully usable as variable / fn / parameter names. Only in
+    // annotation position (after a `:`) are the uppercase forms special.
+
+    SECTION("former abbreviations are usable as identifiers") {
+        // `arr`, `str`, `num`, `stream`, `sig` are plain identifiers now.
+        auto ast = parse_ok("fn arr(x) -> x");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+        CHECK(ast.arena[fn].as_function_def().name == "arr");
     }
 
-    SECTION("top-level `num = 5` surfaces a clean parse error (no crash)") {
-        // PRD prd-parameter-type-annotations-phase-2 §4.4: `num` reuses
-        // TokenType::Number with empty value variant. parse_number()'s
-        // defensive guard emits E185 instead of crashing on
-        // std::bad_variant_access.
-        auto [tokens, lex_diags] = lex("num = 5");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        (void)ast;
-        CHECK_FALSE(parse_diags.empty());
-        bool has_e185 = false;
-        for (const auto& d : parse_diags) {
-            if (d.code == "E185") has_e185 = true;
-        }
-        CHECK(has_e185);
+    SECTION("former abbreviation usable as a parameter name") {
+        auto ast = parse_ok("fn f(arr) -> arr");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        NodeIndex p0 = ast.arena[fn].first_child;
+        CHECK(std::holds_alternative<Node::IdentifierData>(ast.arena[p0].data));
     }
 
-    SECTION("top-level `str` as expression surfaces a clean parse error") {
-        auto [tokens, lex_diags] = lex("str");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        (void)ast;
-        CHECK_FALSE(parse_diags.empty());
-        bool has_e185 = false;
-        for (const auto& d : parse_diags) {
-            if (d.code == "E185") has_e185 = true;
-        }
-        CHECK(has_e185);
-    }
-
-    SECTION("`fn arr(...)` rejects the reserved name as fn-name") {
-        auto [tokens, lex_diags] = lex("fn arr(x) -> x");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        (void)ast;
-        CHECK_FALSE(parse_diags.empty());
-    }
-
-    SECTION("`fn f(arr) -> arr` rejects the reserved name as param-name") {
-        auto [tokens, lex_diags] = lex("fn f(arr) -> arr");
-        REQUIRE(lex_diags.empty());
-        auto [ast, parse_diags] = parse(std::move(tokens), "src");
-        (void)ast;
-        CHECK_FALSE(parse_diags.empty());
+    SECTION("uppercase type names are usable as identifiers outside annotation position") {
+        // `String`/`Array`/etc. are not reserved — only meaningful after `:`.
+        auto ast = parse_ok("fn String(x) -> x");
+        NodeIndex fn = ast.arena[ast.root].first_child;
+        REQUIRE(ast.arena[fn].type == NodeType::FunctionDef);
+        CHECK(ast.arena[fn].as_function_def().name == "String");
     }
 }
 

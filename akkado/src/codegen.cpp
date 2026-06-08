@@ -1529,15 +1529,45 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // Type check against annotation (non-fatal — continue for max error reporting).
                 // DynArray already reported the dedicated E181 above; skip
                 // the generic type-mismatch to avoid a duplicate diagnostic.
+                //
+                // Two checking modes (PRD prd-compiler-type-system Phase 4):
+                //
+                //  - EXPLICIT annotation (param_types[i] != Any): strict — the
+                //    builtin author opted into a precise type. `type_compatible`
+                //    decides. out/bus reject Array, visualizers want a String
+                //    label, etc.
+                //
+                //  - IMPLICIT Signal slot (no annotation, builtin coerces all
+                //    args to Signal via `args_are_signal`): coerce-friendly per
+                //    the live-coding philosophy ([[feedback_livecoding_coerce_
+                //    dont_fail]]). Number/Pattern (voice-0 coerce), Array
+                //    (map-over-array expansion, `triad.saw().sum()`), Record
+                //    (event-as-scalar → .freq) and String (e.g. sample("bd")
+                //    ids) all have a defensible interpretation, so they pass.
+                //    Only Function and StateCell have no audio meaning at a
+                //    signal slot — those are the genuine no-coercion-path
+                //    mistakes, and the only types this implicit path rejects.
                 if (arg_idx < MAX_BUILTIN_PARAMS &&
-                    builtin->param_types[arg_idx] != ParamValueType::Any &&
                     !arg_tv.error && arg_tv.type != ValueType::Void &&
                     arg_tv.type != ValueType::DynArray) {
-                    if (!type_compatible(arg_tv.type, builtin->param_types[arg_idx])) {
+                    const ParamValueType expected = builtin->param_types[arg_idx];
+                    if (expected != ParamValueType::Any) {
+                        if (!type_compatible(arg_tv.type, expected)) {
+                            error("E160", func_name + "() argument '" +
+                                  std::string(builtin->param_names[arg_idx]) +
+                                  "' expects " + param_value_type_name(expected) +
+                                  ", got " + value_type_name(arg_tv.type),
+                                  diag_loc);
+                        }
+                    } else if (builtin->args_are_signal &&
+                               arg_idx < builtin->total_params() &&
+                               (arg_tv.type == ValueType::Function ||
+                                arg_tv.type == ValueType::StateCell)) {
                         error("E160", func_name + "() argument '" +
-                              std::string(builtin->param_names[arg_idx]) + "' expects " +
-                              param_value_type_name(builtin->param_types[arg_idx]) +
-                              ", got " + value_type_name(arg_tv.type),
+                              std::string(builtin->param_names[arg_idx]) +
+                              "' expects a signal, got " +
+                              value_type_name(arg_tv.type) +
+                              " — no coercion path",
                               diag_loc);
                     }
                 }

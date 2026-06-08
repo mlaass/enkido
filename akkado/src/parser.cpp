@@ -1208,34 +1208,35 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     bool seen_default = false;
     std::size_t destr_param_idx = 0;
 
-    // PRD prd-parameter-type-annotations-phase-2 §3.1: parse the optional
-    // annotation after a parameter name. Returns Any when no annotation is
-    // present. Emits E185 for an unknown type name (e.g. `: bogustype`) and
-    // recovers by skipping one token.
+    // PRD prd-parameter-type-annotations §3.1: parse the optional annotation
+    // after a parameter name. Returns Any when no annotation is present. Emits
+    // E185 for an unknown type name (e.g. `: bogustype`) and recovers by
+    // skipping one token.
     //
-    // Token strategy (P2-Q12): `num`/`str` reuse TokenType::Number/String
-    // (literal token types). The lexer keyword path produces these tokens
-    // with `tok.value == std::monostate{}` and `tok.lexeme == "num"`/`"str"`,
-    // so we disambiguate via the lexeme. `fn` reuses TokenType::Fn (the
-    // declaration keyword) — contexts are disjoint, no conflict.
+    // Type names are uppercase PascalCase identifiers mirroring the C++
+    // ValueType enum (Signal/Number/Pattern/Record/Array/String/Function/
+    // Stream). They are NOT keywords — the lexer emits them as Identifier
+    // tokens, so they remain usable as ordinary identifiers outside an
+    // annotation position. We resolve by lexeme here.
     auto parse_optional_annotation = [&]() -> ParamValueType {
         if (!match(TokenType::Colon)) {
             return ParamValueType::Any;
         }
         Token tok = advance();
-        if (tok.type == TokenType::Evs)    return ParamValueType::Stream;
-        if (tok.type == TokenType::Signal) return ParamValueType::Signal;
-        if (tok.type == TokenType::Record) return ParamValueType::Record;
-        if (tok.type == TokenType::Array)  return ParamValueType::Array;
-        if (tok.type == TokenType::Fn)     return ParamValueType::Function;
-        if (tok.type == TokenType::Number && tok.lexeme == "num")
-                                           return ParamValueType::Number;
-        if (tok.type == TokenType::String && tok.lexeme == "str")
-                                           return ParamValueType::String;
+        if (tok.type == TokenType::Identifier) {
+            if (tok.lexeme == "Signal")   return ParamValueType::Signal;
+            if (tok.lexeme == "Number")   return ParamValueType::Number;
+            if (tok.lexeme == "Pattern")  return ParamValueType::Pattern;
+            if (tok.lexeme == "Record")   return ParamValueType::Record;
+            if (tok.lexeme == "Array")    return ParamValueType::Array;
+            if (tok.lexeme == "String")   return ParamValueType::String;
+            if (tok.lexeme == "Function") return ParamValueType::Function;
+            if (tok.lexeme == "Stream")   return ParamValueType::Stream;
+        }
         error_with_code(tok, "E185",
             "Unknown type name '" + std::string(tok.lexeme) +
-            "' in parameter annotation; expected `evs`, `sig`/`signal`, "
-            "`num`, `rec`, `arr`, `str`, or `fn`.");
+            "' in parameter annotation; expected `Signal`, `Number`, "
+            "`Pattern`, `Record`, `Array`, `String`, `Function`, or `Stream`.");
         return ParamValueType::Any;
     };
 
@@ -1244,11 +1245,7 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
     // errors after E104. The caller has already verified `check(TokenType::Colon)`.
     auto skip_rejected_annotation = [&]() {
         advance();  // consume ':'
-        if (check(TokenType::Evs) || check(TokenType::Signal) ||
-            check(TokenType::Record) || check(TokenType::Array) ||
-            check(TokenType::Fn) ||
-            check(TokenType::Number) || check(TokenType::String) ||
-            check(TokenType::Identifier)) {
+        if (check(TokenType::Identifier)) {
             advance();
         }
     };

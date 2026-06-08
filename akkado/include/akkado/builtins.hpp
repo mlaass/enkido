@@ -58,6 +58,12 @@ constexpr const char* param_value_type_name(ParamValueType type) {
 inline bool type_compatible(ValueType actual, ParamValueType expected) {
     switch (expected) {
         case ParamValueType::Any:      return true;
+        // Signal accepts Signal, Number (auto-promoted), and mono Pattern
+        // (voice-0 coerce). Array is deliberately NOT accepted: chord/array
+        // expansion (`expand_call_arguments`) flattens an array into per-element
+        // Signals BEFORE this check runs, so a raw Array reaching here means the
+        // array was not expandable in this position — a genuine type error
+        // (e.g. `out([1,2,3])`). DynArray is handled separately (E181) earlier.
         case ParamValueType::Signal:   return actual == ValueType::Signal || actual == ValueType::Number || actual == ValueType::Pattern;
         case ParamValueType::Pattern:  return actual == ValueType::Pattern;
         case ParamValueType::String:   return actual == ValueType::String;
@@ -1304,14 +1310,16 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                     {"input", "lambda", "", "", "", ""},
                     {NAN, NAN, NAN},
                     "Higher-order per-event instrument: each_voice(input, (n) -> ...) runs the lambda once per pattern event and mixes the outputs.",
-                    0, {}, {}, ChannelCount::Stereo, true}},
+                    0, {ParamValueType::Any, ParamValueType::Function},
+                    {}, ChannelCount::Stereo, true}},
     // each(input, lambda): side-effecting per-event sink — the lambda body
     // calls out() itself; iterations accumulate into the global bus.
     {"each", {cedar::Opcode::NOP, 2, 0, true,
               {"input", "lambda", "", "", "", ""},
               {NAN, NAN, NAN},
               "Higher-order per-event sink: each(input, (n) -> ...) runs the lambda once per event for side effects (the body calls out() itself).",
-              0, {}, {}, ChannelCount::Mono, true}},
+              0, {ParamValueType::Any, ParamValueType::Function},
+              {}, ChannelCount::Mono, true}},
     // Runtime event-stream transforms (PRD prd-runtime-event-transforms
     // Phase 2). event_map(events, (e) -> {...}) rewrites every event of a
     // pattern / MIDI stream via a closure returning a field-overlay record;
@@ -1409,7 +1417,8 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"pattern", "trig", "step", "reset", "", ""},
                  {1.0f, NAN, NAN, NAN, NAN},
                  "Trigger-driven pattern transport — decouples a pattern from "
-                 "the global clock; each trigger edge advances playback."}},
+                 "the global clock; each trigger edge advances playback.",
+                 0, {ParamValueType::Pattern}}},
     // transpose / velocity / dur / bend / aftertouch live in
     // akkado/stdlib/event_transforms.ak as one-line `event_map` wrappers
     // (prd-runtime-event-transforms Phase 2b).

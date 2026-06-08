@@ -544,9 +544,14 @@ TypedValue CodeGenerator::handle_user_function_call(
                     // for fundamentally incompatible types.
                     const ParamValueType expected = func.params[i].annotated_type;
 
-                    if (expected == ParamValueType::Stream) {
+                    if (expected == ParamValueType::Stream ||
+                        expected == ParamValueType::Pattern) {
                         // PRD §4.2 row "Stream / Pattern" + "Stream / EventSource":
-                        // pass-through. Other types fire E184.
+                        // pass-through. Other types fire E184. `: Pattern` is the
+                        // strict-Pattern spelling; `: Stream` is the abstract
+                        // supertype. Both accept Pattern only and behave
+                        // identically here (type_compatible() collapses them) —
+                        // the only difference is the type name in diagnostics.
                         //
                         // Bare-identifier args (`m = n"…"; xp(m, 7)`) don't get
                         // their Pattern TypedValue recorded in `node_types_`
@@ -562,7 +567,9 @@ TypedValue CodeGenerator::handle_user_function_call(
                         if (arg_tv.type != ValueType::Pattern) {
                             std::string msg = "parameter '" + func.params[i].name +
                                               "' of fn '" + func.name +
-                                              "' expects Stream, got " +
+                                              "' expects " +
+                                              std::string(param_value_type_name(expected)) +
+                                              ", got " +
                                               std::string(value_type_name(arg_tv.type)) +
                                               " — no coercion path";
                             if (arg_tv.type == ValueType::DynArray) {
@@ -2051,6 +2058,18 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
     };
     std::vector<ArmInfo> arms;
 
+    // PRD prd-compiler-type-system Phase 4: match-arm type agreement. The
+    // runtime SELECT chain merges every arm into one signal buffer, so arms
+    // that produce genuinely different value kinds (e.g. one arm a Signal,
+    // another a Pattern or Record) cannot be combined coherently. We record
+    // each arm body's ValueType and, after collecting them, require agreement:
+    // Signal / Number / Pattern are mutually compatible (all reduce to a signal
+    // buffer — coerce-friendly, [[feedback_livecoding_coerce_dont_fail]]); any
+    // other type must match all the others exactly. The arm's source location
+    // is captured for a precise diagnostic.
+    struct ArmType { ValueType type; SourceLocation loc; };
+    std::vector<ArmType> arm_types;
+
     arm = first_arm;
     while (arm != NULL_NODE) {
         const Node& arm_node = ast_->arena[arm];
@@ -2081,9 +2100,12 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
             // Visit body first (all branches compute in DSP)
             std::uint16_t body_buf = BufferAllocator::BUFFER_UNUSED;
             if (body != NULL_NODE) {
-                body_buf = visit(body).buffer;
+                TypedValue body_tv = visit(body);
+                body_buf = body_tv.buffer;
+                arm_types.push_back({body_tv.type, ast_->arena[body].location});
             } else {
-                // Empty body -> emit 0.0
+                // Empty body -> emit 0.0 (a signal-like constant; no agreement
+                // constraint contributed).
                 body_buf = buffers_.allocate();
                 cedar::Instruction push_inst{};
                 push_inst.opcode = cedar::Opcode::PUSH_CONST;
@@ -2217,6 +2239,33 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
     if (arms.empty()) {
         error("E122", "Match expression has no arms", n.location);
         return TypedValue::void_val();
+    }
+
+    // Match-arm type agreement (PRD prd-compiler-type-system Phase 4). Signal /
+    // Number / Pattern all reduce to a signal buffer, so they are mutually
+    // compatible; any other ValueType must match every arm exactly. Mixing a
+    // signal-like arm with (say) a Pattern, or two different compound types, is
+    // a type error — the SELECT chain cannot merge them coherently.
+    {
+        auto signal_like = [](ValueType t) {
+            return t == ValueType::Signal || t == ValueType::Number ||
+                   t == ValueType::Pattern;
+        };
+        for (std::size_t i = 1; i < arm_types.size(); ++i) {
+            const ValueType a = arm_types[0].type;
+            const ValueType b = arm_types[i].type;
+            const bool compatible =
+                (signal_like(a) && signal_like(b)) || a == b;
+            if (!compatible) {
+                error("E160",
+                      std::string("match arms produce incompatible types: ") +
+                      std::string(value_type_name(a)) + " and " +
+                      std::string(value_type_name(b)) +
+                      " — every arm must yield the same kind of value",
+                      arm_types[i].loc);
+                break;
+            }
+        }
     }
 
     // Build nested select chain (reverse order)
