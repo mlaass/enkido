@@ -100,6 +100,23 @@ is no automated tripwire. More broadly:
 - **No pre-release gate** beyond a clean git tree and a CHANGELOG
   entry. A leak or budget regression can ship.
 
+> **Observed symptom (2026-06-08).** A second, milder instance of the
+> same class: the `akkado_tests` Catch2 binary — which performs ~1000+
+> independent `akkado::compile()` calls in one process — slows
+> progressively as it runs (the later a test case executes, the slower
+> it compiles), to the point where a full run can be ~10× slower per
+> assertion than the first few hundred. The suite still *passes* given
+> enough wall-clock, so it is not a correctness bug, but the per-process
+> degradation strongly suggests **state that is not reset between
+> `compile()` calls** (a growing arena / string interner / static map,
+> or a per-compile resource that is allocated but never reclaimed). This
+> is exactly what **Leg 4's linear-slope-on-sampled-RSS check** (§3.5)
+> is designed to catch — a single process doing N compiles should hold
+> bounded RSS, not grow monotonically. Worth using `akkado_tests` itself
+> (or a tight `compile()`-in-a-loop driver) as a ready-made corpus for
+> that slope check, and tracing whether the compiler's arena/interner
+> has a per-invocation reset path.
+
 ---
 
 ## 2. Goals and Non-Goals
