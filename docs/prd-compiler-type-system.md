@@ -11,7 +11,8 @@
 >   emitting `E160` diagnostics with source locations all exist and run.
 > - **Phase 3 — complete.** `Symbol` carries `TypedValue` (so `as` bindings
 >   propagate types), closures propagate types (`codegen_functions.cpp`), and
->   `EventSource` typing wires `midi()` → `poly()`.
+>   runtime-event-source Pattern typing (`is_runtime_event_source`, the model that
+>   superseded the former standalone `EventSource` type) wires `midi()` → `poly()`.
 > - **Phase 4 (Coverage) — shipped (2026-06-08).** Rather than spelling
 >   `{Signal, …}` on all ~186 entries, the `visit_call()` check now treats an
 >   unannotated slot on an `args_are_signal` builtin as **coerce-friendly
@@ -78,69 +79,98 @@ This causes three concrete problems:
 
 ## Proposed Types
 
-Built-in, not user-extendable. Eight types:
+Built-in, not user-extendable. The shipped `ValueType` enum
+(`akkado/include/akkado/typed_value.hpp:15`) has **eleven** members. The first
+eight below were the original design; `StateCell`, `DynArray`, and `Stream` were
+added by later PRDs and are documented here for completeness.
 
 | Type | Representation | Examples |
 |------|---------------|----------|
 | **Signal** | Single audio-rate buffer | `sine(440)`, `@ * 0.5` |
 | **Number** | Compile-time constant (float) | `440`, `0.5`, `2 * pi` |
-| **Pattern** | Record of {freq, vel, trig, gate, type} + SequenceState ref + cycle_length | `n"c4 e4 g4"`, `seq("x _ x _")` |
+| **Pattern** | Field buffers + SequenceState ref + cycle_length; also carries runtime event streams (`midi()`) via `is_runtime_event_source` | `n"c4 e4 g4"`, `seq("x _ x _")` |
 | **Record** | Named fields → TypedValue | `{freq: 440, vel: 0.8}` |
-| **Array** | Ordered typed values | `[1, 2, 3]`, chord expansion `C4'` |
+| **Array** | Ordered typed values (compile-time unrolled) | `[1, 2, 3]`, chord expansion `C4'` |
 | **String** | Compile-time string literal | `"sin"`, `"kick.wav"` |
 | **Function** | Compile-time reference to closure/fn | `(x) -> x * 2`, named functions |
+| **StateCell** | Handle to a `CellState` slot (added later) | `state(init)` in userspace |
+| **DynArray** | Runtime-varying-length array (added later) | `notes(e)`, `freqs(e)` chord data |
+| **Stream** | Abstract supertype for `: stream` annotations; `Pattern ⊆ Stream`. Never constructed as a runtime `TypedValue` — only used by the annotation surface and `type_compatible()` (added later) | `: stream` param annotation |
 | **Void** | No value (side effects) | `out(sig, sig)` |
 
-Pattern is a specialization of Record with known field names and associated SequenceState. The compiler may treat Pattern as a Record subtype for field access purposes.
+Pattern is a specialization of Record with known field names and associated SequenceState. The compiler may treat Pattern as a Record subtype for field access purposes. Phase 5 Commit I folded the former standalone `ValueType::EventSource` into Pattern (distinguished by the `is_runtime_event_source` flag).
 
 Function is a compile-time reference to a closure or function definition. It is not callable at runtime — the compiler inlines function bodies at call sites. This type exists so that higher-order patterns (passing functions as arguments) can be type-checked.
 
 ## Core Change: TypedValue
 
+The struct definitions below reflect what shipped. The canonical source of truth
+is `akkado/include/akkado/typed_value.hpp` — these have evolved past the original
+sketch (the field array grew to 11 slots, `voice_fields` became `voice_freqs`,
+`num_voices` became `max_voices`, and the payload absorbed several flags).
+
 ```cpp
 enum class ValueType : uint8_t {
     Signal,
     Number,
-    Pattern,
+    Pattern,     // also carries runtime event streams (is_runtime_event_source)
     Record,
     Array,
     String,
     Function,
+    StateCell,   // handle to a CellState slot (state(init))
+    DynArray,    // runtime-varying-length array (chord notes from events)
+    Stream,      // abstract supertype for `: stream` annotations (Pattern ⊆ Stream)
     Void
 };
 
 struct PatternPayload {
-    std::array<uint16_t, 5> fields;  // freq, vel, trig, gate, type (mono)
-    // For polyphonic: per-voice buffers
-    std::vector<std::array<uint16_t, 5>> voice_fields;  // empty if mono
+    std::array<uint16_t, 11> fields;  // freq, vel, trig, gate, type, note, dur,
+                                      // chance, time, phase, sample_id (0xFFFF = none)
+    std::vector<uint16_t> voice_freqs;             // per-voice freq buffers (poly); empty if mono
+    std::unordered_map<std::string, uint16_t> custom_fields;       // SEQPAT_PROP buffers
+    std::unordered_map<std::string, uint8_t> custom_field_slots;   // event prop_vals[] slots
     uint32_t state_id;
     float cycle_length;
-    uint8_t num_voices;
+    bool is_sample_pattern = false;       // s"…" — gates Pattern→Signal coerce
+    uint8_t max_voices = 1;
+    bool is_runtime_event_source = false; // set by midi() (former EventSource type)
+    std::vector<RequiredSample> sample_refs;
 };
 
 struct RecordPayload {
-    std::unordered_map<uint32_t, TypedValue> fields;  // interned name → TypedValue
+    std::unordered_map<std::string, TypedValue> fields;  // name → TypedValue
 };
 
 struct ArrayPayload {
     std::vector<TypedValue> elements;
 };
 
-struct TypedValue {
-    ValueType type;
-    uint16_t buffer;          // Primary buffer (Signal/Number) or BUFFER_UNUSED
-    bool error = false;       // Poison flag for error recovery
+struct DynArrayPayload {
+    uint16_t data_buffer = 0xFFFF;  // packed element data (samples 0..len-1)
+    uint16_t len_buffer  = 0xFFFF;  // per-block length signal
+};
 
-    // Compound payload (null for Signal/Number/String/Void/Function)
+struct TypedValue {
+    ValueType type = ValueType::Void;
+    uint16_t buffer = 0xFFFF;  // Primary buffer or BUFFER_UNUSED
+    bool error = false;        // Poison flag for error recovery
+
+    ChannelCount channels = ChannelCount::Mono;  // stereo is a flag, not a type
+    uint16_t right_buffer = 0xFFFF;              // when channels == Stereo (buffer + 1)
+
+    // Compound payloads (only one non-null at a time)
     std::shared_ptr<PatternPayload> pattern;    // Pattern
     std::shared_ptr<RecordPayload> record;      // Record
     std::shared_ptr<ArrayPayload> array;        // Array
+    std::shared_ptr<DynArrayPayload> dyn;       // DynArray
     uint32_t string_id = 0;                     // String (interned hash)
+    uint32_t cell_state_id = 0;                 // StateCell (state pool slot id)
     // Function: reuses existing FunctionRef / NodeIndex to closure body
 };
 ```
 
-Only one `shared_ptr` is non-null at a time. This is 40-48 bytes per TypedValue, but they are only created during compilation (not in the audio path). Copies are cheap via shared_ptr refcount.
+Only one compound `shared_ptr` is non-null at a time. TypedValues are only created during compilation (not in the audio path); copies are cheap via shared_ptr refcount.
 
 `visit()` returns `TypedValue` instead of `uint16_t`.
 
@@ -224,7 +254,9 @@ n"c4 e4" |> transport(@, trigger(2))
 ```
 1. Visit the expression → get TypedValue
 2. Switch on type:
-   - Pattern: look up field in pattern fields (freq/vel/trig/gate/type)
+   - Pattern: look up field in pattern fields (freq, vel, trig, gate, type,
+              note, dur, chance, time, phase, sample_id — plus any custom_fields),
+              resolving aliases (freq/pitch/f, vel/velocity/v, …) via pattern_field()
    - Record:  look up field in record map
    - Other:   type error
 ```
@@ -242,48 +274,80 @@ struct BuiltinInfo {
     uint8_t optional_count;
     bool requires_state;
     std::array<std::string_view, MAX_BUILTIN_PARAMS> param_names;
-    std::array<ValueType, MAX_BUILTIN_PARAMS> param_types;    // NEW
+    std::array<ParamValueType, MAX_BUILTIN_PARAMS> param_types = {};  // NEW; all Any by default
     std::array<float, MAX_BUILTIN_DEFAULTS> defaults;
     std::string_view description;
     uint8_t extended_param_count = 0;
+    bool args_are_signal = true;   // opt-out flag for non-signal builtins
 };
 ```
 
-`param_types` array marks each parameter's expected type. `Signal` is the default (backward compatible — any audio-rate value). Special values:
+`param_types` marks each parameter's expected type, using the dedicated
+`ParamValueType` enum (`typed_value.hpp:44`). The default is **`Any`** (no
+checking — opt-in), not Signal. Annotation values:
 
-- `Signal` — accepts Signal or Number (auto-promoted to constant buffer). **Pattern is not accepted** — require explicit field access (e.g., `.freq`).
-- `Pattern` — requires Pattern typed value
+- `Signal` — accepts Signal, Number (auto-promoted), and Pattern (coerced — see below)
+- `Pattern` — requires Pattern
 - `String` — requires compile-time string literal
-- `Number` — requires compile-time constant
+- `Number` — strict compile-time constant
+- `Record` — accepts Record or Pattern (Pattern is a Record subtype)
+- `Array`, `Function`, `Stream` — require the corresponding type (`Stream` accepts Pattern)
 
-Type checking happens in `visit_call()` after visiting each argument:
+**Enforcement is coerce-friendly, not always-strict.** The generic per-arg check
+runs in the `visit_call()` loop (`codegen.cpp:1535+`). For a slot that is
+*unannotated* (`Any`) on an `args_are_signal` builtin, the check treats it as a
+**coerce-friendly Signal**: Signal/Number/Pattern/Array/Record/String all pass
+(each has a defensible signal/expansion/coerce path, per the live-coding
+"coerce, don't fail" philosophy); only Function/StateCell (no audio meaning) are
+rejected. *Explicit* annotations stay strict via `type_compatible()`. Builtins
+with specific-typed parameters (transport, midi, visualizers, poly, UI controls,
+sample) bypass this loop entirely via custom handlers that emit their own
+diagnostics (E133, E423, options-schema, E151–E157, …):
+
 ```cpp
 for (int i = 0; i < num_args; i++) {
     TypedValue arg = visit(arg_node);
-    ValueType expected = builtin.param_types[i];
-    if (!type_compatible(arg.type, expected)) {
-        error("argument '{}' expects {}, got {}", builtin.param_names[i], expected, arg.type);
+    ParamValueType expected = builtin.param_types[i];   // Any unless annotated
+    if (expected != ParamValueType::Any && !type_compatible(arg.type, expected)) {
+        error("E160", "argument '{}' expects {}, got {}", ...);
     }
+    // unannotated args_are_signal slot: coerce-friendly Signal fallback
 }
 ```
 
 ### Type compatibility rules
 
+`type_compatible(actual, expected)` (`builtins.hpp:58`):
+
 | Expected | Accepts |
 |----------|---------|
-| Signal | Signal, Number (promoted) |
+| Any | anything (no check) |
+| Signal | Signal, Number (promoted), Pattern (coerced) |
 | Number | Number only |
 | Pattern | Pattern only |
 | Record | Record, Pattern (subtype) |
 | Array | Array only |
 | String | String only |
 | Function | Function only |
+| Stream | Pattern only (Pattern ⊆ Stream; covers runtime event sources) |
 
-Pattern → Signal coercion is deliberately **not** supported. Passing a Pattern where a Signal is expected is a type error. Users must access a specific field: `n"c4".freq` or `e.freq` via `as` binding. This prevents silent "which field did you mean?" ambiguity.
+`StateCell` and `DynArray` are not annotation targets in `ParamValueType`; they
+are handled at dedicated call sites (`get`/`set` for StateCell; E181 / `ARRAY_INDEX`
+for DynArray) rather than through the generic `type_compatible()` path.
+
+**Pattern → Signal coercion *is* supported** (this reverses the original design).
+At the call slot (`codegen.cpp:1500-1510`) a Pattern coerces to a Signal: a
+**monophonic** pattern routes its primary FREQ buffer; a **sample** pattern
+(`s"…"`) routes its post-`SAMPLE_PLAY` audio output. Only a **polyphonic
+non-sample** pattern (`max_voices > 1`) is rejected — with **E160** — because
+silently emitting voice-0 would drop the chord's other voices; the user must
+consume it with `poly()` or pick a voice/field (`p.freq`) explicitly. Accessing
+a field (`n"c4".freq`, `e.freq` via `as`) remains the way to name a specific
+field, but is no longer *required* for the monophonic case.
 
 ## Migration Strategy
 
-Three phases. The original Phase 1 (introduce `visit_typed()` wrapper alongside `visit()`) is skipped — go directly to changing `visit()` return type. This is a mechanical refactor: every call site adds `.buffer` or `buffer_of()`.
+Four phases (Phase 4 was added later as a coverage-consolidation pass). The original Phase 1 (introduce `visit_typed()` wrapper alongside `visit()`) is skipped — go directly to changing `visit()` return type. This is a mechanical refactor: every call site adds `.buffer` or `buffer_of()`.
 
 ### Phase 1: Change visit() → TypedValue
 
