@@ -4,12 +4,19 @@
 //
 // PRD: docs/prd-builtin-overload-resolution.md
 //
-// This is the Phase-1 foundation: a single declarative dispatch model that will
-// eventually unify builtin overloads, operators (op_*), and user-function
-// overloading. Phase 1 ships the data model + resolver and wires codegen to
-// resolve *single-pattern* builtins (each builtin = one pattern synthesized from
-// its `param_types`/`defaults`). It is a no-behavior-change refactor of the old
+// This is the foundation: a single declarative dispatch model that will
+// eventually unify builtin overloads, operators, and user-function overloading.
+// Phase 1 shipped the data model + resolver and wires codegen to resolve
+// *single-pattern* builtins (each builtin = one pattern synthesized from its
+// `param_types`/`defaults`). It is a no-behavior-change refactor of the old
 // inline `param_types` type-check loop.
+//
+// Phase 2 brings operators into the model: they reuse their existing builtin
+// names (`add`/`mul`/`eq`/`band`/…, what the parser already desugars to — no
+// `op_*` names) as keys into a shared operator OverloadTable. The matched
+// pattern's DispatchTarget selects the emission body — arithmetic carries a
+// LegacyHandler target (the array/stereo broadcasting handler), comparison/
+// logical a Builtin target. See `lookup_operator_overloads`.
 //
 // Resolution model (PRD §5):
 //   - Every overloadable name owns an ordered list of DispatchPatterns.
@@ -18,10 +25,11 @@
 //     `type_compatible`) counts as a match, so ordering is the only knob.
 //   - No match (even with coercion) is an error naming the closest candidate.
 //
-// Phase 1 only exercises the Type/Any matcher kinds via single-pattern builtins.
-// The literal-value kinds (StringLiteral/NumberLiteral), `matches()`/`resolve()`
-// multi-pattern resolution, and `closest_candidate()` are implemented and
-// unit-tested here, but not driven by codegen until Phases 2/3.
+// `matches()`/`resolve()`/`closest_candidate()` are implemented and unit-tested
+// here. Because every operator (and builtin) has exactly one pattern today,
+// codegen dispatch reduces to that single pattern's target and does not yet call
+// `resolve()` by argument type — live multi-pattern `resolve()` in codegen lands
+// in Phase 3 with the first genuinely multi-form builtins (delay/sample).
 
 #include "akkado/typed_value.hpp"
 #include "akkado/builtins.hpp"  // BuiltinInfo, type_compatible, MAX_BUILTIN_PARAMS
@@ -65,19 +73,31 @@ struct ArgMatcher {
     // Function/StateCell ("no coercion path") while every other type passes.
     // This slot is strictly MORE permissive than a Type{Signal} matcher (it
     // accepts String/Array/Record/Number/Pattern), which is why it cannot be a
-    // Kind::Type. Removed in Phase 2, when these slots become explicit Signal
-    // patterns.
+    // Kind::Type. (The Phase-1 design sketched retiring this in Phase 2 by
+    // making operator slots explicit Signal patterns; that migration is deferred
+    // — Phase 2 reuses the existing synthesized matchers verbatim to keep the
+    // generic per-arg E160 path byte-identical.)
     bool reject_uncoercible_signal = false;
 };
 
-/// Where a matched pattern dispatches to. Phase 1 only uses Builtin and codegen
-/// still emits directly from the BuiltinInfo it already holds, so this is
-/// forward-compatible scaffolding rather than a consumed emission target.
+/// Identifies which bespoke codegen handler a LegacyHandler target dispatches to
+/// (the PRD §5.6 migration bridge: a declarative pattern that selects existing
+/// hand-written codegen instead of inlining an opcode). Phase 2 needs only the
+/// arithmetic-operator broadcasting handler; Phase 3/5 add more.
+enum class LegacyHandlerId : std::uint8_t {
+    None,
+    BinaryOpBroadcast,  // handle_binary_op_call — +,-,*,/,^ array/stereo broadcast
+};
+
+/// Where a matched pattern dispatches to. Phase 2 consumes Builtin (emit the
+/// opcode) and LegacyHandler (run an existing bespoke handler) as live dispatch
+/// targets for operators; UserFunction is Phase-4 scaffolding.
 struct DispatchTarget {
     enum class Kind : std::uint8_t { Builtin, UserFunction, LegacyHandler };
     Kind kind = Kind::Builtin;
-    const BuiltinInfo* builtin = nullptr;  // Kind::Builtin
-    // Phase 4 adds a user-fn body NodeIndex; Phase 3/5 add a handler id.
+    const BuiltinInfo* builtin = nullptr;            // Kind::Builtin
+    LegacyHandlerId legacy_handler = LegacyHandlerId::None;  // Kind::LegacyHandler
+    // Phase 4 adds a user-fn body NodeIndex.
 };
 
 /// One overload form: an ordered list of per-argument matchers plus the number
@@ -131,6 +151,16 @@ struct ResolveResult {
 /// `total_params()` (implicit signal-coerce Any matchers), and `input_count`
 /// (required_count). `params` has length MAX_BUILTIN_PARAMS.
 DispatchPattern make_builtin_pattern(const BuiltinInfo& info);
+
+/// Phase-2 operator dispatch. Returns the ordered pattern list for an operator
+/// name (`add`/`sub`/`mul`/`div`/`pow`, `eq`/`neq`/`lt`/`gt`/`lte`/`gte`,
+/// `band`/`bor`/`bnot` — what the parser desugars `+ - * / ^`, `== != < <= > >=`,
+/// `&& || !` to), or nullptr if `name` is not an operator. Each operator has a
+/// single pattern in Phase 2: arithmetic carries a LegacyHandler/BinaryOpBroadcast
+/// target, comparison/logical a Builtin target. The patterns mirror
+/// `make_builtin_pattern` of the underlying builtin, so the matchers are
+/// identical to the generic per-arg type-check path.
+const std::vector<DispatchPattern>* lookup_operator_overloads(std::string_view name);
 
 /// Per-slot match predicate — the primitive Phase-1 codegen uses.
 bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg);

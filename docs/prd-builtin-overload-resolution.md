@@ -1,9 +1,26 @@
-> **Status: NOT STARTED — design capture (2026-06-08).** Spun out of
+> **Status: PHASE 2 IMPLEMENTED (2026-06-09).** Phase 1 (pattern model +
+> resolver) and Phase 2 (operators routed through the shared `OverloadTable`)
+> have shipped; Phases 3-5 (multi-form builtin handlers, user-function
+> overloading, heavy pattern/higher-order handlers) are not started. Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload
 > resolution because "no mechanism exists." This PRD specifies that mechanism:
 > a single, declarative, first-match dispatch model unifying builtin overloads,
 > operators, and user-defined function overloading.
+>
+> **Phase 2 as-built reconciliation.** Operators **reuse their existing builtin
+> names** (`add`/`sub`/`mul`/`div`/`pow`, `eq`/`neq`/`lt`/`gt`/`lte`/`gte`,
+> `band`/`bor`/`bnot`) as `OverloadTable` keys — there are **no `op_*` names** and
+> **no analyzer desugaring pass**; the parser already desugars operators to these
+> names (`parser.cpp` `parse_binary`). The §5.4 `op_*` sketch is cosmetic. Each
+> operator has a single pattern: arithmetic carries a `LegacyHandler` target (the
+> array/stereo broadcasting handler `handle_binary_op_call`), comparison/logical a
+> `Builtin` target. Because every operator is single-pattern, codegen dispatch
+> reduces to that one target and does **not** call `resolve()` by argument type
+> yet — live multi-pattern `resolve()` in codegen lands in Phase 3. `op_neg`
+> (unary minus) and `op_mod` (`%`) are **out of scope**: neither operator exists
+> in Akkado (`%` is the hole token; `neg`/`fmod` are functions only). `pow` (`^`),
+> omitted from the §5.4 list, **is** covered.
 
 # Akkado Builtin & Function Overload Resolution PRD
 
@@ -304,10 +321,21 @@ builtins (each builtin gets a one-pattern list mirroring today's
 `param_types`/defaults). Retire the generic `param_types` loop. **Verify:** full
 `akkado_tests` green; `param_types` enforcement now uniform.
 
-### Phase 2 — Operators as named builtins
+### Phase 2 — Operators as named builtins ✅ (2026-06-09)
 Desugaring pass; `op_*` patterns; move operator codegen into pattern targets.
 Covers **all operators** — arithmetic, comparison, and logical.
 **Verify:** arithmetic/array/pattern/comparison/logical operator tests unchanged.
+
+> **As-built:** no desugaring pass / `op_*` names were added — the parser already
+> desugars operators to existing builtin names, which are reused as the
+> `OverloadTable` keys (see the status block's Phase 2 reconciliation). Operator
+> codegen moved into pattern targets via `DispatchTarget`: arithmetic →
+> `LegacyHandler`/`BinaryOpBroadcast` (`overload.cpp` `lookup_operator_overloads`,
+> consumed in `codegen.cpp` `visit_call`), comparison/logical → `Builtin` (generic
+> path). Pure plumbing, zero behavior change; the full `akkado_tests` suite stays
+> green with no operator test modified. New unit coverage in `test_overload.cpp`.
+> Deferred to Phase 3: live `resolve()`-by-type in codegen (operators are
+> single-pattern today, so dispatch reduces to the one target).
 
 ### Phase 3 — Migrate multi-form builtin handlers
 `pan`/`balance`/`pingpong` (channel branch stays orthogonal), `delay*` +

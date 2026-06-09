@@ -38,6 +38,50 @@ DispatchPattern make_builtin_pattern(const BuiltinInfo& info) {
     return p;
 }
 
+const std::vector<DispatchPattern>* lookup_operator_overloads(std::string_view name) {
+    // Lazily-built registry of operator overloads, keyed by the builtin name the
+    // parser desugars each operator to (parser.cpp parse_binary). Single pattern
+    // per operator in Phase 2 — every pattern mirrors make_builtin_pattern of the
+    // underlying builtin, so the matchers stay identical to the generic per-arg
+    // type-check path; only the DispatchTarget differs.
+    static const OverloadTable table = [] {
+        OverloadTable t;
+
+        // Arithmetic (+ - * / ^): the array/stereo broadcasting handler
+        // (handle_binary_op_call) is the emission body, selected via a
+        // LegacyHandler target (PRD §5.6 migration bridge).
+        static constexpr std::string_view kArithmetic[] = {
+            "add", "sub", "mul", "div", "pow",
+        };
+        for (std::string_view nm : kArithmetic) {
+            const BuiltinInfo* info = lookup_builtin(nm);
+            if (!info) continue;  // every operator name is a builtin; guard defensively
+            DispatchPattern p = make_builtin_pattern(*info);
+            p.target.kind = DispatchTarget::Kind::LegacyHandler;
+            p.target.legacy_handler = LegacyHandlerId::BinaryOpBroadcast;
+            t[nm].push_back(std::move(p));
+        }
+
+        // Comparison (== != < <= > >=) and logical (&& || !): emit the opcode
+        // directly through the generic builtin path, so a Builtin target (already
+        // set by make_builtin_pattern) is correct.
+        static constexpr std::string_view kBuiltinOps[] = {
+            "eq", "neq", "lt", "gt", "lte", "gte",  // comparison
+            "band", "bor", "bnot",                  // logical (bnot is unary)
+        };
+        for (std::string_view nm : kBuiltinOps) {
+            const BuiltinInfo* info = lookup_builtin(nm);
+            if (!info) continue;
+            t[nm].push_back(make_builtin_pattern(*info));
+        }
+
+        return t;
+    }();
+
+    auto it = table.find(name);
+    return it != table.end() ? &it->second : nullptr;
+}
+
 bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg) {
     switch (matcher.kind) {
         case ArgMatcher::Kind::Type:

@@ -1136,11 +1136,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"random",    &CodeGenerator::handle_random_call},
                 {"harmonics", &CodeGenerator::handle_harmonics_call},
                 // Binary operation broadcasting (desugared from +, -, *, /, ^)
-                {"add",     &CodeGenerator::handle_binary_op_call},
-                {"sub",     &CodeGenerator::handle_binary_op_call},
-                {"mul",     &CodeGenerator::handle_binary_op_call},
-                {"div",     &CodeGenerator::handle_binary_op_call},
-                {"pow",     &CodeGenerator::handle_binary_op_call},
+                // is dispatched via the operator OverloadTable below
+                // (LegacyHandler → handle_binary_op_call), not from this map.
                 // min/max with array support
                 {"min",     &CodeGenerator::handle_minmax_call},
                 {"max",     &CodeGenerator::handle_minmax_call},
@@ -1195,6 +1192,32 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"each_voice", &CodeGenerator::handle_each_voice_call},
                 {"each",       &CodeGenerator::handle_each_call},
             };
+
+            // Phase-2 operator dispatch (PRD prd-builtin-overload-resolution
+            // §5.4): operators reuse their existing builtin names as keys into a
+            // shared operator OverloadTable; the matched pattern's DispatchTarget
+            // selects the emission body. Single pattern per operator today, so
+            // the one pattern's target fully determines dispatch (live
+            // resolve()-by-type arrives in Phase 3 with multi-form builtins).
+            // Arithmetic (+,-,*,/,^) → LegacyHandler: the array/stereo
+            // broadcasting handler. Comparison/logical → Builtin: fall through to
+            // the generic per-arg path below (unchanged emission + E160 check).
+            // Placed after the user-fn / FunctionValue checks so a user `fn add`
+            // still shadows the operator.
+            if (const auto* op_overloads = lookup_operator_overloads(func_name)) {
+                const DispatchPattern& op_pat = (*op_overloads)[0];
+                if (op_pat.target.kind == DispatchTarget::Kind::LegacyHandler &&
+                    op_pat.target.legacy_handler ==
+                        LegacyHandlerId::BinaryOpBroadcast) {
+                    TypedValue tv = handle_binary_op_call(node, n);
+                    if (node_types_.find(node) == node_types_.end()) {
+                        node_types_[node] = tv;
+                    }
+                    return tv;
+                }
+                // Builtin-target operator (comparison/logical): fall through to
+                // the generic builtin emission below.
+            }
 
             auto handler_it = special_handlers.find(func_name);
             if (handler_it != special_handlers.end()) {

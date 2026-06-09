@@ -318,3 +318,111 @@ TEST_CASE("overload codegen: a clean program leaves no spurious E160",
     CHECK(r.success);
     CHECK_FALSE(has_diagnostic(r, "E160"));
 }
+
+// -----------------------------------------------------------------------------
+// Phase 2 — operators as named builtins (lookup_operator_overloads).
+// -----------------------------------------------------------------------------
+
+TEST_CASE("operator overloads: every operator name resolves to one pattern",
+          "[overload]") {
+    const std::string_view ops[] = {
+        "add", "sub", "mul", "div", "pow",      // arithmetic  + - * / ^
+        "eq", "neq", "lt", "gt", "lte", "gte",  // comparison  == != < > <= >=
+        "band", "bor", "bnot",                  // logical     && || !
+    };
+    for (std::string_view nm : ops) {
+        const auto* patterns = lookup_operator_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        CHECK(patterns->size() == 1);  // single pattern per operator in Phase 2
+    }
+}
+
+TEST_CASE("operator overloads: non-operators return nullptr", "[overload]") {
+    // Plain builtins keep the generic path — they are not operators.
+    CHECK(lookup_operator_overloads("sine") == nullptr);
+    CHECK(lookup_operator_overloads("min") == nullptr);
+    // neg (unary minus) and fmod (%) are functions only — no such operators
+    // exist in Akkado, so they are deliberately out of the operator table.
+    CHECK(lookup_operator_overloads("neg") == nullptr);
+    CHECK(lookup_operator_overloads("fmod") == nullptr);
+    CHECK(lookup_operator_overloads("nonexistent_fn") == nullptr);
+}
+
+TEST_CASE("operator overloads: arithmetic ops carry a LegacyHandler target",
+          "[overload]") {
+    for (std::string_view nm : {"add", "sub", "mul", "div", "pow"}) {
+        const auto* patterns = lookup_operator_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 1);
+        const DispatchTarget& t = (*patterns)[0].target;
+        CHECK(t.kind == DispatchTarget::Kind::LegacyHandler);
+        CHECK(t.legacy_handler == LegacyHandlerId::BinaryOpBroadcast);
+    }
+}
+
+TEST_CASE("operator overloads: comparison/logical ops carry a Builtin target",
+          "[overload]") {
+    for (std::string_view nm : {"eq", "neq", "lt", "gt", "lte", "gte",
+                                "band", "bor", "bnot"}) {
+        const auto* patterns = lookup_operator_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 1);
+        const DispatchTarget& t = (*patterns)[0].target;
+        CHECK(t.kind == DispatchTarget::Kind::Builtin);
+        CHECK(t.builtin == lookup_builtin(nm));
+    }
+}
+
+TEST_CASE("operator overloads: patterns mirror make_builtin_pattern matchers",
+          "[overload]") {
+    // The matchers/required_count must equal the synthesized builtin pattern so
+    // the generic per-arg E160 check stays byte-identical for the operators that
+    // still flow through it (comparison/logical). Check a binary op and a unary.
+    for (std::string_view nm : {"add", "eq", "bnot"}) {
+        const auto* patterns = lookup_operator_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        const DispatchPattern& op = (*patterns)[0];
+        const BuiltinInfo* info = lookup_builtin(nm);
+        REQUIRE(info != nullptr);
+        DispatchPattern ref = make_builtin_pattern(*info);
+
+        CHECK(op.required_count == ref.required_count);
+        REQUIRE(op.params.size() == ref.params.size());
+        for (std::size_t i = 0; i < op.params.size(); ++i) {
+            CHECK(op.params[i].kind == ref.params[i].kind);
+            CHECK(op.params[i].type == ref.params[i].type);
+            CHECK(op.params[i].reject_uncoercible_signal ==
+                  ref.params[i].reject_uncoercible_signal);
+        }
+    }
+}
+
+TEST_CASE("operator overloads: resolve() first-match extension point (Phase 3)",
+          "[overload]") {
+    // Forward-looking guard: once an operator gains a second pattern, resolve()
+    // selects by declaration order with coercion counting as a match. Model a
+    // future binary `mul` overload — a Number-literal fast path before the
+    // Signal form.
+    DispatchPattern num2 = make_pattern(
+        {type_m(ParamValueType::Number), type_m(ParamValueType::Number)}, 2);
+    DispatchPattern sig2 = make_pattern(
+        {type_m(ParamValueType::Signal), type_m(ParamValueType::Signal)}, 2);
+    std::vector<ArgDescriptor> nums = {arg_num(2.0f), arg_num(3.0f)};
+
+    // (Number,Number) first → two Number literals bind to it.
+    {
+        std::vector<DispatchPattern> table = {num2, sig2};
+        ResolveResult r = resolve(table, nums);
+        REQUIRE(r.matched);
+        CHECK(r.closest_index == 0);
+        CHECK(r.pattern->params[0].type == ParamValueType::Number);
+    }
+    // (Signal,Signal) first → the same Numbers coerce into Signal first.
+    {
+        std::vector<DispatchPattern> table = {sig2, num2};
+        ResolveResult r = resolve(table, nums);
+        REQUIRE(r.matched);
+        CHECK(r.closest_index == 0);
+        CHECK(r.pattern->params[0].type == ParamValueType::Signal);
+    }
+}
