@@ -5,6 +5,10 @@
 // live mode will surface as audibly different output for the same code — the
 // symptom that motivated this test.
 
+// MSVC: required for M_PI from <cmath> / <math.h>. Must be defined before
+// ANY include can pull <cmath> in transitively (Catch2 headers do).
+#define _USE_MATH_DEFINES
+
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/akkado.hpp"
 #include <cedar/vm/vm.hpp>

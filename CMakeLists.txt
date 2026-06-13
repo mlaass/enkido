@@ -22,10 +22,11 @@ option(NKIDO_BUILD_CEDAR "Build Cedar synth engine" ON)
 option(NKIDO_BUILD_AKKADO "Build Akkado compiler" ON)
 option(NKIDO_BUILD_TOOLS "Build CLI tools" ON)
 option(NKIDO_BUILD_TESTS "Build tests" ON)
-# nkido CLI tests (test_serve.cpp) are still POSIX-only — split into
-# their own flag so cedar_tests + akkado_tests can stay enabled on
-# Windows while the broken nkido tests are skipped. Defaults to the
-# umbrella flag for source-unchanged behaviour on Linux/macOS.
+# nkido CLI tests (test_serve.cpp) used to be POSIX-only; the Phase 3
+# Windows port (tools/nkido/tests/test_subprocess.hpp) made them
+# portable. The flag stays as a downstream opt-out (e.g. for the
+# godot-nkido-addon CI that doesn't care about CLI integration tests)
+# and defaults to the umbrella flag everywhere.
 option(NKIDO_BUILD_NKIDO_TESTS "Build nkido CLI tests" ${NKIDO_BUILD_TESTS})
 
 # Include CMake modules

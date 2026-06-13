@@ -64,13 +64,16 @@ elseif(MSVC)
         /w14906  # string literal cast to LPWSTR
         /w14928  # illegal copy-initialization
     )
-    # Bump the Windows default 1 MB thread stack to 8 MB. cedar::VM and
-    # akkado's compile-time tables push frame sizes high enough that the
-    # default stack overflows during static init / first compile (the same
-    # reason serve_mode heap-allocates AudioEngine). Linux/macOS default
-    # to ~8 MB so this matches the implicit POSIX behaviour.
+    # Bump the Windows default 1 MB thread stack. cedar::VM and akkado's
+    # compile-time tables push frame sizes high enough that the default
+    # stack overflows during static init / first compile (the same reason
+    # serve_mode heap-allocates AudioEngine). 8 MB matches the implicit
+    # POSIX main-thread default and is enough for cedar_tests, but
+    # akkado_tests (1,143 TEST_CASEs × static-init overhead) crashes with
+    # STACK_OVERFLOW even on `--help` at 8 MB. 32 MB gives generous
+    # headroom for both binaries.
     target_link_options(nkido_compiler_options INTERFACE
-        /STACK:8388608
+        /STACK:33554432
     )
 endif()
 

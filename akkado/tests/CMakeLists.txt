@@ -16,6 +16,7 @@ endif()
 include(Catch)
 
 add_executable(akkado_tests
+    akkado_test_main.cpp
     test_akkado.cpp
     test_analyzer.cpp
     test_builtins.cpp
@@ -72,7 +73,7 @@ add_executable(akkado_tests
 target_link_libraries(akkado_tests
     PRIVATE
         akkado
-        Catch2::Catch2WithMain
+        Catch2::Catch2  # custom main lives in akkado_test_main.cpp
 )
 
 # Phase 0 of prd-parser-codegen-correctness.md: bytecode-disassembly
@@ -85,6 +86,23 @@ if(NKIDO_BUILD_TOOLS)
         PRIVATE
             AKKADO_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
             AKKADO_TEST_SNAPSHOTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/snapshots"
+    )
+endif()
+
+# BUILD_SHARED_LIBS is ON in this tree (vcpkg toolchain), so Catch2 is
+# built as a DLL. The Catch2WithMain target inlines main() and pulls the
+# Catch2 implementation static-ish; the plain Catch2 target we link
+# against (custom main lives in akkado_test_main.cpp) leaves Catch2d.dll
+# as a runtime dependency that has to sit next to the .exe — both for
+# catch_discover_tests' build-time enumeration and for ctest runs.
+# $<TARGET_RUNTIME_DLLS> only sees IMPORTED SHARED targets, so the
+# in-build Catch2 target needs to be copied explicitly via TARGET_FILE.
+# (vcpkg's applocal.ps1 step on the link line handles libssl / libcrypto.)
+if(WIN32)
+    add_custom_command(TARGET akkado_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:Catch2::Catch2>
+                $<TARGET_FILE_DIR:akkado_tests>
     )
 endif()
 

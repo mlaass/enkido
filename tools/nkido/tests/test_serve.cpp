@@ -15,64 +15,58 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "test_paths.hpp"
+#include "test_subprocess.hpp"
 
-#include <array>
-#include <cerrno>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unistd.h>  // for close()
+#include <utility>
+#include <vector>
 
 namespace {
 
+using EnvVars = std::vector<std::pair<std::string, std::string>>;
+
 // Pipe `commands` into `argv` over stdin and capture stdout+stderr. Returns
 // the captured combined output. exit_status is set to the child's exit code.
-// `env_prefix`, if given, is prepended to the shell command (e.g.
-// "FOO=bar BAZ=qux") and overrides nothing else. SDL_AUDIODRIVER=dummy is
-// always set so headless audio init succeeds.
+// `extra_env` lets a caller force specific env vars for the duration of the
+// invocation (RAII-restored on return). SDL_AUDIODRIVER=dummy is always
+// set so headless audio init succeeds. Implementation uses std::system
+// with shell redirection (`< in > out 2>&1`) — identical syntax in sh and
+// cmd.exe, so the test is portable without a process-spawning library.
 std::string run_with_stdin(const std::string& argv,
                            const std::string& commands,
                            int* exit_status,
-                           const std::string& env_prefix = "") {
-    // Write commands to a tempfile, redirect stdin from it, redirect both
-    // stdout and stderr to a tempfile we read back. This is portable enough
-    // for a Linux dev box without pulling in a process-spawning lib.
-    char cmd_path[] = "/tmp/nkido_serve_test_in_XXXXXX";
-    int cmd_fd = mkstemp(cmd_path);
-    REQUIRE(cmd_fd >= 0);
+                           const EnvVars& extra_env = {}) {
+    using nkido::test::ScopedEnv;
+    using nkido::test::ScopedTempFile;
+    using nkido::test::quote_for_shell;
+
+    ScopedEnv sdl_guard("SDL_AUDIODRIVER", "dummy");
+    std::vector<ScopedEnv> guards;
+    guards.reserve(extra_env.size());
+    for (const auto& [k, v] : extra_env) {
+        guards.emplace_back(k.c_str(), v);
+    }
+
+    ScopedTempFile in("nkido_serve_test_in");
+    ScopedTempFile out("nkido_serve_test_out");
     {
-        std::ofstream cmd_file(cmd_path);
+        std::ofstream cmd_file(in.path());
         cmd_file << commands;
     }
-    close(cmd_fd);
 
-    char out_path[] = "/tmp/nkido_serve_test_out_XXXXXX";
-    int out_fd = mkstemp(out_path);
-    REQUIRE(out_fd >= 0);
-    close(out_fd);
-
-    std::string shell_cmd =
-        "SDL_AUDIODRIVER=dummy ";
-    if (!env_prefix.empty()) {
-        shell_cmd += env_prefix + " ";
-    }
-    shell_cmd += argv +
-        " < " + cmd_path +
-        " > " + out_path + " 2>&1";
+    std::string shell_cmd = argv +
+        " < " + quote_for_shell(in.path()) +
+        " > " + quote_for_shell(out.path()) + " 2>&1";
 
     const int rc = std::system(shell_cmd.c_str());
     if (exit_status) *exit_status = rc;
 
-    std::ifstream out_file(out_path);
+    std::ifstream out_file(out.path());
     std::stringstream buf;
     buf << out_file.rdbuf();
-
-    std::remove(cmd_path);
-    std::remove(out_path);
-
     return buf.str();
 }
 
@@ -149,8 +143,9 @@ TEST_CASE("serve mode: --no-default-bank suppresses the built-in default kit",
     commands += R"({"cmd":"quit"})" "\n";
 
     int exit_code = -1;
-    const std::string output = run_with_stdin(args, commands, &exit_code,
-                                              "NKIDO_DEFAULT_KIT=");
+    const std::string output = run_with_stdin(
+        args, commands, &exit_code,
+        {{"NKIDO_DEFAULT_KIT", ""}});
 
     INFO("stdout/stderr was:\n" << output);
     CHECK(contains(output, "sample 'bd' not found in any loaded bank"));
@@ -170,10 +165,9 @@ TEST_CASE("serve mode: bare sample name resolves via built-in default kit",
     commands += R"({"cmd":"quit"})" "\n";
 
     int exit_code = -1;
-    const std::string env_prefix = std::string("NKIDO_DEFAULT_KIT=") +
-                                   nkido::test::DEFAULT_KIT_FIXTURE;
-    const std::string output = run_with_stdin(args, commands, &exit_code,
-                                              env_prefix);
+    const std::string output = run_with_stdin(
+        args, commands, &exit_code,
+        {{"NKIDO_DEFAULT_KIT", nkido::test::DEFAULT_KIT_FIXTURE}});
 
     INFO("stdout/stderr was:\n" << output);
     CHECK(contains(output, R"("event":"compiled","ok":true)"));
@@ -200,10 +194,9 @@ TEST_CASE("serve mode: user load_bank shadows the default kit",
     commands += R"({"cmd":"quit"})" "\n";
 
     int exit_code = -1;
-    const std::string env_prefix = std::string("NKIDO_DEFAULT_KIT=") +
-                                   nkido::test::DEFAULT_KIT_FIXTURE;
-    const std::string output = run_with_stdin(args, commands, &exit_code,
-                                              env_prefix);
+    const std::string output = run_with_stdin(
+        args, commands, &exit_code,
+        {{"NKIDO_DEFAULT_KIT", nkido::test::DEFAULT_KIT_FIXTURE}});
 
     INFO("stdout/stderr was:\n" << output);
     CHECK(contains(output, R"("event":"bank_registered")"));
@@ -232,7 +225,7 @@ TEST_CASE("serve mode: missing default kit URI degrades to a warning, not a cras
     int exit_code = -1;
     const std::string output = run_with_stdin(
         args, commands, &exit_code,
-        "NKIDO_DEFAULT_KIT=file:///definitely/does/not/exist.json");
+        {{"NKIDO_DEFAULT_KIT", "file:///definitely/does/not/exist.json"}});
 
     INFO("stdout/stderr was:\n" << output);
     CHECK(contains(output, "sample 'bd' not found in any loaded bank"));
