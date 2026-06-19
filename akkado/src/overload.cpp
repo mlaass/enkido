@@ -82,6 +82,87 @@ const std::vector<DispatchPattern>* lookup_operator_overloads(std::string_view n
     return it != table.end() ? &it->second : nullptr;
 }
 
+const std::vector<DispatchPattern>* lookup_builtin_overloads(std::string_view name) {
+    // Lazily-built registry of the multi-form builtin families migrated in
+    // Phase 3 (PRD §8). Names NOT in this table keep the single-pattern
+    // make_builtin_pattern path in codegen — no behavior change for the ~200
+    // ordinary builtins.
+    static const OverloadTable table = [] {
+        OverloadTable t;
+
+        // --- pan / pingpong / smooch: one LegacyHandler pattern each. The real
+        // dispatch dimension (channel width for pan/pingpong, arg count for
+        // smooch) is orthogonal to the type model (PRD §3) and stays inside the
+        // existing handler; the pattern only routes the name declaratively,
+        // mirroring Phase 2's arithmetic-operator migration.
+        struct LegacyEntry {
+            std::string_view name;
+            LegacyHandlerId  handler;
+        };
+        static constexpr LegacyEntry kLegacy[] = {
+            {"pan",       LegacyHandlerId::Pan},
+            {"pingpong",  LegacyHandlerId::Pingpong},
+            {"smooch",    LegacyHandlerId::Smooch},
+            {"wt",        LegacyHandlerId::Smooch},
+            {"wavetable", LegacyHandlerId::Smooch},
+        };
+        for (const LegacyEntry& e : kLegacy) {
+            const BuiltinInfo* info = lookup_builtin(e.name);
+            if (!info) continue;  // defensive: every name above is a builtin
+            DispatchPattern p = make_builtin_pattern(*info);
+            p.target.kind = DispatchTarget::Kind::LegacyHandler;
+            p.target.legacy_handler = e.handler;
+            t[e.name].push_back(std::move(p));
+        }
+
+        // --- delay / delay_ms / delay_smp: one Builtin pattern each. Emission
+        // falls through to the generic path; the time unit comes from
+        // BuiltinInfo::inst_rate (the three entries declare 0/1/2), not a
+        // func-name string compare in codegen.
+        static constexpr std::string_view kDelay[] = {
+            "delay", "delay_ms", "delay_smp",
+        };
+        for (std::string_view nm : kDelay) {
+            const BuiltinInfo* info = lookup_builtin(nm);
+            if (!info) continue;
+            t[nm].push_back(make_builtin_pattern(*info));
+        }
+
+        // --- sample / sample_loop: TWO Builtin patterns keyed by the id slot
+        // (index 2) type. Declaration order is dispatch priority: the String
+        // (sample-name) form first, the Signal (numeric / runtime id) form
+        // second. type_compatible coerces Number→Signal, so a numeric literal
+        // id binds to the Signal form; an Array/Record id matches neither and
+        // resolve() reports E424. Both forms emit through the generic
+        // SAMPLE_PLAY path — resolve() selects the form and gates the id type.
+        static constexpr std::string_view kSample[] = {
+            "sample", "sample_loop",
+        };
+        for (std::string_view nm : kSample) {
+            const BuiltinInfo* info = lookup_builtin(nm);
+            if (!info) continue;
+
+            DispatchPattern named = make_builtin_pattern(*info);
+            named.params[2].kind = ArgMatcher::Kind::Type;
+            named.params[2].type = ParamValueType::String;
+            named.params[2].reject_uncoercible_signal = false;
+
+            DispatchPattern numeric = make_builtin_pattern(*info);
+            numeric.params[2].kind = ArgMatcher::Kind::Type;
+            numeric.params[2].type = ParamValueType::Signal;
+            numeric.params[2].reject_uncoercible_signal = false;
+
+            t[nm].push_back(std::move(named));
+            t[nm].push_back(std::move(numeric));
+        }
+
+        return t;
+    }();
+
+    auto it = table.find(name);
+    return it != table.end() ? &it->second : nullptr;
+}
+
 bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg) {
     switch (matcher.kind) {
         case ArgMatcher::Kind::Type:

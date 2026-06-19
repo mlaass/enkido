@@ -1145,15 +1145,16 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"tap_delay", &CodeGenerator::handle_tap_delay_call},
                 {"tap_delay_ms", &CodeGenerator::handle_tap_delay_call},
                 {"tap_delay_smp", &CodeGenerator::handle_tap_delay_call},
-                // Stereo operations
+                // Stereo operations.
+                // NB: pan / pingpong migrated to the Phase-3 builtin overload
+                // table (lookup_builtin_overloads → LegacyHandler); they are
+                // dispatched in the block below, not from this map.
                 {"stereo", &CodeGenerator::handle_stereo_call},
                 {"left", &CodeGenerator::handle_left_call},
                 {"right", &CodeGenerator::handle_right_call},
-                {"pan", &CodeGenerator::handle_pan_call},
                 {"width", &CodeGenerator::handle_width_call},
                 {"ms_encode", &CodeGenerator::handle_ms_encode_call},
                 {"ms_decode", &CodeGenerator::handle_ms_decode_call},
-                {"pingpong", &CodeGenerator::handle_pingpong_call},
                 // Visualization builtins
                 {"pianoroll", &CodeGenerator::handle_pianoroll_call},
                 {"oscilloscope", &CodeGenerator::handle_oscilloscope_call},
@@ -1171,15 +1172,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"midi_cc", &CodeGenerator::handle_midi_cc_call},
                 // Wavetable: wt_load(name, path) is a compile-time directive
                 // (records required_wavetables, no instruction emitted).
-                // smooch / wt / wavetable resolve the bank name to its ID at
-                // compile time and emit OSC_WAVETABLE with rate = bank_id.
+                // smooch / wt / wavetable (the OSC_WAVETABLE oscillator) migrated
+                // to the Phase-3 builtin overload table (lookup_builtin_overloads
+                // → LegacyHandler::Smooch); dispatched in the block below.
                 {"wt_load",   &CodeGenerator::handle_wt_load_call},
                 // samples("uri") — compile-time URI declaration for sample
                 // banks; records to required_uris_ for host to fetch.
                 {"samples",   &CodeGenerator::handle_samples_call},
-                {"smooch",    &CodeGenerator::handle_smooch_call},
-                {"wt",        &CodeGenerator::handle_smooch_call},
-                {"wavetable", &CodeGenerator::handle_smooch_call},
                 // Live audio input (microphone / tab / file)
                 {"in", &CodeGenerator::handle_input_call},
                 // Polyphony
@@ -1217,6 +1216,92 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
                 // Builtin-target operator (comparison/logical): fall through to
                 // the generic builtin emission below.
+            }
+
+            // Phase-3 builtin-overload dispatch (PRD prd-builtin-overload-
+            // resolution §8): the migrated multi-form families resolve through
+            // lookup_builtin_overloads. Placed after the operator / user-fn
+            // checks (same shadowing rules) and before the special_handlers map
+            // and generic path.
+            if (const auto* bov = lookup_builtin_overloads(func_name)) {
+                if (bov->size() == 1) {
+                    // Single-pattern family (pan/pingpong/smooch, delay*). No
+                    // resolve()/arg pre-visit: the dispatch dimension is channel
+                    // width / arg count (orthogonal to the type model, PRD §3)
+                    // and stays inside the LegacyHandler, which re-visits args
+                    // itself. Mirrors the Phase-2 operator path — avoids a
+                    // double-visit.
+                    const DispatchTarget& tgt = bov->front().target;
+                    if (tgt.kind == DispatchTarget::Kind::LegacyHandler) {
+                        Handler h = nullptr;
+                        switch (tgt.legacy_handler) {
+                            case LegacyHandlerId::Pan:
+                                h = &CodeGenerator::handle_pan_call; break;
+                            case LegacyHandlerId::Pingpong:
+                                h = &CodeGenerator::handle_pingpong_call; break;
+                            case LegacyHandlerId::Smooch:
+                                h = &CodeGenerator::handle_smooch_call; break;
+                            default: break;
+                        }
+                        if (h) {
+                            TypedValue tv = (this->*h)(node, n);
+                            if (node_types_.find(node) == node_types_.end()) {
+                                node_types_[node] = tv;
+                            }
+                            return tv;
+                        }
+                    }
+                    // Builtin-target single pattern (delay*): fall through to the
+                    // generic emission below (time unit from inst_rate).
+                } else {
+                    // Multi-pattern family (sample/sample_loop): the first family
+                    // to drive a live resolve() type dispatch. The id slot
+                    // (index 2) selects the String-name form vs the numeric/
+                    // Signal id form. We type the id from its *literal* AST node
+                    // so the gate needs no visit (no double-emit); a non-literal
+                    // id is left ungated and handled by the generic path as
+                    // before. A literal id that is neither String nor coercible
+                    // to Signal (e.g. a record/array literal) → E424.
+                    std::vector<NodeIndex> arg_values;
+                    for (NodeIndex it_arg = n.first_child; it_arg != NULL_NODE;
+                         it_arg = ast_->arena[it_arg].next_sibling) {
+                        const Node& an = ast_->arena[it_arg];
+                        arg_values.push_back(
+                            an.type == NodeType::Argument ? an.first_child : it_arg);
+                    }
+                    const std::size_t req = bov->front().required_count;  // 3
+                    if (arg_values.size() == req && arg_values[req - 1] != NULL_NODE) {
+                        std::optional<ValueType> id_type;
+                        switch (ast_->arena[arg_values[req - 1]].type) {
+                            case NodeType::StringLit: id_type = ValueType::String; break;
+                            case NodeType::NumberLit: id_type = ValueType::Number; break;
+                            case NodeType::RecordLit: id_type = ValueType::Record; break;
+                            case NodeType::ArrayLit:  id_type = ValueType::Array;  break;
+                            default: break;  // non-literal → leave ungated
+                        }
+                        if (id_type) {
+                            std::vector<ArgDescriptor> ads(arg_values.size());
+                            for (auto& ad : ads) ad.skip = true;  // gate id only
+                            ads[req - 1].skip = false;
+                            ads[req - 1].type = *id_type;
+                            if (!resolve(*bov, ads).matched) {
+                                error("E424",
+                                      func_name + "() has no overload matching an "
+                                      "id of type " + value_type_name(*id_type) +
+                                      "; expected a sample name (String) or a "
+                                      "numeric id (Number/Signal)",
+                                      ast_->arena[arg_values[req - 1]].location);
+                                if (node_types_.find(node) == node_types_.end()) {
+                                    node_types_[node] = TypedValue::error_val();
+                                }
+                                return TypedValue::error_val();
+                            }
+                        }
+                    }
+                    // Matched / ungated: fall through to the generic SAMPLE_PLAY
+                    // emission, which performs the String-name parse and numeric
+                    // id handling as today.
+                }
             }
 
             auto handler_it = special_handlers.find(func_name);
@@ -1709,11 +1794,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
             // PRD §5.3 rule 1 / §5.2 (G1): declarative channel-type mismatch.
             // For builtins that are not stereo_native, a stereo signal in a
-            // Mono slot (or vice versa) is a compile error E186. Special-handler
-            // builtins (stereo/mono/left/right/pan/width/ms_encode/ms_decode/
-            // pingpong) never reach this path — they enforce their own
-            // signatures with E181–E184. `out()` is handled above via E185 and
-            // the single-arg expansion branch.
+            // Mono slot (or vice versa) is a compile error E186. Bespoke-handler
+            // builtins (stereo/mono/left/right/width/ms_encode/ms_decode via the
+            // special_handlers map; pan/pingpong via the builtin overload table)
+            // never reach this path — they enforce their own signatures with
+            // E181–E184. `out()` is handled above via E185 and the single-arg
+            // expansion branch.
             //
             // Stereo-native opcodes (prd-stereo-native-opcodes) skip this check
             // because they auto-escalate mono → stereo at the boundary (mono
@@ -2228,15 +2314,12 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
             }
 
-            // Special handling for delay time units: rate field encodes unit type
-            // 0 = seconds (default), 1 = milliseconds, 2 = samples
-            if (func_name == "delay") {
-                inst.rate = 0;  // seconds
-            } else if (func_name == "delay_ms") {
-                inst.rate = 1;  // milliseconds
-            } else if (func_name == "delay_smp") {
-                inst.rate = 2;  // samples
-            }
+            // delay / delay_ms / delay_smp encode the time unit (0=s, 1=ms,
+            // 2=samples) in the rate field. This is fully data-driven via
+            // BuiltinInfo::inst_rate (applied at `inst.rate = builtin->inst_rate`
+            // above; the three entries declare 0/1/2) — no func-name ladder
+            // needed. They are also registered in the Phase-3 builtin overload
+            // table (lookup_builtin_overloads) as single Builtin patterns.
 
             // PRD prd-extended-params §6b — phaser's `feedback` and `stages`
             // are now full extended params (ExtendedParams<3>, slots 0/1),

@@ -1,6 +1,7 @@
-> **Status: PHASE 2 IMPLEMENTED (2026-06-09).** Phase 1 (pattern model +
-> resolver) and Phase 2 (operators routed through the shared `OverloadTable`)
-> have shipped; Phases 3-5 (multi-form builtin handlers, user-function
+> **Status: PHASE 3 IMPLEMENTED (2026-06-19).** Phase 1 (pattern model +
+> resolver), Phase 2 (operators routed through the shared `OverloadTable`), and
+> Phase 3 (multi-form builtin families migrated; `sample` drives the first live
+> multi-pattern `resolve()` in codegen) have shipped; Phases 4-5 (user-function
 > overloading, heavy pattern/higher-order handlers) are not started. Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload
@@ -21,6 +22,28 @@
 > (unary minus) and `op_mod` (`%`) are **out of scope**: neither operator exists
 > in Akkado (`%` is the hole token; `neg`/`fmod` are functions only). `pow` (`^`),
 > omitted from the §5.4 list, **is** covered.
+>
+> **Phase 3 as-built reconciliation.** A new `lookup_builtin_overloads`
+> (`overload.cpp`) registers the migrated families; names absent from it keep the
+> single-pattern `make_builtin_pattern` path (no change for ~200 builtins).
+> `pan`/`pingpong`/`smooch`/`wt`/`wavetable` migrate as **single LegacyHandler
+> patterns** (new `LegacyHandlerId::{Pan,Pingpong,Smooch}`) — their dispatch
+> dimension (channel width / arg count) is orthogonal to the type model (§3), so
+> it stays inside the existing handler; this is pure plumbing like Phase 2's
+> arithmetic. `delay`/`delay_ms`/`delay_smp` migrate as single Builtin patterns
+> and the redundant `if (func_name=="delay")` rate ladder is retired — the time
+> unit was already data-driven via `BuiltinInfo::inst_rate`. **`sample`/
+> `sample_loop`** are the one genuinely multi-form family: two Builtin patterns
+> keyed by the id slot type (`String` name form first, `Signal` numeric/runtime
+> id form second), and codegen now calls **`resolve()`** for real to select the
+> form and reject a non-String/Signal id with **E424** (the no-match diagnostic).
+> **Descoped vs §4.1:** the `delay(sig, "ms", t)` literal-unit form is **not**
+> shipped — `delay_ms`/`delay_smp` keep their existing call shapes. Because that
+> was the only proposed consumer of the `StringLiteral`/`NumberLiteral` matchers,
+> those matcher kinds remain resolver-only (implemented + unit-tested, no codegen
+> consumer yet); `sample` dispatches by `Kind::Type`, not literal value. New
+> coverage: 9 `[overload]` cases (table shape, `resolve()`-by-id-type, E424
+> codegen). Existing `[stereo]`/`[sample]`/`[golden]` suites stay green unchanged.
 
 # Akkado Builtin & Function Overload Resolution PRD
 
@@ -337,11 +360,24 @@ Covers **all operators** — arithmetic, comparison, and logical.
 > Deferred to Phase 3: live `resolve()`-by-type in codegen (operators are
 > single-pattern today, so dispatch reduces to the one target).
 
-### Phase 3 — Migrate multi-form builtin handlers
+### Phase 3 — Migrate multi-form builtin handlers ✅ (2026-06-19)
 `pan`/`balance`/`pingpong` (channel branch stays orthogonal), `delay*` +
-`smooch` (literal-value matchers), `sample` (String vs Number id form).
-**Verify:** each migrated family's existing tests pass; add a literal-match
-test per migrated builtin.
+`smooch`, `sample` (String vs Number id form).
+**Verify:** each migrated family's existing tests pass; add a resolve()-by-type
+test for the multi-form family.
+
+> **As-built:** all six families migrated via `lookup_builtin_overloads`
+> (`overload.cpp`) — see the status block's Phase 3 reconciliation.
+> `pan`/`pingpong`/`smooch` route through single LegacyHandler patterns (channel/
+> arity branch stays in the handler); `delay*` through single Builtin patterns
+> (rate via `inst_rate`, redundant name-ladder retired); **`sample`/`sample_loop`
+> drive the first live multi-pattern `resolve()` in codegen**, selecting the
+> String-name vs Signal-id form by type and rejecting other id types with **E424**.
+> `balance` is not a separate builtin (it is `pan`'s stereo branch). The §4.1
+> `delay(sig,"ms",t)` literal-unit form was **descoped** by product decision, so
+> the `StringLiteral`/`NumberLiteral` matchers stay resolver-only (no codegen
+> consumer); `sample` dispatch is type-based. New `[overload]` coverage added;
+> the full `akkado_tests` suite stays green with no existing test modified.
 
 ### Phase 4 — User-function overloading
 Accumulate same-name defs by signature (types + literal guards); first-match at

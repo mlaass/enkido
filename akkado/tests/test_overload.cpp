@@ -426,3 +426,126 @@ TEST_CASE("operator overloads: resolve() first-match extension point (Phase 3)",
         CHECK(r.pattern->params[0].type == ParamValueType::Signal);
     }
 }
+
+// -----------------------------------------------------------------------------
+// Phase 3 — multi-form builtin families (lookup_builtin_overloads).
+// -----------------------------------------------------------------------------
+
+TEST_CASE("builtin overloads: non-migrated names return nullptr", "[overload]") {
+    // Ordinary builtins keep the single-pattern make_builtin_pattern path.
+    CHECK(lookup_builtin_overloads("sine") == nullptr);
+    CHECK(lookup_builtin_overloads("lp") == nullptr);
+    CHECK(lookup_builtin_overloads("out") == nullptr);
+    CHECK(lookup_builtin_overloads("nonexistent_fn") == nullptr);
+}
+
+TEST_CASE("builtin overloads: pan/pingpong/smooch carry one LegacyHandler pattern",
+          "[overload]") {
+    struct Case { std::string_view name; LegacyHandlerId id; };
+    const Case cases[] = {
+        {"pan",       LegacyHandlerId::Pan},
+        {"pingpong",  LegacyHandlerId::Pingpong},
+        {"smooch",    LegacyHandlerId::Smooch},
+        {"wt",        LegacyHandlerId::Smooch},  // alias → same handler
+        {"wavetable", LegacyHandlerId::Smooch},  // alias → same handler
+    };
+    for (const Case& c : cases) {
+        const auto* patterns = lookup_builtin_overloads(c.name);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 1);  // channel/arity branch stays in handler
+        const DispatchTarget& t = (*patterns)[0].target;
+        CHECK(t.kind == DispatchTarget::Kind::LegacyHandler);
+        CHECK(t.legacy_handler == c.id);
+    }
+}
+
+TEST_CASE("builtin overloads: delay family carries one Builtin pattern",
+          "[overload]") {
+    // delay/delay_ms/delay_smp keep distinct names; the time unit rides on
+    // inst_rate, the pattern just routes the name through the model.
+    for (std::string_view nm : {"delay", "delay_ms", "delay_smp"}) {
+        const auto* patterns = lookup_builtin_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 1);
+        const DispatchTarget& t = (*patterns)[0].target;
+        CHECK(t.kind == DispatchTarget::Kind::Builtin);
+        CHECK(t.builtin == lookup_builtin(nm));
+    }
+}
+
+TEST_CASE("builtin overloads: sample family has two id-keyed patterns",
+          "[overload]") {
+    for (std::string_view nm : {"sample", "sample_loop"}) {
+        const auto* patterns = lookup_builtin_overloads(nm);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 2);
+        // id slot (index 2): String name form first, Signal id form second.
+        CHECK((*patterns)[0].params[2].kind == ArgMatcher::Kind::Type);
+        CHECK((*patterns)[0].params[2].type == ParamValueType::String);
+        CHECK((*patterns)[1].params[2].kind == ArgMatcher::Kind::Type);
+        CHECK((*patterns)[1].params[2].type == ParamValueType::Signal);
+        // Both forms emit the same SAMPLE_PLAY/LOOP builtin.
+        CHECK((*patterns)[0].target.kind == DispatchTarget::Kind::Builtin);
+        CHECK((*patterns)[0].target.builtin == lookup_builtin(nm));
+        CHECK((*patterns)[1].target.builtin == lookup_builtin(nm));
+    }
+}
+
+TEST_CASE("builtin overloads: resolve() selects the sample form by id type",
+          "[overload]") {
+    const auto* patterns = lookup_builtin_overloads("sample");
+    REQUIRE(patterns != nullptr);
+    // Mirror the codegen gate: skip args 0/1, type only the id slot (index 2).
+    auto gate = [&](ValueType id) {
+        std::vector<ArgDescriptor> ads(3);
+        ads[0].skip = true;
+        ads[1].skip = true;
+        ads[2].type = id;
+        return resolve(*patterns, ads);
+    };
+    // String id → the named (String) form, declared first.
+    {
+        ResolveResult r = gate(ValueType::String);
+        REQUIRE(r.matched);
+        CHECK(r.closest_index == 0);
+        CHECK(r.pattern->params[2].type == ParamValueType::String);
+    }
+    // Number id → coerces into the Signal form (index 1).
+    {
+        ResolveResult r = gate(ValueType::Number);
+        REQUIRE(r.matched);
+        CHECK(r.closest_index == 1);
+        CHECK(r.pattern->params[2].type == ParamValueType::Signal);
+    }
+    // Record / Array id → matches neither form (no coercion path to id slot).
+    CHECK_FALSE(gate(ValueType::Record).matched);
+    CHECK_FALSE(gate(ValueType::Array).matched);
+}
+
+// --- Codegen end-to-end: the sample gate is the first live multi-pattern
+// resolve() in codegen. ---------------------------------------------------
+
+TEST_CASE("sample codegen: String id compiles (named form)", "[overload]") {
+    auto r = akkado::compile(R"(sample(1.0, 1.0, "bd") |> out(@))");
+    CHECK(r.success);
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("sample codegen: numeric literal id compiles (Signal form)",
+          "[overload]") {
+    auto r = akkado::compile(R"(sample(1.0, 1.0, 5) |> out(@))");
+    CHECK(r.success);
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("sample codegen: record-literal id is rejected with E424",
+          "[overload]") {
+    auto r = akkado::compile(R"(sample(1.0, 1.0, {a: 1}) |> out(@))");
+    CHECK(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("sample codegen: array-literal id is rejected with E424",
+          "[overload]") {
+    auto r = akkado::compile(R"(sample(1.0, 1.0, [1, 2]) |> out(@))");
+    CHECK(has_diagnostic(r, "E424"));
+}
