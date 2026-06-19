@@ -1,8 +1,9 @@
-> **Status: PHASE 3 IMPLEMENTED (2026-06-19).** Phase 1 (pattern model +
-> resolver), Phase 2 (operators routed through the shared `OverloadTable`), and
+> **Status: PHASE 4 IMPLEMENTED (2026-06-19).** Phase 1 (pattern model +
+> resolver), Phase 2 (operators routed through the shared `OverloadTable`),
 > Phase 3 (multi-form builtin families migrated; `sample` drives the first live
-> multi-pattern `resolve()` in codegen) have shipped; Phases 4-5 (user-function
-> overloading, heavy pattern/higher-order handlers) are not started. Spun out of
+> multi-pattern `resolve()` in codegen), and Phase 4 (user-function overloading)
+> have shipped; Phase 5 (heavy pattern/higher-order handlers) is not started.
+> Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload
 > resolution because "no mechanism exists." This PRD specifies that mechanism:
@@ -379,10 +380,54 @@ test for the multi-form family.
 > consumer); `sample` dispatch is type-based. New `[overload]` coverage added;
 > the full `akkado_tests` suite stays green with no existing test modified.
 
-### Phase 4 — User-function overloading
-Accumulate same-name defs by signature (types + literal guards); first-match at
-call sites; redefine-same-signature replaces (hot-swap). **Verify:** overload
-accumulation, redefinition-replacement, and hot-swap determinism tests.
+### Phase 4 — User-function overloading ✅ (2026-06-19)
+Accumulate same-name defs by signature; first-match at call sites;
+redefine-same-signature replaces. **Verify:** overload accumulation,
+redefinition-replacement, selection, fallback, shadow, and shared-block
+non-collision tests (`akkado/tests/test_overload.cpp`,
+`akkado/tests/test_symbol_table.cpp`).
+
+**Phase 4 as-built reconciliation.**
+- **Storage.** `Symbol::user_function` (single) became
+  `Symbol::overloads` (`std::vector<UserFunctionInfo>`), the single source of
+  truth; `primary_overload()` returns the first overload for the
+  single-body/fallback readers. `SymbolTable::define_function` now returns a
+  `DefineFunctionResult` (`Added` / `Accumulated` / `ReplacedSameSignature`) and
+  `update_function_nodes` remaps **every** overload's nodes.
+- **Signature identity = arity + ordered param annotated-type list +
+  per-param required-ness.** **Literal-value guards were dropped** (PRD §4.3 /
+  §5.5 `f(String == "ms")`): the grammar only produces `: Type`
+  (`parser.cpp`), so they are inexpressible — consistent with Phase 3 descoping
+  the builtin literal-unit form. The `StringLiteral`/`NumberLiteral` matchers
+  stay resolver-only.
+- **Unresolved/ambiguous calls warn + fall back to the first overload**
+  (`W170`), they do **not** hard-error — matching the "live-coding coerce,
+  don't fail" rule. This covers a no-overload-by-type match, named arguments,
+  `_` partial application, spread, and the bare name used as a value. The
+  fallback overload's per-param binding still emits the precise `E160`/`E184`
+  for a genuine type error, so **no new `E` codes were added** (the planned
+  E425–E428 were unnecessary).
+- **Stdlib shadowing.** The stdlib/prelude is prepended to user source in the
+  same global scope, so a user `fn osc`/`fn voice` shares a name with a stdlib
+  definition. A **user-source** definition shadows the **whole** stdlib overload
+  set for that name (the documented "user code can shadow these" idiom);
+  same-origin definitions accumulate. Origin is tagged via the `<stdlib…>`
+  source region (`UserFunctionInfo::is_stdlib`). Without this rule the existing
+  "user shadows stdlib `osc`" and `unison`-passes-user-`voice` tests regress.
+- **Polyphonic-pattern mirror.** `ArgDescriptor::polyphonic_scalar_incompatible`
+  + a `matches_arg` guard make a polyphonic non-sample Pattern skip a
+  `Type{Signal}`/`Any` overload (which binding would `E160`) so it reaches a
+  `: Pattern` overload regardless of declaration order. Builtin/operator
+  resolution never sets the bit, so their behavior is unchanged.
+- **Hot-swap reframed.** Hot-swap is a fresh, atomic recompilation — there is no
+  cross-compile symbol-table state, so "replace" is purely a within-one-source
+  last-wins for same-signature defs. Determinism follows from deterministic
+  first-match resolution + the existing emission-order state-id counters; the
+  inline path gained **no** per-call-site path push (that would have changed
+  every existing program's state IDs).
+- **Shared blocks keyed by signature.** `shared_block_key()` appends a signature
+  suffix only when a name is overloaded, so each overload owns its own
+  `BLOCK_CALL` body; single-definition fns keep byte-identical bytecode.
 
 ### Phase 5 (Future) — Migrate heavy pattern/higher-order handlers
 `poly`/`each`/`transport`/`midi` carry large bespoke codegen; their patterns

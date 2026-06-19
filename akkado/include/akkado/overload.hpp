@@ -134,6 +134,16 @@ struct ArgDescriptor {
     std::uint32_t string_id = 0;
     bool is_number_literal = false;
     float number = 0.0f;
+
+    // Phase 4 user-fn overloading: set when the argument is a *polyphonic*
+    // non-sample Pattern. The user-fn binding rejects such a value in a scalar
+    // slot (`: Signal` or un-annotated) with E160, so a `Kind::Type{Signal}` or
+    // `Kind::Any` matcher must NOT select it — otherwise resolve() would pick
+    // an overload that then fails binding, skipping a `: Pattern` overload the
+    // user wanted. This bit makes selection mirror the binding rule exactly.
+    // (Builtin/operator resolution never sets it, so their behavior is
+    // unchanged.)
+    bool polyphonic_scalar_incompatible = false;
 };
 
 /// Per-slot match failure. Lets a caller emit one diagnostic per failing slot,

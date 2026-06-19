@@ -6,6 +6,7 @@
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/const_eval.hpp"
+#include "akkado/overload.hpp"
 #include <cstring>
 
 namespace akkado {
@@ -963,6 +964,140 @@ TypedValue CodeGenerator::handle_user_function_call(
 }
 
 // ============================================================================
+// PRD prd-builtin-overload-resolution Phase 4 — user-function overloading
+// ============================================================================
+
+// One DispatchPattern per overload: an annotated param becomes a Kind::Type
+// matcher, an un-annotated param a Kind::Any matcher. We do NOT set
+// reject_uncoercible_signal — the user-fn binding (not the resolver) owns the
+// Function/StateCell decision. required_count counts params with no default and
+// not rest, mirroring the analyzer's min-args computation.
+static DispatchPattern make_user_fn_pattern(const UserFunctionInfo& fn) {
+    DispatchPattern p;
+    p.params.reserve(fn.params.size());
+    for (const auto& param : fn.params) {
+        ArgMatcher m;
+        if (param.annotated_type == ParamValueType::Any) {
+            m.kind = ArgMatcher::Kind::Any;
+        } else {
+            m.kind = ArgMatcher::Kind::Type;
+            m.type = param.annotated_type;
+        }
+        p.params.push_back(m);
+        bool required = !param.default_value.has_value() &&
+                        !param.default_string.has_value() &&
+                        param.default_node == NULL_NODE && !param.is_rest;
+        if (required) p.required_count++;
+    }
+    p.target.kind = DispatchTarget::Kind::UserFunction;
+    return p;
+}
+
+// Stable signature suffix for shared-block keying when a name is overloaded.
+// Encodes arity + per-param (annotated_type, required-ness, destructure) + rest
+// — i.e. the full signature identity — so two distinct overloads never share a
+// block key.
+static std::string fn_signature_suffix(const UserFunctionInfo& fn) {
+    std::string s = "#" + std::to_string(fn.params.size());
+    for (const auto& p : fn.params) {
+        s += '_';
+        s += std::to_string(static_cast<int>(p.annotated_type));
+        bool required = !p.default_value.has_value() &&
+                        !p.default_string.has_value() &&
+                        p.default_node == NULL_NODE && !p.is_rest;
+        s += required ? 'q' : 'o';
+        if (p.is_destructure) s += 'd';
+    }
+    if (fn.has_rest_param) s += "_r";
+    return s;
+}
+
+TypedValue CodeGenerator::dispatch_overloaded_function_call(
+    NodeIndex node, const Node& n,
+    const std::vector<UserFunctionInfo>& overloads) {
+
+    const UserFunctionInfo& primary = overloads.front();
+
+    // Scan the arguments. Named args, `_` placeholders, and spread (`..rec`)
+    // all make type-based selection impossible — warn and fall back to the
+    // first overload. Otherwise collect each argument's value node.
+    std::vector<NodeIndex> value_nodes;
+    const char* ambiguous_reason = nullptr;
+    for (NodeIndex arg = n.first_child; arg != NULL_NODE;
+         arg = ast_->arena[arg].next_sibling) {
+        const Node& arg_node = ast_->arena[arg];
+        NodeIndex value = arg;
+        if (arg_node.type == NodeType::Argument &&
+            std::holds_alternative<Node::ArgumentData>(arg_node.data)) {
+            const auto& a = arg_node.as_argument();
+            if (a.name.has_value()) ambiguous_reason = "named arguments";
+            if (a.spread_source != NULL_NODE) ambiguous_reason = "spread arguments";
+            value = arg_node.first_child;
+        }
+        if (value != NULL_NODE) {
+            const Node& vn = ast_->arena[value];
+            if (vn.type == NodeType::Identifier &&
+                std::holds_alternative<Node::IdentifierData>(vn.data) &&
+                ctx_->interner->view(vn.as_identifier()) == "_") {
+                ambiguous_reason = "`_` partial application";
+            }
+        }
+        value_nodes.push_back(value);
+    }
+
+    if (ambiguous_reason) {
+        warn("W170",
+             "Call to overloaded function '" + primary.name + "' uses " +
+             ambiguous_reason + ", which cannot select an overload by argument "
+             "type — using the first declared overload.",
+             n.location);
+        return handle_user_function_call(node, n, primary);
+    }
+
+    // Classify each positional argument by visiting it. visit() caches in
+    // node_types_, so the selected overload's inline body re-visits and
+    // cache-hits — no double emission (same property the shared-block path
+    // relies on).
+    std::vector<ArgDescriptor> args;
+    args.reserve(value_nodes.size());
+    for (NodeIndex value : value_nodes) {
+        ArgDescriptor d;
+        if (value == NULL_NODE) {
+            d.skip = true;
+            args.push_back(d);
+            continue;
+        }
+        TypedValue tv = visit(value);
+        d.type = tv.type;
+        // Mirror the binding's polyphonic-pattern scalar rejection so a
+        // polyphonic pattern never selects a `: Signal` / un-annotated overload.
+        if (tv.type == ValueType::Pattern && tv.pattern &&
+            tv.pattern->max_voices > 1 && !tv.pattern->is_sample_pattern) {
+            d.polyphonic_scalar_incompatible = true;
+        }
+        args.push_back(d);
+    }
+
+    // Build one pattern per overload and resolve first-match in declaration order.
+    std::vector<DispatchPattern> patterns;
+    patterns.reserve(overloads.size());
+    for (const auto& uf : overloads) patterns.push_back(make_user_fn_pattern(uf));
+
+    ResolveResult r = resolve(patterns, args);
+    if (r.matched) {
+        return handle_user_function_call(node, n, overloads[r.closest_index]);
+    }
+
+    // No overload matches the argument types — warn and fall back. The first
+    // overload's per-param binding then emits any precise E160/E184.
+    warn("W170",
+         "No overload of '" + primary.name + "' matches the argument types — "
+         "using the first declared overload.",
+         n.location);
+    return handle_user_function_call(node, n, primary);
+}
+
+// ============================================================================
 // PRD prd-runtime-functions-control-flow L2 — shared-block `fn` lowering
 // ============================================================================
 
@@ -1007,14 +1142,26 @@ bool CodeGenerator::fn_shareable_by_signature(
     return true;
 }
 
+std::string CodeGenerator::shared_block_key(const UserFunctionInfo& func) const {
+    // Single definition → bare name (keeps existing bytecode byte-identical).
+    // Overloaded name → name + signature suffix so each overload owns a
+    // distinct block and its call-site state path can't collide with a sibling.
+    auto sym = symbols_->lookup(func.name);
+    if (sym && sym->kind == SymbolKind::UserFunction && sym->overloads.size() > 1) {
+        return func.name + fn_signature_suffix(func);
+    }
+    return func.name;
+}
+
 const CodeGenerator::SharedBlock*
 CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
-    if (auto it = shared_blocks_.find(func.name); it != shared_blocks_.end()) {
+    const std::string key = shared_block_key(func);
+    if (auto it = shared_blocks_.find(key); it != shared_blocks_.end()) {
         return it->second ? &*it->second : nullptr;
     }
 
     auto not_shareable = [&]() -> const SharedBlock* {
-        shared_blocks_[func.name] = std::nullopt;
+        shared_blocks_[key] = std::nullopt;
         return nullptr;
     };
 
@@ -1025,7 +1172,7 @@ CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
 
     // Tentatively mark not-shareable so a (analyzer-rejected, but defensive)
     // recursive reference resolves to the inline path instead of re-entering.
-    shared_blocks_[func.name] = std::nullopt;
+    shared_blocks_[key] = std::nullopt;
 
     // --- Speculative shared-body compile (rolled back if it fails) ---------
     const std::size_t subprog_mark = subprograms_.size();
@@ -1056,7 +1203,7 @@ CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
     // dispatch time via the BLOCK_CALL state_id XOR (see emit_block_call).
     auto saved_path = std::move(path_stack_);
     path_stack_.clear();
-    push_path("block:" + func.name);
+    push_path("block:" + key);
     auto saved_node_types = std::move(node_types_);
     node_types_.clear();
 
@@ -1179,8 +1326,8 @@ CodeGenerator::get_or_compile_shared_block(const UserFunctionInfo& func) {
     blk.param_count = pc;
     blk.output_count = output_count;
     blk.is_stereo = body_is_stereo;
-    shared_blocks_[func.name] = blk;
-    return &*shared_blocks_[func.name];
+    shared_blocks_[key] = blk;
+    return &*shared_blocks_[key];
 }
 
 TypedValue CodeGenerator::emit_block_call(
@@ -1191,8 +1338,11 @@ TypedValue CodeGenerator::emit_block_call(
     // the BLOCK_CALL state_id. The VM XORs the shared body's state IDs by a
     // mix of this value, so each call site gets its own DSP state slots —
     // recoverable across hot-swap as long as source identity is preserved.
-    std::uint32_t count = call_counters_["block:" + func.name]++;
-    push_path("block:" + func.name + "@callsite_" + std::to_string(count));
+    // Use the same key as the compiled block so an overloaded fn's call-site
+    // path lines up with its own body (not a sibling overload's).
+    const std::string key = shared_block_key(func);
+    std::uint32_t count = call_counters_["block:" + key]++;
+    push_path("block:" + key + "@callsite_" + std::to_string(count));
     std::uint32_t state_id = compute_state_id();
     pop_path();
 

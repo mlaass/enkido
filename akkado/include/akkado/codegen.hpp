@@ -686,6 +686,20 @@ private:
     TypedValue handle_user_function_call(NodeIndex node, const Node& n,
                                          const UserFunctionInfo& func);
 
+    /// Phase 4 overload resolution: select one of N same-name overloads by the
+    /// call's argument types (first-match in declaration order), then dispatch
+    /// to handle_user_function_call. When selection is impossible — named args,
+    /// `_` partial application, spread, or no overload matches — emits W170 and
+    /// falls back to the first declared overload.
+    TypedValue dispatch_overloaded_function_call(
+        NodeIndex node, const Node& n,
+        const std::vector<UserFunctionInfo>& overloads);
+
+    /// Cache/state key for a shared BLOCK_CALL body. Bare name for a single
+    /// definition (keeps bytecode byte-identical); name + a signature suffix
+    /// when the name is overloaded, so each overload owns a distinct block.
+    std::string shared_block_key(const UserFunctionInfo& func) const;
+
     /// A user `fn` lowered to a shared subprogram block (PRD L2). The body is
     /// compiled once; every eligible call site emits a BLOCK_CALL into it.
     struct SharedBlock {

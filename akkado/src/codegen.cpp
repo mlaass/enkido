@@ -1010,7 +1010,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Check user-defined functions FIRST (allows stdlib osc to work)
             auto sym = symbols_->lookup(func_name);
             if (sym && sym->kind == SymbolKind::UserFunction) {
-                return handle_user_function_call(node, n, sym->user_function);
+                // Phase 4: one definition → the unchanged direct path; multiple
+                // overloads → select one by argument type (warn + fall back to
+                // the first overload when selection is impossible).
+                if (sym->overloads.size() == 1) {
+                    return handle_user_function_call(node, n, sym->overloads.front());
+                }
+                return dispatch_overloaded_function_call(node, n, sym->overloads);
             }
 
             // Check for FunctionValue (lambda assigned to variable)

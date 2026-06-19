@@ -141,7 +141,9 @@ static bool all_placeholders_have_defaults(const AstArena& arena,
         // Phase 5 fast path: lookup by SymbolId directly.
         auto sym = symbols.lookup(call_node.as_identifier());
         if (sym && sym->kind == SymbolKind::UserFunction) {
-            user_func = &sym->user_function;
+            // Partial-application default check falls back to the first
+            // overload (Phase 4: `_` placeholders don't select an overload).
+            user_func = &sym->primary_overload();
         }
     }
 
@@ -529,7 +531,8 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 }
                 auto callee_sym = symbols_.lookup(callee_name);
                 if (callee_sym && callee_sym->kind == SymbolKind::UserFunction) {
-                    NodeIndex body = callee_sym->user_function.body_node;
+                    // Closure-return detection inspects the first overload.
+                    NodeIndex body = callee_sym->primary_overload().body_node;
                     if (body != NULL_NODE && (*input_ast_).arena[body].type == NodeType::Closure) {
                         FunctionRef func_ref{};
                         func_ref.closure_node = body;
@@ -770,9 +773,9 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         // Register the user-defined function
         const auto& fn_data = n.as_function_def();
 
-        if (symbols_.is_defined_in_current_scope(fn_data.name)) {
-            warning("Function '" + fn_data.name + "' redefined", n.location);
-        }
+        // Phase 4: distinct signatures accumulate as overloads (a feature, not
+        // a smell), so the "redefined" warning now fires only when a definition
+        // replaces an existing *same-signature* overload — see below.
 
         // Collect parameters from Identifier children (before body)
         UserFunctionInfo func_info;
@@ -781,6 +784,15 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
         func_info.has_rest_param = fn_data.has_rest_param;
         func_info.is_const = fn_data.is_const;
         func_info.is_inline = fn_data.is_inline;
+        // Phase 4: tag stdlib-origin definitions so a user definition of the
+        // same name shadows the whole stdlib set rather than accumulating with
+        // it. Stdlib regions are `<stdlib>` and `<stdlib/*.ak>`.
+        if (source_map_) {
+            const auto* region = source_map_->find_region(n.location.offset);
+            if (region && (region->filename.rfind("<stdlib", 0) == 0)) {
+                func_info.is_stdlib = true;
+            }
+        }
 
         NodeIndex child = n.first_child;
         std::size_t param_idx = 0;
@@ -828,7 +840,12 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             func_info.returns_closure = true;
         }
 
-        symbols_.define_function(func_info);
+        if (symbols_.define_function(func_info) ==
+            DefineFunctionResult::ReplacedSameSignature) {
+            warning("Function '" + fn_data.name +
+                    "' redefined (same signature replaces the previous body)",
+                    n.location);
+        }
     }
 
     // Recurse to children
@@ -849,20 +866,24 @@ void SemanticAnalyzer::detect_recursive_functions() {
     // Codegen inlines a fn body per call site; a recursive fn would inline
     // forever. Build a call graph over user functions and reject any cycle.
     struct FnEntry {
-        NodeIndex body_node = NULL_NODE;
+        // Phase 4: a name may own several overloads; a cycle through *any*
+        // overload body is still infinite inlining, so track them all.
+        std::vector<NodeIndex> body_nodes;
         bool is_inline = false;
         SourceLocation location{};
     };
     std::unordered_map<std::string, FnEntry> fns;
     for (const auto& [hash, sym] : symbols_.globals()) {
-        if (sym.kind != SymbolKind::UserFunction) continue;
+        if (sym.kind != SymbolKind::UserFunction || sym.overloads.empty()) continue;
         FnEntry e;
-        e.body_node = sym.user_function.body_node;
-        e.is_inline = sym.user_function.is_inline;
-        if (output_arena_.valid(sym.user_function.def_node)) {
-            e.location = output_arena_[sym.user_function.def_node].location;
+        for (const auto& uf : sym.overloads) {
+            e.body_nodes.push_back(uf.body_node);
+            if (uf.is_inline) e.is_inline = true;
         }
-        fns[sym.user_function.name] = e;
+        if (output_arena_.valid(sym.primary_overload().def_node)) {
+            e.location = output_arena_[sym.primary_overload().def_node].location;
+        }
+        fns[sym.name] = e;
     }
     if (fns.empty()) return;
 
@@ -872,7 +893,9 @@ void SemanticAnalyzer::detect_recursive_functions() {
     for (const auto& [name, e] : fns) {
         std::vector<std::string> callees;
         std::vector<NodeIndex> stack;
-        if (e.body_node != NULL_NODE) stack.push_back(e.body_node);
+        for (NodeIndex b : e.body_nodes) {
+            if (b != NULL_NODE) stack.push_back(b);
+        }
         while (!stack.empty()) {
             NodeIndex idx = stack.back();
             stack.pop_back();
@@ -1813,8 +1836,25 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 error("E004", "Unknown function: '" + func_name + "'", n.location);
             }
         } else if (sym->kind == SymbolKind::UserFunction) {
-            // Validate user function call
-            const auto& fn = sym->user_function;
+            // Validate user function call. Phase 4: named-arg reorder targets
+            // the first overload (the warn+fallback target); the arity check
+            // accepts the call if it fits ANY overload's [min,max] range, so a
+            // call valid for one overload is not rejected against another.
+            const auto& fn = sym->primary_overload();
+
+            // Required-arg count for one overload (params with no default/rest).
+            auto min_required = [](const UserFunctionInfo& f) {
+                std::size_t min_args = 0;
+                for (const auto& param : f.params) {
+                    if (!param.default_value.has_value() &&
+                        !param.default_string.has_value() &&
+                        param.default_node == NULL_NODE &&
+                        !param.is_rest) {
+                        min_args++;
+                    }
+                }
+                return min_args;
+            };
 
             // Spread arguments are statically unsized — defer arg-count and
             // reorder validation to codegen, which expands ..record / ..array
@@ -1822,7 +1862,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
             const bool spread = has_spread_arg(node);
 
             if (!spread) {
-                // Reorder named arguments if any
+                // Reorder named arguments if any (against the first overload).
                 std::vector<std::string> pnames;
                 for (const auto& p : fn.params) pnames.push_back(p.name);
                 reorder_named_arguments(node, pnames, func_name);
@@ -1835,28 +1875,30 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                     arg = output_arena_[arg].next_sibling;
                 }
 
-                // Count required args (params without defaults or rest)
-                std::size_t min_args = 0;
-                for (const auto& param : fn.params) {
-                    if (!param.default_value.has_value() &&
-                        !param.default_string.has_value() &&
-                        param.default_node == NULL_NODE &&
-                        !param.is_rest) {
-                        min_args++;
-                    }
+                // Accept if the arg count fits any overload's arity range.
+                bool any_fits = false;
+                for (const auto& uf : sym->overloads) {
+                    if (arg_count < min_required(uf)) continue;
+                    if (!uf.has_rest_param && arg_count > uf.params.size()) continue;
+                    any_fits = true;
+                    break;
                 }
 
-                if (arg_count < min_args) {
-                    error("E006", "Function '" + func_name + "' expects at least " +
-                          std::to_string(min_args) + " argument(s), got " +
-                          std::to_string(arg_count), n.location);
-                } else if (!fn.has_rest_param) {
-                    // Only enforce max if no rest param
-                    std::size_t max_args = fn.params.size();
-                    if (arg_count > max_args) {
-                        error("E007", "Function '" + func_name + "' expects at most " +
-                              std::to_string(max_args) + " argument(s), got " +
+                if (!any_fits) {
+                    // Report against the first overload (keeps the existing
+                    // E006/E007 wording for the common single-overload case).
+                    std::size_t min_args = min_required(fn);
+                    if (arg_count < min_args) {
+                        error("E006", "Function '" + func_name + "' expects at least " +
+                              std::to_string(min_args) + " argument(s), got " +
                               std::to_string(arg_count), n.location);
+                    } else if (!fn.has_rest_param) {
+                        std::size_t max_args = fn.params.size();
+                        if (arg_count > max_args) {
+                            error("E007", "Function '" + func_name + "' expects at most " +
+                                  std::to_string(max_args) + " argument(s), got " +
+                                  std::to_string(arg_count), n.location);
+                        }
                     }
                 }
             }
@@ -2589,7 +2631,13 @@ void SemanticAnalyzer::verify_const_purity(NodeIndex node, const std::string& co
                     return;
                 }
             } else if (sym->kind == SymbolKind::UserFunction) {
-                if (!sym->user_function.is_const) {
+                // Phase 4: const context is satisfied if ANY overload is const
+                // (the const evaluator selects the matching const overload).
+                bool any_const = false;
+                for (const auto& uf : sym->overloads) {
+                    if (uf.is_const) { any_const = true; break; }
+                }
+                if (!any_const) {
                     error("E202", "Non-const function '" + func_name +
                           "' cannot be used in " + context, n.location);
                     return;

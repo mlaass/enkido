@@ -82,14 +82,73 @@ bool SymbolTable::define_parameter(std::string_view name, std::uint16_t buffer_i
     return define(sym);
 }
 
-bool SymbolTable::define_function(const UserFunctionInfo& func_info) {
+// Phase 4: two user-fn definitions share a signature when their parameter
+// *shapes* match — same arity, same ordered annotated-type list, same
+// per-param required-ness and rest/destructure flags. Parameter *names* and
+// default *values* do not affect identity, but required-ness does (so `f(a)`
+// and `f(a = 0)` are distinct overloads). Equal signatures replace; differing
+// signatures accumulate.
+static bool same_signature(const UserFunctionInfo& a, const UserFunctionInfo& b) {
+    if (a.params.size() != b.params.size()) return false;
+    if (a.has_rest_param != b.has_rest_param) return false;
+    auto required = [](const FunctionParamInfo& p) {
+        return !p.default_value.has_value() && !p.default_string.has_value() &&
+               p.default_node == NULL_NODE && !p.is_rest;
+    };
+    for (std::size_t i = 0; i < a.params.size(); ++i) {
+        const auto& pa = a.params[i];
+        const auto& pb = b.params[i];
+        if (pa.annotated_type != pb.annotated_type) return false;
+        if (pa.is_rest != pb.is_rest) return false;
+        if (pa.is_destructure != pb.is_destructure) return false;
+        if (required(pa) != required(pb)) return false;
+    }
+    return true;
+}
+
+DefineFunctionResult SymbolTable::define_function(const UserFunctionInfo& func_info) {
+    SymbolId id = interner_->intern(func_info.name);
+    auto& current = scopes_.back();
+    auto it = current.find(id);
+    if (it != current.end() && it->second.kind == SymbolKind::UserFunction) {
+        auto& overloads = it->second.overloads;
+        // A user-source definition shadows the stdlib base layer: the first
+        // user `fn name` replaces ALL stdlib overloads of that name (the
+        // documented "user code can shadow stdlib" idiom). Later user defs then
+        // accumulate among themselves by signature. (Stdlib defs are processed
+        // first, so a stdlib def never meets a pre-existing user set.)
+        if (!func_info.is_stdlib) {
+            bool all_stdlib = true;
+            for (const auto& uf : overloads) {
+                if (!uf.is_stdlib) { all_stdlib = false; break; }
+            }
+            if (all_stdlib) {
+                overloads.clear();
+                overloads.push_back(func_info);
+                return DefineFunctionResult::Added;
+            }
+        }
+        // Accumulate into the existing overload set: a matching signature
+        // replaces in place (last-wins), a new signature appends.
+        for (auto& uf : overloads) {
+            if (same_signature(uf, func_info)) {
+                uf = func_info;
+                return DefineFunctionResult::ReplacedSameSignature;
+            }
+        }
+        overloads.push_back(func_info);
+        return DefineFunctionResult::Accumulated;
+    }
+    // First definition of this name in the current scope (or it shadows a
+    // non-function symbol of the same name — replace it with a fresh set).
     Symbol sym{};
     sym.kind = SymbolKind::UserFunction;
-    sym.name_id = interner_->intern(func_info.name);
+    sym.name_id = id;
     sym.name = func_info.name;
     sym.buffer_index = 0xFFFF;  // Not applicable for functions
-    sym.user_function = func_info;
-    return define(sym);
+    sym.overloads.push_back(func_info);
+    current.insert_or_assign(id, sym);
+    return DefineFunctionResult::Added;
 }
 
 bool SymbolTable::define_pattern(std::string_view name, const PatternInfo& pattern_info) {
@@ -183,21 +242,25 @@ bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
 
 static void update_symbol_nodes(Symbol& sym, const std::unordered_map<NodeIndex, NodeIndex>& node_map) {
     if (sym.kind == SymbolKind::UserFunction) {
-        auto body_it = node_map.find(sym.user_function.body_node);
-        if (body_it != node_map.end()) sym.user_function.body_node = body_it->second;
-        auto def_it = node_map.find(sym.user_function.def_node);
-        if (def_it != node_map.end()) sym.user_function.def_node = def_it->second;
-        for (auto& param : sym.user_function.params) {
-            if (param.default_node != NULL_NODE) {
-                auto param_it = node_map.find(param.default_node);
-                if (param_it != node_map.end()) param.default_node = param_it->second;
-            }
-            // Phase 3b: each destructure field's default expression also
-            // moved during the analyzer's AST clone.
-            for (auto& f : param.destructure_fields) {
-                if (f.default_node != NULL_NODE) {
-                    auto it = node_map.find(f.default_node);
-                    if (it != node_map.end()) f.default_node = it->second;
+        // Phase 4: remap every overload — each carries its own body/def nodes
+        // and per-param default nodes that all moved during the AST clone.
+        for (auto& uf : sym.overloads) {
+            auto body_it = node_map.find(uf.body_node);
+            if (body_it != node_map.end()) uf.body_node = body_it->second;
+            auto def_it = node_map.find(uf.def_node);
+            if (def_it != node_map.end()) uf.def_node = def_it->second;
+            for (auto& param : uf.params) {
+                if (param.default_node != NULL_NODE) {
+                    auto param_it = node_map.find(param.default_node);
+                    if (param_it != node_map.end()) param.default_node = param_it->second;
+                }
+                // Phase 3b: each destructure field's default expression also
+                // moved during the analyzer's AST clone.
+                for (auto& f : param.destructure_fields) {
+                    if (f.default_node != NULL_NODE) {
+                        auto it = node_map.find(f.default_node);
+                        if (it != node_map.end()) f.default_node = it->second;
+                    }
                 }
             }
         }

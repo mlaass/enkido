@@ -172,11 +172,16 @@ std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_no
             return sym->function_ref;
         }
         if (sym->kind == SymbolKind::UserFunction) {
+            // Phase 4: a FunctionRef wraps a single body. Using an overloaded
+            // name as a first-class value falls back to the first overload.
+            // (This site is probed speculatively in several places, so the
+            // fallback stays silent here; call-site dispatch carries the warning.)
+            const UserFunctionInfo& fn = sym->primary_overload();
             FunctionRef ref{};
             ref.is_user_function = true;
             ref.user_function_name = sym->name;
-            ref.params = sym->user_function.params;
-            ref.closure_node = sym->user_function.body_node;
+            ref.params = fn.params;
+            ref.closure_node = fn.body_node;
             return ref;
         }
     }

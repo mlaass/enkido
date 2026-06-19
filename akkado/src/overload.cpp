@@ -166,6 +166,13 @@ const std::vector<DispatchPattern>* lookup_builtin_overloads(std::string_view na
 bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg) {
     switch (matcher.kind) {
         case ArgMatcher::Kind::Type:
+            // Phase 4: a polyphonic non-sample Pattern cannot coerce into a
+            // scalar Signal slot (binding emits E160), so don't let it match —
+            // it should flow to a `: Pattern` overload instead.
+            if (arg.polyphonic_scalar_incompatible &&
+                matcher.type == ParamValueType::Signal) {
+                return false;
+            }
             // Coercion counts as a match (PRD §5.2).
             return type_compatible(arg.type, matcher.type);
 
@@ -182,6 +189,11 @@ bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg) {
             if (matcher.reject_uncoercible_signal &&
                 (arg.type == ValueType::Function ||
                  arg.type == ValueType::StateCell)) {
+                return false;
+            }
+            // Phase 4: an un-annotated user-fn slot also rejects a polyphonic
+            // non-sample Pattern (binding emits E160), mirroring the scalar rule.
+            if (arg.polyphonic_scalar_incompatible) {
                 return false;
             }
             return true;
