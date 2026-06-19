@@ -1,7 +1,9 @@
-> **Status: PHASE 2 IMPLEMENTED (2026-06-09).** Phase 1 (pattern model +
-> resolver) and Phase 2 (operators routed through the shared `OverloadTable`)
-> have shipped; Phases 3-5 (multi-form builtin handlers, user-function
-> overloading, heavy pattern/higher-order handlers) are not started. Spun out of
+> **Status: PHASE 4 IMPLEMENTED (2026-06-19).** Phase 1 (pattern model +
+> resolver), Phase 2 (operators routed through the shared `OverloadTable`),
+> Phase 3 (multi-form builtin families migrated; `sample` drives the first live
+> multi-pattern `resolve()` in codegen), and Phase 4 (user-function overloading)
+> have shipped; Phase 5 (heavy pattern/higher-order handlers) is not started.
+> Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload
 > resolution because "no mechanism exists." This PRD specifies that mechanism:
@@ -21,6 +23,28 @@
 > (unary minus) and `op_mod` (`%`) are **out of scope**: neither operator exists
 > in Akkado (`%` is the hole token; `neg`/`fmod` are functions only). `pow` (`^`),
 > omitted from the §5.4 list, **is** covered.
+>
+> **Phase 3 as-built reconciliation.** A new `lookup_builtin_overloads`
+> (`overload.cpp`) registers the migrated families; names absent from it keep the
+> single-pattern `make_builtin_pattern` path (no change for ~200 builtins).
+> `pan`/`pingpong`/`smooch`/`wt`/`wavetable` migrate as **single LegacyHandler
+> patterns** (new `LegacyHandlerId::{Pan,Pingpong,Smooch}`) — their dispatch
+> dimension (channel width / arg count) is orthogonal to the type model (§3), so
+> it stays inside the existing handler; this is pure plumbing like Phase 2's
+> arithmetic. `delay`/`delay_ms`/`delay_smp` migrate as single Builtin patterns
+> and the redundant `if (func_name=="delay")` rate ladder is retired — the time
+> unit was already data-driven via `BuiltinInfo::inst_rate`. **`sample`/
+> `sample_loop`** are the one genuinely multi-form family: two Builtin patterns
+> keyed by the id slot type (`String` name form first, `Signal` numeric/runtime
+> id form second), and codegen now calls **`resolve()`** for real to select the
+> form and reject a non-String/Signal id with **E424** (the no-match diagnostic).
+> **Descoped vs §4.1:** the `delay(sig, "ms", t)` literal-unit form is **not**
+> shipped — `delay_ms`/`delay_smp` keep their existing call shapes. Because that
+> was the only proposed consumer of the `StringLiteral`/`NumberLiteral` matchers,
+> those matcher kinds remain resolver-only (implemented + unit-tested, no codegen
+> consumer yet); `sample` dispatches by `Kind::Type`, not literal value. New
+> coverage: 9 `[overload]` cases (table shape, `resolve()`-by-id-type, E424
+> codegen). Existing `[stereo]`/`[sample]`/`[golden]` suites stay green unchanged.
 
 # Akkado Builtin & Function Overload Resolution PRD
 
@@ -337,16 +361,73 @@ Covers **all operators** — arithmetic, comparison, and logical.
 > Deferred to Phase 3: live `resolve()`-by-type in codegen (operators are
 > single-pattern today, so dispatch reduces to the one target).
 
-### Phase 3 — Migrate multi-form builtin handlers
+### Phase 3 — Migrate multi-form builtin handlers ✅ (2026-06-19)
 `pan`/`balance`/`pingpong` (channel branch stays orthogonal), `delay*` +
-`smooch` (literal-value matchers), `sample` (String vs Number id form).
-**Verify:** each migrated family's existing tests pass; add a literal-match
-test per migrated builtin.
+`smooch`, `sample` (String vs Number id form).
+**Verify:** each migrated family's existing tests pass; add a resolve()-by-type
+test for the multi-form family.
 
-### Phase 4 — User-function overloading
-Accumulate same-name defs by signature (types + literal guards); first-match at
-call sites; redefine-same-signature replaces (hot-swap). **Verify:** overload
-accumulation, redefinition-replacement, and hot-swap determinism tests.
+> **As-built:** all six families migrated via `lookup_builtin_overloads`
+> (`overload.cpp`) — see the status block's Phase 3 reconciliation.
+> `pan`/`pingpong`/`smooch` route through single LegacyHandler patterns (channel/
+> arity branch stays in the handler); `delay*` through single Builtin patterns
+> (rate via `inst_rate`, redundant name-ladder retired); **`sample`/`sample_loop`
+> drive the first live multi-pattern `resolve()` in codegen**, selecting the
+> String-name vs Signal-id form by type and rejecting other id types with **E424**.
+> `balance` is not a separate builtin (it is `pan`'s stereo branch). The §4.1
+> `delay(sig,"ms",t)` literal-unit form was **descoped** by product decision, so
+> the `StringLiteral`/`NumberLiteral` matchers stay resolver-only (no codegen
+> consumer); `sample` dispatch is type-based. New `[overload]` coverage added;
+> the full `akkado_tests` suite stays green with no existing test modified.
+
+### Phase 4 — User-function overloading ✅ (2026-06-19)
+Accumulate same-name defs by signature; first-match at call sites;
+redefine-same-signature replaces. **Verify:** overload accumulation,
+redefinition-replacement, selection, fallback, shadow, and shared-block
+non-collision tests (`akkado/tests/test_overload.cpp`,
+`akkado/tests/test_symbol_table.cpp`).
+
+**Phase 4 as-built reconciliation.**
+- **Storage.** `Symbol::user_function` (single) became
+  `Symbol::overloads` (`std::vector<UserFunctionInfo>`), the single source of
+  truth; `primary_overload()` returns the first overload for the
+  single-body/fallback readers. `SymbolTable::define_function` now returns a
+  `DefineFunctionResult` (`Added` / `Accumulated` / `ReplacedSameSignature`) and
+  `update_function_nodes` remaps **every** overload's nodes.
+- **Signature identity = arity + ordered param annotated-type list +
+  per-param required-ness.** **Literal-value guards were dropped** (PRD §4.3 /
+  §5.5 `f(String == "ms")`): the grammar only produces `: Type`
+  (`parser.cpp`), so they are inexpressible — consistent with Phase 3 descoping
+  the builtin literal-unit form. The `StringLiteral`/`NumberLiteral` matchers
+  stay resolver-only.
+- **Unresolved/ambiguous calls warn + fall back to the first overload**
+  (`W170`), they do **not** hard-error — matching the "live-coding coerce,
+  don't fail" rule. This covers a no-overload-by-type match, named arguments,
+  `_` partial application, spread, and the bare name used as a value. The
+  fallback overload's per-param binding still emits the precise `E160`/`E184`
+  for a genuine type error, so **no new `E` codes were added** (the planned
+  E425–E428 were unnecessary).
+- **Stdlib shadowing.** The stdlib/prelude is prepended to user source in the
+  same global scope, so a user `fn osc`/`fn voice` shares a name with a stdlib
+  definition. A **user-source** definition shadows the **whole** stdlib overload
+  set for that name (the documented "user code can shadow these" idiom);
+  same-origin definitions accumulate. Origin is tagged via the `<stdlib…>`
+  source region (`UserFunctionInfo::is_stdlib`). Without this rule the existing
+  "user shadows stdlib `osc`" and `unison`-passes-user-`voice` tests regress.
+- **Polyphonic-pattern mirror.** `ArgDescriptor::polyphonic_scalar_incompatible`
+  + a `matches_arg` guard make a polyphonic non-sample Pattern skip a
+  `Type{Signal}`/`Any` overload (which binding would `E160`) so it reaches a
+  `: Pattern` overload regardless of declaration order. Builtin/operator
+  resolution never sets the bit, so their behavior is unchanged.
+- **Hot-swap reframed.** Hot-swap is a fresh, atomic recompilation — there is no
+  cross-compile symbol-table state, so "replace" is purely a within-one-source
+  last-wins for same-signature defs. Determinism follows from deterministic
+  first-match resolution + the existing emission-order state-id counters; the
+  inline path gained **no** per-call-site path push (that would have changed
+  every existing program's state IDs).
+- **Shared blocks keyed by signature.** `shared_block_key()` appends a signature
+  suffix only when a name is overloaded, so each overload owns its own
+  `BLOCK_CALL` body; single-definition fns keep byte-identical bytecode.
 
 ### Phase 5 (Future) — Migrate heavy pattern/higher-order handlers
 `poly`/`each`/`transport`/`midi` carry large bespoke codegen; their patterns

@@ -26,10 +26,14 @@
 //   - No match (even with coercion) is an error naming the closest candidate.
 //
 // `matches()`/`resolve()`/`closest_candidate()` are implemented and unit-tested
-// here. Because every operator (and builtin) has exactly one pattern today,
-// codegen dispatch reduces to that single pattern's target and does not yet call
-// `resolve()` by argument type — live multi-pattern `resolve()` in codegen lands
-// in Phase 3 with the first genuinely multi-form builtins (delay/sample).
+// here. Phase 3 brings the multi-form builtin families into the model via
+// `lookup_builtin_overloads`: pan/pingpong/smooch/delay* migrate as single
+// declarative patterns (like Phase 2's operators), and `sample`/`sample_loop`
+// become the first family to drive codegen through a live multi-pattern
+// `resolve()` — selecting the String-name vs Number-id form by argument type.
+// (The PRD §4.1 `delay(sig,"ms",t)` literal-unit form was descoped; delay keeps
+// its three names, so the StringLiteral/NumberLiteral matchers remain
+// resolver-only with no codegen consumer yet.)
 
 #include "akkado/typed_value.hpp"
 #include "akkado/builtins.hpp"  // BuiltinInfo, type_compatible, MAX_BUILTIN_PARAMS
@@ -82,11 +86,16 @@ struct ArgMatcher {
 
 /// Identifies which bespoke codegen handler a LegacyHandler target dispatches to
 /// (the PRD §5.6 migration bridge: a declarative pattern that selects existing
-/// hand-written codegen instead of inlining an opcode). Phase 2 needs only the
-/// arithmetic-operator broadcasting handler; Phase 3/5 add more.
+/// hand-written codegen instead of inlining an opcode). Phase 2 added the
+/// arithmetic-operator broadcasting handler; Phase 3 migrates the multi-form
+/// stereo/wavetable handlers whose dispatch dimension (channel width / arg count)
+/// is orthogonal to the type model and therefore stays inside the handler.
 enum class LegacyHandlerId : std::uint8_t {
     None,
     BinaryOpBroadcast,  // handle_binary_op_call — +,-,*,/,^ array/stereo broadcast
+    Pan,                // handle_pan_call — mono PAN vs stereo PAN_STEREO (channel width)
+    Pingpong,           // handle_pingpong_call — stereo vs explicit-L/R forms
+    Smooch,             // handle_smooch_call — wavetable smooch/wt/wavetable, 2-4 args
 };
 
 /// Where a matched pattern dispatches to. Phase 2 consumes Builtin (emit the
@@ -125,6 +134,16 @@ struct ArgDescriptor {
     std::uint32_t string_id = 0;
     bool is_number_literal = false;
     float number = 0.0f;
+
+    // Phase 4 user-fn overloading: set when the argument is a *polyphonic*
+    // non-sample Pattern. The user-fn binding rejects such a value in a scalar
+    // slot (`: Signal` or un-annotated) with E160, so a `Kind::Type{Signal}` or
+    // `Kind::Any` matcher must NOT select it — otherwise resolve() would pick
+    // an overload that then fails binding, skipping a `: Pattern` overload the
+    // user wanted. This bit makes selection mirror the binding rule exactly.
+    // (Builtin/operator resolution never sets it, so their behavior is
+    // unchanged.)
+    bool polyphonic_scalar_incompatible = false;
 };
 
 /// Per-slot match failure. Lets a caller emit one diagnostic per failing slot,
@@ -161,6 +180,21 @@ DispatchPattern make_builtin_pattern(const BuiltinInfo& info);
 /// `make_builtin_pattern` of the underlying builtin, so the matchers are
 /// identical to the generic per-arg type-check path.
 const std::vector<DispatchPattern>* lookup_operator_overloads(std::string_view name);
+
+/// Phase-3 multi-form builtin dispatch. Returns the ordered pattern list for a
+/// migrated multi-form builtin name, or nullptr for any other name (which keeps
+/// the single-pattern `make_builtin_pattern` path unchanged). Families:
+///   - `pan`, `pingpong`, `smooch`/`wt`/`wavetable` — one LegacyHandler pattern
+///     each (Pan/Pingpong/Smooch). Their dispatch dimension (channel width /
+///     arg count) is NOT a type-model dimension (PRD §3), so it stays inside the
+///     existing handler; the pattern just routes the name declaratively.
+///   - `delay`/`delay_ms`/`delay_smp` — one Builtin pattern each; emission falls
+///     through to the generic path and the time unit comes from `inst_rate`.
+///   - `sample`/`sample_loop` — TWO Builtin patterns keyed by the id slot type
+///     (`String` name form first, `Number` id form second). This is the first
+///     family that drives codegen through a live `resolve()` type dispatch, with
+///     a no-match diagnostic (E424) when the id slot is neither String nor Number.
+const std::vector<DispatchPattern>* lookup_builtin_overloads(std::string_view name);
 
 /// Per-slot match predicate — the primitive Phase-1 codegen uses.
 bool matches_arg(const ArgMatcher& matcher, const ArgDescriptor& arg);

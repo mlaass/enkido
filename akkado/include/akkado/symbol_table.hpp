@@ -43,6 +43,11 @@ struct UserFunctionInfo {
     bool returns_closure = false; // true if body is explicitly a Closure in source
     bool is_const = false;  // true for const fn (compile-time evaluable)
     bool is_inline = false; // true for #inline fn (forces per-site inlining)
+    // Phase 4: true when this definition comes from the embedded stdlib/prelude
+    // (`<stdlib>` or `<stdlib/*.ak>`). A user-source definition shadows the
+    // whole stdlib overload set for that name (the documented "user code can
+    // shadow these" idiom); only same-origin definitions accumulate.
+    bool is_stdlib = false;
 };
 
 /// Compile-time constant value (scalar or array)
@@ -152,8 +157,20 @@ struct Symbol {
     // Only valid if kind == Builtin
     BuiltinInfo builtin;
 
-    // Only valid if kind == UserFunction
-    UserFunctionInfo user_function;
+    // Only valid if kind == UserFunction. Phase 4 (overload resolution): a
+    // name owns an ordered list of overloads. Distinct param signatures
+    // accumulate; a same-signature redefinition replaces in place (last-wins
+    // within one compilation). This is the single source of truth — there is
+    // no separate "primary" copy to keep in sync (the analyzer's AST-clone
+    // remap mutates body_node/def_node in place, so a duplicate would rot).
+    std::vector<UserFunctionInfo> overloads;
+
+    // The first-declared overload — the warn+fallback target for call sites
+    // that cannot select an overload by argument type (named args, `_`
+    // partial application, spread, or the bare name used as a value) and for
+    // single-body legacy readers. Only call when kind == UserFunction (then
+    // `overloads` is guaranteed non-empty).
+    const UserFunctionInfo& primary_overload() const { return overloads.front(); }
 
     // Only valid if kind == Pattern
     PatternInfo pattern;
@@ -181,6 +198,13 @@ struct Symbol {
 
     // Only valid if kind == Module: canonical path of the module
     std::string module_path;
+};
+
+/// Outcome of accumulating a user-function definition (Phase 4 overloading).
+enum class DefineFunctionResult {
+    Added,                  // first definition of this name in the current scope
+    Accumulated,            // distinct signature appended to an existing set
+    ReplacedSameSignature,  // same-signature redefinition replaced in place
 };
 
 /// Scoped symbol table with lexical scoping
@@ -236,8 +260,12 @@ public:
     /// Define a closure parameter
     bool define_parameter(std::string_view name, std::uint16_t buffer_index);
 
-    /// Define a user function
-    bool define_function(const UserFunctionInfo& func_info);
+    /// Define a user function. Phase 4: a same-name definition with a *distinct*
+    /// signature (arity + ordered param annotated-type list + per-param
+    /// required-ness) accumulates as a new overload; a *same*-signature
+    /// definition replaces the existing one in place (last-wins). The return
+    /// value lets the analyzer warn only on same-signature replacement.
+    DefineFunctionResult define_function(const UserFunctionInfo& func_info);
 
     /// Define a pattern variable
     bool define_pattern(std::string_view name, const PatternInfo& pattern_info);

@@ -192,14 +192,15 @@ TEST_CASE("SymbolTable user functions", "[symbol_table]") {
         func_info.body_node = 42;
         func_info.def_node = 40;
 
-        bool ok = table.define_function(func_info);
-        CHECK(ok);
+        auto result = table.define_function(func_info);
+        CHECK(result == DefineFunctionResult::Added);
 
         auto sym = table.lookup("myFunc");
         REQUIRE(sym.has_value());
         CHECK(sym->kind == SymbolKind::UserFunction);
-        CHECK(sym->user_function.params.size() == 2);
-        CHECK(sym->user_function.body_node == 42);
+        REQUIRE(sym->overloads.size() == 1);
+        CHECK(sym->primary_overload().params.size() == 2);
+        CHECK(sym->primary_overload().body_node == 42);
     }
 
     SECTION("function shadowing in nested scope") {
@@ -221,13 +222,74 @@ TEST_CASE("SymbolTable user functions", "[symbol_table]") {
 
         auto sym = table.lookup("func");
         REQUIRE(sym.has_value());
-        CHECK(sym->user_function.params.size() == 3);  // Inner
+        CHECK(sym->primary_overload().params.size() == 3);  // Inner
 
         table.pop_scope();
 
         sym = table.lookup("func");
         REQUIRE(sym.has_value());
-        CHECK(sym->user_function.params.size() == 1);  // Outer
+        CHECK(sym->primary_overload().params.size() == 1);  // Outer
+    }
+
+    SECTION("distinct signatures accumulate; same signature replaces") {
+        // Two 1-param overloads with different annotated types accumulate.
+        UserFunctionInfo a;
+        a.name = "voice";
+        a.params.resize(1);
+        a.params[0].name = "f";
+        a.params[0].annotated_type = ParamValueType::Number;
+        a.body_node = 1;
+        CHECK(table.define_function(a) == DefineFunctionResult::Added);
+
+        UserFunctionInfo b;
+        b.name = "voice";
+        b.params.resize(1);
+        b.params[0].name = "p";
+        b.params[0].annotated_type = ParamValueType::Pattern;
+        b.body_node = 2;
+        CHECK(table.define_function(b) == DefineFunctionResult::Accumulated);
+
+        auto sym = table.lookup("voice");
+        REQUIRE(sym.has_value());
+        REQUIRE(sym->overloads.size() == 2);
+        CHECK(sym->overloads[0].body_node == 1);
+        CHECK(sym->overloads[1].body_node == 2);
+
+        // Redefining the Number overload (same signature) replaces in place.
+        UserFunctionInfo a2;
+        a2.name = "voice";
+        a2.params.resize(1);
+        a2.params[0].name = "freq";  // name differs — irrelevant to signature
+        a2.params[0].annotated_type = ParamValueType::Number;
+        a2.body_node = 3;
+        CHECK(table.define_function(a2) ==
+              DefineFunctionResult::ReplacedSameSignature);
+
+        sym = table.lookup("voice");
+        REQUIRE(sym.has_value());
+        REQUIRE(sym->overloads.size() == 2);
+        CHECK(sym->overloads[0].body_node == 3);  // replaced
+        CHECK(sym->overloads[1].body_node == 2);  // untouched
+    }
+
+    SECTION("arity-range identity: f(a) and f(a, b=0) are distinct overloads") {
+        UserFunctionInfo one;
+        one.name = "f";
+        one.params.resize(1);
+        one.params[0].name = "a";
+        CHECK(table.define_function(one) == DefineFunctionResult::Added);
+
+        UserFunctionInfo two;
+        two.name = "f";
+        two.params.resize(2);
+        two.params[0].name = "a";
+        two.params[1].name = "b";
+        two.params[1].default_value = 0.0;  // trailing optional → different arity
+        CHECK(table.define_function(two) == DefineFunctionResult::Accumulated);
+
+        auto sym = table.lookup("f");
+        REQUIRE(sym.has_value());
+        CHECK(sym->overloads.size() == 2);
     }
 }
 

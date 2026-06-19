@@ -243,10 +243,24 @@ std::optional<ConstValue> ConstEvaluator::eval_call(NodeIndex node, const Node& 
         child = ast_->arena[child].next_sibling;
     }
 
-    // Check for user-defined const fn
+    // Check for user-defined const fn. Phase 4: pick the first const overload
+    // whose arity admits the supplied args; non-const overloads (and calls that
+    // fit no const overload) fall through to the runtime inline path.
     auto sym = symbols_->lookup(func_name);
-    if (sym && sym->kind == SymbolKind::UserFunction && sym->user_function.is_const) {
-        return eval_const_fn_call(sym->user_function, args, n.location);
+    if (sym && sym->kind == SymbolKind::UserFunction) {
+        for (const auto& uf : sym->overloads) {
+            if (!uf.is_const) continue;
+            std::size_t req = 0;
+            for (const auto& p : uf.params) {
+                if (!p.default_value.has_value() && !p.default_string.has_value() &&
+                    p.default_node == NULL_NODE && !p.is_rest) {
+                    req++;
+                }
+            }
+            if (args.size() < req) continue;
+            if (!uf.has_rest_param && args.size() > uf.params.size()) continue;
+            return eval_const_fn_call(uf, args, n.location);
+        }
     }
 
     // Handle array operations
