@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 1, 2 & 3 (test infra) DONE on Windows dev box; Phase 3.5 (functional compat fixes) pending** — Phase 1 source-level readiness in `1412a0b`; Phase 2 platform abstractions end-to-end-verified (cedar_tests green, render + serve JSON + UTF-8 paths). Phase 3 (2026-06-13) made every test binary build, link, and run: cedar_tests 331/331, akkado_tests 1145/1167, nkido_cli_tests 19/23. The 26 remaining failures are pre-existing Windows compat bugs (URI parsing, Instruction-struct layout, snapshot CRLF) hidden until the runners could execute — now tracked as Phase 3.5. Phases 4 (CI) and 5 (release zip) remain.
+> **Status: IN PROGRESS — Phases 1, 2, 3 (test infra), 3.5a (test_types UAF) & 3.5b (snapshot CRLF) DONE on Windows dev box; 3.5c–d (SoundFont URI, file:// drive-letter) pending** — Phase 1 source-level readiness in `1412a0b`; Phase 2 platform abstractions end-to-end-verified (cedar_tests green, render + serve JSON + UTF-8 paths). Phase 3 (2026-06-13, `b11fff8`) made every test binary build, link, and run: cedar_tests 331/331, akkado_tests 1145/1167, nkido_cli_tests 19/23. Phase 3.5a (2026-06-13, `345371a`) restored the `[stereo-native]` 70-case group via a test-side UAF fix (predicted struct-packing hypothesis was wrong). Phase 3.5b (2026-06-19) added `.gitattributes` pinning snapshot/fixture line endings to LF — akkado_tests now **1167/1167 cases, 321 401 assertions all pass on Windows**. The remaining failures live in nkido_cli_tests (3.5c, 3.5d). Phases 4 (CI) and 5 (release zip) remain.
 
 # PRD: Windows Port of Nkido Executables
 
@@ -402,19 +402,35 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 Phase 3 unblocked the runners and surfaced ~26 functional Windows bugs that were hidden because `akkado_tests` crashed before any test could execute, and `nkido_cli_tests` couldn't compile. None of these are Phase 3 regressions; they are pre-existing gaps in cedar/akkado that the Phase 1+2 source-level port didn't cover. Splitting them out keeps Phase 3 closeable and lets Phase 4 (CI) light up green-or-explicit-allowlist on schedule.
 
-**3.5a — `akkado/tests/test_types.cpp` Instruction flags + rate (13 cases, ~44 asserts)**
+**3.5a — `akkado/tests/test_types.cpp` Instruction flags + rate (21 cases, 44 asserts) — DONE (2026-06-13, `345371a`)**
 
-Pattern: `op->flags & cedar::InstructionFlag::STEREO_OUTPUT != 0` → `0 != 0`, `STEREO_INPUT == 0` → `1 == 0`, and `op->rate == 1` → `'\x01' == 1` displaying as `'?'`. Affects lines 598, 599, 610, 621, 631, 641, 642, 653, 664, 674, 684, 760, 761, 771, 782, 789, 796, 806, 813, 820, 827, 834, 855, 856, 867, 877, 878, 885, 886, 895, 908, 909, 919, 930, 937, 948, 958, 1001, 1043, 1045, 1052, 1060, 1068, 1079.
+Original observation: `op->flags & cedar::InstructionFlag::STEREO_OUTPUT != 0` → `0 != 0`, `STEREO_INPUT == 0` → `1 == 0`, and `op->rate == 1` → `'\x01' == 1` displaying as `'?'`. Affected the 70 `[stereo-native]` cases.
 
-Root cause is either MSVC bit-field/struct-packing differing from GCC for `cedar::Instruction` (likely culprit: `flags` member declared without `[[gnu::packed]]` analog), or codegen genuinely emits different flags on MSVC. Needs an audit of `cedar/include/cedar/vm/instruction.hpp` against the test's expectations, with bytecode-disassembly side-by-side.
+**Actual root cause** (the predicted struct-packing / bitfield hypothesis was wrong): **use-after-free in the test helpers** at `akkado/tests/test_types.cpp`. The pattern `find_instruction(get_instructions(result), op)` returned a pointer into a `std::vector<cedar::Instruction>` *temporary* that was destroyed at end of the full expression. Linux GCC's release allocator returned the freed bytes to a free-list without overwriting, so the CHECKs read the still-valid pattern. MSVC's debug allocator immediately reused/stomped the freed region, so `op->flags` and `op->rate` read garbage. Diagnostic printfs confirmed codegen wrote `flags=0x0002` and the on-disk `.cedar` bytecode had `02 00` at offset 14 — the bug was on the read side, not the write side.
 
-**3.5b — `akkado/tests/test_bytecode_snapshot.cpp` snapshot mismatches (8 fixtures)**
+Fix (test-side only, +79/-36 in `akkado/tests/test_types.cpp`):
+- Added a deleted rvalue overload `static const cedar::Instruction* find_instruction(std::vector<cedar::Instruction>&&, cedar::Opcode) = delete;` so any future temporary-vector use is a compile-time error.
+- Rewrote 36 call sites to the safe two-line `auto insts = get_instructions(result); auto* op = find_instruction(insts, …);` pattern (33 other call sites already used this).
 
-Pattern: `expected == snapshot` fails for `01_basic_osc.ak` through `08_multiline_mini.ak`. Snapshot files were authored on Linux. Two suspects:
-- CRLF line endings injected by Windows git checkout (`.gitattributes` doesn't pin `.disasm` as LF).
-- Path separators inside snapshot content (`\` vs `/`).
+Result on Windows MSVC: `[stereo-native]` 70 cases / 402 assertions all pass (previously 21 cases / 44 asserts failing). No production code touched; no Linux risk (the safe pattern was already the majority).
 
-Fix path: pin `.disasm` files to LF via `.gitattributes`, and/or normalize path separators in `serialize_*` helpers before snapshot compare.
+**3.5b — `akkado/tests/test_bytecode_snapshot.cpp` snapshot mismatches (8 fixtures) — DONE (2026-06-19)**
+
+Original observation: `expected == snapshot` fails for `01_basic_osc.ak` through `08_multiline_mini.ak`. Snapshot files were authored on Linux.
+
+**Actual root cause**: CRLF line endings. The repo had no `.gitattributes` file, so Windows checkouts with `core.autocrlf=true` (which the dev box uses globally) converted every `.disasm` file's `\n` to `\r\n` on checkout. The test reads files in `std::ios::binary` mode (`test_bytecode_snapshot.cpp:27-33`) and compares raw bytes against `render_snapshot`'s LF-only output, so every line mismatched. Path separators were a red herring — `render_snapshot` only embeds bare filenames via `fixture.filename().string()`, no `/` or `\` in the snapshot body.
+
+Fix (one new file + tree refresh):
+- Added `.gitattributes` at repo root pinning `akkado/tests/snapshots/*.disasm` and `akkado/tests/fixtures/*.ak` to `text eol=lf`. Fixtures are pinned too so any future codegen change that observes source line endings (e.g. via a string literal) stays deterministic across platforms.
+- Re-checked-out the 8 snapshots + 8 fixtures on this dev box to flush the CRLF working copies (`rm … && git checkout HEAD -- …`).
+
+Verification on Windows MSVC (2026-06-19):
+- `akkado_tests "[snapshot]"` → all 34 assertions in 1 test case pass.
+- Full akkado_tests suite → **1167/1167 cases, 321 401/321 401 assertions all pass** (was 1145/1167 post-Phase-3).
+- `[stereo-native]` re-run → still 70/70, 402/402 (3.5a regression check).
+- Git working tree clean after re-checkout — no spurious LF-conversion diffs leaked into other files.
+
+No production code touched. Zero Linux risk (Linux checkouts were already LF; the `.gitattributes` rule simply formalizes the invariant).
 
 **3.5c — `tools/nkido/tests/test_render.cpp` SoundFont URI resolution (3 cases)**
 
@@ -516,7 +532,9 @@ The `cedar-only` preset disables akkado and tools — the only thing it builds i
 | 1 | Manual `cmake --build` on a Windows dev box; `--help` runs on both executables. | ✅ done 2026-05-29 (`1412a0b`) |
 | 2 | Round-trip Ctrl+C and UTF-8 path tests on Windows; existing Linux tests unchanged. | ✅ done 2026-06-05 (incl. manual interactive Ctrl+C confirmation in PowerShell — exits promptly, no stuck audio) |
 | 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_cli_tests`. | ⏳ runners ship 2026-06-13 (cedar_tests 331/331, akkado_tests 1145/1167, nkido_cli_tests 19/23) but ctest exit-0 awaits Phase 3.5 functional fixes |
-| 3.5 | URI parsing + Instruction layout + snapshot CRLF fixes → all three test binaries 100% green on Windows. | ⏳ pending |
+| 3.5a | `test_types.cpp` `[stereo-native]` 70 cases green on Windows. | ✅ done 2026-06-13 (`345371a`) — fix was test-side UAF, not the predicted struct-packing |
+| 3.5b | `test_bytecode_snapshot.cpp` 8 fixtures green on Windows. | ✅ done 2026-06-19 — `.gitattributes` pins `.disasm`/`.ak` to `eol=lf`; akkado_tests now 1167/1167 |
+| 3.5c–d | SoundFont URI + `file://` drive-letter fixes → nkido_cli_tests 100% green on Windows. | ⏳ pending |
 | 4 | All 4 CI jobs green on a no-op PR. | ⏳ pending |
 | 5 | Pre-release tag → downloadable zip → smoke-test on clean Win11 VM. | ⏳ pending |
 

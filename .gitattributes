@@ -1,0 +1,6 @@
+# Bytecode-snapshot fixtures are byte-compared by
+# akkado/tests/test_bytecode_snapshot.cpp via std::ios::binary, and the
+# renderer emits LF only. Pin both inputs and snapshots to LF so Windows
+# checkouts with core.autocrlf=true don't break the comparison.
+akkado/tests/snapshots/*.disasm text eol=lf
+akkado/tests/fixtures/*.ak       text eol=lf
