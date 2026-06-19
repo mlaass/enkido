@@ -1,4 +1,4 @@
-> **Status: IN PROGRESS — Phases 1 & 2 DONE on Windows dev box (2026-06-05)** — Phase 1 source-level readiness shipped in `1412a0b`; Phase 2 platform abstractions verified end-to-end on this machine (cedar_tests green, nkido render + serve JSON round-trip + UTF-8 paths working, EOF shutdown clean). Phases 3 (port `test_serve.cpp` + fix `akkado_tests` Catch2 static-init stack overflow), 4 (CI), and 5 (release zip) remain.
+> **Status: IN PROGRESS — Phases 1, 2 & 3 (test infra) DONE on Windows dev box; Phase 3.5 (functional compat fixes) pending** — Phase 1 source-level readiness in `1412a0b`; Phase 2 platform abstractions end-to-end-verified (cedar_tests green, render + serve JSON + UTF-8 paths). Phase 3 (2026-06-13) made every test binary build, link, and run: cedar_tests 331/331, akkado_tests 1145/1167, nkido_cli_tests 19/23. The 26 remaining failures are pre-existing Windows compat bugs (URI parsing, Instruction-struct layout, snapshot CRLF) hidden until the runners could execute — now tracked as Phase 3.5. Phases 4 (CI) and 5 (release zip) remain.
 
 # PRD: Windows Port of Nkido Executables
 
@@ -374,19 +374,61 @@ To avoid a race (both `deploy.yml` and `ci.yml` trying to create the Release), w
 
 **Carried forward to Phase 3:** (a) port `tools/nkido/tests/test_serve.cpp` off POSIX, (b) fix the `akkado_tests` Catch2 static-init stack overflow (raise `/STACK` further, defer test registration, or split the binary).
 
-### Phase 3 — Test suite ported
+### Phase 3 — Test infra ported — **DONE (test runners) (2026-06-13)** / **PARTIAL (functional pass-rate)**
 
-**Goal:** `ctest` runs green on Windows.
+**Goal as shipped:** every test binary on Windows now builds, links, loads, and runs to completion. `ctest` exit-0 is held back by ~26 pre-existing Windows compat bugs in non-test code (URI parsing, struct layout, snapshot CRLF) that were hidden until Phase 3 unblocked the runners — tracked separately as Phase 3.5 below.
 
-**Files:** primarily `tools/nkido/tests/test_serve.cpp` rewrite — replace the `mkstemp` + shell-string + `popen`-style approach with either:
-- **Option A (preferred):** `std::filesystem::temp_directory_path()` + `_popen`/`popen` behind a thin `tests/test_subprocess.hpp` helper.
-- **Option B (fallback):** mark the test `[!mayfail]` on Windows and file a follow-up. Avoid if possible — the test exists for a reason.
+**Files shipped:**
+- `tools/nkido/tests/test_subprocess.hpp` (new) — `ScopedEnv` (movable RAII env-var guard), `ScopedTempFile` (PID + atomic-counter naming under `std::filesystem::temp_directory_path()`), `quote_for_shell`. Header-only, ~110 LOC, `#if defined(_WIN32)` branches around `_putenv_s`/`setenv` and `_dupenv_s`/`getenv`.
+- `tools/nkido/tests/test_serve.cpp` — `<unistd.h>` / `mkstemp` / shell `VAR=val cmd` prefix all gone; the 4 call sites that used to pass an `env_prefix` string now pass `std::vector<std::pair<std::string,std::string>>`. Test logic unchanged.
+- `akkado/tests/akkado_test_main.cpp` (new) — custom Catch2 main that runs `session.run()` on a worker thread for stack uniformity. Note: Catch2 v3.5.2's `TEST_CASE` macros still register via static-init `AutoReg` on the main thread regardless, so this is hygiene rather than a stack-overflow fix.
+- `cmake/CompilerOptions.cmake` — MSVC `/STACK:8388608` → `/STACK:33554432` (32 MB). This is what actually unblocks `akkado_tests` static-init.
+- `akkado/tests/CMakeLists.txt` — `akkado_test_main.cpp` first in source list; link `Catch2::Catch2` instead of `Catch2WithMain`; `WIN32` POST_BUILD copy of `$<TARGET_FILE:Catch2::Catch2>` because vcpkg's `BUILD_SHARED_LIBS=ON` builds Catch2 as a DLL and `applocal.ps1` doesn't see in-build targets.
+- `cedar/tests/CMakeLists.txt` + `tools/nkido/tests/CMakeLists.txt` — same `WIN32` POST_BUILD copy of `Catch2::Catch2` **and** `Catch2::Catch2WithMain` DLLs. Both binaries link `Catch2WithMain` which depends on the Catch2 DLL.
+- `akkado/tests/test_hot_swap_determinism.cpp` — `#define _USE_MATH_DEFINES` at the top of the TU (must precede any `<cmath>` include, including transitive ones from Catch2). Pre-existing MSVC gap; only became visible at the link stage.
 
-Other tests audited: `cedar_tests` passes 330/330 (341,522 assertions) on Windows. `akkado_tests` crashes with `STACK_OVERFLOW` (`0xC00000FD`) during Catch2 static-init even on `--help` — 8 MB `/STACK` is insufficient. Phase 3 must either raise the linker stack further, switch to Catch2's CMake-time test registration (so registration isn't all-static-init), or split the binary. Surfaced during Phase 2 verification on this box (2026-06-05).
+**Verification on Windows dev box (2026-06-13):**
+- `akkado_tests --help` exits 0 (previously 0xC00000FD on static-init). **Static-init crash fixed.**
+- `cedar_tests`: **331/331 pass** (5 SoundFont-fixture tests skipped — fixture not committed). 357 452 assertions, ~206 s.
+- `akkado_tests`: 1167 cases / 321 401 assertions discovered. **1145 / 22 fail-by-case, 321 349 / 52 fail-by-assertion.** Test runner works end-to-end; failures are in newly-exposed Windows compat bugs (see §10).
+- `nkido_cli_tests`: 23 cases discovered (previously didn't compile). **19 / 4 fail-by-case, 100 / 5 fail-by-assertion.** Test harness (subprocess + env-var + temp-file plumbing) verified working — failures are downstream URI/SoundFont resolution bugs.
+- `NKIDO_BUILD_NKIDO_TESTS` flag stays as a downstream opt-out (default = `${NKIDO_BUILD_TESTS}`).
 
-**Verification:** `ctest` exit code 0 on both `windows-debug` and `linux-debug` configurations.
+**Not done in Phase 3:** Linux regression smoke test of the new RAII helpers. `ScopedEnv`/`ScopedTempFile` POSIX paths are straightforward (`setenv`/`unsetenv`, `temp_directory_path()`) but should be eyeballed on Linux before the Phase 4 CI lights up.
 
-**Commit:** `test(windows): port test_serve.cpp to MSVC; verify full test suite on Windows`
+**Commit:** `test(windows): port test_serve.cpp to MSVC; bump /STACK to 32 MB; copy Catch2 DLLs alongside test exes`
+
+### Phase 3.5 — Windows compat bugs newly exposed by Phase 3
+
+Phase 3 unblocked the runners and surfaced ~26 functional Windows bugs that were hidden because `akkado_tests` crashed before any test could execute, and `nkido_cli_tests` couldn't compile. None of these are Phase 3 regressions; they are pre-existing gaps in cedar/akkado that the Phase 1+2 source-level port didn't cover. Splitting them out keeps Phase 3 closeable and lets Phase 4 (CI) light up green-or-explicit-allowlist on schedule.
+
+**3.5a — `akkado/tests/test_types.cpp` Instruction flags + rate (13 cases, ~44 asserts)**
+
+Pattern: `op->flags & cedar::InstructionFlag::STEREO_OUTPUT != 0` → `0 != 0`, `STEREO_INPUT == 0` → `1 == 0`, and `op->rate == 1` → `'\x01' == 1` displaying as `'?'`. Affects lines 598, 599, 610, 621, 631, 641, 642, 653, 664, 674, 684, 760, 761, 771, 782, 789, 796, 806, 813, 820, 827, 834, 855, 856, 867, 877, 878, 885, 886, 895, 908, 909, 919, 930, 937, 948, 958, 1001, 1043, 1045, 1052, 1060, 1068, 1079.
+
+Root cause is either MSVC bit-field/struct-packing differing from GCC for `cedar::Instruction` (likely culprit: `flags` member declared without `[[gnu::packed]]` analog), or codegen genuinely emits different flags on MSVC. Needs an audit of `cedar/include/cedar/vm/instruction.hpp` against the test's expectations, with bytecode-disassembly side-by-side.
+
+**3.5b — `akkado/tests/test_bytecode_snapshot.cpp` snapshot mismatches (8 fixtures)**
+
+Pattern: `expected == snapshot` fails for `01_basic_osc.ak` through `08_multiline_mini.ak`. Snapshot files were authored on Linux. Two suspects:
+- CRLF line endings injected by Windows git checkout (`.gitattributes` doesn't pin `.disasm` as LF).
+- Path separators inside snapshot content (`\` vs `/`).
+
+Fix path: pin `.disasm` files to LF via `.gitattributes`, and/or normalize path separators in `serialize_*` helpers before snapshot compare.
+
+**3.5c — `tools/nkido/tests/test_render.cpp` SoundFont URI resolution (3 cases)**
+
+`run_cli`/`run_cli_env` calls fail at lines 231, 276, 303 with `error: SoundFont fetch 'gm' failed: File not found: gm`. `tools/nkido/asset_loader.cpp::resolve_soundfont_alias()` searches a path layout that exists on the dev box but the resolution isn't kicking in inside the test invocation — possibly because the test's working directory doesn't include `share/nkido/soundfonts/` relative to the CLI exe path on Windows.
+
+**3.5d — `tools/nkido/tests/test_serve.cpp` `file://C:/…` URI parsing (1 case)**
+
+The "bare sample name resolves via built-in default kit" test (line 174–176) fails because `file:///C:/Users/moritz/…/default_kit_minimal.strudel.json` gets reduced to `/C:/Users/moritz/…` by the URI handler, then `fopen("/C:/…")` returns ENOENT. Windows `file://` URLs need the host-relative `/` stripped when the next character is a drive letter. Bug lives in cedar's URI handler (likely `cedar/src/io/handlers/file_handler.cpp` or wherever `file://` schemes are normalized). My Phase 3 subprocess harness is verified clean here — the test framework round-trip works end-to-end.
+
+**Verification target for 3.5:** `ctest --output-on-failure` exit 0 on Windows. Estimated scope: 3.5a is the biggest unknown (struct layout audit + possible codegen fix); 3.5b and 3.5d are <50 LOC each; 3.5c is one path-resolution branch.
+
+**Commits:** one per sub-bullet (3.5a–d), each with its own root-cause analysis.
+
+### Phase 4 — CI on every push/PR
 
 ### Phase 4 — CI on every push/PR
 
@@ -473,7 +515,8 @@ The `cedar-only` preset disables akkado and tools — the only thing it builds i
 |-------|------|--------|
 | 1 | Manual `cmake --build` on a Windows dev box; `--help` runs on both executables. | ✅ done 2026-05-29 (`1412a0b`) |
 | 2 | Round-trip Ctrl+C and UTF-8 path tests on Windows; existing Linux tests unchanged. | ✅ done 2026-06-05 (incl. manual interactive Ctrl+C confirmation in PowerShell — exits promptly, no stuck audio) |
-| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_tests`. | ⏳ `cedar_tests` green; `akkado_tests` blocked on Catch2 static-init stack overflow; `nkido_tests` blocked on `test_serve.cpp` POSIX rewrite |
+| 3 | `ctest` exit 0 on Windows for `cedar_tests`, `akkado_tests`, `nkido_cli_tests`. | ⏳ runners ship 2026-06-13 (cedar_tests 331/331, akkado_tests 1145/1167, nkido_cli_tests 19/23) but ctest exit-0 awaits Phase 3.5 functional fixes |
+| 3.5 | URI parsing + Instruction layout + snapshot CRLF fixes → all three test binaries 100% green on Windows. | ⏳ pending |
 | 4 | All 4 CI jobs green on a no-op PR. | ⏳ pending |
 | 5 | Pre-release tag → downloadable zip → smoke-test on clean Win11 VM. | ⏳ pending |
 

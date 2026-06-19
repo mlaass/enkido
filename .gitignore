@@ -54,3 +54,8 @@ web/static/soundfonts/
 docs/*proposal.md
 .claude/*.lock
 *__dont_commit__*
+*.pdb
+*.pyd
+*.ilk
+.claude/settings.local.json
+whats-next.md

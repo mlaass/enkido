@@ -76,4 +76,18 @@ target_compile_definitions(cedar_tests PRIVATE
     CEDAR_OPCODES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../include/cedar/opcodes"
 )
 
+# On Windows with BUILD_SHARED_LIBS=ON (vcpkg toolchain), Catch2 is built
+# as a DLL. Catch2WithMain depends on Catch2, so both DLLs have to sit
+# next to the exe for catch_discover_tests and ctest. vcpkg's
+# applocal.ps1 only handles imported targets (libssl/libcrypto), so copy
+# Catch2's DLLs explicitly.
+if(WIN32)
+    add_custom_command(TARGET cedar_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:Catch2::Catch2>
+                $<TARGET_FILE:Catch2::Catch2WithMain>
+                $<TARGET_FILE_DIR:cedar_tests>
+    )
+endif()
+
 catch_discover_tests(cedar_tests)

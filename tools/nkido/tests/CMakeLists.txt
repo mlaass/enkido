@@ -77,4 +77,18 @@ target_link_libraries(nkido_cli_tests
         akkado  # asset_loader.cpp uses akkado::RequiredSample
 )
 
+# On Windows with BUILD_SHARED_LIBS=ON (vcpkg toolchain), Catch2 is built
+# as a DLL. Catch2WithMain depends on Catch2, so both DLLs have to sit
+# next to the exe for catch_discover_tests' build-time enumeration and
+# for ctest. vcpkg's applocal.ps1 only handles imported targets
+# (libssl/libcrypto), so copy Catch2's DLLs explicitly.
+if(WIN32)
+    add_custom_command(TARGET nkido_cli_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:Catch2::Catch2>
+                $<TARGET_FILE:Catch2::Catch2WithMain>
+                $<TARGET_FILE_DIR:nkido_cli_tests>
+    )
+endif()
+
 catch_discover_tests(nkido_cli_tests)

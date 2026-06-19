@@ -35,6 +35,13 @@ static const cedar::Instruction* find_instruction(const std::vector<cedar::Instr
     return nullptr;
 }
 
+// Deleted rvalue overload: prevents `find_instruction(get_instructions(result), …)`
+// from returning a pointer into a destroyed temporary vector. Linux GCC happened
+// to leave the freed memory readable; MSVC's debug allocator stomps on it,
+// causing flag/rate fields to read garbage.
+static const cedar::Instruction* find_instruction(std::vector<cedar::Instruction>&&,
+                                                   cedar::Opcode) = delete;
+
 static size_t count_instructions(const std::vector<cedar::Instruction>& insts,
                                   cedar::Opcode op) {
     size_t c = 0;
@@ -593,7 +600,8 @@ TEST_CASE("Types: stereo-native lp produces stereo output from mono input", "[ty
         saw(220) |> lp(%, 800, 0.7) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_LP);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -605,7 +613,8 @@ TEST_CASE("Types: stereo-native lp reads stereo primary input", "[types][stereo]
         lp(s, 800, 0.7) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_LP);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_SVF_LP);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -616,7 +625,8 @@ TEST_CASE("Types: stereo-native hp produces stereo output from mono input", "[ty
         saw(220) |> hp(%, 800, 0.7) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_HP);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_SVF_HP);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -626,7 +636,8 @@ TEST_CASE("Types: stereo-native bp produces stereo output from mono input", "[ty
         saw(220) |> bp(%, 800, 2.0) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SVF_BP);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_SVF_BP);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -636,7 +647,8 @@ TEST_CASE("Types: stereo-native moog produces stereo output from mono input", "[
         saw(220) |> moog(%, 1000, 1.5) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_MOOG);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_MOOG);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -648,7 +660,8 @@ TEST_CASE("Types: stereo-native moog reads stereo primary input", "[types][stere
         moog(s, 1000, 1.5) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_MOOG);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_MOOG);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -659,7 +672,8 @@ TEST_CASE("Types: stereo-native diode produces stereo output from mono input", "
         saw(220) |> diode(%, 800, 2.0) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_DIODE);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_DIODE);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -669,7 +683,8 @@ TEST_CASE("Types: stereo-native formant produces stereo output from mono input",
         saw(220) |> formant(%, 0.0, 1.0, 0.5, 10.0) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_FORMANT);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_FORMANT);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -679,7 +694,8 @@ TEST_CASE("Types: stereo-native sallenkey produces stereo output from mono input
         saw(220) |> sallenkey(%, 800, 1.5, 0.0) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::FILTER_SALLENKEY);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::FILTER_SALLENKEY);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -755,7 +771,8 @@ TEST_CASE("Types: stereo-native saturate produces stereo output", "[types][stere
     SECTION("mono in") {
         auto result = akkado::compile(R"( saw(220) |> saturate(%, 2.0) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TANH);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_TANH);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -766,7 +783,8 @@ TEST_CASE("Types: stereo-native saturate produces stereo output", "[types][stere
             saturate(s, 2.0) |> out(%)
         )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TANH);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_TANH);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -777,21 +795,24 @@ TEST_CASE("Types: stereo-native softclip/fold/bitcrush produce stereo output", "
     SECTION("softclip mono in") {
         auto result = akkado::compile(R"( saw(220) |> softclip(%, 0.5) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_SOFT);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_SOFT);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("fold mono in") {
         auto result = akkado::compile(R"( saw(220) |> fold(%, 0.5) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_FOLD);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_FOLD);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("bitcrush mono in") {
         auto result = akkado::compile(R"( saw(220) |> bitcrush(%, 8, 0.5) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_BITCRUSH);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_BITCRUSH);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
@@ -801,35 +822,40 @@ TEST_CASE("Types: stereo-native oversampled distortion (tube/smooth/tape/xfmr/ex
     SECTION("tube") {
         auto result = akkado::compile(R"( saw(220) |> tube(%, 5.0, 0.1) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TUBE);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_TUBE);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("smooth") {
         auto result = akkado::compile(R"( saw(220) |> smooth(%, 5.0) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_SMOOTH);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_SMOOTH);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("tape") {
         auto result = akkado::compile(R"( saw(220) |> tape(%, 3.0, 0.3) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_TAPE);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_TAPE);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("xfmr") {
         auto result = akkado::compile(R"( saw(220) |> xfmr(%, 3.0, 5.0) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_XFMR);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_XFMR);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("excite") {
         auto result = akkado::compile(R"( saw(220) |> excite(%, 0.5, 3000) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DISTORT_EXCITE);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DISTORT_EXCITE);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
@@ -850,7 +876,8 @@ TEST_CASE("Types: stereo-native filter+distortion chain", "[types][stereo][stere
 TEST_CASE("Types: stereo-native delay produces stereo output from mono input", "[types][stereo][stereo-native]") {
     auto result = akkado::compile(R"( saw(220) |> delay(%, 0.25, 0.5) |> out(%) )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::DELAY);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -862,7 +889,8 @@ TEST_CASE("Types: stereo-native delay reads stereo primary input", "[types][ster
         delay(s, 0.25, 0.5) |> out(%)
     )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::DELAY);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -872,7 +900,8 @@ TEST_CASE("Types: stereo-native delay_ms and delay_smp inherit inst_rate", "[typ
     SECTION("delay_ms encodes rate=1") {
         auto result = akkado::compile(R"( saw(220) |> delay_ms(%, 250, 0.5) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DELAY);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 1);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
@@ -880,7 +909,8 @@ TEST_CASE("Types: stereo-native delay_ms and delay_smp inherit inst_rate", "[typ
     SECTION("delay_smp encodes rate=2") {
         auto result = akkado::compile(R"( saw(220) |> delay_smp(%, 12000, 0.5) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DELAY);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DELAY);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 2);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
@@ -890,7 +920,8 @@ TEST_CASE("Types: stereo-native delay_ms and delay_smp inherit inst_rate", "[typ
 TEST_CASE("Types: stereo-native comb produces stereo output", "[types][stereo][stereo-native]") {
     auto result = akkado::compile(R"( saw(220) |> comb(%, 5, 0.7) |> out(%) )");
     REQUIRE(result.success);
-    auto* op = find_instruction(get_instructions(result), cedar::Opcode::EFFECT_COMB);
+    auto insts = get_instructions(result);
+    auto* op = find_instruction(insts, cedar::Opcode::EFFECT_COMB);
     REQUIRE(op != nullptr);
     CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
 }
@@ -903,7 +934,8 @@ TEST_CASE("Types: stereo-native comp produces stereo output", "[types][stereo][s
     SECTION("mono in") {
         auto result = akkado::compile(R"( saw(220) |> comp(%, -12, 4) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_COMP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_COMP);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -914,7 +946,8 @@ TEST_CASE("Types: stereo-native comp produces stereo output", "[types][stereo][s
             comp(s, -12, 4) |> out(%)
         )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_COMP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_COMP);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -925,14 +958,16 @@ TEST_CASE("Types: stereo-native limiter and gate produce stereo output", "[types
     SECTION("limiter") {
         auto result = akkado::compile(R"( saw(220) |> limiter(%, -0.1, 0.1) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_LIMITER);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_LIMITER);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
     SECTION("gate") {
         auto result = akkado::compile(R"( saw(220) |> gate(%, -40, -40) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::DYNAMICS_GATE);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::DYNAMICS_GATE);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
     }
@@ -942,7 +977,8 @@ TEST_CASE("Types: env_follower output width matches input", "[types][stereo][ste
     SECTION("mono in produces mono envelope (no STEREO_OUTPUT)") {
         auto result = akkado::compile(R"( saw(220) |> env_follower(%, 0.01, 0.1) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::ENV_FOLLOWER);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::ENV_FOLLOWER);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) == 0);
@@ -953,7 +989,8 @@ TEST_CASE("Types: env_follower output width matches input", "[types][stereo][ste
             env_follower(s, 0.01, 0.1) |> out(%)
         )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::ENV_FOLLOWER);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::ENV_FOLLOWER);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
@@ -996,7 +1033,8 @@ TEST_CASE("Types: stereo-native tap_delay runs closure on stereo signal pair", "
             saw(220) |> tap_delay_ms(%, 250, 0.5, (x) -> lp(x, 800)) |> out(%)
         )");
         REQUIRE(result.success);
-        auto* tap = find_instruction(get_instructions(result), cedar::Opcode::DELAY_TAP);
+        auto insts = get_instructions(result);
+        auto* tap = find_instruction(insts, cedar::Opcode::DELAY_TAP);
         REQUIRE(tap != nullptr);
         CHECK(tap->rate == 1);
     }
@@ -1038,7 +1076,8 @@ TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][s
     SECTION("sah — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> sah(%, beat(1)) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
@@ -1047,7 +1086,8 @@ TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][s
     SECTION("gateup — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> gateup(%) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 1);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
@@ -1055,7 +1095,8 @@ TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][s
     SECTION("gatedown — mono in, mono out") {
         auto result = akkado::compile(R"( saw(220) |> gatedown(%) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 2);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
@@ -1063,7 +1104,8 @@ TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][s
     SECTION("counter — mono in, mono out") {
         auto result = akkado::compile(R"( beat(1) |> counter(%) |> out(%) )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK(op->rate == 3);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) == 0);
@@ -1074,7 +1116,8 @@ TEST_CASE("Types: EDGE_OP family output width matches input", "[types][stereo][s
             sah(s, beat(1)) |> out(%)
         )");
         REQUIRE(result.success);
-        auto* op = find_instruction(get_instructions(result), cedar::Opcode::EDGE_OP);
+        auto insts = get_instructions(result);
+        auto* op = find_instruction(insts, cedar::Opcode::EDGE_OP);
         REQUIRE(op != nullptr);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_OUTPUT) != 0);
         CHECK((op->flags & cedar::InstructionFlag::STEREO_INPUT) != 0);
