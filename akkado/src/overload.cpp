@@ -115,6 +115,32 @@ const std::vector<DispatchPattern>* lookup_builtin_overloads(std::string_view na
             t[e.name].push_back(std::move(p));
         }
 
+        // --- Phase 5: poly/legato/mono, each/each_voice, transport, midi. The
+        // heavy pattern / higher-order handlers. One LegacyHandler pattern each;
+        // the dispatch dimension (arity / mode / options) is orthogonal to the
+        // type model and stays inside the handler, which keeps its own bespoke
+        // codegen and type guards (E133/E403/E423, E400/E401/E402/E406/E407/
+        // E411-E414). Same single-pattern routing as the Phase-3 families above
+        // — no resolve(); the matched pattern's target.legacy_handler fully
+        // determines dispatch.
+        static constexpr LegacyEntry kPhase5[] = {
+            {"poly",       LegacyHandlerId::Poly},
+            {"legato",     LegacyHandlerId::Poly},
+            {"mono",       LegacyHandlerId::Mono},
+            {"each",       LegacyHandlerId::Each},
+            {"each_voice", LegacyHandlerId::EachVoice},
+            {"transport",  LegacyHandlerId::Transport},
+            {"midi",       LegacyHandlerId::Midi},
+        };
+        for (const LegacyEntry& e : kPhase5) {
+            const BuiltinInfo* info = lookup_builtin(e.name);
+            if (!info) continue;  // defensive: every name above is a builtin
+            DispatchPattern p = make_builtin_pattern(*info);
+            p.target.kind = DispatchTarget::Kind::LegacyHandler;
+            p.target.legacy_handler = e.handler;
+            t[e.name].push_back(std::move(p));
+        }
+
         // --- delay / delay_ms / delay_smp: one Builtin pattern each. Emission
         // falls through to the generic path; the time unit comes from
         // BuiltinInfo::inst_rate (the three entries declare 0/1/2), not a

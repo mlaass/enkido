@@ -89,13 +89,23 @@ struct ArgMatcher {
 /// hand-written codegen instead of inlining an opcode). Phase 2 added the
 /// arithmetic-operator broadcasting handler; Phase 3 migrates the multi-form
 /// stereo/wavetable handlers whose dispatch dimension (channel width / arg count)
-/// is orthogonal to the type model and therefore stays inside the handler.
+/// is orthogonal to the type model and therefore stays inside the handler; Phase 5
+/// migrates the heavy pattern / higher-order handlers (poly/each/transport/midi),
+/// whose dispatch dimension (arity / mode / options) likewise stays inside.
 enum class LegacyHandlerId : std::uint8_t {
     None,
     BinaryOpBroadcast,  // handle_binary_op_call — +,-,*,/,^ array/stereo broadcast
     Pan,                // handle_pan_call — mono PAN vs stereo PAN_STEREO (channel width)
     Pingpong,           // handle_pingpong_call — stereo vs explicit-L/R forms
     Smooch,             // handle_smooch_call — wavetable smooch/wt/wavetable, 2-4 args
+    // Phase 5: heavy pattern / higher-order handlers. Single-pattern routing;
+    // the dispatch dimension (arity / mode / options) stays inside each handler.
+    Poly,               // handle_poly_call — poly / legato voice allocation
+    Mono,               // handle_mono_call — mono downmix
+    Each,               // handle_each_call — each(pattern, lambda)
+    EachVoice,          // handle_each_voice_call — each_voice(pattern, lambda)
+    Transport,          // handle_transport_call — transport sequencer
+    Midi,               // handle_midi_call — runtime MIDI event source
 };
 
 /// Where a matched pattern dispatches to. Phase 2 consumes Builtin (emit the

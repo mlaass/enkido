@@ -1,8 +1,10 @@
-> **Status: PHASE 4 IMPLEMENTED (2026-06-19).** Phase 1 (pattern model +
-> resolver), Phase 2 (operators routed through the shared `OverloadTable`),
-> Phase 3 (multi-form builtin families migrated; `sample` drives the first live
-> multi-pattern `resolve()` in codegen), and Phase 4 (user-function overloading)
-> have shipped; Phase 5 (heavy pattern/higher-order handlers) is not started.
+> **Status: ALL PHASES DONE (2026-06-20).** All five phases of overload
+> resolution have shipped: the pattern model + resolver, operators routed
+> through the shared `OverloadTable`, multi-form builtin families (`sample`
+> drives the first live multi-pattern `resolve()` in codegen), user-function
+> overloading, and the heavy pattern/higher-order handlers (`poly`/`each`/
+> `transport`/`midi`, plus aliases `legato`/`mono`/`each_voice`) now route
+> through the shared overload table as single-pattern `LegacyHandler` dispatch.
 > Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload
@@ -439,10 +441,40 @@ non-collision tests (`akkado/tests/test_overload.cpp`,
   suffix only when a name is overloaded, so each overload owns its own
   `BLOCK_CALL` body; single-definition fns keep byte-identical bytecode.
 
-### Phase 5 (Future) — Migrate heavy pattern/higher-order handlers
+### Phase 5 — Migrate heavy pattern/higher-order handlers ✅ (2026-06-20)
 `poly`/`each`/`transport`/`midi` carry large bespoke codegen; their patterns
-*select the handler* rather than inlining a target. Lowest priority — these are
-already type-guarded by dedicated diagnostics (E133, E403, E423).
+*select the handler* rather than inlining a target. These were already
+type-guarded by dedicated diagnostics (E133, E403, E423), so the migration is
+pure routing.
+
+**Phase 5 as-built reconciliation.**
+- **Single-pattern `LegacyHandler` routing — identical to Phase 3.** Each name
+  gets one `DispatchPattern` in `lookup_builtin_overloads()` (`overload.cpp`)
+  whose `target.legacy_handler` selects the bespoke handler. The real dispatch
+  dimension (arity / mode / options) is orthogonal to the type model and stays
+  inside the handler, so codegen takes the existing `bov->size() == 1`
+  single-pattern branch and **never calls `resolve()`** — the matched pattern's
+  enum fully determines dispatch, exactly as for `pan`/`pingpong`/`smooch`.
+- **Family-complete scope.** Six new `LegacyHandlerId` values
+  (`Poly`/`Mono`/`Each`/`EachVoice`/`Transport`/`Midi`) and seven table entries:
+  the four PRD families plus the handler-sharing aliases `legato` (→
+  `handle_poly_call`, same as `poly`), `mono` (→ `handle_mono_call`), and
+  `each_voice` (→ `handle_each_voice_call`). Migrating the aliases keeps the
+  invariant that **no handler is reachable from both** the overload table and
+  the `special_handlers` map.
+- **Handlers keep their bespoke codegen and guards.** No emission logic moved;
+  the handlers retain every type guard (E133/E403/E423 plus E400/E401/E402/E406/
+  E407 for poly/each and E411–E414 for midi). The phase is a pure structural
+  refactor — zero behavior change, proven by the unchanged golden/integration
+  suites.
+- **No ordering change.** `lookup_builtin_overloads` is consulted *after* the
+  user-fn / operator checks and *immediately before* `special_handlers`, so
+  moving these names from the map into the table does not change resolution
+  order relative to user-fn/operator shadowing — a user `fn poly` still shadows.
+- **`special_handlers` shrinks.** The `poly`/`mono`/`legato`/`each`/`each_voice`/
+  `transport`/`midi` entries were removed from the `special_handlers` initializer
+  in `codegen.cpp` (migration comments left in place, mirroring the Phase-3
+  pan/smooch notes).
 
 ---
 

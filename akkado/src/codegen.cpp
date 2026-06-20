@@ -1103,7 +1103,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"event_filter", &CodeGenerator::handle_event_filter_call},
                 {"bank",      &CodeGenerator::handle_bank_call},
                 {"variant",   &CodeGenerator::handle_variant_call},
-                {"transport", &CodeGenerator::handle_transport_call},
+                // NB: transport migrated to the Phase-5 builtin overload table
+                // (lookup_builtin_overloads → LegacyHandler::Transport); it is
+                // dispatched in the block below, not from this map.
                 {"tune",      &CodeGenerator::handle_tune_call},
                 // Phase 2 PRD time/structure transforms.
                 // early/late are stdlib `fn`s in event_transforms.ak.
@@ -1172,8 +1174,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // SoundFont playback
                 {"soundfont", &CodeGenerator::handle_soundfont_call},
                 {"sf_voice", &CodeGenerator::handle_sf_voice_call},
-                // Runtime MIDI event source (PRD prd-midi-input §4.7)
-                {"midi", &CodeGenerator::handle_midi_call},
+                // Runtime MIDI event source (PRD prd-midi-input §4.7).
+                // NB: midi migrated to the Phase-5 builtin overload table
+                // (lookup_builtin_overloads → LegacyHandler::Midi); it is
+                // dispatched in the block below, not from this map.
                 // MIDI CC / PB / AT → param() route (PRD prd-midi-input §4.8)
                 {"midi_cc", &CodeGenerator::handle_midi_cc_call},
                 // Wavetable: wt_load(name, path) is a compile-time directive
@@ -1187,15 +1191,15 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 {"samples",   &CodeGenerator::handle_samples_call},
                 // Live audio input (microphone / tab / file)
                 {"in", &CodeGenerator::handle_input_call},
-                // Polyphony
-                {"poly",   &CodeGenerator::handle_poly_call},
-                {"mono",   &CodeGenerator::handle_mono_call},
-                {"legato", &CodeGenerator::handle_poly_call},
+                // Polyphony: poly / mono / legato migrated to the Phase-5 builtin
+                // overload table (lookup_builtin_overloads → LegacyHandler::
+                // Poly/Mono); dispatched in the block below, not from this map.
                 // Forward control flow (PRD prd-runtime-functions-control-flow L1)
                 {"when",   &CodeGenerator::handle_when_call},
-                // Higher-order DSL (PRD prd-runtime-functions-control-flow L3)
-                {"each_voice", &CodeGenerator::handle_each_voice_call},
-                {"each",       &CodeGenerator::handle_each_call},
+                // Higher-order DSL (PRD prd-runtime-functions-control-flow L3):
+                // each / each_voice migrated to the Phase-5 builtin overload table
+                // (lookup_builtin_overloads → LegacyHandler::Each/EachVoice);
+                // dispatched in the block below, not from this map.
             };
 
             // Phase-2 operator dispatch (PRD prd-builtin-overload-resolution
@@ -1247,6 +1251,19 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                                 h = &CodeGenerator::handle_pingpong_call; break;
                             case LegacyHandlerId::Smooch:
                                 h = &CodeGenerator::handle_smooch_call; break;
+                            // Phase 5: heavy pattern / higher-order handlers.
+                            case LegacyHandlerId::Poly:
+                                h = &CodeGenerator::handle_poly_call; break;
+                            case LegacyHandlerId::Mono:
+                                h = &CodeGenerator::handle_mono_call; break;
+                            case LegacyHandlerId::Each:
+                                h = &CodeGenerator::handle_each_call; break;
+                            case LegacyHandlerId::EachVoice:
+                                h = &CodeGenerator::handle_each_voice_call; break;
+                            case LegacyHandlerId::Transport:
+                                h = &CodeGenerator::handle_transport_call; break;
+                            case LegacyHandlerId::Midi:
+                                h = &CodeGenerator::handle_midi_call; break;
                             default: break;
                         }
                         if (h) {

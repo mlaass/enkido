@@ -733,3 +733,89 @@ TEST_CASE("overload fn: redefining the same signature replaces (no extra body)",
     CHECK(has_opcode(r, cedar::Opcode::OSC_SAW));
     CHECK_FALSE(has_opcode(r, cedar::Opcode::OSC_SIN));
 }
+
+// -----------------------------------------------------------------------------
+// Phase 5 — heavy pattern / higher-order handlers (poly/each/transport/midi).
+//
+// These migrated out of the special_handlers map into lookup_builtin_overloads
+// as single-pattern LegacyHandler entries (same shape as Phase 3's pan/pingpong/
+// smooch). The dispatch dimension (arity / mode / options) stays inside each
+// handler, so there is no resolve() — the matched pattern's legacy_handler fully
+// determines dispatch. Family-complete scope: the handler-sharing aliases
+// (legato/mono/each_voice) migrate too, so no handler is reachable from both the
+// overload table and special_handlers.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("builtin overloads: poly/each/transport/midi carry one LegacyHandler "
+          "pattern", "[overload]") {
+    struct Case { std::string_view name; LegacyHandlerId id; };
+    const Case cases[] = {
+        {"poly",       LegacyHandlerId::Poly},
+        {"legato",     LegacyHandlerId::Poly},       // alias → same handler
+        {"mono",       LegacyHandlerId::Mono},
+        {"each",       LegacyHandlerId::Each},
+        {"each_voice", LegacyHandlerId::EachVoice},
+        {"transport",  LegacyHandlerId::Transport},
+        {"midi",       LegacyHandlerId::Midi},
+    };
+    for (const Case& c : cases) {
+        const auto* patterns = lookup_builtin_overloads(c.name);
+        REQUIRE(patterns != nullptr);
+        REQUIRE(patterns->size() == 1);  // arity/mode/options branch stays inside
+        const DispatchTarget& t = (*patterns)[0].target;
+        CHECK(t.kind == DispatchTarget::Kind::LegacyHandler);
+        CHECK(t.legacy_handler == c.id);
+    }
+}
+
+// --- Dispatch regression: a valid program for each family still routes to its
+// bespoke handler through the new overload-table path (observed via the handler's
+// signature opcode). ---------------------------------------------------------
+
+TEST_CASE("poly codegen: dispatch reaches handle_poly_call (FOREACH_EVENT)",
+          "[overload]") {
+    auto r = akkado::compile(
+        R"(n"c4 e4 g4" |> poly(@, (f, g, v) -> sine(f) * v) |> out(@))");
+    REQUIRE(r.success);
+    CHECK(has_opcode(r, cedar::Opcode::FOREACH_EVENT));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("each codegen: dispatch reaches handle_each_call (FOREACH_EVENT)",
+          "[overload]") {
+    auto r = akkado::compile(
+        R"(n"c4 e4 g4" |> each(@, (n) -> osc("sin", n.freq) * 0.3 |> out(@)))");
+    REQUIRE(r.success);
+    CHECK(has_opcode(r, cedar::Opcode::FOREACH_EVENT));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("transport codegen: dispatch reaches handle_transport_call "
+          "(SEQPAT_TRANSPORT)", "[overload]") {
+    auto r = akkado::compile(
+        R"(transport(n"c4 e4 g4", trigger(2)) as e |> sine(e.freq) |> out(@))");
+    REQUIRE(r.success);
+    CHECK(has_opcode(r, cedar::Opcode::SEQPAT_TRANSPORT));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("midi codegen: dispatch reaches handle_midi_call (MIDI_QUERY)",
+          "[overload]") {
+    auto r = akkado::compile(R"(midi() as e |> osc("sin", e.freq) |> out(@))");
+    REQUIRE(r.success);
+    CHECK(has_opcode(r, cedar::Opcode::MIDI_QUERY));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
+}
+
+TEST_CASE("phase-5 migration: the handler's own type guard still fires",
+          "[overload]") {
+    // The migration is pure routing — each handler keeps its bespoke guards.
+    // transport's non-pattern first arg (E133) and poly's non-stream input
+    // (E423) must still be rejected through the new dispatch path.
+    auto t = akkado::compile("transport(sine(440), trigger(2)) |> out(@)");
+    CHECK_FALSE(t.success);
+    CHECK(has_diagnostic(t, "E133"));
+
+    auto p = akkado::compile(R"(poly(440, (f, g, v) -> sine(f) * v) |> out(@))");
+    CHECK(has_diagnostic(p, "E423"));
+}
