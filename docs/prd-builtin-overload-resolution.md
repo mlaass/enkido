@@ -400,13 +400,23 @@ non-collision tests (`akkado/tests/test_overload.cpp`,
   (`parser.cpp`), so they are inexpressible — consistent with Phase 3 descoping
   the builtin literal-unit form. The `StringLiteral`/`NumberLiteral` matchers
   stay resolver-only.
-- **Unresolved/ambiguous calls warn + fall back to the first overload**
-  (`W170`), they do **not** hard-error — matching the "live-coding coerce,
-  don't fail" rule. This covers a no-overload-by-type match, named arguments,
-  `_` partial application, spread, and the bare name used as a value. The
-  fallback overload's per-param binding still emits the precise `E160`/`E184`
-  for a genuine type error, so **no new `E` codes were added** (the planned
-  E425–E428 were unnecessary).
+- **No-match is a hard error, reusing `E424`** — the same "no overload
+  matches" code the builtin multi-pattern path uses (`sample`/`sample_loop`).
+  A type-classifiable call that matches no overload emits a single overload-aware
+  `E424` naming the passed types and the candidate signatures (e.g. `tone() has
+  no overload matching argument types (String); candidates: (Number),
+  (Pattern)`); no fallback. This is safe to fire unconditionally on a codegen
+  resolve-no-match: codegen only runs once the analyzer has accepted the call's
+  arity (against ≥1 overload, else `E006`/`E007`), so anything reaching the
+  resolve is a genuine type mismatch — no double diagnostic. **No new code was
+  minted** and the earlier W-class `W170` was removed (it also collided with the
+  reserved `W170` in `prd-patterns-as-scalar-values.md`).
+- **Structurally-ambiguous calls behave like an ordinary call.** Named
+  arguments, `_` partial application, spread, and the bare name used as a value
+  can't be type-dispatched, so they route to the **first** overload and produce
+  whatever a normal (non-overloaded) call would — no special warning, no special
+  code. (Overloaded functions are not a special case here; the "use the first,
+  else fail like any function" rule applies.)
 - **Stdlib shadowing.** The stdlib/prelude is prepended to user source in the
   same global scope, so a user `fn osc`/`fn voice` shares a name with a stdlib
   definition. A **user-source** definition shadows the **whole** stdlib overload

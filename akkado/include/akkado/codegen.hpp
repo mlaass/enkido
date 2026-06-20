@@ -688,9 +688,11 @@ private:
 
     /// Phase 4 overload resolution: select one of N same-name overloads by the
     /// call's argument types (first-match in declaration order), then dispatch
-    /// to handle_user_function_call. When selection is impossible — named args,
-    /// `_` partial application, spread, or no overload matches — emits W170 and
-    /// falls back to the first declared overload.
+    /// to handle_user_function_call. A type-classifiable call that matches no
+    /// overload is a genuine type mismatch -> E424 (the same "no overload
+    /// matches" code the builtin multi-pattern path uses). Calls that can't be
+    /// type-dispatched (named args, `_` partial application, spread) route to
+    /// the first overload and behave like an ordinary call.
     TypedValue dispatch_overloaded_function_call(
         NodeIndex node, const Node& n,
         const std::vector<UserFunctionInfo>& overloads);

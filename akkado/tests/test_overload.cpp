@@ -623,37 +623,46 @@ TEST_CASE("overload polyphonic mirror: a scalar-incompatible pattern skips "
     CHECK(r.closest_index == 1);  // the Pattern overload, not the Signal one
 }
 
-TEST_CASE("overload fn: no matching overload warns (W170) and falls back",
+TEST_CASE("overload fn: no overload matches the arg types errors E424",
           "[overload]") {
-    // A String arg matches neither the Number nor the Pattern overload → W170
-    // + first overload, whose binding then emits its own precise E184.
+    // A String arg matches neither the Number nor the Pattern overload. Arity
+    // is fine for both, so the analyzer passes and codegen reports the genuine
+    // type mismatch as E424 — the same "no overload matches" code the builtin
+    // multi-pattern path (sample) uses. No fallback, no W-class overload warning.
     auto r = akkado::compile(R"(
         fn tone(f: Number)  -> sine(f)
         fn tone(p: Pattern) -> saw(220)
         tone("hi") |> out(@)
     )");
-    CHECK(has_diagnostic(r, "W170"));
+    CHECK(has_diagnostic(r, "E424"));
+    CHECK_FALSE(r.success);
 }
 
-TEST_CASE("overload fn: `_` partial application warns (W170) and falls back",
+TEST_CASE("overload fn: `_` partial application routes to the first overload",
           "[overload]") {
+    // `_` can't select an overload by type, so the call behaves exactly like a
+    // normal partial application of the first overload — no E424, no W170. The
+    // first overload is un-annotated so the placeholder applies cleanly.
     auto r = akkado::compile(R"(
-        fn tone(f: Number)  -> sine(f)
+        fn tone(f)          -> sine(f)
         fn tone(p: Pattern) -> saw(220)
-        f = tone(_)
-        f(440) |> out(@)
+        g = tone(_)
+        g(440) |> out(@)
     )");
-    CHECK(has_diagnostic(r, "W170"));
+    REQUIRE(r.success);
+    CHECK(has_opcode(r, cedar::Opcode::OSC_SIN));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
 }
 
-TEST_CASE("overload fn: single definition does not warn", "[overload]") {
-    // The size==1 fast path must never emit the overload warning.
+TEST_CASE("overload fn: single definition takes the direct path", "[overload]") {
+    // size==1 bypasses overload dispatch entirely — no E424, no resolution.
     auto r = akkado::compile(R"(
         fn tone(f: Number) -> sine(f)
         tone(440) |> out(@)
     )");
     REQUIRE(r.success);
-    CHECK_FALSE(has_diagnostic(r, "W170"));
+    CHECK(has_opcode(r, cedar::Opcode::OSC_SIN));
+    CHECK_FALSE(has_diagnostic(r, "E424"));
 }
 
 TEST_CASE("overload fn: arity dispatch picks the matching overload",

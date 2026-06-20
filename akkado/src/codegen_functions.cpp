@@ -1019,10 +1019,13 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
     const UserFunctionInfo& primary = overloads.front();
 
     // Scan the arguments. Named args, `_` placeholders, and spread (`..rec`)
-    // all make type-based selection impossible — warn and fall back to the
-    // first overload. Otherwise collect each argument's value node.
+    // make type-based selection impossible — there is no way to assert "no
+    // overload matches", so route to the first overload and let it behave
+    // exactly like a normal (non-overloaded) call (any error is then the
+    // ordinary E184/E011/… that overload would raise). Otherwise collect each
+    // argument's value node for classification.
     std::vector<NodeIndex> value_nodes;
-    const char* ambiguous_reason = nullptr;
+    bool cannot_type_dispatch = false;
     for (NodeIndex arg = n.first_child; arg != NULL_NODE;
          arg = ast_->arena[arg].next_sibling) {
         const Node& arg_node = ast_->arena[arg];
@@ -1030,8 +1033,8 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
         if (arg_node.type == NodeType::Argument &&
             std::holds_alternative<Node::ArgumentData>(arg_node.data)) {
             const auto& a = arg_node.as_argument();
-            if (a.name.has_value()) ambiguous_reason = "named arguments";
-            if (a.spread_source != NULL_NODE) ambiguous_reason = "spread arguments";
+            if (a.name.has_value()) cannot_type_dispatch = true;            // named arg
+            if (a.spread_source != NULL_NODE) cannot_type_dispatch = true;  // spread
             value = arg_node.first_child;
         }
         if (value != NULL_NODE) {
@@ -1039,18 +1042,13 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
             if (vn.type == NodeType::Identifier &&
                 std::holds_alternative<Node::IdentifierData>(vn.data) &&
                 ctx_->interner->view(vn.as_identifier()) == "_") {
-                ambiguous_reason = "`_` partial application";
+                cannot_type_dispatch = true;  // `_` partial application
             }
         }
         value_nodes.push_back(value);
     }
 
-    if (ambiguous_reason) {
-        warn("W170",
-             "Call to overloaded function '" + primary.name + "' uses " +
-             ambiguous_reason + ", which cannot select an overload by argument "
-             "type — using the first declared overload.",
-             n.location);
+    if (cannot_type_dispatch) {
         return handle_user_function_call(node, n, primary);
     }
 
@@ -1088,13 +1086,35 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
         return handle_user_function_call(node, n, overloads[r.closest_index]);
     }
 
-    // No overload matches the argument types — warn and fall back. The first
-    // overload's per-param binding then emits any precise E160/E184.
-    warn("W170",
-         "No overload of '" + primary.name + "' matches the argument types — "
-         "using the first declared overload.",
-         n.location);
-    return handle_user_function_call(node, n, primary);
+    // No arity-compatible overload accepts these argument types. Codegen only
+    // runs once the analyzer has accepted the call's arity (against at least one
+    // overload), so reaching here is a genuine type mismatch — emit E424, the
+    // same "no overload matches" diagnostic the builtin multi-pattern path uses
+    // (sample/sample_loop), naming the passed types and the candidate signatures.
+    std::string passed;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i) passed += ", ";
+        passed += value_type_name(args[i].type);
+    }
+    std::string candidates;
+    for (std::size_t i = 0; i < overloads.size(); ++i) {
+        if (i) candidates += ", ";
+        candidates += "(";
+        const auto& ps = overloads[i].params;
+        for (std::size_t j = 0; j < ps.size(); ++j) {
+            if (j) candidates += ", ";
+            candidates += param_value_type_name(ps[j].annotated_type);
+        }
+        candidates += ")";
+    }
+    error("E424",
+          primary.name + "() has no overload matching argument types (" +
+          passed + "); candidates: " + candidates,
+          n.location);
+    if (node_types_.find(node) == node_types_.end()) {
+        node_types_[node] = TypedValue::error_val();
+    }
+    return TypedValue::error_val();
 }
 
 // ============================================================================
