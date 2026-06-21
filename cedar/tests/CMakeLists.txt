@@ -29,7 +29,7 @@ add_executable(cedar_tests
     test_crossfade.cpp
     test_hot_swap.cpp
     test_sample_bank.cpp
-    test_memory_stress.cpp
+    test_logical_stress.cpp
     test_sequence.cpp
     test_poly.cpp
     test_seqpat_values.cpp
@@ -53,6 +53,9 @@ add_executable(cedar_tests
     test_soundfont_registry.cpp
     test_audit_inst_rate.cpp
     test_subprogram_table.cpp
+    # Leg 3 of docs/prd-memory-integrity-tests.md: zero-allocation trap.
+    zero_alloc_hooks.cpp
+    test_zero_alloc.cpp
 )
 
 # Add concurrency tests if enabled
@@ -75,6 +78,31 @@ target_compile_definitions(cedar_tests PRIVATE
     CEDAR_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
     CEDAR_OPCODES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../include/cedar/opcodes"
 )
+
+# Leg 3 of docs/prd-memory-integrity-tests.md: configure the zero-allocation
+# trap (zero_alloc_hooks.cpp). Both the C++ guards and the linker --wrap flag
+# are driven from the SAME CMake condition so they can't drift (the test TU is
+# not necessarily compiled with -fsanitize=address, so the source can't detect
+# the ASan build on its own).
+#
+#   ZERO_ALLOC_DISABLE       under ASan: do NOT override operator new (ASan
+#                            owns it); the guard goes inert, [zero_alloc]
+#                            passes trivially. The release build is where it
+#                            bites (scripts/check-release.sh, run_all.sh).
+#   ZERO_ALLOC_WRAP_MALLOC   Linux + non-ASan: also wrap the malloc family via
+#                            -Wl,--wrap so C allocations that bypass operator
+#                            new are caught (operator new uses __real_malloc).
+if(NKIDO_ENABLE_ASAN)
+    target_compile_definitions(cedar_tests PRIVATE ZERO_ALLOC_DISABLE=1)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(cedar_tests PRIVATE ZERO_ALLOC_WRAP_MALLOC=1)
+    target_link_options(cedar_tests PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=free
+    )
+endif()
 
 # On Windows with BUILD_SHARED_LIBS=ON (vcpkg toolchain), Catch2 is built
 # as a DLL. Catch2WithMain depends on Catch2, so both DLLs have to sit

@@ -4,9 +4,10 @@
 # Local entry point for the memory-integrity harness
 # (docs/prd-memory-integrity-tests.md §3.1). Builds the release tree and runs
 # the fast tier of every leg that currently exists. Each leg is appended as
-# its phase lands; today (Phase 1) it builds the CLI tools and runs:
+# its phase lands; today it builds the CLI tools + cedar_tests and runs:
 #
 #   Leg 1  Explosion guard       scripts/memory/check_corpus.sh
+#   Leg 3  Zero-alloc trap       cedar_tests "[zero_alloc]"
 #
 # Target: exit 0 on a clean checkout in well under a minute on a warm build
 # (PRD §11.2.1).
@@ -31,7 +32,7 @@ BUILD_DIR="build/release"
 if [[ "${NKIDO_SKIP_BUILD:-0}" != "1" ]]; then
     echo "== Build (release) =="
     cmake --preset release -DNKIDO_BUILD_TESTS=ON >/dev/null
-    cmake --build "$BUILD_DIR" --target akkado_cli nkido_cli -j
+    cmake --build "$BUILD_DIR" --target akkado_cli nkido_cli cedar_tests -j
 fi
 
 export NKIDO_BIN_DIR="$REPO_ROOT/$BUILD_DIR/bin"
@@ -48,6 +49,23 @@ if "$SCRIPT_DIR/check_corpus.sh"; then
 else
     echo "Leg 1: FAIL"
     overall=1
+fi
+
+# ---------------------------------------------------------------------------
+# Leg 3 — Zero-allocation trap (cedar_tests "[zero_alloc]")
+# ---------------------------------------------------------------------------
+echo
+echo "== Leg 3: Zero-allocation trap =="
+CEDAR_TESTS="$BUILD_DIR/cedar/tests/cedar_tests"
+if [[ -x "$CEDAR_TESTS" ]]; then
+    if "$CEDAR_TESTS" "[zero_alloc]"; then
+        echo "Leg 3: PASS"
+    else
+        echo "Leg 3: FAIL"
+        overall=1
+    fi
+else
+    echo "Leg 3: SKIP (cedar_tests not built)"
 fi
 
 echo
