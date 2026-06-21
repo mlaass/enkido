@@ -68,12 +68,21 @@ add_executable(akkado_tests
     test_fuzz_recompile_audio.cpp
     test_hot_swap_event_transforms.cpp
     test_state_init_buffer_codec.cpp
+    test_drift_fuzz.cpp
 )
 
 target_link_libraries(akkado_tests
     PRIVATE
         akkado
         Catch2::Catch2  # custom main lives in akkado_test_main.cpp
+)
+
+# Leg 4 of docs/prd-memory-integrity-tests.md: the drift fuzz seeds from the
+# stdlib + a curated corpus. Embed both directories as compile-time strings so
+# the test doesn't depend on the runtime working directory.
+target_compile_definitions(akkado_tests PRIVATE
+    AKKADO_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../stdlib"
+    AKKADO_TEST_CORPUS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus"
 )
 
 # Phase 0 of prd-parser-codegen-correctness.md: bytecode-disassembly

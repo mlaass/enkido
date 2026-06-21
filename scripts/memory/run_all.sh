@@ -8,6 +8,7 @@
 #
 #   Leg 1  Explosion guard       scripts/memory/check_corpus.sh
 #   Leg 3  Zero-alloc trap       cedar_tests "[zero_alloc]"
+#   Leg 4  Drift fuzz (100)      akkado_tests "[drift_fuzz]" --iters 100
 #
 # Target: exit 0 on a clean checkout in well under a minute on a warm build
 # (PRD §11.2.1).
@@ -22,17 +23,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 BUILD_DIR="build/release"
+DRIFT_ITERS="${NKIDO_DRIFT_ITERS:-100}"
 
 # ---------------------------------------------------------------------------
 # Build (release + tests in one tree). The `release` preset sets
 # NKIDO_BUILD_TESTS=OFF; we override so the same tree carries the CLI tools
-# AND the Catch2 binaries the zero-alloc / drift legs will need in later
-# phases.
+# AND the Catch2 binaries the zero-alloc / drift legs need.
 # ---------------------------------------------------------------------------
 if [[ "${NKIDO_SKIP_BUILD:-0}" != "1" ]]; then
     echo "== Build (release) =="
     cmake --preset release -DNKIDO_BUILD_TESTS=ON >/dev/null
-    cmake --build "$BUILD_DIR" --target akkado_cli nkido_cli cedar_tests -j
+    cmake --build "$BUILD_DIR" --target akkado_cli nkido_cli cedar_tests akkado_tests -j
 fi
 
 export NKIDO_BIN_DIR="$REPO_ROOT/$BUILD_DIR/bin"
@@ -66,6 +67,23 @@ if [[ -x "$CEDAR_TESTS" ]]; then
     fi
 else
     echo "Leg 3: SKIP (cedar_tests not built)"
+fi
+
+# ---------------------------------------------------------------------------
+# Leg 4 — Mutating recompile drift fuzz (fast tier)
+# ---------------------------------------------------------------------------
+echo
+echo "== Leg 4: Drift fuzz (--iters $DRIFT_ITERS) =="
+AKKADO_TESTS="$BUILD_DIR/akkado/tests/akkado_tests"
+if [[ -x "$AKKADO_TESTS" ]]; then
+    if "$AKKADO_TESTS" "[drift_fuzz]" --iters "$DRIFT_ITERS"; then
+        echo "Leg 4: PASS"
+    else
+        echo "Leg 4: FAIL"
+        overall=1
+    fi
+else
+    echo "Leg 4: SKIP (akkado_tests not built)"
 fi
 
 echo

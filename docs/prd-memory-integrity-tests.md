@@ -1,7 +1,24 @@
-> **Status: NOT STARTED** — Test infrastructure only; the 48GB
-> `akkado --check` explosion that triggered this PRD is tracked
-> separately and will be reproduced + fixed using the harness this PRD
-> ships.
+> **Status: COMPLETE — all four legs shipped (2026-06-21).** Explosion
+> guard, ASan/LSan/UBSan build, zero-alloc trap, and drift fuzz are
+> implemented, wired into `scripts/memory/run_all.sh`,
+> `scripts/check-release.sh`, and the `workflow_dispatch` CI, and pass.
+> Test infrastructure only; the 48GB `akkado --check` explosion that
+> triggered this PRD is tracked separately and will be reproduced + fixed
+> using this harness.
+>
+> **Bugs the harness surfaced (fixed in-tree, since they made the gate
+> red):** (1) UBSan — `memcpy` of a null pointer in `akkado::compile()` on
+> a zero-instruction compile; (2) ASan — heap-use-after-free in the
+> analyzer's `all_placeholders_have_defaults` (a `&optional<Symbol>`
+> dangling past its block).
+>
+> **Findings filed for separate follow-up (out of this PRD's test-infra
+> scope, §2.2):** a single VM hot-swapped through ~150+ structurally
+> distinct FX programs exhausts the audio arena (per-program reverb/delay
+> buffers are not reclaimed on state GC), surfacing as a null delay-line
+> buffer in `reverbs.hpp`; FX opcodes also lack a null-buffer guard. The
+> drift fuzz models bounded live-coding sessions (recreates the VM every N
+> swaps) so this is contained rather than masked.
 
 # PRD: Memory Integrity Tests
 

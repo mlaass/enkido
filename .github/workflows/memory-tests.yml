@@ -39,3 +39,31 @@ jobs:
           ASAN_OPTIONS: "detect_leaks=1:abort_on_error=0"
           UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
         run: ./build/sanitize/akkado/tests/akkado_tests
+
+  # Leg 1 — Explosion guard over the fixture corpus.
+  explosion-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build akkado CLI (release)
+        run: |
+          cmake --preset release
+          cmake --build build/release --target akkado_cli -j
+      - name: Explosion guard
+        run: scripts/memory/check_corpus.sh
+
+  # Leg 4 — Mutating recompile drift fuzz.
+  drift-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build akkado_tests (release)
+        run: |
+          cmake --preset release -DNKIDO_BUILD_TESTS=ON
+          cmake --build build/release --target akkado_tests -j
+      - name: Drift fuzz (10k iters under the RSS guard)
+        run: |
+          python3 scripts/memory/run_with_limit.py \
+            --binary build/release/akkado/tests/akkado_tests \
+            --rss-mb 1024 --timeout-sec 600 \
+            -- "[drift_fuzz]" --iters 10000
