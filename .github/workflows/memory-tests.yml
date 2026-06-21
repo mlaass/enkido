@@ -1,0 +1,41 @@
+name: Memory Tests
+
+# Memory-integrity harness (docs/prd-memory-integrity-tests.md).
+# v1: manual trigger only — the harness stabilises before it gates merges
+# (PRD §2.2, §10). Scheduled cron + PR gating are deliberate follow-ups.
+on:
+  workflow_dispatch:
+
+jobs:
+  # Leg 2 — Sanitizer build (ASan + LSan + UBSan) over the full Catch2 suite.
+  sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (sanitize preset)
+        run: cmake --preset sanitize
+
+      # Build only the Catch2 test binaries: they cover the cedar + akkado
+      # libraries without pulling in the audio backend (rtmidi/ALSA) that the
+      # nkido CLI needs, so the job needs no extra system packages. The test
+      # binaries are run directly (one process each) rather than per-case via
+      # ctest: a single long-lived process is both faster under ASan and a
+      # stronger check for leaks that accumulate across the ~1000 compiles a
+      # run performs.
+      - name: Build test binaries (sanitized)
+        run: cmake --build build/sanitize --target cedar_tests akkado_tests -j
+
+      - name: Run cedar_tests (ASan + LSan + UBSan)
+        env:
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/cedar/tests/lsan.supp"
+          ASAN_OPTIONS: "detect_leaks=1:abort_on_error=0"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: ./build/sanitize/cedar/tests/cedar_tests
+
+      - name: Run akkado_tests (ASan + LSan + UBSan)
+        env:
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/cedar/tests/lsan.supp"
+          ASAN_OPTIONS: "detect_leaks=1:abort_on_error=0"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: ./build/sanitize/akkado/tests/akkado_tests

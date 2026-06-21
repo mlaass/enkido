@@ -140,10 +140,17 @@ static bool all_placeholders_have_defaults(const AstArena& arena,
 
     const BuiltinInfo* builtin = lookup_builtin(func_name);
 
+    // `sym` must outlive `user_func`: SymbolTable::lookup() returns the Symbol
+    // BY VALUE, and user_func points into that Symbol's overload vector. Keep
+    // the optional at function scope so the pointer stays valid through the
+    // placeholder loop below — declaring it inside the `if` block freed the
+    // Symbol at the block's end, a use-after-free caught by ASan in the
+    // memory-integrity sanitizer build (docs/prd-memory-integrity-tests.md).
+    std::optional<Symbol> sym;
     const UserFunctionInfo* user_func = nullptr;
     if (!builtin) {
         // Phase 5 fast path: lookup by SymbolId directly.
-        auto sym = symbols.lookup(call_node.as_identifier());
+        sym = symbols.lookup(call_node.as_identifier());
         if (sym && sym->kind == SymbolKind::UserFunction) {
             // Partial-application default check falls back to the first
             // overload (Phase 4: `_` placeholders don't select an overload).

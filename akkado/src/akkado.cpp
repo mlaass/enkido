@@ -216,9 +216,15 @@ CompileResult compile(std::string_view source, std::string_view filename,
     }
 
     // Convert instructions to byte array (full [ main | block bodies ] stream).
+    // Guard the memcpy: a program that legitimately compiles to zero
+    // instructions leaves gen.instructions empty, so .data() is null and
+    // passing null to memcpy is UB even with a zero size (caught by UBSan in
+    // the memory-integrity sanitizer build, docs/prd-memory-integrity-tests.md).
     result.bytecode.resize(gen.instructions.size() * sizeof(cedar::Instruction));
-    std::memcpy(result.bytecode.data(), gen.instructions.data(),
-                result.bytecode.size());
+    if (!gen.instructions.empty()) {
+        std::memcpy(result.bytecode.data(), gen.instructions.data(),
+                    result.bytecode.size());
+    }
 
     // FOREACH_EVENT subprogram table (PRD L3): record the main/body boundary
     // and build the cedar::BlockEntry table the host hands to the VM.

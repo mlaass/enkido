@@ -70,6 +70,15 @@
             }
         },
         {
+            "name": "sanitize",
+            "displayName": "Debug with ASan + LSan + UBSan",
+            "inherits": "debug",
+            "cacheVariables": {
+                "NKIDO_ENABLE_ASAN": "ON",
+                "NKIDO_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
             "name": "minsize",
             "displayName": "Minimum Size (LTO, -Os)",
             "inherits": "base",
@@ -125,6 +134,10 @@
             "configurePreset": "coverage"
         },
         {
+            "name": "sanitize",
+            "configurePreset": "sanitize"
+        },
+        {
             "name": "minsize",
             "configurePreset": "minsize"
         },
@@ -141,6 +154,13 @@
         {
             "name": "debug",
             "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "sanitize",
+            "configurePreset": "sanitize",
             "output": {
                 "outputOnFailure": true
             }

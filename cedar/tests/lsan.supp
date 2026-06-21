@@ -1,0 +1,20 @@
+# LeakSanitizer suppressions for the memory-integrity sanitizer build
+# (docs/prd-memory-integrity-tests.md §3.3, §9.8).
+#
+# Format (one per line):
+#   leak:<substring matched against a frame in the leak's stack trace>
+#
+# Usage (wired by .github/workflows/memory-tests.yml and
+# scripts/check-release.sh):
+#   LSAN_OPTIONS=suppressions=$PWD/cedar/tests/lsan.supp
+#
+# RULES (enforced by review; §9.8 flags stale entries at release time):
+#   * Every entry MUST carry a one-line comment explaining WHAT leaks and
+#     WHY it is acceptable (third-party library, intentional one-shot leak
+#     during static init, etc.).
+#   * Never suppress a leak in cedar/ or akkado/ runtime code to make the
+#     build green. A real leak is a finding — fix it, don't mute it.
+#   * Stale entries (matching no symbol on the current build) are reviewed
+#     and removed at each release.
+#
+# No suppressions are needed at present — the suite runs leak-clean.
