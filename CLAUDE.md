@@ -165,6 +165,40 @@ Current hooks:
   (and re-stages it) whenever a commit touches anything under
   `web/static/patches/welcome/`. Requires `bun` on `PATH`.
 
+## Memory Integrity Tests
+
+A four-legged harness (`docs/prd-memory-integrity-tests.md`) guards against
+memory failures the unit suite can't see: unbounded-growth explosions, leaks,
+audio-path allocations, and slow drift across recompiles.
+
+```bash
+# Local entry point — build release + run the fast tier of every leg
+# (explosion guard + zero-alloc + drift 100 iters). ~1 min on a warm build.
+./scripts/memory/run_all.sh
+```
+
+The four legs:
+1. **Explosion guard** — `scripts/memory/check_corpus.sh` runs `akkado --check`
+   over a fixture corpus under an RSS ceiling + wall-clock timeout
+   (`scripts/memory/run_with_limit.py`). The `NKIDO_RLIMIT_MB` env var caps the
+   process address space via `setrlimit(RLIMIT_AS)` inside `akkado`/`nkido` as a
+   hard backstop (unset → no cap).
+2. **Sanitizer build** — `cmake --preset sanitize` (ASan + LSan + UBSan), run
+   via `ctest --test-dir build/sanitize`. Suppressions in `cedar/tests/lsan.supp`.
+3. **Zero-alloc trap** — `cedar_tests "[zero_alloc]"` arms an `operator new`/
+   `malloc` trap around VM block processing.
+4. **Drift fuzz** — `akkado_tests "[drift_fuzz]" --iters N` mutates seeds,
+   recompiles + hot-swaps into a live VM, and asserts bounded peak RSS + a
+   linear-slope check on sampled RSS.
+
+Budgets are centralised in `scripts/memory/budgets.sh` (one file, with a
+rationale in the commit message — never silently raised). The CI workflow
+`.github/workflows/memory-tests.yml` is `workflow_dispatch`-only in v1.
+
+The pre-release gate `scripts/check-release.sh` runs the sanitizer suite plus
+the memory legs at deep iteration counts; the release ritual is
+`./scripts/check-release.sh && ./scripts/bump-version.sh <bump>`.
+
 ## Releases
 
 Version bumps go through `scripts/bump-version.sh` — **never edit `VERSION`

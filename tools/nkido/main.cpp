@@ -19,7 +19,33 @@
 #include <unordered_map>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
 namespace {
+
+// Memory-integrity Leg 1 (docs/prd-memory-integrity-tests.md §3.2a): cap the
+// process virtual address space via setrlimit(RLIMIT_AS) when NKIDO_RLIMIT_MB
+// is set, so a runaway compile/render is OOM-killed cleanly instead of
+// swapping the machine. RLIMIT_AS is process-wide and works for `serve` mode
+// too (§9.6). Unset → unchanged behavior. POSIX-only.
+void apply_rlimit_from_env() {
+    const char* mb = std::getenv("NKIDO_RLIMIT_MB");
+    if (mb == nullptr || *mb == '\0') {
+        return;
+    }
+#ifndef _WIN32
+    char* end = nullptr;
+    const long value = std::strtol(mb, &end, 10);
+    if (end == mb || value <= 0) {
+        return;
+    }
+    const rlim_t bytes = static_cast<rlim_t>(value) * 1024u * 1024u;
+    struct rlimit rl { bytes, bytes };
+    setrlimit(RLIMIT_AS, &rl);  // best-effort: ignore failure
+#endif
+}
 
 void print_usage(const char* program) {
     std::cerr << "Usage: " << program << " [mode] [options] [input]\n\n"
@@ -491,6 +517,10 @@ int handle_render_mode(const nkido::Options& opts) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // Apply the optional virtual-address-space backstop before any work
+    // (memory-integrity Leg 1).
+    apply_rlimit_from_env();
+
     // Switch the attached console to UTF-8 so non-ASCII paths and
     // diagnostic messages render correctly on Windows. POSIX: no-op.
     cedar::platform::ensure_utf8_console();

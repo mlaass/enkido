@@ -4,6 +4,33 @@
 #include "akkado/akkado.hpp"
 #include "cedar/platform/utf8_init.hpp"
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
+// Memory-integrity Leg 1 (docs/prd-memory-integrity-tests.md §3.2a): when
+// NKIDO_RLIMIT_MB is set, cap the process virtual address space via
+// setrlimit(RLIMIT_AS). The OS then kills a runaway compile cleanly instead
+// of swapping the box to death (the 48 GB `akkado --check` trigger incident).
+// Unset (the default) leaves behavior unchanged. POSIX-only; on Windows the
+// external wrapper's RSS poll is the sole backstop.
+static void apply_rlimit_from_env() {
+    const char* mb = std::getenv("NKIDO_RLIMIT_MB");
+    if (mb == nullptr || *mb == '\0') {
+        return;
+    }
+#ifndef _WIN32
+    char* end = nullptr;
+    const long value = std::strtol(mb, &end, 10);
+    if (end == mb || value <= 0) {
+        return;
+    }
+    const rlim_t bytes = static_cast<rlim_t>(value) * 1024u * 1024u;
+    struct rlimit rl { bytes, bytes };
+    setrlimit(RLIMIT_AS, &rl);  // best-effort: ignore failure (e.g. cap below current)
+#endif
+}
+
 void print_usage(const char* program) {
     std::cout << "Akkado Compiler v" << akkado::Version::string() << "\n\n"
               << "Usage: " << program << " [options] <source-file>\n\n"
@@ -24,6 +51,10 @@ void print_version() {
 }
 
 int main(int argc, char* argv[]) {
+    // Apply the optional virtual-address-space backstop before any
+    // compilation work (memory-integrity Leg 1).
+    apply_rlimit_from_env();
+
     // Switch the attached console to UTF-8 so non-ASCII paths and
     // diagnostic messages render correctly on Windows. POSIX: no-op.
     cedar::platform::ensure_utf8_console();
