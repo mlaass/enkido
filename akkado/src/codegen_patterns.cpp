@@ -5494,6 +5494,25 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
         cedar::MidiQueueState::TempoMode::Follow;
 
     if (options_arg != NULL_NODE) {
+        // Enforce midi's `{Record}` param_type (PRD prd-builtin-overload-resolution
+        // Goal 4 / §10). midi routes through LegacyHandler::Midi and never calls
+        // resolve(), so without this guard a non-record options arg (e.g.
+        // midi(440), midi("x")) would slip straight into extract_options, which
+        // silently returns an empty payload for a non-RecordLit — opening the
+        // default device with no diagnostic. Reject it like transport's E133.
+        NodeIndex options_value = options_arg;
+        if (ast_->arena[options_arg].type == NodeType::Argument) {
+            options_value = ast_->arena[options_arg].first_child;
+        }
+        if (options_value == NULL_NODE ||
+            ast_->arena[options_value].type != NodeType::RecordLit) {
+            error("E425",
+                  "midi() options must be a record literal "
+                  "(e.g. midi({device: \"name\"}) or midi({file: \"song.mid\"})).",
+                  n.location);
+            return TypedValue::void_val();
+        }
+
         // Look up the options schema declared on the builtin.
         const OptionSchema* schema_ptr = nullptr;
         if (const BuiltinInfo* info = lookup_builtin("midi")) {

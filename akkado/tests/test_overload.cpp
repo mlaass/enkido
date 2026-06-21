@@ -84,6 +84,14 @@ bool has_diagnostic(const akkado::CompileResult& r, std::string_view code) {
     return false;
 }
 
+// Full message text of the first diagnostic with `code` (empty if none).
+std::string diag_message(const akkado::CompileResult& r, std::string_view code) {
+    for (const auto& d : r.diagnostics) {
+        if (d.code == code) return d.message;
+    }
+    return {};
+}
+
 // Scan compiled bytecode for an opcode (Phase 4 selection tests use distinct
 // builtins per overload, so the inlined body is observable in the opcode stream).
 std::size_t count_opcode(const akkado::CompileResult& r, cedar::Opcode target) {
@@ -818,4 +826,158 @@ TEST_CASE("phase-5 migration: the handler's own type guard still fires",
 
     auto p = akkado::compile(R"(poly(440, (f, g, v) -> sine(f) * v) |> out(@))");
     CHECK(has_diagnostic(p, "E423"));
+}
+
+TEST_CASE("midi codegen: a non-record options arg is rejected (E425)",
+          "[overload]") {
+    // PRD Goal 4 / §10: midi's `{Record}` param_type must reject mismatches.
+    // midi routes through LegacyHandler::Midi (no resolve()), so the guard lives
+    // in handle_midi_call. Before the fix, midi(440)/midi("x") compiled silently
+    // (decorative param_type) — the regression these assertions lock down.
+    auto num = akkado::compile(R"(midi(440) as e |> osc("sin", e.freq) |> out(@))");
+    CHECK_FALSE(num.success);
+    CHECK(has_diagnostic(num, "E425"));
+
+    auto str = akkado::compile(R"(midi("dev") as e |> osc("sin", e.freq) |> out(@))");
+    CHECK_FALSE(str.success);
+    CHECK(has_diagnostic(str, "E425"));
+
+    // The valid record form still compiles (no false positive).
+    auto ok = akkado::compile(R"(midi({channel: 1}) as e |> osc("sin", e.freq) |> out(@))");
+    CHECK(ok.success);
+    CHECK_FALSE(has_diagnostic(ok, "E425"));
+
+    // Bare midi() (no options) is unaffected.
+    auto bare = akkado::compile(R"(midi() as e |> osc("sin", e.freq) |> out(@))");
+    CHECK(bare.success);
+    CHECK_FALSE(has_diagnostic(bare, "E425"));
+}
+
+// -----------------------------------------------------------------------------
+// §9 edge case 1 — overload shadowing warning (W171).
+//
+// When an earlier user-fn overload coerce-matches everything a later one would,
+// the later overload is unreachable. pattern_subsumes() decides this over the
+// ValueType lattice; the analyzer emits W171 on by default. Resolution itself
+// is never changed (first-match still wins, so the shadowed program compiles).
+// -----------------------------------------------------------------------------
+
+TEST_CASE("pattern_subsumes: a Signal slot shadows a later Number slot",
+          "[overload]") {
+    // Number coerces to Signal, so (Signal) declared first matches every call
+    // (Number) would — the later form is unreachable.
+    DispatchPattern sig = make_pattern({type_m(ParamValueType::Signal)}, 1);
+    DispatchPattern num = make_pattern({type_m(ParamValueType::Number)}, 1);
+    CHECK(pattern_subsumes(sig, num));
+    // Not symmetric: (Number) does NOT shadow (Signal) — a Signal arg escapes it.
+    CHECK_FALSE(pattern_subsumes(num, sig));
+}
+
+TEST_CASE("pattern_subsumes: a Signal slot does NOT shadow a later Pattern slot",
+          "[overload]") {
+    // A polyphonic pattern escapes a scalar Signal slot (poly mirror) and reaches
+    // the Pattern overload, so the Pattern form stays reachable — no shadow.
+    DispatchPattern sig = make_pattern({type_m(ParamValueType::Signal)}, 1);
+    DispatchPattern pat = make_pattern({type_m(ParamValueType::Pattern)}, 1);
+    CHECK_FALSE(pattern_subsumes(sig, pat));
+}
+
+TEST_CASE("pattern_subsumes: an Any slot shadows any later typed slot",
+          "[overload]") {
+    DispatchPattern any = make_pattern({any_m()}, 1);
+    DispatchPattern num = make_pattern({type_m(ParamValueType::Number)}, 1);
+    CHECK(pattern_subsumes(any, num));
+    // A wider arity range on the earlier side still subsumes (optional trailing).
+    DispatchPattern any2 = make_pattern({any_m(), any_m()}, 1);  // arity 1..2
+    CHECK(pattern_subsumes(any2, num));                          // num is arity 1
+    // But a narrower earlier arity range cannot cover a wider later one.
+    CHECK_FALSE(pattern_subsumes(num, any2));
+}
+
+TEST_CASE("overload fn: an earlier coercing overload warns W171 (unreachable)",
+          "[overload]") {
+    // (Signal) before (Number): 440 still binds the Signal form (first match),
+    // so the program compiles and picks sine — but the Number form is dead code,
+    // flagged W171 on by default.
+    auto r = akkado::compile(R"(
+        fn tone(x: Signal) -> sine(x)
+        fn tone(x: Number) -> saw(x)
+        tone(440) |> out(@)
+    )");
+    REQUIRE(r.success);                       // warn, don't fail
+    CHECK(has_diagnostic(r, "W171"));
+    CHECK(has_opcode(r, cedar::Opcode::OSC_SIN));   // first-match unchanged
+    CHECK_FALSE(has_opcode(r, cedar::Opcode::OSC_SAW));
+}
+
+TEST_CASE("overload fn: a non-shadowing overload pair does NOT warn W171",
+          "[overload]") {
+    // (Number) before (Pattern): neither subsumes the other, both reachable.
+    auto r = akkado::compile(R"(
+        fn tone(f: Number)  -> sine(f)
+        fn tone(p: Pattern) -> saw(220)
+        tone(440) |> out(@)
+    )");
+    REQUIRE(r.success);
+    CHECK_FALSE(has_diagnostic(r, "W171"));
+    // (Signal) before (Pattern) also must NOT warn — the poly mirror keeps the
+    // Pattern form reachable.
+    auto r2 = akkado::compile(R"(
+        fn tone(x: Signal)  -> sine(x)
+        fn tone(p: Pattern) -> saw(220)
+        tone(440) |> out(@)
+    )");
+    REQUIRE(r2.success);
+    CHECK_FALSE(has_diagnostic(r2, "W171"));
+}
+
+// -----------------------------------------------------------------------------
+// §4.4 / §5.3 — the no-match diagnostic names the closest candidate.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("overload fn: E424 names the closest candidate + the failing slot",
+          "[overload]") {
+    // tone("hi") matches neither (Number) nor (Pattern). closest_candidate()
+    // ties to the earliest (Number), and the message must surface it with the
+    // exact non-coercible argument (PRD §4.4).
+    auto r = akkado::compile(R"(
+        fn tone(f: Number)  -> sine(f)
+        fn tone(p: Pattern) -> saw(220)
+        tone("hi") |> out(@)
+    )");
+    CHECK_FALSE(r.success);
+    const std::string msg = diag_message(r, "E424");
+    REQUIRE_FALSE(msg.empty());
+    CHECK(msg.find("closest:") != std::string::npos);
+    CHECK(msg.find("tone(Number)") != std::string::npos);
+    CHECK(msg.find("not coercible to Number") != std::string::npos);
+    CHECK(msg.find("argument 1") != std::string::npos);
+}
+
+// -----------------------------------------------------------------------------
+// §10 — hot-swap determinism with overloaded names. Per the Phase-4 as-built
+// reframe, hot-swap is a fresh atomic recompilation, so determinism reduces to:
+// compiling the same overloaded program twice yields byte-identical bytecode.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("overload fn: recompiling an overloaded program is deterministic",
+          "[overload]") {
+    const char* src = R"(
+        fn tone(f: Number)   -> sine(f)
+        fn tone(p: Pattern)  -> saw(220)
+        fn tone(a, b)        -> tri(a + b)
+        s = tone(110) + tone(110, 5) + (n"c4 e4" |> tone(@))
+        s |> out(@)
+    )";
+    auto a = akkado::compile(src);
+    auto b = akkado::compile(src);
+    REQUIRE(a.success);
+    REQUIRE(b.success);
+    // State IDs and emission order are deterministic, so the bytecode is
+    // byte-identical across recompiles — the property hot-swap relies on.
+    CHECK(a.bytecode == b.bytecode);
+    // All three overload bodies are reachable and distinct.
+    CHECK(has_opcode(a, cedar::Opcode::OSC_SIN));
+    CHECK(has_opcode(a, cedar::Opcode::OSC_SAW));
+    CHECK(has_opcode(a, cedar::Opcode::OSC_TRI));
 }

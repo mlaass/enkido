@@ -5,6 +5,11 @@
 > overloading, and the heavy pattern/higher-order handlers (`poly`/`each`/
 > `transport`/`midi`, plus aliases `legato`/`mono`/`each_voice`) now route
 > through the shared overload table as single-pattern `LegacyHandler` dispatch.
+> _Audited 2026-06-21 (`docs/audits/prd-builtin-overload-resolution_audit_2026-06-21.md`):
+> closed the midi `{Record}` enforcement gap (new **E425** — it had been
+> decorative), added the §9.1 overload-shadowing warning (**W171**), and surfaced
+> the §4.4 closest-candidate line in the user-fn no-match diagnostic; 5 new
+> `[overload]` tests, full suite green._
 > Spun out of
 > `prd-compiler-type-system.md` ("Phase 4 / Deferred"), which shipped the
 > `ValueType`/`TypedValue` foundation but explicitly deferred overload

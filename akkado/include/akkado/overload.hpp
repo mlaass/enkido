@@ -227,4 +227,16 @@ ResolveResult resolve(const std::vector<DispatchPattern>& patterns,
 std::size_t closest_candidate(const std::vector<DispatchPattern>& patterns,
                               const std::vector<ArgDescriptor>& args);
 
+/// True iff every argument tuple accepted by `later` is also accepted by
+/// `earlier` — i.e. `earlier`, declared first, makes `later` unreachable
+/// (PRD §9 edge case 1). Decided over the ValueType lattice via `matches_arg`,
+/// so coercion (Number→Signal) and the polyphonic-pattern escape are both
+/// honoured: a `Signal`/`Any` earlier slot does NOT subsume a `Pattern` later
+/// slot, because a polyphonic pattern escapes the former and reaches the
+/// latter. Conservative — only returns true when shadowing is provable, so the
+/// caller can warn on by default without false positives. Patterns carrying a
+/// rest/variadic param (unbounded arity) should be excluded by the caller.
+bool pattern_subsumes(const DispatchPattern& earlier,
+                      const DispatchPattern& later);
+
 }  // namespace akkado

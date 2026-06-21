@@ -1096,20 +1096,41 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
         if (i) passed += ", ";
         passed += value_type_name(args[i].type);
     }
+    auto signature = [&](const UserFunctionInfo& uf) {
+        std::string s = "(";
+        for (std::size_t j = 0; j < uf.params.size(); ++j) {
+            if (j) s += ", ";
+            s += param_value_type_name(uf.params[j].annotated_type);
+        }
+        s += ")";
+        return s;
+    };
     std::string candidates;
     for (std::size_t i = 0; i < overloads.size(); ++i) {
         if (i) candidates += ", ";
-        candidates += "(";
-        const auto& ps = overloads[i].params;
-        for (std::size_t j = 0; j < ps.size(); ++j) {
-            if (j) candidates += ", ";
-            candidates += param_value_type_name(ps[j].annotated_type);
-        }
-        candidates += ")";
+        candidates += signature(overloads[i]);
     }
+
+    // Closest candidate (PRD §4.4 / §5.3): resolve() left closest_index at the
+    // fewest-failing-slots overload and populated `failures`. Surface it with
+    // the first non-coercible slot so the message points at the exact mismatch
+    // instead of leaving the user to scan the candidate list.
+    std::string closest;
+    if (r.pattern && r.closest_index < overloads.size()) {
+        closest = "; closest: " + primary.name + signature(overloads[r.closest_index]);
+        if (!r.failures.empty()) {
+            const SlotFailure& f = r.failures.front();
+            const ValueType got = f.index < args.size() ? args[f.index].type
+                                                         : ValueType::Void;
+            closest += " — argument " + std::to_string(f.index + 1) + " (" +
+                       value_type_name(got) + ") is not coercible to " +
+                       param_value_type_name(f.expected);
+        }
+    }
+
     error("E424",
           primary.name + "() has no overload matching argument types (" +
-          passed + "); candidates: " + candidates,
+          passed + "); candidates: " + candidates + closest,
           n.location);
     if (node_types_.find(node) == node_types_.end()) {
         node_types_[node] = TypedValue::error_val();

@@ -297,6 +297,44 @@ std::size_t closest_candidate(const std::vector<DispatchPattern>& patterns,
     return best_index;
 }
 
+bool pattern_subsumes(const DispatchPattern& earlier,
+                      const DispatchPattern& later) {
+    // Arity containment: every call `later` accepts (arity in
+    // [later.required_count, later.params.size()]) must fall inside earlier's
+    // accepted range. If not, some arity reaches `later` but not `earlier`.
+    if (earlier.required_count > later.required_count) return false;
+    if (earlier.params.size() < later.params.size()) return false;
+
+    // Per-slot subsumption decided by concrete witnesses over the ValueType
+    // lattice. For each type a witness "matches later but not earlier" proves a
+    // value escapes earlier — so earlier does not subsume. The polyphonic
+    // Pattern witness mirrors the binding rule (matches_arg): such a value skips
+    // a Signal/Any slot but binds a Pattern slot, so it correctly defeats
+    // `(Signal)`-shadows-`(Pattern)`.
+    static constexpr ValueType kTypes[] = {
+        ValueType::Number, ValueType::Signal, ValueType::Pattern,
+        ValueType::Record, ValueType::Array,  ValueType::String,
+        ValueType::Function, ValueType::Stream, ValueType::StateCell,
+    };
+    auto slot_subsumed = [](const ArgMatcher& e, const ArgMatcher& l) {
+        for (ValueType vt : kTypes) {
+            ArgDescriptor w;
+            w.type = vt;
+            if (matches_arg(l, w) && !matches_arg(e, w)) return false;
+        }
+        ArgDescriptor poly;
+        poly.type = ValueType::Pattern;
+        poly.polyphonic_scalar_incompatible = true;
+        if (matches_arg(l, poly) && !matches_arg(e, poly)) return false;
+        return true;
+    };
+
+    for (std::size_t i = 0; i < later.params.size(); ++i) {
+        if (!slot_subsumed(earlier.params[i], later.params[i])) return false;
+    }
+    return true;
+}
+
 ResolveResult resolve(const std::vector<DispatchPattern>& patterns,
                       const std::vector<ArgDescriptor>& args) {
     ResolveResult result;

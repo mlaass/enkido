@@ -84,6 +84,11 @@ private:
     // infinite-loop codegen's per-call-site body inlining.
     void detect_recursive_functions();
 
+    // Pass 2.8: Warn (W171) when an earlier user-fn overload coerce-shadows a
+    // later one, making it unreachable (PRD prd-builtin-overload-resolution
+    // §9 edge case 1). Pure diagnostic — never changes resolution.
+    void detect_shadowed_overloads();
+
     // Pass 3: Resolve function calls and validate
     void resolve_and_validate(NodeIndex node);
 
@@ -165,6 +170,7 @@ private:
     void error(const std::string& message, SourceLocation loc);
     void error(const std::string& code, const std::string& message, SourceLocation loc);
     void warning(const std::string& message, SourceLocation loc);
+    void warning(const std::string& code, const std::string& message, SourceLocation loc);
 
     // Hide definitions from namespaced modules (between pass 1 and pass 2)
     void hide_namespaced_definitions();

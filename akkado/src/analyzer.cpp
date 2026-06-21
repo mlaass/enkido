@@ -1,5 +1,6 @@
 #include "akkado/analyzer.hpp"
 #include "akkado/builtins.hpp"
+#include "akkado/overload.hpp"
 #include "akkado/source_map.hpp"
 #include <algorithm>
 #include <functional>
@@ -87,6 +88,9 @@ AnalysisResult SemanticAnalyzer::analyze(const Ast& ast, std::string_view filena
 
     // Pass 2.7: Reject recursive `fn` definitions (would infinite-loop codegen)
     detect_recursive_functions();
+
+    // Pass 2.8: Warn on overloads made unreachable by an earlier coercing one.
+    detect_shadowed_overloads();
 
     // Pass 3: Resolve and validate function calls
     resolve_and_validate(new_root);
@@ -966,6 +970,72 @@ void SemanticAnalyzer::detect_recursive_functions() {
 
     for (const auto& [name, e] : fns) {
         if (color[name] == White) dfs(name);
+    }
+}
+
+void SemanticAnalyzer::detect_shadowed_overloads() {
+    // PRD prd-builtin-overload-resolution §9 edge case 1: when an earlier
+    // overload coerce-matches everything a later overload would (e.g. a
+    // `: Signal` form declared before a `: Number` form — Number coerces to
+    // Signal), the later form is unreachable. Per the live-coding "warn, don't
+    // fail" philosophy this is W171, emitted on by default; resolution is never
+    // changed (first-match still wins).
+    auto build_pattern = [](const UserFunctionInfo& uf) {
+        DispatchPattern p;
+        for (const auto& param : uf.params) {
+            ArgMatcher m;
+            if (param.annotated_type == ParamValueType::Any) {
+                m.kind = ArgMatcher::Kind::Any;
+            } else {
+                m.kind = ArgMatcher::Kind::Type;
+                m.type = param.annotated_type;
+            }
+            p.params.push_back(m);
+            const bool required = !param.default_value.has_value() &&
+                                  !param.default_string.has_value() &&
+                                  param.default_node == NULL_NODE && !param.is_rest;
+            if (required) p.required_count++;
+        }
+        return p;
+    };
+    auto signature = [](const UserFunctionInfo& uf) {
+        std::string s = "(";
+        for (std::size_t i = 0; i < uf.params.size(); ++i) {
+            if (i) s += ", ";
+            s += param_value_type_name(uf.params[i].annotated_type);
+        }
+        s += ")";
+        return s;
+    };
+
+    for (const auto& [hash, sym] : symbols_.globals()) {
+        if (sym.kind != SymbolKind::UserFunction || sym.overloads.size() < 2) continue;
+        const auto& ovs = sym.overloads;
+        for (std::size_t later = 1; later < ovs.size(); ++later) {
+            // Unbounded-arity (rest) overloads aren't decided by the lattice.
+            if (ovs[later].has_rest_param) continue;
+            // Only warn on user-authored code — a stdlib-only set isn't
+            // user-actionable. (A user def clears the stdlib set, so a mixed
+            // set never reaches here; this guard handles the pure-stdlib case.)
+            if (ovs[later].is_stdlib) continue;
+            const DispatchPattern lp = build_pattern(ovs[later]);
+            for (std::size_t earlier = 0; earlier < later; ++earlier) {
+                if (ovs[earlier].has_rest_param || ovs[earlier].is_stdlib) continue;
+                if (!pattern_subsumes(build_pattern(ovs[earlier]), lp)) continue;
+                SourceLocation loc{};
+                if (output_arena_.valid(ovs[later].def_node)) {
+                    loc = output_arena_[ovs[later].def_node].location;
+                }
+                warning("W171",
+                        "Overload '" + sym.name + signature(ovs[later]) +
+                            "' is unreachable: an earlier overload '" +
+                            sym.name + signature(ovs[earlier]) +
+                            "' already matches everything it would (declare the "
+                            "more specific form first).",
+                        loc);
+                break;  // one warning per shadowed overload
+            }
+        }
     }
 }
 
@@ -2582,9 +2652,14 @@ void SemanticAnalyzer::error(const std::string& code, const std::string& message
 }
 
 void SemanticAnalyzer::warning(const std::string& message, SourceLocation loc) {
+    warning("W000", message, loc);
+}
+
+void SemanticAnalyzer::warning(const std::string& code, const std::string& message,
+                               SourceLocation loc) {
     Diagnostic diag;
     diag.severity = Severity::Warning;
-    diag.code = "W000";
+    diag.code = code;
     diag.message = message;
     diag.filename = filename_;
     diag.location = loc;
