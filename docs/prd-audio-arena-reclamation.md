@@ -1,7 +1,9 @@
-> **Status: NOT STARTED** — Follow-up to
+> **Status: DONE — all three phases shipped; drift-fuzz regression guard runs
+> a single persistent VM clean to 10k iters with zero arena exhaustions
+> (2026-06-22).** Follow-up to
 > `docs/prd-memory-integrity-tests.md` (§2.2 scoped arena reclamation out of
 > the test-infra harness). The drift fuzz (Leg 4) surfaced the bug this PRD
-> fixes and will become its regression test.
+> fixes and is now its regression test.
 
 # PRD: Audio Arena Reclamation
 
