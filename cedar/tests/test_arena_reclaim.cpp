@@ -102,6 +102,21 @@ TEST_CASE("AudioArena free list: cleared on reset", "[arena][reclaim]") {
     REQUIRE(arena.bytes_used() > 0);
 }
 
+TEST_CASE("AudioArena counts exhaustion (failed allocations)", "[arena][reclaim]") {
+    AudioArena arena(4096);  // 4 KB
+
+    REQUIRE(arena.exhaustion_count() == 0);
+    REQUIRE(arena.allocate(8) != nullptr);     // fits
+    REQUIRE(arena.exhaustion_count() == 0);
+    REQUIRE(arena.allocate(100000) == nullptr); // way over capacity → exhaustion
+    REQUIRE(arena.exhaustion_count() == 1);
+    REQUIRE(arena.allocate(100000) == nullptr);
+    REQUIRE(arena.exhaustion_count() == 2);
+
+    arena.reset();
+    REQUIRE(arena.exhaustion_count() == 0);  // reset clears the count
+}
+
 TEST_CASE("DSP state release() returns buffers to the arena for reuse", "[arena][reclaim]") {
     AudioArena arena(1u << 20);
 

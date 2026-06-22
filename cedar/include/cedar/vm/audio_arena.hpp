@@ -86,6 +86,7 @@ public:
         : memory_(other.memory_)
         , size_(other.size_)
         , offset_(other.offset_)
+        , exhaustion_count_(other.exhaustion_count_)
     {
         // Free-list heads point into memory_, which moves with us unchanged.
         std::memcpy(free_lists_, other.free_lists_, sizeof(free_lists_));
@@ -109,6 +110,7 @@ public:
             memory_ = other.memory_;
             size_ = other.size_;
             offset_ = other.offset_;
+            exhaustion_count_ = other.exhaustion_count_;
             std::memcpy(free_lists_, other.free_lists_, sizeof(free_lists_));
             std::memcpy(free_count_, other.free_count_, sizeof(free_count_));
             other.memory_ = nullptr;
@@ -169,6 +171,7 @@ public:
     // Call when resetting the entire state pool.
     void reset() noexcept {
         offset_ = 0;
+        exhaustion_count_ = 0;
         for (int c = 0; c <= MAX_CLASS; ++c) { free_lists_[c] = nullptr; free_count_[c] = 0; }
         // Optionally zero memory for clean state
         if (memory_) {
@@ -184,6 +187,10 @@ public:
     [[nodiscard]] std::size_t bytes_used() const noexcept { return offset_; }
     [[nodiscard]] std::size_t available() const noexcept { return size_ - offset_; }
     [[nodiscard]] bool is_valid() const noexcept { return memory_ != nullptr; }
+    // Count of allocate() calls that failed (no free block + no bump room).
+    // Stays 0 while reclamation keeps the working set within the arena; a
+    // non-zero value is the exhaustion the drift fuzz guards against.
+    [[nodiscard]] std::size_t exhaustion_count() const noexcept { return exhaustion_count_; }
 
     // Check if a pointer belongs to this arena
     [[nodiscard]] bool owns(const float* ptr) const noexcept {
@@ -222,7 +229,8 @@ private:
         const std::size_t bytes_needed = floats * sizeof(float);
         const std::size_t aligned_offset = (offset_ + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
         if (aligned_offset + bytes_needed > size_) {
-            return nullptr;  // arena exhausted
+            ++exhaustion_count_;  // no free block AND no bump room — true exhaustion
+            return nullptr;
         }
         float* ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(memory_) + aligned_offset);
         offset_ = aligned_offset + bytes_needed;
@@ -250,6 +258,7 @@ private:
     float* memory_ = nullptr;
     std::size_t size_ = 0;
     std::size_t offset_ = 0;
+    std::size_t exhaustion_count_ = 0;
     FreeNode* free_lists_[MAX_CLASS + 1] = {};
     std::uint16_t free_count_[MAX_CLASS + 1] = {};
 };

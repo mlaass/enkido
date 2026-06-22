@@ -582,6 +582,9 @@ public:
     // the working set of live programs stabilises (prd-audio-arena-reclamation
     // §3.6) — the bounded-memory signal the drift fuzz asserts on.
     [[nodiscard]] std::size_t arena_bytes_used() const { return audio_arena_.bytes_used(); }
+    // Number of arena allocations that failed (exhaustion). Stays 0 while
+    // reclamation keeps the working set bounded; the drift fuzz asserts on it.
+    [[nodiscard]] std::size_t arena_exhaustion_count() const { return audio_arena_.exhaustion_count(); }
     [[nodiscard]] EnvMap& env_map() { return env_map_; }
 
 private:

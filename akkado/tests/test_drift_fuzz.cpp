@@ -178,17 +178,14 @@ TEST_CASE("drift fuzz: bounded RSS over mutating recompiles", "[drift_fuzz]") {
     };
     auto vm = make_vm();
 
-    // Programs are hot-swapped into one VM to exercise the swap/state-rebind
-    // path, but the VM is recreated every VM_SESSION_SWAPS successful loads to
-    // model a bounded live-coding *session*. This keeps the test on its target
-    // — compiler + hot-swap MEMORY drift — rather than tripping over a separate
-    // cedar limitation: a single VM hot-swapped through hundreds of structurally
-    // distinct FX programs exhausts the audio arena (per-program reverb/delay
-    // buffers are not reclaimed on state GC), which surfaces as a null buffer in
-    // an FX opcode. That arena-reclamation gap is filed separately per the PRD's
-    // test-infra-only scope (§2.2); recreating the VM bounds it to one session.
-    constexpr int VM_SESSION_SWAPS = 12;
-    int session_loads = 0;
+    // Programs are hot-swapped into ONE persistent VM for the whole run — no
+    // periodic recreation. This is the regression guard for
+    // prd-audio-arena-reclamation: before that fix a single VM hot-swapped
+    // through ~150+ structurally distinct FX programs exhausted the audio arena
+    // (per-program reverb/delay buffers were never reclaimed on state GC) and
+    // crashed on a null FX buffer. With reclamation the arena's bump high-water
+    // (arena_bytes_used) plateaus instead of climbing to exhaustion; we assert
+    // that plateau below.
 
     // Retain the CompileResult + its sequence backing for the last few loaded
     // programs: set_crossfade_blocks(0) still micro-crossfades structural
@@ -202,6 +199,14 @@ TEST_CASE("drift fuzz: bounded RSS over mutating recompiles", "[drift_fuzz]") {
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     std::vector<std::pair<int, std::size_t>> rss_samples;  // (iter, rss_kb)
     std::size_t peak_kb = 0;
+
+    // Audio-arena bump high-water across the run. With reclamation this
+    // plateaus; without it (the bug) it climbs monotonically to the 32 MB
+    // arena ceiling and then degrades FX to passthrough. Sampled every loaded
+    // program (after its blocks run) so the peak reflects steady-state churn.
+    std::size_t peak_arena_bytes = 0;
+    std::size_t arena_bytes_first_half_peak = 0;  // peak over the first half of loads
+    std::size_t arena_bytes_second_half_peak = 0; // peak over the second half
 
     // Sample ~100 points regardless of iteration count.
     const int sample_every = std::max(1, iters / 100);
@@ -258,10 +263,13 @@ TEST_CASE("drift fuzz: bounded RSS over mutating recompiles", "[drift_fuzz]") {
                     }
                     while (live.size() > 3) live.pop_front();
 
-                    if (++session_loads >= VM_SESSION_SWAPS) {
-                        vm = make_vm();   // fresh session: frees the arena
-                        live.clear();
-                        session_loads = 0;
+                    // Sample the arena high-water after this program has run.
+                    const std::size_t ab = vm->arena_bytes_used();
+                    if (ab > peak_arena_bytes) peak_arena_bytes = ab;
+                    if (i < iters / 2) {
+                        if (ab > arena_bytes_first_half_peak) arena_bytes_first_half_peak = ab;
+                    } else {
+                        if (ab > arena_bytes_second_half_peak) arena_bytes_second_half_peak = ab;
                     }
                 }
             }
@@ -346,5 +354,37 @@ TEST_CASE("drift fuzz: bounded RSS over mutating recompiles", "[drift_fuzz]") {
                           "valid measurement (need >= ~8000 iters; this is the "
                           "nightly/pre-release rigor, see PRD §6.2)");
         }
+    }
+
+    // --- bounded audio arena (prd-audio-arena-reclamation regression) --------
+    // The headline guard. A single persistent VM hot-swapped through many
+    // structurally distinct FX programs must NOT exhaust the audio arena.
+    // Before reclamation, per-program reverb/delay buffers were never reclaimed
+    // on state GC, so the bump high-water climbed monotonically to the 32 MB
+    // ceiling; the next allocation returned null and an FX opcode dereferenced
+    // it (SIGSEGV at ~155 swaps). With reclamation each evicted program returns
+    // its buffers to the free list and the high-water plateaus (~8.6 MB at 1.5k
+    // iters, ~11.4 MB at 10k — a slow running-max creep as larger programs
+    // appear, NOT cumulative drift), so allocations never fail.
+    const std::size_t exhaustions = vm->arena_exhaustion_count();
+    UNSCOPED_INFO("arena exhaustions=" << exhaustions
+                  << " peak_bytes=" << peak_arena_bytes
+                  << " first_half_peak=" << arena_bytes_first_half_peak
+                  << " second_half_peak=" << arena_bytes_second_half_peak
+                  << " capacity=" << cedar::AudioArena::DEFAULT_SIZE
+                  << " loaded_ok=" << loaded_ok);
+
+    // Primary, scale-insensitive check: zero failed allocations across the run.
+    // Directly asserts the bug is fixed without a magic byte threshold — the
+    // running-max footprint creeps with iters but never reaches exhaustion.
+    CHECK(exhaustions == 0);
+
+    if (loaded_ok > 0) {
+        // Secondary defense-in-depth: even short of outright exhaustion, the
+        // high-water must stay well under the ceiling. 3/4 of the arena (24 MB)
+        // sits far above the observed plateau yet below the ~32 MB the bug
+        // reached, catching a partial regression that climbs without (yet)
+        // failing an allocation.
+        CHECK(peak_arena_bytes < cedar::AudioArena::DEFAULT_SIZE * 3 / 4);
     }
 }
