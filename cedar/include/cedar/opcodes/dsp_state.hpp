@@ -181,12 +181,27 @@ struct DelayState {
         float* new_buffer_l = buffer[0] && buffer_size >= new_size ? buffer[0] : arena->allocate(new_size);
         float* new_buffer_r = buffer[1] && buffer_size >= new_size ? buffer[1] : arena->allocate(new_size);
         if (new_buffer_l && new_buffer_r) {
+            // Grow-path reclaim: a reallocation to a larger size returns the
+            // old (smaller) blocks to the arena free list before adopting the
+            // new ones. prd-audio-arena-reclamation §3.4.
+            if (arena) {
+                if (buffer[0] && buffer[0] != new_buffer_l) arena->release(buffer[0], buffer_size);
+                if (buffer[1] && buffer[1] != new_buffer_r) arena->release(buffer[1], buffer_size);
+            }
             buffer[0] = new_buffer_l;
             buffer[1] = new_buffer_r;
             buffer_size = new_size;
             write_pos[0] = 0;
             write_pos[1] = 0;
         }
+    }
+
+    [[nodiscard]] bool buffers_ready() const { return buffer[0] && buffer[1]; }
+
+    void release(AudioArena& arena) {
+        if (buffer[0]) { arena.release(buffer[0], buffer_size); buffer[0] = nullptr; }
+        if (buffer[1]) { arena.release(buffer[1], buffer_size); buffer[1] = nullptr; }
+        buffer_size = 0;
     }
 
     // Reset both buffers to silence (for seek)
@@ -433,6 +448,14 @@ struct CombFilterState {
         if (!buffer[1]) buffer[1] = arena->allocate(MAX_COMB_SAMPLES);
     }
 
+    [[nodiscard]] bool buffers_ready() const { return buffer[0] && buffer[1]; }
+
+    void release(AudioArena& arena) {
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) { arena.release(buffer[ch], MAX_COMB_SAMPLES); buffer[ch] = nullptr; }
+        }
+    }
+
     void reset() {
         for (std::size_t ch = 0; ch < 2; ++ch) {
             if (buffer[ch]) {
@@ -461,6 +484,14 @@ struct FlangerState {
         if (!buffer[1]) buffer[1] = arena->allocate(MAX_FLANGER_SAMPLES);
     }
 
+    [[nodiscard]] bool buffers_ready() const { return buffer[0] && buffer[1]; }
+
+    void release(AudioArena& arena) {
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) { arena.release(buffer[ch], MAX_FLANGER_SAMPLES); buffer[ch] = nullptr; }
+        }
+    }
+
     void reset() {
         for (std::size_t ch = 0; ch < 2; ++ch) {
             if (buffer[ch]) {
@@ -486,6 +517,14 @@ struct ChorusState {
         if (!arena) return;
         if (!buffer[0]) buffer[0] = arena->allocate(MAX_CHORUS_SAMPLES);
         if (!buffer[1]) buffer[1] = arena->allocate(MAX_CHORUS_SAMPLES);
+    }
+
+    [[nodiscard]] bool buffers_ready() const { return buffer[0] && buffer[1]; }
+
+    void release(AudioArena& arena) {
+        for (std::size_t ch = 0; ch < 2; ++ch) {
+            if (buffer[ch]) { arena.release(buffer[ch], MAX_CHORUS_SAMPLES); buffer[ch] = nullptr; }
+        }
     }
 
     void reset() {
@@ -649,6 +688,13 @@ struct SoundFontVoiceState {
         }
     }
 
+    static constexpr std::size_t VOICE_FLOATS =
+        (sizeof(SFVoice) * MAX_VOICES + sizeof(float) - 1) / sizeof(float);
+    void release(AudioArena& arena) {
+        if (voices) { arena.release(reinterpret_cast<float*>(voices), VOICE_FLOATS); voices = nullptr; }
+        num_voices = 0;
+    }
+
     // Find a free voice, or steal the quietest releasing voice
     SFVoice* allocate_voice(std::uint8_t /*note*/) {
         if (!voices) return nullptr;
@@ -734,6 +780,13 @@ struct SFVoiceState {
                 new (&subzones[i]) SFVoice{};
             }
         }
+    }
+
+    static constexpr std::size_t VOICE_FLOATS =
+        (sizeof(SFVoice) * MAX_ZONES_PER_NOTE + sizeof(float) - 1) / sizeof(float);
+    void release(AudioArena& arena) {
+        if (subzones) { arena.release(reinterpret_cast<float*>(subzones), VOICE_FLOATS); subzones = nullptr; }
+        active_zone_count = 0;
     }
 };
 #endif // CEDAR_NO_SOUNDFONT
@@ -856,6 +909,25 @@ struct FreeverbState {
         }
     }
 
+    [[nodiscard]] bool buffers_ready() const {
+        for (std::size_t c = 0; c < 2; ++c) {
+            for (std::size_t i = 0; i < NUM_COMBS; ++i) if (!comb_buffers[c][i]) return false;
+            for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) if (!allpass_buffers[c][i]) return false;
+        }
+        return true;
+    }
+
+    void release(AudioArena& arena) {
+        for (std::size_t c = 0; c < 2; ++c) {
+            for (std::size_t i = 0; i < NUM_COMBS; ++i) {
+                if (comb_buffers[c][i]) { arena.release(comb_buffers[c][i], COMB_SIZES_LR[c][i]); comb_buffers[c][i] = nullptr; }
+            }
+            for (std::size_t i = 0; i < NUM_ALLPASSES; ++i) {
+                if (allpass_buffers[c][i]) { arena.release(allpass_buffers[c][i], ALLPASS_SIZES_LR[c][i]); allpass_buffers[c][i] = nullptr; }
+            }
+        }
+    }
+
     void reset() {
         for (std::size_t c = 0; c < 2; ++c) {
             for (std::size_t i = 0; i < NUM_COMBS; ++i) {
@@ -946,6 +1018,30 @@ struct DattorroState {
         }
     }
 
+    [[nodiscard]] bool buffers_ready() const {
+        for (std::size_t c = 0; c < 2; ++c) {
+            if (!predelay_buffer[c]) return false;
+            for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) if (!input_diffusers[c][i]) return false;
+        }
+        for (std::size_t i = 0; i < 2; ++i) {
+            if (!decay_diffusers[i] || !delays[i]) return false;
+        }
+        return true;
+    }
+
+    void release(AudioArena& arena) {
+        for (std::size_t c = 0; c < 2; ++c) {
+            if (predelay_buffer[c]) { arena.release(predelay_buffer[c], PREDELAY_SIZE); predelay_buffer[c] = nullptr; }
+            for (std::size_t i = 0; i < NUM_INPUT_DIFFUSERS; ++i) {
+                if (input_diffusers[c][i]) { arena.release(input_diffusers[c][i], INPUT_DIFFUSER_SIZES[i]); input_diffusers[c][i] = nullptr; }
+            }
+        }
+        for (std::size_t i = 0; i < 2; ++i) {
+            if (decay_diffusers[i]) { arena.release(decay_diffusers[i], DECAY_DIFFUSER_SIZES[i]); decay_diffusers[i] = nullptr; }
+            if (delays[i]) { arena.release(delays[i], MAX_DELAY_SIZE); delays[i] = nullptr; }
+        }
+    }
+
     void reset() {
         for (std::size_t c = 0; c < 2; ++c) {
             if (predelay_buffer[c]) {
@@ -1004,6 +1100,17 @@ struct FDNState {
         }
     }
 
+    [[nodiscard]] bool buffers_ready() const {
+        for (std::size_t i = 0; i < NUM_DELAYS; ++i) if (!delay_buffers[i]) return false;
+        return true;
+    }
+
+    void release(AudioArena& arena) {
+        for (std::size_t i = 0; i < NUM_DELAYS; ++i) {
+            if (delay_buffers[i]) { arena.release(delay_buffers[i], MAX_DELAY_SIZE); delay_buffers[i] = nullptr; }
+        }
+    }
+
     void reset() {
         for (std::size_t i = 0; i < NUM_DELAYS; ++i) {
             if (delay_buffers[i]) {
@@ -1050,11 +1157,23 @@ struct PingPongDelayState {
         float* new_buffer_left = arena->allocate(new_size);
         float* new_buffer_right = arena->allocate(new_size);
         if (new_buffer_left && new_buffer_right) {
+            // Grow-path reclaim (prd-audio-arena-reclamation §3.4): hand the
+            // old, smaller blocks back before adopting the new ones.
+            if (buffer_left) arena->release(buffer_left, buffer_size);
+            if (buffer_right) arena->release(buffer_right, buffer_size);
             buffer_left = new_buffer_left;
             buffer_right = new_buffer_right;
             buffer_size = new_size;
             write_pos = 0;
         }
+    }
+
+    [[nodiscard]] bool buffers_ready() const { return buffer_left && buffer_right; }
+
+    void release(AudioArena& arena) {
+        if (buffer_left) { arena.release(buffer_left, buffer_size); buffer_left = nullptr; }
+        if (buffer_right) { arena.release(buffer_right, buffer_size); buffer_right = nullptr; }
+        buffer_size = 0;
     }
 
     void reset() {
@@ -1166,6 +1285,12 @@ struct PolyAllocState {
                 new (&voices[i]) PolyVoice{};
             }
         }
+    }
+
+    static constexpr std::size_t VOICE_FLOATS =
+        (sizeof(PolyVoice) * MAX_VOICES + sizeof(float) - 1) / sizeof(float);
+    void release(AudioArena& arena) {
+        if (voices) { arena.release(reinterpret_cast<float*>(voices), VOICE_FLOATS); voices = nullptr; }
     }
 
     std::uint8_t active_voice_count() const {
@@ -1522,6 +1647,14 @@ struct FFTProbeState {
     // Write a block of samples. Triggers FFT when accumulation buffer is full.
     // Implementation in cedar/src/dsp/fft.cpp
     void write_block(const float* samples, std::size_t count);
+
+    void release(AudioArena& arena) {
+        if (input_buffer)  { arena.release(input_buffer, MAX_FFT_SIZE); input_buffer = nullptr; }
+        if (magnitudes_db) { arena.release(magnitudes_db, MAX_BINS); magnitudes_db = nullptr; }
+        if (real_bins)     { arena.release(real_bins, MAX_BINS); real_bins = nullptr; }
+        if (imag_bins)     { arena.release(imag_bins, MAX_BINS); imag_bins = nullptr; }
+        initialized = false;
+    }
 };
 #endif // CEDAR_NO_FFT
 

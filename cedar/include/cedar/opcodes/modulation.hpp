@@ -6,6 +6,7 @@
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
 #include "drywet.hpp"
+#include "../util/log_once.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -52,11 +53,9 @@ inline void op_effect_comb(ExecutionContext& ctx, const Instruction& inst) {
     }
 
     state.ensure_buffer(ctx.arena);
-    if (!state.buffer[0] || !state.buffer[1]) {
-        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            out_l[i] = 0.0f;
-            out_r[i] = 0.0f;
-        }
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: comb → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
         return;
     }
 
@@ -151,6 +150,11 @@ inline void op_effect_flanger(ExecutionContext& ctx, const Instruction& inst) {
 
     // Ensure both per-channel buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: flanger → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
+        return;
+    }
 
     float inv_sample_rate = 1.0f / ctx.sample_rate;
 
@@ -239,6 +243,11 @@ inline void op_effect_chorus(ExecutionContext& ctx, const Instruction& inst) {
     auto& state = ctx.states->get_or_create<ChorusState>(inst.state_id);
 
     state.ensure_buffers(ctx.arena);
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: chorus → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
+        return;
+    }
 
     // Extended params: ext[0] = lfo_phase (turns, default 0.25),
     //                  ext[1] = dry (default 1.0), ext[2] = wet (default 0.5).

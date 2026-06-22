@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../dsp/constants.hpp"
+#include "../util/log_once.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
@@ -17,10 +18,18 @@ namespace cedar {
 // Guarantees zero heap allocation during audio processing.
 //
 // Design:
-// - Simple bump allocator with 32-byte alignment for SIMD
-// - Reset-based deallocation (no individual free)
-// - Owned by StatePool and passed to states that need buffer memory
+// - Bump allocator with 32-byte alignment for SIMD, plus a size-classed,
+//   allocation-free free list so evicted DSP states can return their buffers
+//   and a later same-class allocation reuses them (prd-audio-arena-reclamation).
+//   Without this the bump pointer only grows; a long live-coding session of
+//   structurally distinct hot-swaps eventually exhausts the arena.
+// - reset() rewinds the bump pointer AND clears the free lists.
+// - Owned by StatePool and passed to states that need buffer memory.
 //
+// Free list: blocks are rounded up to a power-of-two float count (size class);
+// allocate() bumps the rounded size so every class-C block is interchangeable,
+// and release() pushes the block onto its class via an intrusive next-pointer
+// stored in the block's own memory (zero heap). Reused blocks are re-zeroed.
 class AudioArena {
 public:
     // Default size: 32MB (enough for ~8 large reverbs + many delays)
@@ -78,9 +87,14 @@ public:
         , size_(other.size_)
         , offset_(other.offset_)
     {
+        // Free-list heads point into memory_, which moves with us unchanged.
+        std::memcpy(free_lists_, other.free_lists_, sizeof(free_lists_));
+        std::memcpy(free_count_, other.free_count_, sizeof(free_count_));
         other.memory_ = nullptr;
         other.size_ = 0;
         other.offset_ = 0;
+        std::memset(other.free_lists_, 0, sizeof(other.free_lists_));
+        std::memset(other.free_count_, 0, sizeof(other.free_count_));
     }
 
     AudioArena& operator=(AudioArena&& other) noexcept {
@@ -95,41 +109,67 @@ public:
             memory_ = other.memory_;
             size_ = other.size_;
             offset_ = other.offset_;
+            std::memcpy(free_lists_, other.free_lists_, sizeof(free_lists_));
+            std::memcpy(free_count_, other.free_count_, sizeof(free_count_));
             other.memory_ = nullptr;
             other.size_ = 0;
             other.offset_ = 0;
+            std::memset(other.free_lists_, 0, sizeof(other.free_lists_));
+            std::memset(other.free_count_, 0, sizeof(other.free_count_));
         }
         return *this;
     }
 
-    // Allocate a buffer of N floats from the arena
-    // Returns nullptr if allocation fails (arena exhausted)
+    // Allocate a buffer of N floats from the arena.
+    // Returns nullptr if allocation fails (arena exhausted).
+    //
+    // Pooled sizes (n <= MAX_CLASS floats) are rounded up to a power-of-two
+    // size class and satisfied from the free list when a same-class block is
+    // available (re-zeroed on reuse); otherwise bump-allocated at the rounded
+    // size so freed class-C blocks are interchangeable. Sizes larger than any
+    // class fall back to an exact, un-pooled bump allocation (legacy behavior).
     [[nodiscard]] float* allocate(std::size_t num_floats) noexcept {
         if (!memory_) return nullptr;
 
-        std::size_t bytes_needed = num_floats * sizeof(float);
-
-        // Align offset to 32 bytes
-        std::size_t aligned_offset = (offset_ + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
-
-        if (aligned_offset + bytes_needed > size_) {
-            // Arena exhausted
-            return nullptr;
+        const int cls = size_class(num_floats);
+        if (cls <= MAX_CLASS) {
+            const std::size_t floats = std::size_t{1} << cls;
+            if (free_lists_[cls]) {
+                FreeNode* node = free_lists_[cls];
+                free_lists_[cls] = node->next;
+                --free_count_[cls];
+                std::memset(node, 0, floats * sizeof(float));  // re-zero on reuse
+                return reinterpret_cast<float*>(node);
+            }
+            return bump(floats);
         }
-
-        float* ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(memory_) + aligned_offset);
-        offset_ = aligned_offset + bytes_needed;
-
-        // Zero the allocated memory
-        std::memset(ptr, 0, bytes_needed);
-
-        return ptr;
+        return bump(num_floats);  // too big to pool: exact bump
     }
 
-    // Reset arena (invalidates all allocations)
-    // Call when resetting the entire state pool
+    // Return a previously-allocated block to its size-class free list so a
+    // later same-class allocate() reuses it. `num_floats` MUST be the value
+    // passed to allocate(). No-op on null. Free-list overflow (more than
+    // FREE_CAP_PER_CLASS blocks held for a class) drops the block — it stays in
+    // bump space until the next reset() — and logs once. Never frees to the OS.
+    void release(float* ptr, std::size_t num_floats) noexcept {
+        if (!ptr) return;
+        const int cls = size_class(num_floats);
+        if (cls > MAX_CLASS) return;  // un-pooled allocation: nothing to reclaim
+        if (free_count_[cls] >= FREE_CAP_PER_CLASS) {
+            CEDAR_LOG_ONCE("[CEDAR] audio arena free-list overflow (class %d): block dropped until reset\n", cls);
+            return;
+        }
+        FreeNode* node = reinterpret_cast<FreeNode*>(ptr);
+        node->next = free_lists_[cls];
+        free_lists_[cls] = node;
+        ++free_count_[cls];
+    }
+
+    // Reset arena (invalidates all allocations and clears the free lists).
+    // Call when resetting the entire state pool.
     void reset() noexcept {
         offset_ = 0;
+        for (int c = 0; c <= MAX_CLASS; ++c) { free_lists_[c] = nullptr; free_count_[c] = 0; }
         // Optionally zero memory for clean state
         if (memory_) {
             std::memset(memory_, 0, size_);
@@ -139,6 +179,9 @@ public:
     // Query methods
     [[nodiscard]] std::size_t capacity() const noexcept { return size_; }
     [[nodiscard]] std::size_t used() const noexcept { return offset_; }
+    // Bump high-water in bytes. With reclamation this plateaus once the free
+    // list satisfies reallocations — the bounded-memory signal (§3.6).
+    [[nodiscard]] std::size_t bytes_used() const noexcept { return offset_; }
     [[nodiscard]] std::size_t available() const noexcept { return size_ - offset_; }
     [[nodiscard]] bool is_valid() const noexcept { return memory_ != nullptr; }
 
@@ -174,9 +217,41 @@ public:
     }
 
 private:
+    // Raw bump allocation of `floats` floats (32-byte aligned, zeroed).
+    [[nodiscard]] float* bump(std::size_t floats) noexcept {
+        const std::size_t bytes_needed = floats * sizeof(float);
+        const std::size_t aligned_offset = (offset_ + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
+        if (aligned_offset + bytes_needed > size_) {
+            return nullptr;  // arena exhausted
+        }
+        float* ptr = reinterpret_cast<float*>(reinterpret_cast<char*>(memory_) + aligned_offset);
+        offset_ = aligned_offset + bytes_needed;
+        std::memset(ptr, 0, bytes_needed);
+        return ptr;
+    }
+
+    // Smallest size-class shift `s` with (1<<s) >= n, floored at MIN_CLASS.
+    // Returns a value > MAX_CLASS for sizes too large to pool (caller bumps
+    // exactly). The longest real allocation (a 960k-sample delay line) lands at
+    // class 20; anything larger is a test-only edge that stays un-pooled.
+    [[nodiscard]] static int size_class(std::size_t n) noexcept {
+        int s = MIN_CLASS;
+        while ((std::size_t{1} << s) < n) ++s;
+        return s;
+    }
+
+    // Intrusive free-list node stored in the freed block's own first bytes.
+    struct FreeNode { FreeNode* next; };
+
+    static constexpr int MIN_CLASS = 3;   // 8 floats (32 bytes) — holds a pointer
+    static constexpr int MAX_CLASS = 21;  // 2,097,152 floats — covers MAX_DELAY_SAMPLES (960k)
+    static constexpr std::size_t FREE_CAP_PER_CLASS = 256;
+
     float* memory_ = nullptr;
     std::size_t size_ = 0;
     std::size_t offset_ = 0;
+    FreeNode* free_lists_[MAX_CLASS + 1] = {};
+    std::uint16_t free_count_[MAX_CLASS + 1] = {};
 };
 
 // Buffer handle for states - just a pointer and size

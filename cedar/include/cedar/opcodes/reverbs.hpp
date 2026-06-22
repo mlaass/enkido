@@ -6,6 +6,7 @@
 #include "dsp_state.hpp"
 #include "dsp_utils.hpp"
 #include "drywet.hpp"
+#include "../util/log_once.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -56,6 +57,11 @@ inline void op_reverb_freeverb(ExecutionContext& ctx, const Instruction& inst) {
 
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: reverb(freeverb) → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
+        return;
+    }
 
     // ExtendedParams<2>: ext[0] = dry (default 1.0), ext[1] = wet (default 0.5)
     const auto* ext = ctx.states->get_if<ExtendedParams<2>>(ext_params_state_id(inst.state_id));
@@ -180,6 +186,11 @@ inline void op_reverb_dattorro(ExecutionContext& ctx, const Instruction& inst) {
 
     // Ensure buffers are allocated from arena
     state.ensure_buffers(ctx.arena);
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: reverb(dattorro) → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
+        return;
+    }
 
     // ExtendedParams<5> (prd-extended-params-migration §4.4):
     //   ext[0]=damping, ext[1]=mod_depth, ext[2]=lfo_rate (Hz),
@@ -393,6 +404,11 @@ inline void op_reverb_fdn(ExecutionContext& ctx, const Instruction& inst) {
     float size_mod = 0.5f + static_cast<float>(inst.rate) / 255.0f;  // 0.5-1.5
 
     state.ensure_buffers(ctx.arena);
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: reverb(fdn) → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
+        return;
+    }
 
     // Hadamard matrix coefficients (normalized 4x4)
     // H = 0.5 * [[1,1,1,1], [1,-1,1,-1], [1,1,-1,-1], [1,-1,-1,1]]

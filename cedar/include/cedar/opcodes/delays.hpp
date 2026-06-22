@@ -5,6 +5,7 @@
 #include "../dsp/constants.hpp"
 #include "drywet.hpp"
 #include "dsp_state.hpp"
+#include "../util/log_once.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -48,11 +49,9 @@ inline void op_delay(ExecutionContext& ctx, const Instruction& inst) {
     max_samples = std::min(max_samples, DelayState::MAX_DELAY_SAMPLES);
     state.ensure_buffer(max_samples, ctx.arena);
 
-    if (!state.buffer[0] || !state.buffer[1]) {
-        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            out_l[i] = 0.0f;
-            out_r[i] = 0.0f;
-        }
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: delay → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
         return;
     }
 
@@ -136,11 +135,9 @@ inline void op_delay_sync(ExecutionContext& ctx, const Instruction& inst) {
     max_samples = std::min(max_samples, DelayState::MAX_DELAY_SAMPLES);
     state.ensure_buffer(max_samples, ctx.arena);
 
-    if (!state.buffer[0] || !state.buffer[1]) {
-        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            out_l[i] = 0.0f;
-            out_r[i] = 0.0f;
-        }
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: delay → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
         return;
     }
 
@@ -277,11 +274,9 @@ inline void op_delay_write(ExecutionContext& ctx, const Instruction& inst) {
     const float* wet_level = (inst.inputs[4] != 0xFFFF) ? ctx.buffers->get(inst.inputs[4]) : nullptr;
     auto& state = ctx.states->get_or_create<DelayState>(inst.state_id);
 
-    if (!state.buffer[0] || !state.buffer[1]) {
-        for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
-            out_l[i] = 0.0f;
-            out_r[i] = 0.0f;
-        }
+    if (!state.buffers_ready()) {  // arena exhausted — degrade to dry passthrough
+        CEDAR_LOG_ONCE("[CEDAR] audio arena exhausted: delay → dry passthrough\n");
+        drywet::passthrough_stereo(input, input_r, stereo_in, out_l, out_r, BLOCK_SIZE);
         return;
     }
 

@@ -23,6 +23,7 @@ add_executable(cedar_tests
     test_vm.cpp
     test_arrays.cpp
     test_audio_arena.cpp
+    test_arena_reclaim.cpp
     test_buffer_pool.cpp
     test_state_pool.cpp
     test_env_map.cpp

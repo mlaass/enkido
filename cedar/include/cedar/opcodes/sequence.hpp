@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 
+#include "../vm/audio_arena.hpp"
+
 namespace cedar {
 
 // ============================================================================
@@ -262,6 +264,38 @@ struct SequenceState {
     // Active event for UI highlighting
     std::uint16_t active_source_offset = 0;
     std::uint16_t active_source_length = 0;
+
+    // Return all arena-allocated memory (sequences array, each sequence's
+    // events array, and the output-events buffer) to the arena free list on
+    // eviction. prd-audio-arena-reclamation §3.2. The float counts mirror the
+    // allocation math in StatePool::init_sequence_program / init_event_transform
+    // exactly so each block lands back in the size class it came from.
+    static std::size_t floats_for(std::size_t bytes) {
+        return (bytes + sizeof(float) - 1) / sizeof(float);
+    }
+    void release(AudioArena& arena) {
+        if (sequences) {
+            for (std::uint32_t i = 0; i < seq_capacity; ++i) {
+                if (sequences[i].events && sequences[i].capacity) {
+                    arena.release(reinterpret_cast<float*>(sequences[i].events),
+                                  floats_for(sequences[i].capacity * sizeof(Event)));
+                    sequences[i].events = nullptr;
+                }
+            }
+            arena.release(reinterpret_cast<float*>(sequences),
+                          floats_for(seq_capacity * sizeof(Sequence)));
+            sequences = nullptr;
+        }
+        num_sequences = 0;
+        seq_capacity = 0;
+        if (output.events && output.capacity) {
+            arena.release(reinterpret_cast<float*>(output.events),
+                          floats_for(output.capacity * sizeof(OutputEvents::OutputEvent)));
+            output.events = nullptr;
+        }
+        output.num_events = 0;
+        output.capacity = 0;
+    }
 
     // Add a sequence and return its ID (only during initialization when capacity allows)
     std::uint16_t add_sequence(const Sequence& seq) {
