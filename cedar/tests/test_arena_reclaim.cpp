@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cedar/vm/audio_arena.hpp>
+#include <cedar/vm/state_pool.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
 #include <cedar/opcodes/drywet.hpp>
 
@@ -133,6 +134,47 @@ TEST_CASE("DSP state release() returns buffers to the arena for reuse", "[arena]
         REQUIRE(fv2.buffers_ready());
         REQUIRE(arena.bytes_used() == used);  // all 24 buffers reclaimed
     }
+}
+
+TEST_CASE("StatePool gc reclaims an evicted state's buffers", "[arena][reclaim]") {
+    AudioArena arena(1u << 20);
+    StatePool pool;
+    pool.set_arena(&arena);
+    pool.set_fade_blocks(0);  // immediate delete on sweep (no fading pool)
+
+    // Create a reverb state and allocate its arena buffers.
+    auto& fv = pool.get_or_create<FreeverbState>(0x1111u);
+    fv.ensure_buffers(&arena);
+    REQUIRE(fv.buffers_ready());
+    const std::size_t used = arena.bytes_used();
+    REQUIRE(used > 0);
+
+    // Next frame doesn't touch it → gc_sweep evicts it → buffers reclaimed.
+    pool.begin_frame();
+    pool.gc_sweep();
+
+    // A fresh reverb (different id) reuses the freed blocks — no new bump.
+    auto& fv2 = pool.get_or_create<FreeverbState>(0x2222u);
+    fv2.ensure_buffers(&arena);
+    REQUIRE(fv2.buffers_ready());
+    REQUIRE(arena.bytes_used() == used);
+}
+
+TEST_CASE("StatePool without a wired arena does not reclaim (and does not crash)", "[arena][reclaim]") {
+    AudioArena arena(1u << 20);
+    StatePool pool;  // no set_arena → reclamation disabled
+    pool.set_fade_blocks(0);
+
+    auto& fv = pool.get_or_create<FreeverbState>(0x3333u);
+    fv.ensure_buffers(&arena);
+    const std::size_t used = arena.bytes_used();
+
+    pool.begin_frame();
+    pool.gc_sweep();  // evicts the slot but cannot reclaim (no arena pointer)
+
+    auto& fv2 = pool.get_or_create<FreeverbState>(0x4444u);
+    fv2.ensure_buffers(&arena);
+    REQUIRE(arena.bytes_used() > used);  // had to bump — old buffers stranded
 }
 
 TEST_CASE("drywet::passthrough_stereo copies dry signal", "[arena][reclaim][drywet]") {

@@ -17,6 +17,12 @@ VM::VM() {
     ctx_.arena = &audio_arena_;
     ctx_.env_map = &env_map_;
 
+    // Wire the audio arena into the state pool so evicted/faded states return
+    // their buffers to the free list (prd-audio-arena-reclamation). Only the
+    // live pool reclaims; shadow_state_pool_ stays unwired (it shares buffer
+    // pointers during the crossfade snapshot and must not free them).
+    state_pool_.set_arena(&audio_arena_);
+
     // Clear BUFFER_ZERO - this reserved buffer is always 0.0
     // Used as default for optional inputs (phase, trigger, etc.)
     buffer_pool_.clear(BUFFER_ZERO);

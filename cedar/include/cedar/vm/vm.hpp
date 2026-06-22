@@ -578,6 +578,10 @@ public:
     [[nodiscard]] const ExecutionContext& context() const { return ctx_; }
     [[nodiscard]] BufferPool& buffers() { return buffer_pool_; }
     [[nodiscard]] StatePool& states() { return state_pool_; }
+    // Audio-arena bump high-water in bytes. With reclamation this plateaus once
+    // the working set of live programs stabilises (prd-audio-arena-reclamation
+    // §3.6) — the bounded-memory signal the drift fuzz asserts on.
+    [[nodiscard]] std::size_t arena_bytes_used() const { return audio_arena_.bytes_used(); }
     [[nodiscard]] EnvMap& env_map() { return env_map_; }
 
 private:

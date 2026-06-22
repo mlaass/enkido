@@ -10,8 +10,15 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <variant>
 
 namespace cedar {
+
+// Detects DSP state types that own arena memory and expose a release hook
+// (prd-audio-arena-reclamation §3.2). Stateless variant members (OscState,
+// std::monostate, …) lack it and become no-ops in the eviction visitor.
+template<typename T>
+concept HasArenaRelease = requires(T& t, AudioArena& a) { t.release(a); };
 
 // State that is being faded out (orphaned during hot-swap)
 struct FadingState {
@@ -80,6 +87,11 @@ public:
 
     void set_state_id_xor(std::uint32_t xor_val) { state_id_xor_ = xor_val; }
     std::uint32_t state_id_xor() const { return state_id_xor_; }
+
+    // Arena that evicted states return their buffers to (prd-audio-arena-
+    // reclamation). Null (the default, e.g. in unit tests) disables reclamation
+    // — gc just clears slots as before. Set once by the owning VM.
+    void set_arena(AudioArena* arena) { arena_ = arena; }
 
     // Get or create state for a given semantic ID
     // Template type T must be one of the DSPState variant alternatives
@@ -280,6 +292,10 @@ public:
             if (states_[i].occupied && !touched_[i]) {
                 // Move to fading pool instead of immediate deletion
                 if (fade_blocks_ > 0) {
+                    // Buffers travel with the state into the fading pool and are
+                    // released at final removal in gc_fading() — NOT here, or a
+                    // freed buffer would be reused under a still-fading program
+                    // (use-after-free, §7.1).
                     std::size_t fading_idx = find_or_insert_fading_slot(states_[i].key);
                     auto& fe = fading_states_[fading_idx];
                     fe.key = states_[i].key;
@@ -288,6 +304,9 @@ public:
                     fe.fading.fade_gain = 1.0f;
                     fe.fading.fade_decrement = 1.0f / static_cast<float>(fade_blocks_);
                     fe.occupied = true;
+                } else {
+                    // Immediate delete: reclaim arena buffers now (final removal).
+                    release_state_buffers(states_[i].state);
                 }
                 // Clear the state slot
                 states_[i].occupied = false;
@@ -335,6 +354,9 @@ public:
     void gc_fading() {
         for (std::size_t i = 0; i < MAX_STATES; ++i) {
             if (fading_states_[i].occupied && fading_states_[i].fading.blocks_remaining == 0) {
+                // Final removal of a faded-out state: reclaim its arena buffers
+                // (§3.3). The crossfade is over, so nothing reads them anymore.
+                release_state_buffers(fading_states_[i].fading.state);
                 fading_states_[i].occupied = false;
                 fading_states_[i].key = 0;
                 fading_states_[i].fading = FadingState{};
@@ -1119,6 +1141,16 @@ public:
 private:
     static constexpr std::size_t INVALID_SLOT = ~std::size_t{0};
 
+    // Return any arena buffers a to-be-evicted state owns to the free list.
+    // No-op when no arena is wired or the state type is stateless.
+    void release_state_buffers(DSPState& s) {
+        if (!arena_) return;
+        std::visit([this](auto& st) {
+            using T = std::decay_t<decltype(st)>;
+            if constexpr (HasArenaRelease<T>) st.release(*arena_);
+        }, s);
+    }
+
     // Open-addressing hash table lookup (linear probing)
     // Returns slot index if found, INVALID_SLOT otherwise
     [[nodiscard]] std::size_t find_slot(std::uint32_t key) const {
@@ -1222,6 +1254,7 @@ private:
     std::size_t state_count_ = 0;
     std::uint32_t fade_blocks_ = 3;  // Default: match crossfade duration
     std::uint32_t state_id_xor_ = 0; // XOR mask for poly voice state isolation
+    AudioArena* arena_ = nullptr;    // Reclamation target for evicted states (set by VM)
 };
 
 }  // namespace cedar
