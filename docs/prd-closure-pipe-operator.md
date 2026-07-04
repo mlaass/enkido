@@ -27,10 +27,10 @@ callback:
 
 ```akkado
 // Current: must write the full closure signature and param names
-n"C4' Am7' G4'" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
+c"C Am7 G" |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel) |> out(@, @)
 
 // Proposed: ->> provides the closure body, compiler fills the params
-n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
+c"C" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
 
 // Multiple callbacks — one labeled ->> clause per slot:
 when(beat(2) > 1)
@@ -144,12 +144,12 @@ or what its callback's parameter names are. §4.4 adds that.
 
 ```akkado
 // Current:
-n"C4' Am7' G4' F4'"
+c"C Am7 G F"
   |> poly(@, (freq, gate, vel) -> saw(freq) * ar(gate) * vel)
   |> out(@, @)
 
 // With ->>:
-n"C4' Am7' G4' F4'"
+c"C Am7 G F"
   |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel
   |> out(@, @)
 ```
@@ -197,7 +197,7 @@ When the body contains its own pipe chain, wrap it in `(...)`. Inside a grouped 
 - `@` **after** `|>` → standard pipe hole (filled by the pipe input)
 
 ```akkado
-n"C4'"
+c"C"
   |> poly(@) ->> (saw(@.freq) |> lp(@, 2000 * adsr(@.gate)) * @.vel)
   |> out(@, @)
 ```
@@ -209,7 +209,7 @@ n"C4'"
 ### 3.5 Pipes Inside the Closure Body (Braces)
 
 ```akkado
-n"C4'"
+c"C"
   |> poly(@) ->> {
        saw(@.freq)
        |> lp(@, 2000 * adsr(@.gate))
@@ -254,7 +254,7 @@ A `->>` body may itself contain `->>` calls. `@` always refers to the **innermos
 closure. To reach an **outer** closure's record, name it with `as name` on the call:
 
 ```akkado
-n"C4'"
+c"C"
   |> poly(@) as v ->> ( map(harmonics) ->> sine(@.val * v.freq) )
   |> out(@, @)
 ```
@@ -268,7 +268,7 @@ n"C4'"
 The plain `as` pipe-binding also works *inside* a body, exactly as in any expression:
 
 ```akkado
-n"C4'"
+c"C"
   |> poly(@) ->>
        saw(@.freq) as snd
        |> lp(snd, 2000 * adsr(@.gate))
@@ -281,8 +281,8 @@ n"C4'"
 `->>` binds tighter than `|>`, so the outer pipeline operates on the completed call:
 
 ```akkado
-// parses as: (poly(n"C4'") ->> body) |> out(@, @)
-n"C4'" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
+// parses as: (poly(c"C") ->> body) |> out(@, @)
+c"C" |> poly(@) ->> saw(@.freq) * ar(@.gate) * @.vel |> out(@, @)
 ```
 
 ---
@@ -646,7 +646,7 @@ param; `v.freq` reaches `poly`'s closure via the `as v` binding. Without `as v`,
 ### 9.2 `->>` with Named Arguments
 
 ```akkado
-poly(input: n"C4'") ->> saw(@.freq) * ar(@.gate) * @.vel
+poly(input: c"C") ->> saw(@.freq) * ar(@.gate) * @.vel
 ```
 
 **Expected:** Works. The closure is inserted as a named argument
@@ -666,7 +666,7 @@ synthesizes the closure-slot argument.
 ### 9.4 Bare `@` with a Multi-Param Closure
 
 ```akkado
-poly(n"C4'") ->> @          // E503
+poly(c"C") ->> @          // E503
 ```
 
 **Expected:** **Error E503** — `poly`'s `instrument` closure has 3 params; bare `@` is
@@ -772,8 +772,8 @@ CHECK(has_error(compile("poly(@) ->> a ->> b"), "E512"));
 
 ```cpp
 // ->> bytecode-identical to the explicit named-closure-arg form
-auto a = compile("c\"C4'\" |> poly(@) ->> saw(@.freq)*ar(@.gate)*@.vel |> out(@,@)");
-auto b = compile("c\"C4'\" |> poly(@, instrument: (freq,gate,vel) -> "
+auto a = compile("c\"C\" |> poly(@) ->> saw(@.freq)*ar(@.gate)*@.vel |> out(@,@)");
+auto b = compile("c\"C\" |> poly(@, instrument: (freq,gate,vel) -> "
                  "saw(freq)*ar(gate)*vel) |> out(@,@)");
 CHECK(a.bytecode == b.bytecode);
 

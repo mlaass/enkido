@@ -881,7 +881,7 @@ Each phase ends with a deployable, demo-able artifact.
 - **Identifier resolves to a record field:** `{rec.freq}` works if `rec` is a compile-time record literal. If `rec` is a runtime binding, it renders as `<signal mono>` or similar — the field access doesn't drill into runtime values.
 - **Identifier resolves to a function:** renders as `<function: name>` and emits W311 (unusual usage).
 - **Identifier resolves to a builtin (non-`$`):** same as function — `<builtin: osc>`.
-- **Identifier resolves to a chord literal `C4'`:** `<chord[3]>` (size from compile-time chord expansion).
+- **Chord values:** the apostrophe `ChordLit` syntax was removed (prd-pattern-event-arrays, 2026-05-21); chords are pattern-level, so they reach interpolation only as runtime values and render like any other runtime binding (`<signal …>`).
 - **Identifier shadowed by both compile-time and runtime binding:** compile-time wins. Warning W312: shadow note.
 - **Format spec on a non-scalar:** error E685: `'.2f' applied to <signal mono>`.
 - **`$env(key)` with key not in EnvMap:** renders `<unset>`. No warning if the key starts with `__` (Cedar convention for internal); warning W314 otherwise.

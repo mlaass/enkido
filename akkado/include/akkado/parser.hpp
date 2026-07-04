@@ -139,8 +139,9 @@ private:
     std::vector<NodeIndex> parse_argument_list();
 
     // Closure helpers
-    // `allow_destructure` permits `fn f({x, y})`-style destructure slots; only
-    // fn-defs (Phase 3b) accept them. Closures `(x) -> …` pass false.
+    // `allow_destructure` permits `{x, y}`-style destructure slots. Both
+    // fn-defs (Phase 3b) and closures pass true
+    // (prd-poly-callback-event-record).
     std::vector<ParsedParam> parse_param_list(bool allow_destructure = false);
     NodeIndex parse_closure_body();
     NodeIndex parse_block();

@@ -111,7 +111,7 @@ n"c4 e4 g4 b4"
 
 ```akkado
 // Unchanged from today's user-facing API
-n"C4' Am7'" |> soundfont(@, "gm", 0) |> out(@, @)
+c"C Am7" |> soundfont(@, "gm", 0) |> out(@, @)
 
 // Lowering happens in the akkado stdlib (Phase 4) — explicit lambda, since
 // `_` is not partial application (see §3.2):
@@ -516,7 +516,7 @@ A chord event spawns N voices in poly; each voice receives one freq. SF_VOICE in
 
 **Goal**: old `soundfont()` API produces equivalent output via the new path.
 
-Test: compile and render `n"C4'" |> soundfont(@, "test.sf2", 0) |> out(@)` both before this PRD lands (capture WAV baseline) and after (via the userspace stdlib sugar). Diff. Small differences from generic-vs-SF-pool stealing acceptable when envelope-done is enabled; bit-identical not required.
+Test: compile and render `c"C" |> soundfont(@, "test.sf2", 0) |> out(@)` both before this PRD lands (capture WAV baseline) and after (via the userspace stdlib sugar). Diff. Small differences from generic-vs-SF-pool stealing acceptable when envelope-done is enabled; bit-identical not required.
 
 ### 9.2 Retrigger regression
 

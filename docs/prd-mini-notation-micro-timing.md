@@ -240,7 +240,8 @@ n"..[c4 d4{nudge: 0.05} e4]"
 // outer pad shrinks the group; d4 inside is nudged further by 0.05
 
 // Mixed atom kinds
-s"..bd ..sd:2 ..C4'"          // pad on sample, sample-variant, chord
+s"..bd ..sd:2"                // pad on sample and sample-variant
+c"..Am ..F"                   // pad on chord symbols
 ```
 
 ### 3.4 Composition with existing modifiers

@@ -52,11 +52,16 @@ State preservation during code updates:
 
 ## Akkado Language Concepts
 
+Formal grammar reference (EBNF, extracted from the parser — keep in sync when
+changing syntax): `docs/grammar/akkado-grammar.md` (core language),
+`docs/grammar/mini-notation-grammar.md` (pattern strings),
+`docs/grammar/chord-grammar.md` (chord symbols).
+
 ### Core Operators
 - `|>` (pipe): Defines signal flow through the DAG
 - `@` (hole): Explicit input port for signal injection. `%` parses identically as a legacy alias, but new docs/examples should use `@`.
 - `as` (pipe binding): Named binding for multi-stage access: `expr as name`
-- Mini-notation patterns: `pat()`, `seq()`, `timeline()`, `note()` - see [Mini-Notation Reference](docs/mini-notation-reference.md)
+- Mini-notation patterns: typed literals `n"…"` (notes), `s"…"` (samples), `c"…"` (chords), `v"…"` (values), `t"…"` (timeline curves), plus the `chord()`/`timeline()` builtins; pattern-taking builtins also accept plain strings (re-parsed as note-mode mini-notation) - see [Mini-Notation Reference](docs/mini-notation-reference.md)
 
 ### Records and Field Access
 Record literals allow grouping related values:
@@ -77,14 +82,21 @@ Pattern events are records with fields accessible via `@`:
 
 Example with pipe binding:
 ```akkado
-pat("c4 e4 g4") as e |> sine(e.freq) |> @ * e.vel |> out(@)
+n"c4 e4 g4" as e |> sine(e.freq) |> @ * e.vel |> out(@)
 ```
 
 ### Chord Expansion (Strudel-compatible)
-Chords are signal arrays that auto-expand UGens:
-- `C4'` → major chord → `[261.6, 329.6, 392.0]` Hz
-- `Am7'` → A minor 7th chord
-- `F#m7_4'` → chord with slash bass
+Chords live in patterns as chord symbols; their notes surface as arrays on
+pattern events (see `docs/prd-pattern-event-arrays.md`):
+- `c"Am F C G"` / `chord("Am F C G")` — chord-mode patterns
+- Uppercase atoms in note-mode patterns: `n"Am F C7 G"`, `n"Fmaj7"`
+- Per-event note arrays: `e.notes` (MIDI) / `e.freqs` (Hz) for arpeggiators,
+  harmonizers, etc.
+- Quality table + symbol grammar: `docs/grammar/chord-grammar.md`
+
+The old apostrophe `ChordLit` syntax (`C4'`, `Am7'`) was **removed**
+2026-05-21 (prd-pattern-event-arrays); a trailing `'` is not chord syntax
+anywhere today.
 
 ### Voicing
 - `poly(input, instrument, voices)` allocates a new runtime voice per incoming note (instrument is 3-arg `(freq, gate, vel)`, may return stereo).

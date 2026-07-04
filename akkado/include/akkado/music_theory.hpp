@@ -9,8 +9,8 @@
 namespace akkado {
 
 /// Canonical chord-quality interval table. Single source of truth shared
-/// by parse_chord_symbol() (chord_parser.cpp), the mini-notation chord
-/// lexer, and the apostrophe-syntax chord-literal lexer.
+/// by parse_chord_symbol() (chord_parser.cpp) and the mini-notation chord
+/// lexer. Documented in docs/grammar/chord-grammar.md — keep in sync.
 inline const std::unordered_map<std::string_view, std::vector<std::int8_t>> CHORD_INTERVALS = {
     // Triads
     {"",      {0, 4, 7}},        // Major (empty quality — default)

@@ -216,10 +216,10 @@ map(freqs, (f) -> voice(f) |> lp(%, 1000))
 Chord and array values propagate through function parameters automatically. When a multi-buffer value (e.g., a chord) is passed to a function parameter, the function body runs per-voice:
 
 ```akkado
-fn voice(freq) -> saw(freq) |> lp(%, 800)
+fn voice(freq) -> saw(freq) |> lp(@, 800)
 
-// Chord auto-expands: voice runs once per chord note
-voice(C4') |> out(%, %)
+// Frequency array auto-expands: voice runs once per element (C major)
+voice([261.6, 329.6, 392.0]) |> out(@, @)
 ```
 
 For explicit per-voice processing, use `map()` with a closure:

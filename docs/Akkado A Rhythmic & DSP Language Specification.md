@@ -155,31 +155,15 @@ Octave is **required** outside mini-notation.
 
 Examples: `'c4'`, `'f#3'`, `'Bb5'`
 
-**Chord Literals:**
-```ebnf
-chord_literal = pitch_name [ chord_quality ] [ "_" ] octave "'" ;
-chord_quality = ? any key from akkado::CHORD_INTERVALS ? ;
-              (* triads:    M | maj | m | min | -  | dim | o | aug | +
-                          | sus | sus2 | sus4 | 5
-                 sevenths:  7 | dom7 | M7 | maj7 | ^ | ^7
-                          | m7 | min7 | -7 | dim7 | o7
-                          | m7b5 | 0 | aug7 | +7
-                          | mM7 | m^7 | minmaj7
-                 sixths:    6 | m6 | min6
-                 extended:  9 | M9 | maj9 | m9 | min9 | add9 | add2
-                          | 11 | m11 | 13 *)
-```
-Uses standard Strudel chord-symbol notation: `{Root}{Quality}`. The lexer
-greedily matches the longest key from the canonical `CHORD_INTERVALS` table —
-the same table the `chord()` builtin and the `c"..."` mini-notation prefix
-consult, so any quality that works in one syntax works in all three.
+**Chord Symbols** (patterns only):
 
-Use `_` before octave to disambiguate when the symbol ends in a digit
-(e.g., `A7_3'`, `Cm9_4'`, `D13_5'`).
-
-Examples: `C4'` (C major), `Am3'` (A minor), `Cmaj7_4'` (C major 7),
-`Cm9_3'` (C minor 9 — 5 voices), `D13_4'` (D dominant 13 — 6 voices),
-`E5_2'` (E power chord).
+The standalone `ChordLit` literal (`C4'`, `Am7'`, `Cmaj7_4'`) was **removed**
+2026-05-21 by `prd-pattern-event-arrays.md`. Chords are written as
+`{Root}{Quality}` symbols *inside patterns*: `c"C Am7"`, `chord("C Am7")`,
+or uppercase atoms in note-mode patterns (`n"Am F C7 G"`). Qualities come
+from the canonical `CHORD_INTERVALS` table; the full symbol grammar and
+quality table live in `docs/grammar/chord-grammar.md`. A chord's notes
+surface on pattern events as `e.notes` (MIDI) / `e.freqs` (Hz) arrays.
 
 **Array Literals:**
 ```ebnf
@@ -797,20 +781,21 @@ Random selection each cycle: `bd | sd | hh`
 
 ## 11. Chord Expansion
 
-Chord literals and inline chords expand to frequency arrays (see Section 6 for array operations):
+Chord symbols in patterns carry their notes as per-event arrays (see
+Section 6 for array operations):
 
 ```
-C4'   -> [261.6, 329.6, 392.0]  // C, E, G in Hz
-'c3e3g3'   -> [130.8, 164.8, 196.0]  // inline chord
+c"C" as e   // e.freqs -> [261.6, 329.6, 392.0]  (C, E, G in Hz)
 ```
 
-When passed to a UGen expecting a scalar:
+Multi-voice chord patterns must be wrapped in `poly()` for playback (E410).
+A frequency array passed to a UGen expecting a scalar auto-expands:
 1. The UGen is duplicated for each frequency
 2. Outputs are summed by default
 3. Use `map()` for custom per-voice processing:
    ```
-   freqs = C4'
-   map(freqs, hz -> saw(hz) |> lp(%, 1000))
+   freqs = [261.6, 329.6, 392.0]
+   map(freqs, hz -> saw(hz) |> lp(@, 1000))
    ```
 
 ## 12. Complete Example

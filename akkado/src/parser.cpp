@@ -1252,9 +1252,8 @@ std::vector<ParsedParam> Parser::parse_param_list(bool allow_destructure) {
 
     do {
         // Phase 3b: function-parameter destructure `fn f({x, y [= default]})`.
-        // Only enabled in fn-def context (allow_destructure=true). Closures
-        // currently reject destructure slots — this scope decision is
-        // deliberate; revisit if user demand emerges.
+        // Enabled for fn-defs and closures alike — both pass
+        // allow_destructure=true (prd-poly-callback-event-record).
         if (check(TokenType::LBrace)) {
             if (!allow_destructure) {
                 error("Destructuring parameters are only allowed in `fn` definitions");
