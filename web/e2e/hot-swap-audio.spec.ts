@@ -53,14 +53,39 @@ async function bootAudioAndCompile(page: import('@playwright/test').Page, source
 	await page.locator('button[title="Play (Space)"]').click();
 
 	// Set the source and trigger initial compile via the test hook.
+	// Two races to defend against (both observed 2026-07-04):
+	//  1. The Play click kicks off the app's own evaluate() of the welcome
+	//     draft; editor.evaluate() early-returns false while one is in
+	//     flight (isEvaluating guard), silently skipping our compile.
+	//  2. drafts.updateActiveCode drops setCode entirely until the drafts
+	//     store has activated a draft on first launch.
+	// Without the retry, the RMS "baseline" below measures the welcome
+	// patch (rhythmic, median varies run-to-run) instead of the target
+	// patch, and the storm's first recompile — which swaps the real patch
+	// in — reads as a permanent gap whenever the welcome median lands high.
 	await page.evaluate(async (src) => {
 		const hook = window.__nkidoTest!;
-		hook.editor.setCode(src);
-		await hook.editor.evaluate();
+		for (let i = 0; i < 40; i++) {
+			hook.editor.setCode(src);
+			// editor.code still stale -> drafts store hasn't taken the write.
+			if (hook.editor.code === src) {
+				// evaluate() returns true only when THIS source compiled+loaded.
+				if (await hook.editor.evaluate()) return;
+			}
+			await new Promise((r) => setTimeout(r, 250));
+		}
+		throw new Error('bootAudioAndCompile: target patch never compiled');
 	}, source);
 
-	// Let audio stabilise after first load (warmup + crossfade settle).
-	await page.waitForTimeout(500);
+	// Wait for audible output before callers start RMS baselines — a fixed
+	// delay under-waits slow-attack patches (the pad's 0.5 s ADSR produces
+	// ~200 ms of legitimate silence that would read as a "gap" at trace
+	// start). Poll until sound exists, then let the envelope settle.
+	await page.waitForFunction(() => window.__nkidoTest!.readRms() > 0.01, {
+		timeout: 15_000,
+		polling: 100
+	});
+	await page.waitForTimeout(1000);
 }
 
 test.describe('hot-swap audio continuity', () => {
@@ -175,12 +200,16 @@ test.describe('hot-swap audio continuity', () => {
 		expect(evalTimes.length).toBe(20);
 	});
 
-	// TEMPORARILY SKIPPED for the 0.4.2 release. This test correctly fails:
-	// hot-swapping the unison-pad drops audio for ~6-8 analyser frames because
-	// akkado.compile() still runs on the AudioWorklet thread. Re-enable once the
-	// "compile off the AudioWorklet thread" work lands (see docs PRD). Do NOT
-	// relax the worstRun<5 threshold to "fix" this — the gap is a real bug.
-	test.skip("user's unison-pad: identical recompile maintains audio level", async ({ page }) => {
+	// RE-ENABLED 2026-07-04. Was skipped for the 0.4.2/0.4.3 releases: the
+	// real recompile gap (~6-8 analyser frames) was fixed by the "compile
+	// off the AudioWorklet thread" PRD, and the "residual ~140-200 ms
+	// silence at the first recompile" observed afterwards turned out to be
+	// a harness artifact — the RMS trace started before the pad's 0.5 s
+	// ADSR attack produced sound, so the attack ramp at trace start read
+	// as a gap (bootAudioAndCompile now waits for audible output). Passes
+	// with worst gap run=0 across 20 recompiles. Do NOT relax the
+	// worstRun<5 threshold if this regresses — a gap here is a real bug.
+	test("user's unison-pad: identical recompile maintains audio level", async ({ page }) => {
 		const silenceWarnings: string[] = [];
 		const logs: string[] = [];
 		page.on('console', (msg) => {
