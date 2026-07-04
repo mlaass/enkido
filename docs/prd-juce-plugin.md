@@ -162,6 +162,16 @@ as a named user preset on disk, browse and load presets, and pick from bundled
 
 ## 3. Repository & Open/Closed Boundary
 
+> **Amendment (2026-07-04, nkido studio planning):** the standalone
+> `nkido-juce-plugin` repo below is **superseded** by a single closed repo
+> **`nkido-studio`** holding a shared `host-core/` library (compile thread,
+> native bridge, WebView host, block adapter, param pool) plus thin
+> `plugin/` (these two targets) and `studio/` (`juce_add_gui_app`) targets.
+> The plugin still ships first; only the repo layout changes. See
+> `prd-studio-foundation.md` and `docs/research/studio-overview.md`.
+> §3.1's structure remains accurate if `nkido-juce-plugin/` is read as the
+> `plugin/` + `host-core/` subtrees of `nkido-studio`. Resolves [11.7].
+
 ### 3.1 Two repositories
 
 ```
@@ -683,7 +693,9 @@ adds the other platforms' codepaths.
 - **11.6** Plugin-only UI panels architecture (see §5.6): single shared
   codebase with `IS_PLUGIN` build-time flag, separate `plugin-ui/` package
   consuming the shared core, or runtime feature detection?
-- **11.7** Repo name: `nkido-juce-plugin` (assumed) — confirm.
+- **11.7** ~~Repo name: `nkido-juce-plugin` (assumed) — confirm.~~
+  **Resolved 2026-07-04:** single closed repo `nkido-studio` with
+  `host-core/` + `plugin/` + `studio/` targets (see §3 amendment).
 - **11.8** Final marketing/product names beyond the working convention
   "Nkido" (instrument) / "Nkido FX" (effect), plus distinct VST3/CLAP/AU
   plugin codes.
