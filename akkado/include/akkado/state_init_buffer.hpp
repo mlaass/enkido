@@ -55,7 +55,7 @@ namespace akkado::state_init_buffer {
 
 inline constexpr std::uint32_t MAGIC_STATE_INITS  = 0x494E4954u;  // "INIT"
 inline constexpr std::uint32_t MAGIC_MIDI_SOURCES = 0x4D494449u;  // "MIDI"
-inline constexpr std::uint16_t WIRE_VERSION       = 1;
+inline constexpr std::uint16_t WIRE_VERSION       = 2;
 
 // Wire-format size tripwires. The SequenceProgram / Timeline payloads embed
 // these structs via raw memcpy, so any size change silently alters the wire
@@ -206,6 +206,7 @@ pack_state_inits(const std::vector<StateInitData>& state_inits,
                 w.f32(seq.duration);
                 w.u8(static_cast<std::uint8_t>(seq.mode));
                 w.pad(3);
+                w.f32(seq.steps_per_cycle);
                 std::uint32_t nev = 0;
                 if (i < init.sequence_events.size()) {
                     nev = static_cast<std::uint32_t>(init.sequence_events[i].size());
@@ -445,6 +446,7 @@ apply_state_inits(cedar::VM& vm, const std::uint8_t* buf,
                 float duration = pr.f32();
                 auto mode      = static_cast<cedar::SequenceMode>(pr.u8());
                 pr.skip(3);
+                float steps_per_cycle = pr.f32();
                 std::uint32_t nev = pr.u32();
                 events[i].resize(nev);
                 if (nev > 0) {
@@ -455,6 +457,7 @@ apply_state_inits(cedar::VM& vm, const std::uint8_t* buf,
                 seqs[i].capacity   = nev;
                 seqs[i].duration   = duration;
                 seqs[i].step       = 0;
+                seqs[i].steps_per_cycle = steps_per_cycle;
                 seqs[i].mode       = mode;
             }
             vm.init_sequence_program_state(state_id, seqs.data(), seqs.size(),

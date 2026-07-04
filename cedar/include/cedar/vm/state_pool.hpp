@@ -967,6 +967,7 @@ public:
             dst.duration = src.duration;
             dst.mode = src.mode;
             dst.step = src.step;
+            dst.steps_per_cycle = src.steps_per_cycle;
             dst.num_events = src.num_events;
 
             if (src.num_events > 0 && src.events) {

@@ -289,6 +289,33 @@ private:
                 seq.capacity = 0;
             }
         }
+
+        // Clock-derived alternation (cedar::query_pattern): compute each
+        // sequence's expected queries per pattern-cycle. The root is queried
+        // once per cycle; a NORMAL parent forwards its full rate per SUB_SEQ
+        // reference (<a b>*4 -> 4); ALTERNATE/RANDOM parents query one child
+        // per visit, so each reference carries rate/num_events — the
+        // fractional rate gives nested <a <b c>> the Tidal a-b-a-c order.
+        // Sub-sequences are created during descent, so SUB_SEQ refs always
+        // point to higher indices and one ascending pass is exact.
+        std::vector<float> rate(sequences_.size(), 0.0f);
+        if (!rate.empty()) rate[0] = 1.0f;
+        for (std::size_t i = 0; i < sequences_.size(); ++i) {
+            const auto& events = sequence_events_[i];
+            if (events.empty()) continue;
+            float share = rate[i];
+            if (sequences_[i].mode != cedar::SequenceMode::NORMAL) {
+                share /= static_cast<float>(events.size());
+            }
+            for (const auto& e : events) {
+                if (e.type == cedar::EventType::SUB_SEQ && e.seq_id < rate.size()) {
+                    rate[e.seq_id] += share;
+                }
+            }
+        }
+        for (std::size_t i = 0; i < sequences_.size(); ++i) {
+            sequences_[i].steps_per_cycle = rate[i];
+        }
     }
 
     // Add event to a sequence by index

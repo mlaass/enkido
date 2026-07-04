@@ -182,6 +182,7 @@ ${enumToTs(stateInitTypes)}
 export interface SequenceSummary {
   duration: number;
   mode: number;
+  stepsPerCycle: number;
   numEvents: number;
 }
 
@@ -278,10 +279,12 @@ export function decodeStateInits(buf: Uint8Array): DecodedStateInits {
           p += 4;
           const mode = dv.getUint8(p);
           p += 4; // u8 + pad[3]
+          const stepsPerCycle = dv.getFloat32(p, true);
+          p += 4;
           const numEvents = dv.getUint32(p, true);
           p += 4;
           p += numEvents * EVENT_SIZE; // skip the memcpy'd cedar::Event[]
-          sequences.push({ duration, mode, numEvents });
+          sequences.push({ duration, mode, stepsPerCycle, numEvents });
         }
         rec.sequences = sequences;
         if (p !== payloadEnd) {

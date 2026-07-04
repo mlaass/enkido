@@ -9,7 +9,7 @@
 // web/tests/state-init-codec.test.ts, which fails if the wire format ever
 // drifts from this generated description.
 
-export const WIRE_VERSION = 1;
+export const WIRE_VERSION = 2;
 export const MAGIC_STATE_INITS = 0x494E4954;
 export const MAGIC_MIDI_SOURCES = 0x4D494449;
 
@@ -46,6 +46,7 @@ export enum StateInitType {
 export interface SequenceSummary {
   duration: number;
   mode: number;
+  stepsPerCycle: number;
   numEvents: number;
 }
 
@@ -142,10 +143,12 @@ export function decodeStateInits(buf: Uint8Array): DecodedStateInits {
           p += 4;
           const mode = dv.getUint8(p);
           p += 4; // u8 + pad[3]
+          const stepsPerCycle = dv.getFloat32(p, true);
+          p += 4;
           const numEvents = dv.getUint32(p, true);
           p += 4;
           p += numEvents * EVENT_SIZE; // skip the memcpy'd cedar::Event[]
-          sequences.push({ duration, mode, numEvents });
+          sequences.push({ duration, mode, stepsPerCycle, numEvents });
         }
         rec.sequences = sequences;
         if (p !== payloadEnd) {

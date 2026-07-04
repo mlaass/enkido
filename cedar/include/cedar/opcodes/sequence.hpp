@@ -118,6 +118,13 @@ struct Sequence {
     std::uint32_t capacity = 0;       // Allocated event count
     float duration = 1.0f;            // Total duration in beats (cycle = beat)
     std::uint32_t step = 0;           // Current step (for ALTERNATE mode)
+    // Expected queries per pattern-cycle, computed at compile time
+    // (SequenceCompiler::finalize_sequences). query_pattern() re-derives
+    // step = floor(cycle * steps_per_cycle) for ALTERNATE sequences every
+    // cycle, so playback position is a pure function of the global clock:
+    // a state created mid-performance (new pattern, hot-swap) plays the same
+    // element as one that ran since beat 0.
+    float steps_per_cycle = 1.0f;
     SequenceMode mode = SequenceMode::NORMAL;
 
     // Add event (only during compilation when capacity allows)
@@ -447,6 +454,20 @@ inline void process_event(SequenceState& state, const Event& e, std::uint64_t se
 // Query the root sequence (sequence 0) for the current cycle
 inline void query_pattern(SequenceState& state, std::uint64_t cycle, float cycle_length) {
     state.output.clear();
+
+    // Clock-derived alternation: re-derive every ALTERNATE step from the
+    // cycle number instead of trusting the accumulated counter. Fresh states
+    // join mid-performance in phase with long-running siblings, and querying
+    // the same cycle twice is idempotent. Within-cycle multi-queries
+    // (<a b>*4 = 4 SUB_SEQ refs) still advance via seq.step++ from this base.
+    for (std::uint32_t i = 0; i < state.num_sequences; ++i) {
+        Sequence& seq = state.sequences[i];
+        if (seq.mode == SequenceMode::ALTERNATE) {
+            seq.step = static_cast<std::uint32_t>(
+                static_cast<double>(cycle) *
+                static_cast<double>(seq.steps_per_cycle));
+        }
+    }
 
     // Query root sequence (always ID 0)
     std::uint64_t seed = state.pattern_seed + cycle;

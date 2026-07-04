@@ -256,6 +256,37 @@ per-event extended fields and multi-voice chord values
 (`OutputEvent.values[]`, prd-pattern-event-arrays), not just
 time/value/velocity triples.
 
+### Clock-Derived Alternation (playhead alignment)
+
+ALTERNATE-mode playback position is a **pure function of the global
+clock**, not an accumulated counter. Each `Sequence` carries a
+compile-time `steps_per_cycle` (expected queries per pattern-cycle,
+computed in `SequenceCompiler::finalize_sequences`: the root is queried
+once per cycle; NORMAL parents forward their rate per `SUB_SEQ`
+reference, so `<a b>*4` → 4; ALTERNATE/RANDOM parents divide by their
+event count, so nested `<a <b c>>` → ½ and plays the Tidal order
+`a b a c`). `query_pattern()` re-derives
+`step = floor(cycle * steps_per_cycle)` before every query.
+
+Consequences:
+
+- A pattern added or structurally edited **mid-performance** (hot-swap)
+  starts exactly where it would be had it played since beat 0 — its
+  startpoints always align with every sibling pattern's startpoints
+  (same-length patterns coincide every cycle; different lengths realign
+  at common multiples).
+- Re-querying the same cycle is idempotent, so hot-swap re-queries and
+  mid-block wrap re-queries can never double-advance an alternation.
+- Seek/scrub lands on the correct alternation element (same property
+  `iter()`/`iterBack()` already had via `cycle_index`).
+
+The one deliberately *stateful* transport remains `transport()`
+(SEQPAT_TRANSPORT): its `beat_pos` accumulates from 0 at state creation
+and is trigger-driven by design.
+
+Regression tests: `akkado/tests/test_pattern_playback_e2e.cpp`
+(`[hotswap]` tag).
+
 ## Known Limitations
 
 1. **Modifiers outside quotes**: Modifiers like `/2` or `*4` outside pattern strings are treated as arithmetic operators, not pattern modifiers.

@@ -446,6 +446,106 @@ TEST_CASE("e2e: n\"c4 d4 e4 f4\" alternates one note per cycle",
 }
 
 // ============================================================================
+// Clock-derived alternation (hot-swap phase alignment, 2026-07-04).
+// ALTERNATE playback position must be a pure function of the cycle number: a
+// SequenceState created mid-performance (pattern added live, or a
+// structurally-changed edit that skips the hot-swap snapshot restore) must
+// play the same element as a state that has run since beat 0. Previously
+// seq.step was a monotonic per-state counter, so a fresh pattern started at
+// element 0 wherever the clock was — permanently out of phase with siblings.
+// ============================================================================
+
+TEST_CASE("e2e: fresh state joins mid-performance in phase with a veteran",
+          "[codegen][patterns][e2e][alternation][hotswap]") {
+    auto result = akkado::compile(R"(n"c4 d4 e4 f4")");
+    REQUIRE(result.success);
+    const auto* init = find_seq_init(result);
+    REQUIRE(init != nullptr);
+
+    // Veteran: queried every cycle since 0.
+    PatternHarness veteran;
+    veteran.install(*init, /*state_id=*/1);
+    for (std::uint64_t c = 0; c <= 10; ++c) veteran.cycle(c);
+
+    // Newcomer: fresh state whose first query is cycle 10.
+    PatternHarness newcomer;
+    newcomer.install(*init, /*state_id=*/2);
+    const auto& nout = newcomer.cycle(10);
+
+    // Both must play element 10 % 4 = 2 -> e4 (midi 64).
+    REQUIRE(nout.num_events == 1);
+    CHECK_THAT(nout.events[0].midi_note, WithinAbs(64.0f, 0.01f));
+    REQUIRE(veteran.state().output.num_events == 1);
+    CHECK_THAT(veteran.state().output.events[0].midi_note,
+               WithinAbs(64.0f, 0.01f));
+}
+
+TEST_CASE("e2e: re-querying the same cycle is idempotent for alternation",
+          "[codegen][patterns][e2e][alternation][hotswap]") {
+    auto result = akkado::compile(R"(n"c4 d4 e4 f4")");
+    REQUIRE(result.success);
+    const auto* init = find_seq_init(result);
+    REQUIRE(init != nullptr);
+
+    PatternHarness h;
+    h.install(*init, /*state_id=*/1);
+
+    const auto& first = h.cycle(5);
+    REQUIRE(first.num_events == 1);
+    CHECK_THAT(first.events[0].midi_note, WithinAbs(62.0f, 0.01f));  // 5%4=1 -> d4
+
+    // Same cycle again (as after a hot-swap mid-cycle re-query): must not
+    // advance the alternation.
+    const auto& second = h.cycle(5);
+    REQUIRE(second.num_events == 1);
+    CHECK_THAT(second.events[0].midi_note, WithinAbs(62.0f, 0.01f));
+}
+
+TEST_CASE("e2e: <c4 d4 e4>*2 fresh state derives sub-cycle steps",
+          "[codegen][patterns][e2e][alternation][hotswap]") {
+    auto result = akkado::compile(R"(n"<c4 d4 e4>*2")");
+    REQUIRE(result.success);
+    const auto* init = find_seq_init(result);
+    REQUIRE(init != nullptr);
+
+    // Two alternation steps per cycle. Fresh state at cycle 10: steps 20 and
+    // 21 -> 20%3=2 (e4), 21%3=0 (c4).
+    PatternHarness h;
+    h.install(*init, /*state_id=*/1);
+    const auto& out = h.cycle(10);
+    REQUIRE(out.num_events == 2);
+    CHECK_THAT(out.events[0].midi_note, WithinAbs(64.0f, 0.01f));
+    CHECK_THAT(out.events[1].midi_note, WithinAbs(60.0f, 0.01f));
+}
+
+TEST_CASE("e2e: nested <c4 <d4 e4>> keeps c-d-c-e order and joins in phase",
+          "[codegen][patterns][e2e][alternation][hotswap]") {
+    auto result = akkado::compile(R"(n"<c4 <d4 e4>>")");
+    REQUIRE(result.success);
+    const auto* init = find_seq_init(result);
+    REQUIRE(init != nullptr);
+
+    // From cycle 0 the Tidal order: c4 d4 c4 e4.
+    PatternHarness a;
+    a.install(*init, /*state_id=*/1);
+    int expected[4] = {60, 62, 60, 64};
+    for (std::uint64_t c = 0; c < 4; ++c) {
+        const auto& out = a.cycle(c);
+        REQUIRE(out.num_events == 1);
+        CHECK_THAT(out.events[0].midi_note,
+                   WithinAbs(static_cast<float>(expected[c]), 0.01f));
+    }
+
+    // Fresh state at cycle 3: inner step floor(3 * 0.5) = 1 -> e4. The old
+    // monotonic counter would have played d4 here.
+    PatternHarness b;
+    b.install(*init, /*state_id=*/2);
+    const auto& out = b.cycle(3);
+    REQUIRE(out.num_events == 1);
+    CHECK_THAT(out.events[0].midi_note, WithinAbs(64.0f, 0.01f));
+}
+
+// ============================================================================
 // VM-driven tests: exercise op_seqpat_query (with its per-cycle cache) by
 // actually running audio blocks, not by calling query_pattern directly.
 // This is the closest in-process analog of the WASM playback path.
