@@ -1,4 +1,5 @@
 #include "akkado/const_eval.hpp"
+#include "akkado/music_theory.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -433,6 +434,26 @@ std::optional<ConstValue> ConstEvaluator::eval_call(NodeIndex node, const Node& 
         }
         auto arr = as_array(args[0]);
         return ConstValue{static_cast<double>(arr.size())};
+    }
+
+    if (func_name == "key_deltas") {
+        // Compile-time nearest-tone delta table for user-defined `key`
+        // (docs/prd-scale-quantize.md §4.6): key_deltas(root, intervals)
+        // -> 12-entry array where entry [pc] is the signed-semitone delta
+        // from input pitch class pc to the nearest pitch class in the
+        // scale; exact tie -> lower MIDI (PRD §11.4). Mirrors
+        // keyDeltaTable in web/scripts/generate-scale-quantize.ts.
+        // Intervals are coerced mod 12 — no validation by design
+        // (live-coding coerce-don't-fail; audit 2026-07-04).
+        if (args.size() != 2) {
+            error("E152", "key_deltas() requires 2 arguments (root, intervals)",
+                  n.location);
+            return std::nullopt;
+        }
+        auto root = as_scalar(args[0], n.location);
+        if (!root) return std::nullopt;
+        const int root_pc = ((static_cast<int>(*root) % 12) + 12) % 12;
+        return ConstValue{compute_key_deltas(root_pc, as_array(args[1]))};
     }
 
     if (func_name == "mean") {

@@ -122,11 +122,12 @@ const ROOTS: { name: string; pc: number }[] = [
   { name: "b",  pc: 11 },
 ];
 
-// Octaves emitted for `scale`. `key` ignores octave and emits only the
-// octave-less form (octave param is discarded per PRD §4.3). Octaves 2..4
-// cover the practical live-coding range (below C2 ≈ 65 Hz is rare; above C5
-// ≈ 523 Hz the degree mapping clamps quickly against MIDI 127). The
-// octave-less default is "root:scale" -> octave 3.
+// Octaves emitted for `scale` AND as ignored aliases for `key` (the octave
+// digit is accepted and discarded per PRD §4.3, so "d2:minor" quantizes
+// identically to "d:minor"). Octaves 2..4 cover the practical live-coding
+// range (below C2 ≈ 65 Hz is rare; above C5 ≈ 523 Hz the degree mapping
+// clamps quickly against MIDI 127). The octave-less default is
+// "root:scale" -> octave 3.
 const SCALE_OCTAVES = [2, 3, 4];
 const SCALE_DEFAULT_OCTAVE = 3;
 
@@ -196,9 +197,10 @@ function emitScaleQuantizeAk(): string {
   lines.push("// at runtime, so each branch inlines its own literal interval array.");
   lines.push("//");
   lines.push("// Catalog: 12 chromatic roots × " + SCALES.length + " scale types.");
-  lines.push("// `key` strings are octave-agnostic (root only); `scale` strings carry");
-  lines.push("// the octave digit (e.g. `\"d3:minor\"`), with a missing digit defaulting");
-  lines.push("// to octave 3 per PRD §4.3.");
+  lines.push("// `key` strings are octave-agnostic — an octave digit is accepted and");
+  lines.push("// ignored (\"d2:minor\" == \"d:minor\"). `scale` strings use the octave");
+  lines.push("// digit (e.g. `\"d3:minor\"`), with a missing digit defaulting to");
+  lines.push("// octave 3 per PRD §4.3.");
   lines.push("");
   lines.push("// ----------------------------------------------------------------------------");
   lines.push("// Helper fns — factored arithmetic shared across branches");
@@ -207,11 +209,66 @@ function emitScaleQuantizeAk(): string {
   lines.push("// `snap` round-halves-up a (possibly fractional) MIDI note to the nearest");
   lines.push("// integer. `pc12` reduces a (possibly negative) MIDI note to its pitch");
   lines.push("// class 0..11, two `fmod`s to handle negative inputs symmetrically.");
-  lines.push("// These are called from every match-branch closure body and lower to a");
-  lines.push("// single shared `fn` body via BLOCK_CALL.");
+  lines.push("//");
+  lines.push("// `key_q` / `scale_q` carry the entire per-event arithmetic ONCE; every");
+  lines.push("// match branch is a short call passing literal tables. The match-dispatcher");
+  lines.push("// literal-only constraint applies to the match SCRUTINEE (the name string),");
+  lines.push("// not to delegating the arithmetic — after the match folds to one branch,");
+  lines.push("// what remains is a plain fn call with literal args, and closures capture");
+  lines.push("// fn params exactly like stdlib `transpose` does. This keeps the embedded");
+  lines.push("// stdlib small: per-compile parse cost scales with file size.");
   lines.push("");
   lines.push("fn snap(n) -> floor(n + 0.5)");
   lines.push("fn pc12(n) -> fmod(fmod(n, 12) + 12, 12)");
+  lines.push("");
+  lines.push("fn key_q(events: Stream, deltas) -> event_map(events, (e) -> {note: snap(e.note) + deltas[pc12(snap(e.note))]})");
+  lines.push("fn scale_q(events: Stream, rm, k, ivals) -> event_map(events, (e) -> {note: rm + floor(snap(e.note) / k) * 12 + ivals[snap(e.note) - floor(snap(e.note) / k) * k]})");
+  lines.push("");
+
+  // -------- `fn note_num` --------
+  lines.push("// ----------------------------------------------------------------------------");
+  lines.push("// fn note_num — note-name string to MIDI number. Octave-less names default");
+  lines.push("// to octave 3 (\"d\" -> 50), matching scale()'s default. Numbers pass");
+  lines.push("// through the `_` arm untouched, so callers may hand a MIDI number");
+  lines.push("// directly wherever a root name is accepted.");
+  lines.push("// ----------------------------------------------------------------------------");
+  lines.push("");
+  lines.push("fn note_num(name) -> match(name) {");
+  for (const root of ROOTS) {
+    lines.push(
+      `    "${root.name}": ${rootMidi(root.pc, SCALE_DEFAULT_OCTAVE)}`,
+    );
+    for (let oct = 0; oct <= 8; oct++) {
+      lines.push(`    "${root.name}${oct}": ${rootMidi(root.pc, oct)}`);
+    }
+  }
+  lines.push("    _: name");
+  lines.push("}");
+  lines.push("");
+
+  // -------- user-defined (root, intervals) overloads (PRD §4.6) --------
+  lines.push("// ----------------------------------------------------------------------------");
+  lines.push("// User-defined scales (PRD §4.6) — arity-3 overloads. `root` is a note");
+  lines.push("// name string (\"d2\") or a MIDI number; `ivals` a semitone interval");
+  lines.push("// array. key_deltas() is a compile-time builtin (C++ const-eval) that");
+  lines.push("// turns (root, intervals) into the 12-entry nearest-tone delta table.");
+  lines.push("// No validation by design — out-of-range intervals coerce mod 12");
+  lines.push("// (live-coding coerce-don't-fail; audit 2026-07-04).");
+  lines.push("// ----------------------------------------------------------------------------");
+  lines.push("");
+  lines.push("// key_deltas resolves the root itself (note-name string or number,");
+  lines.push("// octave ignored). Both bodies bind the compile-time pieces to LOCALS");
+  lines.push("// before the nested call: codegen clears param_literals_ around a");
+  lines.push("// nested call's argument list, so key_deltas(root, ...) / note_num(root)");
+  lines.push("// can only see `root`'s caller literal from body-statement position.");
+  lines.push("fn key(events: Stream, root, ivals) -> {");
+  lines.push("    deltas = key_deltas(root, ivals)");
+  lines.push("    key_q(events, deltas)");
+  lines.push("}");
+  lines.push("fn scale(events: Stream, root, ivals) -> {");
+  lines.push("    rm = note_num(root)");
+  lines.push("    scale_q(events, rm, len(ivals), ivals)");
+  lines.push("}");
   lines.push("");
 
   // -------- `fn key` --------
@@ -223,27 +280,22 @@ function emitScaleQuantizeAk(): string {
   lines.push("");
   lines.push("fn key(events: Stream, name) -> match(name) {");
 
-  // Each branch:
-  //   snap(e.note) + delta_table[ pc12(snap(e.note)) ]
-  // `snap` is shared via fn — lowers to BLOCK_CALL when called from >=2 sites.
-  function keySnapBody(deltaArr: string): string {
-    return "snap(e.note) + " + deltaArr + "[pc12(snap(e.note))]";
-  }
-
+  // Each branch delegates to `key_q` with its literal delta table.
   const keyBranches: string[] = [];
   for (const root of ROOTS) {
     for (const scale of SCALES) {
       const delta = keyDeltaTable(intervalsToSemitones(scale.intervals), root.pc);
-      const body = keySnapBody(fmtArray(delta));
-      const k = `"${root.name}:${scale.name}"`;
-      keyBranches.push(
-        `    ${k}: event_map(events, (e) -> {note: ${body}})`,
-      );
-      for (const alias of scale.aliases ?? []) {
-        const ak = `"${root.name}:${alias}"`;
-        keyBranches.push(
-          `    ${ak}: event_map(events, (e) -> {note: ${body}})`,
-        );
+      const call = `key_q(events, ${fmtArray(delta)})`;
+      // Octave digits are accepted and IGNORED per PRD §4.3/§8 — every
+      // "rootN:scale" alias shares the octave-less branch call. Without
+      // these aliases a scale()-style string like "d2:minor" silently
+      // fell through to identity (audit 2026-07-04).
+      const names = [scale.name, ...(scale.aliases ?? [])];
+      for (const n of names) {
+        keyBranches.push(`    "${root.name}:${n}": ${call}`);
+        for (const oct of SCALE_OCTAVES) {
+          keyBranches.push(`    "${root.name}${oct}:${n}": ${call}`);
+        }
       }
     }
   }
@@ -261,53 +313,25 @@ function emitScaleQuantizeAk(): string {
   lines.push("");
   lines.push("fn scale(events: Stream, name) -> match(name) {");
 
-  // Per-branch:
-  //   root_midi
-  //     + floor(snap(e.note) / k) * 12
-  //     + intervals[ snap(e.note) - floor(snap(e.note) / k) * k ]
-  // `snap` is shared via fn — calls lower to BLOCK_CALL.
-  function scaleStepBody(rm: number, intervalsLit: string, k: number): string {
-    return (
-      rm +
-      " + floor(snap(e.note) / " + k + ") * 12 + " +
-      intervalsLit +
-      "[snap(e.note) - floor(snap(e.note) / " + k + ") * " + k + "]"
-    );
-  }
-
+  // Each branch delegates to `scale_q(events, root_midi, k, intervals)`.
   const scaleBranches: string[] = [];
   for (const root of ROOTS) {
     for (const scale of SCALES) {
       const intervals = intervalsToSemitones(scale.intervals);
       const k = intervals.length;
       const intervalsLit = fmtArray(intervals);
+      const callFor = (oct: number) =>
+        `scale_q(events, ${rootMidi(root.pc, oct)}, ${k}, ${intervalsLit})`;
 
-      // Octave-less form defaults to octave 3.
-      const rmDefault = rootMidi(root.pc, SCALE_DEFAULT_OCTAVE);
-      const bodyDefault = scaleStepBody(rmDefault, intervalsLit, k);
-      scaleBranches.push(
-        `    "${root.name}:${scale.name}": event_map(events, (e) -> {note: ${bodyDefault}})`,
-      );
-
-      // Explicit-octave forms.
-      for (const oct of SCALE_OCTAVES) {
-        const rm = rootMidi(root.pc, oct);
-        const body = scaleStepBody(rm, intervalsLit, k);
+      const names = [scale.name, ...(scale.aliases ?? [])];
+      for (const n of names) {
+        // Octave-less form defaults to octave 3.
         scaleBranches.push(
-          `    "${root.name}${oct}:${scale.name}": event_map(events, (e) -> {note: ${body}})`,
-        );
-      }
-
-      // Aliases.
-      for (const alias of scale.aliases ?? []) {
-        scaleBranches.push(
-          `    "${root.name}:${alias}": event_map(events, (e) -> {note: ${bodyDefault}})`,
+          `    "${root.name}:${n}": ${callFor(SCALE_DEFAULT_OCTAVE)}`,
         );
         for (const oct of SCALE_OCTAVES) {
-          const rm = rootMidi(root.pc, oct);
-          const body = scaleStepBody(rm, intervalsLit, k);
           scaleBranches.push(
-            `    "${root.name}${oct}:${alias}": event_map(events, (e) -> {note: ${body}})`,
+            `    "${root.name}${oct}:${n}": ${callFor(oct)}`,
           );
         }
       }
@@ -326,6 +350,60 @@ function emitScaleQuantizeAk(): string {
 // ----------------------------------------------------------------------------
 
 function spotCheck(): void {
+  // Interval sets pinned against tonal.js scale-type data (PRD §10:
+  // "spot-check scales vs tonal.js"). Covers the entire shipped catalog.
+  const EXPECTED_INTERVALS: Record<string, number[]> = {
+    major: [0, 2, 4, 5, 7, 9, 11],
+    minor: [0, 2, 3, 5, 7, 8, 10],
+    dorian: [0, 2, 3, 5, 7, 9, 10],
+    mixolydian: [0, 2, 4, 5, 7, 9, 10],
+    harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
+    major_pentatonic: [0, 2, 4, 7, 9],
+    minor_pentatonic: [0, 3, 5, 7, 10],
+    chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  };
+  for (const scale of SCALES) {
+    const got = intervalsToSemitones(scale.intervals);
+    const want = EXPECTED_INTERVALS[scale.name];
+    if (!want) throw new Error(`no expected intervals pinned for '${scale.name}'`);
+    if (got.length !== want.length || got.some((v, i) => v !== want[i])) {
+      throw new Error(
+        `${scale.name} intervals [${got}] != tonal.js [${want}]`,
+      );
+    }
+  }
+
+  // Key-delta invariants for every (root, scale): delta 0 iff pc ∈ P,
+  // |delta| is the true minimum pc distance, tie → negative (lower MIDI,
+  // PRD §11.4).
+  for (const root of ROOTS) {
+    for (const scale of SCALES) {
+      const intervals = intervalsToSemitones(scale.intervals);
+      const P = pitchClassSet(intervals, root.pc);
+      const deltas = keyDeltaTable(intervals, root.pc);
+      for (let pc = 0; pc < 12; pc++) {
+        const d = deltas[pc];
+        const where = `${root.name}:${scale.name} pc=${pc}`;
+        if (P.has(pc)) {
+          if (d !== 0) throw new Error(`${where}: in-scale pc has delta ${d}`);
+          continue;
+        }
+        if (d === 0) throw new Error(`${where}: out-of-scale pc has delta 0`);
+        if (!P.has((((pc + d) % 12) + 12) % 12)) {
+          throw new Error(`${where}: delta ${d} lands outside P`);
+        }
+        for (let closer = 1; closer < Math.abs(d); closer++) {
+          if (P.has((pc + closer) % 12) || P.has((pc - closer + 12) % 12)) {
+            throw new Error(`${where}: delta ${d} not minimal (dist ${closer} exists)`);
+          }
+        }
+        if (d > 0 && P.has((pc - d + 12) % 12)) {
+          throw new Error(`${where}: tie broken upward (delta ${d}), must go lower`);
+        }
+      }
+    }
+  }
+
   const cMajorDelta = keyDeltaTable(intervalsToSemitones(SCALES[0].intervals), 0);
   const expected = [0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0];
   for (let i = 0; i < 12; i++) {
@@ -335,7 +413,10 @@ function spotCheck(): void {
   }
   if (rootMidi(2, 3) !== 50) throw new Error(`D3 should be MIDI 50, got ${rootMidi(2, 3)}`);
   if (rootMidi(0, 4) !== 60) throw new Error(`C4 should be MIDI 60, got ${rootMidi(0, 4)}`);
-  console.log("Spot-check OK (c:major delta + root_midi sanity)");
+  console.log(
+    `Spot-check OK (${SCALES.length} interval sets vs tonal.js, ` +
+    `${ROOTS.length * SCALES.length} key-delta tables validated)`,
+  );
 }
 
 // ----------------------------------------------------------------------------

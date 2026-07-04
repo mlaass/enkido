@@ -25,6 +25,7 @@ export const slugToPath: Record<string, string> = {
 	"basics": "reference/mini-notation/basics.md",
 	"curve-notation": "reference/mini-notation/curve-notation.md",
 	"literals": "reference/pattern/literals.md",
+	"scale-key": "reference/pattern/scale-key.md",
 	"uri-schemes": "reference/uri-schemes.md",
 	"records": "reference/language/records.md",
 	"methods": "reference/language/methods.md",
@@ -2015,6 +2016,165 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"category": "pattern",
 		"title": "Pattern Literals"
 	},
+	"scale": {
+		"slug": "waveform",
+		"category": "builtins",
+		"title": "scale",
+		"anchor": "scale"
+	},
+	"key": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"quantize": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"quantization": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"degree": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"degree-mapping": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"scale-degree": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"tonality": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"major": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"minor": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"dorian": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"mixolydian": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"ionian": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"aeolian": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"harmonic_minor": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"pentatonic": {
+		"slug": "pianoroll",
+		"category": "builtins",
+		"title": "pentatonic",
+		"anchor": "pentatonic"
+	},
+	"major_pentatonic": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"minor_pentatonic": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"chromatic": {
+		"slug": "pianoroll",
+		"category": "builtins",
+		"title": "chromatic",
+		"anchor": "chromatic"
+	},
+	"snap": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"in-key": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"music-theory": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"root": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"tonic": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"octave": {
+		"slug": "pianoroll",
+		"category": "builtins",
+		"title": "octave",
+		"anchor": "octave"
+	},
+	"user-defined": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"intervals": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"interval-list": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"custom-scale": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"key_deltas": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
+	"note_num": {
+		"slug": "scale-key",
+		"category": "pattern",
+		"title": "Scale & Key"
+	},
 	"uri": {
 		"slug": "uri-schemes",
 		"category": "reference",
@@ -3160,30 +3320,6 @@ export const lookup: Record<string, { slug: string; category: string; title: str
 		"title": "showGrid",
 		"anchor": "showgrid"
 	},
-	"scale": {
-		"slug": "waveform",
-		"category": "builtins",
-		"title": "scale",
-		"anchor": "scale"
-	},
-	"chromatic": {
-		"slug": "pianoroll",
-		"category": "builtins",
-		"title": "chromatic",
-		"anchor": "chromatic"
-	},
-	"pentatonic": {
-		"slug": "pianoroll",
-		"category": "builtins",
-		"title": "pentatonic",
-		"anchor": "pentatonic"
-	},
-	"octave": {
-		"slug": "pianoroll",
-		"category": "builtins",
-		"title": "octave",
-		"anchor": "octave"
-	},
 	"piano": {
 		"slug": "pianoroll",
 		"category": "builtins",
@@ -3978,6 +4114,7 @@ export const previews: Record<string, string> = {
 	"basics": "Mini-notation is a compact syntax for describing musical patterns, inspired by TidalCycles and Strudel.",
 	"curve-notation": "Curve notation is an ASCII-art syntax for defining automation curves that compile to Cedar's  opcode breakpoints.",
 	"literals": "Patterns can be written as typed string prefixes that disambiguate parse semantics at the literal site:",
+	"scale-key": "Two pattern transforms constrain melodies to a musical scale. They have clearly separated jobs:",
 	"uri-schemes": "Every asset loaded by nkido — sample banks, SoundFonts, wavetables, single audio files — is identified by a URI. The same scheme syntax works in...",
 	"records": "A record is a value that bundles named fields together. Records are immutable: each operation that \"modifies\" a record produces a new record. They...",
 	"methods": "Akkado supports method-call syntax for any callable in scope, built-in or user-defined. The form",

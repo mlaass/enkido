@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cctype>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -75,6 +76,54 @@ inline const std::vector<std::int8_t>* lookup_chord(std::string_view name) {
         return &it->second;
     }
     return nullptr;
+}
+
+/// Pitch class (0-11) of a note-name string ("d", "d#2", "eb") — octave
+/// digits are parsed and ignored (key quantization is octave-agnostic).
+/// @return -1 if the string is not a note name.
+/// Used by the user-defined key() overload (prd-scale-quantize §4.6).
+inline int note_name_pitch_class(std::string_view s) {
+    if (s.empty()) return -1;
+    static constexpr int base[7] = {9, 11, 0, 2, 4, 5, 7};  // a..g
+    const char c = static_cast<char>(
+        std::tolower(static_cast<unsigned char>(s[0])));
+    if (c < 'a' || c > 'g') return -1;
+    int pc = base[c - 'a'];
+    std::size_t i = 1;
+    for (; i < s.size(); ++i) {
+        if (s[i] == '#')      pc += 1;
+        else if (s[i] == 'b') pc -= 1;
+        else break;
+    }
+    for (; i < s.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(s[i]))) return -1;
+    }
+    return ((pc % 12) + 12) % 12;
+}
+
+/// 12-entry nearest-tone delta table for scale quantization: entry[pc] is
+/// the signed-semitone move from input pitch class pc to the nearest pitch
+/// class of the scale {root_pc + i mod 12 : i in intervals}; an exact tie
+/// snaps to the LOWER tone (prd-scale-quantize §11.4). Intervals coerce
+/// mod 12 — no validation by design (coerce-don't-fail; audit 2026-07-04).
+/// An empty interval set yields all zeros (identity), matching the
+/// unknown-scale-name fall-through contract. Mirrors keyDeltaTable in
+/// web/scripts/generate-scale-quantize.ts.
+inline std::vector<double> compute_key_deltas(
+    int root_pc, const std::vector<double>& intervals) {
+    bool in_p[12] = {};
+    for (double iv : intervals) {
+        in_p[(((root_pc + static_cast<int>(iv)) % 12) + 12) % 12] = true;
+    }
+    std::vector<double> deltas(12, 0.0);
+    for (int pc = 0; pc < 12; ++pc) {
+        if (in_p[pc]) continue;
+        for (int d = 1; d <= 6; ++d) {
+            if (in_p[(pc - d + 12) % 12]) { deltas[pc] = -d; break; }
+            if (in_p[(pc + d) % 12])      { deltas[pc] = d;  break; }
+        }
+    }
+    return deltas;
 }
 
 } // namespace akkado

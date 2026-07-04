@@ -1058,6 +1058,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             using Handler = TypedValue (CodeGenerator::*)(NodeIndex, const Node&);
             static const std::unordered_map<std::string_view, Handler> special_handlers = {
                 {"len",     &CodeGenerator::handle_len_call},
+                // Compile-time quantize table for user-defined key()
+                // (prd-scale-quantize §4.6); const-folds to a 12-element array.
+                {"key_deltas", &CodeGenerator::handle_key_deltas_call},
                 // Bus routing sinks (prd-bus-routing Phase 1). out() is a
                 // pure alias for bus(0, ...); both share handle_bus_call so
                 // out(@) and bus(0, @) produce byte-identical bytecode.

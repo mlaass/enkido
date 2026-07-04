@@ -2699,7 +2699,7 @@ void SemanticAnalyzer::verify_const_purity(NodeIndex node, const std::string& co
             // Array operations (compile-time)
             "range", "map", "sum", "len",
             "linspace", "harmonics", "random",
-            "mean",
+            "mean", "key_deltas",
             // Logic
             "select",
         };

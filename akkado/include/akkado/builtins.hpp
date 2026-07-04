@@ -1192,6 +1192,12 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                  {"arr", "", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Array length (compile-time for static arrays, runtime for dynamic arrays)"}},
+    {"key_deltas", {cedar::Opcode::PUSH_CONST, 2, 0, false,
+                 {"root", "intervals", "", "", "", ""},
+                 {NAN, NAN, NAN},
+                 "Compile-time nearest-tone delta table (12 entries) for a scale "
+                 "given as root + semitone interval list; tie snaps lower. "
+                 "Used by the user-defined key() overload (prd-scale-quantize §4.6)"}},
 
     // Pattern-event chord accessors (PRD prd-pattern-event-arrays). Both are
     // dispatched by name in codegen.cpp's special_handlers map; the opcode

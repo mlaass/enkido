@@ -587,6 +587,10 @@ private:
     /// Handle len() function calls - compile-time array length
     TypedValue handle_len_call(NodeIndex node, const Node& n);
 
+    /// Handle key_deltas() calls — compile-time quantize table for the
+    /// user-defined key() overload (prd-scale-quantize §4.6)
+    TypedValue handle_key_deltas_call(NodeIndex node, const Node& n);
+
     /// Handle notes(e) / freqs(e) — surface a pattern event's chord notes as a
     /// DynArray (MIDI numbers / frequencies respectively). Both delegate to
     /// emit_pattern_values(). See PRD prd-pattern-event-arrays §5.3.
@@ -1441,6 +1445,16 @@ private:
     /// that need compile-time-constant args (e.g. linspace) see literals passed
     /// through a stdlib/user function parameter.
     NodeIndex resolve_param_literal(NodeIndex node) const;
+
+    /// Same resolution against an explicit map. Used at nested-call param
+    /// binding, where the caller's `param_literals_` has already been moved
+    /// into a local save — makes literal propagation TRANSITIVE, so match
+    /// dispatchers and compile-time builtins keep folding through stdlib
+    /// wrapper fns (e.g. `fn scale(events, root, ivals) -> { rm =
+    /// note_num(root) … }` folds note_num's match on the caller's root).
+    NodeIndex resolve_param_literal_in(
+        NodeIndex node,
+        const std::unordered_map<std::uint32_t, NodeIndex>& literals) const;
 
     /// Apply a resolved function reference with captures.
     /// Generalized N-arity helper: binds `arg_bufs[i]` to `ref.params[i].name`

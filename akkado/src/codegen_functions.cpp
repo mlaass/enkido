@@ -325,12 +325,17 @@ TypedValue CodeGenerator::handle_user_function_call(
                 } else {
                     // Concrete arg coming through the spread call (positional or named).
                     NodeIndex src = arg_to_use->source_node;
-                    const Node& arg_node = ast_->arena[src];
+                    // Transitive literal propagation: an identifier arg bound
+                    // to a literal in the caller's frame (saved map — see
+                    // resolve_param_literal_in) records that literal here.
+                    NodeIndex lit_src =
+                        resolve_param_literal_in(src, saved_param_literals);
+                    const Node& arg_node = ast_->arena[lit_src];
                     if (arg_node.type == NodeType::StringLit ||
                         arg_node.type == NodeType::NumberLit ||
                         arg_node.type == NodeType::BoolLit) {
                         std::uint32_t param_hash = fnv1a_hash(param.name);
-                        param_literals_[param_hash] = src;
+                        param_literals_[param_hash] = lit_src;
                     }
                     TypedValue tv = visit(src);
                     param_buf = tv.buffer;
@@ -524,13 +529,17 @@ TypedValue CodeGenerator::handle_user_function_call(
                     param_function_refs_[param_hash] = *func_ref;
                     param_buf = BufferAllocator::BUFFER_UNUSED;  // placeholder — never used as audio
                 } else {
-                    // Check if the argument is a literal - record for match resolution
-                    const Node& arg_node = ast_->arena[args[i]];
+                    // Check if the argument is a literal - record for match
+                    // resolution. Transitive: an identifier arg bound to a
+                    // literal in the caller's frame (saved map) counts too.
+                    NodeIndex lit_src =
+                        resolve_param_literal_in(args[i], saved_param_literals);
+                    const Node& arg_node = ast_->arena[lit_src];
                     if (arg_node.type == NodeType::StringLit ||
                         arg_node.type == NodeType::NumberLit ||
                         arg_node.type == NodeType::BoolLit) {
                         std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
-                        param_literals_[param_hash] = args[i];
+                        param_literals_[param_hash] = lit_src;
                     }
 
                     // Visit argument in caller's scope
@@ -1535,12 +1544,17 @@ TypedValue CodeGenerator::handle_function_value_call(
                     }
                 } else {
                     NodeIndex src = arg_to_use->source_node;
-                    const Node& arg_node = ast_->arena[src];
+                    // Transitive literal propagation (see
+                    // resolve_param_literal_in): identifier args bound to a
+                    // caller-frame literal record that literal.
+                    NodeIndex lit_src =
+                        resolve_param_literal_in(src, saved_param_literals);
+                    const Node& arg_node = ast_->arena[lit_src];
                     if (arg_node.type == NodeType::StringLit ||
                         arg_node.type == NodeType::NumberLit ||
                         arg_node.type == NodeType::BoolLit) {
                         std::uint32_t param_hash = fnv1a_hash(param.name);
-                        param_literals_[param_hash] = src;
+                        param_literals_[param_hash] = lit_src;
                     }
                     TypedValue tv = visit(src);
                     param_buf = tv.buffer;

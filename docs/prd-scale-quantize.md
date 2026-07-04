@@ -1,5 +1,6 @@
-> **Status: IN FLIGHT** — corrected scope as of 2026-05-24. Standalone sibling
-> of [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
+> **Status: PARTIAL — phases 1–4 shipped (1–3 on 2026-05-24, phase 4 on 2026-07-04); phase 5 moved to prd-pattern-array-transforms (audited 2026-07-04).**
+> Standalone sibling of
+> [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
 > The original draft (2026-05-22) specced `scale` / `key` as a new
 > `EVENT_QUANTIZE` opcode. **That framing has been dropped.** Under the
 > parent PRD's foundational principle ("opcodes are for primitive operations
@@ -8,11 +9,53 @@
 > `transpose` / `velocity` / `dur` / `bend` migration. No new opcode is
 > introduced; the parent PRD's §3.1 substrate is unchanged
 > (`EVENT_MAP` + `EVENT_FILTER`). This PRD owns all `scale` / `key`
-> semantics and the generated `akkado/stdlib/scales.ak` catalog.
->
-> **Hard dependencies:**
-> - Parent PRD's `EVENT_MAP` closure substrate (Phase 2a, SHIPPED) — `scale` / `key` lower to `event_map` calls.
-> - Stdlib-module loading (SHIPPED — `akkado/stdlib/event_transforms.ak` already loads). Phase 2 here additionally requires **top-level constant bindings** to load (e.g. `minor = [0,2,3,5,7,8,10]`); a precondition spike verifies this in Commit B of `/home/moritz/.claude/plans/phase-4-fully-unified-snowglobe.md`.
+> semantics and the generated stdlib catalog.
+
+## Implementation Record (audit 2026-07-04)
+
+Phases 1–3 shipped 2026-05-24 as parent-PRD Phase 5 Commits B/C/F
+(`13de2a5`, `14db122`, `8c19539`; refactor `405be8f`), with these
+**accepted deviations** from the spec below (full trail:
+[`audits/prd-scale-quantize_audit_2026-07-04.md`](audits/prd-scale-quantize_audit_2026-07-04.md)):
+
+- **Curated catalog, not full tonal.js** — 12 roots × 8 types (major,
+  minor, dorian, mixolydian, harmonic_minor, major/minor_pentatonic,
+  chromatic + ionian/aeolian aliases). The embedded stdlib re-parses on
+  every `akkado::compile()`, so catalog size is compile-time cost; rarer
+  scales are Phase 4's user-defined form.
+- **Match dispatchers, not name parsing** — the match-dispatcher
+  literal-only constraint (scrutinee must be a string literal so the
+  match folds to one branch) means names resolve as literal branches in
+  the generated `akkado/stdlib/scale_quantize.ak`, not through a
+  `parse_scale_name()` helper. Each branch delegates to a shared
+  `key_q` / `scale_q` fn with literal tables (audit 2026-07-04 —
+  this factoring made the file smaller AND compiles faster).
+- **Multi-word types use underscores** (`"c:harmonic_minor"`), not the
+  Strudel colon convention (`"c:harmonic:minor"`) of §3.
+- **`scale` octaves are 2–4** (plus octave-less → 3). Other octave
+  digits fall through to identity.
+- **Unknown name → identity pass-through, no error** — E184/E185 were
+  dropped in favor of the live-coding coerce-don't-fail philosophy;
+  see §7.
+- **No MIDI 0..127 clamp** on results — event_map note writes are
+  intentionally unclamped (general contract, not scale/key-specific).
+- **`key` accepts and ignores octave digits** (`"d2:minor"` ==
+  `"d:minor"`) — fixed 2026-07-04; it previously fell through to
+  identity.
+- `scale` / `key` are **not in editor autocomplete** (stdlib fns aren't
+  in the builtins JSON) — accepted; exposing stdlib fns to autocomplete
+  is a general follow-up affecting `voice` / `invert` / `swing` too.
+- **Phase 4 (2026-07-04):** user-defined `(root, intervals)` overloads
+  shipped per §4.6 — no interval validation (coerce, don't fail), root
+  as note-name string or MIDI number, `key`'s delta table computed at
+  compile time by the `key_deltas` C++ builtin. Required a small core
+  codegen change: **transitive param-literal propagation**
+  (`resolve_param_literal_in`) so match dispatchers and compile-time
+  builtins keep folding through stdlib wrapper fns.
+
+> **Hard dependencies (all SHIPPED):**
+> - Parent PRD's `EVENT_MAP` closure substrate (Phase 2a) — `scale` / `key` lower to `event_map` calls.
+> - Stdlib-module loading (`akkado/stdlib/*.ak` embed mechanism). Top-level constant bindings turned out NOT to be needed — the generated dispatchers use `fn` + `match` instead.
 
 # PRD: Scale & Key — Note Quantization and Degree Mapping
 
@@ -70,10 +113,10 @@ runtime event-transform substrate.
 | Chord-symbol parsing (`Am`, `Fmaj7`) | Exists | `akkado/src/chord_parser.cpp`, `music_theory.hpp` |
 | Pitch-class arithmetic (`semitone % 12`) | Implicit | scattered |
 | Tuning system (12-EDO / JI / Bohlen-Pierce) | Exists | `akkado/include/akkado/tuning.hpp` |
-| `scale` / `key` builtins | **Specified, unimplemented** | parent PRD §5 migration table; this PRD §4 |
-| `event_map` closure substrate | **Shipped** (Phase 2a, 2026-05-23) | `cedar/include/cedar/opcodes/event_transforms.hpp`; this PRD lowers `scale`/`key` to `event_map` calls |
-| Named musical scales (major, minor, modes…) | **None** | — |
-| Scale-quantize / degree-mapping transform | **None** | — |
+| `scale` / `key` builtins | **Shipped** (2026-05-24) | `akkado/stdlib/scale_quantize.ak` (generated) |
+| `event_map` closure substrate | **Shipped** (Phase 2a, 2026-05-23) | `cedar/include/cedar/opcodes/event_transforms.hpp`; `scale`/`key` lower to `event_map` calls |
+| Named musical scales (major, minor, modes…) | **Shipped** (curated 8-type catalog) | `akkado/stdlib/scales.ak`, `scale_quantize.ak` |
+| Scale-quantize / degree-mapping transform | **Shipped** | `fn key` / `fn scale` in `scale_quantize.ak` |
 
 The builtin name `scale` is currently **free** — the unrelated array builtin
 `scale(array, lo, hi)` was removed in commit `0d4aaa2` precisely to clear it.
@@ -92,12 +135,22 @@ expect `scale` to exist and reach for it immediately.
 ### 2.1 Goals
 
 1. Ship two builtins, `scale` and `key`, with the semantics in §4.
-2. Ship the full tonal.js scale catalog as a **generated** Akkado stdlib file.
+   **SHIPPED** (with the deviations in the Implementation Record).
+2. Ship a **generated** scale catalog as an Akkado stdlib file.
+   **SHIPPED** — curated 8-type catalog, not full tonal.js (descope
+   accepted 2026-07-04; compile-cost rationale in the Implementation
+   Record).
 3. Support **user-defined** scales via a root + interval-list form.
-4. Make the scale/key argument **patternable** (per-cycle alternation).
-5. Lower both builtins to one new Cedar opcode, `EVENT_QUANTIZE`, on the
-   parent PRD's event-transform substrate.
-6. Every behavior in §4 and §8 covered by a test (§10).
+   **SHIPPED 2026-07-04** — `scale(pat, root, ivals)` /
+   `key(pat, root, ivals)`; root is a note-name string or MIDI number;
+   no interval validation (coerce mod 12, audit decision).
+4. ~~Make the scale/key argument patternable (per-cycle alternation).~~
+   **DEFERRED** to `prd-pattern-array-transforms.md` (§11.8).
+5. ~~Lower both builtins to one new Cedar opcode, `EVENT_QUANTIZE`.~~
+   Superseded by the corrected scope: both lower to stdlib `event_map`
+   calls, no new opcode (§4.8, §11.10). **SHIPPED.**
+6. Every behavior in §4 and §8 covered by a test (§10). **SHIPPED**
+   (coverage gaps closed in the 2026-07-04 audit).
 
 ### 2.2 Non-Goals (deferred)
 
@@ -118,9 +171,10 @@ expect `scale` to exist and reach for it immediately.
 ## 3. Target Syntax / User Experience
 
 The scale/key argument is a string `"Root[octave]:type"`, colon-separated.
-Multi-word scale types use additional colons (Strudel convention): segment 0
-is the tonic, segments 1..n joined by spaces form the scale-type name —
-`"D2:harmonic:minor"` = tonic `D2`, type `harmonic minor`.
+Multi-word scale types use **underscores** (shipped convention, deviating
+from Strudel's extra-colon form): `"d2:harmonic_minor"` = tonic `D2`,
+type `harmonic minor`. Root names are lowercase, sharp-spelled
+(`c c# d … b`).
 
 ```akkado
 // key — QUANTIZE: snap a chromatic run into D minor (octave ignored)
@@ -262,21 +316,31 @@ lands in whichever octave is closest to the input.
 **Chord events** (`num_values > 1`) pass through `key` entirely unmodified —
 no voice is snapped. (Per §11.2; chord-aware quantization is a Non-Goal.)
 
-### 4.6 User-defined scales
+### 4.6 User-defined scales — SHIPPED 2026-07-04 (as below)
 
 Both builtins accept, instead of a name string, a `(root, intervals)` pair:
 
 ```akkado
-scale(pat, "D2", [0,2,3,5,7,8,10])   // root note string, then 0-based intervals
-key(pat,   "D",  [0,2,3,5,7,8,10])   // key ignores the octave as usual
+scale(pat, "d2", [0,2,3,5,7,8,10])   // root note string, then semitone intervals
+key(pat,   "d",  [0,2,3,5,7,8,10])   // key ignores the octave as usual
+scale(pat, 38,   [0,3,5,7,10])       // MIDI-number root works too
 ```
 
-The interval list must be a compile-time-constant array, ascending, first
-element `0`, all elements in `0..11`. Violations → **E186**. The root string
-is parsed by §4.3 rules (octave used by `scale`, ignored by `key`).
+The interval list must be a compile-time-constant array. **No validation**
+(audit decision 2026-07-04, superseding the original E186 plan): values
+coerce mod 12 for `key`; for `scale` they are used as given. The root is a
+lowercase note-name string (octave used by `scale`, ignored by `key`) or a
+plain MIDI number; a malformed root string is a clean `E203`.
 
-Named-scale strings (`"D2:minor"`) are sugar: the parser splits the string,
-resolves the type to its interval list via §4.2, and proceeds identically.
+Implementation: arity-3 stdlib overloads in the generated
+`scale_quantize.ak`. `scale` resolves the root through the generated
+`note_num` match dispatcher and calls `scale_q`; `key` calls the
+compile-time C++ builtin `key_deltas(root, ivals)`
+(`handle_key_deltas_call` in `akkado/src/codegen_arrays.cpp`, table math
+shared via `compute_key_deltas` in `akkado/include/akkado/music_theory.hpp`),
+which folds to a 12-entry constant delta table at compile time.
+
+Named-scale strings (`"d2:minor"`) remain the catalog sugar (§4.2).
 
 ### 4.7 Patternable scale/key argument
 
@@ -365,17 +429,28 @@ user-fn-call path lowers them through `event_map` automatically.
 
 ---
 
-## 7. Error Codes (proposed)
+## 7. Error Codes
 
-| Code | Site | Meaning |
-|---|---|---|
-| `E184` | `scale`/`key` codegen | Unknown scale/key type name (not in the catalog) |
-| `E185` | `scale`/`key` codegen | Malformed scale/key name string (bad tonic or empty type) |
-| `E186` | `scale`/`key` codegen | Invalid user-defined interval list (non-ascending, not 0-based, out of `0..11`, empty, or non-constant) |
+**Superseded (audit 2026-07-04).** The shipped implementation raises no
+errors for unknown or malformed names: any string that doesn't match a
+catalog branch falls through to `_: events` — an identity pass-through.
+This is a deliberate alignment with the live-coding philosophy (coerce,
+don't fail; a typo'd scale name mutes the *transform*, not the *set*),
+and it's pinned by the test "key: unknown scale name falls through to
+identity".
 
-> The parent PRD's `E182` reservation was tied to the now-dropped
-> `EVENT_QUANTIZE` opcode and is no longer reserved. `E184`–`E186` are free
-> in `akkado/src` today and confirmed as the assigned codes for this PRD.
+The originally proposed codes are dead:
+
+- `E184` / `E185` (unknown / malformed name) — dropped for the identity
+  fall-through.
+- `E185` and `E186` have meanwhile been assigned to unrelated features
+  (parser type-name errors; stereo-slot mismatch), so the "free in
+  `akkado/src`" claim no longer holds.
+
+Phase 4 shipped (2026-07-04) with **no interval-list validation** — the
+planned code was dropped entirely (§4.6). The only hard error on the
+user-defined path is a malformed root string, reported as `E203`
+(compile-time-constant violation) by `handle_key_deltas_call`.
 
 ---
 
@@ -407,10 +482,10 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
 
 | Phase | Deliverable | Tests |
 |---|---|---|
-| **1** | `web/scripts/generate-scales.ts` + generated `akkado/stdlib/scales.ak`; interval-quality → semitone conversion | Generator unit test; spot-check ~10 scales vs tonal.js |
-| **2** | Stdlib `fn key` + helpers (`snap_to_scale`, `parse_scale_root`, `parse_scale_intervals`) in `akkado/stdlib/event_transforms.ak` (or `scale_quantize.ak`). Constant name string. Requires the stdlib loader to expose top-level constant bindings from `scales.ak`. | Codegen tests; quantize WAV (≥300 s) |
-| **3** | Stdlib `fn scale` + `degree_to_note` helper. Constant name string. | Degree-map codegen tests; `scale` WAV (incl. negative degrees via `v"…"`) |
-| **4** | User-defined `(root, intervals)` form for both builtins; `E186` validation | Custom-scale codegen + error tests |
+| **1** ✅ | `web/scripts/generate-scales.ts` + generated `akkado/stdlib/scales.ak` (+ `generate-scale-quantize.ts` → `scale_quantize.ak`); interval-quality → semitone conversion | Generator self-check (all 8 interval sets vs tonal.js + all 96 key-delta tables validated; script fails on mismatch) |
+| **2** ✅ | Stdlib `fn key` — generated match dispatcher delegating to shared `key_q(events, deltas)`. Constant name string. (Top-level constant bindings turned out unnecessary.) | `[key][scale-quantize]` tests; 300 s chromatic-sweep in-scale trace test |
+| **3** ✅ | Stdlib `fn scale` — generated match dispatcher delegating to shared `scale_q(events, rm, k, ivals)`. Constant name string. | `[scale][scale-quantize]` tests incl. fractional + negative degrees; 300 s degree-map trace test |
+| **4** ✅ | User-defined `(root, intervals)` form for both builtins (shipped 2026-07-04). Arity-3 stdlib overloads: `scale` binds `rm = note_num(root)` (generated dispatcher, numbers pass through `_`) then calls `scale_q`; `key` binds `deltas = key_deltas(root, ivals)` — a compile-time C++ builtin (`handle_key_deltas_call` + `compute_key_deltas` in `music_theory.hpp`) that parses the root and computes the 12-entry nearest-tone table. **No interval validation** (values coerce mod 12; audit decision — replaces the planned error code). A malformed root string is a clean `E203`. Enabled by transitive param-literal propagation in codegen (`resolve_param_literal_in`). | 5 tests in `test_scale_quantize.cpp`: string root, number root, custom-key tie-break, octave-ignored + number-root equivalence, malformed-root error |
 | **5** | **Deferred** — patternable scale/key argument (per-cycle alternation) is naturally an array-of-events concept and ships once `prd-pattern-array-transforms.md` lands the array substrate. | Per-cycle alternation test; long-render WAV (§10) |
 
 ---
@@ -474,17 +549,16 @@ there — `EVENT_MAP`/`OutputEvents` scaffolding) must precede Phase 2 here.
 
 ## 12. Open Questions
 
-- **12.1 — Error-code numbers.** The parent PRD reserved `E182`, which is now
-  in use. Confirm `E184`–`E186` (free in `src` today) or reassign.
-- **12.2 — Method vs pipe surface.** Examples show both `pat.scale(...)` and
-  `pat |> scale(...)`. Confirm both forms register identically (expected —
-  consistent with `transpose`/`slow`), no separate decision needed unless the
-  pattern-method dispatch needs explicit wiring.
-- **12.3 — Stdlib-module loading is a hard prerequisite** (§11.9). This is
-  resolved as a design decision, not an open question, but is tracked here for
-  scheduling visibility: Phase 2 cannot start until stdlib-module loading
-  exists. Coordinate with whoever lands `akkado/stdlib/` (parent PRD's
-  `event_transforms.ak` needs the same infrastructure).
+All resolved (audit 2026-07-04):
+
+- **12.1 — Error-code numbers.** Obsolete — no error codes shipped (§7);
+  Phase 4 allocates a fresh one.
+- **12.2 — Method vs pipe surface.** Verified: both `pat.key("d:minor")`
+  and `pat |> key(@, "d:minor")` compile identically (standard stdlib-fn
+  dispatch; note the pipe form needs the explicit `@` hole).
+- **12.3 — Stdlib-module loading.** Shipped (embed mechanism,
+  `cmake/generate_stdlib_files.cmake`); top-level constant bindings were
+  never needed.
 
 ---
 

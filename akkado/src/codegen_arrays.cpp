@@ -5,6 +5,7 @@
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/const_eval.hpp"
+#include "akkado/music_theory.hpp"
 #include "akkado/string_interner.hpp"
 #include <algorithm>
 #include <cmath>
@@ -51,6 +52,12 @@ static std::optional<double> resolve_const_scalar(
 }
 
 NodeIndex CodeGenerator::resolve_param_literal(NodeIndex node) const {
+    return resolve_param_literal_in(node, param_literals_);
+}
+
+NodeIndex CodeGenerator::resolve_param_literal_in(
+    NodeIndex node,
+    const std::unordered_map<std::uint32_t, NodeIndex>& literals) const {
     if (node == NULL_NODE) return node;
     const Node& n = ast_->arena[node];
     if (n.type != NodeType::Identifier) return node;
@@ -63,8 +70,8 @@ NodeIndex CodeGenerator::resolve_param_literal(NodeIndex node) const {
     }
     if (name.empty()) return node;
 
-    auto it = param_literals_.find(fnv1a_hash(name));
-    if (it != param_literals_.end()) {
+    auto it = literals.find(fnv1a_hash(name));
+    if (it != literals.end()) {
         return it->second;
     }
     return node;
@@ -897,6 +904,122 @@ TypedValue CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
     emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out));
+}
+
+// key_deltas(root, intervals) — compile-time quantize table for the
+// user-defined key() overload (prd-scale-quantize §4.6). Both arguments
+// resolve at compile time: `root` is a note-name string ("d#2" — octave
+// accepted and ignored) or a number (pitch class mod 12); `intervals` a
+// constant array. Called from the stdlib body of `fn key(events, root,
+// ivals)`, so both args are usually fn-param identifiers — resolved back
+// to the caller's literal nodes via param_literals_ /
+// param_multi_buffer_sources_ (same mechanism as linspace/match-fold).
+// The result materializes as a 12-element constant array, exactly the
+// shape an equivalent ArrayLit would produce.
+TypedValue CodeGenerator::handle_key_deltas_call(NodeIndex node, const Node& n) {
+    // Collect the two argument nodes (unwrapping Argument wrappers).
+    NodeIndex arg_nodes[2] = {NULL_NODE, NULL_NODE};
+    int argc = 0;
+    for (NodeIndex child = n.first_child; child != NULL_NODE && argc < 2;
+         child = ast_->arena[child].next_sibling, ++argc) {
+        NodeIndex a = child;
+        if (ast_->arena[a].type == NodeType::Argument) {
+            a = ast_->arena[a].first_child;
+        }
+        arg_nodes[argc] = a;
+    }
+    if (argc < 2 || arg_nodes[0] == NULL_NODE || arg_nodes[1] == NULL_NODE) {
+        error("E120", "key_deltas() requires 2 arguments (root, intervals)",
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    // Root: see through a fn-param identifier to the caller's literal.
+    NodeIndex root_node = resolve_param_literal(arg_nodes[0]);
+    const Node& root_n = ast_->arena[root_node];
+    int root_pc = -1;
+    if (root_n.type == NodeType::StringLit) {
+        root_pc = note_name_pitch_class(root_n.as_string());
+        if (root_pc < 0) {
+            error("E203",
+                  "key(): root '" + root_n.as_string() +
+                      "' is not a note name (expected e.g. \"d\", \"f#\", "
+                      "\"a#2\")",
+                  n.location);
+            return TypedValue::error_val();
+        }
+    } else {
+        ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
+        auto root_val = evaluator.evaluate(root_node);
+        if (!root_val || !std::holds_alternative<double>(*root_val)) {
+            error("E203",
+                  "key(): root must be a note-name string or a compile-time "
+                  "constant number",
+                  n.location);
+            return TypedValue::error_val();
+        }
+        root_pc =
+            ((static_cast<int>(std::get<double>(*root_val)) % 12) + 12) % 12;
+    }
+
+    // Intervals: a fn-param identifier resolves to the caller's array node
+    // via param_multi_buffer_sources_; a direct ArrayLit const-evals as-is.
+    NodeIndex ivals_node = arg_nodes[1];
+    const Node& ivals_n = ast_->arena[ivals_node];
+    if (ivals_n.type == NodeType::Identifier) {
+        std::string name;
+        if (std::holds_alternative<Node::IdentifierData>(ivals_n.data)) {
+            name = ctx_->interner->view(ivals_n.as_identifier());
+        }
+        if (!name.empty()) {
+            auto it = param_multi_buffer_sources_.find(fnv1a_hash(name));
+            if (it != param_multi_buffer_sources_.end()) {
+                ivals_node = it->second;
+                if (ast_->arena[ivals_node].type == NodeType::Argument) {
+                    ivals_node = ast_->arena[ivals_node].first_child;
+                }
+            }
+        }
+    }
+    ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
+    auto ivals_val = evaluator.evaluate(ivals_node);
+    for (const auto& diag : evaluator.diagnostics()) {
+        diagnostics_.push_back(diag);
+    }
+    if (!ivals_val ||
+        !std::holds_alternative<std::vector<double>>(*ivals_val)) {
+        error("E203",
+              "key(): interval list must be a compile-time-constant array",
+              n.location);
+        return TypedValue::error_val();
+    }
+
+    const std::vector<double> deltas = compute_key_deltas(
+        root_pc, std::get<std::vector<double>>(*ivals_val));
+
+    std::vector<TypedValue> elements;
+    elements.reserve(deltas.size());
+    std::uint16_t first_buf = BufferAllocator::BUFFER_UNUSED;
+    for (double v : deltas) {
+        std::uint16_t out = buffers_.allocate();
+        if (out == BufferAllocator::BUFFER_UNUSED) {
+            error("E101", "Buffer pool exhausted", n.location);
+            return TypedValue::error_val();
+        }
+        if (first_buf == BufferAllocator::BUFFER_UNUSED) first_buf = out;
+        cedar::Instruction inst{};
+        inst.opcode = cedar::Opcode::PUSH_CONST;
+        inst.out_buffer = out;
+        inst.inputs[0] = 0xFFFF;
+        inst.inputs[1] = 0xFFFF;
+        inst.inputs[2] = 0xFFFF;
+        inst.inputs[3] = 0xFFFF;
+        encode_const_value(inst, static_cast<float>(v));
+        emit(inst);
+        elements.push_back(TypedValue::signal(out));
+    }
+    return cache_and_return(node,
+                            TypedValue::make_array(std::move(elements), first_buf));
 }
 
 // Shared codegen for notes()/freqs() and the e.notes/e.freqs field forms.

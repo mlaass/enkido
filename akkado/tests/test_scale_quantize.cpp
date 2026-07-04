@@ -16,6 +16,7 @@
 #include <cedar/dsp/constants.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <span>
@@ -280,4 +281,249 @@ TEST_CASE("scale: alias scale names resolve to the canonical scale",
     REQUIRE(st_ionian->output.num_events == 1);
     CHECK_THAT(st_major->output.events[0].midi_note,
                WithinAbs(st_ionian->output.events[0].midi_note, 0.01f));
+}
+
+// ============================================================================
+// Audit 2026-07-04 — regression + coverage-gap tests (PRD §8, §10)
+// ============================================================================
+
+TEST_CASE("key: octave digit in the name is accepted and ignored",
+          "[key][scale-quantize]") {
+    // Regression (audit 2026-07-04): "d2:minor" fell through to `_: events`
+    // because fn key had no octave-carrying branches — a scale()-style name
+    // silently disabled quantization. PRD §4.3/§8: the octave digit is
+    // accepted and ignored, so "d2:minor" must quantize exactly like
+    // "d:minor": c#4(61) and d#4(63) both tie between two scale tones and
+    // round to the lower (60, 62).
+    auto r_oct  = akkado::compile(R"(n"[c#4 d#4]" |> key(@, "d2:minor"))");
+    auto r_bare = akkado::compile(R"(n"[c#4 d#4]" |> key(@, "d:minor"))");
+    REQUIRE(r_oct.success);
+    REQUIRE(r_bare.success);
+    auto h_oct  = render(r_oct, 1);
+    auto h_bare = render(r_bare, 1);
+    const auto* st_oct  = final_transform_state(*h_oct);
+    const auto* st_bare = final_transform_state(*h_bare);
+    REQUIRE(st_oct != nullptr);
+    REQUIRE(st_bare != nullptr);
+    REQUIRE(st_oct->output.num_events == 2);
+    REQUIRE(st_bare->output.num_events == 2);
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        CHECK_THAT(st_oct->output.events[i].midi_note,
+                   WithinAbs(st_bare->output.events[i].midi_note, 0.01f));
+    }
+    CHECK_THAT(st_oct->output.events[0].midi_note, WithinAbs(60.0f, 0.01f));
+    CHECK_THAT(st_oct->output.events[1].midi_note, WithinAbs(62.0f, 0.01f));
+}
+
+TEST_CASE("scale: fractional degree rounds to the nearest integer degree",
+          "[scale][scale-quantize]") {
+    // PRD §8 — d = 2.7 rounds to degree 3. n"c0" carries MIDI 12; runtime
+    // transpose(-9.3) yields 2.7. Degree 3 of d3:minor = 50 + 5 = 55.
+    auto r = akkado::compile(R"(n"c0".transpose(-9.3) |> scale(@, "d3:minor"))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(55.0f, 0.01f));
+}
+
+TEST_CASE("key: fractional input note rounds half-up before quantizing",
+          "[key][scale-quantize]") {
+    // snap() is round-half-up (scale_quantize.ak): 60.6 -> 61 -> C-major
+    // delta -1 -> 60; 61.5 -> 62 (exact half rounds UP) -> in-scale -> 62.
+    {
+        auto r = akkado::compile(R"(n"c4".transpose(0.6) |> key(@, "c:major"))");
+        REQUIRE(r.success);
+        auto h = render(r, 1);
+        const auto* st = final_transform_state(*h);
+        REQUIRE(st != nullptr);
+        REQUIRE(st->output.num_events == 1);
+        CHECK_THAT(st->output.events[0].midi_note, WithinAbs(60.0f, 0.01f));
+    }
+    {
+        auto r = akkado::compile(R"(n"c4".transpose(1.5) |> key(@, "c:major"))");
+        REQUIRE(r.success);
+        auto h = render(r, 1);
+        const auto* st = final_transform_state(*h);
+        REQUIRE(st != nullptr);
+        REQUIRE(st->output.num_events == 1);
+        CHECK_THAT(st->output.events[0].midi_note, WithinAbs(62.0f, 0.01f));
+    }
+}
+
+TEST_CASE("scale: negative degree maps below the root",
+          "[scale][scale-quantize]") {
+    // PRD §4.4 — d = -1: oct = floor(-1/7) = -1, step = 6, out =
+    // 50 - 12 + I[6] = 50 - 12 + 10 = 48 (C3). Floor division must hold
+    // for negative degrees; truncation would give step -1 and misindex.
+    auto r = akkado::compile(R"(n"c0".transpose(-13) |> scale(@, "d3:minor"))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events >= 1);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(48.0f, 0.01f));
+}
+
+// ============================================================================
+// Long renders — PRD §10 audio-render leg (>=300 simulated seconds, per the
+// project experiment methodology). Trace-only: every block's output events
+// are asserted; on failure the block index / simulated time is reported.
+// ============================================================================
+
+namespace {
+
+constexpr int kLongBlocks = 300 * 48000 / cedar::BLOCK_SIZE + 1;  // >= 300 s
+
+double sim_seconds(int block) {
+    return static_cast<double>(block) * cedar::BLOCK_SIZE / 48000.0;
+}
+
+int pitch_class_of(float midi_note) {
+    return ((static_cast<int>(std::lround(midi_note)) % 12) + 12) % 12;
+}
+
+}  // namespace
+
+TEST_CASE("key: 300s chromatic sweep stays in-scale every block",
+          "[key][scale-quantize][long]") {
+    // A full chromatic octave exercises every entry of the a:minor delta
+    // table each cycle. Every emitted note across >=300 simulated seconds
+    // must land in the A-minor pitch-class set {9, 11, 0, 2, 4, 5, 7}.
+    auto r = akkado::compile(
+        R"(n"[c4 c#4 d4 d#4 e4 f4 f#4 g4 g#4 a4 a#4 b4]" |> key(@, "a:minor"))");
+    REQUIRE(r.success);
+    auto host = render(r, 0);
+    const bool in_scale[12] = {true,  false, true, false, true,  true,
+                               false, true,  false, true, false, true};
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (int b = 0; b < kLongBlocks; ++b) {
+        host->vm.process_block(L.data(), R.data());
+        const auto* st = final_transform_state(*host);
+        REQUIRE(st != nullptr);
+        for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+            const float note = st->output.events[i].midi_note;
+            const int pc = pitch_class_of(note);
+            if (!in_scale[pc]) {
+                INFO("block " << b << " (t=" << sim_seconds(b) << "s), event "
+                              << i << ", note " << note << ", pc " << pc);
+                REQUIRE(in_scale[pc]);
+            }
+        }
+    }
+}
+
+TEST_CASE("scale: 300s degree-mapped sequence emits only expected notes",
+          "[scale][scale-quantize][long]") {
+    // Degrees {0,2,4,6} / {1,3,5,7} on alternating cycles through
+    // d3:minor map to {50,53,57,60} / {52,55,58,62}. Any other note at
+    // any block over >=300 simulated seconds is a regression (event
+    // buffer reuse, cycle-alternation wrap, octave-wrap arithmetic).
+    auto r = akkado::compile(R"(n"[0 2 4 6] [1 3 5 7]" |> scale(@, "d3:minor"))");
+    REQUIRE(r.success);
+    auto host = render(r, 0);
+    const std::array<float, 8> allowed = {50.f, 52.f, 53.f, 55.f,
+                                          57.f, 58.f, 60.f, 62.f};
+    std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+    for (int b = 0; b < kLongBlocks; ++b) {
+        host->vm.process_block(L.data(), R.data());
+        const auto* st = final_transform_state(*host);
+        REQUIRE(st != nullptr);
+        for (std::uint32_t i = 0; i < st->output.num_events; ++i) {
+            const float note = st->output.events[i].midi_note;
+            bool ok = false;
+            for (float a : allowed) {
+                if (std::abs(note - a) < 0.01f) { ok = true; break; }
+            }
+            if (!ok) {
+                INFO("block " << b << " (t=" << sim_seconds(b) << "s), event "
+                              << i << ", note " << note);
+                REQUIRE(ok);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Phase 4 — user-defined (root, intervals) scales (PRD §4.6)
+// ============================================================================
+
+TEST_CASE("scale: user-defined intervals with note-name root",
+          "[scale][scale-quantize]") {
+    // Custom minor pentatonic rooted at D2 (MIDI 38): degrees 0..4 map to
+    // 38 + [0,3,5,7,10]. Exercises note_num("d2") folding through the
+    // fn-param into scale_q's rm slot.
+    auto r = akkado::compile(
+        R"(n"[0 1 2 3 4]" |> scale(@, "d2", [0,3,5,7,10]))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 5);
+    const float expect[5] = {38.f, 41.f, 43.f, 45.f, 48.f};
+    for (std::uint32_t i = 0; i < 5; ++i) {
+        CHECK_THAT(st->output.events[i].midi_note, WithinAbs(expect[i], 0.01f));
+    }
+}
+
+TEST_CASE("scale: user-defined intervals with MIDI-number root",
+          "[scale][scale-quantize]") {
+    // Numbers pass through note_num's `_` arm: root 50 (D3), natural-minor
+    // intervals — degrees 0..2 -> 50, 52, 53.
+    auto r = akkado::compile(
+        R"(n"[0 1 2]" |> scale(@, 50, [0,2,3,5,7,8,10]))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 3);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(50.0f, 0.01f));
+    CHECK_THAT(st->output.events[1].midi_note, WithinAbs(52.0f, 0.01f));
+    CHECK_THAT(st->output.events[2].midi_note, WithinAbs(53.0f, 0.01f));
+}
+
+TEST_CASE("key: user-defined intervals quantize with tie snapping lower",
+          "[key][scale-quantize]") {
+    // E major pentatonic pitch classes {4,6,8,11,1}: c4(60, pc 0) ties
+    // b3(59)/c#4(61) -> lower 59; c#4(61, pc 1) in-set -> 61; d4(62, pc 2)
+    // -> nearest c#4(61). Exercises the key_deltas compile-time table from
+    // a note-name root through the fn param.
+    auto r = akkado::compile(
+        R"(n"[c4 c#4 d4]" |> key(@, "e", [0,2,4,7,9]))");
+    REQUIRE(r.success);
+    auto h = render(r, 1);
+    const auto* st = final_transform_state(*h);
+    REQUIRE(st != nullptr);
+    REQUIRE(st->output.num_events == 3);
+    CHECK_THAT(st->output.events[0].midi_note, WithinAbs(59.0f, 0.01f));
+    CHECK_THAT(st->output.events[1].midi_note, WithinAbs(61.0f, 0.01f));
+    CHECK_THAT(st->output.events[2].midi_note, WithinAbs(61.0f, 0.01f));
+}
+
+TEST_CASE("key: user-defined root accepts numbers and ignores octave digits",
+          "[key][scale-quantize]") {
+    // Root 4 (pitch class E) and "e2" (octave ignored) must produce the
+    // same table as "e" — all three quantize c4 to 59.
+    const char* variants[] = {
+        R"(n"c4" |> key(@, 4, [0,2,4,7,9]))",
+        R"(n"c4" |> key(@, "e2", [0,2,4,7,9]))",
+    };
+    for (const char* src : variants) {
+        auto r = akkado::compile(src);
+        REQUIRE(r.success);
+        auto h = render(r, 1);
+        const auto* st = final_transform_state(*h);
+        REQUIRE(st != nullptr);
+        REQUIRE(st->output.num_events == 1);
+        CHECK_THAT(st->output.events[0].midi_note, WithinAbs(59.0f, 0.01f));
+    }
+}
+
+TEST_CASE("key: malformed user-defined root is a clean compile error",
+          "[key][scale-quantize]") {
+    // "zz9" is not a note name — E203 from handle_key_deltas_call, not a
+    // crash or silent identity.
+    auto r = akkado::compile(R"(n"c4" |> key(@, "zz9", [0,2,4]))");
+    CHECK_FALSE(r.success);
 }
