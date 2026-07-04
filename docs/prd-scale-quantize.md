@@ -1,4 +1,4 @@
-> **Status: PARTIAL — phases 1–4 shipped (1–3 on 2026-05-24, phase 4 on 2026-07-04); phase 5 moved to prd-pattern-array-transforms (audited 2026-07-04).**
+> **Status: COMPLETE — phases 1–4 shipped (2026-05-24 and 2026-07-04); the patternable argument moved to prd-pattern-array-transforms (audited 2026-07-04).**
 > Standalone sibling of
 > [`prd-runtime-event-transforms.md`](prd-runtime-event-transforms.md).
 > The original draft (2026-05-22) specced `scale` / `key` as a new
