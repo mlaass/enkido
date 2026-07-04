@@ -9,7 +9,7 @@ This document describes the implementation of mini-notation pattern evaluation a
 The pattern evaluation pipeline transforms mini-notation strings into bytecode for the Cedar VM:
 
 ```
-Pattern String → Lexer → Parser → AST → Evaluator → Events → Codegen → SEQ_STEP
+Pattern String → Lexer → Parser → AST → Evaluator → Events → Codegen → SEQPAT_*
 ```
 
 ### Pipeline Stages
@@ -17,7 +17,7 @@ Pattern String → Lexer → Parser → AST → Evaluator → Events → Codegen
 1. **Lexer** (`mini_lexer.cpp`): Tokenizes the pattern string into tokens (pitches, samples, operators, brackets)
 2. **Parser** (`mini_parser.cpp`): Builds an AST using Pratt parsing with operator precedence
 3. **Evaluator** (`pattern_eval.cpp`): Expands the AST into a flat timeline of events
-4. **Codegen** (`codegen_patterns.cpp`): Emits SEQ_STEP bytecode with event data
+4. **Codegen** (`codegen_patterns.cpp`): Emits the SEQPAT opcode family (`SEQPAT_QUERY`/`STEP`/`GATE`/`TYPE`/`FIELD`/`PHASE`) sharing one `SequenceState`
 
 ### Cycle-Based Evaluation Model
 
@@ -158,7 +158,7 @@ Logic:
 - `MiniGroup`: returns max of children's cycle counts
 - `MiniSequence` (`<>`): returns N * max(child_cycles) where N = number of children
 - `MiniModified`: returns child's cycle count (modifiers don't add cycles)
-- `MiniPolyrhythm`: returns max of children's cycle counts
+- `MiniPolyrhythm`, `MiniPolymeter`: returns max of children's cycle counts
 - `MiniChoice`: returns max of children's cycle counts
 
 ### Multi-Cycle Evaluation Process
@@ -207,55 +207,54 @@ PatternEventStream evaluate_pattern_multi_cycle(NodeIndex root, const AstArena& 
 
 ### Normalized Time to Beat Time
 
-Events are evaluated with normalized times (0.0 - cycle_span). Conversion to beats:
+**One cycle = one beat**, so normalized cycle time IS beat time — there is
+no conversion factor. Top-level compilation is a hybrid dispatch
+(`compile_top_level_pattern` in `codegen_patterns.cpp`):
 
-```
-beat_time = normalized_time * 4.0
-cycle_length = 4.0 * cycle_span
-```
+- **All top-level weights == 1** (no `/n` or `@n` on any top-level
+  element): the per-cycle-alternation path is used and `cycle_length_`
+  stays at its **1.0 base** — elements alternate one-per-cycle at runtime,
+  and `.slow(N)` / `.fast(N)` scale from that 1.0 base.
+- **Any non-unit weight** (a top-level `/n` or `@n`): children subdivide
+  time proportionally and `cycle_length_ = sum of top-level weights`.
 
 ### Examples
 
-| Pattern | cycle_span | cycle_length | Event Beat Times |
-|---------|------------|--------------|------------------|
-| `c4 e4 g4` | 1.0 | 4 beats | 0, 1.33, 2.67 |
-| `<c4 e4 g4>` | 3.0 | 12 beats | 0, 4, 8 |
-| `[c4 e4 g4 b4]/2` | 2.0 | 8 beats | 0, 2, 4, 6 |
+| Pattern | cycle_length | Behavior |
+|---------|--------------|----------|
+| `c4 e4 g4` | 1.0 (base) | Per-cycle alternation: c4 in cycle 0, e4 in cycle 1, g4 in cycle 2 |
+| `<c4 e4 g4>` | 1.0 (base) | Identical (synonym of top-level) |
+| `[c4 e4 g4 b4]/2` | 2.0 | Events at beats 0, 0.5, 1.0, 1.5 |
+| `a [b c]/2 d` | 4.0 | Weights 1 + 2 + 1; children packed proportionally |
 
-## SEQ_STEP Opcode
+## SEQPAT Opcode Family
 
-The SEQ_STEP opcode handles pattern playback in the Cedar VM.
+Pattern playback in the Cedar VM is handled by the SEQPAT opcode family,
+all reading one shared `SequenceState`
+(`cedar/include/cedar/opcodes/sequence.hpp`):
 
-### State Structure
+- `SEQPAT_QUERY` — advances the sequence against the beat clock once per
+  block; the other opcodes read its result
+- `SEQPAT_STEP` — current event value (freq / sample id)
+- `SEQPAT_GATE` — gate signal (high for event duration, 1-sample drop at
+  each onset)
+- `SEQPAT_TYPE`, `SEQPAT_FIELD`, `SEQPAT_PHASE` — event kind, extended
+  fields (`vel`, `dur`, `note`, `chance`, …), phase within the event
 
-```cpp
-struct SeqStepState {
-    std::vector<float> times;      // Event times in beats
-    std::vector<float> values;     // Event values (freq, sample_id)
-    std::vector<float> velocities; // Event velocities
-    float cycle_length;            // Total pattern length in beats
-    uint32_t current_index;        // Current playback position
-};
-```
+### Trigger Logic (conceptual)
 
-### Trigger Logic
+1. Compute the beat position within the pattern:
+   `beat_pos = fmod(beat, cycle_length)`
+2. When `beat_pos` crosses the next event's start time, fire its onset
+   (trigger pulse + gate drop-and-raise)
+3. Output the event's value / velocity / extended fields
+4. Wrap detection: when `beat_pos` resets below the previous position,
+   playback restarts from the first event
 
-The opcode fires triggers based on current beat position:
-
-1. Calculate `beat_pos = std::fmod(beat, cycle_length)`
-2. If `beat_pos >= times[current_index]`, fire trigger
-3. Output current value and velocity
-4. Advance `current_index`, wrap at end of pattern
-
-### Wrap Detection
-
-Pattern wrapping is detected when beat position resets:
-
-```cpp
-if (beat_pos < previous_beat_pos) {
-    current_index = 0;  // Reset to beginning
-}
-```
+See `SequenceState` for the full current structure — events carry
+per-event extended fields and multi-voice chord values
+(`OutputEvent.values[]`, prd-pattern-event-arrays), not just
+time/value/velocity triples.
 
 ## Known Limitations
 
@@ -267,49 +266,11 @@ if (beat_pos < previous_beat_pos) {
 
 4. **Random choice evaluation**: The `|` choice operator selects randomly at evaluation time. Multi-cycle evaluation will make different random choices per cycle.
 
-## UI Feedback Design (Future Phase)
+## UI Feedback (Implemented)
 
-### Goal
-
-Highlight the currently playing step in the pattern editor.
-
-### Challenges
-
-- Pattern is compiled to flat event list; original source structure is lost
-- Need to map beat position back to source location
-- Multiple patterns may play simultaneously
-
-### Proposed Solution
-
-Add source mapping to events:
-
-```cpp
-struct PatternEvent {
-    // ... existing fields
-    SourceLocation source_loc;  // For UI highlighting
-    uint32_t step_index;        // Index in original pattern
-};
-```
-
-SEQ_STEP outputs current step index:
-
-```cpp
-struct SeqStepState {
-    // ... existing fields
-    uint32_t current_step;      // For UI feedback
-};
-```
-
-### UI Integration
-
-1. Codegen preserves `step_index` from pattern evaluation
-2. SEQ_STEP updates `current_step` on each trigger
-3. WASM bindings expose `get_current_step(pattern_id)` API
-4. UI polls at display rate (60fps) and highlights corresponding source
-
-### Visual Highlighting Options
-
-- Background color pulse on current step
-- Cursor/playhead indicator in pattern text
-- Piano roll style with moving marker
-- Oscilloscope showing triggered note
+Active-step highlighting shipped: pattern events carry source locations
+(`akkado::serialize_sequences_json()` / `serialize_mini_ast_json()` export
+them), and the web editor highlights the playing step via
+`web/src/lib/stores/pattern-highlight.svelte.ts` and
+`Panel/PatternDebugPanel.svelte` (AST visualization, sequence events,
+source-location mapping). See CLAUDE.md "Pattern Debug Serialization".

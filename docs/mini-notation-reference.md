@@ -2,7 +2,7 @@
 
 # Mini-Notation Reference
 
-This document provides a comprehensive reference for Akkado's mini-notation syntax, used in typed pattern literals like `n"…"`, `v"…"`, `s"…"`, `c"…"` and `timeline()`.
+This document provides a comprehensive reference for Akkado's mini-notation syntax, used in typed pattern literals like `n"…"`, `v"…"`, `s"…"`, `c"…"` and `timeline()`. The formal EBNF (including lexer disambiguation rules and curve mode) lives in [docs/grammar/mini-notation-grammar.md](grammar/mini-notation-grammar.md).
 
 ## Typed Prefixes
 
@@ -14,7 +14,7 @@ Pattern strings carry a parse-mode prefix that selects per-atom rules:
 | `n"…"`  | Note    | Note names + bare MIDI ints (both → Hz)            | mtof'd freq           |
 | `s"…"`  | Sample  | Sample names — `bd`, `sd`, `kick:2`                | Sample IDs            |
 | `c"…"`  | Chord   | Chord symbols — `Am`, `C7`, `F#m7b5`               | Multi-voice chord     |
-| `n"…"`  | Auto    | Detect per-atom (legacy, backwards compatible)     | Inherits              |
+| *(plain string)* | Note | Pattern-taking builtins re-parse bare strings in note mode | mtof'd freq |
 | `t"…"`  | Curve   | `_`, `.`, `-`, `^`, `'` for breakpoints; `~` smooth| Timeline curve        |
 
 The Value mode adds a numeric-atom path to the lexer: signed decimals, scientific notation, and finite reals are accepted; note names / sample names / chord symbols error E163.
@@ -47,8 +47,9 @@ Pitches follow the pattern: `note[accidental][octave]`
 | Component | Values | Notes |
 |-----------|--------|-------|
 | Note | `a`-`g` (lowercase) or `A`-`G` (uppercase) | Case affects parsing |
-| Accidental | `#` (sharp), `b` (flat) | Optional |
-| Octave | `0`-`9` | Optional, defaults to 4 |
+| Accidental | `#` (sharp), `b` (flat), `x` (double sharp) | Optional, stackable |
+| Micro-step | `^`/`+` (up), `v`/`\` (down) | Optional microtonal offset, stackable |
+| Octave | `0`-`9` (two digits accepted; MIDI clamped 0–127) | Optional, defaults to 4 |
 
 **Examples:**
 ```
@@ -89,7 +90,7 @@ s"amencutup:0 amencutup:1".bank("Dirt-Samples").out()
 
 URI schemes (`file://`, `http(s)://`, `github:user/repo`, `bundled://`) are resolved by the unified URI resolver — see [URI Schemes](uri-schemes.md) for the full list and caching behaviour.
 
-**Trigger-driven one-shots:** for samples fired by an arbitrary trigger source (a button, an envelope, a custom edge detector) rather than the cycle clock, use `sample(trig, pitch, "name")` directly — it accepts the same `[bank/]name[:variant]` syntax as the mini-notation forms above. See [`sample()`](builtins/samplers.md#sample) for details.
+**Trigger-driven one-shots:** for samples fired by an arbitrary trigger source (a button, an envelope, a custom edge detector) rather than the cycle clock, use `sample(trig, pitch, "name")` directly — it accepts the same `[bank/]name[:variant]` syntax as the mini-notation forms above. See [`sample()`](../web/static/docs/reference/builtins/samplers.md#sample) for details.
 
 ### Chords
 
@@ -127,7 +128,7 @@ Am11        // A minor 11th — 6 voices
 G13         // G dominant 13th — 6 voices
 ```
 
-The same quality table backs the `chord()` builtin, the `c"..."` mini-notation prefix, and the apostrophe-literal syntax (`Am'`, `Cmaj7_4'`). See the [Chords reference](../web/static/docs/reference/mini-notation/chords.md) for voicing transforms and the canonical interval lists.
+The same quality table backs the `chord()` builtin and the `c"..."` mini-notation prefix — the formal symbol grammar lives in [docs/grammar/chord-grammar.md](grammar/chord-grammar.md). See the [Chords reference](../web/static/docs/reference/mini-notation/chords.md) for voicing transforms and the canonical interval lists. (The old apostrophe chord literals `Am'` / `Cmaj7_4'` were removed 2026-05-21.)
 
 ### Rests
 
@@ -159,12 +160,16 @@ If `_` appears at the start (with no previous note), it has no effect.
 
 ## Grouping Constructs
 
-### Sequence (implicit)
+### Top-Level Sequence (implicit alternation)
 
-Elements separated by whitespace subdivide the cycle equally.
+At the top level, whitespace-separated elements alternate **one per
+cycle** (synonym of `<…>`) — they do *not* subdivide the cycle. Wrap in
+`[…]` to pack elements into one cycle. (Deliberate divergence from
+Strudel/Tidal — see CLAUDE.md "Clock System".)
 
 ```
-c4 e4 g4    // Three equal parts per cycle
+c4 e4 g4     // c4 in cycle 0, e4 in cycle 1, g4 in cycle 2
+[c4 e4 g4]   // three equal parts within one cycle
 ```
 
 ### Group `[...]`
@@ -268,7 +273,7 @@ Multiple modifiers can be combined:
 
 ```
 c4*2?0.5    // Repeat twice, each with 50% chance
-c4:2@3      // Hold for 2 units with weight 3
+c4:0.8@3    // Velocity 0.8, temporal weight 3
 ```
 
 ### Record Suffix `{key:value, ...}` (Phase 2 PRD)
@@ -341,35 +346,35 @@ When using patterns with pipe binding (`as`), event fields are accessible.
 
 | Field | Aliases | Type | Description |
 |-------|---------|------|-------------|
-| `%.freq` | `%.f`, `%.pitch` | Hz | Frequency |
-| `%.vel` | `%.v`, `%.velocity` | 0-1 | Velocity |
-| `%.trig` | `%.trigger` | pulse | 1-sample pulse at every event onset (per-note retrigger) |
-| `%.gate` | `%.g` | 0/1 | Held high during the event's duration, with a 1-sample drop at each onset |
-| `%.note` | `%.n`, `%.midi` | 0-127 | MIDI note number |
-| `%.dur` | - | cycles | Duration |
-| `%.chance` | - | 0-1 | Probability |
-| `%.time` | - | cycles | Event time |
-| `%.phase` | - | 0-1 | Phase within cycle |
+| `@.freq` | `@.f`, `@.pitch` | Hz | Frequency |
+| `@.vel` | `@.v`, `@.velocity` | 0-1 | Velocity |
+| `@.trig` | `@.trigger` | pulse | 1-sample pulse at every event onset (per-note retrigger) |
+| `@.gate` | `@.g` | 0/1 | Held high during the event's duration, with a 1-sample drop at each onset |
+| `@.note` | `@.n`, `@.midi` | 0-127 | MIDI note number |
+| `@.dur` | - | cycles | Duration |
+| `@.chance` | - | 0-1 | Probability |
+| `@.time` | - | cycles | Event time |
+| `@.phase` | - | 0-1 | Phase within cycle |
 
 ### Trigger vs gate
 
-`%.trig` and `%.gate` are **two different signals**, not aliases. Pick the one
+`@.trig` and `@.gate` are **two different signals**, not aliases. Pick the one
 that matches your envelope:
 
-- **`%.trig`** is a single-sample pulse fired exactly once at the start of each
+- **`@.trig`** is a single-sample pulse fired exactly once at the start of each
   event. Pair it with `ar()`, sample players, or anything that listens for an
   impulse.
-- **`%.gate`** stays high for the full duration of each event but drops to
+- **`@.gate`** stays high for the full duration of each event but drops to
   `0` for one sample at every event onset, so retrigger-style envelopes
   (`ar`, `adsr`) see a rising edge per note. Pair it with `adsr()` when you
   want true sustain between attack and release.
 
 ```akkado
 // AR + .trig — pulse-driven, clean per-note attack/release
-n"c4 e4 g4 b4" |> saw(@.freq) * ar(@.trig, 0.005, 0.15) |> out(%)
+n"c4 e4 g4 b4" |> saw(@.freq) * ar(@.trig, 0.005, 0.15) |> out(@)
 
 // ADSR + .gate — sustains while the note is held; per-note retrigger
-n"c4 e4 g4 b4" |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.2) |> out(%)
+n"c4 e4 g4 b4" |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.2) |> out(@)
 ```
 
 #### Legato via overlapping durations
@@ -382,12 +387,12 @@ get true legato (no retrigger between notes):
 // Each note's duration is 2 steps long, so events overlap
 // → gate stays continuously high → ADSR sustains across the whole phrase.
 n"c4 e4 g4 b4".dur(2)
-  |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.5) |> out(%)
+  |> saw(@.freq) * adsr(@.gate, 0.01, 0.1, 0.7, 0.5) |> out(@)
 ```
 
 **Example:**
 ```akkado
-n"c4 e4 g4" as e |> sine(e.freq) |> % * e.vel |> out(%)
+n"c4 e4 g4" as e |> sine(e.freq) |> @ * e.vel |> out(@)
 ```
 
 ## Chord Qualities
