@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-07-06
+
+### Fixed
+
+- **Hot-swap debug logging no longer runs on the audio thread.**
+  `handle_swap()` executes from `process_block()` on the audio thread,
+  where its ~10 `fprintf(stderr, "[VM] …")` calls allocate + lock (not
+  real-time-safe) and flooded stderr on every program swap/crossfade
+  during live coding. These traces are compiled out by default; define
+  `CEDAR_VM_SWAP_LOG=1` to restore them when debugging a swap/crossfade
+  issue.
+
+## [0.4.4] - 2026-07-04
+
+### Added
+
+- **Builtin overload resolution.** Builtins and user-defined functions
+  can now be overloaded across multiple forms; operators participate as
+  named builtins in the same resolution pass.
+- **Scale/key quantization with user-defined scales.** New `scale`/`key`
+  pattern support plus a documented reference (`pattern/scale-key`).
+- **Parameter type annotations.** Type names are PascalCase — `Signal`,
+  `Number`, `Pattern`, `Record`, `Array`, `String`, `Function`,
+  `Stream` — parsed contextually, so they remain usable as identifiers.
+- **Windows / MSVC build support.** Source-level readiness for the Cedar
+  engine and the Akkado/nkido CLI tools (ctrl-c handling, binary stdio,
+  UTF-8 init, app manifests).
+- **Session state save/restore round-trip.** A state-init codec on the
+  web side serializes and restores live DSP state across reloads.
+- **EBNF grammar references** for the core language, mini-notation, and
+  chord symbols (`docs/grammar/`).
+- **Top-level MIT LICENSE.**
+
+### Changed
+
+- **Audio arena memory is reclaimed during GC.** Long live-coding
+  sessions no longer grow the audio arena without bound; untouched
+  buffers are reclaimed on sweep.
+
+### Fixed
+
+- **Hot-swapped patterns join in phase.** Pattern alternation position
+  is now derived from the global clock, so a hot-swap keeps the new
+  pattern aligned instead of restarting its cycle.
+
 ## [0.4.3] - 2026-05-29
 
 ### Fixed
