@@ -91,6 +91,11 @@ struct CompileResult {
     // unsuccessful compiles.
     std::uint32_t required_buffers = 0;
 
+    // Per-bus scratch buffer index map (prd-bus-routing). Empty for programs
+    // with no audio sink. Lets a host read an individual bus's output buffer
+    // by index after process_block. See CodeGenerator::emit_bus_epilogue.
+    std::vector<BusBufferMapping> bus_buffers;
+
     // Phase 2 records-system-unification: analyzer outputs retained for
     // downstream tooling (e.g. shape index serialization). Populated by
     // compile() whenever the corresponding pass runs, including on early-

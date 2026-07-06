@@ -254,6 +254,16 @@ struct RequiredSoundFont {
     int preset_index = 0;    // Preset index within the SF2
 };
 
+// Per-bus scratch buffer mapping (prd-bus-routing). Lets a host read an
+// individual bus's summed output (post per-bus mixer, pre-sum-into-master)
+// by buffer index after process_block, e.g. to route buses to separate
+// hardware output channels. bus 0 is the master. right_buffer == left_buffer + 1.
+struct BusBufferMapping {
+    std::uint32_t bus_index    = 0;
+    std::uint16_t left_buffer  = 0;
+    std::uint16_t right_buffer = 0;
+};
+
 /// Required MIDI source from compile-time midi() calls
 /// (PRD prd-midi-input §4.7). One entry per midi() call site — duplicates by
 /// `device:` or `file:` are NOT collapsed, because per-call channel filters
@@ -367,6 +377,7 @@ struct CodeGenResult {
     std::vector<RequiredWavetable> required_wavetables;  // Wavetable banks from wt_load()
     std::vector<UriRequest> required_uris;  // URI declarations from samples() etc.
     std::uint32_t required_buffers = 0;  // Peak distinct buffer indices used (cedar::BufferPool::ensure_capacity input)
+    std::vector<BusBufferMapping> bus_buffers;  // Per-bus scratch buffer index map (populated by emit_bus_epilogue)
     bool success = false;
 };
 
@@ -1329,6 +1340,9 @@ private:
     std::vector<UriRequest> required_uris_;
     // Track input source strings from in('...') calls (per-call order; not deduplicated)
     std::vector<std::string> required_input_sources_;
+    // Per-bus scratch buffer index map, populated by emit_bus_epilogue and
+    // drained into CodeGenResult.bus_buffers (prd-bus-routing).
+    std::vector<BusBufferMapping> bus_buffers_;
 
     // Map from AST node index to typed result (replaces node_buffers_, record_fields_,
     // multi_buffers_, array_lengths_, pattern_state_ids_)
