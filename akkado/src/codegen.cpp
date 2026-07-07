@@ -140,6 +140,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_wavetables_.clear();
     required_uris_.clear();
     required_input_sources_.clear();
+    bus_buffers_.clear();
     param_decls_.clear();
     viz_decls_.clear();
     builtin_var_overrides_.clear();
@@ -241,6 +242,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     result.required_wavetables = std::move(required_wavetables_);
     result.required_uris = std::move(required_uris_);
     result.required_buffers = buffers_.peak_count();
+    result.bus_buffers = std::move(bus_buffers_);
     result.success = success;
     return result;
 }
@@ -3176,6 +3178,15 @@ void CodeGenerator::emit_bus_epilogue() {
             return;
         }
         bus_left[idx] = l;
+    }
+
+    // Publish the bus → buffer-index map so a host can tap individual buses
+    // (prd-bus-routing). right = left + 1 (adjacency asserted above).
+    bus_buffers_.clear();
+    bus_buffers_.reserve(bus_left.size());
+    for (const auto& [idx, l] : bus_left) {
+        bus_buffers_.push_back({static_cast<std::uint32_t>(idx), l,
+                                static_cast<std::uint16_t>(l + 1)});
     }
 
     // 3. Rewrite bus placeholders to real left-buffer indices.

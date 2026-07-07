@@ -133,6 +133,42 @@ TEST_CASE("bus-routing: a program with no sink emits no epilogue", "[bus]") {
     CHECK(count_op(insts, cedar::Opcode::CLAMP) == 0);
 }
 
+TEST_CASE("bus-routing: bus_buffers exposes the per-bus buffer index map",
+          "[bus]") {
+    // Master (bus 0) + two numbered buses → one BusBufferMapping per bus,
+    // ascending by bus_index (std::map iteration order in emit_bus_epilogue).
+    auto r = akkado::compile("out(0.5)\nbus(1, 0.3)\nbus(2, 0.4)");
+    REQUIRE(r.success);
+    REQUIRE(r.bus_buffers.size() == 3);
+
+    CHECK(r.bus_buffers[0].bus_index == 0u);
+    CHECK(r.bus_buffers[1].bus_index == 1u);
+    CHECK(r.bus_buffers[2].bus_index == 2u);
+
+    for (const auto& bb : r.bus_buffers) {
+        // Right channel is always the left index + 1 (adjacency invariant).
+        CHECK(bb.right_buffer == static_cast<std::uint16_t>(bb.left_buffer + 1));
+        // Every bus buffer lies inside the pool the host is told to allocate.
+        CHECK(bb.left_buffer < r.required_buffers);
+        CHECK(bb.right_buffer < r.required_buffers);
+    }
+
+    // Left-buffer indices are pairwise distinct (no two buses share a slot).
+    for (std::size_t i = 0; i < r.bus_buffers.size(); ++i) {
+        for (std::size_t j = i + 1; j < r.bus_buffers.size(); ++j) {
+            CHECK(r.bus_buffers[i].left_buffer != r.bus_buffers[j].left_buffer);
+        }
+    }
+}
+
+TEST_CASE("bus-routing: a program with no sink has empty bus_buffers",
+          "[bus]") {
+    // Pure computation, no out()/bus() writer → no bus epilogue, no mapping.
+    auto r = akkado::compile("x = 1 + 1");
+    REQUIRE(r.success);
+    CHECK(r.bus_buffers.empty());
+}
+
 TEST_CASE("bus-routing: a non-literal bus index is E260", "[bus][diag]") {
     auto r = akkado::compile(
         "b = param(\"b\", 1, 0, 4)\n"

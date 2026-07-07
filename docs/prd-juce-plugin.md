@@ -280,63 +280,19 @@ untouched.
    └────────────────────┘         └──────────────────────────┘
 ```
 
-### 5.3 The `AudioBackend` interface (formalizing the existing surface)
+### 5.3 `AudioBackend` interface, extraction & host reconciliation — see `prd-web-audio-backend.md`
 
-The interface is the existing `audioEngine` method set, grouped:
+**Superseded 2026-07-07 by
+[`prd-web-audio-backend.md`](prd-web-audio-backend.md).** That PRD owns the formal
+`AudioBackend` interface (the grouped `audioEngine` surface), the split of
+`audio.svelte.ts` into a backend-agnostic shell + a transport backend,
+`WasmAudioBackend`, `JuceAudioBackend`, the host-capability reconciliation (the
+transport/clock-ownership inversion, bidirectional params, native asset
+resolution, the web-only analyser leak), and the `IS_NATIVE` build.
 
-| Group | Methods (representative) |
-|-------|--------------------------|
-| Lifecycle | `initialize()`, `restart()` |
-| Transport | `play()`, `pause()`, `stop()`, `setBpm(n)`, `setVolume(v)` — in plugin these are *observe/request*, the host owns truth |
-| Compile/load | `compile(source) → {ok, diagnostics, decls}` |
-| Params | `setParam(id, value)`, `pressButton`, `releaseButton`, `toggleParam`, `resetParam`, `clearParams` |
-| Assets | `loadSample/FromBytes/FromFile`, `loadSoundFont`, `loadWavetable`, `loadMidiFile`, `loadBank`, `loadAsset`, `clear*`, `forget*` |
-| Queries | `getBuiltins`, `getShapeIndex`, `getPatternInfo`, `queryPatternPreview`, `getCurrentBeatPosition`, `getActiveSteps`, `inspectState`, `getPatternDebug`, `getProbeData`, `getFFTProbeData` |
-| MIDI/input | `setInputSource`, `listInputDevices`, `register/unregisterInputFile`, `midi(...)`, `setDefaultMidiDevice` |
-| Analyser (web-only leak) | `getAnalyserNode`, `getAudioContext`, `getTimeDomainData`, `getFrequencyData` → **return `null` in plugin backend** (only `test-hooks.ts` consumes them; production viz uses `getProbeData`/`getFFTProbeData`) |
-
-The reactive `$state` + getters (`isPlaying`, `bpm`, `currentBeat`, `params`,
-`vizDecls`, `loadedSamples`, `inputStatus`, …) **stay in the shell**; backends
-update them via callbacks. In the web backend the worklet pushes updates; in the
-plugin backend JUCE event listeners push host-driven updates.
-
-### 5.4 Why extraction, not branching (evidence)
-
-Both approaches edit essentially the **same one file**. Branching scatters
-`if (isPlugin)` across ~30–40 methods of a 2900-line file — worst around the
-~350-line `compile()` orchestration (compile-worker → asset loaders →
-`loadProgram`) and the transport-ownership inversion. Extraction relocates that
-same code into `WasmAudioBackend` verbatim and writes a short
-`JuceAudioBackend.compile()` (the native engine does compile + resolve + load
-atomically behind one `getNativeFunction`). Cost delta is small; clarity and the
-single-source-of-truth payoff are large.
-
-**Files changed by the extraction:**
-
-| File | Change |
-|------|--------|
-| `web/src/lib/stores/audio.svelte.ts` | **Modified** — split: keep `$state`/getters + delegating shell; move backend logic out |
-| `web/src/lib/audio/audio-backend.ts` | **New** — `AudioBackend` interface |
-| `web/src/lib/audio/wasm-backend.ts` | **New** — the moved web implementation (owns `compile.worker.ts`, `input-source.ts`, Web MIDI wiring) |
-| `web/src/lib/audio/juce-backend.ts` | **New** — `window.__JUCE__` bridge implementation |
-| ~33 consumer files (components/stores/editor/viz) | **No change** — still import `audioEngine` |
-
-### 5.5 Host-capability differences the adapters must reconcile
-
-| Browser provides | Plugin host provides instead |
-|------------------|------------------------------|
-| `AudioContext` + `AudioWorkletNode` (owns DSP+clock) | Native Cedar engine owns DSP; **DAW owns clock/transport** |
-| `fetch('/wasm/...')` + compile `Worker` | Native `akkado_compile` on a JUCE background thread |
-| `navigator.requestMIDIAccess` (Web MIDI) | Sample-accurate MIDI from the DAW (`MidiBuffer`) |
-| `getUserMedia`/`getDisplayMedia` input | DAW input bus (effect variant) |
-| One-way UI→engine params | **Bidirectional**: host automation writes back into params |
-| IndexedDB/`localStorage`/Blob URLs/file pickers | WebView keeps IndexedDB/localStorage; **asset resolution routes through the native engine resolver**; file pickers via JUCE `FileChooser` bridged |
-
-The **transport/clock-ownership inversion** is the one genuinely new design
-problem (the store flips from *owning and pushing* `isPlaying`/`bpm`/
-`currentBeat` to *observing* host-driven values). This effort is identical under
-extraction or branching — but extraction keeps it from metastasizing across the
-file. Bidirectional params are likewise new and host-driven.
+The plugin is a **consumer** of that abstraction: it provides the
+`JuceAudioBackend`'s runtime target — the C++ native-function/event bridge (§6.8)
+— and the plugin-only UI panels (§5.6).
 
 ### 5.6 Plugin-only UI panels
 
@@ -347,17 +303,19 @@ indicators (§6.3), and (eventually) license-activation UI. The shared core
 (§5.2) covers the editor, params, visualizations, and inspectors; these
 plugin-only panels need a home that doesn't pollute the site bundle.
 
-Working assumption: keep one Svelte codebase under `nkido/web` and gate
-plugin-only components behind a build-time `IS_PLUGIN` flag (Vite `define`),
-producing two bundles — `web/` (site) and `web/plugin-ui/` (WebView). Plugin
-panels live in `web/src/lib/plugin/` and are tree-shaken out of the site
-build. The `JuceAudioBackend` already runs only when `window.__JUCE__` exists,
-so plugin code that imports it doesn't pull JUCE into the site bundle.
+Per [`prd-web-audio-backend.md`](prd-web-audio-backend.md) §5.5 (resolving
+OQ11.6): one Svelte codebase under `nkido/web`; host-only components live under
+`web/src/lib/native/`, gated behind an **`IS_NATIVE`** build flag (Vite
+`define`) and tree-shaken out of the site build. The plugin's preset browser,
+drag-and-drop sample loader, and license UI live there. `JuceAudioBackend` runs
+only when `window.__JUCE__` exists, so importing it never pulls native code into
+the site bundle. No separate UI package.
 
-> **[OPEN QUESTION 11.6]** Plugin-only UI architecture: single shared
-> codebase with `IS_PLUGIN` build flag (proposed), separate `plugin-ui/`
-> package consuming the shared core as a dependency, or runtime feature
-> detection only? Affects build, deploy, and CI surface.
+> **[RESOLVED 11.6 — 2026-07-07]** One shared Svelte codebase with an
+> `IS_NATIVE` build flag; host-only panels under `web/src/lib/native/`,
+> tree-shaken from the site build; **no** separate `plugin-ui/` package. Both
+> native products (plugin + studio) share the gating. Specified in
+> [`prd-web-audio-backend.md`](prd-web-audio-backend.md) §5.5.
 
 ---
 
@@ -593,14 +551,13 @@ process).
 Each phase ends with a verification step. Phases 0–5 target **Linux**; Phase 6
 adds the other platforms' codepaths.
 
-### Phase 0 — Shared UI core extraction (in `nkido/web`, open repo)
-**Goal:** split `audio.svelte.ts` into a store shell + `AudioBackend` interface +
-`WasmAudioBackend`, with **zero behavior change** to the site.
-- Add **Playwright e2e baseline** capturing current site behavior *first*.
-- Create `audio-backend.ts`, `wasm-backend.ts`; move backend logic out of the
-  store; stub `juce-backend.ts`.
-- **Verify:** Playwright baseline still green; `bun run check`; manual site
-  smoke. No consumer file changed.
+### Phase 0 — Shared UI core extraction — see `prd-web-audio-backend.md`
+**Superseded 2026-07-07.** The `AudioBackend` interface + the `audio.svelte.ts`
+store split + `WasmAudioBackend` + `JuceAudioBackend` + the `IS_NATIVE` build are
+specified and delivered by
+[`prd-web-audio-backend.md`](prd-web-audio-backend.md) (single effort, in
+`nkido/web`). The plugin **consumes** that work; its plugin-specific pieces are
+Phases 1–6 below (the C++ native bridge the `JuceAudioBackend` calls is Phase 4).
 
 ### Phase 1 — Plugin skeleton (Linux)
 **Goal:** an empty plugin that builds and loads.
