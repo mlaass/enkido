@@ -1,6 +1,6 @@
 > **Status: NOT STARTED (drafted 2026-07-07).** Supersedes the `AudioBackend`
-> design currently sketched in `prd-juce-plugin.md` §5.3–5.6 + Phase 0 (which
-> become pointers to this PRD — see §11). Extracts a formal `AudioBackend`
+> design previously sketched in `prd-juce-plugin.md` §5.3–5.6 + Phase 0 (now
+> pointers to this PRD, applied in commit 4abafff — see §11). Extracts a formal `AudioBackend`
 > interface out of `web/src/lib/stores/audio.svelte.ts`, with a
 > `WasmAudioBackend` (today's browser behavior) and a `JuceAudioBackend`
 > (native, dormant in a plain browser), so the one shared SvelteKit UI drives
@@ -23,7 +23,8 @@ hosts the UI).
 
 The SvelteKit web IDE talks to the audio engine through exactly **one** file —
 `web/src/lib/stores/audio.svelte.ts` (2943 lines), the `audioEngine` singleton
-that ~17 components import. That file welds together two very different things:
+imported by ~34 files across `components/`, `editor/`, `viz/` and `stores/`
+(~14 of them `components/` proper). That file welds together two very different things:
 the app's **UI state** (reactive `$state` for the editor, params, panels, loaded
 assets) and the **audio transport** (an `AudioContext` + `AudioWorkletNode`, a
 compile `Worker`, `fetch('/wasm/…')`, and ~30 `port.postMessage` call sites).
@@ -235,9 +236,97 @@ interface AudioBackendHost {
 }
 ```
 
-Full method-by-method signatures + which are async are specified in §4 of the
-implementation (the interface file is the source of truth once written); the
-above is the contract shape.
+### 4.1 Full method signatures
+
+The interface below is the exact transport-facing surface, grounded in the
+current `audioEngine` methods (referenced TS types — `CompileResult`,
+`PatternInfo`, `PatternEvent`, `StateInspection`, `PatternDebugInfo`,
+`FFTProbeData`, `ShapeIndexData`, `BuiltinsData`, `SoundFontInfo`,
+`InputSourceConfig`, `InputConstraints` — are the existing ones from the store /
+worklet-RPC modules). Signatures are copied verbatim from `audio.svelte.ts`;
+only two names normalize (`restart` ← `restartAudio`, `dispose` ← the teardown /
+`terminateCompileWorker` path). The **shell keeps the current public names**, so
+the ~34 consumers are untouched; the shell maps them onto this interface.
+
+```ts
+interface AudioBackend {
+  // Lifecycle
+  initialize(): Promise<void>;
+  restart(): Promise<void>;          // shell method: restartAudio()
+  dispose(): void;                   // teardown incl. terminateCompileWorker()
+
+  // Transport (request; truth arrives via AudioBackendHost.onTransport)
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  stop(): Promise<void>;
+  setBpm(bpm: number): void;
+  setVolume(volume: number): void;
+
+  // Compile
+  compile(source: string): Promise<CompileResult>;
+
+  // Params (host automation writes back via AudioBackendHost.onParam)
+  setParam(name: string, value: number, slewMs?: number): void;
+  setParamValue(name: string, value: number, slewMs?: number): void;
+  getParamValue(name: string): number;
+  pressButton(name: string): void;
+  releaseButton(name: string): void;
+  toggleParam(name: string): void;
+  resetParam(name: string): void;
+  clearParams(): void;
+
+  // Assets
+  loadSample(name: string, audioData: Float32Array, channels: number, sampleRate: number): Promise<void>;
+  loadSampleFromBytes(name: string, data: ArrayBuffer, origin?: 'builtin' | 'user'): Promise<boolean>;
+  loadSampleFromFile(name: string, file: File | Blob, origin?: 'builtin' | 'user'): Promise<boolean>;
+  loadSamplePack(samples: Array<{ name: string; url: string }>): Promise<number>;
+  loadBank(url: string, name?: string): Promise<boolean>;
+  loadSoundFont(name: string, data: ArrayBuffer, origin?: 'builtin' | 'user'): Promise<SoundFontInfo | null>;
+  loadMidiFile(name: string, data: ArrayBuffer): Promise<boolean>;
+  loadWavetable(name: string, data: ArrayBuffer): Promise<number>;
+  loadAsset(uri: string, kind: 'sample' | 'soundfont' | 'wavetable' | 'sample_bank' | 'midi',
+            name?: string, origin?: 'builtin' | 'user'): Promise<boolean | SoundFontInfo | null | number>;
+  clearSamples(): void;
+  clearWavetables(): void;
+  forgetSample(name: string): Promise<void>;
+  forgetSoundFont(sfId: number): Promise<void>;
+  unregisterMidiFile(name: string): void;
+
+  // Queries (native: hot ones — getProbeData/FFT/beat — served from last pushed frame)
+  getBuiltins(): Promise<BuiltinsData | null>;
+  getShapeIndex(source: string, cursorOffset: number): Promise<ShapeIndexData | null>;
+  getPatternInfo(): Promise<PatternInfo[]>;
+  queryPatternPreview(patternIndex: number, startBeat: number, endBeat: number): Promise<PatternEvent[]>;
+  getCurrentBeatPosition(): Promise<number>;
+  getActiveSteps(stateIds: number[]): Promise<Record<number, unknown>>;
+  inspectState(stateId: number): Promise<StateInspection | null>;
+  getPatternDebug(patternIndex: number): Promise<PatternDebugInfo | null>;
+  getProbeData(stateId: number): Promise<Float32Array | null>;
+  getFFTProbeData(stateId: number): Promise<FFTProbeData | null>;
+
+  // MIDI / input (native: DAW/host MIDI + input bus; Web MIDI / getUserMedia absent → no-op)
+  setInputSource(config: InputSourceConfig): Promise<void>;
+  setInputConstraints(c: Partial<InputConstraints>): void;
+  listInputDevices(): Promise<MediaDeviceInfo[]>;
+  registerInputFile(name: string, data: ArrayBuffer): string;
+  unregisterInputFile(name: string): void;
+  getInputFileNames(): string[];
+  setDefaultMidiDevice(name: string): void;
+  ensureMidiAccess(): Promise<unknown>;
+
+  // Analyser (web-only; native returns null / no-op — only test-hooks.ts consumes)
+  getAnalyserNode(): AnalyserNode | null;
+  getAudioContext(): AudioContext | null;
+  getTimeDomainData(): Uint8Array;
+  getFrequencyData(): Uint8Array;
+}
+```
+
+The `midi(...)` message path (raw MIDI in) and the reactive `midiBank` / sample-bank
+catalog helpers (`getBankNames`, `hasBank`, `getBankSampleNames`, …) stay in the
+**shell** — they are registry/UI bookkeeping, not transport, so they are not on
+the backend interface. The interface file (`audio-backend.ts`) is the source of
+truth once written; the above is generated from today's surface and must match it.
 
 ---
 
@@ -413,24 +502,28 @@ One landing, but four logical workstreams that reviewers can read independently:
 
 ---
 
-## 11. PRD landscape updates (for approval before editing)
+## 11. PRD landscape updates
 
-This PRD **supersedes** the `AudioBackend` design that currently lives elsewhere.
-The following edits make this PRD the single source of truth (not yet applied):
+This PRD **supersedes** the `AudioBackend` design that previously lived
+elsewhere. The edits below make this PRD the single source of truth. **They have
+already been applied** — the `prd-juce-plugin.md` edits landed in commit
+4abafff (the same commit that added this PRD), and the `prd-studio-foundation.md`
+edits are in place in the closed `nkido-studio` repo. Recorded here for
+traceability:
 
-- **`prd-juce-plugin.md`**
+- **`prd-juce-plugin.md`** — *applied (commit 4abafff)*
   - §5.2–5.6 (shared UI core, the `AudioBackend` interface table, extraction
-    evidence, host-capability table, plugin-only panels) → replace with a short
+    evidence, host-capability table, plugin-only panels) → replaced with a short
     pointer: "The `AudioBackend` abstraction + web store refactor + `IS_NATIVE`
     build are specified in `prd-web-audio-backend.md`. The plugin implements the
-    `JuceAudioBackend` consumer + the C++ bridge side." Keep the plugin-specific
+    `JuceAudioBackend` consumer + the C++ bridge side." Kept the plugin-specific
     bits (preset browser, drag-drop sample loader, license UI).
-  - **Phase 0** ("Shared UI core extraction") → replace with "Consume
+  - **Phase 0** ("Shared UI core extraction") → replaced with "Consume
     `prd-web-audio-backend.md` (interface + `WasmAudioBackend` + `JuceAudioBackend`
     + `IS_NATIVE` build)."
-  - **OQ11.6** → mark **Resolved**: one codebase, `IS_NATIVE` build-flag gating,
+  - **OQ11.6** → marked **Resolved**: one codebase, `IS_NATIVE` build-flag gating,
     `lib/native/` panels (this PRD §5.5).
-- **`prd-studio-foundation.md`** (closed repo)
+- **`prd-studio-foundation.md`** (closed repo) — *applied*
   - §4.3 open/closed table row + §5.7 "AudioBackend extraction" row + the Phase-5
     "UI side consumes … prd-juce-plugin Phase 0" wording + the top-status
     follow-up line → point to `prd-web-audio-backend.md`, and state the studio's
