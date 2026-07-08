@@ -1,5 +1,7 @@
-> **Status: MOSTLY SHIPPED** — Phases 1–4 landed; overload resolution spun out
-> to its own PRD (`prd-builtin-overload-resolution.md`).
+> **Status: COMPLETE** — Phases 1–4 landed, implemented and tested (audited
+> 2026-06-21, `docs/audits/prd-compiler-type-system_audit_2026-06-21.md`).
+> Builtin overload resolution was always out of scope here and is tracked in its
+> own PRD (`prd-builtin-overload-resolution.md`).
 >
 > - **Phase 1 — complete.** `TypedValue` struct, `ValueType` enum, and `visit()`
 >   returning `TypedValue` are implemented (`akkado/include/akkado/typed_value.hpp`).
