@@ -1668,6 +1668,24 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                           diag_loc);
                 }
 
+                // A Void expression (e.g. piping onward from out(), which
+                // returns no value) carries no buffer — wiring its 0xFFFF
+                // sentinel into the instruction would make the VM read out
+                // of bounds. Coerce to silence (BUFFER_ZERO) and warn
+                // ([[feedback_livecoding_coerce_dont_fail]]).
+                if (!arg_tv.error && arg_tv.type == ValueType::Void &&
+                    arg_tv.buffer == 0xFFFF) {
+                    warn("W161",
+                         func_name + "() argument '" +
+                         (arg_idx < MAX_BUILTIN_PARAMS
+                              ? std::string(builtin->param_names[arg_idx])
+                              : std::to_string(arg_idx)) +
+                         "' has no value (void expression — e.g. piping "
+                         "onward from out()) — coerced to silence",
+                         diag_loc);
+                    arg_tv.buffer = cedar::BUFFER_ZERO;
+                }
+
                 arg_buffers.push_back(arg_tv.buffer);
 
                 // Type check against annotation (non-fatal — continue for max error reporting).
@@ -2424,6 +2442,19 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 default:
                     error("E109", "Unknown binary operator", n.location);
                     return TypedValue::error_val();
+            }
+
+            // Same Void→silence coerce as the builtin-call arg path (W161):
+            // never wire the 0xFFFF sentinel into a required input slot.
+            if (lhs_tv.buffer == 0xFFFF) {
+                warn("W161", "operand has no value (void expression) — coerced to silence",
+                     n.location);
+                lhs_tv.buffer = cedar::BUFFER_ZERO;
+            }
+            if (rhs_tv.buffer == 0xFFFF) {
+                warn("W161", "operand has no value (void expression) — coerced to silence",
+                     n.location);
+                rhs_tv.buffer = cedar::BUFFER_ZERO;
             }
 
             emit(cedar::Instruction::make_binary(opcode, out, lhs_tv.buffer, rhs_tv.buffer));

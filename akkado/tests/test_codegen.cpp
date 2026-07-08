@@ -11829,3 +11829,38 @@ TEST_CASE("F14: built-in voicings (close/open/drop2/drop3) resolve in every fres
         CHECK_FALSE(has_e141);
     }
 }
+
+// =============================================================================
+// W161: Void expression at a signal slot coerces to silence (issue #4)
+// =============================================================================
+// Piping onward from out() (which returns Void) used to wire the 0xFFFF
+// "unused" sentinel straight into the next builtin's required input slot;
+// the VM then called BufferPool::get(65535) every block. The compiler must
+// instead coerce the void arg to BUFFER_ZERO and emit W161.
+TEST_CASE("W161: piping past out() coerces void to silence, never emits 0xFFFF input",
+          "[codegen][W161]") {
+    struct Case { const char* src; cedar::Opcode op; };
+    const Case cases[] = {
+        {"sine(220) |> out(@) |> lp(@, 800)", cedar::Opcode::FILTER_SVF_LP},
+        {"saw(220) |> out(@ * 0.3, @ * 0.3) |> delay(@, 0.25, 0.4)", cedar::Opcode::DELAY},
+        {"v\"<0.2 0.5 0.8 0.5>\" * sine(330) |> out(@, @) |> reverb(@)",
+         cedar::Opcode::REVERB_FREEVERB},
+    };
+    for (const auto& c : cases) {
+        INFO("src = " << c.src);
+        auto result = akkado::compile(c.src);
+        REQUIRE(result.success);
+
+        const bool has_w161 = std::any_of(
+            result.diagnostics.begin(), result.diagnostics.end(),
+            [](const akkado::Diagnostic& d) { return d.code == "W161"; });
+        CHECK(has_w161);
+
+        auto insts = get_instructions(result);
+        const cedar::Instruction* inst = find_instruction(insts, c.op);
+        REQUIRE(inst != nullptr);
+        // The required signal input must be wired (to BUFFER_ZERO = silence),
+        // never the 0xFFFF sentinel the VM would pass to BufferPool::get().
+        CHECK(inst->inputs[0] == cedar::BUFFER_ZERO);
+    }
+}

@@ -23,6 +23,20 @@
 
 namespace cedar {
 
+void debug::log_current_instruction() {
+    const Instruction* inst = debug::current_inst;
+    if (!inst) {
+        std::printf("[CEDAR BUG]   (no current instruction)\n");
+        return;
+    }
+    std::printf("[CEDAR BUG]   opcode=%u rate=%u out=%u inputs={%u,%u,%u,%u,%u} state_id=%08x\n",
+                static_cast<unsigned>(inst->opcode), static_cast<unsigned>(inst->rate),
+                static_cast<unsigned>(inst->out_buffer),
+                static_cast<unsigned>(inst->inputs[0]), static_cast<unsigned>(inst->inputs[1]),
+                static_cast<unsigned>(inst->inputs[2]), static_cast<unsigned>(inst->inputs[3]),
+                static_cast<unsigned>(inst->inputs[4]), inst->state_id);
+}
+
 VM::VM() {
     // Initialize context with pointers to our pools
     ctx_.buffers = &buffer_pool_;
@@ -420,6 +434,7 @@ std::size_t VM::execute_step(const ProgramSlot* slot,
                              std::span<const Instruction> body,
                              std::size_t ip) {
     const Instruction& inst = body[ip];
+    debug::current_inst = &inst;
     switch (inst.opcode) {
       case Opcode::SKIP_IF_ZERO:
       case Opcode::SKIP_IF_NONZERO: {
@@ -1375,6 +1390,7 @@ void VM::run_event_filter_closure(const ProgramSlot* slot, const Instruction& in
 }
 
 void VM::execute(const Instruction& inst) {
+    debug::current_inst = &inst;
     // Every audio-signal opcode is stereo-native (prd-stereo-native-opcodes
     // Phase 5): it handles both channels in one dispatch with one state struct,
     // reading the STEREO_INPUT / STEREO_OUTPUT flags itself. The legacy

@@ -4,11 +4,25 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
 
 namespace cedar {
+
+struct Instruction;
+
+namespace debug {
+// Breadcrumb set by VM::execute()/execute_step() so the BufferPool guard
+// below can name the instruction that passed a bad index. One thread_local
+// store per instruction dispatch — negligible next to the 128-sample
+// block loop each opcode runs.
+inline thread_local const Instruction* current_inst = nullptr;
+// Prints opcode + inputs of `current_inst` (defined in vm.cpp where the
+// Instruction layout is visible).
+void log_current_instruction();
+}  // namespace debug
 
 // Pre-allocated pool of audio buffers acting as "registers" for the VM.
 //
@@ -85,6 +99,11 @@ struct BufferPool {
         if (index >= MAX_BUFFERS) {
             std::printf("[CEDAR BUG] BufferPool::get(%u) out of bounds (MAX_BUFFERS=%zu)\n",
                         static_cast<unsigned>(index), MAX_BUFFERS);
+            debug::log_current_instruction();
+            // Debug/sanitize builds fail loudly: an out-of-range index means
+            // an opcode read an unwired input slot (0xFFFF) or the compiler
+            // emitted one — both are bugs upstream, not runtime conditions.
+            assert(false && "BufferPool::get out of bounds — unwired input reached the VM");
             return safe_fallback();
         }
         const std::uint32_t slab_idx = index / SLAB_BUFFERS;
@@ -101,6 +120,8 @@ struct BufferPool {
         if (index >= MAX_BUFFERS) {
             std::printf("[CEDAR BUG] BufferPool::get(%u) const out of bounds (MAX_BUFFERS=%zu)\n",
                         static_cast<unsigned>(index), MAX_BUFFERS);
+            debug::log_current_instruction();
+            assert(false && "BufferPool::get out of bounds — unwired input reached the VM");
             return safe_fallback_const();
         }
         const std::uint32_t slab_idx = index / SLAB_BUFFERS;
