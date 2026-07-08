@@ -8,16 +8,12 @@
 
 import type { AudioBackend, AudioBackendHost } from './audio-backend';
 import { createWasmAudioBackend } from './wasm-backend';
+import { createJuceAudioBackend } from './juce-backend';
 
 export function hasJuceBridge(): boolean {
-	return (
-		typeof window !== 'undefined' &&
-		(window as unknown as { __JUCE__?: { backend?: unknown } }).__JUCE__?.backend != null
-	);
+	return typeof window !== 'undefined' && window.__JUCE__?.backend != null;
 }
 
 export function selectAudioBackend(host: AudioBackendHost): AudioBackend {
-	// JuceAudioBackend lands with the bridge adapter (PRD workstream 3);
-	// until then a __JUCE__ host would fall through to the WASM path.
-	return createWasmAudioBackend(host);
+	return hasJuceBridge() ? createJuceAudioBackend(host) : createWasmAudioBackend(host);
 }
