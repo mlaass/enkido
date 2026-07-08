@@ -22,6 +22,13 @@
 		// `window.__nkidoTest` for Playwright e2e tests. No-op in production
 		// (still exposed — the surface is read-only debug accessors).
 		installTestHooks();
+		// Host-only UI (studio/plugin panels). `__IS_NATIVE__` is statically
+		// false on the site, so this block — and the whole `$lib/native/`
+		// chunk behind the dynamic import — tree-shakes out of the site
+		// bundle (prd-web-audio-backend §5.5).
+		if (__IS_NATIVE__) {
+			void import('$lib/native').then((m) => m.initNativeHost());
+		}
 	});
 </script>
 

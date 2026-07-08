@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite dev",
-    "build": "bun scripts/build-docs-index.ts && bun scripts/build-welcome-patches.ts && bunx --bun vite build",
+    "build": "bun scripts/build-docs-index.ts && bun scripts/build-welcome-patches.ts && bunx --bun vite build && bun scripts/check-native-bundle.ts site",
+    "build:native": "bun scripts/build-docs-index.ts && bun scripts/build-welcome-patches.ts && NKIDO_NATIVE=1 bunx --bun vite build && bun scripts/check-native-bundle.ts native",
     "build:docs": "bun scripts/build-docs-index.ts",
     "build:welcome": "bun scripts/build-welcome-patches.ts",
     "build:opcodes": "bun scripts/generate-opcode-metadata.ts",

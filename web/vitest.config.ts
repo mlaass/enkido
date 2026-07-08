@@ -4,6 +4,10 @@ import { resolve } from 'path';
 
 export default defineConfig({
 	plugins: [svelte({ hot: false })],
+	define: {
+		// Mirror vite.config.ts — tests run as the site build.
+		__IS_NATIVE__: 'false'
+	},
 	test: {
 		include: ['tests/**/*.test.ts'],
 		globals: true,
