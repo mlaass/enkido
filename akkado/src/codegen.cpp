@@ -3211,7 +3211,9 @@ void CodeGenerator::emit_bus_epilogue() {
     //    monotonic — if the last one succeeds all did.
     const std::uint16_t c1 = buffers_.allocate();
     const std::uint16_t c2 = buffers_.allocate();
-    if (c2 == BufferAllocator::BUFFER_UNUSED) {
+    // Shared unity (1.0) fallback for every per-bus BUS_TRIM (OQ5 mixer fader).
+    const std::uint16_t unity_trim = buffers_.allocate();
+    if (unity_trim == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted (bus epilogue)", {});
         return;
     }
@@ -3229,9 +3231,31 @@ void CodeGenerator::emit_bus_epilogue() {
         emit(push);
     };
 
+    // Per-bus mixer trim (OQ5): stereo in-place ×gain from the host-poked
+    // EnvMap value "__bus_trim_<N>" (unity fallback). Emitted between a bus's
+    // mixer closure and its sum into bus 0, so the fader reaches the real master
+    // and the post-fader stem tap. Nondestructive: unpoked ⇒ ×1.0 (bit-exact).
+    emit_push_const(unity_trim, 1.0f);
+    auto emit_bus_trim = [&](std::uint16_t l, int idx) {
+        const std::string name = "__bus_trim_" + std::to_string(idx);
+        cedar::Instruction t{};
+        t.opcode = cedar::Opcode::BUS_TRIM;
+        t.out_buffer = l;              // stereo in place: l, l+1
+        t.inputs[0] = 0xFFFF;
+        t.inputs[1] = unity_trim;      // unity fallback
+        t.inputs[2] = 0xFFFF;
+        t.inputs[3] = 0xFFFF;
+        t.inputs[4] = 0xFFFF;
+        t.state_id = cedar::fnv1a_hash_runtime(name.data(), name.size());
+        t.flags = static_cast<std::uint16_t>(
+            cedar::InstructionFlag::STEREO_INPUT |
+            cedar::InstructionFlag::STEREO_OUTPUT);
+        emit(t);
+    };
+
     // 5. Emit the epilogue into the main stream.
     // (a) For each non-zero bus: run its mixer closure (if any) on the bus
-    //     signal in place, then sum the bus into bus 0.
+    //     signal in place, apply the per-bus trim, then sum the bus into bus 0.
     for (const auto& [idx, l] : bus_left) {
         if (idx == 0) continue;
         auto mit = winning_mixers.find(idx);
@@ -3239,6 +3263,7 @@ void CodeGenerator::emit_bus_epilogue() {
             inline_mixer_closure(mit->second, l,
                                  static_cast<std::uint16_t>(l + 1));
         }
+        emit_bus_trim(l, idx);
         cedar::Instruction o{};
         o.opcode = cedar::Opcode::OUTPUT;
         o.out_buffer = bus0_l;
@@ -3275,6 +3300,10 @@ void CodeGenerator::emit_bus_epilogue() {
             emit(soft);
         }
     }
+
+    // (b2) Master fader (bus 0 trim): post-master-chain, pre-safety, so the
+    //      master fader scales the final mix (OQ5). Unity fallback ⇒ bit-exact.
+    emit_bus_trim(bus0_l, 0);
 
     // (c) Forced safety: hard rail at ±1.0 — "do not damage speakers".
     //     std::clamp() passes NaN through unchanged; the device-store

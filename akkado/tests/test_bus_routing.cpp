@@ -720,3 +720,38 @@ TEST_CASE("mixer-closure: pipe-form closure body — `sg |> stereo(0, left(@))`"
     CHECK_THAT(b.L[0], Catch::Matchers::WithinAbs(0.0f, 1e-4f));
     CHECK_THAT(b.R[0], Catch::Matchers::WithinAbs(0.4f, 1e-4f));
 }
+
+// --- Per-bus mixer trim (studio daw-core OQ5) --------------------------------
+// The host pokes "__bus_trim_<N>" and the bus epilogue multiplies bus N by it
+// (bus 0 = master fader), so a host mixer fader reaches the real master. Unpoked
+// buses are unity (nondestructive). Identity master keeps the arithmetic exact.
+TEST_CASE("bus-routing: per-bus trim scales the master (OQ5)", "[bus][trim]") {
+    auto r = akkado::compile("master((s) -> s)\nbus(1, 0.5)\nbus(2, 0.3)");
+    REQUIRE(r.success);
+    const auto insts = get_instructions(r);
+
+    // BUS_TRIM emitted per bus (2 non-master + master = 3).
+    CHECK(count_op(insts, cedar::Opcode::BUS_TRIM) == 3);
+
+    auto render = [&](const char* name, float val) {
+        cedar::VM vm;
+        vm.set_sample_rate(48000.0f);
+        vm.set_bpm(120.0f);
+        REQUIRE(vm.load_program_immediate(
+            std::span<const cedar::Instruction>(insts)));
+        if (name != nullptr) vm.set_param(name, val);  // poked before first block
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+        return L[64];  // mid-block
+    };
+
+    using Catch::Matchers::WithinAbs;
+    // Unpoked → unity: master = 0.5 + 0.3 = 0.8 (bit-exact vs a no-trim build).
+    CHECK_THAT(render(nullptr, 0.0f), WithinAbs(0.8f, 1e-5f));
+    // Mute bus 1 → 0.3.
+    CHECK_THAT(render("__bus_trim_1", 0.0f), WithinAbs(0.3f, 1e-5f));
+    // Halve bus 1 → 0.25 + 0.3 = 0.55.
+    CHECK_THAT(render("__bus_trim_1", 0.5f), WithinAbs(0.55f, 1e-5f));
+    // Master fader 0.5 → 0.8 * 0.5 = 0.4.
+    CHECK_THAT(render("__bus_trim_0", 0.5f), WithinAbs(0.4f, 1e-5f));
+}

@@ -1657,6 +1657,10 @@ void VM::execute(const Instruction& inst) {
             op_env_get(ctx_, inst);
             break;
 
+        case Opcode::BUS_TRIM:
+            op_bus_trim(ctx_, inst);
+            break;
+
         case Opcode::STATE_OP:
             op_state(ctx_, inst);
             break;
