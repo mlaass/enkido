@@ -916,6 +916,9 @@ public:
         // structural-match check passes.
         const OutputEvents::OutputEvent* old_output_events = nullptr;
         std::uint32_t old_output_num_events = 0;
+        std::uint32_t old_output_capacity = 0;
+        Sequence* old_sequences = nullptr;
+        std::uint32_t old_seq_capacity = 0;
         if (auto* existing = get_if<SequenceState>(state_id)) {
             snap.valid = true;
             snap.num_sequences = existing->num_sequences;
@@ -931,11 +934,48 @@ public:
             }
             old_output_events = existing->output.events;
             old_output_num_events = existing->output.num_events;
+            old_output_capacity = existing->output.capacity;
+            old_sequences = existing->sequences;
+            old_seq_capacity = existing->seq_capacity;
         }
 
         auto& state = get_or_create<SequenceState>(state_id);
 
+        // Reclaim the PREVIOUS program's arena blocks (issue #3: re-init on
+        // every hot-swap recompile used to orphan them, monotonically
+        // exhausting the arena). The sequences array + per-sequence event
+        // arrays were fully snapshotted above, so release them before the
+        // new allocations below — freed blocks can then satisfy them. The
+        // old OUTPUT buffer must stay live until the continuity copy at the
+        // end of this function reads it; release_old_output() runs on every
+        // exit path after that.
+        if (arena && old_sequences) {
+            for (std::uint32_t i = 0; i < old_seq_capacity; ++i) {
+                if (old_sequences[i].events && old_sequences[i].capacity) {
+                    arena->release(
+                        reinterpret_cast<float*>(old_sequences[i].events),
+                        SequenceState::floats_for(
+                            old_sequences[i].capacity * sizeof(Event)));
+                }
+            }
+            arena->release(reinterpret_cast<float*>(old_sequences),
+                           SequenceState::floats_for(
+                               old_seq_capacity * sizeof(Sequence)));
+            old_sequences = nullptr;
+        }
+        auto release_old_output = [&]() {
+            if (arena && old_output_events && old_output_capacity) {
+                arena->release(
+                    reinterpret_cast<float*>(const_cast<OutputEvents::OutputEvent*>(
+                        old_output_events)),
+                    SequenceState::floats_for(
+                        old_output_capacity * sizeof(OutputEvents::OutputEvent)));
+                old_output_events = nullptr;
+            }
+        };
+
         if (!arena || seq_count == 0) {
+            release_old_output();
             state.sequences = nullptr;
             state.num_sequences = 0;
             state.seq_capacity = 0;
@@ -950,9 +990,13 @@ public:
         std::size_t seq_floats = (seq_bytes + sizeof(float) - 1) / sizeof(float);
         float* seq_mem = arena->allocate(seq_floats);
         if (!seq_mem) {
+            release_old_output();
             state.sequences = nullptr;
             state.num_sequences = 0;
             state.seq_capacity = 0;
+            state.output.events = nullptr;
+            state.output.capacity = 0;
+            state.output.num_events = 0;
             return;
         }
         state.sequences = reinterpret_cast<Sequence*>(seq_mem);
@@ -1051,8 +1095,8 @@ public:
                 state.sequences[i].step = snap.seq_steps[i];
             }
             // Repopulate the per-cycle output cache from the OLD output
-            // buffer. The arena is bump-allocated and never frees, so the
-            // OLD pointer is still valid here. Copying the events keeps
+            // buffer — still live here because release_old_output() only
+            // runs below, after this copy. Copying the events keeps
             // SEQPAT_QUERY's cache-hit check satisfied on the next call,
             // preventing a spurious re-query that would advance ALTERNATE
             // step counters mid-cycle.
@@ -1066,6 +1110,7 @@ public:
                 state.output.num_events = copy_n;
             }
         }
+        release_old_output();
     }
 
     // Initialize a transform-owned SequenceState for EVENT_MAP / EVENT_FILTER
@@ -1080,6 +1125,10 @@ public:
                               bool is_sample_pattern, AudioArena* arena,
                               std::uint32_t output_capacity) {
         auto& state = get_or_create<SequenceState>(state_id);
+        // Reclaim any previous incarnation's arena blocks before the fresh
+        // allocation below (issue #3) — this init keeps no old data, so the
+        // full release is safe up front.
+        if (arena) state.release(*arena);
         state.sequences = nullptr;
         state.num_sequences = 0;
         state.seq_capacity = 0;

@@ -213,3 +213,59 @@ TEST_CASE("drywet::passthrough_stereo copies dry signal", "[arena][reclaim][dryw
         }
     }
 }
+
+// Issue #3 regression: re-initing a SequenceState under the SAME state_id
+// (what every hot-swap recompile does) must reclaim the previous program's
+// sequence/event/output blocks. Before the fix, init_sequence_program
+// overwrote the pointers without releasing, orphaning the old blocks —
+// repeated recompiles bump-allocated until the 32 MB arena was exhausted.
+TEST_CASE("StatePool init_sequence_program re-init reclaims prior blocks",
+          "[arena][reclaim]") {
+    AudioArena arena(1u << 20);
+    StatePool pool;
+    pool.set_arena(&arena);
+
+    // A compiler-side sequence with a couple of events.
+    std::array<Event, 2> events{};
+    Sequence seq{};
+    seq.events = events.data();
+    seq.num_events = 2;
+    seq.capacity = 2;
+
+    pool.init_sequence_program(0xABCDu, &seq, 1, 1.0f, false, &arena, 2);
+    REQUIRE(arena.bytes_used() > 0);
+
+    // The second init pays a one-time bump: the new OUTPUT buffer is
+    // allocated while the old one is still live (the hot-swap continuity
+    // copy reads it), so the two overlap for the duration of one init.
+    pool.init_sequence_program(0xABCDu, &seq, 1, 1.0f, false, &arena, 2);
+    const std::size_t steady = arena.bytes_used();
+
+    // From there on the high-water must plateau: every further re-init of
+    // the same state_id (what a hot-swap recompile does) reuses the blocks
+    // the previous one released. Before the fix this grew by a full
+    // program's worth of blocks per re-init.
+    for (int i = 0; i < 100; ++i) {
+        pool.init_sequence_program(0xABCDu, &seq, 1, 1.0f, false, &arena, 2);
+    }
+    REQUIRE(arena.bytes_used() == steady);
+    REQUIRE(arena.exhaustion_count() == 0);
+}
+
+// Same contract for the transform-owned SequenceState init.
+TEST_CASE("StatePool init_event_transform re-init reclaims prior output buffer",
+          "[arena][reclaim]") {
+    AudioArena arena(1u << 20);
+    StatePool pool;
+    pool.set_arena(&arena);
+
+    pool.init_event_transform(0xBEEFu, 1.0f, false, &arena, 64);
+    const std::size_t used_after_first = arena.bytes_used();
+    REQUIRE(used_after_first > 0);
+
+    for (int i = 0; i < 100; ++i) {
+        pool.init_event_transform(0xBEEFu, 1.0f, false, &arena, 64);
+    }
+    REQUIRE(arena.bytes_used() == used_after_first);
+    REQUIRE(arena.exhaustion_count() == 0);
+}
