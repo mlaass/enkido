@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-07-08
+
+### Added
+
+- **`JuceAudioBackend` — native bridge adapter for the shared web UI.**
+  Implements the new `AudioBackend` interface over `window.__JUCE__` per
+  the nkido-studio bridge protocol v1: readiness handshake, compile via
+  native function + `compileResult` event, and pull-model visualization
+  served from buffered pushed frames (`playhead`, `meters`, `scopeReady`
+  → `scope.bin`). Dormant in a plain browser; selected automatically at
+  boot when the bridge is present.
+- **Native bundle build.** `bun run build:native` produces the
+  `IS_NATIVE` bundle (`build-native/`) for the studio/plugin WebView,
+  with a `web/src/lib/native/` seam for host-only panels and a
+  build-artifact check asserting native-only code never ships in the
+  site bundle (and vice versa).
+- **Per-bus buffer map in `akkado::CompileResult`.** New
+  `BusBufferMapping` list publishing each bus's summed stereo output
+  buffer indices, so hosts can tap individual buses and route them to
+  separate hardware output channels (prd-bus-routing follow-up).
+
+### Changed
+
+- **Web audio store split behind an `AudioBackend` seam.** The
+  `audioEngine` store is now a backend-agnostic shell (reactive UI
+  state + asset registries) delegating to a `WasmAudioBackend` that owns
+  the worklet/WASM/compile-worker transport — behavior-preserving on the
+  site, and the seam both native products (studio + plugin) drive.
+  Conformance checklist: `docs/audio-backend-conformance.md`.
+
 ## [0.4.5] - 2026-07-06
 
 ### Fixed
