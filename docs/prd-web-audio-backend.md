@@ -1,4 +1,7 @@
-> **Status: NOT STARTED (drafted 2026-07-07).** Supersedes the `AudioBackend`
+> **Status: SHIPPED — interface + shell split + WasmAudioBackend +
+> JuceAudioBackend + IS_NATIVE build landed (2026-07-08); see §13 for
+> implementation notes and `docs/audio-backend-conformance.md` for the §10
+> checklist.** Supersedes the `AudioBackend`
 > design previously sketched in `prd-juce-plugin.md` §5.3–5.6 + Phase 0 (now
 > pointers to this PRD, applied in commit 4abafff — see §11). Extracts a formal `AudioBackend`
 > interface out of `web/src/lib/stores/audio.svelte.ts`, with a
@@ -551,3 +554,58 @@ traceability:
   own transport — where that truth originates (a native transport object feeding
   `playhead`) is a `nkido-studio` detail; this PRD only requires the
   `onTransport` callback exists.
+
+---
+
+## 13. Implementation notes (shipped 2026-07-08)
+
+Landed in four commits: interface + shell split + `WasmAudioBackend`
+(4faa749), `JuceAudioBackend` + boot selection (e2f60b4), `IS_NATIVE`
+build + `lib/native/` seam (fc55026), conformance checklist + this
+section. Conformance mapping: `docs/audio-backend-conformance.md`.
+
+**Interface-file deviations from the §4.1 sketch** (the PRD names
+`audio-backend.ts` the source of truth once written; these are the
+differences):
+
+- Pure shell bookkeeping stayed on the store, off the transport
+  interface: `setParamValue`/`getParamValue`/`pressButton`/
+  `releaseButton`/`toggleParam`/`resetParam`/`clearParams` (shell map +
+  one backend `setParam`), `loadSampleFromFile` (arrayBuffer wrapper),
+  `loadSamplePack` (loop over `loadAsset`), and `setInputConstraints`'s
+  reactive copy. Host automation still writes back via `onParam`.
+- `forget*` split: the backend method drops transport-side load tracking
+  only; the shell owns the registry row + IndexedDB manifest.
+  `forgetSoundFont` takes the name (shell resolves sfId → name).
+- Added to the interface: `getMidiController()` (web returns the Web
+  MIDI controller, native `null`) and `terminateCompileWorker()` (test
+  hook; no-op on native), following the same web-only-escape-hatch
+  pattern as the analyser methods.
+- `AudioBackendHost` grew beyond the sketch: `onTransport` takes a
+  *partial* transport patch; `onStatus` (boot/loading/input flags),
+  `onAssetsCleared`, and `onEngineReset` (ordering hook inside
+  `restart()`) were added; `onAssetLoaded` is a discriminated union
+  carrying the full registry payload.
+
+**Documented `WasmAudioBackend` cleanups** (behavior-preserving
+otherwise): dead `loadDefaultSamples`/`loadDefaultSoundFonts`/
+`ensureSampleLoaded` dropped (no callers anywhere in `web/src`);
+transport-side existence checks moved off reactive state onto plain
+Sets/Maps (`loadedSampleNames`/`loadedMidiNames`/`loadedSoundFonts`).
+
+**`JuceAudioBackend` v1 scope:** implements exactly bridge-protocol v1
+(`compile`/`getBuiltins`/`inspectState`/`setParam`/`deviceStatus` +
+`compileResult`/`meters`/`playhead`/`scopeReady` events + `scope.bin`).
+Transport/volume calls are attempted via `callNativeFunction` and degrade
+gracefully on rejection (bridge §6 forward-compat), so they light up as
+the protocol grows without touching this adapter. Not-in-v1 loaders and
+queries resolve well-formed empty/failure values, never throw (§9).
+`getProbeData` serves the left channel of the latest master scope frame
+for every stateId until per-bus probe paths exist.
+
+**§10 corrections:** the "visualization e2e" named as an anchor does not
+exist; the no-regression anchors used were `hot-swap-audio.spec.ts`,
+`worker-recovery.spec.ts`, the full Playwright suite (15/15), vitest
+(164 tests incl. the new backend suites), `svelte-check`, and both
+build-artifact assertions. `test-hooks.ts` needed no change — it already
+tolerates the empty analyser data native backends return.

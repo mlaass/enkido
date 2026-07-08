@@ -222,6 +222,22 @@ describe('transport requests + graceful degradation (bridge-protocol §6)', () =
 		expect(await backend.inspectState(7)).toBeNull();
 	});
 
+	it('asset loaders resolve well-formed failure values until the bridge grows asset fns', async () => {
+		const { bridge } = makeBridge({ deviceStatus: () => ({}) });
+		const backend = createJuceAudioBackend(makeHost(), bridge);
+		await backend.initialize();
+
+		const bytes = new ArrayBuffer(4);
+		expect(await backend.loadSampleFromBytes('kick', bytes)).toBe(false);
+		expect(await backend.loadSoundFont('gm', bytes)).toBeNull();
+		expect(await backend.loadMidiFile('riff', bytes)).toBe(false);
+		expect(await backend.loadWavetable('wt', bytes)).toBe(-1);
+		expect(await backend.loadBank('https://x/strudel.json')).toBe(false);
+		expect(await backend.loadAsset('https://x/a.wav', 'sample', 'a')).toBe(false);
+		expect(await backend.loadAsset('https://x/a.sf2', 'soundfont', 'a')).toBeNull();
+		expect(await backend.loadAsset('https://x/a.wav', 'wavetable', 'a')).toBe(-1);
+	});
+
 	it('web-only escape hatches return null / empty on native (PRD §4)', async () => {
 		const { bridge } = makeBridge({ deviceStatus: () => ({}) });
 		const backend = createJuceAudioBackend(makeHost(), bridge);
