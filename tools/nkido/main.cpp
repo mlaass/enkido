@@ -11,6 +11,7 @@
 #include "cedar/io/file_cache.hpp"
 #include "cedar/platform/utf8_init.hpp"
 #include <iostream>
+#include <cctype>
 #include <fstream>
 #include <cstring>
 #include <cstdlib>
@@ -71,6 +72,8 @@ void print_usage(const char* program) {
               << "  -o, --output <f>   Output file (for compile/render mode)\n"
               << "  --seconds <f>      Render duration in seconds (default: 4)\n"
               << "  --bpm <f>          Override patch BPM in render mode (default: from patch, fallback 120)\n"
+              << "  --stems            Render mode: also write one WAV per bus (<out>.<label|busN>.wav)\n"
+              << "  --float32          Render mode: 32-bit float WAV instead of 16-bit PCM\n"
               << "  --trace-poly <f>   Write per-block poly voice state to JSONL\n"
               << "  --list-devices     List audio capture devices and exit\n"
               << "  --input-device <n> Capture device name for in() (default: system default)\n"
@@ -162,6 +165,10 @@ std::optional<nkido::Options> parse_args(int argc, char* argv[]) {
                 return std::nullopt;
             }
             opts.render_seconds = std::stof(argv[i]);
+        } else if (arg == "--stems") {
+            opts.render_stems = true;
+        } else if (arg == "--float32") {
+            opts.render_float32 = true;
         } else if (arg == "--bpm") {
             if (++i >= argc) {
                 std::cerr << "error: --bpm requires a value\n";
@@ -361,6 +368,47 @@ bool write_wav_16(const std::string& path, const std::vector<float>& interleaved
     return out.good();
 }
 
+// Minimal WAV writer (32-bit IEEE float stereo). Lossless — this is the format
+// the studio's capture/render path uses, so `--float32` renders are sample-exact
+// against it (the render-equivalence harness).
+bool write_wav_f32(const std::string& path, const std::vector<float>& interleaved,
+                   std::uint32_t sample_rate, std::uint16_t channels) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+
+    auto write_u32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+    auto write_u16 = [&](std::uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+    auto write_str = [&](const char* s) { out.write(s, 4); };
+
+    const std::uint32_t num_samples = static_cast<std::uint32_t>(interleaved.size());
+    const std::uint32_t data_size = num_samples * 4;
+    const std::uint32_t fmt_size = 16;
+    const std::uint32_t riff_size = 36 + data_size;
+    const std::uint32_t byte_rate = sample_rate * channels * 4;
+    const std::uint16_t block_align = static_cast<std::uint16_t>(channels * 4);
+
+    write_str("RIFF"); write_u32(riff_size); write_str("WAVE");
+    write_str("fmt "); write_u32(fmt_size);
+    write_u16(3);                   // IEEE float format
+    write_u16(channels);
+    write_u32(sample_rate);
+    write_u32(byte_rate);
+    write_u16(block_align);
+    write_u16(32);                  // bits per sample
+    write_str("data"); write_u32(data_size);
+
+    out.write(reinterpret_cast<const char*>(interleaved.data()),
+              static_cast<std::streamsize>(num_samples) * 4);
+    return out.good();
+}
+
+// Dispatch by --float32.
+bool write_wav(const std::string& path, const std::vector<float>& interleaved,
+               std::uint32_t sample_rate, std::uint16_t channels, bool f32) {
+    return f32 ? write_wav_f32(path, interleaved, sample_rate, channels)
+               : write_wav_16(path, interleaved, sample_rate, channels);
+}
+
 int handle_render_mode(const nkido::Options& opts) {
     auto load = nkido::load_bytecode(opts);
     if (!load.success) {
@@ -432,10 +480,44 @@ int handle_render_mode(const nkido::Options& opts) {
     std::vector<float> interleaved;
     interleaved.reserve(total_blocks * cedar::BLOCK_SIZE * 2);
 
+    // --stems (studio daw-core OQ10): one WAV per non-master bus, tapped from
+    // the bus scratch pair after process_block — post mixer(N) closure and
+    // per-bus trim, pre-sum into bus 0. Same tap point + bus-keyed layout the
+    // studio's capture/render uses, so this doubles as the equivalence harness.
+    struct Stem {
+        std::uint16_t l = 0, r = 0;
+        std::string name;
+        std::vector<float> interleaved;
+    };
+    std::vector<Stem> stems;
+    if (opts.render_stems) {
+        for (const auto& bb : load.compile_result->bus_buffers) {
+            if (bb.bus_index == 0) continue;  // master is the main output file
+            Stem s;
+            s.l = bb.left_buffer;
+            s.r = bb.right_buffer;
+            s.name = bb.label.empty() ? ("bus" + std::to_string(bb.bus_index))
+                                      : bb.label;
+            for (char& c : s.name)  // filesystem-safe
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-') c = '_';
+            s.interleaved.reserve(total_blocks * cedar::BLOCK_SIZE * 2);
+            stems.push_back(std::move(s));
+        }
+    }
+
     std::array<float, cedar::BLOCK_SIZE> left{}, right{};
 
     for (std::uint32_t b = 0; b < total_blocks; ++b) {
         vm->process_block(left.data(), right.data());
+
+        for (auto& s : stems) {
+            const float* sl = vm->buffers().get(s.l);
+            const float* sr = vm->buffers().get(s.r);
+            for (std::size_t i = 0; i < cedar::BLOCK_SIZE; ++i) {
+                s.interleaved.push_back(sl[i]);
+                s.interleaved.push_back(sr[i]);
+            }
+        }
 
         // PRD §7.4: drain file-CC events and dispatch through the route
         // table so render mode can exercise file-CC → param() bindings.
@@ -495,10 +577,25 @@ int handle_render_mode(const nkido::Options& opts) {
         }
     }
 
-    // Write WAV
-    if (!write_wav_16(wav_path, interleaved, opts.sample_rate, 2)) {
+    // Write WAV (master)
+    if (!write_wav(wav_path, interleaved, opts.sample_rate, 2, opts.render_float32)) {
         std::cerr << "error: failed to write WAV: " << wav_path << "\n";
         return EXIT_FAILURE;
+    }
+
+    // Write per-bus stems next to it: <base>.<label|busN>.wav
+    if (!stems.empty()) {
+        std::string base = wav_path;
+        if (base.size() > 4 && base.compare(base.size() - 4, 4, ".wav") == 0)
+            base.resize(base.size() - 4);
+        for (const auto& s : stems) {
+            const std::string p = base + "." + s.name + ".wav";
+            if (!write_wav(p, s.interleaved, opts.sample_rate, 2, opts.render_float32)) {
+                std::cerr << "error: failed to write stem WAV: " << p << "\n";
+                return EXIT_FAILURE;
+            }
+            if (opts.verbose) std::cerr << "Stem: " << p << "\n";
+        }
     }
 
     if (opts.verbose) {

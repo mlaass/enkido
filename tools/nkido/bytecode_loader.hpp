@@ -51,6 +51,8 @@ struct Options {
     float render_seconds = 4.0f;                  // Duration for render mode
     std::optional<float> render_bpm;              // CLI --bpm override (renders honor patch BPM otherwise)
     std::optional<std::string> trace_poly_file;   // Optional path for poly state JSONL trace
+    bool render_stems = false;                    // --stems: also write one WAV per bus (bus tap map)
+    bool render_float32 = false;                  // --float32: 32-bit float WAV instead of 16-bit PCM
 
     // Audio input options (Play/UI modes)
     bool list_devices = false;                    // Print capture devices and exit
