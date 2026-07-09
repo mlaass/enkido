@@ -141,6 +141,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_uris_.clear();
     required_input_sources_.clear();
     bus_buffers_.clear();
+    bus_labels_.clear();
     param_decls_.clear();
     viz_decls_.clear();
     builtin_var_overrides_.clear();
@@ -2742,6 +2743,22 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
         sig_start = 1;
     }
 
+    // Optional trailing string label (OQ4): bus(N, sig, "kick") / out(sig, "mix").
+    // Recorded per bus (last non-empty wins) and dropped from the signal args.
+    // Only pop when a signal argument would remain — so out("hi") still reports
+    // E160 (string is not a signal) rather than silently becoming a label.
+    if (args.size() > sig_start + 1) {
+        const Node& last = ast_->arena[args.back()];
+        NodeIndex last_val =
+            (last.type == NodeType::Argument) ? last.first_child : args.back();
+        if (last_val != NULL_NODE &&
+            ast_->arena[last_val].type == NodeType::StringLit) {
+            const std::string& lbl = ast_->arena[last_val].as_string();
+            if (!lbl.empty()) bus_labels_[bus_index] = lbl;
+            args.pop_back();
+        }
+    }
+
     const std::size_t sig_count = args.size() - sig_start;
     if (sig_count < 1 || sig_count > 2) {
         error("E260", func_name + "() expects 1 or 2 signal arguments",
@@ -2856,6 +2873,23 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
             const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
     }
 
+    // Optional trailing string label (OQ4): mixer(N, closure, "drums") /
+    // master(closure, "mix"). Popped before arity checks; bound to the bus
+    // index once it is resolved below. Only pop when the required args (index +
+    // closure) would still remain, so master("hi") keeps its existing error.
+    const std::size_t min_args = (func_name == "mixer") ? 2u : 1u;
+    std::string pending_label;
+    if (args.size() > min_args) {
+        const Node& last = ast_->arena[args.back()];
+        NodeIndex last_val =
+            (last.type == NodeType::Argument) ? last.first_child : args.back();
+        if (last_val != NULL_NODE &&
+            ast_->arena[last_val].type == NodeType::StringLit) {
+            pending_label = ast_->arena[last_val].as_string();
+            args.pop_back();
+        }
+    }
+
     // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a
     // compile-time non-negative integer literal as its first argument
     // (validation mirrors handle_bus_call exactly).
@@ -2896,6 +2930,9 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
         }
         closure_arg = args[0];
     }
+
+    // Bind the popped label to the now-resolved bus index (last non-empty wins).
+    if (!pending_label.empty()) bus_labels_[bus_index] = pending_label;
 
     // Unwrap an Argument wrapper, then require an inline closure literal.
     if (ast_->arena[closure_arg].type == NodeType::Argument) {
@@ -3185,8 +3222,11 @@ void CodeGenerator::emit_bus_epilogue() {
     bus_buffers_.clear();
     bus_buffers_.reserve(bus_left.size());
     for (const auto& [idx, l] : bus_left) {
+        auto lit = bus_labels_.find(idx);
         bus_buffers_.push_back({static_cast<std::uint32_t>(idx), l,
-                                static_cast<std::uint16_t>(l + 1)});
+                                static_cast<std::uint16_t>(l + 1),
+                                lit != bus_labels_.end() ? lit->second
+                                                         : std::string{}});
     }
 
     // 3. Rewrite bus placeholders to real left-buffer indices.

@@ -755,3 +755,43 @@ TEST_CASE("bus-routing: per-bus trim scales the master (OQ5)", "[bus][trim]") {
     // Master fader 0.5 → 0.8 * 0.5 = 0.4.
     CHECK_THAT(render("__bus_trim_0", 0.5f), WithinAbs(0.4f, 1e-5f));
 }
+
+// --- Friendly bus labels (studio daw-core OQ4) -------------------------------
+// bus(N, sig, "name") / mixer(N, closure, "name") / master(closure, "name")
+// attach a label to the bus, surfaced on BusBufferMapping so a host names stem
+// files + mixer strips from the code. Empty ⇒ host falls back to bus<N>/master.
+TEST_CASE("bus-routing: bus()/mixer() accept a friendly label (OQ4)",
+          "[bus][label]") {
+    auto label_of = [](const akkado::CompileResult& r, std::uint32_t bus) {
+        for (const auto& bb : r.bus_buffers)
+            if (bb.bus_index == bus) return bb.label;
+        return std::string{"<missing>"};
+    };
+
+    SECTION("bus() trailing label") {
+        auto r = akkado::compile("bus(1, 0.5, \"kick\")\nbus(2, 0.3, \"pads\")");
+        REQUIRE(r.success);
+        CHECK(label_of(r, 1) == "kick");
+        CHECK(label_of(r, 2) == "pads");
+        CHECK(label_of(r, 0).empty());  // master unlabeled → host default
+    }
+    SECTION("mixer()/master() trailing label") {
+        auto r = akkado::compile(
+            "bus(1, 0.5)\n"
+            "mixer(1, (s) -> s |> @ * 0.5, \"drums\")\n"
+            "master((s) -> s, \"mix\")");
+        REQUIRE(r.success);
+        CHECK(label_of(r, 1) == "drums");
+        CHECK(label_of(r, 0) == "mix");
+    }
+    SECTION("unlabeled buses stay empty (nondestructive)") {
+        auto r = akkado::compile("bus(1, 0.5)\nout(0.2)");
+        REQUIRE(r.success);
+        CHECK(label_of(r, 1).empty());
+        CHECK(label_of(r, 0).empty());
+    }
+    SECTION("a label alone is not a signal") {
+        auto r = akkado::compile("bus(1, \"kick\")");
+        CHECK_FALSE(r.success);  // label popped, no signal left → E260
+    }
+}

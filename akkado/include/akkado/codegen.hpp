@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
 #include <span>
@@ -262,6 +263,10 @@ struct BusBufferMapping {
     std::uint32_t bus_index    = 0;
     std::uint16_t left_buffer  = 0;
     std::uint16_t right_buffer = 0;
+    // Optional friendly label from bus(N, …, "name") / mixer(N, …, "name")
+    // (studio daw-core OQ4). Empty ⇒ the host falls back to "bus<N>"/"master".
+    // Names stems + mixer strips — "the code is the DAW".
+    std::string   label;
 };
 
 /// Required MIDI source from compile-time midi() calls
@@ -1252,6 +1257,9 @@ private:
         SourceLocation call_loc;
     };
     std::vector<MixerCall> mixer_calls_;
+    // Optional per-bus friendly labels from bus()/mixer() (OQ4). Last non-empty
+    // wins; consumed by emit_bus_epilogue into BusBufferMapping.label.
+    std::map<int, std::string> bus_labels_;
     /// Codegen for mixer()/master(). Validates, records into mixer_calls_,
     /// and emits no instruction at the call site (deferred to the epilogue).
     TypedValue handle_mixer_call(NodeIndex node, const Node& n);
