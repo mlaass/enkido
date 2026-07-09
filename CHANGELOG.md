@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.7] - 2026-07-09
+
+### Added
+
+- **`BUS_TRIM` opcode — per-bus mixer fader.** Multiplies a bus scratch
+  pair in place by a host-poked gain, applied between the `mixer(N)`
+  closure and the sum into bus 0, so a fader reaches both the real
+  master and the post-fader stem tap. Unity fallback when unpoked
+  (exactly ×1.0, nondestructive); a ~5 ms one-pole ramp keeps moves
+  click-free.
+- **Friendly bus labels.** `bus()`, `mixer()` and `master()` take an
+  optional trailing string label — `mixer(1, (s) -> s, "drums")` — that
+  surfaces on `BusBufferMapping` so hosts can name stems and mixer
+  strips.
+- **`nkido render --stems` and `--float32`.** `--stems` writes one WAV
+  per non-master bus next to the master file, tapped post-mixer and
+  post-trim; `--float32` renders 32-bit float WAVs.
+- **Per-bus hot-swap crossfade.** The per-bus scratch pairs now
+  crossfade across a hot-swap the same way the master always has, so
+  stems stay glitch-free through a recompile.
+- **`IS_STUDIO` studio panels** in the web bundle: mixer, transport,
+  capture, render and takes.
+
+### Fixed
+
+- **`mixer()` / `master()` silently dropped a non-string extra
+  argument.** The semantic analyzer accepted it on `optional_count` and
+  codegen only consumed a trailing `StringLit`, so `mixer(1, c, 5)`
+  compiled with the `5` thrown away. Now `E260`.
+- **`BUS_TRIM` was reported as stateless** by `opcode_is_stateful()`
+  even though `op_bus_trim` owns a `SlewState`, causing WASM
+  disassembly and state-id enumeration to under-report state.
+- **`nkido render --stems` overwrote colliding stems.** Two buses
+  sharing a label — or two labels sanitizing to the same filename —
+  wrote to the same path, silently losing the earlier output. Colliding
+  names now get a `_busN` suffix.
+- **`SequenceState` arena blocks** are reclaimed on hot-swap re-init.
+- **Void arguments** coerce to silence instead of wiring the `0xFFFF`
+  sentinel into a buffer slot.
+
 ## [0.4.6] - 2026-07-08
 
 ### Added
