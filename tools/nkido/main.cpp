@@ -500,6 +500,15 @@ int handle_render_mode(const nkido::Options& opts) {
                                       : bb.label;
             for (char& c : s.name)  // filesystem-safe
                 if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-') c = '_';
+            // Two buses can share a label (or sanitize to the same string);
+            // suffix the bus index so the later stem never overwrites the
+            // earlier one's WAV.
+            for (const auto& prev : stems) {
+                if (prev.name == s.name) {
+                    s.name += "_bus" + std::to_string(bb.bus_index);
+                    break;
+                }
+            }
             s.interleaved.reserve(total_blocks * cedar::BLOCK_SIZE * 2);
             stems.push_back(std::move(s));
         }

@@ -2920,6 +2920,16 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
             args.pop_back();
         }
     }
+    // Anything still past the required args is a caller mistake. Without this
+    // the semantic analyzer's optional_count lets mixer(0, c, 5) through and
+    // codegen silently drops the 5.
+    if (args.size() > min_args) {
+        error("E260",
+              func_name + "() takes " + std::to_string(min_args) +
+                  " argument(s) plus an optional trailing string label",
+              call_loc);
+        return cache_and_return(node, TypedValue::void_val());
+    }
 
     // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a
     // compile-time non-negative integer literal as its first argument

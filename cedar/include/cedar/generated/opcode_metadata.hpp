@@ -255,6 +255,7 @@ inline bool opcode_is_stateful(Opcode op) {
         case Opcode::EVENT_RATE_SCALE:
         case Opcode::EVENT_REORDER:
         case Opcode::EVENT_FANOUT:
+        case Opcode::BUS_TRIM:
             return true;
         default:
             return false;

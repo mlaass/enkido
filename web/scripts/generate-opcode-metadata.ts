@@ -154,6 +154,7 @@ function inferStatefulOpcodes(opcodes: Map<string, number>, fromBuiltins: Set<st
     "FFT_PROBE",   // FFT visualization state
     "POLY_BEGIN",  // PolyAllocState — voice allocation
     "MIDI_QUERY",  // MidiQueueState — runtime MIDI event source
+    "BUS_TRIM",    // SlewState — per-bus fader smoothing
   ];
 
   for (const [name, _] of opcodes) {

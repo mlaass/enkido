@@ -794,6 +794,18 @@ TEST_CASE("bus-routing: bus()/mixer() accept a friendly label (OQ4)",
         auto r = akkado::compile("bus(1, \"kick\")");
         CHECK_FALSE(r.success);  // label popped, no signal left → E260
     }
+    SECTION("a non-string extra arg is E260, not silently dropped") {
+        auto rm = akkado::compile("bus(1, 0.5)\nmixer(1, (s) -> s, 5)\nout(0.2)");
+        CHECK_FALSE(rm.success);
+        CHECK(has_code(rm, "E260"));
+        auto rr = akkado::compile("master((s) -> s, 5)\nout(0.2)");
+        CHECK_FALSE(rr.success);
+        CHECK(has_code(rr, "E260"));
+        // Beyond the label slot the semantic analyzer's arity check fires first.
+        auto r2 = akkado::compile("master((s) -> s, \"a\", \"b\")\nout(0.2)");
+        CHECK_FALSE(r2.success);
+        CHECK(has_code(r2, "E007"));
+    }
 }
 
 // --- Per-bus hot-swap crossfade (studio daw-core OQ2) ------------------------
