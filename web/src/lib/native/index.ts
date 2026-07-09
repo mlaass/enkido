@@ -7,19 +7,37 @@
  * outside an `if (__IS_NATIVE__)` gate — `scripts/check-native-bundle.ts`
  * asserts the marker below is absent from the site build artifact.
  *
- * The actual host panels (studio device settings, bus mixer, plugin
- * preset browser) are owned by the nkido-studio / plugin PRDs and get
- * added here as they land; this file is the seam, not the panels.
+ * Panels live here: the studio daw-core dock (transport + capture indicator,
+ * bus mixer, takes browser, render dialog) — prd-studio-daw-core §5.3–§5.6.
+ * The plugin's preset browser will register alongside it.
  */
+import { mount } from 'svelte';
+
+import StudioPanels from './StudioPanels.svelte';
+import { studio } from './studio-bridge.svelte';
 
 // Grep-able sentinel for the build-artifact assertion. Keep it referenced
 // from runtime code so minification can't drop it from the native bundle.
 export const NATIVE_BUNDLE_MARKER = 'NKIDO_NATIVE_BUNDLE_MARKER';
 
+let mounted = false;
+
 /**
- * Called once from the root layout when `__IS_NATIVE__` is set. Native
- * panels register themselves here as they are implemented.
+ * Called once from the root layout when `__IS_NATIVE__` is set.
+ *
+ * The panels only render once the native bridge answers (`studio.available`),
+ * so a native bundle loaded without a host — the dev server, a plain browser —
+ * shows the plain IDE rather than dead controls.
  */
 export function initNativeHost(): void {
 	console.log('[native] host UI seam active:', NATIVE_BUNDLE_MARKER);
+	if (mounted) return;
+	mounted = true;
+
+	studio.start();
+
+	const host = document.createElement('div');
+	host.id = 'nkido-studio-panels';
+	document.body.appendChild(host);
+	mount(StudioPanels, { target: host });
 }
