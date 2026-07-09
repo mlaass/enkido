@@ -1,7 +1,7 @@
 # fixture: 02_pattern_mini.ak
-# main: 25, blocks: 0, total: 25
+# main: 27, blocks: 0, total: 27
 
-Cedar Bytecode - 25 instructions
+Cedar Bytecode - 27 instructions
 ============================================================
 0000: COPY          buf[16 ] <- buf[255]
 0001: COPY          buf[17 ] <- buf[255]
@@ -21,11 +21,13 @@ Cedar Bytecode - 25 instructions
 0015: OSC_SIN       buf[14 ] freq=buf[0]  state: 0x46deb883
 0016: MUL           buf[15 ] <- buf[14], buf[1]
 0017: OUTPUT        buf[16 ] <- buf[15]
-0018: PUSH_CONST    buf[18 ] = 0.900
-0019: DISTORT_SOFT  buf[16 ] in0=buf[16] in1=buf[18]
-0020: PUSH_CONST    buf[18 ] = -1.000
-0021: PUSH_CONST    buf[19 ] = 1.000
-0022: CLAMP         buf[16 ] <- buf[16], buf[18], buf[19]
-0023: CLAMP         buf[17 ] <- buf[17], buf[18], buf[19]
-0024: OUTPUT        buf[65535] <- buf[16]
+0018: PUSH_CONST    buf[20 ] = 1.000
+0019: PUSH_CONST    buf[18 ] = 0.900
+0020: DISTORT_SOFT  buf[16 ] in0=buf[16] in1=buf[18]
+0021: BUS_TRIM      buf[16 ] in1=buf[20]  state: 0x9d8fcef7
+0022: PUSH_CONST    buf[18 ] = -1.000
+0023: PUSH_CONST    buf[19 ] = 1.000
+0024: CLAMP         buf[16 ] <- buf[16], buf[18], buf[19]
+0025: CLAMP         buf[17 ] <- buf[17], buf[18], buf[19]
+0026: OUTPUT        buf[65535] <- buf[16]
 ============================================================

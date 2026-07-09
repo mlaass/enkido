@@ -1,7 +1,7 @@
 # fixture: 04_spread_args.ak
-# main: 20, blocks: 0, total: 20
+# main: 22, blocks: 0, total: 22
 
-Cedar Bytecode - 20 instructions
+Cedar Bytecode - 22 instructions
 ============================================================
 0000: COPY          buf[11 ] <- buf[255]
 0001: COPY          buf[12 ] <- buf[255]
@@ -16,11 +16,13 @@ Cedar Bytecode - 20 instructions
 0010: PUSH_CONST    buf[8  ] = 1.000
 0011: FILTER_SVF_LP buf[9  ] in=buf[6] freq=buf[0] q=buf[1]  state: 0x1e331bc2
 0012: OUTPUT        buf[11 ] <- buf[9]
-0013: PUSH_CONST    buf[13 ] = 0.900
-0014: DISTORT_SOFT  buf[11 ] in0=buf[11] in1=buf[13]
-0015: PUSH_CONST    buf[13 ] = -1.000
-0016: PUSH_CONST    buf[14 ] = 1.000
-0017: CLAMP         buf[11 ] <- buf[11], buf[13], buf[14]
-0018: CLAMP         buf[12 ] <- buf[12], buf[13], buf[14]
-0019: OUTPUT        buf[65535] <- buf[11]
+0013: PUSH_CONST    buf[15 ] = 1.000
+0014: PUSH_CONST    buf[13 ] = 0.900
+0015: DISTORT_SOFT  buf[11 ] in0=buf[11] in1=buf[13]
+0016: BUS_TRIM      buf[11 ] in1=buf[15]  state: 0x9d8fcef7
+0017: PUSH_CONST    buf[13 ] = -1.000
+0018: PUSH_CONST    buf[14 ] = 1.000
+0019: CLAMP         buf[11 ] <- buf[11], buf[13], buf[14]
+0020: CLAMP         buf[12 ] <- buf[12], buf[13], buf[14]
+0021: OUTPUT        buf[65535] <- buf[11]
 ============================================================

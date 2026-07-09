@@ -1,7 +1,7 @@
 # fixture: 08_multiline_mini.ak
-# main: 24, blocks: 0, total: 24
+# main: 26, blocks: 0, total: 26
 
-Cedar Bytecode - 24 instructions
+Cedar Bytecode - 26 instructions
 ============================================================
 0000: COPY          buf[15 ] <- buf[255]
 0001: COPY          buf[16 ] <- buf[255]
@@ -20,11 +20,13 @@ Cedar Bytecode - 24 instructions
 0014: PUSH_CONST    buf[13 ] = 0.000
 0015: OSC_SIN       buf[14 ] freq=buf[0]  state: 0x46deb883
 0016: OUTPUT        buf[15 ] <- buf[14]
-0017: PUSH_CONST    buf[17 ] = 0.900
-0018: DISTORT_SOFT  buf[15 ] in0=buf[15] in1=buf[17]
-0019: PUSH_CONST    buf[17 ] = -1.000
-0020: PUSH_CONST    buf[18 ] = 1.000
-0021: CLAMP         buf[15 ] <- buf[15], buf[17], buf[18]
-0022: CLAMP         buf[16 ] <- buf[16], buf[17], buf[18]
-0023: OUTPUT        buf[65535] <- buf[15]
+0017: PUSH_CONST    buf[19 ] = 1.000
+0018: PUSH_CONST    buf[17 ] = 0.900
+0019: DISTORT_SOFT  buf[15 ] in0=buf[15] in1=buf[17]
+0020: BUS_TRIM      buf[15 ] in1=buf[19]  state: 0x9d8fcef7
+0021: PUSH_CONST    buf[17 ] = -1.000
+0022: PUSH_CONST    buf[18 ] = 1.000
+0023: CLAMP         buf[15 ] <- buf[15], buf[17], buf[18]
+0024: CLAMP         buf[16 ] <- buf[16], buf[17], buf[18]
+0025: OUTPUT        buf[65535] <- buf[15]
 ============================================================

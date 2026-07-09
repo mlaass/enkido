@@ -697,6 +697,15 @@ private:
     // Perform crossfade mixing
     void perform_crossfade(float* out_left, float* out_right);
 
+    // Per-bus stem crossfade (studio daw-core OQ2). The bus→buffer map is
+    // recovered from a slot's BUS_TRIM instructions (rate = bus index,
+    // out_buffer = bus L). capture_old_bus_stems() must run immediately after
+    // the outgoing program executes, before the incoming one overwrites the
+    // shared BufferPool; blend_new_bus_stems() writes the equal-power blend back
+    // into the incoming program's bus buffers so host taps see no block edge.
+    void capture_old_bus_stems(const ProgramSlot* slot) noexcept;
+    void blend_new_bus_stems(const ProgramSlot* slot, float position) noexcept;
+
     // Detect if structural change requires crossfade
     bool requires_crossfade(const ProgramSlot* old_slot,
                            const ProgramSlot* new_slot) const;

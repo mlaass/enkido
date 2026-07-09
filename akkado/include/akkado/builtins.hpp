@@ -1079,8 +1079,10 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // into numbered bus N. Bus 0 is the master/device bus; every non-zero
     // bus auto-sums into bus 0. N must be a compile-time non-negative
     // integer literal. Handled entirely by handle_bus_call in codegen.
-    {"bus",     {cedar::Opcode::OUTPUT, 2, 1, false,
-                 {"N", "L", "R", "", "", ""},
+    // The optional trailing string is a friendly bus label (OQ4): it names the
+    // stem file + mixer strip. bus(N, L, "kick") / bus(N, L, R, "kick").
+    {"bus",     {cedar::Opcode::OUTPUT, 2, 2, false,
+                 {"N", "L", "R", "label", "", ""},
                  {NAN, NAN, NAN},
                  "Route a signal into numbered bus N (bus 0 is the master)"}},
 
@@ -1090,12 +1092,13 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
     // (handle_mixer_call) records the closure and inlines it into the bus
     // epilogue. The closure body runs once per block on the bus's summed
     // signal.
-    {"mixer",   {cedar::Opcode::NOP, 2, 0, false,
-                 {"N", "closure", "", "", "", ""},
+    // Both take an optional trailing string label (OQ4), same as bus().
+    {"mixer",   {cedar::Opcode::NOP, 2, 1, false,
+                 {"N", "closure", "label", "", "", ""},
                  {NAN, NAN, NAN},
                  "Attach a processing closure to bus N"}},
-    {"master",  {cedar::Opcode::NOP, 1, 0, false,
-                 {"closure", "", "", "", "", ""},
+    {"master",  {cedar::Opcode::NOP, 1, 1, false,
+                 {"closure", "label", "", "", "", ""},
                  {NAN, NAN, NAN},
                  "Attach a processing closure to bus 0 — alias for "
                  "mixer(0, ...)"}},

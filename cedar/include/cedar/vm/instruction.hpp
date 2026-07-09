@@ -308,6 +308,12 @@ enum class Opcode : std::uint8_t {
     EVENT_REORDER = 222,     // rev / palindrome / iter / iter_back / zoom / compress
     EVENT_FANOUT  = 223,     // ply / linger / segment
 
+    // Per-bus mixer trim (prd-capture-recording / studio daw-core OQ5): stereo
+    // in-place gain read from the host-poked EnvMap value "__bus_trim_<N>",
+    // unity fallback, click-free ramp. Nondestructive: unpoked ⇒ ×1.0. Reads
+    // the raw EnvMap target (get_target) so it does NOT drive param slew.
+    BUS_TRIM = 224,          // out/out+1 *= trim; in1 = unity fallback const
+
     INVALID = 255
 };
 

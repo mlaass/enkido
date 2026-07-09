@@ -165,6 +165,7 @@ inline const char* opcode_to_string(Opcode op) {
         case Opcode::EVENT_RATE_SCALE: return "EVENT_RATE_SCALE";
         case Opcode::EVENT_REORDER: return "EVENT_REORDER";
         case Opcode::EVENT_FANOUT: return "EVENT_FANOUT";
+        case Opcode::BUS_TRIM: return "BUS_TRIM";
         case Opcode::INVALID: return "INVALID";
         default: return "UNKNOWN";
     }

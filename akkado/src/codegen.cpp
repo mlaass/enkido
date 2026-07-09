@@ -141,6 +141,7 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_uris_.clear();
     required_input_sources_.clear();
     bus_buffers_.clear();
+    bus_labels_.clear();
     param_decls_.clear();
     viz_decls_.clear();
     builtin_var_overrides_.clear();
@@ -2773,6 +2774,22 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
         sig_start = 1;
     }
 
+    // Optional trailing string label (OQ4): bus(N, sig, "kick") / out(sig, "mix").
+    // Recorded per bus (last non-empty wins) and dropped from the signal args.
+    // Only pop when a signal argument would remain — so out("hi") still reports
+    // E160 (string is not a signal) rather than silently becoming a label.
+    if (args.size() > sig_start + 1) {
+        const Node& last = ast_->arena[args.back()];
+        NodeIndex last_val =
+            (last.type == NodeType::Argument) ? last.first_child : args.back();
+        if (last_val != NULL_NODE &&
+            ast_->arena[last_val].type == NodeType::StringLit) {
+            const std::string& lbl = ast_->arena[last_val].as_string();
+            if (!lbl.empty()) bus_labels_[bus_index] = lbl;
+            args.pop_back();
+        }
+    }
+
     const std::size_t sig_count = args.size() - sig_start;
     if (sig_count < 1 || sig_count > 2) {
         error("E260", func_name + "() expects 1 or 2 signal arguments",
@@ -2887,6 +2904,23 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
             const_cast<AstArena&>(ast_->arena), *ctx_->interner, args, *bi);
     }
 
+    // Optional trailing string label (OQ4): mixer(N, closure, "drums") /
+    // master(closure, "mix"). Popped before arity checks; bound to the bus
+    // index once it is resolved below. Only pop when the required args (index +
+    // closure) would still remain, so master("hi") keeps its existing error.
+    const std::size_t min_args = (func_name == "mixer") ? 2u : 1u;
+    std::string pending_label;
+    if (args.size() > min_args) {
+        const Node& last = ast_->arena[args.back()];
+        NodeIndex last_val =
+            (last.type == NodeType::Argument) ? last.first_child : args.back();
+        if (last_val != NULL_NODE &&
+            ast_->arena[last_val].type == NodeType::StringLit) {
+            pending_label = ast_->arena[last_val].as_string();
+            args.pop_back();
+        }
+    }
+
     // Resolve the bus index. master(...) targets bus 0; mixer(N, ...) takes a
     // compile-time non-negative integer literal as its first argument
     // (validation mirrors handle_bus_call exactly).
@@ -2927,6 +2961,9 @@ TypedValue CodeGenerator::handle_mixer_call(NodeIndex node, const Node& n) {
         }
         closure_arg = args[0];
     }
+
+    // Bind the popped label to the now-resolved bus index (last non-empty wins).
+    if (!pending_label.empty()) bus_labels_[bus_index] = pending_label;
 
     // Unwrap an Argument wrapper, then require an inline closure literal.
     if (ast_->arena[closure_arg].type == NodeType::Argument) {
@@ -3216,8 +3253,11 @@ void CodeGenerator::emit_bus_epilogue() {
     bus_buffers_.clear();
     bus_buffers_.reserve(bus_left.size());
     for (const auto& [idx, l] : bus_left) {
+        auto lit = bus_labels_.find(idx);
         bus_buffers_.push_back({static_cast<std::uint32_t>(idx), l,
-                                static_cast<std::uint16_t>(l + 1)});
+                                static_cast<std::uint16_t>(l + 1),
+                                lit != bus_labels_.end() ? lit->second
+                                                         : std::string{}});
     }
 
     // 3. Rewrite bus placeholders to real left-buffer indices.
@@ -3242,7 +3282,9 @@ void CodeGenerator::emit_bus_epilogue() {
     //    monotonic — if the last one succeeds all did.
     const std::uint16_t c1 = buffers_.allocate();
     const std::uint16_t c2 = buffers_.allocate();
-    if (c2 == BufferAllocator::BUFFER_UNUSED) {
+    // Shared unity (1.0) fallback for every per-bus BUS_TRIM (OQ5 mixer fader).
+    const std::uint16_t unity_trim = buffers_.allocate();
+    if (unity_trim == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted (bus epilogue)", {});
         return;
     }
@@ -3260,9 +3302,35 @@ void CodeGenerator::emit_bus_epilogue() {
         emit(push);
     };
 
+    // Per-bus mixer trim (OQ5): stereo in-place ×gain from the host-poked
+    // EnvMap value "__bus_trim_<N>" (unity fallback). Emitted between a bus's
+    // mixer closure and its sum into bus 0, so the fader reaches the real master
+    // and the post-fader stem tap. Nondestructive: unpoked ⇒ ×1.0 (bit-exact).
+    emit_push_const(unity_trim, 1.0f);
+    auto emit_bus_trim = [&](std::uint16_t l, int idx) {
+        const std::string name = "__bus_trim_" + std::to_string(idx);
+        cedar::Instruction t{};
+        t.opcode = cedar::Opcode::BUS_TRIM;
+        // rate carries the bus index (a compile-time count field, no audio
+        // meaning) so the VM can recover this program's bus→buffer map by
+        // scanning for BUS_TRIM — used by the per-bus hot-swap crossfade.
+        t.rate = static_cast<std::uint8_t>(idx);
+        t.out_buffer = l;              // stereo in place: l, l+1
+        t.inputs[0] = 0xFFFF;
+        t.inputs[1] = unity_trim;      // unity fallback
+        t.inputs[2] = 0xFFFF;
+        t.inputs[3] = 0xFFFF;
+        t.inputs[4] = 0xFFFF;
+        t.state_id = cedar::fnv1a_hash_runtime(name.data(), name.size());
+        t.flags = static_cast<std::uint16_t>(
+            cedar::InstructionFlag::STEREO_INPUT |
+            cedar::InstructionFlag::STEREO_OUTPUT);
+        emit(t);
+    };
+
     // 5. Emit the epilogue into the main stream.
     // (a) For each non-zero bus: run its mixer closure (if any) on the bus
-    //     signal in place, then sum the bus into bus 0.
+    //     signal in place, apply the per-bus trim, then sum the bus into bus 0.
     for (const auto& [idx, l] : bus_left) {
         if (idx == 0) continue;
         auto mit = winning_mixers.find(idx);
@@ -3270,6 +3338,7 @@ void CodeGenerator::emit_bus_epilogue() {
             inline_mixer_closure(mit->second, l,
                                  static_cast<std::uint16_t>(l + 1));
         }
+        emit_bus_trim(l, idx);
         cedar::Instruction o{};
         o.opcode = cedar::Opcode::OUTPUT;
         o.out_buffer = bus0_l;
@@ -3306,6 +3375,10 @@ void CodeGenerator::emit_bus_epilogue() {
             emit(soft);
         }
     }
+
+    // (b2) Master fader (bus 0 trim): post-master-chain, pre-safety, so the
+    //      master fader scales the final mix (OQ5). Unity fallback ⇒ bit-exact.
+    emit_bus_trim(bus0_l, 0);
 
     // (c) Forced safety: hard rail at ±1.0 — "do not damage speakers".
     //     std::clamp() passes NaN through unchanged; the device-store

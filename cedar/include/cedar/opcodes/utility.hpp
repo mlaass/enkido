@@ -374,6 +374,46 @@ inline void op_env_get(ExecutionContext& ctx, const Instruction& inst) {
     }
 }
 
+// BUS_TRIM: per-bus mixer fader (studio daw-core OQ5). Multiplies a bus scratch
+// pair (out_buffer = L, out_buffer+1 = R) in place by a host-poked gain, applied
+// between the mixer(N) closure and the sum into bus 0 so the fader reaches the
+// real master (and the post-fader stem tap). The gain is the EnvMap value
+// "__bus_trim_<N>" read via get_target — deliberately NOT get()/interpolation,
+// so adding trims never perturbs param() slew (env_map's per-sample
+// update_interpolation is untouched). Unity fallback (inputs[1]) when the host
+// hasn't poked it; a one-pole ~5 ms ramp (reusing SlewState.current[0]) keeps
+// moves click-free. Nondestructive: unpoked ⇒ ×1.0 exactly.
+inline void op_bus_trim(ExecutionContext& ctx, const Instruction& inst) {
+    float* L = ctx.buffers->get(inst.out_buffer);
+    float* R = ctx.buffers->get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+
+    float fallback = 1.0f;
+    if (inst.inputs[1] != BUFFER_UNUSED)
+        fallback = ctx.buffers->get(inst.inputs[1])[0];
+
+    float target = fallback;
+    if (ctx.env_map && ctx.env_map->has_param_hash(inst.state_id))
+        target = ctx.env_map->get_target(inst.state_id);
+
+    auto& st = ctx.states->get_or_create<SlewState>(inst.state_id);
+    if (!st.initialized) {
+        st.current[0] = target;
+        st.initialized = true;
+    }
+
+    // ~5 ms one-pole smoothing (click-free); instant at pathological rates.
+    float coeff = 1.0f;
+    if (ctx.sample_rate > 200.0f) coeff = 1.0f / (0.005f * ctx.sample_rate);
+
+    float g = st.current[0];
+    for (std::size_t i = 0; i < BLOCK_SIZE; ++i) {
+        g += (target - g) * coeff;
+        L[i] *= g;
+        R[i] *= g;
+    }
+    st.current[0] = g;
+}
+
 // PROBE: Capture signal to ring buffer for visualization
 // The signal passes through unchanged (out = in)
 // State stores a ring buffer of recent samples for UI queries
