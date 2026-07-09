@@ -90,6 +90,16 @@ struct CrossfadeBuffers {
     alignas(32) std::array<float, BLOCK_SIZE> new_left{};
     alignas(32) std::array<float, BLOCK_SIZE> new_right{};
 
+    // Per-bus stem crossfade (studio daw-core OQ2). During a swap both programs
+    // execute into the shared BufferPool, so the outgoing program's per-bus
+    // stems must be copied out before the incoming one overwrites them. Indexed
+    // by bus index; `captured` marks which buses the old program actually had.
+    // Buses above MAX_BUSES keep the old hard block-edge behaviour.
+    static constexpr std::size_t MAX_BUSES = 64;  // 64 KB scratch, preallocated
+    alignas(32) std::array<std::array<float, BLOCK_SIZE>, MAX_BUSES> old_bus_l{};
+    alignas(32) std::array<std::array<float, BLOCK_SIZE>, MAX_BUSES> old_bus_r{};
+    std::uint64_t captured = 0;  // bitmask of buses copied from the old program
+
     // Mix old and new with equal-power crossfade
     // Equal-power maintains perceived loudness during transition
     void mix_equal_power(float* out_left, float* out_right, float position) noexcept {
@@ -115,8 +125,10 @@ struct CrossfadeBuffers {
         }
     }
 
-    // Clear all buffers
+    // Clear all buffers. The per-bus stem scratch is not zeroed (64 KB per
+    // block would be wasteful) — `captured` gates every read of it.
     void clear() noexcept {
+        captured = 0;
         old_left.fill(0.0f);
         old_right.fill(0.0f);
         new_left.fill(0.0f);

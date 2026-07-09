@@ -3280,6 +3280,10 @@ void CodeGenerator::emit_bus_epilogue() {
         const std::string name = "__bus_trim_" + std::to_string(idx);
         cedar::Instruction t{};
         t.opcode = cedar::Opcode::BUS_TRIM;
+        // rate carries the bus index (a compile-time count field, no audio
+        // meaning) so the VM can recover this program's bus→buffer map by
+        // scanning for BUS_TRIM — used by the per-bus hot-swap crossfade.
+        t.rate = static_cast<std::uint8_t>(idx);
         t.out_buffer = l;              // stereo in place: l, l+1
         t.inputs[0] = 0xFFFF;
         t.inputs[1] = unity_trim;      // unity fallback

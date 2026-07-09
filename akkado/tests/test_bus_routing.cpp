@@ -795,3 +795,86 @@ TEST_CASE("bus-routing: bus()/mixer() accept a friendly label (OQ4)",
         CHECK_FALSE(r.success);  // label popped, no signal left → E260
     }
 }
+
+// --- Per-bus hot-swap crossfade (studio daw-core OQ2) ------------------------
+// The master has always been crossfaded on a hot-swap; the per-bus scratch pairs
+// (what a host taps for stems) used to switch at a hard block edge. Both
+// programs now execute during the swap window, the outgoing program's stems are
+// copied out before the incoming one overwrites the shared pool, and the stems
+// are blended with the same equal-power law and written back into the incoming
+// program's bus buffers.
+namespace {
+std::uint16_t bus_left_of(const akkado::CompileResult& r, std::uint32_t bus) {
+    for (const auto& b : r.bus_buffers)
+        if (b.bus_index == bus) return b.left_buffer;
+    return 0xFFFF;
+}
+}  // namespace
+
+TEST_CASE("bus-routing: per-bus stems crossfade on hot-swap (OQ2)",
+          "[bus][crossfade]") {
+    using Catch::Matchers::WithinAbs;
+
+    SECTION("a changed bus blends instead of jumping at the block edge") {
+        auto A = akkado::compile("master((s) -> s)\nbus(1, 0.8)");
+        auto B = akkado::compile("master((s) -> s)\nbus(1, 0.2)");
+        REQUIRE(A.success);
+        REQUIRE(B.success);
+        const auto ia = get_instructions(A), ib = get_instructions(B);
+        const std::uint16_t b1 = bus_left_of(B, 1);
+        REQUIRE(b1 != 0xFFFF);
+
+        cedar::VM vm;
+        vm.set_sample_rate(48000.0f);
+        vm.set_bpm(120.0f);
+        REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(ia)));
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+        CHECK_THAT(vm.buffers().get(bus_left_of(A, 1))[0], WithinAbs(0.8f, 1e-5f));
+
+        REQUIRE(vm.load_program(std::span<const cedar::Instruction>(ib)) ==
+                cedar::VM::LoadResult::Success);
+
+        // Walk the crossfade: the stem must pass through intermediate values
+        // between the old (0.8) and new (0.2) levels, tracking the master.
+        bool saw_intermediate = false;
+        for (int b = 0; b < 6; ++b) {
+            vm.process_block(L.data(), R.data());
+            const float stem = vm.buffers().get(b1)[0];
+            // Identity master + a single bus ⇒ the stem equals the master mix.
+            CHECK_THAT(stem, WithinAbs(L[0], 1e-5f));
+            CHECK(stem <= 0.8f + 1e-5f);
+            CHECK(stem >= 0.2f - 1e-5f);
+            if (stem > 0.2f + 1e-3f && stem < 0.8f - 1e-3f) saw_intermediate = true;
+        }
+        CHECK(saw_intermediate);  // would be false with a hard block-edge switch
+        // Settled on the new program.
+        vm.process_block(L.data(), R.data());
+        CHECK_THAT(vm.buffers().get(b1)[0], WithinAbs(0.2f, 1e-5f));
+    }
+
+    SECTION("a bus only the new program has fades up from silence") {
+        auto A = akkado::compile("master((s) -> s)\nout(0.5)");
+        auto B = akkado::compile("master((s) -> s)\nout(0.5)\nbus(1, 0.6)");
+        REQUIRE(A.success);
+        REQUIRE(B.success);
+        const auto ia = get_instructions(A), ib = get_instructions(B);
+        const std::uint16_t b1 = bus_left_of(B, 1);
+        REQUIRE(b1 != 0xFFFF);
+
+        cedar::VM vm;
+        vm.set_sample_rate(48000.0f);
+        vm.set_bpm(120.0f);
+        REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(ia)));
+        std::array<float, cedar::BLOCK_SIZE> L{}, R{};
+        vm.process_block(L.data(), R.data());
+        REQUIRE(vm.load_program(std::span<const cedar::Instruction>(ib)) ==
+                cedar::VM::LoadResult::Success);
+
+        vm.process_block(L.data(), R.data());
+        // First crossfade block is all-old: the new bus is still silent, not 0.6.
+        CHECK(vm.buffers().get(b1)[0] < 0.6f - 1e-3f);
+        for (int b = 0; b < 5; ++b) vm.process_block(L.data(), R.data());
+        CHECK_THAT(vm.buffers().get(b1)[0], WithinAbs(0.6f, 1e-5f));  // settled
+    }
+}

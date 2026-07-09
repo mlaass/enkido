@@ -329,6 +329,11 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
         execute_program(old_slot,
                        crossfade_buffers_.old_left.data(),
                        crossfade_buffers_.old_right.data());
+        // Copy out the OUTGOING program's per-bus stems before the incoming
+        // program overwrites the shared BufferPool (studio daw-core OQ2). The
+        // bus→buffer map is recovered from this slot's BUS_TRIM instructions
+        // (rate = bus index, out_buffer = bus L; R = L+1).
+        capture_old_bus_stems(old_slot);
     } else {
         std::fill(crossfade_buffers_.old_left.begin(),
                   crossfade_buffers_.old_left.end(), 0.0f);
@@ -359,6 +364,52 @@ void VM::perform_crossfade(float* out_left, float* out_right) {
     // Mix with equal-power crossfade
     float position = crossfade_state_.position();
     crossfade_buffers_.mix_equal_power(out_left, out_right, position);
+
+    // Blend the per-bus stems with the same equal-power law and write them back
+    // into the INCOMING program's bus buffers, so a host tapping bus buffers
+    // after process_block sees crossfaded stems rather than a hard block-edge
+    // switch (OQ2). A bus only the new program has fades up from silence; one
+    // only the old program had simply disappears with the outgoing slot.
+    if (new_slot && new_slot->instruction_count > 0) {
+        blend_new_bus_stems(new_slot, position);
+    }
+}
+
+void VM::capture_old_bus_stems(const ProgramSlot* slot) noexcept {
+    crossfade_buffers_.captured = 0;
+    for (std::uint32_t i = 0; i < slot->main_count; ++i) {
+        const Instruction& inst = slot->instructions[i];
+        if (inst.opcode != Opcode::BUS_TRIM) continue;
+        const std::size_t bus = inst.rate;
+        if (bus >= CrossfadeBuffers::MAX_BUSES) continue;
+        const float* l = buffer_pool_.get(inst.out_buffer);
+        const float* r = buffer_pool_.get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+        std::copy_n(l, BLOCK_SIZE, crossfade_buffers_.old_bus_l[bus].begin());
+        std::copy_n(r, BLOCK_SIZE, crossfade_buffers_.old_bus_r[bus].begin());
+        crossfade_buffers_.captured |= (1ull << bus);
+    }
+}
+
+void VM::blend_new_bus_stems(const ProgramSlot* slot, float position) noexcept {
+    const float angle = position * HALF_PI;
+    const float old_gain = std::cos(angle);
+    const float new_gain = std::sin(angle);
+
+    for (std::uint32_t i = 0; i < slot->main_count; ++i) {
+        const Instruction& inst = slot->instructions[i];
+        if (inst.opcode != Opcode::BUS_TRIM) continue;
+        const std::size_t bus = inst.rate;
+        if (bus >= CrossfadeBuffers::MAX_BUSES) continue;
+        float* l = buffer_pool_.get(inst.out_buffer);
+        float* r = buffer_pool_.get(static_cast<std::uint16_t>(inst.out_buffer + 1));
+        const bool had_old = (crossfade_buffers_.captured & (1ull << bus)) != 0;
+        const float* ol = had_old ? crossfade_buffers_.old_bus_l[bus].data() : nullptr;
+        const float* orr = had_old ? crossfade_buffers_.old_bus_r[bus].data() : nullptr;
+        for (std::size_t s = 0; s < BLOCK_SIZE; ++s) {
+            l[s] = (ol ? ol[s] * old_gain : 0.0f) + l[s] * new_gain;
+            r[s] = (orr ? orr[s] * old_gain : 0.0f) + r[s] * new_gain;
+        }
+    }
 }
 
 bool VM::requires_crossfade(const ProgramSlot* old_slot,
