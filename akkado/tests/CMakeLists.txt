@@ -71,6 +71,11 @@ add_executable(akkado_tests
     test_drift_fuzz.cpp
 )
 
+# Host extension tests only exist when the API is compiled in.
+if(CEDAR_HOST_EXTENSIONS)
+    target_sources(akkado_tests PRIVATE test_host_extensions.cpp)
+endif()
+
 target_link_libraries(akkado_tests
     PRIVATE
         akkado

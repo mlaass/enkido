@@ -1,4 +1,7 @@
 #include "akkado/symbol_table.hpp"
+#ifdef CEDAR_HOST_EXTENSIONS
+#include "akkado/host_extensions.hpp"
+#endif
 
 namespace akkado {
 
@@ -45,6 +48,20 @@ void SymbolTable::register_builtins(StringInterner& interner) {
             define(alias_sym);
         }
     }
+
+#ifdef CEDAR_HOST_EXTENSIONS
+    // Embedder-registered names resolve exactly like core builtins. Collisions
+    // were rejected at registration, so nothing above can be shadowed here.
+    for (const auto& [name, info] : host_functions()) {
+        Symbol sym{};
+        sym.kind = SymbolKind::Builtin;
+        sym.name_id = interner.intern(name);
+        sym.name = std::string(name);
+        sym.buffer_index = 0xFFFF;
+        sym.builtin = *info;
+        define(sym);
+    }
+#endif
 }
 
 void SymbolTable::push_scope() {

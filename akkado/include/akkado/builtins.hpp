@@ -1691,6 +1691,12 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"noisegate", "gate"},
 };
 
+#ifdef CEDAR_HOST_EXTENSIONS
+// Defined in host_extensions.cpp. Declared here (rather than including that
+// header) to keep builtins.hpp free of any dependency on the registry.
+const BuiltinInfo* lookup_host_builtin(std::string_view name);
+#endif
+
 /// Lookup a builtin by name, handling aliases
 /// Returns nullptr if not found
 inline const BuiltinInfo* lookup_builtin(std::string_view name) {
@@ -1705,6 +1711,13 @@ inline const BuiltinInfo* lookup_builtin(std::string_view name) {
     if (it != BUILTIN_FUNCTIONS.end()) {
         return &it->second;
     }
+#ifdef CEDAR_HOST_EXTENSIONS
+    // Miss-path only: host names can never shadow a core name (collisions are
+    // rejected at registration), so the ordering here is pure optimization.
+    if (const BuiltinInfo* host = lookup_host_builtin(name)) {
+        return host;
+    }
+#endif
     return nullptr;
 }
 
@@ -1737,5 +1750,25 @@ inline const std::unordered_map<std::string_view, BuiltinVarDef> BUILTIN_VARIABL
     {"sr",  {"get_sr",  "",         "__sr",  48000.0f, 0.0f, 0.0f}},
     {"spb", {"get_spb", "",         "__spb", 0.5f, 0.0f, 0.0f}},  // seconds per beat = 60.0 / bpm
 };
+
+#ifdef CEDAR_HOST_EXTENSIONS
+// Defined in host_extensions.cpp — see lookup_host_builtin above.
+const BuiltinVarDef* lookup_host_variable(std::string_view name);
+#endif
+
+/// Lookup a builtin variable (`bpm`, `sr`, `spb`), falling back to the host
+/// registry. Returns nullptr if the name is not a builtin variable.
+inline const BuiltinVarDef* lookup_builtin_variable(std::string_view name) {
+    auto it = BUILTIN_VARIABLES.find(name);
+    if (it != BUILTIN_VARIABLES.end()) {
+        return &it->second;
+    }
+#ifdef CEDAR_HOST_EXTENSIONS
+    if (const BuiltinVarDef* host = lookup_host_variable(name)) {
+        return host;
+    }
+#endif
+    return nullptr;
+}
 
 } // namespace akkado

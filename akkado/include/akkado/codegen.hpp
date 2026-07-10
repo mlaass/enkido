@@ -8,6 +8,9 @@
 #include "symbol_table.hpp"
 #include "sample_registry.hpp"
 #include "typed_value.hpp"
+#ifdef CEDAR_HOST_EXTENSIONS
+#include "host_extensions.hpp"  // RequiredHostNode
+#endif
 #include <cedar/vm/instruction.hpp>
 #include <cedar/opcodes/sequence.hpp>
 #include <cedar/opcodes/dsp_state.hpp>
@@ -371,6 +374,11 @@ struct CodeGenResult {
     std::vector<ScalarSampleMapping> scalar_sample_mappings;  // Direct sample("name") references requiring runtime ID patching
     std::vector<RequiredSoundFont> required_soundfonts;  // SoundFont files needed at runtime
     std::vector<RequiredMidiSource> required_midi_sources;  // Per-call MIDI source configs (PRD prd-midi-input)
+#ifdef CEDAR_HOST_EXTENSIONS
+    // Per-call-site hosted-node records (prd-host-extension-api). The host binds
+    // an instance for each `state_id` off the audio thread before resuming.
+    std::vector<RequiredHostNode> required_host_nodes;
+#endif
     std::vector<RequiredMidiCcRoute> required_midi_cc_routes;  // midi_cc() routes (PRD prd-midi-input §4.8)
     // Input source strings collected from in('...') calls (per-call, not deduplicated).
     // Empty means in() was called with no argument (host uses UI default).
@@ -1337,6 +1345,9 @@ private:
     std::unordered_map<std::string, std::string> soundfont_aliases_;
     // Track per-call midi() configs (PRD prd-midi-input §4.7).
     std::vector<RequiredMidiSource> required_midi_sources_;
+#ifdef CEDAR_HOST_EXTENSIONS
+    std::vector<RequiredHostNode> required_host_nodes_;
+#endif
     // Track per-call midi_cc() routes (PRD prd-midi-input §4.8).
     std::vector<RequiredMidiCcRoute> required_midi_cc_routes_;
     // Track required wavetable banks from compile-time wt_load() directives

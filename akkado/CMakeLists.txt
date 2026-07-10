@@ -97,6 +97,8 @@ add_library(akkado STATIC
     src/codegen_viz.cpp
     src/codegen/options.cpp
     src/builtins_json.cpp
+    # Whole file is #ifdef CEDAR_HOST_EXTENSIONS — an empty TU when the flag is off.
+    src/host_extensions.cpp
     src/shape_index.cpp
     src/typed_value.cpp
     src/overload.cpp

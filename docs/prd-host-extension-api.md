@@ -1,8 +1,61 @@
-> **Status: NOT STARTED** — Design for a static, C++-level host extension API letting embedders register custom variables, builtins, and opcodes at startup (2026-06-08).
+> **Status: Phases 1–3 complete** — `register_host_variable` / `register_host_function` / `register_host_node` ship behind `CEDAR_HOST_EXTENSIONS` (default OFF); `HOST_OP = 209` dispatches through `cedar::HostOpRegistry`. Phase 4 (audio-rate host variables, `builtins_json` introspection, authoring guide) NOT STARTED. First consumer: **nkido studio's `plugin()` hosting seam** (closed-repo `prd-studio-plugin-hosting.md`, §7.0 / OQ12), amended in below (2026-07-10).
 
 # PRD: Host Extension API (Embedding-Time Variables, Builtins & Opcodes)
 
-**Date:** 2026-06-08
+**Date:** 2026-06-08 · amended 2026-07-10 (studio as first consumer)
+
+---
+
+## 0. Amendment — 2026-07-10: hosted nodes, and studio as first consumer
+
+Two owner decisions (2026-07-10) landed against this PRD while implementing
+`prd-studio-plugin-hosting.md` Phase 0. Recording them here, per that PRD's
+§7.0, which requires the OQ12 resolution be filed as an amendment to this one.
+
+**1. `plugin()` is a studio-only language extension, not an akkado builtin.**
+The hosting PRD's §6.3 assumed `plugin()`/`vst()`/`clap()` would be core akkado
+builtins so a shared patch compiles everywhere and degrades to a W-warning +
+passthrough on web/CLI. The owner chose the opposite: the hosting surface
+belongs to the studio. `plugin()` is registered by the embedder through this
+API, so it does not exist in the WASM/web or CLI builds at all — where a patch
+using it now fails with an ordinary unknown-function error (`E004`) rather than
+degrading. That trade was made knowingly; the hosting PRD's §4.5 and §8 are
+amended to match. This API is what makes that possible without a fork.
+
+**2. [OQ12, hosting PRD] resolved: a sibling `register_host_node`, not a wider
+`HOST_OP`.** A hosted plugin is not shaped like a leaf DSP op — it names a
+heavyweight instance, and the host must load/prepare that instance off the
+audio thread. Rather than widen `HOST_OP`'s descriptor (five float inputs,
+audio-thread `impl_fn`, arena scratch) for every future embedder, hosted nodes
+get their own registration entry point over the *same* dispatch path:
+
+- A node declares exactly one `String` parameter slot naming the instance.
+  A string literal lowers to a bufferless `TypedValue`, so that slot's
+  `inputs[]` entry is already `0xFFFF` — no instruction-layout change.
+- Codegen records each call site in `CompileResult::required_host_nodes`
+  (`state_id`, `host_index`, `name`), mirroring how `midi()` records
+  `RequiredMidiSource`. The host walks that manifest off the audio thread,
+  binds instances into its own pool keyed by `state_id`, and the audio-thread
+  `impl_fn` looks the instance up by `inst.state_id`. An unbound `state_id`
+  is the host's cue to pass through.
+- **The engine therefore has no load/prepare/destroy lifecycle hooks at all.**
+  That was the third "known gap" §6.3 of the hosting PRD listed, and it turns
+  out not to need engine surface: the manifest plus the semantic-ID key are
+  sufficient. The whole plugin lifecycle — and JUCE — stays out of the open
+  engine, and the `HostedPluginNode` boundary remains the intended v2 IPC cut.
+
+**Not yet built (deliberately, no stubs):** `HostNodeDesc::accepts_events` — the
+event-stream input carrying pattern events to the node as MIDI — is **rejected
+at registration** rather than accepted and ignored. It lands with its first real
+consumer, the studio's VST3/CLAP backend (hosting PRD Phase 2), together with a
+`seq_state_id` field on `RequiredHostNode`. Cedar already has the seam for it
+(`PatternPayload::is_runtime_event_source` → `seq_state_id`, as `midi()` → SF2
+voice uses today).
+
+**§13-Q1 (arena reclamation) is answered: yes.** `HostOpState` carries a
+`release(AudioArena&)` hook, so the `HasArenaRelease` concept the StatePool
+sweep already looks for reclaims host-op regions on eviction. No per-region
+free had to be added — `prd-audio-arena-reclamation` had already built it.
 
 ---
 
@@ -419,25 +472,45 @@ the WASM dispatch path, every core opcode handler.
 
 ## 8. Implementation Phases
 
-### Phase 1 — Host variables (control-rate)
+### Phase 1 — Host variables (control-rate) ✅ COMPLETE (2026-07-10)
 **Goal:** A host-registered scalar variable resolves in Akkado and is driven via `set_param`.
 - `host_extensions.hpp/.cpp` skeleton; `HostVariableRegistry` (Control rate only).
 - Hook identifier resolution + codegen onto the existing `bpm/sr/spb` path.
 - `CEDAR_HOST_EXTENSIONS` flag wired; OFF for WASM.
 - **Verify:** register `health`; compile `lp(saw(110), 200 + health*3000)`; drive `set_param("health", x)`; assert filter cutoff tracks.
 
-### Phase 2 — Host functions over existing opcodes (null impl)
+### Phase 2 — Host functions over existing opcodes (null impl) ✅ COMPLETE (2026-07-10)
 **Goal:** A host-registered name maps to a core `Opcode` and codegens identically to a builtin.
 - `HostFunctionRegistry` with owned strings; `lookup_builtin` fallback; collision rejection.
 - Codegen emits the mapped core opcode.
 - **Verify:** register an alias over `REVERB_DATTORRO`; compile + render; output matches calling the core builtin directly. Collision with `lp` returns `false`.
 
-### Phase 3 — Host opcodes (the real extension)
+### Phase 3 — Host opcodes (the real extension) ✅ COMPLETE (2026-07-10)
 **Goal:** A host `impl_fn` runs on the audio thread with arena-backed state.
 - `HOST_OP` enum value; `HostOpRegistry` + `execute()` dispatch case.
 - `HostOpState` variant member; arena reservation in the load path.
 - Codegen emits `HOST_OP` with `rate = index`, allocates `state_id`.
+- **Also shipped here:** `register_host_node` + `CompileResult::required_host_nodes`
+  (§0 amendment) — the studio's `plugin()` seam.
 - **Verify:** register `hwcrush`; `saw(220).hwcrush(6)` renders; state persists across blocks and hot-swap (matched by semantic ID); a program using no host ops produces byte-identical bytecode and output to a `CEDAR_HOST_EXTENSIONS=OFF` build.
+
+**Verification actually run (2026-07-10):**
+- `cedar_tests "[host-op]"` — 5 cases: dispatch, collision + null-impl rejection,
+  unbound index is a no-op, arena state persists across blocks, and **100
+  hot-swaps at one semantic ID → exactly one instantiation** (the pooling
+  invariant, asserted with a fixture instantiation counter).
+- `akkado_tests "[host-extensions]"` — 17 cases across all three phases,
+  including a host variable driven end-to-end through `vm.set_param` and the
+  null-impl alias emitting an opcode stream identical to the core builtin's.
+- **Nondestructiveness:** full suites green both ways — flag ON (cedar 350,
+  akkado 1233 cases) and OFF (cedar 345, akkado 1223). Registering a host op
+  leaves an unrelated program's bytecode byte-identical. Three fixtures
+  (`02_pattern_mini`, `03_pattern_chord`, `07_voicing`) rendered **300 s each**
+  produce **bit-identical WAVs** from an ON build and an OFF build.
+- **Arena reservation note:** reserved lazily on first touch inside the
+  `HOST_OP` dispatch case (the arena is a lock-free bump/free-list, so this is
+  RT-safe), mirroring `DelayState::ensure_buffer` — not in a separate load pass
+  as §6.4 sketched. Same guarantee, one less code path.
 
 ### Phase 4 — Audio-rate variables + introspection + docs
 **Goal:** Audio-rate host buffers; editor metadata; authoring guide.
