@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-07-10
+
+### Added
+
+- **Host Extension API** (`prd-host-extension-api.md` Phases 1–3), behind
+  the new `CEDAR_HOST_EXTENSIONS` CMake option — **default OFF**, so the
+  WASM/web build, the CLI and every existing program are untouched.
+  Embedders can register, once at init:
+  - `akkado::register_host_variable(...)` — control-rate host signals,
+    desugared onto the existing `bpm`/`sr` `ENV_GET` path. Drive them via
+    `vm.set_param(akkado::host_variable_env_key("name"), x)`.
+  - `akkado::register_host_function(...)` — with a null `impl_fn` it
+    aliases an existing core opcode; with an `impl_fn` it becomes a real
+    host opcode.
+  - `akkado::register_host_node(...)` — a stateful node naming a
+    heavyweight host-owned instance (nkido studio's `plugin("Diva")`).
+    Codegen records each call site in `CompileResult::required_host_nodes`
+    so the host can bind a pooled instance to that `state_id` off the
+    audio thread. The engine never loads, prepares or destroys the
+    instance, and needs no lifecycle hooks.
+- **`HOST_OP` opcode (209)** dispatched through `cedar::HostOpRegistry`,
+  a 256-entry table indexed by `inst.rate`. Host extensibility costs one
+  enum slot regardless of how many host ops are registered; core opcodes
+  keep their jump table and only host ops pay one indirect call.
+- **`HostOpState`** — arena-backed per-instance host-op state with a
+  `release()` hook, so the existing `HasArenaRelease` StatePool sweep
+  reclaims it. No per-region arena free had to be added.
+
+Name collisions with a core builtin, alias, or variable — or with an
+earlier host registration — are rejected, never shadowed. Audio-rate host
+variables and hosted-node event-stream inputs are likewise *rejected*
+rather than silently ignored; both land with Phase 4 and the studio's
+plugin backend respectively.
+
+Nondestructiveness verified: full cedar + akkado suites pass with the flag
+both ON and OFF, registering a host op leaves an unrelated program's
+bytecode byte-identical, and three fixtures rendered 300 s each produce
+bit-identical WAVs from ON and OFF builds.
+
 ## [0.4.7] - 2026-07-09
 
 ### Added
