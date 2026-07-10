@@ -39,6 +39,8 @@ void zero_alloc_arm() noexcept {
     g_armed = true;
 }
 void zero_alloc_disarm() noexcept { g_armed = false; }
+bool zero_alloc_is_armed() noexcept { return g_armed; }
+void zero_alloc_resume() noexcept { g_armed = true; }  // no counter reset
 std::size_t zero_alloc_violations() noexcept { return g_violations; }
 std::size_t zero_alloc_first_bytes() noexcept { return g_first_bytes; }
 

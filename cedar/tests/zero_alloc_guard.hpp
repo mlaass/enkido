@@ -32,6 +32,14 @@ namespace cedar::testing {
 void zero_alloc_arm() noexcept;
 void zero_alloc_disarm() noexcept;
 
+// Scope-exemption support (hosting PRD OQ6, owner 2026-07-10): a host may
+// suspend the trap around exactly a third-party call site and resume it
+// WITHOUT resetting the violation counter — a cedar-native violation earlier
+// in the same block must still be reported. `is_armed` lets the suspender
+// stay a no-op when no guard is active.
+bool zero_alloc_is_armed() noexcept;
+void zero_alloc_resume() noexcept;
+
 // Number of allocations seen while armed since the last arm()/reset().
 std::size_t zero_alloc_violations() noexcept;
 // Byte size of the first allocation seen while armed (0 if none) — handy for
