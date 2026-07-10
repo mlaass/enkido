@@ -41,6 +41,10 @@ option(CEDAR_ENABLE_FFT            "Include FFT support (KissFFT)" ON)
 option(CEDAR_ENABLE_FILE_IO        "Include filesystem-based file loading" ON)
 option(CEDAR_ENABLE_MINBLEP        "Include MinBLEP anti-aliased oscillators" ON)
 option(CEDAR_FLOAT_ONLY            "Use float instead of double for beat timing" OFF)
+# Host extension API (prd-host-extension-api). Native embedders only — OFF keeps
+# the dispatch switch, the DSPState variant and the emitted bytecode exactly as
+# they were, so the WASM/web build and the golden render hashes are untouched.
+option(CEDAR_HOST_EXTENSIONS       "Allow embedders to register host variables, builtins and opcodes" OFF)
 
 # Memory constant overrides (empty = use defaults)
 set(CEDAR_BLOCK_SIZE "" CACHE STRING "Override BLOCK_SIZE (default 128)")
@@ -63,6 +67,10 @@ set(CEDAR_SOURCES
 )
 
 # Conditional sources
+if(CEDAR_HOST_EXTENSIONS)
+    list(APPEND CEDAR_SOURCES src/vm/host_op_registry.cpp)
+endif()
+
 if(CEDAR_ENABLE_AUDIO_DECODERS)
     list(APPEND CEDAR_SOURCES src/io/audio_decoder.cpp)
 endif()
@@ -158,6 +166,9 @@ if(NOT CEDAR_ENABLE_FFT)
 endif()
 if(NOT CEDAR_ENABLE_FILE_IO OR EMSCRIPTEN)
     target_compile_definitions(cedar PUBLIC CEDAR_NO_FILE_IO=1)
+endif()
+if(CEDAR_HOST_EXTENSIONS)
+    target_compile_definitions(cedar PUBLIC CEDAR_HOST_EXTENSIONS=1)
 endif()
 if(NOT CEDAR_ENABLE_MINBLEP)
     target_compile_definitions(cedar PUBLIC CEDAR_NO_MINBLEP=1)

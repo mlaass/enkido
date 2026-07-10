@@ -59,6 +59,11 @@ add_executable(cedar_tests
     test_zero_alloc.cpp
 )
 
+# Host extension tests only exist when the API is compiled in.
+if(CEDAR_HOST_EXTENSIONS)
+    target_sources(cedar_tests PRIVATE test_host_op.cpp)
+endif()
+
 # Add concurrency tests if enabled
 if(CEDAR_ENABLE_CONCURRENCY_TESTS)
     target_sources(cedar_tests PRIVATE test_concurrency.cpp)

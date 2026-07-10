@@ -1658,6 +1658,55 @@ struct FFTProbeState {
 };
 #endif // CEDAR_NO_FFT
 
+#ifdef CEDAR_HOST_EXTENSIONS
+// ============================================================================
+// Host Extension State (prd-host-extension-api §6.4)
+// ============================================================================
+
+// Per-instance state for a HOST_OP. The region is arena-backed rather than
+// inlined into the variant, so registering a host op with a large state does
+// not inflate every StatePool slot. `ensure_buffer` mirrors
+// DelayState::ensure_buffer: reserved off the audio thread at program load,
+// zero-initialized on first touch, and returned to the arena on eviction via
+// the HasArenaRelease concept the StatePool sweep already looks for.
+//
+// The impl casts `ptr` to its own layout. `bytes` is retained so release()
+// can hand the block back to the right size class.
+struct HostOpState {
+    void* ptr = nullptr;
+    std::uint32_t bytes = 0;
+
+    static constexpr std::size_t floats_for(std::uint32_t nbytes) {
+        return (nbytes + sizeof(float) - 1) / sizeof(float);
+    }
+
+    // Reserve `nbytes` of zeroed scratch. Returns false if the arena is full,
+    // in which case the impl sees a null `ptr` and must degrade gracefully.
+    bool ensure_buffer(std::uint32_t nbytes, AudioArena& arena) {
+        if (ptr != nullptr || nbytes == 0) return ptr != nullptr;
+        const std::size_t nfloats = floats_for(nbytes);
+        float* block = arena.allocate(nfloats);
+        if (block == nullptr) return false;
+        std::memset(block, 0, nfloats * sizeof(float));
+        ptr = block;
+        bytes = nbytes;
+        return true;
+    }
+
+    void release(AudioArena& arena) {
+        if (ptr) {
+            arena.release(static_cast<float*>(ptr), floats_for(bytes));
+            ptr = nullptr;
+        }
+        bytes = 0;
+    }
+
+    void reset() {
+        if (ptr && bytes > 0) std::memset(ptr, 0, floats_for(bytes) * sizeof(float));
+    }
+};
+#endif // CEDAR_HOST_EXTENSIONS
+
 // Variant holding all possible DSP state types
 // std::monostate represents stateless operations
 using DSPState = std::variant<
@@ -1739,6 +1788,12 @@ using DSPState = std::variant<
     ExtendedParams<3>,   // 8-param opcodes (5 inputs + 3 extended)
     ExtendedParams<5>,   // 10-param opcodes (5 inputs + 5 extended)
     ExtendedParams<8>    // 13-param opcodes (5 inputs + 8 extended)
+#ifdef CEDAR_HOST_EXTENSIONS
+    ,
+    // Host extension state (arena-backed). Last member so that, with the flag
+    // off, the variant's alternative indices are byte-for-byte what they were.
+    HostOpState
+#endif
 >;
 
 }  // namespace cedar

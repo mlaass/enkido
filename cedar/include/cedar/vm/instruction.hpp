@@ -210,6 +210,14 @@ enum class Opcode : std::uint8_t {
     // Inputs: in0=freq, in1=phaseOffset, in2=tablePos. State: SmoochState.
     OSC_WAVETABLE = 200,
 
+    // Host Extensions (201-209) — PRD prd-host-extension-api §6.6.
+    // A single opcode slot covers all embedder-registered opcodes: `rate` is
+    // the 0..255 index into cedar::HostOpRegistry's dispatch table. Only
+    // emitted when CEDAR_HOST_EXTENSIONS is on; absent from the WASM build.
+    // Inputs: wired from the call args like any builtin. State: HostOpState
+    // (arena-backed) when the descriptor declares state_bytes > 0.
+    HOST_OP = 209,
+
     // Forward Control Flow (210-219) — PRD prd-runtime-functions-control-flow L1.
     // Pure control-flow opcodes: handled directly in the VM dispatch loop, NOT
     // through the execute() opcode switch (same as POLY_BEGIN). Forward-only —

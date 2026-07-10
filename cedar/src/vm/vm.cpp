@@ -1,6 +1,9 @@
 #include "cedar/vm/vm.hpp"
 #include "cedar/io/midi_sequence.hpp"
 #include "cedar/opcodes/opcodes.hpp"
+#ifdef CEDAR_HOST_EXTENSIONS
+#include "cedar/vm/host_op_registry.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -2053,6 +2056,26 @@ void VM::execute(const Instruction& inst) {
         case Opcode::FFT_PROBE:
             op_fft_probe(ctx_, inst);
             break;
+#endif
+
+#ifdef CEDAR_HOST_EXTENSIONS
+        // === Host extensions (prd-host-extension-api §6.4) ===
+        // One indirect call, paid only by host ops. Core opcodes keep their
+        // jump table. An unbound index is a no-op rather than a crash: the
+        // program outlives the registration that produced it (hot-swap,
+        // bytecode loaded from a bundle).
+        case Opcode::HOST_OP: {
+            auto& registry = HostOpRegistry::instance();
+            const HostOpFn fn = registry.get(inst.rate);
+            if (fn == nullptr) break;
+            if (const std::uint32_t nbytes = registry.state_bytes(inst.rate); nbytes > 0) {
+                // Lazy first-touch reservation, same contract as DelayState.
+                ctx_.states->get_or_create<HostOpState>(inst.state_id)
+                    .ensure_buffer(nbytes, *ctx_.arena);
+            }
+            fn(ctx_, inst);
+            break;
+        }
 #endif
 
         // === Invalid ===
