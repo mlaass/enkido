@@ -273,9 +273,9 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 
         // Builtin variable assignment (bpm, sr) — skip normal registration
         {
-            auto bv_it = BUILTIN_VARIABLES.find(name);
-            if (bv_it != BUILTIN_VARIABLES.end()) {
-                if (bv_it->second.setter_name.empty()) {
+            const BuiltinVarDef* bv_def = lookup_builtin_variable(name);
+            if (bv_def != nullptr) {
+                if (bv_def->setter_name.empty()) {
                     error("E170", "Cannot assign to read-only builtin variable '" + name + "'", n.location);
                 }
                 // Skip variable registration — codegen handles the desugaring
@@ -684,8 +684,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 
         // Cannot declare builtin variable as const
         {
-            auto bv_it = BUILTIN_VARIABLES.find(name);
-            if (bv_it != BUILTIN_VARIABLES.end()) {
+            if (lookup_builtin_variable(name) != nullptr) {
                 error("E170", "Cannot declare builtin variable '" + name + "' as const", n.location);
                 return;
             }
@@ -2298,7 +2297,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
             if (!sym) {
                 // Builtin variables (bpm, sr) are not in the symbol table —
                 // they're desugared to ENV_GET in codegen
-                if (BUILTIN_VARIABLES.find(name) == BUILTIN_VARIABLES.end()) {
+                if (lookup_builtin_variable(name) == nullptr) {
                     error("E005", "Undefined identifier: '" + name + "'", n.location);
                 }
             }

@@ -8,6 +8,9 @@
 #include "akkado/chord_parser.hpp"
 #include "akkado/const_eval.hpp"
 #include "akkado/pattern_eval.hpp"
+#ifdef CEDAR_HOST_EXTENSIONS
+#include "akkado/host_extensions.hpp"
+#endif
 #include <cedar/vm/state_pool.hpp>
 #include <algorithm>
 #include <cassert>
@@ -27,6 +30,22 @@ using codegen::is_upgradeable_oscillator;
 using codegen::upgrade_for_fm;
 using codegen::SamplePatternEmitCtx;
 using codegen::emit_sample_chain;
+
+#ifdef CEDAR_HOST_EXTENSIONS
+// The `arg_index`-th argument of a Call node, if it is a string literal.
+// (codegen_patterns.cpp has a pattern-node twin; this one walks a plain Call.)
+static std::optional<std::string> get_call_string_arg(const Ast& ast, const Node& n,
+                                                      std::size_t arg_index) {
+    NodeIndex arg = n.first_child;
+    for (std::size_t i = 0; arg != NULL_NODE; ++i, arg = ast.arena[arg].next_sibling) {
+        if (i != arg_index) continue;
+        const Node& unwrapped = ast.arena[unwrap_argument(ast.arena, arg)];
+        if (unwrapped.type != NodeType::StringLit) return std::nullopt;
+        return unwrapped.as_string();
+    }
+    return std::nullopt;
+}
+#endif
 
 CodeGenerator::CodeGenerator(CompileContext& ctx) : ctx_(&ctx) {}
 
@@ -140,6 +159,9 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     required_wavetables_.clear();
     required_uris_.clear();
     required_input_sources_.clear();
+#ifdef CEDAR_HOST_EXTENSIONS
+    required_host_nodes_.clear();
+#endif
     bus_buffers_.clear();
     bus_labels_.clear();
     param_decls_.clear();
@@ -237,6 +259,9 @@ CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,
     result.required_midi_sources = std::move(required_midi_sources_);
     result.required_midi_cc_routes = std::move(required_midi_cc_routes_);
     result.required_input_sources = std::move(required_input_sources_);
+#ifdef CEDAR_HOST_EXTENSIONS
+    result.required_host_nodes = std::move(required_host_nodes_);
+#endif
     result.param_decls = std::move(param_decls_);
     result.viz_decls = std::move(viz_decls_);
     result.builtin_var_overrides = std::move(builtin_var_overrides_);
@@ -644,9 +669,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
             // Builtin variable read (bpm, sr) — desugar to ENV_GET
             {
-                auto bv_it = BUILTIN_VARIABLES.find(name);
-                if (bv_it != BUILTIN_VARIABLES.end()) {
-                    const auto& bv = bv_it->second;
+                const BuiltinVarDef* bv_def = lookup_builtin_variable(name);
+                if (bv_def != nullptr) {
+                    const auto& bv = *bv_def;
                     std::uint32_t key_hash = cedar::fnv1a_hash_runtime(
                         bv.env_key.data(), bv.env_key.size());
 
@@ -799,9 +824,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
             // Builtin variable assignment (bpm = 120) — extract compile-time constant
             {
-                auto bv_it = BUILTIN_VARIABLES.find(var_name);
-                if (bv_it != BUILTIN_VARIABLES.end()) {
-                    const auto& bv = bv_it->second;
+                const BuiltinVarDef* bv_def = lookup_builtin_variable(var_name);
+                if (bv_def != nullptr) {
+                    const auto& bv = *bv_def;
                     if (bv.setter_name.empty()) {
                         error("E170", "Cannot assign to read-only builtin variable '" +
                               std::string(var_name) + "'", n.location);
@@ -2389,6 +2414,28 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     inst.opcode = upgrade_for_fm(inst.opcode);
                 }
             }
+
+#ifdef CEDAR_HOST_EXTENSIONS
+            // A hosted node names its instance with a string literal that never
+            // reaches an input buffer (StringLit lowers to a bufferless
+            // TypedValue, so inputs[] already carries 0xFFFF for that slot).
+            // Record the call site so the host can bind an instance to this
+            // state_id off the audio thread before resuming it.
+            if (inst.opcode == cedar::Opcode::HOST_OP) {
+                const int slot = host_node_string_slot(func_name);
+                if (slot >= 0) {
+                    auto name_arg = get_call_string_arg(*ast_, n, static_cast<std::size_t>(slot));
+                    if (!name_arg.has_value()) {
+                        error("E262", func_name + "() argument '" +
+                              std::string(builtin->param_names[static_cast<std::size_t>(slot)]) +
+                              "' must be a string literal", n.location);
+                        return TypedValue::error_val();
+                    }
+                    required_host_nodes_.push_back(
+                        RequiredHostNode{inst.state_id, builtin->inst_rate, *name_arg});
+                }
+            }
+#endif
 
             emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
             emit(inst);

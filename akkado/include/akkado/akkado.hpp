@@ -67,6 +67,12 @@ struct CompileResult {
     // channel_filter, loop, tempo_mode) before resuming the audio thread, plus
     // (for File kind) load the .mid bytes via cedar_load_midi_file / UriResolver.
     std::vector<RequiredMidiSource> required_midi_sources;
+#ifdef CEDAR_HOST_EXTENSIONS
+    // Per-call-site hosted-node records (prd-host-extension-api §6.3). Each entry
+    // tells the host to bind an instance for `state_id` — off the audio thread,
+    // before resuming it. An unbound state_id makes the node pass through.
+    std::vector<RequiredHostNode> required_host_nodes;
+#endif
     // Per-call midi_cc() routes (PRD prd-midi-input §4.8). Compile-time directives
     // that the host MIDI callback evaluates to call vm.set_param(name, value, slew).
     std::vector<RequiredMidiCcRoute> required_midi_cc_routes;
