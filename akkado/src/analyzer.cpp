@@ -1,5 +1,6 @@
 #include "akkado/analyzer.hpp"
 #include "akkado/builtins.hpp"
+#include "akkado/host_extensions.hpp"
 #include "akkado/overload.hpp"
 #include "akkado/source_map.hpp"
 #include <algorithm>
@@ -2630,6 +2631,11 @@ void SemanticAnalyzer::validate_arguments(const std::string& func_name,
     std::size_t min_args = builtin.input_count;
     std::size_t max_args = builtin.input_count + builtin.optional_count
                          + builtin.extended_param_count;
+#ifdef CEDAR_HOST_EXTENSIONS
+    // An open-kwarg host node (plugin("Diva", cutoff: lfo)) may fill every
+    // instruction input slot with kwargs beyond its declared params.
+    if (host_node_open_kwargs(func_name)) max_args = 5;
+#endif
 
     if (arg_count < min_args) {
         error("E006", "Function '" + func_name + "' expects at least " +
@@ -2854,6 +2860,7 @@ bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
     bool has_named = false;
     bool seen_named = false;
     std::set<std::string> used_params;
+    std::set<NodeIndex> open_kwarg_nodes;  // keep their names through reorder
 
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i].name.has_value()) {
@@ -2872,6 +2879,27 @@ bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
 
             // Find parameter index
             int param_idx = builtin.find_param(name);
+#ifdef CEDAR_HOST_EXTENSIONS
+            // Open-kwarg host nodes accept names beyond the declared params:
+            // each takes the next free input slot after them, and keeps its
+            // name in the AST so codegen can record {slot, name} into the
+            // hosted-node manifest (the host owns the matching policy).
+            if (param_idx < 0 && host_node_open_kwargs(func_name)) {
+                param_idx = static_cast<int>(builtin.input_count) +
+                            static_cast<int>(builtin.optional_count) +
+                            static_cast<int>(open_kwarg_nodes.size());
+                if (param_idx > 4) {
+                    error("E263", "Too many parameters at one '" + func_name +
+                          "' call site — at most " +
+                          std::to_string(5 - builtin.input_count -
+                                         builtin.optional_count) +
+                          " keyword parameters fit one call",
+                          output_arena_[args[i].node].location);
+                    return false;
+                }
+                open_kwarg_nodes.insert(args[i].node);
+            }
+#endif
             if (param_idx < 0) {
                 error("E011", "Unknown parameter '" + name + "' for function '" +
                       func_name + "'", output_arena_[args[i].node].location);
@@ -2924,9 +2952,12 @@ bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
         }
     }
 
-    // Clear argument names after reordering (they're now positional)
+    // Clear argument names after reordering (they're now positional).
+    // Open kwargs keep theirs: the name IS the payload the hosted-node
+    // manifest records for the host's parameter matching.
     for (auto& a : args) {
-        if (a.name.has_value() && a.node != NULL_NODE) {
+        if (a.name.has_value() && a.node != NULL_NODE &&
+            open_kwarg_nodes.count(a.node) == 0) {
             Node& arg_node = output_arena_[a.node];
             if (arg_node.type == NodeType::Argument) {
                 arg_node.data = Node::ArgumentData{std::nullopt};

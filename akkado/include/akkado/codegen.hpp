@@ -1347,6 +1347,13 @@ private:
     std::vector<RequiredMidiSource> required_midi_sources_;
 #ifdef CEDAR_HOST_EXTENSIONS
     std::vector<RequiredHostNode> required_host_nodes_;
+    // Record one hosted-node call site (string-literal name, seq_state_id,
+    // open kwargs) into required_host_nodes_. Shared by the generic and the
+    // stereo-native emission paths. False = E262 already reported.
+    bool record_host_node_manifest(const cedar::Instruction& inst,
+                                   const BuiltinInfo& builtin,
+                                   const std::string& func_name, const Node& n,
+                                   std::uint32_t seq_state_id);
 #endif
     // Track per-call midi_cc() routes (PRD prd-midi-input §4.8).
     std::vector<RequiredMidiCcRoute> required_midi_cc_routes_;

@@ -23,6 +23,7 @@ struct HostEntry {
     std::uint8_t host_index = 0;
     bool is_node = false;
     bool accepts_events = false;
+    bool open_kwargs = false;
 };
 
 struct HostVarEntry {
@@ -93,7 +94,7 @@ bool validate(const HostFunctionDesc& desc, cedar::HostOpFn impl_fn) {
 }
 
 bool register_function_impl(const HostFunctionDesc& desc, cedar::HostOpFn impl_fn,
-                            bool is_node, bool accepts_events) {
+                            bool is_node, bool accepts_events, bool open_kwargs) {
     auto& r = registry();
     if (r.frozen) {
         assert(false && "host extensions registered after audio started");
@@ -111,6 +112,7 @@ bool register_function_impl(const HostFunctionDesc& desc, cedar::HostOpFn impl_f
     e.description = desc.description;
     e.is_node = is_node;
     e.accepts_events = accepts_events;
+    e.open_kwargs = open_kwargs;
     e.host_index = host_op ? static_cast<std::uint8_t>(r.next_index) : 0;
 
     if (host_op) {
@@ -130,15 +132,14 @@ bool register_function_impl(const HostFunctionDesc& desc, cedar::HostOpFn impl_f
 }  // namespace
 
 bool register_host_function(const HostFunctionDesc& desc, cedar::HostOpFn impl_fn) {
-    return register_function_impl(desc, impl_fn, /*is_node=*/false, /*accepts_events=*/false);
+    return register_function_impl(desc, impl_fn, /*is_node=*/false, /*accepts_events=*/false,
+                                  /*open_kwargs=*/false);
 }
 
 bool register_host_node(const HostNodeDesc& desc, cedar::HostOpFn impl_fn) {
     // A node is always a real host op with per-call-site state: the state_id is
     // what the host pools its instance by.
     if (impl_fn == nullptr) return false;
-    // No consumer for event-stream inputs yet — see HostNodeDesc::accepts_events.
-    if (desc.accepts_events) return false;
     // Exactly one String slot names the instance; codegen records it into the
     // manifest instead of wiring it to an input buffer.
     int string_slots = 0;
@@ -149,7 +150,8 @@ bool register_host_node(const HostNodeDesc& desc, cedar::HostOpFn impl_fn) {
 
     HostFunctionDesc fn = desc.fn;
     fn.requires_state = true;
-    return register_function_impl(fn, impl_fn, /*is_node=*/true, desc.accepts_events);
+    return register_function_impl(fn, impl_fn, /*is_node=*/true, desc.accepts_events,
+                                  desc.open_kwargs);
 }
 
 bool register_host_variable(const HostVariableDesc& desc) {
@@ -197,6 +199,18 @@ bool is_host_node(std::string_view name) {
     auto& r = registry();
     auto it = r.by_name.find(name);
     return it != r.by_name.end() && it->second->is_node;
+}
+
+bool host_node_accepts_events(std::string_view name) {
+    auto& r = registry();
+    auto it = r.by_name.find(name);
+    return it != r.by_name.end() && it->second->is_node && it->second->accepts_events;
+}
+
+bool host_node_open_kwargs(std::string_view name) {
+    auto& r = registry();
+    auto it = r.by_name.find(name);
+    return it != r.by_name.end() && it->second->is_node && it->second->open_kwargs;
 }
 
 int host_node_string_slot(std::string_view name) {

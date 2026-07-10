@@ -1506,6 +1506,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // CallSlot vector by walking `n.first_child` once — keeping the
             // rest of the loop body single-shape.
             std::vector<std::uint16_t> arg_buffers;
+#ifdef CEDAR_HOST_EXTENSIONS
+            // Upstream event source for an accepts_events host node (0 = none).
+            std::uint32_t host_seq_state_id = 0;
+#endif
             std::vector<CallSlot> chain_slots;
             const std::vector<CallSlot>* effective_slots = nullptr;
             if (spread_call_slots.has_value()) {
@@ -1647,6 +1651,29 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         }
                     }
                 }
+
+#ifdef CEDAR_HOST_EXTENSIONS
+                // Event-input host nodes (hosting PRD §4.1): the pattern's
+                // EVENT STREAM is the input, not its scalar projection. Leave
+                // the slot unwired and record the upstream sequencer's state
+                // id for the manifest — the host resolves the block's events
+                // itself via StatePool::resolve_output_events. This also
+                // bypasses the E160 poly-coerce reject below: chords are
+                // exactly what the event input carries.
+                if (arg_tv.type == ValueType::Pattern && arg_tv.pattern &&
+                    builtin->opcode == cedar::Opcode::HOST_OP &&
+                    host_node_accepts_events(func_name)) {
+                    if (host_seq_state_id != 0 &&
+                        host_seq_state_id != arg_tv.pattern->state_id) {
+                        error("E264", func_name +
+                              "() accepts at most one event input per call",
+                              diag_loc);
+                    }
+                    host_seq_state_id = arg_tv.pattern->state_id;
+                    arg_buffers.push_back(BufferAllocator::BUFFER_UNUSED);
+                    continue;
+                }
+#endif
 
                 // PRD prd-patterns-as-scalar-values §5.3: implicit
                 // Pattern→Signal coerce. arg_tv.buffer is already the
@@ -1894,6 +1921,16 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     const Node& arg_node = ast_->arena[ch];
                     NodeIndex arg_value = (arg_node.type == NodeType::Argument) ?
                                          arg_node.first_child : ch;
+                    // `_` placeholders (user-written or synthesized by the
+                    // analyzer's named-arg gap fill) were default-filled in the
+                    // arg loop and have no channel shape to check — re-visiting
+                    // one as an identifier would be a spurious E102.
+                    const Node& val_node = ast_->arena[arg_value];
+                    if (val_node.type == NodeType::Identifier &&
+                        std::holds_alternative<Node::IdentifierData>(val_node.data) &&
+                        ctx_->interner->view(val_node.as_identifier()) == "_") {
+                        continue;
+                    }
                     TypedValue resolved = visit(arg_value);
                     if (resolved.type != ValueType::Signal) continue;
                     ChannelCount actual = (resolved.is_stereo() &&
@@ -2118,6 +2155,19 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // /L suffix, no XOR. Per-channel fields live inside one state
                 // struct (see DattorroState predelay_buffer[2], etc.).
                 inst.state_id = compute_state_id();
+
+#ifdef CEDAR_HOST_EXTENSIONS
+                // Hosted nodes are stereo devices (hosting PRD §6.1), so they
+                // take this branch — the generic manifest hook below is
+                // unreachable for stereo-native builtins. Record here too.
+                if (inst.opcode == cedar::Opcode::HOST_OP &&
+                    !record_host_node_manifest(inst, *builtin, func_name, n,
+                                               host_seq_state_id)) {
+                    if (pushed_path) pop_path();
+                    return TypedValue::error_val();
+                }
+#endif
+
                 emit_extended_params_init(inst.state_id, *builtin, arg_buffers);
                 emit(inst);
 
@@ -2421,19 +2471,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // TypedValue, so inputs[] already carries 0xFFFF for that slot).
             // Record the call site so the host can bind an instance to this
             // state_id off the audio thread before resuming it.
-            if (inst.opcode == cedar::Opcode::HOST_OP) {
-                const int slot = host_node_string_slot(func_name);
-                if (slot >= 0) {
-                    auto name_arg = get_call_string_arg(*ast_, n, static_cast<std::size_t>(slot));
-                    if (!name_arg.has_value()) {
-                        error("E262", func_name + "() argument '" +
-                              std::string(builtin->param_names[static_cast<std::size_t>(slot)]) +
-                              "' must be a string literal", n.location);
-                        return TypedValue::error_val();
-                    }
-                    required_host_nodes_.push_back(
-                        RequiredHostNode{inst.state_id, builtin->inst_rate, *name_arg});
-                }
+            if (inst.opcode == cedar::Opcode::HOST_OP &&
+                !record_host_node_manifest(inst, *builtin, func_name, n,
+                                           host_seq_state_id)) {
+                return TypedValue::error_val();
             }
 #endif
 
@@ -2717,6 +2758,49 @@ void CodeGenerator::end_subprogram(std::uint32_t block_id,
         subprogram_stack_.pop_back();
     }
 }
+
+#ifdef CEDAR_HOST_EXTENSIONS
+bool CodeGenerator::record_host_node_manifest(const cedar::Instruction& inst,
+                                              const BuiltinInfo& builtin,
+                                              const std::string& func_name,
+                                              const Node& n,
+                                              std::uint32_t seq_state_id) {
+    const int slot = host_node_string_slot(func_name);
+    if (slot < 0) return true;  // a plain host function, not a node
+
+    auto name_arg = get_call_string_arg(*ast_, n, static_cast<std::size_t>(slot));
+    if (!name_arg.has_value()) {
+        error("E262", func_name + "() argument '" +
+              std::string(builtin.param_names[static_cast<std::size_t>(slot)]) +
+              "' must be a string literal", n.location);
+        return false;
+    }
+
+    RequiredHostNode rec{inst.state_id, builtin.inst_rate, *name_arg};
+    rec.seq_state_id = seq_state_id;
+
+    // Open kwargs: the analyzer's reorder kept their names in the AST for
+    // exactly this read (slots past the declared params). Child-list position
+    // == input slot after reordering.
+    if (host_node_open_kwargs(func_name)) {
+        const std::size_t declared = static_cast<std::size_t>(builtin.input_count) +
+                                     static_cast<std::size_t>(builtin.optional_count);
+        std::size_t idx = 0;
+        for (NodeIndex it_arg = n.first_child; it_arg != NULL_NODE;
+             it_arg = ast_->arena[it_arg].next_sibling, ++idx) {
+            const Node& arg_node = ast_->arena[it_arg];
+            if (idx < declared || arg_node.type != NodeType::Argument) continue;
+            auto kw = arg_node.as_arg_name();
+            if (kw.has_value()) {
+                rec.kwargs.push_back(HostNodeKwarg{static_cast<std::uint8_t>(idx), *kw});
+            }
+        }
+    }
+
+    required_host_nodes_.push_back(std::move(rec));
+    return true;
+}
+#endif
 
 std::uint32_t CodeGenerator::compute_state_id() const {
     // Build path string

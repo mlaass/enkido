@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-07-10
+
+### Added
+
+- **Host-node event input** (`prd-host-extension-api` §0 follow-up, landed
+  with its first consumer, nkido studio's CLAP backend): a host node
+  registered with `HostNodeDesc::accepts_events = true` may take a pattern
+  argument. The pattern contributes its **event stream** instead of a scalar
+  freq projection: the input slot stays unwired, and codegen records the
+  upstream SEQPAT/MIDI state id as `RequiredHostNode::seq_state_id`. The
+  host resolves per-block events itself via
+  `StatePool::resolve_output_events`; the engine gains no lifecycle hooks.
+  Chord patterns are exempt from the E160 poly-coerce reject at such slots
+  (chords are what the event input is for). Two distinct pattern args at
+  one call site is the new **E264**.
+- **Open kwargs for host nodes** (`HostNodeDesc::open_kwargs = true`):
+  call sites may pass keyword arguments beyond the declared params
+  (`plugin("Diva", cutoff: lfo)`). Each takes the next free input slot
+  (5-slot instruction limit still applies — overflow is the new **E263**)
+  and is recorded verbatim as `RequiredHostNode::kwargs` `{slot, name}`;
+  name-matching policy belongs to the host. Unknown kwargs on every other
+  callable remain the hard E011.
+- **Stereo-native host nodes**: the hosted-node manifest (string-literal
+  name, seq_state_id, kwargs, E262 enforcement) is now recorded on the
+  stereo-native emission path too, so a host node may declare
+  `output_channels = Stereo` + `stereo_native` and emit an adjacent L/R
+  pair like any core stereo opcode.
+
+### Fixed
+
+- Named-argument gap-fill (`_` placeholders synthesized by the analyzer)
+  no longer trips a spurious E102 in the channel-shape re-walk for
+  non-stereo-native builtins. Previously any call that skipped an optional
+  slot before a named argument on such a builtin failed to compile; core
+  audio opcodes are all stereo-native, so only host-registered callables
+  could hit it.
+- `HostFunctionDesc::defaults` documented as optional-relative (matching
+  `BuiltinInfo`); the misleading "parallel to param_names" reading of the
+  Phase-1–3 header comment is gone.
+
+All behind `CEDAR_HOST_EXTENSIONS` (default OFF). Nondestructiveness gates:
+full cedar + akkado suites green ON and OFF; four fixtures rendered 300 s
+each produce bit-identical WAVs from ON and OFF builds.
+
 ## [0.4.8] - 2026-07-10
 
 ### Added

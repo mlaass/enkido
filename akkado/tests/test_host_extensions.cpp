@@ -281,7 +281,7 @@ akkado::HostNodeDesc plugin_node_desc(std::string name = "plugin") {
     d.fn.param_names = {"name", "in"};
     d.fn.param_types[0] = akkado::ParamValueType::String;
     d.fn.param_types[1] = akkado::ParamValueType::Signal;
-    d.fn.defaults = {NAN, 0.0f};
+    d.fn.defaults = {0.0f};  // optional-relative: "in" defaults to silence
     d.fn.description = "host a third-party plugin";
     return d;
 }
@@ -333,11 +333,157 @@ TEST_CASE("host node name must be a string literal", "[host-extensions]") {
     CHECK(has_error(r));
 }
 
-TEST_CASE("host node registration rejects unwired event inputs", "[host-extensions]") {
+TEST_CASE("event-input host node records the upstream sequencer id", "[host-extensions]") {
     Guard guard;
     auto d = plugin_node_desc();
-    d.accepts_events = true;  // no consumer yet — must not silently no-op
-    REQUIRE_FALSE(akkado::register_host_node(d, &noop_impl));
+    d.accepts_events = true;
+    REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+    // A pattern piped into the node contributes its EVENT STREAM: the slot
+    // stays unwired (no freq-buffer projection) and the manifest records the
+    // upstream SEQPAT's state id for StatePool::resolve_output_events.
+    auto r = akkado::compile("out(plugin(\"Diva\", n\"c3 e3 g3\"))");
+    REQUIRE(r.success);
+    REQUIRE_FALSE(has_error(r));
+    REQUIRE(r.required_host_nodes.size() == 1);
+    CHECK(r.required_host_nodes[0].seq_state_id != 0);
+
+    const auto insts = get_instructions(r);
+    const auto* inst = find_op(insts, cedar::Opcode::HOST_OP);
+    REQUIRE(inst != nullptr);
+    CHECK(inst->inputs[1] == 0xFFFF);
+
+    const auto* seq = find_op(insts, cedar::Opcode::SEQPAT_QUERY);
+    REQUIRE(seq != nullptr);
+    CHECK(r.required_host_nodes[0].seq_state_id == seq->state_id);
+}
+
+TEST_CASE("chord pattern into an event-input node is not E160", "[host-extensions]") {
+    {
+        Guard guard;
+        auto d = plugin_node_desc();
+        d.accepts_events = true;
+        REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+        auto r = akkado::compile("out(plugin(\"Diva\", n\"[c3,e3,g3]\"))");
+        REQUIRE(r.success);
+        REQUIRE_FALSE(has_error(r));
+        REQUIRE(r.required_host_nodes.size() == 1);
+        CHECK(r.required_host_nodes[0].seq_state_id != 0);
+    }
+    {
+        // Without accepts_events the exemption must not leak: the chord takes
+        // the ordinary stateful-UGen fan-out (one instance per voice) and no
+        // entry carries an event source.
+        Guard guard;
+        REQUIRE(akkado::register_host_node(plugin_node_desc(), &noop_impl));
+        auto r = akkado::compile("out(plugin(\"Diva\", n\"[c3,e3,g3]\"))");
+        REQUIRE(r.success);
+        REQUIRE_FALSE(r.required_host_nodes.empty());
+        for (const auto& e : r.required_host_nodes) CHECK(e.seq_state_id == 0);
+    }
+}
+
+TEST_CASE("signal into an event-input node stays an ordinary wired input", "[host-extensions]") {
+    Guard guard;
+    auto d = plugin_node_desc();
+    d.accepts_events = true;
+    REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+    auto r = akkado::compile("out(plugin(\"Verb\", saw(110)))");
+    REQUIRE(r.success);
+    REQUIRE(r.required_host_nodes.size() == 1);
+    CHECK(r.required_host_nodes[0].seq_state_id == 0);
+
+    const auto* inst = find_op(get_instructions(r), cedar::Opcode::HOST_OP);
+    REQUIRE(inst != nullptr);
+    CHECK(inst->inputs[1] != 0xFFFF);
+}
+
+TEST_CASE("open kwargs take free slots and are recorded by name", "[host-extensions]") {
+    Guard guard;
+    auto d = plugin_node_desc();
+    d.open_kwargs = true;
+    REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+    auto r = akkado::compile(
+        "out(plugin(\"Diva\", saw(110), cutoff: sine(0.1), resonance: 0.4))");
+    REQUIRE(r.success);
+    REQUIRE_FALSE(has_error(r));
+    REQUIRE(r.required_host_nodes.size() == 1);
+    const auto& entry = r.required_host_nodes[0];
+    REQUIRE(entry.kwargs.size() == 2);
+    CHECK(entry.kwargs[0].slot == 2);
+    CHECK(entry.kwargs[0].name == "cutoff");
+    CHECK(entry.kwargs[1].slot == 3);
+    CHECK(entry.kwargs[1].name == "resonance");
+
+    const auto* inst = find_op(get_instructions(r), cedar::Opcode::HOST_OP);
+    REQUIRE(inst != nullptr);
+    CHECK(inst->inputs[2] != 0xFFFF);
+    CHECK(inst->inputs[3] != 0xFFFF);
+}
+
+TEST_CASE("open kwargs stay rejected where not opted in, and overflow is E263", "[host-extensions]") {
+    {
+        Guard guard;
+        REQUIRE(akkado::register_host_node(plugin_node_desc(), &noop_impl));
+        // Not opted in → unknown parameter stays the hard E011.
+        auto r = akkado::compile("out(plugin(\"Diva\", cutoff: 0.5))");
+        CHECK(has_error(r));
+    }
+    {
+        Guard guard;
+        auto d = plugin_node_desc();
+        d.open_kwargs = true;
+        REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+        // Three open kwargs fill slots 2..4; a fourth has no slot left.
+        auto ok = akkado::compile("out(plugin(\"D\", a: 1, b: 2, c: 3))");
+        REQUIRE(ok.success);
+        REQUIRE(ok.required_host_nodes.size() == 1);
+        CHECK(ok.required_host_nodes[0].kwargs.size() == 3);
+
+        auto over = akkado::compile("out(plugin(\"D\", a: 1, b: 2, c: 3, d: 4))");
+        CHECK(has_error(over));
+
+        // Duplicate kwarg is still E010.
+        auto dup = akkado::compile("out(plugin(\"D\", a: 1, a: 2))");
+        CHECK(has_error(dup));
+    }
+}
+
+TEST_CASE("stereo-native host node records its manifest on the stereo branch", "[host-extensions]") {
+    Guard guard;
+    auto d = plugin_node_desc();
+    d.accepts_events = true;
+    d.open_kwargs = true;
+    d.fn.output_channels = akkado::ChannelCount::Stereo;
+    d.fn.stereo_native = true;
+    REQUIRE(akkado::register_host_node(d, &noop_impl));
+
+    // The full plugin() shape at once: stereo out, an event input, and an
+    // open kwarg — all through the stereo-native emission path, which is the
+    // one the generic manifest hook cannot reach.
+    auto r = akkado::compile("out(plugin(\"Diva\", n\"c3 e3\", cutoff: 0.5))");
+    REQUIRE(r.success);
+    REQUIRE_FALSE(has_error(r));
+    REQUIRE(r.required_host_nodes.size() == 1);
+    const auto& entry = r.required_host_nodes[0];
+    CHECK(entry.name == "Diva");
+    CHECK(entry.seq_state_id != 0);
+    REQUIRE(entry.kwargs.size() == 1);
+    CHECK(entry.kwargs[0].name == "cutoff");
+
+    const auto* inst = find_op(get_instructions(r), cedar::Opcode::HOST_OP);
+    REQUIRE(inst != nullptr);
+    CHECK(inst->state_id == entry.state_id);
+    CHECK((inst->flags &
+           static_cast<std::uint16_t>(cedar::InstructionFlag::STEREO_OUTPUT)) != 0);
+
+    // Non-literal names are E262 on this path too.
+    auto bad = akkado::compile("out(plugin(440))");
+    CHECK(has_error(bad));
 }
 
 TEST_CASE("host node requires exactly one string slot and a real impl", "[host-extensions]") {

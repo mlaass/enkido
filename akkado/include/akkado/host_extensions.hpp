@@ -55,7 +55,10 @@ struct HostFunctionDesc {
     std::uint8_t input_count = 0;
     std::uint8_t optional_count = 0;
     std::array<std::string, 5> param_names{};
-    std::array<float, 5> defaults{};                 // NaN = required
+    // Defaults are indexed RELATIVE to the optional params, exactly as
+    // BuiltinInfo stores them: defaults[i] belongs to param input_count + i.
+    // NaN = that optional has no default and cannot be gap-skipped.
+    std::array<float, 5> defaults{};
     std::array<ParamValueType, 5> param_types{};     // all Any by default
     bool requires_state = false;
     std::uint32_t state_bytes = 0;                   // arena reservation per instance
@@ -85,12 +88,30 @@ struct HostNodeDesc {
     HostFunctionDesc fn;
 
     // Event-stream input (pattern events → the node, rather than coercion to a
-    // freq/gate buffer). Currently REJECTED at registration: the engine has no
-    // consumer for it until the studio's VST3 backend needs pattern→MIDI, and
-    // an accepted-but-unwired flag would be a stub. Lands with that consumer,
-    // together with `RequiredHostNode::seq_state_id`.
-    // ponytail: reject rather than ignore, so the gap is loud.
+    // freq/gate buffer). When set, a Pattern argument at a Signal slot is NOT
+    // flattened to its freq buffer (and is exempt from the E160 poly-coerce
+    // reject — chords are exactly what the event input is for): the slot is
+    // left unwired and the upstream sequencer's state id is recorded as
+    // `RequiredHostNode::seq_state_id`. At process time the host resolves the
+    // block's events itself via `StatePool::resolve_output_events`; the engine
+    // never learns what the node does with them. Landed with its first real
+    // consumer (the studio's CLAP backend), as promised at Phase 0.
     bool accepts_events = false;
+
+    // Open keyword arguments: a call site may pass kwargs that are NOT in
+    // `fn.param_names` (`plugin("Diva", cutoff: lfo)`). Each open kwarg takes
+    // the next free input slot after the declared params (the five-slot
+    // instruction limit still applies) and is recorded by name + slot in
+    // `RequiredHostNode::kwargs`, so the host can map the names onto its own
+    // parameter space. Name-matching policy is entirely the host's.
+    bool open_kwargs = false;
+};
+
+/// One open kwarg at a host-node call site: which input slot carries the
+/// value, and the name the user wrote (verbatim — matching is host policy).
+struct HostNodeKwarg {
+    std::uint8_t slot = 0;
+    std::string name;
 };
 
 /// Compile-time record of one hosted-node call site. Emitted into
@@ -100,6 +121,14 @@ struct RequiredHostNode {
     std::uint32_t state_id = 0;   // semantic-ID hash of the call site
     std::uint8_t host_index = 0;  // HostOpRegistry dispatch index
     std::string name;             // the string-literal argument, e.g. "Diva"
+
+    // Upstream event source (0 = none): the SEQPAT/MIDI state id of a Pattern
+    // argument, recorded when the node was registered with `accepts_events`.
+    // The host resolves it per block with `StatePool::resolve_output_events`.
+    std::uint32_t seq_state_id = 0;
+
+    // Open kwargs at this call site, in slot order (`open_kwargs` nodes only).
+    std::vector<HostNodeKwarg> kwargs;
 };
 
 /// All three return false on collision, on a malformed descriptor, or if
@@ -122,6 +151,11 @@ struct RequiredHostNode {
 /// True when the name was registered via `register_host_node` (codegen routes
 /// its string-literal argument into the manifest instead of an input buffer).
 [[nodiscard]] bool is_host_node(std::string_view name);
+
+/// True when the host node was registered with `accepts_events` /
+/// `open_kwargs`. False for unknown names and plain host functions.
+[[nodiscard]] bool host_node_accepts_events(std::string_view name);
+[[nodiscard]] bool host_node_open_kwargs(std::string_view name);
 
 /// Argument index of a host node's String slot (the instance name), or -1 if
 /// `name` is not a registered host node.

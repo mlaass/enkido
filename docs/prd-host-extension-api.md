@@ -1,4 +1,4 @@
-> **Status: Phases 1–3 complete** — `register_host_variable` / `register_host_function` / `register_host_node` ship behind `CEDAR_HOST_EXTENSIONS` (default OFF); `HOST_OP = 209` dispatches through `cedar::HostOpRegistry`. Phase 4 (audio-rate host variables, `builtins_json` introspection, authoring guide) NOT STARTED. First consumer: **nkido studio's `plugin()` hosting seam** (closed-repo `prd-studio-plugin-hosting.md`, §7.0 / OQ12), amended in below (2026-07-10).
+> **Status: Phases 1–3 complete** — `register_host_variable` / `register_host_function` / `register_host_node` ship behind `CEDAR_HOST_EXTENSIONS` (default OFF); `HOST_OP = 209` dispatches through `cedar::HostOpRegistry`. Phase 4 (audio-rate host variables, `builtins_json` introspection, authoring guide) NOT STARTED. **v0.4.9 (2026-07-10):** the §0 event-input deferral is closed — `accepts_events`, `open_kwargs` and stereo-native host nodes shipped with the studio CLAP backend as consumer. First consumer: **nkido studio's `plugin()` hosting seam** (closed-repo `prd-studio-plugin-hosting.md`, §7.0 / OQ12), amended in below (2026-07-10).
 
 # PRD: Host Extension API (Embedding-Time Variables, Builtins & Opcodes)
 
@@ -44,13 +44,18 @@ get their own registration entry point over the *same* dispatch path:
   sufficient. The whole plugin lifecycle — and JUCE — stays out of the open
   engine, and the `HostedPluginNode` boundary remains the intended v2 IPC cut.
 
-**Not yet built (deliberately, no stubs):** `HostNodeDesc::accepts_events` — the
-event-stream input carrying pattern events to the node as MIDI — is **rejected
-at registration** rather than accepted and ignored. It lands with its first real
-consumer, the studio's VST3/CLAP backend (hosting PRD Phase 2), together with a
-`seq_state_id` field on `RequiredHostNode`. Cedar already has the seam for it
-(`PatternPayload::is_runtime_event_source` → `seq_state_id`, as `midi()` → SF2
-voice uses today).
+**Landed with its consumer (v0.4.9, 2026-07-10):** `HostNodeDesc::accepts_events`
+— rejected at registration through v0.4.8 — is now accepted, exactly as this
+section promised: a pattern argument at such a node contributes its event
+stream (slot left unwired, upstream SEQPAT/MIDI state id recorded as
+`RequiredHostNode::seq_state_id`; chords exempt from E160 there; two pattern
+args = E264). The host walks the block's events itself through
+`StatePool::resolve_output_events` — still no engine lifecycle hooks. The same
+release adds `HostNodeDesc::open_kwargs` (call-site kwargs beyond the declared
+params, recorded verbatim as `RequiredHostNode::kwargs` `{slot, name}`,
+overflow = E263) and lets a host node register stereo-native with the manifest
+recorded on the stereo emission path. Consumer: the studio's CLAP backend
+(hosting PRD Phase 2).
 
 **§13-Q1 (arena reclamation) is answered: yes.** `HostOpState` carries a
 `release(AudioArena&)` hook, so the `HasArenaRelease` concept the StatePool
