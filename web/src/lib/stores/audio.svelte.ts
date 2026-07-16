@@ -11,6 +11,7 @@
  */
 
 import { midiBank } from '$lib/audio/midi-bank';
+import { inertMidiInputController } from '$lib/midi/midi-input.svelte';
 import type { MidiMeta } from '$lib/audio/midi-meta';
 import { settingsStore } from './settings.svelte';
 import { bankRegistry } from '$lib/audio/bank-registry';
@@ -545,9 +546,12 @@ function createAudioEngine() {
 		unregisterInputFile: (name: string) => backend.unregisterInputFile(name),
 		getInputFileNames: () => backend.getInputFileNames(),
 
-		// MIDI input (prd-midi-input). The controller is web-only; native
-		// backends return null and the MIDI panel is not rendered there.
-		get midi() { return backend.getMidiController()!; },
+		// MIDI input (prd-midi-input). The controller is web-only; the native
+		// backend returns null (the host owns MIDI devices). The MIDI panel IS
+		// still mounted there — its layout slot is persisted — so hand it an
+		// inert 'unsupported' controller: dereferencing null aborted the whole
+		// route mount (the native black-screen bug).
+		get midi() { return backend.getMidiController() ?? inertMidiInputController; },
 		setDefaultMidiDevice(name: string) {
 			settingsStore.setDefaultMidiDevice(name);
 			backend.setDefaultMidiDevice(name);
