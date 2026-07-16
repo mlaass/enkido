@@ -385,3 +385,29 @@ export function createMidiInputController() {
 }
 
 export type MidiInputController = ReturnType<typeof createMidiInputController>;
+
+/**
+ * Inert controller for backends without Web-MIDI. The native (JUCE) backend
+ * returns null from getMidiController() — the HOST owns MIDI devices there
+ * (prd-midi-input is web-only) — but panel components dereference
+ * `audioEngine.midi.status` unconditionally. Handing them this stub renders
+ * an honest "Not supported" instead of a TypeError that aborts the whole
+ * route mount (the native black-screen bug).
+ */
+export const inertMidiInputController: MidiInputController = {
+	supported: false,
+	status: 'unsupported',
+	error: null,
+	devices: [],
+	defaultDeviceName: '',
+	lastEventTime: 0,
+	lastError: null,
+	routeCount: 0,
+
+	ensureAccess: async () => false,
+	setWorkletPort: () => {},
+	setDefaultDeviceName: () => {},
+	setRoutes: () => {},
+	refreshDevices: () => {},
+	destroy: () => {}
+};
