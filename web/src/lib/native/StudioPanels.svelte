@@ -10,6 +10,7 @@
 	 */
 	import { studio } from './studio-bridge.svelte';
 	import { editorStore } from '$lib/stores/editor.svelte';
+	import { themeStore } from '$lib/stores/theme.svelte';
 	import TransportBar from './TransportBar.svelte';
 	import MixerPanel from './MixerPanel.svelte';
 	import CapturesBrowser from './CapturesBrowser.svelte';
@@ -17,6 +18,12 @@
 
 	let renderOpen = $state(false);
 	let collapsed = $state(false);
+
+	// Native chrome (menu bar, window background) follows the web theme — runs
+	// once on mount and again on every theme change.
+	$effect(() => {
+		void studio.pushTheme({ ...themeStore.activeTheme.colors });
+	});
 </script>
 
 {#if studio.available}

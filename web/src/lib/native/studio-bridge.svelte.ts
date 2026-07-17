@@ -154,6 +154,14 @@ class StudioStore {
 		await call('setMixerStrip', [bus, next.faderDb, next.mute, next.solo]);
 	}
 
+	// --- Theme ---------------------------------------------------------------
+	// Push the active theme's colors so native chrome (the JUCE menu bar and
+	// window background) follows the web theme. Fire-and-forget; a host that
+	// doesn't handle it just leaves its default chrome.
+	async pushTheme(colors: Record<string, string>) {
+		await call('themeChanged', [colors]);
+	}
+
 	// --- Transport (§5.4) ----------------------------------------------------
 	async command(cmd: string, value?: number | string | boolean) {
 		const res = await call<{ note?: string }>(
