@@ -55,19 +55,24 @@
 						<div class="peak" style="bottom: {meterHeight(m.peak) * 100}%"></div>
 					</div>
 
-					<input
-						class="fader"
-						type="range"
-						min="0"
-						max="1"
-						step="0.001"
-						aria-label="{strip.label} fader"
-						value={dbToPos(strip.faderDb)}
-						oninput={(e) =>
-							studio.setStrip(strip.index, {
-								faderDb: posToDb(Number(e.currentTarget.value))
-							})}
-					/>
+					<div class="fader-wrap">
+						<input
+							class="fader"
+							type="range"
+							min="0"
+							max="1"
+							step="0.001"
+							aria-label="{strip.label} fader"
+							value={dbToPos(strip.faderDb)}
+							onpointerdown={() => (studio.faderDragging = true)}
+							onpointerup={() => (studio.faderDragging = false)}
+							onpointercancel={() => (studio.faderDragging = false)}
+							oninput={(e) =>
+								studio.setStrip(strip.index, {
+									faderDb: posToDb(Number(e.currentTarget.value))
+								})}
+						/>
+					</div>
 				</div>
 
 				<div class="db">{strip.faderDb <= MIN_DB ? '−∞' : strip.faderDb.toFixed(1)} dB</div>
@@ -99,9 +104,9 @@
 
 <style>
 	.mixer {
-		border: 1px solid var(--border, #333);
+		border: 1px solid var(--border-default);
 		border-radius: 6px;
-		background: var(--bg-panel, #1b1b1b);
+		background: var(--bg-secondary);
 		padding: 0.5rem 0.75rem 0.75rem;
 	}
 	header {
@@ -114,11 +119,11 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		margin: 0 0 0.5rem;
-		color: var(--fg-muted, #999);
+		color: var(--text-muted);
 	}
 	.hint {
 		font-size: 0.7rem;
-		color: var(--fg-muted, #666);
+		color: var(--text-muted);
 	}
 	.strips {
 		display: flex;
@@ -126,7 +131,7 @@
 		overflow-x: auto;
 	}
 	.empty {
-		color: var(--fg-muted, #777);
+		color: var(--text-muted);
 		font-size: 0.8rem;
 	}
 	.strip {
@@ -136,11 +141,11 @@
 		min-width: 62px;
 		padding: 0.4rem;
 		border-radius: 4px;
-		background: var(--bg-strip, #232323);
+		background: var(--bg-tertiary);
 		transition: opacity 120ms;
 	}
 	.strip.master {
-		background: var(--bg-strip-master, #2a2a2a);
+		background: var(--bg-hover);
 	}
 	.strip.dim {
 		opacity: 0.45;
@@ -161,7 +166,7 @@
 	.meter {
 		position: relative;
 		width: 8px;
-		background: #111;
+		background: var(--bg-primary);
 		border-radius: 2px;
 		overflow: hidden;
 	}
@@ -175,18 +180,29 @@
 		position: absolute;
 		width: 100%;
 		height: 2px;
-		background: #fff;
+		background: var(--text-primary);
 	}
-	.fader {
-		writing-mode: vertical-lr;
-		direction: rtl;
+	/* WebKitGTK doesn't honour vertical writing-mode on range inputs (thumb
+	   stays centred, drag axis is wrong), so the fader is a horizontal slider
+	   rotated into place — min at the bottom, max at the top. */
+	.fader-wrap {
+		position: relative;
 		width: 20px;
 		height: 110px;
-		accent-color: var(--accent, #6aa9ff);
+	}
+	.fader {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: 110px;
+		height: 20px;
+		margin: 0;
+		transform: translate(-50%, -50%) rotate(-90deg);
+		accent-color: var(--accent-primary);
 	}
 	.db {
 		font-size: 0.65rem;
-		color: var(--fg-muted, #999);
+		color: var(--text-muted);
 		margin: 0.3rem 0;
 		font-variant-numeric: tabular-nums;
 	}
@@ -199,20 +215,20 @@
 		height: 20px;
 		font-size: 0.65rem;
 		border-radius: 3px;
-		border: 1px solid var(--border, #444);
-		background: #2c2c2c;
-		color: #ccc;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
 		cursor: pointer;
 	}
 	button.on {
-		background: #b3452f;
-		color: #fff;
-		border-color: #b3452f;
+		background: var(--accent-error);
+		color: var(--bg-primary);
+		border-color: var(--accent-error);
 	}
 	button.solo.on {
-		background: #d1c43a;
-		color: #111;
-		border-color: #d1c43a;
+		background: var(--accent-warning);
+		color: var(--bg-primary);
+		border-color: var(--accent-warning);
 	}
 	button[disabled] {
 		opacity: 0.25;

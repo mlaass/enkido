@@ -39,9 +39,9 @@
 
 <style>
 	.browser {
-		border: 1px solid var(--border, #333);
+		border: 1px solid var(--border-default);
 		border-radius: 6px;
-		background: var(--bg-panel, #1b1b1b);
+		background: var(--bg-secondary);
 		padding: 0.5rem 0.75rem 0.6rem;
 		font-size: 0.78rem;
 	}
@@ -60,17 +60,17 @@
 		border-radius: 3px;
 		border: 1px solid transparent;
 		background: transparent;
-		color: var(--fg-muted, #999);
+		color: var(--text-secondary);
 		cursor: pointer;
 		font-size: 0.75rem;
 	}
 	button[aria-selected='true'] {
-		background: #2c2c2c;
-		border-color: var(--border, #444);
-		color: #ddd;
+		background: var(--bg-tertiary);
+		border-color: var(--border-default);
+		color: var(--text-primary);
 	}
 	.refresh {
-		color: var(--fg-muted, #888);
+		color: var(--text-muted);
 	}
 	ul {
 		list-style: none;
@@ -82,10 +82,10 @@
 	li {
 		padding: 0.2rem 0.1rem;
 		font-variant-numeric: tabular-nums;
-		border-bottom: 1px solid #262626;
+		border-bottom: 1px solid var(--border-muted);
 	}
 	li.empty {
-		color: var(--fg-muted, #666);
+		color: var(--text-muted);
 		border: none;
 	}
 </style>

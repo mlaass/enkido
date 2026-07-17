@@ -106,8 +106,8 @@
 		min-width: 320px;
 		padding: 1rem 1.2rem;
 		border-radius: 8px;
-		background: var(--bg-panel, #1e1e1e);
-		border: 1px solid var(--border, #3a3a3a);
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-default);
 		font-size: 0.82rem;
 	}
 	h2 {
@@ -119,16 +119,16 @@
 		align-items: center;
 		gap: 0.4rem;
 		margin-bottom: 0.6rem;
-		color: var(--fg-muted, #aaa);
+		color: var(--text-secondary);
 	}
 	label.check {
 		gap: 0.35rem;
 	}
 	input[type='number'],
 	select {
-		background: #141414;
-		color: inherit;
-		border: 1px solid var(--border, #3a3a3a);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-default);
 		border-radius: 3px;
 		padding: 0.2rem 0.3rem;
 	}
@@ -136,7 +136,7 @@
 		width: 5rem;
 	}
 	.note {
-		color: var(--fg-muted, #777);
+		color: var(--text-muted);
 		font-size: 0.72rem;
 		margin: 0.4rem 0 0.9rem;
 	}
@@ -148,15 +148,15 @@
 	button {
 		padding: 0.3rem 0.7rem;
 		border-radius: 3px;
-		border: 1px solid var(--border, #444);
-		background: #2c2c2c;
-		color: #ddd;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
 		cursor: pointer;
 	}
 	button.primary {
-		background: var(--accent, #3a6ea5);
-		border-color: var(--accent, #3a6ea5);
-		color: #fff;
+		background: var(--accent-primary);
+		border-color: var(--accent-primary);
+		color: var(--bg-primary);
 	}
 	button:disabled {
 		opacity: 0.5;

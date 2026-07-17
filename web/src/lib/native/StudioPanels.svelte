@@ -51,8 +51,8 @@
 		z-index: 30;
 		display: flex;
 		flex-direction: column;
-		background: var(--bg-dock, #171717);
-		border-top: 1px solid var(--border, #333);
+		background: var(--bg-secondary);
+		border-top: 1px solid var(--border-default);
 		box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.35);
 	}
 	.handle {
@@ -64,7 +64,7 @@
 		text-transform: uppercase;
 		background: transparent;
 		border: none;
-		color: var(--fg-muted, #777);
+		color: var(--text-muted);
 		cursor: pointer;
 	}
 	.rows {
@@ -91,9 +91,9 @@
 	.render {
 		padding: 0.3rem;
 		border-radius: 4px;
-		border: 1px solid var(--border, #444);
-		background: #2c2c2c;
-		color: #ddd;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
 		cursor: pointer;
 		font-size: 0.78rem;
 	}

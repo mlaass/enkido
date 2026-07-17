@@ -86,6 +86,15 @@ class StudioStore {
 	/** True once the native bridge answered — panels stay hidden otherwise. */
 	available = $state(false);
 
+	/**
+	 * True while a fader gesture is in progress. The 30 Hz `studioStatus` echo
+	 * carries values that lag the optimistic update by an RPC round-trip, so
+	 * applying it mid-drag snaps the thumb backwards under the pointer. The
+	 * final gesture value is what we last sent, so dropping echoes while
+	 * dragging loses nothing.
+	 */
+	faderDragging = $state(false);
+
 	start() {
 		const b = backend();
 		if (!b) return;
@@ -98,7 +107,7 @@ class StudioStore {
 			};
 			if (p.transport) this.transport = p.transport;
 			if (p.capture) this.capture = p.capture;
-			if (p.mixer) this.strips = p.mixer.strips; // only sent when changed
+			if (p.mixer && !this.faderDragging) this.strips = p.mixer.strips; // only sent when changed
 			this.available = true;
 		});
 

@@ -106,9 +106,9 @@
 		gap: 1rem;
 		flex-wrap: wrap;
 		padding: 0.4rem 0.6rem;
-		border: 1px solid var(--border, #333);
+		border: 1px solid var(--border-default);
 		border-radius: 6px;
-		background: var(--bg-panel, #1b1b1b);
+		background: var(--bg-secondary);
 		font-size: 0.78rem;
 	}
 	.group {
@@ -120,16 +120,16 @@
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
-		color: var(--fg-muted, #999);
+		color: var(--text-secondary);
 	}
 	label.check {
 		gap: 0.25rem;
 	}
 	input[type='number'] {
 		width: 4.5rem;
-		background: #141414;
-		color: inherit;
-		border: 1px solid var(--border, #3a3a3a);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-default);
 		border-radius: 3px;
 		padding: 0.15rem 0.25rem;
 	}
@@ -137,9 +137,9 @@
 		width: 2.8rem;
 	}
 	select {
-		background: #141414;
-		color: inherit;
-		border: 1px solid var(--border, #3a3a3a);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border: 1px solid var(--border-default);
 		border-radius: 3px;
 		padding: 0.15rem;
 	}
@@ -147,9 +147,9 @@
 		min-width: 2rem;
 		padding: 0.25rem 0.5rem;
 		border-radius: 3px;
-		border: 1px solid var(--border, #444);
-		background: #2c2c2c;
-		color: #ddd;
+		border: 1px solid var(--border-default);
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
 		cursor: pointer;
 	}
 	button:disabled {
@@ -157,31 +157,31 @@
 		cursor: default;
 	}
 	button.play.on {
-		background: #3ba55d;
-		border-color: #3ba55d;
-		color: #fff;
+		background: var(--accent-secondary);
+		border-color: var(--accent-secondary);
+		color: var(--bg-primary);
 	}
 	button.rec.on {
-		background: #b3452f;
-		border-color: #b3452f;
-		color: #fff;
+		background: var(--accent-error);
+		border-color: var(--accent-error);
+		color: var(--bg-primary);
 	}
 	.pos {
 		font-variant-numeric: tabular-nums;
-		color: var(--fg-muted, #888);
+		color: var(--text-muted);
 		min-width: 3.5rem;
 	}
 	.capture .dot {
 		width: 9px;
 		height: 9px;
 		border-radius: 50%;
-		background: #444;
+		background: var(--bg-hover);
 	}
 	.capture .dot.armed {
-		background: #3ba55d;
+		background: var(--accent-secondary);
 	}
 	.capture .dot.rec {
-		background: #e0402a;
+		background: var(--accent-error);
 		animation: pulse 1.2s infinite;
 	}
 	@keyframes pulse {
@@ -191,13 +191,13 @@
 	}
 	.buf {
 		font-variant-numeric: tabular-nums;
-		color: var(--fg-muted, #888);
+		color: var(--text-muted);
 	}
 	.warn {
-		color: #e0a02a;
+		color: var(--accent-warning);
 	}
 	.notice {
-		color: var(--fg-muted, #8a8);
+		color: var(--accent-secondary);
 		margin-left: auto;
 	}
 </style>
