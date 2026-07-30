@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Compile
-    auto result = akkado::compile_file(input_file, nullptr, nullptr, lint_strict);
+    auto result = akkado::compile_file(input_file, {.lint_strict = lint_strict});
 
     // Output diagnostics
     std::ifstream source_file(input_file);
@@ -164,17 +164,17 @@ int main(int argc, char* argv[]) {
     }
 
     // List required samples
-    if (list_samples && !result.required_samples.empty()) {
+    if (list_samples && !result.requests.required_samples.empty()) {
         if (json_output) {
             std::cout << "{\"required_samples\":[";
-            for (size_t i = 0; i < result.required_samples.size(); ++i) {
+            for (size_t i = 0; i < result.requests.required_samples.size(); ++i) {
                 if (i > 0) std::cout << ",";
-                std::cout << "\"" << result.required_samples[i] << "\"";
+                std::cout << "\"" << result.requests.required_samples[i] << "\"";
             }
             std::cout << "]}\n";
         } else {
             std::cout << "Required samples:\n";
-            for (const auto& name : result.required_samples) {
+            for (const auto& name : result.requests.required_samples) {
                 std::cout << "  " << name << "\n";
             }
         }
@@ -193,31 +193,31 @@ int main(int argc, char* argv[]) {
         };
         if (json_output) {
             std::cout << "{\"required_uris\":[";
-            for (size_t i = 0; i < result.required_uris.size(); ++i) {
+            for (size_t i = 0; i < result.requests.required_uris.size(); ++i) {
                 if (i > 0) std::cout << ",";
-                std::cout << "{\"uri\":\"" << result.required_uris[i].uri
-                          << "\",\"kind\":\"" << kind_name(result.required_uris[i].kind)
+                std::cout << "{\"uri\":\"" << result.requests.required_uris[i].uri
+                          << "\",\"kind\":\"" << kind_name(result.requests.required_uris[i].kind)
                           << "\"}";
             }
             std::cout << "]}\n";
         } else {
-            std::cout << "Required URIs (" << result.required_uris.size() << "):\n";
-            for (const auto& req : result.required_uris) {
+            std::cout << "Required URIs (" << result.requests.required_uris.size() << "):\n";
+            for (const auto& req : result.requests.required_uris) {
                 std::cout << "  [" << kind_name(req.kind) << "] " << req.uri << "\n";
             }
         }
     }
 
     // Write bytecode
-    if (!check_only && !result.bytecode.empty()) {
+    if (!check_only && !result.program.bytecode.empty()) {
         std::ofstream out(output_file, std::ios::binary);
         if (!out) {
             std::cerr << "error: could not write to " << output_file << "\n";
             return EXIT_FAILURE;
         }
-        out.write(reinterpret_cast<const char*>(result.bytecode.data()),
-                  static_cast<std::streamsize>(result.bytecode.size()));
-        std::cout << "Wrote " << result.bytecode.size() << " bytes to " << output_file << "\n";
+        out.write(reinterpret_cast<const char*>(result.program.bytecode.data()),
+                  static_cast<std::streamsize>(result.program.bytecode.size()));
+        std::cout << "Wrote " << result.program.bytecode.size() << " bytes to " << output_file << "\n";
     }
 
     return EXIT_SUCCESS;

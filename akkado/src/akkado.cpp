@@ -28,23 +28,23 @@ static std::size_t count_lines(std::string_view s) {
     return count;
 }
 
-CompileResult compile(std::string_view source, std::string_view filename,
-                     SampleRegistry* sample_registry,
-                     const FileResolver* resolver,
-                     bool lint_strict,
-                     bool bypass_master,
-                     CompileContext* ctx) {
+CompileResult compile(std::string_view source, const CompileOptions& opts) {
     CompileResult result;
+
+    const std::string_view filename = opts.filename;
+    SampleRegistry* sample_registry = opts.sample_registry;
+    const FileResolver* resolver = opts.resolver;
+    CompileContext* ctx = opts.ctx;
 
     // PRD prd-parser-codegen-correctness.md Phase 4 (F14) + Phase 5 (F12):
     // construct a heap-owned context if the caller didn't supply one,
-    // and stash it in `result.owned_ctx` so the interner / voicing
+    // and stash it in `result.artifacts.owned_ctx` so the interner / voicing
     // registry outlive this function call (downstream tooling that
-    // inspects `result.symbols` post-compile would otherwise hold a
+    // inspects `result.artifacts.symbols` post-compile would otherwise hold a
     // dangling SymbolTable->interner pointer).
     if (ctx == nullptr) {
-        result.owned_ctx = std::make_shared<CompileContext>();
-        ctx = result.owned_ctx.get();
+        result.artifacts.owned_ctx = std::make_shared<CompileContext>();
+        ctx = result.artifacts.owned_ctx.get();
     }
 
     if (source.empty()) {
@@ -163,7 +163,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
 
     // Phase 2: Parsing
     auto [ast, parse_diags] = parse(std::move(tokens), combined_source,
-                                     *ctx->interner, filename, lint_strict);
+                                     *ctx->interner, filename, opts.lint_strict);
     source_map.adjust_all(parse_diags);
     result.diagnostics.insert(result.diagnostics.end(),
                               parse_diags.begin(), parse_diags.end());
@@ -171,7 +171,7 @@ CompileResult compile(std::string_view source, std::string_view filename,
     if (has_errors(parse_diags)) {
         // Phase 2 records-system-unification: surface partial AST so callers
         // (e.g. shape-index tooling) can still inspect what was parsed.
-        result.ast = std::make_shared<Ast>(std::move(ast));
+        result.artifacts.ast = std::make_shared<Ast>(std::move(ast));
         result.success = false;
         return result;
     }
@@ -192,15 +192,15 @@ CompileResult compile(std::string_view source, std::string_view filename,
     if (!analysis.success) {
         // Phase 2 records-system-unification: surface analyzer outputs so
         // partial-bound symbols (records, patterns) remain inspectable.
-        result.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
-        result.symbols = std::move(analysis.symbols);
+        result.artifacts.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
+        result.artifacts.symbols = std::move(analysis.symbols);
         result.success = false;
         return result;
     }
 
     // Phase 4: Code Generation
-    CodeGenerator codegen(*ctx);
-    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry, &source_map, bypass_master);
+    CodeGenerator codegen(*ctx, opts.emit_debug_json);
+    auto gen = codegen.generate(analysis.transformed_ast, analysis.symbols, filename, sample_registry, &source_map, opts.bypass_master);
     source_map.adjust_all(gen.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(),
                               gen.diagnostics.begin(),
@@ -209,8 +209,8 @@ CompileResult compile(std::string_view source, std::string_view filename,
     if (!gen.success) {
         // Phase 2 records-system-unification: surface analyzer outputs even
         // when codegen fails so shape-index tooling has a symbol table.
-        result.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
-        result.symbols = std::move(analysis.symbols);
+        result.artifacts.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
+        result.artifacts.symbols = std::move(analysis.symbols);
         result.success = false;
         return result;
     }
@@ -220,17 +220,17 @@ CompileResult compile(std::string_view source, std::string_view filename,
     // instructions leaves gen.instructions empty, so .data() is null and
     // passing null to memcpy is UB even with a zero size (caught by UBSan in
     // the memory-integrity sanitizer build, docs/prd-memory-integrity-tests.md).
-    result.bytecode.resize(gen.instructions.size() * sizeof(cedar::Instruction));
+    result.program.bytecode.resize(gen.instructions.size() * sizeof(cedar::Instruction));
     if (!gen.instructions.empty()) {
-        std::memcpy(result.bytecode.data(), gen.instructions.data(),
-                    result.bytecode.size());
+        std::memcpy(result.program.bytecode.data(), gen.instructions.data(),
+                    result.program.bytecode.size());
     }
 
     // FOREACH_EVENT subprogram table (PRD L3): record the main/body boundary
     // and build the cedar::BlockEntry table the host hands to the VM.
-    result.main_instruction_count = gen.main_instruction_count;
-    result.block_table.clear();
-    result.block_table.reserve(gen.subprograms.size());
+    result.program.main_instruction_count = gen.main_instruction_count;
+    result.program.block_table.clear();
+    result.program.block_table.reserve(gen.subprograms.size());
     for (const auto& desc : gen.subprograms) {
         cedar::BlockEntry be{};
         be.offset = static_cast<std::uint16_t>(desc.offset);
@@ -239,57 +239,53 @@ CompileResult compile(std::string_view source, std::string_view filename,
         be.output_count = desc.output_count;
         be.param_base = desc.param_base;     // L2 BLOCK_CALL blocks; 0 for FOREACH
         be.body_output = desc.body_output;
-        result.block_table.push_back(be);
+        result.program.block_table.push_back(be);
     }
 
     // Copy source locations, adjusting offsets via source map
-    result.source_locations = std::move(gen.source_locations);
-    source_map.adjust_source_locations(result.source_locations);
+    result.program.source_locations = std::move(gen.source_locations);
+    source_map.adjust_source_locations(result.program.source_locations);
 
     // Copy state initializations, adjusting pattern locations
-    result.state_inits = std::move(gen.state_inits);
-    source_map.adjust_state_inits(result.state_inits);
+    result.program.state_inits = std::move(gen.state_inits);
+    source_map.adjust_state_inits(result.program.state_inits);
 
     // Copy required sample names for runtime loading
-    result.required_samples = std::move(gen.required_samples);
-    result.required_samples_extended = std::move(gen.required_samples_extended);
-    result.scalar_sample_mappings = std::move(gen.scalar_sample_mappings);
-    result.required_soundfonts = std::move(gen.required_soundfonts);
-    result.required_midi_sources = std::move(gen.required_midi_sources);
+    result.requests.required_samples = std::move(gen.required_samples);
+    result.requests.required_samples_extended = std::move(gen.required_samples_extended);
+    result.requests.scalar_sample_mappings = std::move(gen.scalar_sample_mappings);
+    result.requests.required_soundfonts = std::move(gen.required_soundfonts);
+    result.requests.required_midi_sources = std::move(gen.required_midi_sources);
 #ifdef CEDAR_HOST_EXTENSIONS
-    result.required_host_nodes = std::move(gen.required_host_nodes);
+    result.requests.required_host_nodes = std::move(gen.required_host_nodes);
 #endif
-    result.required_midi_cc_routes = std::move(gen.required_midi_cc_routes);
-    result.required_wavetables = std::move(gen.required_wavetables);
-    result.required_uris = std::move(gen.required_uris);
-    result.required_input_sources = std::move(gen.required_input_sources);
-    result.required_buffers = gen.required_buffers;
-    result.bus_buffers = std::move(gen.bus_buffers);
+    result.requests.required_midi_cc_routes = std::move(gen.required_midi_cc_routes);
+    result.requests.required_wavetables = std::move(gen.required_wavetables);
+    result.requests.required_uris = std::move(gen.required_uris);
+    result.requests.required_input_sources = std::move(gen.required_input_sources);
+    result.program.required_buffers = gen.required_buffers;
+    result.program.bus_buffers = std::move(gen.bus_buffers);
 
     // Copy parameter declarations for UI generation
-    result.param_decls = std::move(gen.param_decls);
+    result.artifacts.param_decls = std::move(gen.param_decls);
 
     // Copy visualization declarations, adjusting offsets
-    result.viz_decls = std::move(gen.viz_decls);
-    source_map.adjust_viz_decls(result.viz_decls);
+    result.artifacts.viz_decls = std::move(gen.viz_decls);
+    source_map.adjust_viz_decls(result.artifacts.viz_decls);
 
     // Copy builtin variable overrides
-    result.builtin_var_overrides = std::move(gen.builtin_var_overrides);
+    result.artifacts.builtin_var_overrides = std::move(gen.builtin_var_overrides);
 
     // Phase 2 records-system-unification: retain analyzer outputs for
     // downstream tooling (shape index, future LSP integrations).
-    result.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
-    result.symbols = std::move(analysis.symbols);
+    result.artifacts.ast = std::make_shared<Ast>(std::move(analysis.transformed_ast));
+    result.artifacts.symbols = std::move(analysis.symbols);
 
     result.success = true;
     return result;
 }
 
-CompileResult compile_file(const std::string& path,
-                          SampleRegistry* sample_registry,
-                          const FileResolver* resolver,
-                          bool lint_strict,
-                          CompileContext* ctx) {
+CompileResult compile_file(const std::string& path, const CompileOptions& opts) {
     std::ifstream file(path);
     if (!file) {
         CompileResult result;
@@ -307,21 +303,23 @@ CompileResult compile_file(const std::string& path,
     std::stringstream buffer;
     buffer << file.rdbuf();
 
+    CompileOptions file_opts = opts;
+    file_opts.filename = path;
+
 #ifndef __EMSCRIPTEN__
     // If no resolver provided, create a default FilesystemResolver
     // using the file's parent directory
-    if (!resolver) {
+    if (!opts.resolver) {
         std::filesystem::path p(path);
         auto dir = p.parent_path().string();
         if (dir.empty()) dir = ".";
         FilesystemResolver default_resolver({dir});
-        return compile(buffer.str(), path, sample_registry, &default_resolver,
-                       lint_strict, /*bypass_master=*/false, ctx);
+        file_opts.resolver = &default_resolver;
+        return compile(buffer.str(), file_opts);
     }
 #endif
 
-    return compile(buffer.str(), path, sample_registry, resolver, lint_strict,
-                   /*bypass_master=*/false, ctx);
+    return compile(buffer.str(), file_opts);
 }
 
 } // namespace akkado

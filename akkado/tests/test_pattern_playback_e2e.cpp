@@ -39,7 +39,7 @@ using Catch::Matchers::WithinAbs;
 namespace {
 
 const akkado::StateInitData* find_seq_init(const akkado::CompileResult& result) {
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             return &init;
         }
@@ -166,9 +166,9 @@ struct VmRenderHost {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -177,13 +177,13 @@ std::unique_ptr<VmRenderHost> vm_render_setup(const akkado::CompileResult& r) {
     auto host = std::make_unique<VmRenderHost>();
     host->vm.set_sample_rate(48000.0f);
     host->vm.set_bpm(120.0f);
-    host->vm.set_block_table(r.block_table, r.main_instruction_count);
+    host->vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     host->insts = get_instructions(r);
     REQUIRE(host->vm.load_program_immediate(
         std::span<const cedar::Instruction>(host->insts)));
 
-    host->seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    host->seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0;

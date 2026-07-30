@@ -28,7 +28,7 @@ namespace {
 std::uint32_t apply_state_inits_legacy(cedar::VM& vm,
                                        const akkado::CompileResult& cr) {
     std::uint32_t count = 0;
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         using T = akkado::StateInitData::Type;
         switch (init.type) {
         case T::SequenceProgram: {
@@ -119,12 +119,12 @@ std::uint32_t apply_state_inits_legacy(cedar::VM& vm,
 
 bool load_program_into_vm(cedar::VM& vm, const akkado::CompileResult& cr) {
     const std::size_t inst_size = sizeof(cedar::Instruction);
-    if (cr.bytecode.size() % inst_size != 0) return false;
+    if (cr.program.bytecode.size() % inst_size != 0) return false;
     const auto* instructions =
-        reinterpret_cast<const cedar::Instruction*>(cr.bytecode.data());
-    std::size_t inst_count = cr.bytecode.size() / inst_size;
-    if (!cr.block_table.empty()) {
-        vm.set_block_table(cr.block_table, cr.main_instruction_count);
+        reinterpret_cast<const cedar::Instruction*>(cr.program.bytecode.data());
+    std::size_t inst_count = cr.program.bytecode.size() / inst_size;
+    if (!cr.program.block_table.empty()) {
+        vm.set_block_table(cr.program.block_table, cr.program.main_instruction_count);
     }
     return vm.load_program_immediate({instructions, inst_count});
 }
@@ -173,7 +173,7 @@ bool poly_states_match(cedar::VM& a, cedar::VM& b, std::uint32_t state_id) {
 
 TEST_CASE("state-init buffer round-trip — simple pattern", "[state_init_codec]") {
     auto cr = akkado::compile(R"(out(osc("sin", "c4 e4 g4"))
-)", "<test>");
+)", {.filename = "<test>"});
     REQUIRE(cr.success);
 
     cedar::VM legacy_vm;
@@ -184,7 +184,7 @@ TEST_CASE("state-init buffer round-trip — simple pattern", "[state_init_codec]
     auto legacy_count = apply_state_inits_legacy(legacy_vm, cr);
 
     auto buf = akkado::state_init_buffer::pack_state_inits(
-        cr.state_inits, cr.scalar_sample_mappings);
+        cr.program.state_inits, cr.requests.scalar_sample_mappings);
     auto buffer_count = akkado::state_init_buffer::apply_state_inits(
         buffer_vm, buf.data(), static_cast<std::uint32_t>(buf.size()));
 
@@ -192,7 +192,7 @@ TEST_CASE("state-init buffer round-trip — simple pattern", "[state_init_codec]
     REQUIRE(static_cast<std::uint32_t>(buffer_count) == legacy_count);
 
     // Spot-check every SequenceProgram state matches between the two VMs.
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             REQUIRE(sequence_states_match(legacy_vm, buffer_vm, init.state_id));
         }
@@ -204,7 +204,7 @@ TEST_CASE("state-init buffer round-trip — poly pattern", "[state_init_codec]")
 fn pad({freq, gate, vel}) ->
     saw(freq) * adsr(gate, 0.01, 0.1, 0.7, 0.3) * vel
 chord("Cmaj7 Am7") |> poly(@, pad) |> out(@)
-)", "<test>");
+)", {.filename = "<test>"});
     REQUIRE(cr.success);
 
     cedar::VM legacy_vm;
@@ -214,12 +214,12 @@ chord("Cmaj7 Am7") |> poly(@, pad) |> out(@)
 
     apply_state_inits_legacy(legacy_vm, cr);
     auto buf = akkado::state_init_buffer::pack_state_inits(
-        cr.state_inits, cr.scalar_sample_mappings);
+        cr.program.state_inits, cr.requests.scalar_sample_mappings);
     auto applied = akkado::state_init_buffer::apply_state_inits(
         buffer_vm, buf.data(), static_cast<std::uint32_t>(buf.size()));
     REQUIRE(applied >= 0);
 
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             REQUIRE(sequence_states_match(legacy_vm, buffer_vm, init.state_id));
         } else if (init.type == akkado::StateInitData::Type::PolyAlloc) {
@@ -320,18 +320,18 @@ c"Cmaj9 Am11@2 Fmaj7 G9@2".slow(2).transpose(-12)
 
     const std::size_t inst_size = sizeof(cedar::Instruction);
     const auto* instructions =
-        reinterpret_cast<const cedar::Instruction*>(cr.bytecode.data());
-    const std::size_t inst_count = cr.bytecode.size() / inst_size;
+        reinterpret_cast<const cedar::Instruction*>(cr.program.bytecode.data());
+    const std::size_t inst_count = cr.program.bytecode.size() / inst_size;
     std::span<const cedar::Instruction> insts(instructions, inst_count);
 
     auto buf = akkado::state_init_buffer::pack_state_inits(
-        cr.state_inits, cr.scalar_sample_mappings);
+        cr.program.state_inits, cr.requests.scalar_sample_mappings);
 
     auto render = [&](bool do_swaps, std::vector<float>& out_audio) {
         cedar::VM vm;
         vm.set_crossfade_blocks(3);
-        if (!cr.block_table.empty()) {
-            vm.set_block_table(cr.block_table, cr.main_instruction_count);
+        if (!cr.program.block_table.empty()) {
+            vm.set_block_table(cr.program.block_table, cr.program.main_instruction_count);
         }
         REQUIRE(vm.load_program(insts) == cedar::VM::LoadResult::Success);
         REQUIRE(akkado::state_init_buffer::apply_state_inits(
@@ -350,8 +350,8 @@ c"Cmaj9 Am11@2 Fmaj7 G9@2".slow(2).transpose(-12)
             if (do_swaps) {
                 cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;
                 for (int retry = 0; retry < 64; ++retry) {
-                    if (!cr.block_table.empty()) {
-                        vm.set_block_table(cr.block_table, cr.main_instruction_count);
+                    if (!cr.program.block_table.empty()) {
+                        vm.set_block_table(cr.program.block_table, cr.program.main_instruction_count);
                     }
                     res = vm.load_program(insts);
                     if (res == cedar::VM::LoadResult::Success) break;

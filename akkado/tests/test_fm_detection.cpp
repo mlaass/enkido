@@ -7,13 +7,13 @@ using namespace akkado;
 
 // Helper to compile and get instructions
 static std::vector<cedar::Instruction> compile_to_instructions(std::string_view source) {
-    auto result = akkado::compile(source, "<test>");
+    auto result = akkado::compile(source, {.filename = "<test>"});
     REQUIRE(result.success);
 
     // Convert bytecode back to instructions
-    std::size_t num_instructions = result.bytecode.size() / sizeof(cedar::Instruction);
+    std::size_t num_instructions = result.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> instructions(num_instructions);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 

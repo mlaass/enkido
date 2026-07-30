@@ -38,7 +38,7 @@ namespace {
 // sequence event pointers would dangle.
 void apply_all_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         using T = akkado::StateInitData::Type;
         switch (init.type) {
             case T::SequenceProgram: {
@@ -80,9 +80,9 @@ void apply_all_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
 void live_load(cedar::VM& vm, const akkado::CompileResult& cr,
                std::vector<std::vector<cedar::Sequence>>& seq_storage) {
     REQUIRE(cr.success);
-    const std::size_t n_inst = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n_inst = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n_inst);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
 
     // Retry like the worklet does when slots are busy mid-crossfade.
     auto result = cedar::VM::LoadResult::SlotBusy;
@@ -238,10 +238,10 @@ namespace {
 
 std::uint32_t find_first_state_id_for_opcode(const akkado::CompileResult& cr,
                                              cedar::Opcode op) {
-    const std::size_t n = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     for (std::size_t i = 0; i < n; ++i) {
         cedar::Instruction inst{};
-        std::memcpy(&inst, cr.bytecode.data() + i * sizeof(cedar::Instruction),
+        std::memcpy(&inst, cr.program.bytecode.data() + i * sizeof(cedar::Instruction),
                     sizeof(inst));
         if (inst.opcode == op) return inst.state_id;
     }

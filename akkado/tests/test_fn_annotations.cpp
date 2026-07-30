@@ -21,8 +21,8 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
-    std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
+    std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     return insts;
 }
 
@@ -46,7 +46,7 @@ bool has_diag(const akkado::CompileResult& r, const std::string& code) {
 TEST_CASE("#inline fn compiles and works", "[fn_annotations][inline]") {
     auto r = akkado::compile("#inline fn dbl(x) -> x * 2\nsaw(dbl(220)) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.bytecode.size() > 0);
+    CHECK(r.program.bytecode.size() > 0);
 }
 
 TEST_CASE("#inline const fn compiles", "[fn_annotations][inline]") {
@@ -62,9 +62,9 @@ TEST_CASE("#inline fn and plain fn emit byte-identical bytecode",
     auto inlined = akkado::compile("#inline fn dbl(x) -> x * 2\nsaw(dbl(220)) |> out(@)");
     REQUIRE(plain.success);
     REQUIRE(inlined.success);
-    REQUIRE(plain.bytecode.size() == inlined.bytecode.size());
-    CHECK(std::memcmp(plain.bytecode.data(), inlined.bytecode.data(),
-                      plain.bytecode.size()) == 0);
+    REQUIRE(plain.program.bytecode.size() == inlined.program.bytecode.size());
+    CHECK(std::memcmp(plain.program.bytecode.data(), inlined.program.bytecode.data(),
+                      plain.program.bytecode.size()) == 0);
 }
 
 TEST_CASE("E246: #inline must precede a fn declaration",

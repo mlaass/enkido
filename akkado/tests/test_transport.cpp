@@ -22,9 +22,9 @@ namespace {
 // Decode the flat bytecode blob into a vector of instructions.
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> instructions;
-    const std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     instructions.resize(count);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 

@@ -23,8 +23,8 @@ using Catch::Matchers::WithinAbs;
 namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
-    std::vector<cedar::Instruction> insts(result.bytecode.size() / sizeof(cedar::Instruction));
-    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+    std::vector<cedar::Instruction> insts(result.program.bytecode.size() / sizeof(cedar::Instruction));
+    std::memcpy(insts.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return insts;
 }
 
@@ -296,8 +296,8 @@ TEST_CASE("host node records its call site in the manifest", "[host-extensions]"
     REQUIRE(r.success);
     REQUIRE_FALSE(has_error(r));
 
-    REQUIRE(r.required_host_nodes.size() == 1);
-    const auto& entry = r.required_host_nodes[0];
+    REQUIRE(r.requests.required_host_nodes.size() == 1);
+    const auto& entry = r.requests.required_host_nodes[0];
     CHECK(entry.name == "Diva");
     CHECK(entry.host_index == 0);
     CHECK(entry.state_id != 0);
@@ -315,10 +315,10 @@ TEST_CASE("two host node call sites get distinct semantic IDs", "[host-extension
 
     auto r = akkado::compile("out(plugin(\"Diva\") + plugin(\"Surge\"))");
     REQUIRE(r.success);
-    REQUIRE(r.required_host_nodes.size() == 2);
-    CHECK(r.required_host_nodes[0].state_id != r.required_host_nodes[1].state_id);
+    REQUIRE(r.requests.required_host_nodes.size() == 2);
+    CHECK(r.requests.required_host_nodes[0].state_id != r.requests.required_host_nodes[1].state_id);
 
-    std::vector<std::string> names{r.required_host_nodes[0].name, r.required_host_nodes[1].name};
+    std::vector<std::string> names{r.requests.required_host_nodes[0].name, r.requests.required_host_nodes[1].name};
     CHECK(std::find(names.begin(), names.end(), "Diva") != names.end());
     CHECK(std::find(names.begin(), names.end(), "Surge") != names.end());
 }
@@ -345,8 +345,8 @@ TEST_CASE("event-input host node records the upstream sequencer id", "[host-exte
     auto r = akkado::compile("out(plugin(\"Diva\", n\"c3 e3 g3\"))");
     REQUIRE(r.success);
     REQUIRE_FALSE(has_error(r));
-    REQUIRE(r.required_host_nodes.size() == 1);
-    CHECK(r.required_host_nodes[0].seq_state_id != 0);
+    REQUIRE(r.requests.required_host_nodes.size() == 1);
+    CHECK(r.requests.required_host_nodes[0].seq_state_id != 0);
 
     const auto insts = get_instructions(r);
     const auto* inst = find_op(insts, cedar::Opcode::HOST_OP);
@@ -355,7 +355,7 @@ TEST_CASE("event-input host node records the upstream sequencer id", "[host-exte
 
     const auto* seq = find_op(insts, cedar::Opcode::SEQPAT_QUERY);
     REQUIRE(seq != nullptr);
-    CHECK(r.required_host_nodes[0].seq_state_id == seq->state_id);
+    CHECK(r.requests.required_host_nodes[0].seq_state_id == seq->state_id);
 }
 
 TEST_CASE("chord pattern into an event-input node is not E160", "[host-extensions]") {
@@ -368,8 +368,8 @@ TEST_CASE("chord pattern into an event-input node is not E160", "[host-extension
         auto r = akkado::compile("out(plugin(\"Diva\", n\"[c3,e3,g3]\"))");
         REQUIRE(r.success);
         REQUIRE_FALSE(has_error(r));
-        REQUIRE(r.required_host_nodes.size() == 1);
-        CHECK(r.required_host_nodes[0].seq_state_id != 0);
+        REQUIRE(r.requests.required_host_nodes.size() == 1);
+        CHECK(r.requests.required_host_nodes[0].seq_state_id != 0);
     }
     {
         // Without accepts_events the exemption must not leak: the chord takes
@@ -379,8 +379,8 @@ TEST_CASE("chord pattern into an event-input node is not E160", "[host-extension
         REQUIRE(akkado::register_host_node(plugin_node_desc(), &noop_impl));
         auto r = akkado::compile("out(plugin(\"Diva\", n\"[c3,e3,g3]\"))");
         REQUIRE(r.success);
-        REQUIRE_FALSE(r.required_host_nodes.empty());
-        for (const auto& e : r.required_host_nodes) CHECK(e.seq_state_id == 0);
+        REQUIRE_FALSE(r.requests.required_host_nodes.empty());
+        for (const auto& e : r.requests.required_host_nodes) CHECK(e.seq_state_id == 0);
     }
 }
 
@@ -392,8 +392,8 @@ TEST_CASE("signal into an event-input node stays an ordinary wired input", "[hos
 
     auto r = akkado::compile("out(plugin(\"Verb\", saw(110)))");
     REQUIRE(r.success);
-    REQUIRE(r.required_host_nodes.size() == 1);
-    CHECK(r.required_host_nodes[0].seq_state_id == 0);
+    REQUIRE(r.requests.required_host_nodes.size() == 1);
+    CHECK(r.requests.required_host_nodes[0].seq_state_id == 0);
 
     const auto* inst = find_op(get_instructions(r), cedar::Opcode::HOST_OP);
     REQUIRE(inst != nullptr);
@@ -410,8 +410,8 @@ TEST_CASE("open kwargs take free slots and are recorded by name", "[host-extensi
         "out(plugin(\"Diva\", saw(110), cutoff: sine(0.1), resonance: 0.4))");
     REQUIRE(r.success);
     REQUIRE_FALSE(has_error(r));
-    REQUIRE(r.required_host_nodes.size() == 1);
-    const auto& entry = r.required_host_nodes[0];
+    REQUIRE(r.requests.required_host_nodes.size() == 1);
+    const auto& entry = r.requests.required_host_nodes[0];
     REQUIRE(entry.kwargs.size() == 2);
     CHECK(entry.kwargs[0].slot == 2);
     CHECK(entry.kwargs[0].name == "cutoff");
@@ -441,8 +441,8 @@ TEST_CASE("open kwargs stay rejected where not opted in, and overflow is E263", 
         // Three open kwargs fill slots 2..4; a fourth has no slot left.
         auto ok = akkado::compile("out(plugin(\"D\", a: 1, b: 2, c: 3))");
         REQUIRE(ok.success);
-        REQUIRE(ok.required_host_nodes.size() == 1);
-        CHECK(ok.required_host_nodes[0].kwargs.size() == 3);
+        REQUIRE(ok.requests.required_host_nodes.size() == 1);
+        CHECK(ok.requests.required_host_nodes[0].kwargs.size() == 3);
 
         auto over = akkado::compile("out(plugin(\"D\", a: 1, b: 2, c: 3, d: 4))");
         CHECK(has_error(over));
@@ -468,8 +468,8 @@ TEST_CASE("stereo-native host node records its manifest on the stereo branch", "
     auto r = akkado::compile("out(plugin(\"Diva\", n\"c3 e3\", cutoff: 0.5))");
     REQUIRE(r.success);
     REQUIRE_FALSE(has_error(r));
-    REQUIRE(r.required_host_nodes.size() == 1);
-    const auto& entry = r.required_host_nodes[0];
+    REQUIRE(r.requests.required_host_nodes.size() == 1);
+    const auto& entry = r.requests.required_host_nodes[0];
     CHECK(entry.name == "Diva");
     CHECK(entry.seq_state_id != 0);
     REQUIRE(entry.kwargs.size() == 1);
@@ -508,10 +508,10 @@ TEST_CASE("host node state_id survives a recompile of the same source", "[host-e
     const char* src = "out(plugin(\"Diva\"))";
     auto a = akkado::compile(src);
     auto b = akkado::compile(src);
-    REQUIRE(a.required_host_nodes.size() == 1);
-    REQUIRE(b.required_host_nodes.size() == 1);
+    REQUIRE(a.requests.required_host_nodes.size() == 1);
+    REQUIRE(b.requests.required_host_nodes.size() == 1);
     // The pooling contract: same semantic path → same key → no reload.
-    CHECK(a.required_host_nodes[0].state_id == b.required_host_nodes[0].state_id);
+    CHECK(a.requests.required_host_nodes[0].state_id == b.requests.required_host_nodes[0].state_id);
 }
 
 TEST_CASE("a program using no host ops is unaffected by registration", "[host-extensions]") {
@@ -528,5 +528,5 @@ TEST_CASE("a program using no host ops is unaffected by registration", "[host-ex
     REQUIRE(after.success);
 
     // Byte-identical bytecode: registering a host op perturbs nothing.
-    REQUIRE(before.bytecode == after.bytecode);
+    REQUIRE(before.program.bytecode == after.program.bytecode);
 }

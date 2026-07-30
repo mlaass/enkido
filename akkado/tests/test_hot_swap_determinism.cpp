@@ -38,22 +38,22 @@ struct Diff {
 Diff compare_bytecode(const akkado::CompileResult& a,
                       const akkado::CompileResult& b) {
     Diff d;
-    if (a.bytecode.size() != b.bytecode.size()) {
+    if (a.program.bytecode.size() != b.program.bytecode.size()) {
         d.equal = false;
-        d.summary = "bytecode size: " + std::to_string(a.bytecode.size()) +
-                    " vs " + std::to_string(b.bytecode.size());
+        d.summary = "bytecode size: " + std::to_string(a.program.bytecode.size()) +
+                    " vs " + std::to_string(b.program.bytecode.size());
         return d;
     }
-    if (std::memcmp(a.bytecode.data(), b.bytecode.data(), a.bytecode.size()) != 0) {
+    if (std::memcmp(a.program.bytecode.data(), b.program.bytecode.data(), a.program.bytecode.size()) != 0) {
         d.equal = false;
         std::ostringstream os;
         // Find first differing instruction.
-        const auto n_inst = a.bytecode.size() / sizeof(cedar::Instruction);
+        const auto n_inst = a.program.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t i = 0; i < n_inst; ++i) {
             cedar::Instruction ia{}, ib{};
-            std::memcpy(&ia, a.bytecode.data() + i * sizeof(cedar::Instruction),
+            std::memcpy(&ia, a.program.bytecode.data() + i * sizeof(cedar::Instruction),
                         sizeof(ia));
-            std::memcpy(&ib, b.bytecode.data() + i * sizeof(cedar::Instruction),
+            std::memcpy(&ib, b.program.bytecode.data() + i * sizeof(cedar::Instruction),
                         sizeof(ib));
             if (std::memcmp(&ia, &ib, sizeof(ia)) != 0) {
                 os << "first diff at instruction " << i
@@ -71,15 +71,15 @@ Diff compare_bytecode(const akkado::CompileResult& a,
 Diff compare_state_inits(const akkado::CompileResult& a,
                          const akkado::CompileResult& b) {
     Diff d;
-    if (a.state_inits.size() != b.state_inits.size()) {
+    if (a.program.state_inits.size() != b.program.state_inits.size()) {
         d.equal = false;
-        d.summary = "state_inits size: " + std::to_string(a.state_inits.size()) +
-                    " vs " + std::to_string(b.state_inits.size());
+        d.summary = "state_inits size: " + std::to_string(a.program.state_inits.size()) +
+                    " vs " + std::to_string(b.program.state_inits.size());
         return d;
     }
-    for (std::size_t s = 0; s < a.state_inits.size(); ++s) {
-        const auto& ia = a.state_inits[s];
-        const auto& ib = b.state_inits[s];
+    for (std::size_t s = 0; s < a.program.state_inits.size(); ++s) {
+        const auto& ia = a.program.state_inits[s];
+        const auto& ib = b.program.state_inits[s];
         if (ia.state_id != ib.state_id) {
             d.equal = false;
             d.summary = "state_inits[" + std::to_string(s) +
@@ -222,7 +222,7 @@ namespace {
 // their events into arena memory.
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -277,9 +277,9 @@ void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
 void live_load(cedar::VM& vm, const akkado::CompileResult& cr,
                std::vector<std::vector<cedar::Sequence>>& seq_storage) {
     REQUIRE(cr.success);
-    const std::size_t n_inst = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n_inst = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n_inst);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     REQUIRE(vm.load_program(insts) == cedar::VM::LoadResult::Success);
     apply_seq_state_inits(vm, cr, seq_storage);
 }
@@ -441,7 +441,7 @@ TEST_CASE("VM hot-swap preserves alternation across recompile", "[determinism][h
     // Find the SequenceState created for the pattern. We don't know its id
     // up front, so probe the state_inits to recover it.
     std::uint32_t seq_state_id = 0;
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             seq_state_id = init.state_id;
             break;
@@ -513,7 +513,7 @@ namespace {
 
 std::uint32_t find_state_init_id(const akkado::CompileResult& cr,
                                  akkado::StateInitData::Type t) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == t) return init.state_id;
     }
     return 0;
@@ -524,7 +524,7 @@ std::uint32_t find_state_init_id(const akkado::CompileResult& cr,
 // in the state pool — same struct, same opcode handler — so for the test we
 // just want the state_id, whichever kind it is.
 std::uint32_t find_poly_state_id(const akkado::CompileResult& cr) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::PolyAlloc) {
             return init.state_id;
         }
@@ -736,17 +736,17 @@ TEST_CASE("Hot-swap inside poly body must not stick voices",
              << " pool_size=" << vm.states().size());
         // Dump all state ids in cr_b for cross-reference.
         std::ostringstream all_inits_os;
-        for (const auto& init : cr_b.state_inits) {
+        for (const auto& init : cr_b.program.state_inits) {
             all_inits_os << "init{type=" << static_cast<int>(init.type)
                          << " id=" << init.state_id << "} ";
         }
         INFO("post-B cr_b state_inits: " << all_inits_os.str());
         // Dump bytecode's POLY-class opcode state_ids.
         std::ostringstream poly_opcodes_os;
-        const std::size_t n_inst_b = cr_b.bytecode.size() / sizeof(cedar::Instruction);
+        const std::size_t n_inst_b = cr_b.program.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t k = 0; k < n_inst_b; ++k) {
             cedar::Instruction ins{};
-            std::memcpy(&ins, cr_b.bytecode.data() + k * sizeof(cedar::Instruction),
+            std::memcpy(&ins, cr_b.program.bytecode.data() + k * sizeof(cedar::Instruction),
                         sizeof(ins));
             if (ins.opcode == cedar::Opcode::POLY_BEGIN ||
                 ins.opcode == cedar::Opcode::FOREACH_EVENT) {
@@ -1051,7 +1051,7 @@ TEST_CASE("Hot-swap inside poly+unison body (adsr edit) must not stick voices",
         INFO("post-B voices: " << voice_os.str());
         // Dump every cr_b state_init for cross-reference if assertions fail.
         std::ostringstream all_inits_os;
-        for (const auto& init : cr_b.state_inits) {
+        for (const auto& init : cr_b.program.state_inits) {
             all_inits_os << "{type=" << static_cast<int>(init.type)
                          << " id=" << init.state_id << "} ";
         }
@@ -1209,7 +1209,7 @@ TEST_CASE("Hot-swap chain — five varied edits must not stick voices",
                 std::ostringstream dbg;
                 dbg << "[CHAIN] edit #" << e << " (" << edits[e].desc
                     << ") compile failed, diag count=" << cr.diagnostics.size()
-                    << ", bytecode size=" << cr.bytecode.size() << "\n";
+                    << ", bytecode size=" << cr.program.bytecode.size() << "\n";
                 for (std::size_t di = 0; di < cr.diagnostics.size(); ++di) {
                     const auto& d = cr.diagnostics[di];
                     dbg << "  [" << di << "] code=" << d.code

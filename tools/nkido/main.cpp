@@ -305,11 +305,11 @@ int handle_check_mode(const nkido::Options& opts) {
         return EXIT_FAILURE;
     }
 
-    auto result = akkado::compile(source, filename);
+    auto result = akkado::compile(source, {.filename = filename});
 
     if (result.success) {
         if (opts.verbose) {
-            std::cerr << "OK: " << result.bytecode.size() / 16 << " instructions\n";
+            std::cerr << "OK: " << result.program.bytecode.size() / 16 << " instructions\n";
         }
         return EXIT_SUCCESS;
     }
@@ -436,7 +436,7 @@ int handle_render_mode(const nkido::Options& opts) {
     // a ForeachAlloc/VOICE_POOL state by default (legacy PolyAlloc only under
     // the `legacy_poly` option); both back a PolyAllocState in the state pool.
     std::vector<std::uint32_t> poly_state_ids;
-    for (const auto& init : load.compile_result->state_inits) {
+    for (const auto& init : load.compile_result->program.state_inits) {
         if (init.type == akkado::StateInitData::Type::PolyAlloc ||
             (init.type == akkado::StateInitData::Type::ForeachAlloc &&
              init.foreach_allocator_kind == 0 /* VOICE_POOL */)) {
@@ -449,14 +449,14 @@ int handle_render_mode(const nkido::Options& opts) {
     // through AudioEngine::apply_midi_route_plan, so do it inline here so
     // `midi({file:...}) |> ... ; midi_cc(...)` works in `nkido render`.
     std::vector<std::uint32_t> file_midi_state_ids;
-    for (const auto& req : load.compile_result->required_midi_sources) {
+    for (const auto& req : load.compile_result->requests.required_midi_sources) {
         if (req.kind == cedar::MidiSourceKind::File) {
             file_midi_state_ids.push_back(req.state_id);
         }
     }
     nkido::MidiCcRouteTable file_cc_table;
-    file_cc_table.reserve(load.compile_result->required_midi_cc_routes.size());
-    for (const auto& r : load.compile_result->required_midi_cc_routes) {
+    file_cc_table.reserve(load.compile_result->requests.required_midi_cc_routes.size());
+    for (const auto& r : load.compile_result->requests.required_midi_cc_routes) {
         file_cc_table.push_back({r.param_name, r.cc_num, r.channel_filter,
                                  r.scale, r.bias, r.slew_ms});
     }
@@ -491,7 +491,7 @@ int handle_render_mode(const nkido::Options& opts) {
     };
     std::vector<Stem> stems;
     if (opts.render_stems) {
-        for (const auto& bb : load.compile_result->bus_buffers) {
+        for (const auto& bb : load.compile_result->program.bus_buffers) {
             if (bb.bus_index == 0) continue;  // master is the main output file
             Stem s;
             s.l = bb.left_buffer;
@@ -776,8 +776,8 @@ int main(int argc, char* argv[]) {
     // events into their MidiQueueState SPSC rings. Skipped when the input
     // is precompiled .cedar (no required_midi_sources metadata available).
     if (result.compile_result) {
-        engine.apply_midi_route_plan(result.compile_result->required_midi_sources,
-                                     result.compile_result->required_midi_cc_routes);
+        engine.apply_midi_route_plan(result.compile_result->requests.required_midi_sources,
+                                     result.compile_result->requests.required_midi_cc_routes);
     }
 
     // Install signal handlers for graceful shutdown

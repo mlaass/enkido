@@ -144,17 +144,17 @@ WASM_EXPORT int cedar_load_program(const uint8_t* bytecode, uint32_t byte_count)
     // AudioWorklet processor — heap allocation is safe here, and the
     // chunked BufferPool keeps existing slab pointers stable for any
     // reads still in flight from the previous program.
-    if (g_compile_result.required_buffers > 0) {
-        g_vm->buffers().ensure_capacity(g_compile_result.required_buffers);
+    if (g_compile_result.program.required_buffers > 0) {
+        g_vm->buffers().ensure_capacity(g_compile_result.program.required_buffers);
     }
 
     // PRD prd-runtime-functions-control-flow L3: if the most recent compile
     // produced FOREACH_EVENT subprogram blocks, stage their table for this
-    // load. The bytecode passed here is g_compile_result.bytecode, so the
+    // load. The bytecode passed here is g_compile_result.program.bytecode, so the
     // table matches. Programs with no blocks leave the table empty.
-    if (!g_compile_result.block_table.empty()) {
-        g_vm->set_block_table(g_compile_result.block_table,
-                              g_compile_result.main_instruction_count);
+    if (!g_compile_result.program.block_table.empty()) {
+        g_vm->set_block_table(g_compile_result.program.block_table,
+                              g_compile_result.program.main_instruction_count);
     }
 
     auto result = g_vm->load_program(std::span{instructions, inst_count});
@@ -596,7 +596,7 @@ WASM_EXPORT int akkado_compile(const char* source, uint32_t source_len) {
     }
 
     std::string_view src{source, source_len};
-    akkado::CompileResult new_result = akkado::compile(src, "<web>", nullptr);
+    akkado::CompileResult new_result = akkado::compile(src, {.filename = "<web>", .emit_debug_json = true});
     std::swap(g_compile_result, new_result);
 
     return g_compile_result.success ? 1 : 0;
@@ -615,8 +615,8 @@ WASM_EXPORT int akkado_compile_bypass_master(const char* source, uint32_t source
 
     std::string_view src{source, source_len};
     akkado::CompileResult new_result = akkado::compile(
-        src, "<web-test>", /*sample_registry=*/nullptr, /*resolver=*/nullptr,
-        /*lint_strict=*/false, /*bypass_master=*/true);
+        src, {.filename = "<web-test>", .bypass_master = true,
+              .emit_debug_json = true});
     std::swap(g_compile_result, new_result);
 
     return g_compile_result.success ? 1 : 0;
@@ -627,14 +627,14 @@ WASM_EXPORT int akkado_compile_bypass_master(const char* source, uint32_t source
  * Only valid after successful akkado_compile()
  */
 WASM_EXPORT const uint8_t* akkado_get_bytecode() {
-    return g_compile_result.bytecode.data();
+    return g_compile_result.program.bytecode.data();
 }
 
 /**
  * Get the compiled bytecode size in bytes
  */
 WASM_EXPORT uint32_t akkado_get_bytecode_size() {
-    return static_cast<uint32_t>(g_compile_result.bytecode.size());
+    return static_cast<uint32_t>(g_compile_result.program.bytecode.size());
 }
 
 /**
@@ -704,7 +704,7 @@ WASM_EXPORT void akkado_clear_result() {
  * @return Number of unique sample names used in the compiled code
  */
 WASM_EXPORT uint32_t akkado_get_required_samples_count() {
-    return static_cast<uint32_t>(g_compile_result.required_samples.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_samples.size());
 }
 
 /**
@@ -713,8 +713,8 @@ WASM_EXPORT uint32_t akkado_get_required_samples_count() {
  * @return Pointer to null-terminated sample name, or nullptr if index out of range
  */
 WASM_EXPORT const char* akkado_get_required_sample(uint32_t index) {
-    if (index >= g_compile_result.required_samples.size()) return nullptr;
-    return g_compile_result.required_samples[index].c_str();
+    if (index >= g_compile_result.requests.required_samples.size()) return nullptr;
+    return g_compile_result.requests.required_samples[index].c_str();
 }
 
 // ============================================================================
@@ -726,7 +726,7 @@ WASM_EXPORT const char* akkado_get_required_sample(uint32_t index) {
  * @return Number of unique sample references used in the compiled code
  */
 WASM_EXPORT uint32_t akkado_get_required_samples_extended_count() {
-    return static_cast<uint32_t>(g_compile_result.required_samples_extended.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_samples_extended.size());
 }
 
 /**
@@ -735,8 +735,8 @@ WASM_EXPORT uint32_t akkado_get_required_samples_extended_count() {
  * @return Pointer to null-terminated bank name, or nullptr if invalid/default bank
  */
 WASM_EXPORT const char* akkado_get_required_sample_bank(uint32_t index) {
-    if (index >= g_compile_result.required_samples_extended.size()) return nullptr;
-    const auto& sample = g_compile_result.required_samples_extended[index];
+    if (index >= g_compile_result.requests.required_samples_extended.size()) return nullptr;
+    const auto& sample = g_compile_result.requests.required_samples_extended[index];
     if (sample.bank.empty()) return nullptr;
     return sample.bank.c_str();
 }
@@ -747,8 +747,8 @@ WASM_EXPORT const char* akkado_get_required_sample_bank(uint32_t index) {
  * @return Pointer to null-terminated sample name, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_required_sample_name(uint32_t index) {
-    if (index >= g_compile_result.required_samples_extended.size()) return nullptr;
-    return g_compile_result.required_samples_extended[index].name.c_str();
+    if (index >= g_compile_result.requests.required_samples_extended.size()) return nullptr;
+    return g_compile_result.requests.required_samples_extended[index].name.c_str();
 }
 
 /**
@@ -757,8 +757,8 @@ WASM_EXPORT const char* akkado_get_required_sample_name(uint32_t index) {
  * @return Variant index (0 = first variant), or -1 if invalid
  */
 WASM_EXPORT int32_t akkado_get_required_sample_variant(uint32_t index) {
-    if (index >= g_compile_result.required_samples_extended.size()) return -1;
-    return g_compile_result.required_samples_extended[index].variant;
+    if (index >= g_compile_result.requests.required_samples_extended.size()) return -1;
+    return g_compile_result.requests.required_samples_extended[index].variant;
 }
 
 /**
@@ -769,8 +769,8 @@ WASM_EXPORT int32_t akkado_get_required_sample_variant(uint32_t index) {
  */
 static std::string g_qualified_name_buffer;  // Static buffer for returning string
 WASM_EXPORT const char* akkado_get_required_sample_qualified(uint32_t index) {
-    if (index >= g_compile_result.required_samples_extended.size()) return nullptr;
-    g_qualified_name_buffer = g_compile_result.required_samples_extended[index].qualified_name();
+    if (index >= g_compile_result.requests.required_samples_extended.size()) return nullptr;
+    g_qualified_name_buffer = g_compile_result.requests.required_samples_extended[index].qualified_name();
     return g_qualified_name_buffer.c_str();
 }
 
@@ -783,7 +783,7 @@ WASM_EXPORT const char* akkado_get_required_sample_qualified(uint32_t index) {
  * @return Number of unique SF2 files referenced in the compiled code
  */
 WASM_EXPORT uint32_t akkado_get_required_soundfonts_count() {
-    return static_cast<uint32_t>(g_compile_result.required_soundfonts.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_soundfonts.size());
 }
 
 /**
@@ -792,8 +792,8 @@ WASM_EXPORT uint32_t akkado_get_required_soundfonts_count() {
  * @return Pointer to null-terminated filename, or nullptr if index out of range
  */
 WASM_EXPORT const char* akkado_get_required_soundfont_filename(uint32_t index) {
-    if (index >= g_compile_result.required_soundfonts.size()) return nullptr;
-    return g_compile_result.required_soundfonts[index].filename.c_str();
+    if (index >= g_compile_result.requests.required_soundfonts.size()) return nullptr;
+    return g_compile_result.requests.required_soundfonts[index].filename.c_str();
 }
 
 /**
@@ -802,8 +802,8 @@ WASM_EXPORT const char* akkado_get_required_soundfont_filename(uint32_t index) {
  * @return Preset index, or -1 if index out of range
  */
 WASM_EXPORT int32_t akkado_get_required_soundfont_preset(uint32_t index) {
-    if (index >= g_compile_result.required_soundfonts.size()) return -1;
-    return g_compile_result.required_soundfonts[index].preset_index;
+    if (index >= g_compile_result.requests.required_soundfonts.size()) return -1;
+    return g_compile_result.requests.required_soundfonts[index].preset_index;
 }
 
 // ============================================================================
@@ -820,7 +820,7 @@ WASM_EXPORT int32_t akkado_get_required_soundfont_preset(uint32_t index) {
  * Get number of wt_load() calls from the compile result.
  */
 WASM_EXPORT uint32_t akkado_get_required_wavetables_count() {
-    return static_cast<uint32_t>(g_compile_result.required_wavetables.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_wavetables.size());
 }
 
 /**
@@ -828,8 +828,8 @@ WASM_EXPORT uint32_t akkado_get_required_wavetables_count() {
  * @return Pointer to null-terminated name, or nullptr if index out of range.
  */
 WASM_EXPORT const char* akkado_get_required_wavetable_name(uint32_t index) {
-    if (index >= g_compile_result.required_wavetables.size()) return nullptr;
-    return g_compile_result.required_wavetables[index].name.c_str();
+    if (index >= g_compile_result.requests.required_wavetables.size()) return nullptr;
+    return g_compile_result.requests.required_wavetables[index].name.c_str();
 }
 
 /**
@@ -839,8 +839,8 @@ WASM_EXPORT const char* akkado_get_required_wavetable_name(uint32_t index) {
  * @return Pointer to null-terminated path, or nullptr if index out of range.
  */
 WASM_EXPORT const char* akkado_get_required_wavetable_path(uint32_t index) {
-    if (index >= g_compile_result.required_wavetables.size()) return nullptr;
-    return g_compile_result.required_wavetables[index].path.c_str();
+    if (index >= g_compile_result.requests.required_wavetables.size()) return nullptr;
+    return g_compile_result.requests.required_wavetables[index].path.c_str();
 }
 
 // ============================================================================
@@ -862,7 +862,7 @@ WASM_EXPORT const char* akkado_get_required_wavetable_path(uint32_t index) {
  * Get the number of URI directives in the compile result.
  */
 WASM_EXPORT uint32_t akkado_get_required_uri_count() {
-    return static_cast<uint32_t>(g_compile_result.required_uris.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_uris.size());
 }
 
 /**
@@ -870,8 +870,8 @@ WASM_EXPORT uint32_t akkado_get_required_uri_count() {
  * @return Pointer to null-terminated URI, or nullptr if index out of range.
  */
 WASM_EXPORT const char* akkado_get_required_uri(uint32_t index) {
-    if (index >= g_compile_result.required_uris.size()) return nullptr;
-    return g_compile_result.required_uris[index].uri.c_str();
+    if (index >= g_compile_result.requests.required_uris.size()) return nullptr;
+    return g_compile_result.requests.required_uris[index].uri.c_str();
 }
 
 /**
@@ -880,8 +880,8 @@ WASM_EXPORT const char* akkado_get_required_uri(uint32_t index) {
  * @return UriKind enum value, or -1 if index out of range.
  */
 WASM_EXPORT int32_t akkado_get_required_uri_kind(uint32_t index) {
-    if (index >= g_compile_result.required_uris.size()) return -1;
-    return static_cast<int32_t>(g_compile_result.required_uris[index].kind);
+    if (index >= g_compile_result.requests.required_uris.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.requests.required_uris[index].kind);
 }
 
 /**
@@ -889,7 +889,7 @@ WASM_EXPORT int32_t akkado_get_required_uri_kind(uint32_t index) {
  * to one in() call in source order). Returns 0 if the program does not use in().
  */
 WASM_EXPORT uint32_t akkado_get_required_input_sources_count() {
-    return static_cast<uint32_t>(g_compile_result.required_input_sources.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_input_sources.size());
 }
 
 /**
@@ -898,8 +898,8 @@ WASM_EXPORT uint32_t akkado_get_required_input_sources_count() {
  * Returns nullptr if index is out of range.
  */
 WASM_EXPORT const char* akkado_get_required_input_source(uint32_t index) {
-    if (index >= g_compile_result.required_input_sources.size()) return nullptr;
-    return g_compile_result.required_input_sources[index].c_str();
+    if (index >= g_compile_result.requests.required_input_sources.size()) return nullptr;
+    return g_compile_result.requests.required_input_sources[index].c_str();
 }
 
 // ============================================================================
@@ -918,7 +918,7 @@ WASM_EXPORT const char* akkado_get_required_input_source(uint32_t index) {
  * Number of midi() call sites in the most recent compile.
  */
 WASM_EXPORT uint32_t akkado_get_required_midi_sources_count() {
-    return static_cast<uint32_t>(g_compile_result.required_midi_sources.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_midi_sources.size());
 }
 
 /**
@@ -926,8 +926,8 @@ WASM_EXPORT uint32_t akkado_get_required_midi_sources_count() {
  * for every event the host routes to that call site.
  */
 WASM_EXPORT uint32_t akkado_get_required_midi_source_state_id(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return 0;
-    return g_compile_result.required_midi_sources[index].state_id;
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return 0;
+    return g_compile_result.requests.required_midi_sources[index].state_id;
 }
 
 /**
@@ -935,8 +935,8 @@ WASM_EXPORT uint32_t akkado_get_required_midi_source_state_id(uint32_t index) {
  * 0 = DefaultDevice, 1 = NamedDevice, 2 = File. Returns -1 on bad index.
  */
 WASM_EXPORT int32_t akkado_get_required_midi_source_kind(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return -1;
-    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].kind);
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.requests.required_midi_sources[index].kind);
 }
 
 /**
@@ -944,8 +944,8 @@ WASM_EXPORT int32_t akkado_get_required_midi_source_kind(uint32_t index) {
  * Empty string for DefaultDevice. Returns nullptr on bad index.
  */
 WASM_EXPORT const char* akkado_get_required_midi_source_name(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return nullptr;
-    return g_compile_result.required_midi_sources[index].name_or_path.c_str();
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return nullptr;
+    return g_compile_result.requests.required_midi_sources[index].name_or_path.c_str();
 }
 
 /**
@@ -953,16 +953,16 @@ WASM_EXPORT const char* akkado_get_required_midi_source_name(uint32_t index) {
  * 1-16 restricts to that MIDI channel. Returns -1 on bad index.
  */
 WASM_EXPORT int32_t akkado_get_required_midi_source_channel(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return -1;
-    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].channel_filter);
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.requests.required_midi_sources[index].channel_filter);
 }
 
 /**
  * Loop flag for the i-th midi() call (file mode only). Returns -1 on bad index.
  */
 WASM_EXPORT int32_t akkado_get_required_midi_source_loop(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return -1;
-    return g_compile_result.required_midi_sources[index].loop ? 1 : 0;
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return -1;
+    return g_compile_result.requests.required_midi_sources[index].loop ? 1 : 0;
 }
 
 /**
@@ -970,8 +970,8 @@ WASM_EXPORT int32_t akkado_get_required_midi_source_loop(uint32_t index) {
  * 0 = Follow, 1 = File. Returns -1 on bad index.
  */
 WASM_EXPORT int32_t akkado_get_required_midi_source_tempo(uint32_t index) {
-    if (index >= g_compile_result.required_midi_sources.size()) return -1;
-    return static_cast<int32_t>(g_compile_result.required_midi_sources[index].tempo_mode);
+    if (index >= g_compile_result.requests.required_midi_sources.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.requests.required_midi_sources[index].tempo_mode);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -987,7 +987,7 @@ WASM_EXPORT int32_t akkado_get_required_midi_source_tempo(uint32_t index) {
  * Number of midi_cc() routes in the most recent compile.
  */
 WASM_EXPORT uint32_t akkado_get_required_midi_cc_routes_count() {
-    return static_cast<uint32_t>(g_compile_result.required_midi_cc_routes.size());
+    return static_cast<uint32_t>(g_compile_result.requests.required_midi_cc_routes.size());
 }
 
 /**
@@ -995,8 +995,8 @@ WASM_EXPORT uint32_t akkado_get_required_midi_cc_routes_count() {
  * stable until the next compile. Returns nullptr on bad index.
  */
 WASM_EXPORT const char* akkado_get_required_midi_cc_route_name(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return nullptr;
-    return g_compile_result.required_midi_cc_routes[index].param_name.c_str();
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return nullptr;
+    return g_compile_result.requests.required_midi_cc_routes[index].param_name.c_str();
 }
 
 /**
@@ -1004,8 +1004,8 @@ WASM_EXPORT const char* akkado_get_required_midi_cc_route_name(uint32_t index) {
  * -2 = channel aftertouch. Returns -128 on bad index (out-of-band sentinel).
  */
 WASM_EXPORT int32_t akkado_get_required_midi_cc_route_cc(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return -128;
-    return static_cast<int32_t>(g_compile_result.required_midi_cc_routes[index].cc_num);
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return -128;
+    return static_cast<int32_t>(g_compile_result.requests.required_midi_cc_routes[index].cc_num);
 }
 
 /**
@@ -1013,32 +1013,32 @@ WASM_EXPORT int32_t akkado_get_required_midi_cc_route_cc(uint32_t index) {
  * Returns -1 on bad index.
  */
 WASM_EXPORT int32_t akkado_get_required_midi_cc_route_channel(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return -1;
-    return static_cast<int32_t>(g_compile_result.required_midi_cc_routes[index].channel_filter);
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return -1;
+    return static_cast<int32_t>(g_compile_result.requests.required_midi_cc_routes[index].channel_filter);
 }
 
 /**
  * Scale factor for the i-th route (= max - min). Returns 0 on bad index.
  */
 WASM_EXPORT float akkado_get_required_midi_cc_route_scale(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
-    return g_compile_result.required_midi_cc_routes[index].scale;
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.requests.required_midi_cc_routes[index].scale;
 }
 
 /**
  * Bias for the i-th route (= min). Returns 0 on bad index.
  */
 WASM_EXPORT float akkado_get_required_midi_cc_route_bias(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
-    return g_compile_result.required_midi_cc_routes[index].bias;
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.requests.required_midi_cc_routes[index].bias;
 }
 
 /**
  * EnvMap slew in milliseconds for the i-th route. Returns 0 on bad index.
  */
 WASM_EXPORT float akkado_get_required_midi_cc_route_slew_ms(uint32_t index) {
-    if (index >= g_compile_result.required_midi_cc_routes.size()) return 0.0f;
-    return g_compile_result.required_midi_cc_routes[index].slew_ms;
+    if (index >= g_compile_result.requests.required_midi_cc_routes.size()) return 0.0f;
+    return g_compile_result.requests.required_midi_cc_routes[index].slew_ms;
 }
 
 
@@ -1050,7 +1050,7 @@ WASM_EXPORT float akkado_get_required_midi_cc_route_slew_ms(uint32_t index) {
  * Get number of state initializations from compile result
  */
 WASM_EXPORT uint32_t akkado_get_state_init_count() {
-    return static_cast<uint32_t>(g_compile_result.state_inits.size());
+    return static_cast<uint32_t>(g_compile_result.program.state_inits.size());
 }
 
 /**
@@ -1059,8 +1059,8 @@ WASM_EXPORT uint32_t akkado_get_state_init_count() {
  * @return state_id (32-bit FNV-1a hash)
  */
 WASM_EXPORT uint32_t akkado_get_state_init_id(uint32_t index) {
-    if (index >= g_compile_result.state_inits.size()) return 0;
-    return g_compile_result.state_inits[index].state_id;
+    if (index >= g_compile_result.program.state_inits.size()) return 0;
+    return g_compile_result.program.state_inits[index].state_id;
 }
 
 /**
@@ -1069,8 +1069,8 @@ WASM_EXPORT uint32_t akkado_get_state_init_id(uint32_t index) {
  * @return type
  */
 WASM_EXPORT int akkado_get_state_init_type(uint32_t index) {
-    if (index >= g_compile_result.state_inits.size()) return -1;
-    return static_cast<int>(g_compile_result.state_inits[index].type);
+    if (index >= g_compile_result.program.state_inits.size()) return -1;
+    return static_cast<int>(g_compile_result.program.state_inits[index].type);
 }
 
 /**
@@ -1079,8 +1079,8 @@ WASM_EXPORT int akkado_get_state_init_type(uint32_t index) {
  * @return Cycle length in beats (default 4.0)
  */
 WASM_EXPORT float akkado_get_state_init_cycle_length(uint32_t index) {
-    if (index >= g_compile_result.state_inits.size()) return 4.0f;
-    return g_compile_result.state_inits[index].cycle_length;
+    if (index >= g_compile_result.program.state_inits.size()) return 4.0f;
+    return g_compile_result.program.state_inits[index].cycle_length;
 }
 
 // ============================================================================
@@ -1098,8 +1098,8 @@ static std::vector<std::uint8_t> g_block_table_buf;
 
 WASM_EXPORT const uint8_t* akkado_pack_state_inits_buffer() {
     g_state_inits_buf = akkado::state_init_buffer::pack_state_inits(
-        g_compile_result.state_inits,
-        g_compile_result.scalar_sample_mappings);
+        g_compile_result.program.state_inits,
+        g_compile_result.requests.scalar_sample_mappings);
     return g_state_inits_buf.data();
 }
 
@@ -1109,7 +1109,7 @@ WASM_EXPORT uint32_t akkado_get_state_inits_buffer_size() {
 
 WASM_EXPORT const uint8_t* akkado_pack_midi_sources_buffer() {
     g_midi_sources_buf = akkado::state_init_buffer::pack_midi_sources(
-        g_compile_result.required_midi_sources);
+        g_compile_result.requests.required_midi_sources);
     return g_midi_sources_buf.data();
 }
 
@@ -1119,7 +1119,7 @@ WASM_EXPORT uint32_t akkado_get_midi_sources_buffer_size() {
 
 WASM_EXPORT const uint8_t* akkado_pack_block_table_buffer() {
     g_block_table_buf = akkado::state_init_buffer::pack_block_table(
-        g_compile_result.block_table);
+        g_compile_result.program.block_table);
     return g_block_table_buf.data();
 }
 
@@ -1128,7 +1128,7 @@ WASM_EXPORT uint32_t akkado_get_block_table_buffer_size() {
 }
 
 WASM_EXPORT uint32_t akkado_get_main_instruction_count() {
-    return g_compile_result.main_instruction_count;
+    return g_compile_result.program.main_instruction_count;
 }
 
 // ============================================================================
@@ -1332,7 +1332,7 @@ static cedar::OutputEvents g_preview_output;
  */
 WASM_EXPORT uint32_t akkado_get_pattern_init_count() {
     uint32_t count = 0;
-    for (const auto& init : g_compile_result.state_inits) {
+    for (const auto& init : g_compile_result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             count++;
         }
@@ -1347,8 +1347,8 @@ WASM_EXPORT uint32_t akkado_get_pattern_init_count() {
  */
 static uint32_t get_pattern_init_index(uint32_t pattern_index) {
     uint32_t count = 0;
-    for (uint32_t i = 0; i < g_compile_result.state_inits.size(); ++i) {
-        if (g_compile_result.state_inits[i].type == akkado::StateInitData::Type::SequenceProgram) {
+    for (uint32_t i = 0; i < g_compile_result.program.state_inits.size(); ++i) {
+        if (g_compile_result.program.state_inits[i].type == akkado::StateInitData::Type::SequenceProgram) {
             if (count == pattern_index) return i;
             count++;
         }
@@ -1364,7 +1364,7 @@ static uint32_t get_pattern_init_index(uint32_t pattern_index) {
 WASM_EXPORT uint32_t akkado_get_pattern_state_id(uint32_t pattern_index) {
     uint32_t idx = get_pattern_init_index(pattern_index);
     if (idx == UINT32_MAX) return 0;
-    return g_compile_result.state_inits[idx].state_id;
+    return g_compile_result.program.state_inits[idx].state_id;
 }
 
 /**
@@ -1375,7 +1375,7 @@ WASM_EXPORT uint32_t akkado_get_pattern_state_id(uint32_t pattern_index) {
 WASM_EXPORT uint32_t akkado_get_pattern_doc_offset(uint32_t pattern_index) {
     uint32_t idx = get_pattern_init_index(pattern_index);
     if (idx == UINT32_MAX) return 0;
-    return g_compile_result.state_inits[idx].pattern_location.offset;
+    return g_compile_result.program.state_inits[idx].pattern_location.offset;
 }
 
 /**
@@ -1386,7 +1386,7 @@ WASM_EXPORT uint32_t akkado_get_pattern_doc_offset(uint32_t pattern_index) {
 WASM_EXPORT uint32_t akkado_get_pattern_doc_length(uint32_t pattern_index) {
     uint32_t idx = get_pattern_init_index(pattern_index);
     if (idx == UINT32_MAX) return 0;
-    return g_compile_result.state_inits[idx].pattern_location.length;
+    return g_compile_result.program.state_inits[idx].pattern_location.length;
 }
 
 /**
@@ -1397,7 +1397,7 @@ WASM_EXPORT uint32_t akkado_get_pattern_doc_length(uint32_t pattern_index) {
 WASM_EXPORT float akkado_get_pattern_cycle_length(uint32_t pattern_index) {
     uint32_t idx = get_pattern_init_index(pattern_index);
     if (idx == UINT32_MAX) return 4.0f;
-    return g_compile_result.state_inits[idx].cycle_length;
+    return g_compile_result.program.state_inits[idx].cycle_length;
 }
 
 /**
@@ -1413,7 +1413,7 @@ WASM_EXPORT uint32_t akkado_query_pattern_preview(uint32_t pattern_index, float 
     uint32_t idx = get_pattern_init_index(pattern_index);
     if (idx == UINT32_MAX) return 0;
 
-    const auto& init = g_compile_result.state_inits[idx];
+    const auto& init = g_compile_result.program.state_inits[idx];
     if (init.sequences.empty()) return 0;
 
     // Set up static preview buffers
@@ -1593,7 +1593,7 @@ WASM_EXPORT const char* akkado_get_pattern_debug_json(uint32_t pattern_index) {
         return g_pattern_debug_json.c_str();
     }
 
-    const auto& init = g_compile_result.state_inits[idx];
+    const auto& init = g_compile_result.program.state_inits[idx];
 
     // Serialize sequences to JSON - returns {"sequences":[...]}
     std::string sequences_json = akkado::serialize_sequences_json(
@@ -1653,7 +1653,7 @@ WASM_EXPORT const char* cedar_inspect_state(uint32_t state_id) {
  * @return Number of declared parameters
  */
 WASM_EXPORT uint32_t akkado_get_param_decl_count() {
-    return static_cast<uint32_t>(g_compile_result.param_decls.size());
+    return static_cast<uint32_t>(g_compile_result.artifacts.param_decls.size());
 }
 
 /**
@@ -1662,8 +1662,8 @@ WASM_EXPORT uint32_t akkado_get_param_decl_count() {
  * @return Pointer to null-terminated name string, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_param_name(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return nullptr;
-    return g_compile_result.param_decls[index].name.c_str();
+    if (index >= g_compile_result.artifacts.param_decls.size()) return nullptr;
+    return g_compile_result.artifacts.param_decls[index].name.c_str();
 }
 
 /**
@@ -1672,8 +1672,8 @@ WASM_EXPORT const char* akkado_get_param_name(uint32_t index) {
  * @return Type: 0=Continuous, 1=Button, 2=Toggle, 3=Select, or -1 if invalid
  */
 WASM_EXPORT int akkado_get_param_type(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return -1;
-    return static_cast<int>(g_compile_result.param_decls[index].type);
+    if (index >= g_compile_result.artifacts.param_decls.size()) return -1;
+    return static_cast<int>(g_compile_result.artifacts.param_decls[index].type);
 }
 
 /**
@@ -1682,8 +1682,8 @@ WASM_EXPORT int akkado_get_param_type(uint32_t index) {
  * @return Default value
  */
 WASM_EXPORT float akkado_get_param_default(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 0.0f;
-    return g_compile_result.param_decls[index].default_value;
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 0.0f;
+    return g_compile_result.artifacts.param_decls[index].default_value;
 }
 
 /**
@@ -1692,8 +1692,8 @@ WASM_EXPORT float akkado_get_param_default(uint32_t index) {
  * @return Minimum value
  */
 WASM_EXPORT float akkado_get_param_min(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 0.0f;
-    return g_compile_result.param_decls[index].min_value;
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 0.0f;
+    return g_compile_result.artifacts.param_decls[index].min_value;
 }
 
 /**
@@ -1702,8 +1702,8 @@ WASM_EXPORT float akkado_get_param_min(uint32_t index) {
  * @return Maximum value
  */
 WASM_EXPORT float akkado_get_param_max(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 1.0f;
-    return g_compile_result.param_decls[index].max_value;
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 1.0f;
+    return g_compile_result.artifacts.param_decls[index].max_value;
 }
 
 /**
@@ -1712,8 +1712,8 @@ WASM_EXPORT float akkado_get_param_max(uint32_t index) {
  * @return Number of options, or 0 if not Select type or invalid
  */
 WASM_EXPORT uint32_t akkado_get_param_option_count(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 0;
-    return static_cast<uint32_t>(g_compile_result.param_decls[index].options.size());
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 0;
+    return static_cast<uint32_t>(g_compile_result.artifacts.param_decls[index].options.size());
 }
 
 /**
@@ -1723,8 +1723,8 @@ WASM_EXPORT uint32_t akkado_get_param_option_count(uint32_t index) {
  * @return Pointer to null-terminated option string, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_param_option(uint32_t index, uint32_t opt_index) {
-    if (index >= g_compile_result.param_decls.size()) return nullptr;
-    const auto& param = g_compile_result.param_decls[index];
+    if (index >= g_compile_result.artifacts.param_decls.size()) return nullptr;
+    const auto& param = g_compile_result.artifacts.param_decls[index];
     if (opt_index >= param.options.size()) return nullptr;
     return param.options[opt_index].c_str();
 }
@@ -1735,8 +1735,8 @@ WASM_EXPORT const char* akkado_get_param_option(uint32_t index, uint32_t opt_ind
  * @return Source offset in bytes
  */
 WASM_EXPORT uint32_t akkado_get_param_source_offset(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 0;
-    return g_compile_result.param_decls[index].source_offset;
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 0;
+    return g_compile_result.artifacts.param_decls[index].source_offset;
 }
 
 /**
@@ -1745,8 +1745,8 @@ WASM_EXPORT uint32_t akkado_get_param_source_offset(uint32_t index) {
  * @return Source length in characters
  */
 WASM_EXPORT uint32_t akkado_get_param_source_length(uint32_t index) {
-    if (index >= g_compile_result.param_decls.size()) return 0;
-    return g_compile_result.param_decls[index].source_length;
+    if (index >= g_compile_result.artifacts.param_decls.size()) return 0;
+    return g_compile_result.artifacts.param_decls[index].source_length;
 }
 
 // ============================================================================
@@ -1758,7 +1758,7 @@ WASM_EXPORT uint32_t akkado_get_param_source_length(uint32_t index) {
  * @return Number of overrides
  */
 WASM_EXPORT uint32_t akkado_get_builtin_var_override_count() {
-    return static_cast<uint32_t>(g_compile_result.builtin_var_overrides.size());
+    return static_cast<uint32_t>(g_compile_result.artifacts.builtin_var_overrides.size());
 }
 
 /**
@@ -1767,8 +1767,8 @@ WASM_EXPORT uint32_t akkado_get_builtin_var_override_count() {
  * @return Pointer to null-terminated name string, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_builtin_var_override_name(uint32_t index) {
-    if (index >= g_compile_result.builtin_var_overrides.size()) return nullptr;
-    return g_compile_result.builtin_var_overrides[index].name.c_str();
+    if (index >= g_compile_result.artifacts.builtin_var_overrides.size()) return nullptr;
+    return g_compile_result.artifacts.builtin_var_overrides[index].name.c_str();
 }
 
 /**
@@ -1777,8 +1777,8 @@ WASM_EXPORT const char* akkado_get_builtin_var_override_name(uint32_t index) {
  * @return Override value as float
  */
 WASM_EXPORT float akkado_get_builtin_var_override_value(uint32_t index) {
-    if (index >= g_compile_result.builtin_var_overrides.size()) return 0.0f;
-    return g_compile_result.builtin_var_overrides[index].value;
+    if (index >= g_compile_result.artifacts.builtin_var_overrides.size()) return 0.0f;
+    return g_compile_result.artifacts.builtin_var_overrides[index].value;
 }
 
 // ============================================================================
@@ -1790,7 +1790,7 @@ WASM_EXPORT float akkado_get_builtin_var_override_value(uint32_t index) {
  * @return Number of declared visualizations
  */
 WASM_EXPORT uint32_t akkado_get_viz_count() {
-    return static_cast<uint32_t>(g_compile_result.viz_decls.size());
+    return static_cast<uint32_t>(g_compile_result.artifacts.viz_decls.size());
 }
 
 /**
@@ -1799,8 +1799,8 @@ WASM_EXPORT uint32_t akkado_get_viz_count() {
  * @return Pointer to null-terminated name string, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_viz_name(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return nullptr;
-    return g_compile_result.viz_decls[index].name.c_str();
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return nullptr;
+    return g_compile_result.artifacts.viz_decls[index].name.c_str();
 }
 
 /**
@@ -1809,8 +1809,8 @@ WASM_EXPORT const char* akkado_get_viz_name(uint32_t index) {
  * @return Type: 0=PianoRoll, 1=Oscilloscope, 2=Waveform, 3=Spectrum, or -1 if invalid
  */
 WASM_EXPORT int akkado_get_viz_type(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return -1;
-    return static_cast<int>(g_compile_result.viz_decls[index].type);
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return -1;
+    return static_cast<int>(g_compile_result.artifacts.viz_decls[index].type);
 }
 
 /**
@@ -1819,8 +1819,8 @@ WASM_EXPORT int akkado_get_viz_type(uint32_t index) {
  * @return State ID for probe buffer lookup, or 0 if invalid
  */
 WASM_EXPORT uint32_t akkado_get_viz_state_id(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return 0;
-    return g_compile_result.viz_decls[index].state_id;
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return 0;
+    return g_compile_result.artifacts.viz_decls[index].state_id;
 }
 
 /**
@@ -1829,8 +1829,8 @@ WASM_EXPORT uint32_t akkado_get_viz_state_id(uint32_t index) {
  * @return Pointer to JSON options string, or nullptr if invalid
  */
 WASM_EXPORT const char* akkado_get_viz_options(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return nullptr;
-    const auto& viz = g_compile_result.viz_decls[index];
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return nullptr;
+    const auto& viz = g_compile_result.artifacts.viz_decls[index];
     if (viz.options_json.empty()) return nullptr;
     return viz.options_json.c_str();
 }
@@ -1841,8 +1841,8 @@ WASM_EXPORT const char* akkado_get_viz_options(uint32_t index) {
  * @return Source offset in bytes
  */
 WASM_EXPORT uint32_t akkado_get_viz_source_offset(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return 0;
-    return g_compile_result.viz_decls[index].source_offset;
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return 0;
+    return g_compile_result.artifacts.viz_decls[index].source_offset;
 }
 
 /**
@@ -1851,8 +1851,8 @@ WASM_EXPORT uint32_t akkado_get_viz_source_offset(uint32_t index) {
  * @return Source length in characters
  */
 WASM_EXPORT uint32_t akkado_get_viz_source_length(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return 0;
-    return g_compile_result.viz_decls[index].source_length;
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return 0;
+    return g_compile_result.artifacts.viz_decls[index].source_length;
 }
 
 /**
@@ -1861,8 +1861,8 @@ WASM_EXPORT uint32_t akkado_get_viz_source_length(uint32_t index) {
  * @return Index into state_inits array, or -1 if not a piano roll or no pattern linked
  */
 WASM_EXPORT int32_t akkado_get_viz_pattern_index(uint32_t index) {
-    if (index >= g_compile_result.viz_decls.size()) return -1;
-    return g_compile_result.viz_decls[index].pattern_state_init_index;
+    if (index >= g_compile_result.artifacts.viz_decls.size()) return -1;
+    return g_compile_result.artifacts.viz_decls[index].pattern_state_init_index;
 }
 
 // ============================================================================
@@ -2039,17 +2039,17 @@ static std::string g_disassembly_json;
 WASM_EXPORT const char* akkado_get_disassembly() {
     g_disassembly_json.clear();
 
-    if (g_compile_result.bytecode.empty()) {
+    if (g_compile_result.program.bytecode.empty()) {
         g_disassembly_json = "{\"instructions\":[],\"summary\":{\"totalInstructions\":0,\"statefulCount\":0,\"uniqueStateIds\":0,\"stateIds\":[]}}";
         return g_disassembly_json.c_str();
     }
 
     constexpr size_t INST_SIZE = sizeof(cedar::Instruction);
-    size_t inst_count = g_compile_result.bytecode.size() / INST_SIZE;
-    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.bytecode.data());
+    size_t inst_count = g_compile_result.program.bytecode.size() / INST_SIZE;
+    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.program.bytecode.data());
 
     // Source locations parallel array (may be empty for older compiles)
-    const auto& source_locations = g_compile_result.source_locations;
+    const auto& source_locations = g_compile_result.program.source_locations;
     bool has_source_info = source_locations.size() == inst_count;
 
     std::ostringstream json;
@@ -2113,11 +2113,11 @@ WASM_EXPORT const char* akkado_get_disassembly() {
  * Useful for quick debugging without full disassembly
  */
 WASM_EXPORT uint32_t akkado_get_unique_state_count() {
-    if (g_compile_result.bytecode.empty()) return 0;
+    if (g_compile_result.program.bytecode.empty()) return 0;
 
     constexpr size_t INST_SIZE = sizeof(cedar::Instruction);
-    size_t inst_count = g_compile_result.bytecode.size() / INST_SIZE;
-    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.bytecode.data());
+    size_t inst_count = g_compile_result.program.bytecode.size() / INST_SIZE;
+    auto instructions = reinterpret_cast<const cedar::Instruction*>(g_compile_result.program.bytecode.data());
 
     std::vector<uint32_t> state_ids;
     for (size_t i = 0; i < inst_count; ++i) {

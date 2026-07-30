@@ -325,8 +325,8 @@ TEST_CASE("map() applies function to each element", "[array][map]") {
         auto result = akkado::compile("map([440], (f) -> osc(\"sin\", f)) |> sum(%) |> out(%, %)");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int osc_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -341,8 +341,8 @@ TEST_CASE("map() applies function to each element", "[array][map]") {
         auto result = akkado::compile("map([440, 550, 660], (f) -> osc(\"sin\", f)) |> sum(%) |> out(%, %)");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int osc_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -366,8 +366,8 @@ TEST_CASE("sum() reduces array to single signal", "[array][sum]") {
         REQUIRE(result.success);
 
         // Should just be PUSH_CONST(42), no ADD needed
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int add_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -382,8 +382,8 @@ TEST_CASE("sum() reduces array to single signal", "[array][sum]") {
         auto result = akkado::compile("sum([1, 2, 3])");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int add_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -414,8 +414,8 @@ TEST_CASE("map() voices have unique state_ids", "[array][map]") {
         R"([261.6, 329.6, 392.0] |> map(%, (f) -> sine(f)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
-    auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-    std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+    std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
     std::set<std::uint32_t> state_ids;
     for (std::size_t i = 0; i < count; ++i) {
@@ -440,8 +440,8 @@ TEST_CASE("per-voice filter inside map() with array", "[array][map]") {
         R"([440, 550, 660] |> map(%, (f) -> saw(f) |> lp(1000, %)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
-    auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-    std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+    std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
     int osc_count = 0;
     int lpf_count = 0;
@@ -459,8 +459,8 @@ TEST_CASE("array literal produces multi-buffer", "[array]") {
         R"([60, 64, 67] |> map(%, (n) -> mtof(n) |> tri(%)) |> sum(%) |> out(%, %))");
     REQUIRE(result.success);
 
-    auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-    std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+    std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
     int osc_count = 0;
     for (std::size_t i = 0; i < count; ++i) {
@@ -629,8 +629,8 @@ TEST_CASE("monophonic vs polyphonic pattern detection", "[chord][seqpat]") {
         auto result = akkado::compile("n\"c4 e4 g4\"");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int seqpat_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -648,8 +648,8 @@ TEST_CASE("monophonic vs polyphonic pattern detection", "[chord][seqpat]") {
         auto result = akkado::compile("s\"bd sd hh\"");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int seqpat_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -671,8 +671,8 @@ TEST_CASE("multi-buffer through variable assignment", "[polyphony][variable]") {
         )");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int osc_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -714,8 +714,8 @@ TEST_CASE("pattern field access — monophonic still works", "[polyphony][patter
         )");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int osc_count = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -740,8 +740,8 @@ TEST_CASE("monophonic pattern field access via pipe", "[polyphony][field_access]
         )");
         REQUIRE(result.success);
 
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         int osc_count = 0;
         for (std::size_t i = 0; i < count; ++i) {

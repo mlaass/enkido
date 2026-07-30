@@ -492,8 +492,16 @@ In addition to F5 (concatenation) and F14 (voicing registry):
 
 - **SymbolTable re-registers 600+ builtins on every compile.** `symbol_table.cpp:236-264` is run from the `SymbolTable()` ctor (line 5-9) on every analyzer construction. Could be replaced by a process-shared frozen-hash builtin scope chained as parent of the per-compile scope; or a perfect-hash table (`frozen::map`) given the set is closed and build-time-known. (*Medium*)
 - **`serialize_mini_ast_json` runs unconditionally** at `codegen_patterns.cpp:1379` for every pattern in every compile — even `nkido-cli` and `akkado-cli --check` which never read it. Gate behind `CompilerOptions::emit_debug_json = false` (default) for headless; WASM build sets true. (*Medium* — trivial fix, real CPU savings.)
+
+  > **RESOLVED 2026-07-31** by Phase 2 of `prd-parser-codegen-hardening.md`.
+  > `CompileOptions::emit_debug_json` (default false) gates the call; the
+  > WASM host passes true.
 - **No incremental cache.** Every compile re-reads imports from disk, re-lexes stdlib + embedded stdlib + every import + user source, re-parses, re-builds symbol table, runs analyzer 3-pass, runs full codegen. In live-coding workflow (compile every ~200ms during keystroke debounce) this is heavy. (*Medium-High* — addressed naturally by F5.)
 - **`compile()` public surface is 6 positional args** mixing config and dependencies — `source, filename, sample_registry, file_resolver, lint_strict, bypass_master`. Roll into one `CompileOptions` with optional fields. (*Low*)
+
+  > **RESOLVED 2026-07-31** by Phase 2 of `prd-parser-codegen-hardening.md`.
+  > `compile(source, CompileOptions)` + grouped `CompileResult`
+  > (`program` / `requests` / `artifacts`); every in-tree caller migrated.
 - **No partial-compile entry points.** `lex()` and `parse()` are declared in their headers but there is no public "give me the AST" API for tooling; `shape_index` and any future LSP must drive the full pipeline. (*Low*)
 
 ---
@@ -608,6 +616,11 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Effort:** Small (3-5 days). One correctness bug fixed.
 
 ### PRD-11 — `CompileOptions` + voicing-registry-per-compile + debug-JSON gate  *(Medium; bundles 3 cleanups)*
+
+> **SHIPPED.** Voicing-registry-per-compile landed via
+> `prd-parser-codegen-correctness.md` Phase 4. `CompileOptions` rollup +
+> grouped `CompileResult` + `emit_debug_json` gate landed via
+> `prd-parser-codegen-hardening.md` Phase 2, 2026-07-31.
 
 > **Voicing-registry-per-compile portion SHIPPED via `prd-parser-codegen-correctness.md` Phase 4**, 2026-05-26.
 > The full `CompileOptions` rollup and the `emit_debug_json` gate

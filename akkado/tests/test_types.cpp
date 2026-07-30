@@ -21,9 +21,9 @@
 
 static std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> instructions;
-    size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     instructions.resize(count);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 
@@ -1145,7 +1145,7 @@ TEST_CASE("Types: glide on mono pattern field feeds mono saw freq slot",
 // ============================================================================
 
 static const akkado::StateInitData* find_ext_params_init(const akkado::CompileResult& r) {
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ExtendedParams) return &s;
     }
     return nullptr;

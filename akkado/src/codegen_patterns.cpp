@@ -1491,7 +1491,9 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     seq_init.is_sample_pattern = is_sample_pattern;
     seq_init.pattern_location = pattern.location;  // Store pattern content location for UI
     seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
-    seq_init.ast_json = serialize_mini_ast_json(pattern_node, mini_arena);  // Serialize AST for debug UI
+    if (emit_debug_json_) {
+        seq_init.ast_json = serialize_mini_ast_json(pattern_node, mini_arena);  // Serialize AST for debug UI
+    }
     state_inits_.push_back(std::move(seq_init));
 
     pattern_payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());

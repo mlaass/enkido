@@ -19,8 +19,8 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
-    std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
+    std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     return insts;
 }
 
@@ -46,8 +46,8 @@ bool diag_has_code(const akkado::CompileResult& r, const std::string& code) {
 // seq_storage must outlive every process_block() call.
 void apply_inits(cedar::VM& vm, const akkado::CompileResult& r,
                  std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         std::vector<cedar::Sequence> seq_copy = init.sequences;
         for (std::size_t i = 0;
@@ -76,7 +76,7 @@ std::array<float, cedar::BLOCK_SIZE> run_blocks(const akkado::CompileResult& r,
     cedar::VM vm;
     vm.set_sample_rate(48000.0f);
     vm.set_bpm(120.0f);
-    vm.set_block_table(r.block_table, r.main_instruction_count);
+    vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(insts)));
     std::vector<std::vector<cedar::Sequence>> seq_storage;
     apply_inits(vm, r, seq_storage);
@@ -91,8 +91,7 @@ std::array<float, cedar::BLOCK_SIZE> run_blocks(const akkado::CompileResult& r,
 // the master bus so out() stays a transparent device write — no default
 // soft-clip @ 0.9, no ±1.0 safety clamp. The master bus has its own tests.
 akkado::CompileResult compile_raw(std::string_view src) {
-    return akkado::compile(src, "<input>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.bypass_master = true});
 }
 
 }  // namespace

@@ -462,7 +462,10 @@ public:
     /// owns the VoicingRegistry (Phase 4 / F14) and the StringInterner
     /// (Phase 5 / F12). Codegen does NOT own the context; caller must
     /// keep it alive for the duration of `generate()`.
-    explicit CodeGenerator(CompileContext& ctx);
+    /// `emit_debug_json` gates per-pattern debug JSON serialization
+    /// (StateInitData::ast_json). Headless hosts leave it false; the
+    /// web/wasm host passes true (prd-parser-codegen-hardening Phase 2).
+    explicit CodeGenerator(CompileContext& ctx, bool emit_debug_json = false);
 
     /// Accessor used by free helpers in codegen_patterns.cpp etc. that
     /// take a CodeGenerator reference. Returns the per-compile
@@ -1310,6 +1313,8 @@ private:
     // process-global voicing_registry()/registry_mutex() pair in
     // voicing.cpp. Set in ctor; never null.
     CompileContext* ctx_ = nullptr;
+    // Gate for StateInitData::ast_json serialization (hardening Phase 2).
+    bool emit_debug_json_ = false;
 
     // Semantic path tracking for state_id generation
     std::vector<std::string> path_stack_;

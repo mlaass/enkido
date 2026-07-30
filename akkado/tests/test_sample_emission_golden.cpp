@@ -22,9 +22,9 @@ namespace {
 
 std::vector<cedar::Instruction> bytecode_to_insts(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> out;
-    std::size_t n = r.bytecode.size() / sizeof(cedar::Instruction);
+    std::size_t n = r.program.bytecode.size() / sizeof(cedar::Instruction);
     out.resize(n);
-    std::memcpy(out.data(), r.bytecode.data(), r.bytecode.size());
+    std::memcpy(out.data(), r.program.bytecode.data(), r.program.bytecode.size());
     return out;
 }
 
@@ -135,8 +135,8 @@ TEST_CASE("Golden: G3 single-atom {vel} s\"bd{vel:0.25} ~ ~ ~\"",
     auto r = akkado::compile(R"(s"[bd{vel:0.25} ~ ~ ~]")");
     check_pattern_tail(r);
     // Per-voice velocity rides on velocities[0]; event.velocity stays at 1.0.
-    REQUIRE(!r.state_inits.empty());
-    const auto& events = r.state_inits[0].sequence_events[0];
+    REQUIRE(!r.program.state_inits.empty());
+    const auto& events = r.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     CHECK(events[0].velocities[0] == Catch::Approx(0.25f).margin(0.001f));
     CHECK(events[0].velocity == Catch::Approx(1.0f).margin(0.001f));
@@ -147,8 +147,8 @@ TEST_CASE("Golden: G4 polyrhythm with {vel} on one voice",
           "[golden][sample][emission][polyrhythm][velocity]") {
     auto r = akkado::compile(R"(s"[[hh,bd{vel:0.25}] ~ ~ ~]")");
     check_pattern_tail(r);
-    REQUIRE(!r.state_inits.empty());
-    const auto& events = r.state_inits[0].sequence_events[0];
+    REQUIRE(!r.program.state_inits.empty());
+    const auto& events = r.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     REQUIRE(events[0].num_values == 2);
     CHECK(events[0].velocities[0] == Catch::Approx(1.0f).margin(0.001f));
@@ -192,8 +192,8 @@ TEST_CASE("Golden: G9 three-voice polyrhythm s\"[bd,hh,sn]\"",
           "[golden][sample][emission][polyrhythm]") {
     auto r = akkado::compile(R"(s"[bd,hh,sn]")");
     check_pattern_tail(r);
-    REQUIRE(!r.state_inits.empty());
-    const auto& events = r.state_inits[0].sequence_events[0];
+    REQUIRE(!r.program.state_inits.empty());
+    const auto& events = r.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     CHECK(events[0].num_values == 3);
 }

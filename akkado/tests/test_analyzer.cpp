@@ -357,8 +357,8 @@ TEST_CASE("Analyzer: field access on pattern bindings (audit §10.2)",
           "[analyzer][field-access]") {
     auto pattern_kind = [](const CompileResult& r,
                            const std::string& name) -> std::optional<SymbolKind> {
-        if (!r.symbols) return std::nullopt;
-        auto sym = r.symbols->lookup(name);
+        if (!r.artifacts.symbols) return std::nullopt;
+        auto sym = r.artifacts.symbols->lookup(name);
         if (!sym) return std::nullopt;
         return sym->kind;
     };

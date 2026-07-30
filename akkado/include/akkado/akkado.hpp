@@ -44,9 +44,9 @@ struct Version {
 
 // RequiredSample is defined in codegen.hpp
 
-/// Compilation result
-struct CompileResult {
-    bool success = false;
+/// Cedar bytecode + instruction-level metadata (prd-parser-codegen-hardening
+/// Phase 2 grouping — everything the host loads into the VM).
+struct CompiledProgram {
     // bytecode holds the full [ main program | FOREACH_EVENT block bodies ]
     // instruction stream. main_instruction_count is the main/body boundary;
     // block_table locates each block body (PRD prd-runtime-functions-control-flow L3).
@@ -56,8 +56,24 @@ struct CompileResult {
     std::uint32_t main_instruction_count = 0;
     std::vector<cedar::BlockEntry> block_table;
     std::vector<SourceLocation> source_locations;  // Parallel to bytecode instructions, tracks origin
-    std::vector<Diagnostic> diagnostics;
     std::vector<StateInitData> state_inits;  // State initialization data for patterns
+
+    // Peak distinct buffer indices the compiled program references. Hosts
+    // call `vm.buffers().ensure_capacity(required_buffers)` off the audio
+    // cycle (compile/hot-swap thread) before publishing the new bytecode,
+    // so the chunked BufferPool grows to fit the program. Zero on
+    // unsuccessful compiles.
+    std::uint32_t required_buffers = 0;
+
+    // Per-bus scratch buffer index map (prd-bus-routing). Empty for programs
+    // with no audio sink. Lets a host read an individual bus's output buffer
+    // by index after process_block. See CodeGenerator::emit_bus_epilogue.
+    std::vector<BusBufferMapping> bus_buffers;
+};
+
+/// Per-call resource requests the host must satisfy before resuming the
+/// audio thread (samples, soundfonts, MIDI sources, wavetables, URIs).
+struct RuntimeRequests {
     std::vector<std::string> required_samples;  // Sample names used (for runtime loading) - legacy
     std::vector<RequiredSample> required_samples_extended;  // Sample refs with bank/variant info
     std::vector<ScalarSampleMapping> scalar_sample_mappings;  // Direct sample("name") calls needing runtime ID patching
@@ -79,9 +95,6 @@ struct CompileResult {
     // Source strings collected from in('...') calls in compile order (one entry per call,
     // empty string if the call had no argument). Hosts use this to switch input source.
     std::vector<std::string> required_input_sources;
-    std::vector<ParamDecl> param_decls;  // Declared parameters for UI generation
-    std::vector<VisualizationDecl> viz_decls;  // Declared visualizations for UI generation
-    std::vector<BuiltinVarOverride> builtin_var_overrides;  // Builtin variable overrides (bpm, sr)
     // Wavetable banks declared via wt_load(). v1 keeps the *last* loaded bank
     // active; multi-bank routing is a v2 follow-up.
     std::vector<RequiredWavetable> required_wavetables;
@@ -89,18 +102,13 @@ struct CompileResult {
     // these in source order, dispatch each by `kind` to the appropriate
     // registry, and block bytecode swap until every URI resolves.
     std::vector<UriRequest> required_uris;
+};
 
-    // Peak distinct buffer indices the compiled program references. Hosts
-    // call `vm.buffers().ensure_capacity(required_buffers)` off the audio
-    // cycle (compile/hot-swap thread) before publishing the new bytecode,
-    // so the chunked BufferPool grows to fit the program. Zero on
-    // unsuccessful compiles.
-    std::uint32_t required_buffers = 0;
-
-    // Per-bus scratch buffer index map (prd-bus-routing). Empty for programs
-    // with no audio sink. Lets a host read an individual bus's output buffer
-    // by index after process_block. See CodeGenerator::emit_bus_epilogue.
-    std::vector<BusBufferMapping> bus_buffers;
+/// UI-bearing declarations and post-compile tooling outputs.
+struct CompileArtifacts {
+    std::vector<ParamDecl> param_decls;  // Declared parameters for UI generation
+    std::vector<VisualizationDecl> viz_decls;  // Declared visualizations for UI generation
+    std::vector<BuiltinVarOverride> builtin_var_overrides;  // Builtin variable overrides (bpm, sr)
 
     // Phase 2 records-system-unification: analyzer outputs retained for
     // downstream tooling (e.g. shape index serialization). Populated by
@@ -115,46 +123,55 @@ struct CompileResult {
     // StringInterner inside this context. When `compile()` constructs
     // a default context internally, it stashes it here so the
     // interner outlives the function return — otherwise
-    // `r.symbols->lookup(name)` would dereference a destroyed
+    // `r.artifacts.symbols->lookup(name)` would dereference a destroyed
     // interner. Callers that pass their own `CompileContext*` to
     // `compile()` leave this empty; their context owns the lifetime.
     std::shared_ptr<CompileContext> owned_ctx;
 };
 
-/// Compile Akkado source code to Cedar bytecode
-/// @param source The source code to compile
-/// @param filename Optional filename for error reporting
-/// @param sample_registry Optional sample registry for resolving sample names to IDs
-/// @param resolver Optional file resolver for import statements
-/// @param lint_strict Enable opt-in lint warnings (e.g. W201 dotted hole-field).
-/// @param bypass_master Test-only: suppress the bus-routing master bus so
-///        out()/bus() write raw to the device (no soft-clip / safety stage).
-///        Not reachable from user source — the safety guarantee still holds.
-/// @param ctx Optional per-compile context (owns VoicingRegistry +
-///        future StringInterner). When null, a fresh stack-local context
-///        is constructed. Pass the same ctx across multiple compile()
-///        calls to share user-defined voicings (e.g. for live-coding
-///        hosts that want cross-edit persistence). See PRD
-///        prd-parser-codegen-correctness.md Phase 4.
-/// @return Compilation result with bytecode and diagnostics
-CompileResult compile(std::string_view source, std::string_view filename = "<input>",
-                     SampleRegistry* sample_registry = nullptr,
-                     const FileResolver* resolver = nullptr,
-                     bool lint_strict = false,
-                     bool bypass_master = false,
-                     CompileContext* ctx = nullptr);
+/// Compilation result (prd-parser-codegen-hardening Phase 2 grouped shape).
+struct CompileResult {
+    bool success = false;
+    CompiledProgram program;
+    RuntimeRequests requests;
+    CompileArtifacts artifacts;
+    std::vector<Diagnostic> diagnostics;
+};
 
-/// Compile from file (creates a FilesystemResolver for the file's directory)
-/// @param path Path to the source file
-/// @param sample_registry Optional sample registry for resolving sample names to IDs
-/// @param resolver Optional file resolver (if null, creates a FilesystemResolver)
-/// @param lint_strict Enable opt-in lint warnings (e.g. W201 dotted hole-field).
-/// @param ctx Optional per-compile context (see `compile()`).
-/// @return Compilation result
-CompileResult compile_file(const std::string& path,
-                          SampleRegistry* sample_registry = nullptr,
-                          const FileResolver* resolver = nullptr,
-                          bool lint_strict = false,
-                          CompileContext* ctx = nullptr);
+/// All optional inputs to a compile, grouped into one struct
+/// (prd-parser-codegen-hardening Phase 2). Use designated initializers:
+/// `compile(src, {.lint_strict = true})`.
+struct CompileOptions {
+    std::string_view filename = "<input>";
+    /// Optional sample registry for resolving sample names to IDs.
+    SampleRegistry* sample_registry = nullptr;
+    /// Optional file resolver for import statements.
+    const FileResolver* resolver = nullptr;
+    /// Enable opt-in lint warnings (e.g. W201 dotted hole-field).
+    bool lint_strict = false;
+    /// Test-only: suppress the bus-routing master bus so out()/bus() write
+    /// raw to the device (no soft-clip / safety stage). Not reachable from
+    /// user source — the safety guarantee still holds.
+    bool bypass_master = false;
+    /// Emit per-pattern debug JSON (StateInitData::ast_json for the web
+    /// pattern-debug panel). Default off: headless hosts (CLI render) pay
+    /// no serialization cost. The web/wasm host sets this to true.
+    bool emit_debug_json = false;
+    /// Optional per-compile context (owns VoicingRegistry + StringInterner).
+    /// When null, a fresh heap-owned context is constructed and stashed in
+    /// `result.artifacts.owned_ctx`. Pass the same ctx across multiple
+    /// compile() calls to share user-defined voicings (e.g. for live-coding
+    /// hosts that want cross-edit persistence). See PRD
+    /// prd-parser-codegen-correctness.md Phase 4.
+    CompileContext* ctx = nullptr;
+};
+
+/// Compile Akkado source code to Cedar bytecode
+CompileResult compile(std::string_view source, const CompileOptions& opts = {});
+
+/// Compile from file. If `opts.resolver` is null, a FilesystemResolver for
+/// the file's directory is created. `opts.filename` is ignored (the path is
+/// used).
+CompileResult compile_file(const std::string& path, const CompileOptions& opts = {});
 
 } // namespace akkado

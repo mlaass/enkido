@@ -2061,7 +2061,7 @@ TEST_CASE("tune() compiles end-to-end", "[tuning]") {
 // Returns the values[0] (frequency) of every event in the first SequenceProgram.
 static std::vector<float> extract_event_hz(const akkado::CompileResult& result) {
     std::vector<float> hz;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         for (const auto& events : init.sequence_events) {
             for (const auto& ev : events) hz.push_back(ev.values[0]);

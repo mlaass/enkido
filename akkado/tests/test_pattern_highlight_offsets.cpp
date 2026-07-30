@@ -25,7 +25,7 @@ namespace {
 
 std::vector<const StateInitData*> seq_inits(const CompileResult& r) {
     std::vector<const StateInitData*> out;
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == StateInitData::Type::SequenceProgram) out.push_back(&s);
     }
     return out;

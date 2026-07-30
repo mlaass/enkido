@@ -21,9 +21,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -75,9 +75,9 @@ TEST_CASE("bus-routing: out(@) and bus(0, @) are byte-identical", "[bus]") {
     auto b = akkado::compile("bus(0, 0.5)");
     REQUIRE(a.success);
     REQUIRE(b.success);
-    REQUIRE(a.bytecode.size() == b.bytecode.size());
-    CHECK(std::memcmp(a.bytecode.data(), b.bytecode.data(),
-                      a.bytecode.size()) == 0);
+    REQUIRE(a.program.bytecode.size() == b.program.bytecode.size());
+    CHECK(std::memcmp(a.program.bytecode.data(), b.program.bytecode.data(),
+                      a.program.bytecode.size()) == 0);
 }
 
 TEST_CASE("bus-routing: out() writer carries BUS_WRITE and a real buffer",
@@ -139,24 +139,24 @@ TEST_CASE("bus-routing: bus_buffers exposes the per-bus buffer index map",
     // ascending by bus_index (std::map iteration order in emit_bus_epilogue).
     auto r = akkado::compile("out(0.5)\nbus(1, 0.3)\nbus(2, 0.4)");
     REQUIRE(r.success);
-    REQUIRE(r.bus_buffers.size() == 3);
+    REQUIRE(r.program.bus_buffers.size() == 3);
 
-    CHECK(r.bus_buffers[0].bus_index == 0u);
-    CHECK(r.bus_buffers[1].bus_index == 1u);
-    CHECK(r.bus_buffers[2].bus_index == 2u);
+    CHECK(r.program.bus_buffers[0].bus_index == 0u);
+    CHECK(r.program.bus_buffers[1].bus_index == 1u);
+    CHECK(r.program.bus_buffers[2].bus_index == 2u);
 
-    for (const auto& bb : r.bus_buffers) {
+    for (const auto& bb : r.program.bus_buffers) {
         // Right channel is always the left index + 1 (adjacency invariant).
         CHECK(bb.right_buffer == static_cast<std::uint16_t>(bb.left_buffer + 1));
         // Every bus buffer lies inside the pool the host is told to allocate.
-        CHECK(bb.left_buffer < r.required_buffers);
-        CHECK(bb.right_buffer < r.required_buffers);
+        CHECK(bb.left_buffer < r.program.required_buffers);
+        CHECK(bb.right_buffer < r.program.required_buffers);
     }
 
     // Left-buffer indices are pairwise distinct (no two buses share a slot).
-    for (std::size_t i = 0; i < r.bus_buffers.size(); ++i) {
-        for (std::size_t j = i + 1; j < r.bus_buffers.size(); ++j) {
-            CHECK(r.bus_buffers[i].left_buffer != r.bus_buffers[j].left_buffer);
+    for (std::size_t i = 0; i < r.program.bus_buffers.size(); ++i) {
+        for (std::size_t j = i + 1; j < r.program.bus_buffers.size(); ++j) {
+            CHECK(r.program.bus_buffers[i].left_buffer != r.program.bus_buffers[j].left_buffer);
         }
     }
 }
@@ -166,7 +166,7 @@ TEST_CASE("bus-routing: a program with no sink has empty bus_buffers",
     // Pure computation, no out()/bus() writer → no bus epilogue, no mapping.
     auto r = akkado::compile("x = 1 + 1");
     REQUIRE(r.success);
-    CHECK(r.bus_buffers.empty());
+    CHECK(r.program.bus_buffers.empty());
 }
 
 TEST_CASE("bus-routing: a non-literal bus index is E260", "[bus][diag]") {
@@ -325,9 +325,7 @@ TEST_CASE("bus-routing: the safety stage clamps an aggressive master closure",
 
 TEST_CASE("bus-routing: bypass_master leaves mixer/master inert",
           "[bus][mixer]") {
-    auto r = akkado::compile("master((s) -> s |> @ * 0.5)\nout(0.8)",
-                             "<input>", nullptr, nullptr, false,
-                             /*bypass_master=*/true);
+    auto r = akkado::compile("master((s) -> s |> @ * 0.5)\nout(0.8)", {.bypass_master = true});
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::DISTORT_SOFT) == 0);
@@ -347,9 +345,9 @@ bool bytecode_identical(const char* src_a, const char* src_b) {
     auto b = akkado::compile(src_b);
     REQUIRE(a.success);
     REQUIRE(b.success);
-    REQUIRE(a.bytecode.size() == b.bytecode.size());
-    return std::memcmp(a.bytecode.data(), b.bytecode.data(),
-                       a.bytecode.size()) == 0;
+    REQUIRE(a.program.bytecode.size() == b.program.bytecode.size());
+    return std::memcmp(a.program.bytecode.data(), b.program.bytecode.data(),
+                       a.program.bytecode.size()) == 0;
 }
 }  // namespace
 
@@ -763,7 +761,7 @@ TEST_CASE("bus-routing: per-bus trim scales the master (OQ5)", "[bus][trim]") {
 TEST_CASE("bus-routing: bus()/mixer() accept a friendly label (OQ4)",
           "[bus][label]") {
     auto label_of = [](const akkado::CompileResult& r, std::uint32_t bus) {
-        for (const auto& bb : r.bus_buffers)
+        for (const auto& bb : r.program.bus_buffers)
             if (bb.bus_index == bus) return bb.label;
         return std::string{"<missing>"};
     };
@@ -817,7 +815,7 @@ TEST_CASE("bus-routing: bus()/mixer() accept a friendly label (OQ4)",
 // program's bus buffers.
 namespace {
 std::uint16_t bus_left_of(const akkado::CompileResult& r, std::uint32_t bus) {
-    for (const auto& b : r.bus_buffers)
+    for (const auto& b : r.program.bus_buffers)
         if (b.bus_index == bus) return b.left_buffer;
     return 0xFFFF;
 }

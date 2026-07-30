@@ -20,9 +20,9 @@
 static std::vector<cedar::Instruction> get_instructions(
     const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> insts;
-    size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     insts.resize(count);
-    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(insts.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return insts;
 }
 
@@ -55,8 +55,7 @@ static bool diagnostic_has_code(const akkado::CompileResult& r, const std::strin
 // the master bus so out() stays a transparent device write — no default
 // soft-clip @ 0.9, no ±1.0 safety clamp. The master bus has its own tests.
 static akkado::CompileResult compile_raw(std::string_view src) {
-    return akkado::compile(src, "<input>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.bypass_master = true});
 }
 
 TEST_CASE("State: state(init) emits STATE_OP rate=0", "[state]") {
@@ -104,8 +103,8 @@ TEST_CASE("State: get/set chain stores and reads correctly at runtime", "[state]
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
@@ -127,8 +126,8 @@ TEST_CASE("State: cell value persists across blocks", "[state][persistence]") {
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     for (int block = 0; block < 5; ++block) {
@@ -196,8 +195,8 @@ TEST_CASE("State: get() before any set() returns the init value",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
@@ -313,8 +312,8 @@ TEST_CASE("State: empty array stepper produces silence not a crash",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
@@ -369,8 +368,8 @@ TEST_CASE("State record: get returns a Record; field access reaches each field",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
@@ -394,8 +393,8 @@ TEST_CASE("State record: set roundtrips per field", "[state][record][runtime]") 
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
@@ -505,8 +504,8 @@ TEST_CASE("State record: cell value persists across blocks",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
 
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     for (int block = 0; block < 5; ++block) {
@@ -545,11 +544,11 @@ TEST_CASE("State record: cross-shape hot-swap freshly initializes new fields",
     vm.set_crossfade_blocks(3);
 
     std::span<const cedar::Instruction> bcA(
-        reinterpret_cast<const cedar::Instruction*>(rA.bytecode.data()),
-        rA.bytecode.size() / sizeof(cedar::Instruction));
+        reinterpret_cast<const cedar::Instruction*>(rA.program.bytecode.data()),
+        rA.program.bytecode.size() / sizeof(cedar::Instruction));
     std::span<const cedar::Instruction> bcB(
-        reinterpret_cast<const cedar::Instruction*>(rB.bytecode.data()),
-        rB.bytecode.size() / sizeof(cedar::Instruction));
+        reinterpret_cast<const cedar::Instruction*>(rB.program.bytecode.data()),
+        rB.program.bytecode.size() / sizeof(cedar::Instruction));
 
     REQUIRE(vm.load_program(bcA) == cedar::VM::LoadResult::Success);
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
@@ -656,8 +655,8 @@ TEST_CASE("State record sugar: cell.field read matches get(cell).field semantics
         cedar::VM vm;
         REQUIRE(vm.load_program_immediate(
             std::span<const cedar::Instruction>(
-                reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-                r.bytecode.size() / sizeof(cedar::Instruction))));
+                reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+                r.program.bytecode.size() / sizeof(cedar::Instruction))));
         std::array<float, cedar::BLOCK_SIZE> L{}, R{};
         vm.process_block(L.data(), R.data());
         return std::pair{L[cedar::BLOCK_SIZE - 1], R[cedar::BLOCK_SIZE - 1]};
@@ -689,8 +688,8 @@ TEST_CASE("State record sugar: cell.field = expr stores via STATE_OP rate=2",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
     CHECK(L[cedar::BLOCK_SIZE - 1] == 880.0f);
@@ -717,8 +716,8 @@ TEST_CASE("State record sugar: write sugar matches set+spread observably",
         cedar::VM vm;
         REQUIRE(vm.load_program_immediate(
             std::span<const cedar::Instruction>(
-                reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-                r.bytecode.size() / sizeof(cedar::Instruction))));
+                reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+                r.program.bytecode.size() / sizeof(cedar::Instruction))));
         std::array<float, cedar::BLOCK_SIZE> L{}, R{};
         vm.process_block(L.data(), R.data());
         return std::pair{L[cedar::BLOCK_SIZE - 1], R[cedar::BLOCK_SIZE - 1]};
@@ -752,8 +751,8 @@ TEST_CASE("State record sugar: self-referential update reads then writes",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     // First block: both writes execute against the initial value 0; the
     // second write reads the pre-block value (still 0) so n ends at 1.
@@ -865,8 +864,8 @@ TEST_CASE("State record sugar: aliasing — `t = v` shares cell identity",
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
     CHECK(L[cedar::BLOCK_SIZE - 1] == 7.0f);

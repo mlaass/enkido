@@ -27,8 +27,7 @@ static bool has_diagnostic_code(const std::vector<akkado::Diagnostic>& diagnosti
 // it so out() compiles to a single device-write OUTPUT with no surrounding
 // bus prologue/epilogue. The master bus has its own dedicated tests.
 static akkado::CompileResult compile_raw(std::string_view src) {
-    return akkado::compile(src, "<input>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.bypass_master = true});
 }
 
 TEST_CASE("Akkado compilation", "[akkado]") {
@@ -45,17 +44,17 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         auto result = akkado::compile("// test");
 
         REQUIRE(result.success);
-        CHECK(result.bytecode.empty());  // No instructions for comment-only
+        CHECK(result.program.bytecode.empty());  // No instructions for comment-only
     }
 
     SECTION("simple number literal") {
         auto result = akkado::compile("42");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 42.0f);
     }
@@ -65,10 +64,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // Should have 2 instructions: PUSH_CONST for 440, OSC_SAW
-        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 2 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[2];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -80,10 +79,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // Should have 3 instructions: PUSH_CONST (69), MTOF, OSC_SAW
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         // PUSH_CONST should push MIDI note 69 (A4)
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
@@ -103,10 +102,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST, OSC_SAW, OUTPUT
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -127,10 +126,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
         REQUIRE(result.success);
         // PUSH_CONST(440), OSC_SAW, PUSH_CONST(1000), PUSH_CONST(0.7),
         // PUSH_CONST(0.0) [dry], PUSH_CONST(1.0) [wet], FILTER_SVF_LP, OUTPUT
-        REQUIRE(result.bytecode.size() == 8 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 8 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[8];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         // Check the chain
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);  // 440
@@ -154,7 +153,7 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // PUSH_CONST, OSC_SAW
-        REQUIRE(result.bytecode.size() >= 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 2 * sizeof(cedar::Instruction));
     }
 
     SECTION("arithmetic operators") {
@@ -162,10 +161,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(440), PUSH_CONST(220), ADD
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[2].opcode == cedar::Opcode::ADD);
     }
@@ -220,10 +219,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.01), PUSH_CONST(0.1), ENV_FOLLOWER
-        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 5 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[5];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);  // 100
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -240,10 +239,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.001), PUSH_CONST(0.5), ENV_FOLLOWER
-        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 5 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[5];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);  // 100
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -260,10 +259,10 @@ TEST_CASE("Akkado compilation", "[akkado]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(100), OSC_SAW, PUSH_CONST(0.01), PUSH_CONST(0.1), ENV_FOLLOWER
-        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 5 * sizeof(cedar::Instruction));
         
         cedar::Instruction inst[5];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
         CHECK(inst[4].opcode == cedar::Opcode::ENV_FOLLOWER);
     }
 }
@@ -291,10 +290,10 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
 
         REQUIRE(result.success);
         // Should compile to just PUSH_CONST(440)
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
     }
 
@@ -308,10 +307,10 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
         )");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
     }
 
@@ -325,10 +324,10 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
         )");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
     }
 
@@ -342,10 +341,10 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
         )");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
     }
 
@@ -360,10 +359,10 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST(880), OSC_SAW
-        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 2 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[2];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -397,9 +396,9 @@ TEST_CASE("Akkado match expressions", "[akkado][match]") {
         REQUIRE(result.success);
         // Runtime match produces SELECT opcodes
         std::vector<cedar::Instruction> insts;
-        size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
         insts.resize(count);
-        std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+        std::memcpy(insts.data(), result.program.bytecode.data(), result.program.bytecode.size());
 
         bool has_select = false;
         for (const auto& inst : insts) {
@@ -424,7 +423,7 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
         REQUIRE(result.success);
         // Runtime match: record variable isn't a literal, so uses runtime path
         // Should emit at least the record fields + body + default
-        REQUIRE(result.bytecode.size() >= 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 2 * sizeof(cedar::Instruction));
     }
 
     SECTION("destructure record - second field") {
@@ -436,7 +435,7 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
             }
         )");
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() >= 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 2 * sizeof(cedar::Instruction));
     }
 
     SECTION("destructure with expression body") {
@@ -448,7 +447,7 @@ TEST_CASE("Akkado match destructuring", "[akkado][match][destructure]") {
             }
         )");
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() >= 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 3 * sizeof(cedar::Instruction));
     }
 
     SECTION("as destructuring binding in pipe") {
@@ -509,10 +508,10 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST(100), PUSH_CONST(2), MUL
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
@@ -527,7 +526,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // Should inline the function body
-        REQUIRE(result.bytecode.size() >= 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 3 * sizeof(cedar::Instruction));
     }
 
     SECTION("function with default parameter - using default") {
@@ -538,10 +537,10 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(440), PUSH_CONST(1.0), MUL
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
@@ -556,10 +555,10 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(440), PUSH_CONST(2.0), MUL
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::PUSH_CONST);
@@ -574,10 +573,10 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(440), OSC_SAW
-        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 2 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[2];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(inst[1].opcode == cedar::Opcode::OSC_SAW);
@@ -595,7 +594,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // Should compile the matching branch only
-        REQUIRE(result.bytecode.size() == 2 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 2 * sizeof(cedar::Instruction));
     }
 
     SECTION("nested function calls") {
@@ -607,7 +606,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
 
         REQUIRE(result.success);
         // PUSH_CONST(100), PUSH_CONST(2), MUL, PUSH_CONST(2), MUL
-        REQUIRE(result.bytecode.size() == 5 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 5 * sizeof(cedar::Instruction));
     }
 
     SECTION("function can capture outer variables (read-only)") {
@@ -620,7 +619,7 @@ TEST_CASE("Akkado user-defined functions", "[akkado][fn]") {
         // Captures are now allowed since variables are immutable
         REQUIRE(result.success);
         // Should have ADD instruction
-        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= sizeof(cedar::Instruction));
     }
 
     SECTION("function can call other user functions") {
@@ -673,10 +672,10 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         REQUIRE(result.success);
         // Expected: PUSH_CONST(110), OSC_SAW, PUSH_CONST(400), PUSH_CONST(2),
         //           PUSH_CONST(4.0), PUSH_CONST(0.5), FILTER_MOOG
-        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 7 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[7];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[6].opcode == cedar::Opcode::FILTER_MOOG);
         // Defaults should be filled in as PUSH_CONST
@@ -689,10 +688,10 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         auto result = akkado::compile("saw(110) |> moog(%, 400, 2, 3.5, 0.8)");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 7 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[7];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[6].opcode == cedar::Opcode::FILTER_MOOG);
         CHECK(decode_const_float(inst[4]) == 3.5f);
@@ -705,10 +704,10 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         REQUIRE(result.success);
         // Expected: PUSH_CONST(220), OSC_SAW, PUSH_CONST(0.5), PUSH_CONST(0.5),
         //           PUSH_CONST(0.28), PUSH_CONST(0.7), REVERB_FREEVERB
-        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 7 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[7];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[6].opcode == cedar::Opcode::REVERB_FREEVERB);
         CHECK(decode_const_float(inst[4]) == 0.28f);
@@ -719,10 +718,10 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         auto result = akkado::compile("saw(220) |> freeverb(%, 0.5, 0.5, 0.35, 0.8)");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 7 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[7];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[6].opcode == cedar::Opcode::REVERB_FREEVERB);
         CHECK(decode_const_float(inst[4]) == 0.35f);
@@ -733,10 +732,10 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         auto result = akkado::compile("saw(110) |> flanger(%, 0.5, 0.7, 0.05, 5.0)");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == 7 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 7 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[7];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[6].opcode == cedar::Opcode::EFFECT_FLANGER);
         CHECK(decode_const_float(inst[4]) == 0.05f);
@@ -751,8 +750,8 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
         //           PUSH_CONST(10), DYNAMICS_GATE
         // Note: gate has 3 required + 2 optional params but range default would be added
 
-        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         // Find DYNAMICS_GATE instruction
         bool found_gate = false;
@@ -770,8 +769,8 @@ TEST_CASE("Builtins with optional parameters", "[akkado][builtins]") {
 
         REQUIRE(result.success);
 
-        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         // Find DISTORT_EXCITE instruction
         bool found_excite = false;
@@ -818,28 +817,28 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
 
         REQUIRE(result.success);
         // stdlib osc() produces: PUSH_CONST(freq), PUSH_CONST(pwm default), OSC_SIN
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SIN));
     }
 
     SECTION("stdlib osc() with saw type") {
         auto result = akkado::compile(R"(saw(440))");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
     }
 
     SECTION("stdlib osc() with sqr type") {
         auto result = akkado::compile(R"(sqr(440))");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SQR));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SQR));
     }
 
     SECTION("stdlib osc() with tri type") {
         auto result = akkado::compile(R"(tri(440))");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_TRI));
     }
 
     SECTION("stdlib osc() with alternate names (sine, sawtooth, square, triangle)") {
@@ -847,28 +846,28 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
         {
             auto result = akkado::compile(R"(osc("sine", 440))");
             REQUIRE(result.success);
-            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+            CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SIN));
         }
 
         // Test "sawtooth" alias
         {
             auto result = akkado::compile(R"(osc("sawtooth", 440))");
             REQUIRE(result.success);
-            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+            CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
         }
 
         // Test "square" alias
         {
             auto result = akkado::compile(R"(osc("square", 440))");
             REQUIRE(result.success);
-            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SQR));
+            CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SQR));
         }
 
         // Test "triangle" alias
         {
             auto result = akkado::compile(R"(osc("triangle", 440))");
             REQUIRE(result.success);
-            CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+            CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_TRI));
         }
     }
 
@@ -878,10 +877,10 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
         REQUIRE(result.success);
         // Should have: PUSH_CONST, NOISE
         // Note: noise() ignores frequency but osc() still passes it through the match
-        REQUIRE(result.bytecode.size() >= 1 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= 1 * sizeof(cedar::Instruction));
 
-        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         bool found_noise = false;
         for (size_t i = 0; i < num_inst; ++i) {
@@ -899,8 +898,8 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
             auto result = akkado::compile(R"(osc("sqr_pwm", 440, 0.25))");
             REQUIRE(result.success);
 
-            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-            size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+            size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
             bool found_pwm = false;
             for (size_t i = 0; i < num_inst; ++i) {
@@ -917,8 +916,8 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
             auto result = akkado::compile(R"(osc("pulse", 440, 0.3))");
             REQUIRE(result.success);
 
-            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-            size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+            cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+            size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
             bool found_pwm = false;
             for (size_t i = 0; i < num_inst; ++i) {
@@ -936,7 +935,7 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
 
         REQUIRE(result.success);
         // Should fall back to sin via the wildcard match
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SIN));
     }
 
     SECTION("user can shadow stdlib osc()") {
@@ -948,9 +947,9 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
 
         REQUIRE(result.success);
         // User's osc() should produce OSC_SAW (not OSC_SIN!)
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
         // And should NOT produce OSC_SIN
-        CHECK_FALSE(find_opcode(result.bytecode, cedar::Opcode::OSC_SIN));
+        CHECK_FALSE(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SIN));
     }
 
     SECTION("stdlib osc() works in pipe chain") {
@@ -958,9 +957,9 @@ TEST_CASE("Akkado stdlib", "[akkado][stdlib]") {
 
         REQUIRE(result.success);
         // Should have OSC_SAW, FILTER_SVF_LP, and OUTPUT
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("diagnostic line numbers are correct (not offset by stdlib)") {
@@ -1018,10 +1017,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
 
         REQUIRE(result.success);
         // Should emit first element (1) as PUSH_CONST
-        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 1.0f);
     }
@@ -1030,10 +1029,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         auto result = akkado::compile("[]");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 0.0f);
     }
@@ -1043,10 +1042,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
 
         REQUIRE(result.success);
         // Should emit 3 as PUSH_CONST
-        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 3.0f);
     }
@@ -1055,10 +1054,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         auto result = akkado::compile("len([])");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 0.0f);
     }
@@ -1069,7 +1068,7 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         REQUIRE(result.success);
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 1.0f);
     }
@@ -1078,10 +1077,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
         auto result = akkado::compile("[1, 2, 3] |> len(%)");
 
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() == sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == sizeof(cedar::Instruction));
 
         cedar::Instruction inst;
-        std::memcpy(&inst, result.bytecode.data(), sizeof(inst));
+        std::memcpy(&inst, result.program.bytecode.data(), sizeof(inst));
         CHECK(inst.opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst) == 3.0f);
     }
@@ -1091,10 +1090,10 @@ TEST_CASE("Akkado arrays and len()", "[akkado][array]") {
 
         REQUIRE(result.success);
         // Should emit: PUSH_CONST(5), PUSH_CONST(10), ADD
-        REQUIRE(result.bytecode.size() == 3 * sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() == 3 * sizeof(cedar::Instruction));
 
         cedar::Instruction inst[3];
-        std::memcpy(inst, result.bytecode.data(), result.bytecode.size());
+        std::memcpy(inst, result.program.bytecode.data(), result.program.bytecode.size());
 
         CHECK(inst[0].opcode == cedar::Opcode::PUSH_CONST);
         CHECK(decode_const_float(inst[0]) == 5.0f);
@@ -1129,8 +1128,8 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
         REQUIRE(result.success);
         // Patterns now use SEQPAT_QUERY + SEQPAT_STEP (lazy query system)
         bool has_pat_step = false;
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t i = 0; i < count; ++i) {
             if (insts[i].opcode == cedar::Opcode::SEQPAT_STEP) {
                 has_pat_step = true;
@@ -1169,8 +1168,8 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
         REQUIRE(result.success);
         // Patterns now use SEQPAT_QUERY + SEQPAT_STEP (lazy query system)
         bool has_pat_step = false;
-        auto insts = reinterpret_cast<const cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        auto insts = reinterpret_cast<const cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
         for (std::size_t i = 0; i < count; ++i) {
             if (insts[i].opcode == cedar::Opcode::SEQPAT_STEP) {
                 has_pat_step = true;
@@ -1188,12 +1187,12 @@ TEST_CASE("Pattern variables", "[akkado][pattern]") {
 
         REQUIRE(result.success);
         // Should have state initialization data for the pattern (now uses SequenceProgram)
-        REQUIRE(result.state_inits.size() >= 1);
-        CHECK(result.state_inits[0].type == akkado::StateInitData::Type::SequenceProgram);
+        REQUIRE(result.program.state_inits.size() >= 1);
+        CHECK(result.program.state_inits[0].type == akkado::StateInitData::Type::SequenceProgram);
         // Sequences should be populated (root sequence with events)
-        CHECK(result.state_inits[0].sequences.size() >= 1);
+        CHECK(result.program.state_inits[0].sequences.size() >= 1);
         // Sample patterns should be marked
-        CHECK(result.state_inits[0].is_sample_pattern == true);
+        CHECK(result.program.state_inits[0].is_sample_pattern == true);
     }
 }
 
@@ -1206,11 +1205,11 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
 
         REQUIRE(result.success);
         // Should emit PUSH_CONST(4)
-        REQUIRE(result.bytecode.size() >= sizeof(cedar::Instruction));
+        REQUIRE(result.program.bytecode.size() >= sizeof(cedar::Instruction));
 
         // Find the last PUSH_CONST (the len result)
-        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         // Last instruction should be PUSH_CONST(4)
         CHECK(insts[count - 1].opcode == cedar::Opcode::PUSH_CONST);
@@ -1225,7 +1224,7 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
 
         REQUIRE(result.success);
         // Should have MUL instructions for the mapping
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("lambda as variable") {
@@ -1235,7 +1234,7 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("fn used in map()") {
@@ -1245,7 +1244,7 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("closure captures variable") {
@@ -1256,7 +1255,7 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("variable reassignment produces error") {
@@ -1316,10 +1315,10 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
 
         REQUIRE(result.success);
         // Should have: PUSH_CONST(3), PUSH_CONST(1), ADD
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
 
-        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        std::size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         // Check structure: two PUSH_CONST followed by ADD
         bool found_structure = false;
@@ -1344,8 +1343,8 @@ TEST_CASE("First-class functions and arrays", "[akkado][first-class]") {
 
         REQUIRE(result.success);
         // Should have MUL and ADD instructions
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 }
 
@@ -1358,10 +1357,10 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
 
         REQUIRE(result.success);
         // Should have: SAW, LP filter, HP filter, OUTPUT
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("pipe in closure body") {
@@ -1372,10 +1371,10 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
 
         REQUIRE(result.success);
         // Should have: SAW, LP filter, HP filter, OUTPUT
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("pipe-to-lambda syntax") {
@@ -1386,10 +1385,10 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
 
         REQUIRE(result.success);
         // Should have: SAW, LP filter, HP filter, OUTPUT
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("longer pipe chain in function body") {
@@ -1399,8 +1398,8 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("pipe-to-lambda used in map") {
@@ -1411,9 +1410,9 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("nested function calls with pipes") {
@@ -1424,9 +1423,9 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("bare-param pipe in a function/closure body does not misfire "
@@ -1441,9 +1440,9 @@ TEST_CASE("Pipes in functions and closures", "[akkado][pipe]") {
                                     const akkado::CompileResult& b) {
             REQUIRE(a.success);
             REQUIRE(b.success);
-            REQUIRE(a.bytecode.size() == b.bytecode.size());
-            CHECK(std::memcmp(a.bytecode.data(), b.bytecode.data(),
-                              a.bytecode.size()) == 0);
+            REQUIRE(a.program.bytecode.size() == b.program.bytecode.size());
+            CHECK(std::memcmp(a.program.bytecode.data(), b.program.bytecode.data(),
+                              a.program.bytecode.size()) == 0);
         };
 
         // fn body: `x |> @ * 0.5`  ==  `x * 0.5`
@@ -1482,8 +1481,8 @@ TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
         // out_buffer. Pre-fix, OUTPUT read a freshly-allocated closure-
         // parameter buffer that was never written → silence.
         const auto* inst = reinterpret_cast<const cedar::Instruction*>(
-            result.bytecode.data());
-        const size_t n = result.bytecode.size() / sizeof(cedar::Instruction);
+            result.program.bytecode.data());
+        const size_t n = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         std::uint16_t mul_out = cedar::BUFFER_UNUSED;
         std::uint16_t output_in = cedar::BUFFER_UNUSED;
@@ -1508,9 +1507,9 @@ TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
             saw(440) |> process(%) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("undefined identifier at top-level pipe is a diagnostic, not a closure") {
@@ -1539,11 +1538,11 @@ TEST_CASE("Top-level `as` binding then pipe-to-out (regression)",
             v |> @ + freeverb(@, 0.5, 0.5) * 0.4 |> out(@)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
         // Bytecode must include the freeverb opcode — proves the second
         // statement actually compiled the signal chain rather than
         // collapsing to a stranded closure.
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::REVERB_FREEVERB));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::REVERB_FREEVERB));
     }
 }
 
@@ -1556,8 +1555,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("multiple closure parameters") {
@@ -1568,8 +1567,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("mixed scalar and closure parameters") {
@@ -1579,8 +1578,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("named function as closure parameter") {
@@ -1591,8 +1590,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("closure passthrough through nested function") {
@@ -1603,8 +1602,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("closure with stateful builtin") {
@@ -1615,8 +1614,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
     }
 
     SECTION("multiple closures with stateful builtins get independent state IDs") {
@@ -1630,8 +1629,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
 
         // Should have two FILTER_SVF_LP instructions with different state_ids
         cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(
-            const_cast<std::uint8_t*>(result.bytecode.data()));
-        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+            const_cast<std::uint8_t*>(result.program.bytecode.data()));
+        size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         std::vector<std::uint32_t> lp_state_ids;
         for (size_t i = 0; i < num_inst; ++i) {
@@ -1653,12 +1652,12 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
         // Should have cascaded lp/hp filters
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_HP));
         // And addition to recombine bands
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("multiband3fx with stateful effects") {
@@ -1675,8 +1674,8 @@ TEST_CASE("Closure parameters in user functions", "[akkado][fn][closure-params]"
         // All three effect lp() filters should have distinct state_ids from each other
         // and from the band-splitting filters
         cedar::Instruction* inst = reinterpret_cast<cedar::Instruction*>(
-            const_cast<std::uint8_t*>(result.bytecode.data()));
-        size_t num_inst = result.bytecode.size() / sizeof(cedar::Instruction);
+            const_cast<std::uint8_t*>(result.program.bytecode.data()));
+        size_t num_inst = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         std::vector<std::uint32_t> lp_state_ids;
         for (size_t i = 0; i < num_inst; ++i) {
@@ -1708,8 +1707,8 @@ TEST_CASE("String default parameters", "[akkado][fn][string-defaults]") {
 
         REQUIRE(result.success);
         // "saw" default should resolve match to saw branch
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK_FALSE(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK_FALSE(find_opcode(result.program.bytecode, cedar::Opcode::OSC_TRI));
     }
 
     SECTION("string default overridden by explicit arg") {
@@ -1724,7 +1723,7 @@ TEST_CASE("String default parameters", "[akkado][fn][string-defaults]") {
 
         REQUIRE(result.success);
         // "tri" argument should resolve match to tri branch
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_TRI));
     }
 
     SECTION("string default with numeric default") {
@@ -1738,7 +1737,7 @@ TEST_CASE("String default parameters", "[akkado][fn][string-defaults]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_TRI));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_TRI));
     }
 }
 
@@ -1751,7 +1750,7 @@ TEST_CASE("Named arguments for user functions", "[akkado][fn][named-args]") {
 
         REQUIRE(result.success);
         // Should produce ADD instructions from inlining
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("named args with defaults") {
@@ -1763,8 +1762,8 @@ TEST_CASE("Named arguments for user functions", "[akkado][fn][named-args]") {
         REQUIRE(result.success);
         // a=2, b=5 (default), c=20
         // Should have MUL and ADD
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("named args with string defaults") {
@@ -1778,7 +1777,7 @@ TEST_CASE("Named arguments for user functions", "[akkado][fn][named-args]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
     }
 }
 
@@ -1791,8 +1790,8 @@ TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("closure return captures multiple params") {
@@ -1803,8 +1802,8 @@ TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
     }
 
     SECTION("closure return used inline in pipe") {
@@ -1815,9 +1814,9 @@ TEST_CASE("Closures as return values", "[akkado][fn][closure-return]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 }
 
@@ -1829,8 +1828,8 @@ TEST_CASE("Variadic rest parameters", "[akkado][fn][variadic]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(count_opcode(result.bytecode, cedar::Opcode::OSC_SAW) == 2);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(count_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW) == 2);
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("rest param with len") {
@@ -1841,8 +1840,8 @@ TEST_CASE("Variadic rest parameters", "[akkado][fn][variadic]") {
 
         REQUIRE(result.success);
         // len(items) should be compile-time constant 3
-        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.bytecode.data());
-        std::size_t nm = result.bytecode.size() / sizeof(cedar::Instruction);
+        cedar::Instruction* insts = reinterpret_cast<cedar::Instruction*>(result.program.bytecode.data());
+        std::size_t nm = result.program.bytecode.size() / sizeof(cedar::Instruction);
 
         // Should have a PUSH_CONST(3) somewhere
         bool found_three = false;
@@ -1863,8 +1862,8 @@ TEST_CASE("Variadic rest parameters", "[akkado][fn][variadic]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(count_opcode(result.bytecode, cedar::Opcode::OSC_SAW) == 2);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(count_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW) == 2);
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("single arg to rest param") {
@@ -1874,7 +1873,7 @@ TEST_CASE("Variadic rest parameters", "[akkado][fn][variadic]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
     }
 }
 
@@ -1887,7 +1886,7 @@ TEST_CASE("Partial application", "[akkado][fn][partial]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("partial application first arg") {
@@ -1898,7 +1897,7 @@ TEST_CASE("Partial application", "[akkado][fn][partial]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
     }
 
     SECTION("partial application of builtin") {
@@ -1908,9 +1907,9 @@ TEST_CASE("Partial application", "[akkado][fn][partial]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("partial application with multiple placeholders") {
@@ -1921,7 +1920,7 @@ TEST_CASE("Partial application", "[akkado][fn][partial]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 }
 
@@ -1931,7 +1930,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             lp(sine(440), 5000, _) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
     }
 
     SECTION("builtin: _ equivalent to omitting trailing arg") {
@@ -1943,7 +1942,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
         )");
         REQUIRE(r1.success);
         REQUIRE(r2.success);
-        CHECK(r1.bytecode.size() == r2.bytecode.size());
+        CHECK(r1.program.bytecode.size() == r2.program.bytecode.size());
     }
 
     SECTION("builtin: multiple _ skip middle params") {
@@ -1951,7 +1950,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             delay(sine(440), 0.25, _, _, 0.8) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::DELAY));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::DELAY));
     }
 
     SECTION("user fn: _ with numeric default") {
@@ -1968,7 +1967,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             synth(440, _) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
     }
 
     SECTION("error: _ on required builtin param") {
@@ -1986,7 +1985,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             saw(440) |> low_pass(%) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
     }
 
     SECTION("disambiguation: _ on optional is default-filling, not partial app") {
@@ -1996,8 +1995,8 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             saw(440) |> lp(%, 5000, _) |> out(%, %)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     // PRD §10 Addendum: specialized handlers (poly, tap_delay, bus, mixer) must
@@ -2011,7 +2010,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             n"c4 e4 g4" |> poly(@, pad, _, 2.5) |> out(@)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FOREACH_EVENT));
     }
 
     SECTION("specialized: poly with _ for release uses default 0") {
@@ -2020,7 +2019,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             n"c4 e4 g4" |> poly(@, pad, 32, _) |> out(@)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FOREACH_EVENT));
     }
 
     SECTION("specialized: poly with both optionals as _") {
@@ -2029,7 +2028,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             n"c4 e4 g4" |> poly(@, pad, _, _) |> out(@)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FOREACH_EVENT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FOREACH_EVENT));
     }
 
     SECTION("specialized: tap_delay with _ for dry") {
@@ -2037,7 +2036,7 @@ TEST_CASE("Underscore placeholder default-filling", "[akkado][fn][placeholder]")
             tap_delay(sine(220), 0.25, 0.5, (x) -> lp(x, 2000), _, 0.8) |> out(@)
         )");
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::DELAY_TAP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::DELAY_TAP));
     }
 
     // Regression: prior to PRD §10 the poly/mono/legato BuiltinInfo entries
@@ -2077,8 +2076,8 @@ TEST_CASE("Function composition", "[akkado][fn][compose]") {
 
         REQUIRE(result.success);
         // double(5) = 10, inc(10) = 11
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 
     SECTION("compose with partial application") {
@@ -2088,10 +2087,10 @@ TEST_CASE("Function composition", "[akkado][fn][compose]") {
         )");
 
         REQUIRE(result.success);
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OSC_SAW));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_LP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::FILTER_SVF_HP));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::OUTPUT));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OSC_SAW));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_LP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::FILTER_SVF_HP));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::OUTPUT));
     }
 
     SECTION("compose three functions") {
@@ -2105,8 +2104,8 @@ TEST_CASE("Function composition", "[akkado][fn][compose]") {
 
         REQUIRE(result.success);
         // a(5)=10, b(10)=11, c(11)=33
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::MUL));
-        CHECK(find_opcode(result.bytecode, cedar::Opcode::ADD));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::MUL));
+        CHECK(find_opcode(result.program.bytecode, cedar::Opcode::ADD));
     }
 }
 

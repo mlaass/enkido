@@ -30,9 +30,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -49,7 +49,7 @@ std::size_t count_op(const std::vector<cedar::Instruction>& insts,
 std::size_t count_init(const akkado::CompileResult& r,
                        akkado::StateInitData::Type type) {
     std::size_t n = 0;
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == type) ++n;
     }
     return n;
@@ -58,7 +58,7 @@ std::size_t count_init(const akkado::CompileResult& r,
 // Locate the first state_init of a given type and return its state_id.
 std::uint32_t first_state_id(const akkado::CompileResult& r,
                              akkado::StateInitData::Type type) {
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == type) return init.state_id;
     }
     return 0;
@@ -72,8 +72,8 @@ struct RenderHost {
 
 void apply_inits(cedar::VM& vm, const akkado::CompileResult& r,
                  std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0;
@@ -108,7 +108,7 @@ std::unique_ptr<RenderHost> render(const akkado::CompileResult& r, int blocks) {
     auto host = std::make_unique<RenderHost>();
     host->vm.set_sample_rate(48000.0f);
     host->vm.set_bpm(120.0f);
-    host->vm.set_block_table(r.block_table, r.main_instruction_count);
+    host->vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     host->insts = get_instructions(r);
     REQUIRE(host->vm.load_program_immediate(
         std::span<const cedar::Instruction>(host->insts)));
@@ -137,7 +137,7 @@ TEST_CASE("rev(p) emits EVENT_REORDER(REV) + Reorder init",
     // The inner pattern still has the original 4 events at 0, 0.25, 0.5, 0.75.
     auto seq_id = first_state_id(r, akkado::StateInitData::Type::SequenceProgram);
     REQUIRE(seq_id != 0);
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram &&
             init.state_id == seq_id) {
             REQUIRE(init.sequence_events[0].size() == 4);
@@ -177,7 +177,7 @@ TEST_CASE("palindrome(p) emits EVENT_REORDER(PALINDROME) with 2x cycle_length",
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_REORDER) == 1);
     bool found_reorder = false;
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::Reorder) {
             found_reorder = true;
             CHECK_THAT(init.cycle_length, WithinAbs(2.0f, 0.001f));
@@ -343,7 +343,7 @@ TEST_CASE("ply(p, 3) emits EVENT_FANOUT(PLY) + Fanout init",
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
     CHECK(count_init(r, akkado::StateInitData::Type::Fanout) == 1);
-    for (const auto& si : r.state_inits) {
+    for (const auto& si : r.program.state_inits) {
         if (si.type == akkado::StateInitData::Type::Fanout) {
             // 2 upstream * n=3 = 6
             CHECK(si.total_events == 6);
@@ -380,7 +380,7 @@ TEST_CASE("linger(p, 0.5) emits EVENT_FANOUT(LINGER) with halved cycle_length",
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::EVENT_FANOUT) == 1);
-    for (const auto& si : r.state_inits) {
+    for (const auto& si : r.program.state_inits) {
         if (si.type == akkado::StateInitData::Type::Fanout) {
             CHECK_THAT(si.cycle_length, WithinAbs(0.5f, 0.001f));
         }
@@ -574,7 +574,7 @@ TEST_CASE("rev(fast(p, 2)) folds inner fast at compile time, emits only EVENT_RE
     // No ERS because the inner fast folded at compile time.
     CHECK(count_op(insts, cedar::Opcode::EVENT_RATE_SCALE) == 0);
     // The inner SequenceProgram's cycle_length is the folded value: 1/2 = 0.5.
-    for (const auto& si : r.state_inits) {
+    for (const auto& si : r.program.state_inits) {
         if (si.type == akkado::StateInitData::Type::SequenceProgram) {
             CHECK_THAT(si.cycle_length, WithinAbs(0.5f, 0.001f));
         }

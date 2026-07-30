@@ -26,9 +26,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -45,7 +45,7 @@ std::size_t count_op(const std::vector<cedar::Instruction>& insts,
 std::size_t count_init(const akkado::CompileResult& r,
                        akkado::StateInitData::Type type) {
     std::size_t n = 0;
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == type) ++n;
     }
     return n;
@@ -60,8 +60,8 @@ struct RenderHost {
 
 void apply_inits(cedar::VM& vm, const akkado::CompileResult& r,
                  std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0;
@@ -93,7 +93,7 @@ std::unique_ptr<RenderHost> render(const akkado::CompileResult& r, int blocks) {
     auto host = std::make_unique<RenderHost>();
     host->vm.set_sample_rate(48000.0f);
     host->vm.set_bpm(120.0f);
-    host->vm.set_block_table(r.block_table, r.main_instruction_count);
+    host->vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     host->insts = get_instructions(r);
     REQUIRE(host->vm.load_program_immediate(
         std::span<const cedar::Instruction>(host->insts)));
@@ -875,14 +875,14 @@ TEST_CASE("event-map: event_map() lowers to a closure EVENT_MAP + subprogram",
     auto insts = get_instructions(r);
     REQUIRE(count_op(insts, cedar::Opcode::EVENT_MAP) == 1);
     // The closure body compiled into one subprogram block.
-    CHECK(r.block_table.size() >= 1);
+    CHECK(r.program.block_table.size() >= 1);
     CHECK(count_init(r, akkado::StateInitData::Type::EventTransform) == 1);
 
     for (const auto& i : insts) {
         if (i.opcode != cedar::Opcode::EVENT_MAP) continue;
         // Closure form: EVENT_CLOSURE flag set, `rate` carries the block_id.
         CHECK((i.flags & cedar::InstructionFlag::EVENT_CLOSURE) != 0);
-        CHECK(i.rate < r.block_table.size());
+        CHECK(i.rate < r.program.block_table.size());
         // Write mask (flags bits 4+) records that the `note` field was set.
         std::uint8_t mask = static_cast<std::uint8_t>(
             (i.flags >> cedar::InstructionFlag::EVENT_MASK_SHIFT)

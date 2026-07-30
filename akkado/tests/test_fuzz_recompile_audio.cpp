@@ -39,7 +39,7 @@ namespace {
 // preserves playback position when source is unchanged).
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         std::vector<cedar::Sequence> seq_copy = init.sequences;
         for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -61,9 +61,9 @@ void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
 }
 
 std::vector<cedar::Instruction> to_inst_vector(const akkado::CompileResult& cr) {
-    const std::size_t n = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     return insts;
 }
 
@@ -1121,7 +1121,7 @@ std::string diff_seq_snapshots(const SeqStateSnapshot& a,
 
 // Locate the first SequenceProgram state_id emitted by the compile result.
 std::uint32_t first_seq_state_id(const akkado::CompileResult& cr) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             return init.state_id;
         }

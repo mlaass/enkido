@@ -86,7 +86,7 @@ bool prepare_program_assets(cedar::VM& vm,
     for (const auto& uri : opts.bank_uris) {
         if (!load_bank(uri)) return false;
     }
-    for (const auto& req : cr.required_uris) {
+    for (const auto& req : cr.requests.required_uris) {
         if (req.kind == akkado::UriKind::SampleBank) {
             if (!load_bank(req.uri)) return false;
         }
@@ -107,7 +107,7 @@ bool prepare_program_assets(cedar::VM& vm,
     // references samples — silent otherwise to keep load output clean for
     // pure-synth patches.
     if (!opts.no_default_bank) {
-        const bool has_required = !cr.required_samples_extended.empty();
+        const bool has_required = !cr.requests.required_samples_extended.empty();
         // Discovery diagnostics go to a sink for synth-only patches so the
         // load output stays clean; only emit them when the program actually
         // references samples.
@@ -157,7 +157,7 @@ bool prepare_program_assets(cedar::VM& vm,
                                              spec.substr(eq + 1));
             }
         }
-        for (const auto& req : cr.required_soundfonts) {
+        for (const auto& req : cr.requests.required_soundfonts) {
             std::string uri = resolve_soundfont_alias(req.filename,
                                                       rt_soundfont_aliases)
                                   .value_or(req.filename);
@@ -210,13 +210,13 @@ bool prepare_program_assets(cedar::VM& vm,
     // loaded bank list. Default-bank events search `default_banks`
     // first-hit-wins; events qualified with `.bank("Name")` look up the
     // built-in Tidal Drum Machines catalog first, then `named_banks`.
-    if (!cr.required_samples_extended.empty()) {
+    if (!cr.requests.required_samples_extended.empty()) {
         // Load the catalog only when the program references a non-default
         // bank — pure default-kit patches stay network-free and quiet.
         std::optional<TdmCatalog> tdm_catalog;
         const bool wants_named_bank = std::any_of(
-            cr.required_samples_extended.begin(),
-            cr.required_samples_extended.end(),
+            cr.requests.required_samples_extended.begin(),
+            cr.requests.required_samples_extended.end(),
             [](const akkado::RequiredSample& r) {
                 return !r.bank.empty() && r.bank != "default";
             });
@@ -224,7 +224,7 @@ bool prepare_program_assets(cedar::VM& vm,
             tdm_catalog = load_tdm_catalog(err);
         }
         register_required_samples(
-            vm, cr.required_samples_extended, default_banks, named_banks,
+            vm, cr.requests.required_samples_extended, default_banks, named_banks,
             tdm_catalog ? &*tdm_catalog : nullptr);
     }
 
@@ -232,7 +232,7 @@ bool prepare_program_assets(cedar::VM& vm,
     // ID must match the inst.rate value the compiler baked into the
     // bytecode; warn if the slot drifts. Path is interpreted relative to
     // CWD if not absolute.
-    for (const auto& wt : cr.required_wavetables) {
+    for (const auto& wt : cr.requests.required_wavetables) {
         std::string err_msg;
         const int id = vm.wavetable_registry().load_from_file(
             wt.name, wt.path, &err_msg);
@@ -251,7 +251,7 @@ bool prepare_program_assets(cedar::VM& vm,
 }
 
 void resolve_sample_ids_in_events(cedar::VM& vm, akkado::CompileResult& cr) {
-    for (auto& init : cr.state_inits) {
+    for (auto& init : cr.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         for (const auto& mapping : init.sequence_sample_mappings) {
             if (mapping.seq_idx >= init.sequence_events.size()) continue;
@@ -278,7 +278,7 @@ void resolve_sample_ids_in_events(cedar::VM& vm, akkado::CompileResult& cr) {
 
 void apply_builtin_var_overrides(cedar::VM& vm,
                                  const akkado::CompileResult& cr) {
-    for (const auto& ov : cr.builtin_var_overrides) {
+    for (const auto& ov : cr.artifacts.builtin_var_overrides) {
         if (ov.name == "bpm") {
             vm.set_bpm(ov.value);
         }
@@ -288,8 +288,8 @@ void apply_builtin_var_overrides(cedar::VM& vm,
 void apply_state_inits(cedar::VM& vm,
                        const akkado::CompileResult& result,
                        std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(seq_storage.size() + result.state_inits.size());
-    for (const auto& init : result.state_inits) {
+    seq_storage.reserve(seq_storage.size() + result.program.state_inits.size());
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -425,18 +425,18 @@ bool load_and_prepare_immediate(cedar::VM& vm,
     // load — running on the load thread, not the audio thread, so heap
     // allocation here is safe. Chunked slabs make growth pointer-stable
     // for any reads still in flight from a previous program.
-    if (load.compile_result && load.compile_result->required_buffers > 0) {
-        vm.buffers().ensure_capacity(load.compile_result->required_buffers);
+    if (load.compile_result && load.compile_result->program.required_buffers > 0) {
+        vm.buffers().ensure_capacity(load.compile_result->program.required_buffers);
     }
 
     // PRD L3: a program with FOREACH_EVENT blocks carries a subprogram table
     // that must be loaded alongside the instruction stream.
     bool loaded = false;
-    if (load.compile_result && !load.compile_result->block_table.empty()) {
+    if (load.compile_result && !load.compile_result->program.block_table.empty()) {
         loaded = vm.load_program_with_blocks_immediate(
             load.instructions,
-            load.compile_result->block_table,
-            load.compile_result->main_instruction_count);
+            load.compile_result->program.block_table,
+            load.compile_result->program.main_instruction_count);
     } else {
         loaded = vm.load_program_immediate(load.instructions);
     }
@@ -448,7 +448,7 @@ bool load_and_prepare_immediate(cedar::VM& vm,
     if (load.compile_result) {
         apply_state_inits(vm, *load.compile_result, seq_storage);
         apply_builtin_var_overrides(vm, *load.compile_result);
-        apply_midi_source_inits(vm, load.compile_result->required_midi_sources,
+        apply_midi_source_inits(vm, load.compile_result->requests.required_midi_sources,
                                 err);
     }
     return true;

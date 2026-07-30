@@ -46,9 +46,9 @@
 namespace {
 
 std::vector<cedar::Instruction> to_inst(const akkado::CompileResult& cr) {
-    const std::size_t n = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     return insts;
 }
 

@@ -95,8 +95,8 @@ std::string diag_message(const akkado::CompileResult& r, std::string_view code) 
 // Scan compiled bytecode for an opcode (Phase 4 selection tests use distinct
 // builtins per overload, so the inlined body is observable in the opcode stream).
 std::size_t count_opcode(const akkado::CompileResult& r, cedar::Opcode target) {
-    const auto* inst = reinterpret_cast<const cedar::Instruction*>(r.bytecode.data());
-    std::size_t n = r.bytecode.size() / sizeof(cedar::Instruction);
+    const auto* inst = reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data());
+    std::size_t n = r.program.bytecode.size() / sizeof(cedar::Instruction);
     std::size_t count = 0;
     for (std::size_t i = 0; i < n; ++i) {
         if (inst[i].opcode == target) ++count;
@@ -975,7 +975,7 @@ TEST_CASE("overload fn: recompiling an overloaded program is deterministic",
     REQUIRE(b.success);
     // State IDs and emission order are deterministic, so the bytecode is
     // byte-identical across recompiles — the property hot-swap relies on.
-    CHECK(a.bytecode == b.bytecode);
+    CHECK(a.program.bytecode == b.program.bytecode);
     // All three overload bodies are reachable and distinct.
     CHECK(has_opcode(a, cedar::Opcode::OSC_SIN));
     CHECK(has_opcode(a, cedar::Opcode::OSC_SAW));

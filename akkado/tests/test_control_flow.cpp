@@ -16,9 +16,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> instructions;
-    size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     instructions.resize(count);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 
@@ -38,8 +38,8 @@ float run_one_block_left(const akkado::CompileResult& r) {
     cedar::VM vm;
     REQUIRE(vm.load_program_immediate(
         std::span<const cedar::Instruction>(
-            reinterpret_cast<const cedar::Instruction*>(r.bytecode.data()),
-            r.bytecode.size() / sizeof(cedar::Instruction))));
+            reinterpret_cast<const cedar::Instruction*>(r.program.bytecode.data()),
+            r.program.bytecode.size() / sizeof(cedar::Instruction))));
     std::array<float, cedar::BLOCK_SIZE> L{}, R{};
     vm.process_block(L.data(), R.data());
     return L[cedar::BLOCK_SIZE - 1];
@@ -49,8 +49,7 @@ float run_one_block_left(const akkado::CompileResult& r) {
 // the master bus so out() stays a transparent device write — no default
 // soft-clip @ 0.9, no ±1.0 safety clamp. The master bus has its own tests.
 akkado::CompileResult compile_raw(std::string_view src) {
-    return akkado::compile(src, "<input>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.bypass_master = true});
 }
 
 }  // namespace

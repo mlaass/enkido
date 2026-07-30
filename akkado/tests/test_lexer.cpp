@@ -986,7 +986,7 @@ TEST_CASE("F12: interned views survive source-buffer destruction",
     // The interner owns its strings (Phase 5 design refinement) — a
     // SymbolId resolved after the original source goes out of scope
     // must still return the correct view. This is the property that
-    // lets CompileResult.symbols->lookup() keep working post-compile.
+    // lets CompileResult.artifacts.symbols->lookup() keep working post-compile.
     StringInterner interner;
     SymbolId id;
     {

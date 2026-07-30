@@ -93,7 +93,7 @@ TEST_CASE("scales.ak dispatchers resolve through the loader",
         REQUIRE(r.success);
         // The inefficient codegen still demands far more than the old
         // 256-buffer cap — proving every branch is materialized.
-        CHECK(r.required_buffers > 256);
+        CHECK(r.program.required_buffers > 256);
     }
 }
 

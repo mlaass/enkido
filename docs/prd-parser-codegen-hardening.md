@@ -1,4 +1,13 @@
-> **Status: IN PROGRESS — Phase 1 SHIPPED (2026-07-31), 8 phases remaining.**
+> **Status: IN PROGRESS — Phases 1-2 SHIPPED (2026-07-31), 7 phases remaining.**
+>
+> - **Phase 2 (CompileOptions + grouped CompileResult + debug-JSON gate)
+>   — SHIPPED 2026-07-31.** `compile(source, CompileOptions)` replaces
+>   the 6-positional-arg form; `CompileResult` is grouped into
+>   `program` / `requests` / `artifacts` (+ top-level `success` /
+>   `diagnostics`); `StateInitData::ast_json` is gated behind
+>   `emit_debug_json` (default false; wasm passes true). All in-tree
+>   callers migrated (tools, wasm, ~40 test files). [P2] tests cover
+>   the gate + grouped population. Commit hashes backfilled at Phase 9.
 >
 > - **Phase 1 (dead-code + catalogue) — SHIPPED 2026-07-31.** Deleted
 >   `TokenType::MiniString`, the `MiniLexer`/`lex_mini` bool overloads

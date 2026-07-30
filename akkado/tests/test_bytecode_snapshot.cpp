@@ -51,19 +51,19 @@ std::vector<cedar::Instruction> decode_instructions(const std::vector<std::uint8
 
 std::string render_snapshot(const std::filesystem::path& fixture_path,
                             const akkado::CompileResult& result) {
-    const auto insts = decode_instructions(result.bytecode);
+    const auto insts = decode_instructions(result.program.bytecode);
 
     std::ostringstream out;
     out << "# fixture: " << fixture_path.filename().string() << "\n";
-    out << "# main: " << result.main_instruction_count
-        << ", blocks: " << result.block_table.size()
+    out << "# main: " << result.program.main_instruction_count
+        << ", blocks: " << result.program.block_table.size()
         << ", total: " << insts.size()
         << "\n";
 
-    if (!result.block_table.empty()) {
+    if (!result.program.block_table.empty()) {
         out << "# block table:\n";
-        for (std::size_t i = 0; i < result.block_table.size(); ++i) {
-            const auto& b = result.block_table[i];
+        for (std::size_t i = 0; i < result.program.block_table.size(); ++i) {
+            const auto& b = result.program.block_table[i];
             out << "#   block " << i
                 << ": body=[" << b.offset << ".." << (b.offset + b.length) << ")"
                 << ", frame_slots=" << b.frame_slot_count
@@ -104,12 +104,7 @@ TEST_CASE("bytecode disassembly snapshots", "[snapshot]") {
         CAPTURE(fixture.string());
 
         const std::string source = read_file(fixture);
-        auto result = akkado::compile(source,
-                                      fixture.filename().string(),
-                                      /*sample_registry=*/nullptr,
-                                      /*resolver=*/nullptr,
-                                      /*lint_strict=*/false,
-                                      /*bypass_master=*/false);
+        auto result = akkado::compile(source, {.filename = fixture.filename().string()});
         if (!result.success) {
             for (const auto& d : result.diagnostics) {
                 UNSCOPED_INFO("diag " << d.code << " @ " << d.location.line

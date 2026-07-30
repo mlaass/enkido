@@ -1001,11 +1001,11 @@ void handle_command_line(ServeState& s, const std::string& line) {
             // chunked BufferPool keeps existing slab pointers stable so
             // the audio thread's in-flight reads of the previous program
             // remain valid.
-            if (cr.required_buffers > 0) {
-                s.engine->vm().buffers().ensure_capacity(cr.required_buffers);
+            if (cr.program.required_buffers > 0) {
+                s.engine->vm().buffers().ensure_capacity(cr.program.required_buffers);
             }
             // PRD L3: stage the FOREACH_EVENT subprogram table for this hot-swap.
-            s.engine->vm().set_block_table(cr.block_table, cr.main_instruction_count);
+            s.engine->vm().set_block_table(cr.program.block_table, cr.program.main_instruction_count);
             auto load_result = s.engine->vm().load_program(load.instructions);
             if (load_result != cedar::VM::LoadResult::Success) {
                 const char* reason = "load failed";
@@ -1021,7 +1021,7 @@ void handle_command_line(ServeState& s, const std::string& line) {
             s.seq_storage_history.emplace_back();
             apply_state_inits(s.engine->vm(), cr, s.seq_storage_history.back());
             apply_builtin_var_overrides(s.engine->vm(), cr);
-            s.engine->apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
+            s.engine->apply_midi_route_plan(cr.requests.required_midi_sources, cr.requests.required_midi_cc_routes);
         } else {
             if (!s.audio_initialized) {
                 if (!s.engine->init(s.audio_config)) {
@@ -1038,7 +1038,7 @@ void handle_command_line(ServeState& s, const std::string& line) {
                 emit_compiled(false);
                 return;
             }
-            s.engine->apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
+            s.engine->apply_midi_route_plan(cr.requests.required_midi_sources, cr.requests.required_midi_cc_routes);
             s.engine->set_master_volume(s.master_volume);
             if (!s.engine->start()) {
                 emit_error("failed to start audio");

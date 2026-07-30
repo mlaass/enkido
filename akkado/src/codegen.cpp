@@ -47,7 +47,8 @@ static std::optional<std::string> get_call_string_arg(const Ast& ast, const Node
 }
 #endif
 
-CodeGenerator::CodeGenerator(CompileContext& ctx) : ctx_(&ctx) {}
+CodeGenerator::CodeGenerator(CompileContext& ctx, bool emit_debug_json)
+    : ctx_(&ctx), emit_debug_json_(emit_debug_json) {}
 
 std::uint16_t BufferAllocator::allocate() {
     // LIFO drain of the free list keeps recently-released buffers hot in

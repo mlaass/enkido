@@ -29,9 +29,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -45,7 +45,7 @@ std::size_t count_op(const akkado::CompileResult& r, cedar::Opcode op) {
 }
 
 std::size_t instruction_count(const akkado::CompileResult& r) {
-    return r.bytecode.size() / sizeof(cedar::Instruction);
+    return r.program.bytecode.size() / sizeof(cedar::Instruction);
 }
 
 // Compile + load + render `blocks` blocks of stereo audio. Returns interleaved
@@ -58,9 +58,9 @@ std::vector<float> render(const akkado::CompileResult& cr, int blocks) {
     auto vm = std::make_unique<cedar::VM>();
     vm->set_crossfade_blocks(0);
     bool loaded;
-    if (!cr.block_table.empty()) {
+    if (!cr.program.block_table.empty()) {
         loaded = vm->load_program_with_blocks_immediate(
-            insts, cr.block_table, cr.main_instruction_count);
+            insts, cr.program.block_table, cr.program.main_instruction_count);
     } else {
         loaded = vm->load_program_immediate(insts);
     }
@@ -135,12 +135,12 @@ TEST_CASE("BLOCK_CALL: 10-call-site fn -> one shared block, identical audio",
     REQUIRE(cr_inline.success);
 
     // Exactly one subprogram block, dispatched from all ten call sites.
-    CHECK(cr_shared.block_table.size() == 1);
+    CHECK(cr_shared.program.block_table.size() == 1);
     CHECK(count_op(cr_shared, cedar::Opcode::BLOCK_CALL) == 10);
     CHECK(count_op(cr_shared, cedar::Opcode::MUL) == 1);
 
     // The #inline build expands the body ten times and carries no block table.
-    CHECK(cr_inline.block_table.empty());
+    CHECK(cr_inline.program.block_table.empty());
     CHECK(count_op(cr_inline, cedar::Opcode::MUL) == 10);
 
     auto a = render(cr_shared, 300);
@@ -165,7 +165,7 @@ TEST_CASE("BLOCK_CALL: shared block shrinks the program",
 
     // Body stored once: the shared program's main stream is materially
     // smaller, and so is the whole [main | body] stream.
-    CHECK(cr_shared.main_instruction_count < instruction_count(cr_inline));
+    CHECK(cr_shared.program.main_instruction_count < instruction_count(cr_inline));
     CHECK(instruction_count(cr_shared) < instruction_count(cr_inline));
 }
 
@@ -224,7 +224,7 @@ TEST_CASE("BLOCK_CALL: shared-block state survives hot-swap",
     auto vm = std::make_unique<cedar::VM>();
     vm->set_crossfade_blocks(0);
     REQUIRE(vm->load_program_with_blocks_immediate(
-        insts, cr.block_table, cr.main_instruction_count));
+        insts, cr.program.block_table, cr.program.main_instruction_count));
 
     std::vector<float> swapped;
     swapped.reserve(reference.size());
@@ -241,7 +241,7 @@ TEST_CASE("BLOCK_CALL: shared-block state survives hot-swap",
     REQUIRE(cr2.success);
     auto insts2 = get_instructions(cr2);
     REQUIRE(vm->load_program_with_blocks(
-                insts2, cr2.block_table, cr2.main_instruction_count) ==
+                insts2, cr2.program.block_table, cr2.program.main_instruction_count) ==
             cedar::VM::LoadResult::Success);
 
     for (int b = 0; b < kHalf; ++b) {
@@ -270,7 +270,7 @@ TEST_CASE("BLOCK_CALL: single-call fn is not shared",
     // Sharing a body called only once saves nothing.
     auto r = akkado::compile("fn once(x) -> x * 2\nsaw(once(220)) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -280,7 +280,7 @@ TEST_CASE("BLOCK_CALL: const fn is not shared",
     auto r = akkado::compile(
         "const fn cf(x) -> x * 2\nsaw(cf(110)) + saw(cf(220)) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -289,7 +289,7 @@ TEST_CASE("BLOCK_CALL: #inline fn is never shared",
     auto r = akkado::compile(
         "#inline fn h(x) -> x * 0.5\nsaw(h(220)) + saw(h(330)) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -317,7 +317,7 @@ TEST_CASE("BLOCK_CALL: fn with >32 params falls back to inlining",
     auto r = akkado::compile(
         fn + "saw(big(" + args(1) + ")) + saw(big(" + args(2) + ")) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -345,7 +345,7 @@ TEST_CASE("BLOCK_BIND: 7-param fn is shared, renders identically to inlined",
     REQUIRE(inlined.success);
 
     // One shared body; two call sites; two BLOCK_BIND per site (slots 5,6).
-    CHECK(shared.block_table.size() == 1);
+    CHECK(shared.program.block_table.size() == 1);
     CHECK(count_op(shared, cedar::Opcode::BLOCK_CALL) == 2);
     CHECK(count_op(shared, cedar::Opcode::BLOCK_BIND) == 4);
     CHECK(count_op(inlined, cedar::Opcode::BLOCK_CALL) == 0);
@@ -368,7 +368,7 @@ TEST_CASE("BLOCK_BIND: each BLOCK_BIND run precedes its BLOCK_CALL",
     auto insts = get_instructions(r);
     int bind_run = 0;
     int calls_with_run = 0;
-    for (std::size_t i = 0; i < r.main_instruction_count; ++i) {
+    for (std::size_t i = 0; i < r.program.main_instruction_count; ++i) {
         if (insts[i].opcode == cedar::Opcode::BLOCK_BIND) {
             ++bind_run;
             // BLOCK_BIND only ever binds slots >= 5.
@@ -403,7 +403,7 @@ TEST_CASE("BLOCK_BIND: arrow-body fn followed by a parenthesized call stmt",
     for (const auto& d : r.diagnostics) {
         CHECK(d.code != "E240");  // no false recursion
     }
-    CHECK(r.block_table.size() == 1);
+    CHECK(r.program.block_table.size() == 1);
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 2);
     CHECK(count_op(r, cedar::Opcode::BLOCK_BIND) == 4);
 }
@@ -441,7 +441,7 @@ TEST_CASE("BLOCK_CALL: fn with a default param is not shared",
     auto r = akkado::compile(
         "fn d(x, y = 2) -> x * y\nsaw(d(110)) + saw(d(220)) |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -454,7 +454,7 @@ TEST_CASE("BLOCK_CALL: fn whose body needs a const arg is not shared",
         "fn mk(shape) -> osc(shape, 220)\n"
         "mk(\"sin\") + mk(\"saw\") |> out(@)");
     REQUIRE(r.success);
-    CHECK(r.block_table.empty());
+    CHECK(r.program.block_table.empty());
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 0);
 }
 
@@ -498,8 +498,8 @@ TEST_CASE("BLOCK_CALL: many distinct shared fns compile and stay within cap",
 
     auto r = akkado::compile(src);
     REQUIRE(r.success);
-    CHECK(r.block_table.size() == static_cast<std::size_t>(kFns));
-    CHECK(r.block_table.size() <= cedar::MAX_SUBPROGRAMS);
+    CHECK(r.program.block_table.size() == static_cast<std::size_t>(kFns));
+    CHECK(r.program.block_table.size() <= cedar::MAX_SUBPROGRAMS);
     CHECK(count_op(r, cedar::Opcode::BLOCK_CALL) == 2 * kFns);
 
     // Audio renders without NaN/Inf.

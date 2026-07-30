@@ -26,7 +26,7 @@ inline void live_apply_state_inits(
     const akkado::CompileResult& cr,
     std::vector<std::vector<cedar::Sequence>>& seq_storage) {
 
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         using Type = akkado::StateInitData::Type;
         switch (init.type) {
             case Type::SequenceProgram: {

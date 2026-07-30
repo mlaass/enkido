@@ -110,15 +110,15 @@ std::vector<std::string> load_seeds() {
 
 // --- VM glue (mirrors the helpers in test_fuzz_recompile_audio.cpp) ----------
 std::vector<cedar::Instruction> to_inst_vector(const akkado::CompileResult& cr) {
-    const std::size_t n = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n);
-    if (n != 0) std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    if (n != 0) std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     return insts;
 }
 
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         std::vector<cedar::Sequence> seq_copy = init.sequences;
         for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -243,7 +243,7 @@ TEST_CASE("drift fuzz: bounded RSS over mutating recompiles", "[drift_fuzz]") {
             // Hot-swap into the live VM and run a few blocks so swap/state-GC
             // paths execute.
             auto insts = to_inst_vector(cr);
-            const std::uint32_t req_buffers = cr.required_buffers;
+            const std::uint32_t req_buffers = cr.program.required_buffers;
             if (!insts.empty()) {
                 vm->buffers().ensure_capacity(req_buffers);
                 cedar::VM::LoadResult res = cedar::VM::LoadResult::SlotBusy;

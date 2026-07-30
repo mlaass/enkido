@@ -31,9 +31,9 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts;
-    insts.resize(r.bytecode.size() / sizeof(cedar::Instruction));
+    insts.resize(r.program.bytecode.size() / sizeof(cedar::Instruction));
     if (!insts.empty()) {
-        std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     }
     return insts;
 }
@@ -50,7 +50,7 @@ std::size_t count_op(const std::vector<cedar::Instruction>& insts,
 std::size_t count_init(const akkado::CompileResult& r,
                        akkado::StateInitData::Type type) {
     std::size_t n = 0;
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == type) ++n;
     }
     return n;
@@ -59,7 +59,7 @@ std::size_t count_init(const akkado::CompileResult& r,
 // Find the SequenceProgram init's state_id — the upstream SequenceState that
 // the EVENT_RATE_SCALE instruction targets.
 std::uint32_t first_seq_program_state_id(const akkado::CompileResult& r) {
-    for (const auto& init : r.state_inits) {
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             return init.state_id;
         }
@@ -75,8 +75,8 @@ struct RenderHost {
 
 void apply_inits(cedar::VM& vm, const akkado::CompileResult& r,
                  std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0;
@@ -105,7 +105,7 @@ std::unique_ptr<RenderHost> render(const akkado::CompileResult& r, int blocks) {
     auto host = std::make_unique<RenderHost>();
     host->vm.set_sample_rate(48000.0f);
     host->vm.set_bpm(120.0f);
-    host->vm.set_block_table(r.block_table, r.main_instruction_count);
+    host->vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     host->insts = get_instructions(r);
     REQUIRE(host->vm.load_program_immediate(
         std::span<const cedar::Instruction>(host->insts)));

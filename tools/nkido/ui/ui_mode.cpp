@@ -294,11 +294,11 @@ void UIMode::compile_and_play() {
         // is still running the previous program against its own
         // (smaller) buffer set, and chunked slabs keep existing slab
         // pointers stable across growth.
-        if (cr.required_buffers > 0) {
-            engine_.vm().buffers().ensure_capacity(cr.required_buffers);
+        if (cr.program.required_buffers > 0) {
+            engine_.vm().buffers().ensure_capacity(cr.program.required_buffers);
         }
         // PRD L3: stage the FOREACH_EVENT subprogram table for this hot-swap.
-        engine_.vm().set_block_table(cr.block_table, cr.main_instruction_count);
+        engine_.vm().set_block_table(cr.program.block_table, cr.program.main_instruction_count);
         auto load_result = engine_.vm().load_program(load.instructions);
         if (load_result != cedar::VM::LoadResult::Success) {
             switch (load_result) {
@@ -316,7 +316,7 @@ void UIMode::compile_and_play() {
         }
         seq_storage_history_.emplace_back();
         apply_state_inits(engine_.vm(), cr, seq_storage_history_.back());
-        engine_.apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
+        engine_.apply_midi_route_plan(cr.requests.required_midi_sources, cr.requests.required_midi_cc_routes);
     } else {
         seq_storage_history_.emplace_back();
         if (!load_and_prepare_immediate(engine_.vm(), opts_, load,
@@ -324,7 +324,7 @@ void UIMode::compile_and_play() {
             status_message_ = "Error: Failed to load program";
             return;
         }
-        engine_.apply_midi_route_plan(cr.required_midi_sources, cr.required_midi_cc_routes);
+        engine_.apply_midi_route_plan(cr.requests.required_midi_sources, cr.requests.required_midi_cc_routes);
         if (!engine_.start()) {
             status_message_ = "Error: Failed to start audio";
             return;

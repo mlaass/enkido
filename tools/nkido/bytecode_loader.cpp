@@ -60,7 +60,7 @@ LoadResult compile_source(std::string_view source, std::string_view filename) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    auto compile_result = akkado::compile(source, filename);
+    auto compile_result = akkado::compile(source, {.filename = filename});
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -78,10 +78,10 @@ LoadResult compile_source(std::string_view source, std::string_view filename) {
     }
 
     // Convert bytecode to instructions
-    std::size_t num_instructions = compile_result.bytecode.size() / sizeof(cedar::Instruction);
+    std::size_t num_instructions = compile_result.program.bytecode.size() / sizeof(cedar::Instruction);
     result.instructions.resize(num_instructions);
-    std::memcpy(result.instructions.data(), compile_result.bytecode.data(),
-                compile_result.bytecode.size());
+    std::memcpy(result.instructions.data(), compile_result.program.bytecode.data(),
+                compile_result.program.bytecode.size());
 
     result.success = true;
     result.stats = LoadStats{

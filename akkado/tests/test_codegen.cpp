@@ -32,9 +32,9 @@ static float decode_const_float(const cedar::Instruction& inst) {
 // Helper to extract instructions from bytecode
 static std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> instructions;
-    size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     instructions.resize(count);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 
@@ -61,8 +61,7 @@ static size_t count_instructions(const std::vector<cedar::Instruction>& insts,
 // Bypass it so out() compiles to a single device-write OUTPUT with no bus
 // prologue/epilogue. The master bus has its own dedicated tests.
 static akkado::CompileResult compile_raw(std::string_view src) {
-    return akkado::compile(src, "<input>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.bypass_master = true});
 }
 
 // Resolve the float a PUSH_CONST writes into buffer `buf`, or NaN if none.
@@ -79,7 +78,7 @@ static float buffer_const(const std::vector<cedar::Instruction>& insts,
 static const akkado::StateInitData* find_ext_params(
         const akkado::CompileResult& result, std::uint32_t dsp_state_id) {
     const std::uint32_t want = cedar::ext_params_state_id(dsp_state_id);
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::ExtendedParams &&
             init.state_id == want)
             return &init;
@@ -1314,7 +1313,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1368,7 +1367,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1434,7 +1433,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1460,7 +1459,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1485,7 +1484,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1523,7 +1522,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
 
         // Find SequenceProgram state init
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1559,7 +1558,7 @@ TEST_CASE("Codegen: Embedded alternate sequence timing", "[codegen][pattern][seq
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -1606,7 +1605,7 @@ TEST_CASE("Codegen: transpose() lowers to a runtime EVENT_MAP",
                               cedar::EVENT_OP_ADD));
         // The source pattern stays untransformed at compile time: the
         // SequenceProgram still carries c4 = MIDI 60.
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
             REQUIRE(init.sequence_events.size() >= 1);
             REQUIRE(init.sequence_events[0].size() >= 1);
@@ -1637,9 +1636,9 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
         REQUIRE(result.success);
 
         // Check param_decls populated
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.name == "volume");
         CHECK(decl.type == akkado::ParamType::Continuous);
         CHECK(decl.default_value == Catch::Approx(0.8f));
@@ -1660,9 +1659,9 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             x = param("x", 0.5)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.default_value == Catch::Approx(0.5f));
         CHECK(decl.min_value == Catch::Approx(0.0f));
         CHECK(decl.max_value == Catch::Approx(1.0f));
@@ -1673,8 +1672,8 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             x = param("x", 2.0, 0, 1)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
-        CHECK(result.param_decls[0].default_value == Catch::Approx(1.0f));
+        REQUIRE(result.artifacts.param_decls.size() == 1);
+        CHECK(result.artifacts.param_decls[0].default_value == Catch::Approx(1.0f));
     }
 
     SECTION("param default below min gets clamped") {
@@ -1682,8 +1681,8 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             x = param("x", -1.0, 0, 10)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
-        CHECK(result.param_decls[0].default_value == Catch::Approx(0.0f));
+        REQUIRE(result.artifacts.param_decls.size() == 1);
+        CHECK(result.artifacts.param_decls[0].default_value == Catch::Approx(0.0f));
     }
 
     SECTION("param with min > max swaps values") {
@@ -1691,10 +1690,10 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             x = param("x", 0.5, 1, 0)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
         // min/max should be swapped
-        CHECK(result.param_decls[0].min_value == Catch::Approx(0.0f));
-        CHECK(result.param_decls[0].max_value == Catch::Approx(1.0f));
+        CHECK(result.artifacts.param_decls[0].min_value == Catch::Approx(0.0f));
+        CHECK(result.artifacts.param_decls[0].max_value == Catch::Approx(1.0f));
         // Check for warning
         bool has_warning = false;
         for (const auto& diag : result.diagnostics) {
@@ -1712,7 +1711,7 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             b = param("vol", 0.5)
         )");
         REQUIRE(result.success);
-        CHECK(result.param_decls.size() == 1);
+        CHECK(result.artifacts.param_decls.size() == 1);
     }
 
     SECTION("different params recorded separately") {
@@ -1721,9 +1720,9 @@ TEST_CASE("Codegen: param() generates ENV_GET and records declaration", "[codege
             c = param("cutoff", 2000, 100, 8000)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 2);
-        CHECK(result.param_decls[0].name == "volume");
-        CHECK(result.param_decls[1].name == "cutoff");
+        REQUIRE(result.artifacts.param_decls.size() == 2);
+        CHECK(result.artifacts.param_decls[0].name == "volume");
+        CHECK(result.artifacts.param_decls[1].name == "cutoff");
     }
 }
 
@@ -1758,9 +1757,9 @@ TEST_CASE("Codegen: button() creates momentary parameter", "[codegen][params]") 
             kick = button("kick")
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.name == "kick");
         CHECK(decl.type == akkado::ParamType::Button);
         CHECK(decl.default_value == 0.0f);
@@ -1799,9 +1798,9 @@ TEST_CASE("Codegen: toggle() creates boolean parameter", "[codegen][params]") {
             mute = toggle("mute")
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.name == "mute");
         CHECK(decl.type == akkado::ParamType::Toggle);
         CHECK(decl.default_value == 0.0f);
@@ -1812,8 +1811,8 @@ TEST_CASE("Codegen: toggle() creates boolean parameter", "[codegen][params]") {
             enabled = toggle("enabled", 1)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
-        CHECK(result.param_decls[0].default_value == 1.0f);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
+        CHECK(result.artifacts.param_decls[0].default_value == 1.0f);
     }
 
     SECTION("toggle normalizes default to boolean") {
@@ -1821,9 +1820,9 @@ TEST_CASE("Codegen: toggle() creates boolean parameter", "[codegen][params]") {
             x = toggle("x", 0.7)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
         // 0.7 > 0.5 should normalize to 1.0
-        CHECK(result.param_decls[0].default_value == 1.0f);
+        CHECK(result.artifacts.param_decls[0].default_value == 1.0f);
     }
 
     SECTION("toggle normalizes default below threshold") {
@@ -1831,9 +1830,9 @@ TEST_CASE("Codegen: toggle() creates boolean parameter", "[codegen][params]") {
             x = toggle("x", 0.3)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
         // 0.3 < 0.5 should normalize to 0.0
-        CHECK(result.param_decls[0].default_value == 0.0f);
+        CHECK(result.artifacts.param_decls[0].default_value == 0.0f);
     }
 }
 
@@ -1841,9 +1840,9 @@ TEST_CASE("Codegen: param_decls source location", "[codegen][params]") {
     SECTION("source offset and length recorded") {
         auto result = akkado::compile(R"(vol = param("volume", 0.5))");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         // Source offset should point to the param() call
         CHECK(decl.source_offset > 0);
         CHECK(decl.source_length > 0);
@@ -1854,9 +1853,9 @@ TEST_CASE("Codegen: param hash matches cedar FNV-1a", "[codegen][params]") {
     SECTION("hash is consistent") {
         auto result = akkado::compile(R"(x = param("volume", 0.5))");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         // Compute expected hash
         const char* name = "volume";
         std::uint32_t expected = cedar::fnv1a_hash_runtime(name, std::strlen(name));
@@ -1876,9 +1875,9 @@ TEST_CASE("Codegen: dropdown() creates selection parameter", "[codegen][params]"
             wave = dropdown("waveform", "sine", "saw", "square")
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.name == "waveform");
         CHECK(decl.type == akkado::ParamType::Select);
         CHECK(decl.default_value == 0.0f);  // First option is default
@@ -1896,9 +1895,9 @@ TEST_CASE("Codegen: dropdown() creates selection parameter", "[codegen][params]"
             m = dropdown("mode", "default")
         )");
         REQUIRE(result.success);
-        REQUIRE(result.param_decls.size() == 1);
+        REQUIRE(result.artifacts.param_decls.size() == 1);
 
-        const auto& decl = result.param_decls[0];
+        const auto& decl = result.artifacts.param_decls[0];
         CHECK(decl.min_value == 0.0f);
         CHECK(decl.max_value == 0.0f);  // 1 option -> max index 0
         REQUIRE(decl.options.size() == 1);
@@ -1959,7 +1958,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         REQUIRE(dot.success);
         REQUIRE(direct.success);
         // Same instructions
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call with arguments: osc(\"saw\", 440).lp(800, 0.707)") {
@@ -1971,7 +1970,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("chained dot-calls: a.f().g() == g(f(a))") {
@@ -1986,7 +1985,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call on user-defined function") {
@@ -2000,7 +1999,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call mixed with pipe operator") {
@@ -2012,7 +2011,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
-        CHECK(dot.bytecode == pipe.bytecode);
+        CHECK(dot.program.bytecode == pipe.program.bytecode);
     }
 
     SECTION("dot-call on expression result") {
@@ -2026,7 +2025,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call with no extra arguments") {
@@ -2039,7 +2038,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call produces correct opcodes") {
@@ -2058,7 +2057,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         auto direct = akkado::compile(R"(slow(n"[c4 e4 g4]", 2))");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("chained pattern methods via dot-call") {
@@ -2066,7 +2065,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         auto direct = akkado::compile(R"(slow(fast(n"[c4 e4]", 2), 4))");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 
     SECTION("dot-call on hole: |> %.f(args)") {
@@ -2078,7 +2077,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
-        CHECK(dot.bytecode == pipe.bytecode);
+        CHECK(dot.program.bytecode == pipe.program.bytecode);
     }
 
     SECTION("dot-call on hole with multiple args") {
@@ -2090,7 +2089,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
-        CHECK(dot.bytecode == pipe.bytecode);
+        CHECK(dot.program.bytecode == pipe.program.bytecode);
     }
 
     SECTION("chained dot-calls on hole") {
@@ -2103,7 +2102,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(pipe.success);
-        CHECK(dot.bytecode == pipe.bytecode);
+        CHECK(dot.program.bytecode == pipe.program.bytecode);
     }
 
     SECTION("dot-call on as-binding: as q |> q.f(args)") {
@@ -2115,7 +2114,7 @@ TEST_CASE("Dot-call syntax", "[codegen][methods]") {
         )");
         REQUIRE(dot.success);
         REQUIRE(direct.success);
-        CHECK(dot.bytecode == direct.bytecode);
+        CHECK(dot.program.bytecode == direct.program.bytecode);
     }
 }
 
@@ -2265,9 +2264,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     SECTION("slow(n'…', 2) — SequenceProgram cycle_length stays 1.0; RateScale init emitted") {
         auto result = akkado::compile(R"(slow(n"[c4 e4]", 2))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
@@ -2275,7 +2274,7 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         CHECK(si.sequence_events[0][1].time == Catch::Approx(0.5f));
 
         bool has_rate_scale_init = false;
-        for (const auto& s : result.state_inits) {
+        for (const auto& s : result.program.state_inits) {
             if (s.type == akkado::StateInitData::Type::RateScale)
                 has_rate_scale_init = true;
         }
@@ -2290,9 +2289,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         // Outer slow's ERS at runtime: 0.5 / 0.5 = 1.0 (identity).
         auto result = akkado::compile(R"(slow(fast(n"[c4 e4]", 2), 2))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(0.5f));  // inner fast accumulated
         REQUIRE_FALSE(si.sequence_events.empty());
         REQUIRE(si.sequence_events[0].size() >= 2);
@@ -2310,9 +2309,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         // runtime scaling; transpose's EVENT_MAP overlays on top.
         auto result = akkado::compile(R"(transpose(slow(n"[c4 e4]", 2), 12))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
 
         auto insts = get_instructions(result);
@@ -2325,9 +2324,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         // Outer fast's ERS at runtime: 0.5 / 3 ≈ 0.167 (net 6x speed).
         auto result = akkado::compile(R"(fast(fast(n"[c4 e4]", 2), 3))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(0.5f));  // inner fast accumulated
 
         auto insts = get_instructions(result);
@@ -2337,9 +2336,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
     SECTION("fast(n'…', 2) — SequenceProgram cycle_length stays 1.0; ERS handles 2x speed") {
         auto result = akkado::compile(R"(fast(n"[c4 e4]", 2))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));  // Phase 3: not mutated
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
@@ -2355,9 +2354,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         // rev -> e4 at 0.0, c4 at 0.5
         auto result = akkado::compile(R"(rev(n"[c4 e4]"))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
@@ -2378,9 +2377,9 @@ TEST_CASE("Pattern transform chaining: semantic correctness", "[codegen][pattern
         // rev: events reversed to 0.0, 0.5 (swapped values), cycle_length=8
         auto result = akkado::compile(R"(rev(slow(n"[c4 e4]", 2)))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(2.0f));
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() >= 2);
@@ -2400,7 +2399,7 @@ TEST_CASE("Mini-notation record suffix: vel sets velocity",
           "[codegen][patterns][phase2][record_suffix]") {
     auto result = akkado::compile(R"(n"[c4{vel:0.7} e4{vel:0.5}]")");
     REQUIRE(result.success);
-    const auto& si = result.state_inits[0];
+    const auto& si = result.program.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
     CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.7f).margin(0.01f));
     CHECK(si.sequence_events[0][1].velocity == Catch::Approx(0.5f).margin(0.01f));
@@ -2414,8 +2413,8 @@ TEST_CASE("Mini-notation record suffix: positional :vel and {vel} resolve compat
     auto rcd = akkado::compile(R"(n"c4{vel:0.5}")");
     REQUIRE(pos.success);
     REQUIRE(rcd.success);
-    CHECK(pos.state_inits[0].sequence_events[0][0].velocity ==
-          Catch::Approx(rcd.state_inits[0].sequence_events[0][0].velocity).margin(0.001f));
+    CHECK(pos.program.state_inits[0].sequence_events[0][0].velocity ==
+          Catch::Approx(rcd.program.state_inits[0].sequence_events[0][0].velocity).margin(0.001f));
 }
 
 TEST_CASE("Mini-notation record suffix: backwards compat with polymeter `{a b}%n`",
@@ -2440,7 +2439,7 @@ TEST_CASE("Mini-notation record suffix: multiple keys",
     // (deferred runtime exposure). Compile succeeds; velocity reflects vel.
     auto result = akkado::compile(R"(n"[c4{vel:0.8, bend:0.3, cutoff:0.4}]")");
     REQUIRE(result.success);
-    const auto& si = result.state_inits[0];
+    const auto& si = result.program.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 1);
     CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.8f).margin(0.01f));
 }
@@ -2453,16 +2452,16 @@ TEST_CASE("Mini-notation record suffix: dur sets event.duration",
     // yields event.duration == 0.5.
     auto single = akkado::compile(R"(n"c4{dur:0.5}")");
     REQUIRE(single.success);
-    REQUIRE_FALSE(single.state_inits.empty());
-    REQUIRE(single.state_inits[0].sequence_events[0].size() == 1);
-    CHECK(single.state_inits[0].sequence_events[0][0].duration ==
+    REQUIRE_FALSE(single.program.state_inits.empty());
+    REQUIRE(single.program.state_inits[0].sequence_events[0].size() == 1);
+    CHECK(single.program.state_inits[0].sequence_events[0][0].duration ==
           Catch::Approx(0.5f).margin(0.001f));
 
     // For a 2-atom pat, each atom's time_span == 0.5; dur:0.5 yields
     // event.duration == 0.25.
     auto two = akkado::compile(R"(n"[c4{dur:0.5} e4{dur:1.0}]")");
     REQUIRE(two.success);
-    const auto& events = two.state_inits[0].sequence_events[0];
+    const auto& events = two.program.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
     // Sort by time so assertion order is stable.
     std::vector<std::pair<float, float>> pairs;
@@ -2480,7 +2479,7 @@ TEST_CASE("Mini-notation record suffix: works on sample atoms in n'…'",
     // velocities[0] (event.velocity is pinned to 1.0 so the post-MUL is a no-op).
     auto result = akkado::compile(R"(s"[bd{vel:0.5} sd{vel:0.7}]")");
     REQUIRE(result.success);
-    const auto& events = result.state_inits[0].sequence_events[0];
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
     std::vector<std::pair<float, float>> by_time;
     for (const auto& e : events) by_time.emplace_back(e.time, e.velocities[0]);
@@ -2509,8 +2508,8 @@ TEST_CASE("Sample velocity: {vel:V} inside polyrhythm reaches merged event",
     // bug report.
     auto result = akkado::compile(R"(s"[[hh,bd{vel:0.5}] hh]")");
     REQUIRE(result.success);
-    REQUIRE(!result.state_inits.empty());
-    const auto& events = result.state_inits[0].sequence_events[0];
+    REQUIRE(!result.program.state_inits.empty());
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     // Two subdivided steps -> two events. The first is the polyrhythm-merged
     // event; the second is the bare `hh`.
     REQUIRE(events.size() == 2);
@@ -2576,8 +2575,8 @@ TEST_CASE("Sample property: custom slots propagate through polyrhythm",
     // the first branch that set it.
     auto result = akkado::compile(R"(s"[hh,bd{cutoff:0.3}]")");
     REQUIRE(result.success);
-    REQUIRE(!result.state_inits.empty());
-    const auto& events = result.state_inits[0].sequence_events[0];
+    REQUIRE(!result.program.state_inits.empty());
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     const auto& evt = events[0];
     REQUIRE(evt.num_values == 2);
@@ -2599,8 +2598,8 @@ TEST_CASE("Sample property: explicit {key:0} survives merge",
     // disable a parameter the other branch doesn't touch).
     auto result = akkado::compile(R"(s"[hh{cutoff:0},bd{cutoff:0.5}]")");
     REQUIRE(result.success);
-    REQUIRE(!result.state_inits.empty());
-    const auto& events = result.state_inits[0].sequence_events[0];
+    REQUIRE(!result.program.state_inits.empty());
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     const auto& evt = events[0];
     REQUIRE(evt.num_values == 2);
@@ -2632,8 +2631,8 @@ TEST_CASE("Sample velocity: per-voice velocity in polyrhythm — [cp,bd{vel:0.05
     // Both voices play independently: cp at full amplitude, bd at 5%.
     auto result = akkado::compile(R"(s"[cp,bd{vel:0.05}]")");
     REQUIRE(result.success);
-    REQUIRE(!result.state_inits.empty());
-    const auto& events = result.state_inits[0].sequence_events[0];
+    REQUIRE(!result.program.state_inits.empty());
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     const auto& evt = events[0];
     REQUIRE(evt.num_values == 2);
@@ -2664,8 +2663,8 @@ TEST_CASE("Sample velocity: bd{vel:0.25} attenuates rendered audio amplitude",
     // event.velocity stays at 1.0 (post-MUL no-op for sample patterns); the
     // per-atom velocity rides on velocities[0] and op_sample_play applies it
     // per-voice.
-    REQUIRE(!quiet.state_inits.empty());
-    const auto& events = quiet.state_inits[0].sequence_events[0];
+    REQUIRE(!quiet.program.state_inits.empty());
+    const auto& events = quiet.program.state_inits[0].sequence_events[0];
     REQUIRE(!events.empty());
     CHECK(events[0].velocities[0] == Catch::Approx(0.25f).margin(0.001f));
 
@@ -2683,7 +2682,7 @@ TEST_CASE("Mini-notation record suffix: works in s\"...\" sample-mode prefix",
     // Per-voice velocity: per-atom vel rides on velocities[0].
     auto result = akkado::compile(R"(s"[bd{vel:0.5} sd]")");
     REQUIRE(result.success);
-    const auto& events = result.state_inits[0].sequence_events[0];
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
     std::vector<std::pair<float, float>> by_time;
     for (const auto& e : events) by_time.emplace_back(e.time, e.velocities[0]);
@@ -2733,7 +2732,7 @@ TEST_CASE("Mini-notation record suffix: bare-integer values accepted",
     // `{vel:1}` (no decimal) — lexer accepts integers; codegen clamps to [0,1].
     auto result = akkado::compile(R"(s"bd{vel:1}")");
     REQUIRE(result.success);
-    const auto& events = result.state_inits[0].sequence_events[0];
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 1);
     CHECK(events[0].velocity == Catch::Approx(1.0f).margin(0.001f));
 }
@@ -2768,7 +2767,7 @@ TEST_CASE("Phase 2.1: custom-property slot population from record suffix",
     // event.prop_vals[0]. PRD §11.1 / SequenceCompiler::custom_property_slots().
     auto result = akkado::compile(R"(n"[c4{cutoff:0.3} e4{cutoff:0.7}]")");
     REQUIRE(result.success);
-    const auto& events = result.state_inits[0].sequence_events[0];
+    const auto& events = result.program.state_inits[0].sequence_events[0];
     REQUIRE(events.size() == 2);
     // Order events by time so the assertion is stable.
     std::vector<std::pair<float, float>> by_time;
@@ -2916,8 +2915,8 @@ TEST_CASE("velocity-shorthand n\"c4:0.8\" propagates to event.velocity",
           "[codegen][patterns][phase2]") {
     auto result = akkado::compile(R"(n"[c4:0.5 e4:0.8]")");
     REQUIRE(result.success);
-    REQUIRE_FALSE(result.state_inits.empty());
-    const auto& si = result.state_inits[0];
+    REQUIRE_FALSE(result.program.state_inits.empty());
+    const auto& si = result.program.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
     // Original eval bug: velocity stayed at 1.0 regardless of :0.8 suffix.
     // After fix: per-atom velocity multiplies the inherited context velocity.
@@ -2934,7 +2933,7 @@ TEST_CASE("velocity-shorthand combines with nested velocity() transform",
     // are applied at runtime. Runtime scaling is verified in test_event_map.cpp.
     auto result = akkado::compile(R"(velocity(velocity(n"[c4:0.5 e4:0.8]", 0.5), 1.0))");
     REQUIRE(result.success);
-    const auto& si = result.state_inits[0];
+    const auto& si = result.program.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 2);
     // Per-atom shorthand velocities — NOT multiplied at compile time anymore.
     CHECK(si.sequence_events[0][0].velocity == Catch::Approx(0.5f).margin(0.01f));
@@ -2970,8 +2969,8 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
     SECTION("early(pat, 0.25) shifts event times by -0.25 (mod 1)") {
         auto result = akkado::compile(R"(early(n"[c4 e4 g4 b4]", 0.25))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events.size() >= 1);
         REQUIRE(si.sequence_events[0].size() == 4);
         // Original times: 0.0, 0.25, 0.5, 0.75 -> after -0.25 wrap: 0.75, 0.0, 0.25, 0.5
@@ -2990,8 +2989,8 @@ TEST_CASE("Pattern transform: early()", "[codegen][patterns][phase2]") {
         REQUIRE(late_result.success);
         // Events should rotate identically (sorted times match)
         std::vector<float> et, lt;
-        for (const auto& e : early_result.state_inits[0].sequence_events[0]) et.push_back(e.time);
-        for (const auto& e : late_result.state_inits[0].sequence_events[0]) lt.push_back(e.time);
+        for (const auto& e : early_result.program.state_inits[0].sequence_events[0]) et.push_back(e.time);
+        for (const auto& e : late_result.program.state_inits[0].sequence_events[0]) lt.push_back(e.time);
         std::sort(et.begin(), et.end());
         std::sort(lt.begin(), lt.end());
         REQUIRE(et.size() == lt.size());
@@ -3011,8 +3010,8 @@ TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
     SECTION("late(pat, 0.25) shifts event times by +0.25 (mod 1)") {
         auto result = akkado::compile(R"(late(n"[c4 e4 g4 b4]", 0.25))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 4);
         std::vector<float> times;
         for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
@@ -3026,7 +3025,7 @@ TEST_CASE("Pattern transform: late()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(late(n"[c4 e4 g4 b4]", 1.25))");
         REQUIRE(result.success);
         // Same as late(pat, 0.25)
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         std::vector<float> times;
         for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
         for (float t : times) {
@@ -3048,10 +3047,10 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
         auto wrapped = akkado::compile(R"(n"[c4 e4 <g4> b4]")");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
-        REQUIRE_FALSE(bare.state_inits.empty());
-        REQUIRE_FALSE(wrapped.state_inits.empty());
-        const auto& a = bare.state_inits[0].sequence_events;
-        const auto& b = wrapped.state_inits[0].sequence_events;
+        REQUIRE_FALSE(bare.program.state_inits.empty());
+        REQUIRE_FALSE(wrapped.program.state_inits.empty());
+        const auto& a = bare.program.state_inits[0].sequence_events;
+        const auto& b = wrapped.program.state_inits[0].sequence_events;
         REQUIRE(a.size() == b.size());
         REQUIRE(a[0].size() == b[0].size());
         for (std::size_t i = 0; i < a[0].size(); ++i) {
@@ -3068,10 +3067,10 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
         auto wrapped = akkado::compile(R"(n"[c4 e4 <[g4 b4]> d4]")");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
-        REQUIRE_FALSE(bare.state_inits.empty());
-        REQUIRE_FALSE(wrapped.state_inits.empty());
-        const auto& a = bare.state_inits[0].sequence_events;
-        const auto& b = wrapped.state_inits[0].sequence_events;
+        REQUIRE_FALSE(bare.program.state_inits.empty());
+        REQUIRE_FALSE(wrapped.program.state_inits.empty());
+        const auto& a = bare.program.state_inits[0].sequence_events;
+        const auto& b = wrapped.program.state_inits[0].sequence_events;
         REQUIRE(a.size() == b.size());
         REQUIRE(a[0].size() == b[0].size());
         for (std::size_t i = 0; i < a[0].size(); ++i) {
@@ -3086,8 +3085,8 @@ TEST_CASE("Single-child <X> compiles identically to [X]",
         // `!N` repeat expansion case keeps the wrapper.
         auto wrapped = akkado::compile(R"(n"[c4 <e4!3> g4]")");
         REQUIRE(wrapped.success);
-        REQUIRE_FALSE(wrapped.state_inits.empty());
-        const auto& seqs = wrapped.state_inits[0].sequence_events;
+        REQUIRE_FALSE(wrapped.program.state_inits.empty());
+        const auto& seqs = wrapped.program.state_inits[0].sequence_events;
         CHECK(seqs.size() >= 2);
     }
 }
@@ -3103,8 +3102,8 @@ TEST_CASE("late()/early() only shift root sequence events",
         auto wrapped = akkado::compile(R"(late(n"[c4 e4 <[g4 b4]> d4]", 0.125))");
         REQUIRE(bare.success);
         REQUIRE(wrapped.success);
-        const auto& a = bare.state_inits[0].sequence_events;
-        const auto& b = wrapped.state_inits[0].sequence_events;
+        const auto& a = bare.program.state_inits[0].sequence_events;
+        const auto& b = wrapped.program.state_inits[0].sequence_events;
         REQUIRE(a.size() == b.size());
         REQUIRE(a[0].size() == b[0].size());
         for (std::size_t i = 0; i < a[0].size(); ++i) {
@@ -3118,8 +3117,8 @@ TEST_CASE("late()/early() only shift root sequence events",
         auto shifted = akkado::compile(R"(late(n"[c4 <e4 g4> b4]", 0.25))");
         REQUIRE(base.success);
         REQUIRE(shifted.success);
-        const auto& base_seqs = base.state_inits[0].sequence_events;
-        const auto& shifted_seqs = shifted.state_inits[0].sequence_events;
+        const auto& base_seqs = base.program.state_inits[0].sequence_events;
+        const auto& shifted_seqs = shifted.program.state_inits[0].sequence_events;
         // Multi-child `<e4 g4>` keeps its ALTERNATE wrapper after the fix.
         REQUIRE(base_seqs.size() >= 2);
         REQUIRE(shifted_seqs.size() == base_seqs.size());
@@ -3140,8 +3139,8 @@ TEST_CASE("late()/early() only shift root sequence events",
         auto shifted = akkado::compile(R"(early(n"[c4 <e4 g4> b4]", 0.25))");
         REQUIRE(base.success);
         REQUIRE(shifted.success);
-        const auto& base_seqs = base.state_inits[0].sequence_events;
-        const auto& shifted_seqs = shifted.state_inits[0].sequence_events;
+        const auto& base_seqs = base.program.state_inits[0].sequence_events;
+        const auto& shifted_seqs = shifted.program.state_inits[0].sequence_events;
         REQUIRE(base_seqs.size() >= 2);
         REQUIRE(shifted_seqs.size() == base_seqs.size());
         for (std::size_t s = 1; s < base_seqs.size(); ++s) {
@@ -3169,14 +3168,14 @@ TEST_CASE("Pattern transform: palindrome()", "[codegen][patterns][phase2]") {
         // runtime — see test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(palindrome(n"[c4 e4]"))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
+        REQUIRE_FALSE(result.program.state_inits.empty());
         // Inner pattern: 2 events, original cycle_length=1.
-        const auto& inner = result.state_inits[0];
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         REQUIRE(inner.sequence_events[0].size() == 2);
         // Reorder transform: cycle_length doubles.
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) {
                 found_reorder = true;
                 CHECK(si.cycle_length == Catch::Approx(2.0f));
@@ -3223,8 +3222,8 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         // test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(compress(n"[c4 e4]", 0.25, 0.75))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& inner = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         std::vector<float> times;
         for (const auto& e : inner.sequence_events[0]) times.push_back(e.time);
@@ -3233,7 +3232,7 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         CHECK(times[0] == Catch::Approx(0.0f).margin(0.001f));   // original
         CHECK(times[1] == Catch::Approx(0.5f).margin(0.001f));   // original
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
         }
         CHECK(found_reorder);
@@ -3243,7 +3242,7 @@ TEST_CASE("Pattern transform: compress()", "[codegen][patterns][phase2]") {
         REQUIRE(result.success);
         // Inner pattern carries the original events; the EVENT_REORDER opcode
         // resolves the identity mapping at runtime.
-        const auto& inner = result.state_inits[0];
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         std::vector<float> times;
         for (const auto& e : inner.sequence_events[0]) times.push_back(e.time);
@@ -3275,12 +3274,12 @@ TEST_CASE("Pattern transform: ply()", "[codegen][patterns][phase2]") {
         // tests live in test_event_fanout.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(ply(n"[c4 e4]", 3))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& inner = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         REQUIRE(inner.sequence_events[0].size() == 2);
         bool found_fanout = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Fanout) found_fanout = true;
         }
         CHECK(found_fanout);
@@ -3289,7 +3288,7 @@ TEST_CASE("Pattern transform: ply()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(ply(n"[c4 e4]", 2))");
         REQUIRE(result.success);
         // The Fanout init capacity is sized for 2x upstream events.
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Fanout) {
                 CHECK(si.total_events == 4);  // 2 upstream * 2
             }
@@ -3309,7 +3308,7 @@ TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
     SECTION("linger(pat, 1.0) is a no-op") {
         auto result = akkado::compile(R"(linger(n"[c4 e4]", 1.0))");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 2);
     }
@@ -3321,7 +3320,7 @@ TEST_CASE("Pattern transform: linger()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(linger(n"[c4 e4 g4 b4]", 0.5))");
         REQUIRE(result.success);
         bool found_fanout = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Fanout) {
                 found_fanout = true;
                 CHECK(si.cycle_length == Catch::Approx(0.5f));
@@ -3352,11 +3351,11 @@ TEST_CASE("Pattern transform: zoom()", "[codegen][patterns][phase2]") {
         // test_event_reorder.cpp / test_reorder.cpp.
         auto result = akkado::compile(R"(zoom(n"[c4 e4 g4 b4]", 0.25, 0.75))");
         REQUIRE(result.success);
-        const auto& inner = result.state_inits[0];
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         REQUIRE(inner.sequence_events[0].size() == 4);
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
         }
         CHECK(found_reorder);
@@ -3379,7 +3378,7 @@ TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(segment(n"[c4 e4]", 8))");
         REQUIRE(result.success);
         bool found_fanout = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Fanout) {
                 found_fanout = true;
                 // 8 (n) * 2 (upstream events) = 16 capacity.
@@ -3392,7 +3391,7 @@ TEST_CASE("Pattern transform: segment()", "[codegen][patterns][phase2]") {
         auto result = akkado::compile(R"(segment(n"[c4 e4]", 1))");
         REQUIRE(result.success);
         bool found_fanout = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Fanout) found_fanout = true;
         }
         CHECK(found_fanout);
@@ -3434,7 +3433,7 @@ TEST_CASE("Pattern transform: swing()/swingBy()", "[codegen][patterns][phase2]")
         REQUIRE(result.success);
         // Same Phase 2b note as above: the source events keep their original
         // times; the runtime overlay handles the shift (and adds 0 here).
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         std::vector<float> times;
         for (const auto& e : si.sequence_events[0]) times.push_back(e.time);
         std::sort(times.begin(), times.end());
@@ -3468,12 +3467,12 @@ TEST_CASE("Pattern transform: iter()/iterBack()", "[codegen][patterns][phase2]")
         // payload fields and SequenceState rotation were removed.
         auto result = akkado::compile(R"(iter(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& inner = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& inner = result.program.state_inits[0];
         REQUIRE(inner.type == akkado::StateInitData::Type::SequenceProgram);
         REQUIRE(inner.sequence_events[0].size() == 4);
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
         }
         CHECK(found_reorder);
@@ -3482,7 +3481,7 @@ TEST_CASE("Pattern transform: iter()/iterBack()", "[codegen][patterns][phase2]")
         auto result = akkado::compile(R"(iterBack(n"[c4 e4 g4 b4]", 4))");
         REQUIRE(result.success);
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) found_reorder = true;
         }
         CHECK(found_reorder);
@@ -3513,8 +3512,8 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
     SECTION("run(8) produces 8 events at i/8 with values 0..7") {
         auto result = akkado::compile("run(8)");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         // canonical cycle_length = 4 beats regardless of element count
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 8);
@@ -3529,13 +3528,13 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
     SECTION("run(0) yields empty pattern") {
         auto result = akkado::compile("run(0)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.sequence_events[0].size() == 0);
     }
     SECTION("run(1) yields single full-cycle event") {
         auto result = akkado::compile("run(1)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 1);
         CHECK(si.sequence_events[0][0].time == Catch::Approx(0.0f).margin(0.001f));
         CHECK(si.sequence_events[0][0].duration == Catch::Approx(1.0f).margin(0.001f));
@@ -3544,7 +3543,7 @@ TEST_CASE("Pattern generator: run()", "[codegen][patterns][phase2]") {
     SECTION("run inside slow() composes via recursion") {
         auto result = akkado::compile("slow(run(4), 2)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         // Phase 3: slow's factor lives in a RateScale init + EVENT_RATE_SCALE
         // instruction, not in the SequenceProgram init's cycle_length.
         CHECK(si.cycle_length == Catch::Approx(1.0f));
@@ -3568,8 +3567,8 @@ TEST_CASE("Pattern generator: binary()", "[codegen][patterns][phase2]") {
         // Event 0: trigger (set), 1: rest, 2: trigger, 3: rest.
         auto result = akkado::compile("binary(10)");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 4);
         CHECK(si.sequence_events[0][0].num_values == 1);
@@ -3580,14 +3579,14 @@ TEST_CASE("Pattern generator: binary()", "[codegen][patterns][phase2]") {
     SECTION("binary(0) produces single rest event") {
         auto result = akkado::compile("binary(0)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 1);
         CHECK(si.sequence_events[0][0].num_values == 0);
     }
     SECTION("binary(1) produces single trigger event") {
         auto result = akkado::compile("binary(1)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 1);
         CHECK(si.sequence_events[0][0].num_values == 1);
     }
@@ -3607,7 +3606,7 @@ TEST_CASE("Pattern generator: binaryN()", "[codegen][patterns][phase2]") {
         // MSB-first: 0,0,0,0,0,1,0,1.
         auto result = akkado::compile("binaryN(5, 8)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         // canonical cycle_length = 4 beats regardless of bit count
         CHECK(si.cycle_length == Catch::Approx(1.0f));
         REQUIRE(si.sequence_events[0].size() == 8);
@@ -3620,7 +3619,7 @@ TEST_CASE("Pattern generator: binaryN()", "[codegen][patterns][phase2]") {
         // n=5 (0b101) with bits=2 -> truncate to 0b01 -> [0, 1].
         auto result = akkado::compile("binaryN(5, 2)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() == 2);
         CHECK(si.sequence_events[0][0].num_values == 0);
         CHECK(si.sequence_events[0][1].num_values == 1);
@@ -3628,7 +3627,7 @@ TEST_CASE("Pattern generator: binaryN()", "[codegen][patterns][phase2]") {
     SECTION("binaryN(0, 0) produces empty pattern") {
         auto result = akkado::compile("binaryN(0, 0)");
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.sequence_events[0].size() == 0);
     }
 }
@@ -3660,8 +3659,8 @@ TEST_CASE("Voicing: anchor() basic", "[codegen][voicing][phase2]") {
         // would violate "below"; algorithmic output is correct).
         auto result = akkado::compile(R"(anchor(chord("Am"), "c4").mode("below"))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         REQUIRE(si.sequence_events[0].size() >= 1);
         const auto& ev = si.sequence_events[0][0];
         REQUIRE(ev.num_values == 3);
@@ -3690,7 +3689,7 @@ TEST_CASE("Voicing: mode() basic", "[codegen][voicing][phase2]") {
         // octave: C5=72, E5=76, G5=79. Matches PRD §10.1 golden values.
         auto result = akkado::compile(R"(anchor(chord("C"), "c5").mode("above"))");
         REQUIRE(result.success);
-        const auto& ev = result.state_inits[0].sequence_events[0][0];
+        const auto& ev = result.program.state_inits[0].sequence_events[0][0];
         REQUIRE(ev.num_values == 3);
         std::vector<int> midis;
         for (std::uint8_t i = 0; i < ev.num_values; ++i) {
@@ -3708,7 +3707,7 @@ TEST_CASE("Voicing: mode() basic", "[codegen][voicing][phase2]") {
         // the implemented selection). Pin exact output for regression.
         auto result = akkado::compile(R"(anchor(chord("Am"), "c4").mode("duck"))");
         REQUIRE(result.success);
-        const auto& ev = result.state_inits[0].sequence_events[0][0];
+        const auto& ev = result.program.state_inits[0].sequence_events[0][0];
         REQUIRE(ev.num_values == 3);
         std::vector<int> midis;
         for (std::uint8_t i = 0; i < ev.num_values; ++i) {
@@ -3725,7 +3724,7 @@ TEST_CASE("Voicing: mode() basic", "[codegen][voicing][phase2]") {
         // bass with C4=60, E4=64 above. Pin exact output.
         auto result = akkado::compile(R"(anchor(chord("Am"), "c4").mode("root"))");
         REQUIRE(result.success);
-        const auto& ev = result.state_inits[0].sequence_events[0][0];
+        const auto& ev = result.program.state_inits[0].sequence_events[0][0];
         REQUIRE(ev.num_values == 3);
         std::vector<int> midis;
         for (std::uint8_t i = 0; i < ev.num_values; ++i) {
@@ -3779,8 +3778,8 @@ TEST_CASE("Voicing: addVoicings dict.qualities overrides chord intervals",
             chord("CM") .voicing("test_dict_qualities_M")
         )");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
-        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(!result.program.state_inits.empty());
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         const auto& ev = events[0];
         CHECK(ev.num_values == 5);
@@ -3806,7 +3805,7 @@ TEST_CASE("Voicing: addVoicings dict.qualities overrides chord intervals",
             chord("Am") .voicing("test_dict_qualities_only_M")
         )");
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 3);
     }
@@ -3816,7 +3815,7 @@ TEST_CASE("Voicing: addVoicings dict.qualities overrides chord intervals",
         // intrinsic voicing, not collapse or expand.
         auto result = akkado::compile(R"(chord("CM7") .voicing("close"))");
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 4);
     }
@@ -3841,8 +3840,8 @@ TEST_CASE("Voicing: close vs open produce distinct candidate sets",
         auto open_r = akkado::compile(R"(chord("CM") .voicing("open"))");
         REQUIRE(close_r.success);
         REQUIRE(open_r.success);
-        const auto& close_ev = close_r.state_inits[0].sequence_events[0][0];
-        const auto& open_ev = open_r.state_inits[0].sequence_events[0][0];
+        const auto& close_ev = close_r.program.state_inits[0].sequence_events[0][0];
+        const auto& open_ev = open_r.program.state_inits[0].sequence_events[0][0];
         int close_span = chord_span(close_ev);
         int open_span = chord_span(open_ev);
         INFO("close span = " << close_span << ", open span = " << open_span);
@@ -3858,8 +3857,8 @@ TEST_CASE("Voicing: close vs open produce distinct candidate sets",
         auto drop2_r = akkado::compile(R"(chord("CM7") .voicing("drop2"))");
         REQUIRE(close_r.success);
         REQUIRE(drop2_r.success);
-        const auto& close_ev = close_r.state_inits[0].sequence_events[0][0];
-        const auto& drop2_ev = drop2_r.state_inits[0].sequence_events[0][0];
+        const auto& close_ev = close_r.program.state_inits[0].sequence_events[0][0];
+        const auto& drop2_ev = drop2_r.program.state_inits[0].sequence_events[0][0];
         int close_span = chord_span(close_ev);
         int drop2_span = chord_span(drop2_ev);
         INFO("close7 span = " << close_span << ", drop2 span = " << drop2_span);
@@ -3876,7 +3875,7 @@ TEST_CASE("Voicing: progression voice-leads with bounded movement", "[codegen][v
     // notes[k+1][i]| across consecutive chords.
     auto result = akkado::compile(R"(anchor(chord("[Am C G F]"), "c4").mode("below"))");
     REQUIRE(result.success);
-    const auto& si = result.state_inits[0];
+    const auto& si = result.program.state_inits[0];
     REQUIRE(si.sequence_events[0].size() == 4);
 
     auto freq_to_midi = [](float f) {
@@ -3920,7 +3919,7 @@ TEST_CASE("Phase 2 transforms compose with existing transforms", "[codegen][patt
         auto result = akkado::compile(R"(palindrome(slow(n"[c4 e4]", 2)))");
         REQUIRE(result.success);
         bool found_reorder = false;
-        for (const auto& si : result.state_inits) {
+        for (const auto& si : result.program.state_inits) {
             if (si.type == akkado::StateInitData::Type::Reorder) {
                 CHECK(si.cycle_length == Catch::Approx(4.0f));
                 found_reorder = true;
@@ -3954,8 +3953,8 @@ TEST_CASE("Pattern transform: velocity in chain", "[codegen][patterns]") {
     SECTION("velocity in chain modifies event velocity") {
         auto result = akkado::compile(R"(slow(velocity(n"[c4 e4]", 0.5), 2))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         // Phase 3: slow's factor → RateScale init + EVENT_RATE_SCALE; the
         // SequenceProgram init's cycle_length stays 1.0. INNER velocity is
         // still applied compile-time via compile_pattern_for_transform's
@@ -4006,8 +4005,8 @@ TEST_CASE("Pattern transform: string literal as pattern", "[codegen][patterns]")
     SECTION("string literal has correct semantics") {
         auto result = akkado::compile(R"(slow("c4 e4", 2))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         // Phase 3: slow's factor lives in a RateScale init + EVENT_RATE_SCALE
         // instruction, not in the SequenceProgram init's cycle_length.
         CHECK(si.cycle_length == Catch::Approx(1.0f));
@@ -5492,7 +5491,7 @@ TEST_CASE("Codegen: >> and @ aliases", "[codegen]") {
         auto r2 = akkado::compile("osc(\"sin\", 440) >> out(@, @)");
         REQUIRE(r1.success);
         REQUIRE(r2.success);
-        CHECK(r1.bytecode.size() == r2.bytecode.size());
+        CHECK(r1.program.bytecode.size() == r2.program.bytecode.size());
     }
 
     SECTION("@ field access compiles") {
@@ -5524,8 +5523,8 @@ TEST_CASE("Codegen: Sample pattern event inspection", "[codegen][samples][debug]
         CHECK(count_instructions(insts, cedar::Opcode::SAMPLE_PLAY) >= 1);
 
         // Check state_inits
-        REQUIRE(!result.state_inits.empty());
-        const auto& si = result.state_inits[0];
+        REQUIRE(!result.program.state_inits.empty());
+        const auto& si = result.program.state_inits[0];
         CHECK(si.type == akkado::StateInitData::Type::SequenceProgram);
         CHECK(si.cycle_length == 1.0f);  // canonical 1 cycle = 4 beats, regardless of element count
         CHECK(si.is_sample_pattern == true);
@@ -5586,13 +5585,11 @@ TEST_CASE("Codegen: Sample pattern event inspection", "[codegen][samples][debug]
         registry.register_sample("hh", 42);
         registry.register_sample("oh", 99);
 
-        auto result = akkado::compile(
-            R"(s"[hh hh hh [hh hh] hh hh hh [hh oh]]" |> out(%))",
-            "<input>", &registry);
+        auto result = akkado::compile(R"(s"[hh hh hh [hh hh] hh hh hh [hh oh]]" |> out(%))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 10);
 
         // With registry, sample IDs should be resolved
@@ -5618,12 +5615,11 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     registry.register_sample("hh", 3);
 
     SECTION("[bd, hh] → single event with num_values=2") {
-        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.is_sample_pattern == true);
         REQUIRE(!si.sequence_events.empty());
         const auto& events = si.sequence_events[0];
@@ -5642,10 +5638,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, hh, sd] → three voices") {
-        auto result = akkado::compile(R"(s"[bd, hh, sd]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, hh, sd]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 3);
         CHECK(events[0].values[0] == 1.0f);
@@ -5654,10 +5649,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, bd] → two voices, same id (voice-doubling allowed)") {
-        auto result = akkado::compile(R"(s"[bd, bd]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, bd]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 2);
         CHECK(events[0].values[0] == 1.0f);
@@ -5665,10 +5659,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("[bd, ~] → rest becomes silent voice (values[1] = 0)") {
-        auto result = akkado::compile(R"(s"[bd, ~]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, ~]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         const auto& events = si.sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 2);
@@ -5682,11 +5675,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     SECTION("user's rock groove — half-cycle layout kicks/snares correctly") {
         // Each half-cycle is [[bd, hh] hh [sd, hh] hh] = 4 beats,
         // together 8 top-level beats. Beats 1 and 3 are polyrhythm stacks.
-        auto result = akkado::compile(
-            R"(s"[[[bd, hh] hh [sd, hh] hh]  [[bd, hh] [bd, hh] [sd, hh] hh]]" |> out(%, %))",
-            "<input>", &registry);
+        auto result = akkado::compile(R"(s"[[[bd, hh] hh [sd, hh] hh]  [[bd, hh] [bd, hh] [sd, hh] hh]]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.is_sample_pattern == true);
         CHECK(si.cycle_length == 1.0f);
         const auto& events = si.sequence_events[0];
@@ -5718,10 +5709,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         // simultaneous voices in a single event at t=0. This is the simple
         // recursive semantics — every comma adds a parallel branch, no matter
         // how deeply nested.
-        auto result = akkado::compile(R"(s"[[bd, sd], hh]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[[bd, sd], hh]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].time == Catch::Approx(0.0f));
         CHECK(events[0].num_values == 3);
@@ -5737,10 +5727,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         // only hh (slot 0 = 0 means "no new trigger on bd this step"). The
         // bd voice plays out its sample naturally — SAMPLE_PLAY doesn't need
         // a sustain marker.
-        auto result = akkado::compile(R"(s"[bd, [hh hh hh hh]]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, [hh hh hh hh]]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
-        const auto& si = result.state_inits[0];
+        const auto& si = result.program.state_inits[0];
         CHECK(si.is_sample_pattern == true);
         const auto& events = si.sequence_events[0];
         REQUIRE(events.size() == 4);
@@ -5785,10 +5774,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         akkado::SampleRegistry reg2;
         reg2.register_sample("bd", 1);
         reg2.register_sample("cp", 4);
-        auto result = akkado::compile(R"(s"[bd, [bd, cp]]" |> out(%, %))",
-                                       "<input>", &reg2);
+        auto result = akkado::compile(R"(s"[bd, [bd, cp]]" |> out(%, %))", {.sample_registry = &reg2});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 3);
         CHECK(events[0].values[0] == 1.0f);  // outer bd
@@ -5807,10 +5795,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("bd", 1);
         reg2.register_sample("cp", 4);
         reg2.register_sample("hh", 3);
-        auto result = akkado::compile(R"(s"[[bd cp], [hh hh hh hh]]" |> out(%, %))",
-                                       "<input>", &reg2);
+        auto result = akkado::compile(R"(s"[[bd cp], [hh hh hh hh]]" |> out(%, %))", {.sample_registry = &reg2});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 4);
 
         CHECK(events[0].time == Catch::Approx(0.0f));
@@ -5841,10 +5828,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("hh", 3);
         reg2.register_sample("sn", 2);
         reg2.register_sample("cp", 4);
-        auto result = akkado::compile(R"(s"[bd [hh, sn] cp]" |> out(%, %))",
-                                       "<input>", &reg2);
+        auto result = akkado::compile(R"(s"[bd [hh, sn] cp]" |> out(%, %))", {.sample_registry = &reg2});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         // [bd [hh, sn] cp] — sequential group of 3, middle one widens. The
         // group itself isn't a polyrhythm so it doesn't go through the merge
         // path at this level; each child compiles in time order, with the
@@ -5873,10 +5859,9 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
         reg2.register_sample("hh", 3);
         reg2.register_sample("cp", 4);
         reg2.register_sample("oh", 5);
-        auto result = akkado::compile(R"(s"[bd, sn, hh, cp, oh]" |> out(%, %))",
-                                       "<input>", &reg2);
+        auto result = akkado::compile(R"(s"[bd, sn, hh, cp, oh]" |> out(%, %))", {.sample_registry = &reg2});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 5);
         CHECK(events[0].values[0] == 1.0f);  // bd
@@ -5887,8 +5872,7 @@ TEST_CASE("Codegen: Sample polyrhythm merges into chord-like event",
     }
 
     SECTION("single SAMPLE_PLAY instruction; in3/in4 link to SEQPAT state") {
-        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))",
-                                       "<input>", &registry);
+        auto result = akkado::compile(R"(s"[bd, hh]" |> out(%, %))", {.sample_registry = &registry});
         REQUIRE(result.success);
         auto insts = get_instructions(result);
 
@@ -5928,9 +5912,9 @@ TEST_CASE("MAX_VALUES_PER_EVENT cap enforced", "[event-cap]") {
         }
         pattern += "]\" |> out(%, %)";
 
-        auto result = akkado::compile(pattern, "<input>", &reg);
+        auto result = akkado::compile(pattern, {.sample_registry = &reg});
         REQUIRE(result.success);
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         CHECK(events[0].num_values == 16);
         for (std::uint8_t i = 0; i < 16; ++i) {
@@ -6005,8 +5989,8 @@ TEST_CASE("Mini-notation chord lexer no longer truncates extended qualities",
 
         // FFT-style sanity: the four chord pitch classes must all be
         // represented in the value buffer of event 0.
-        REQUIRE(!result.state_inits.empty());
-        const auto& events = result.state_inits[0].sequence_events[0];
+        REQUIRE(!result.program.state_inits.empty());
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 1);
         const auto& ev = events[0];
         CHECK(ev.num_values == 4);
@@ -6026,9 +6010,9 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("[] within [] — 2 levels: bd [sd [hh hh]]") {
         auto result = akkado::compile(R"(s"[bd [sd [hh hh]]]" |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 4);
 
         // 2 top-level → cycle_length=2, events in [0,1) normalized range
@@ -6049,9 +6033,9 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("[] within [] — 3 levels: bd [sd [hh [cp cp]]]") {
         auto result = akkado::compile(R"(s"[bd [sd [hh [cp cp]]]]" |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 5);
 
         CHECK(events[0].time == Catch::Approx(0.0f));      // bd
@@ -6069,9 +6053,9 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("[] within [] — 4 levels: bd [sd [hh [cp [oh oh]]]]") {
         auto result = akkado::compile(R"(s"[bd [sd [hh [cp [oh oh]]]]]" |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 6);
 
         CHECK(events[0].time == Catch::Approx(0.0f));       // bd
@@ -6091,9 +6075,9 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("symmetric nesting: [bd sd] [hh [cp oh]]") {
         auto result = akkado::compile(R"(s"[[bd sd] [hh [cp oh]]]" |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 5);
 
         // [bd sd] gets first half [0, 0.5)
@@ -6113,9 +6097,9 @@ TEST_CASE("Codegen: Nested bracket subdivision", "[codegen][nested]") {
     SECTION("4 levels all []: [[bd sd] [[hh hh] [cp oh]]]") {
         auto result = akkado::compile(R"(s"[[bd sd] [[hh hh] [cp oh]]]" |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(!result.state_inits.empty());
+        REQUIRE(!result.program.state_inits.empty());
 
-        const auto& events = result.state_inits[0].sequence_events[0];
+        const auto& events = result.program.state_inits[0].sequence_events[0];
         REQUIRE(events.size() == 6);
 
         // Single top-level group → cycle_length=1
@@ -6689,7 +6673,7 @@ TEST_CASE("Codegen: pingpong() emits DELAY_PINGPONG opcode", "[codegen][stereo]"
         REQUIRE(pingpong != nullptr);
 
         const akkado::StateInitData* ext = nullptr;
-        for (const auto& s : result.state_inits) {
+        for (const auto& s : result.program.state_inits) {
             if (s.type == akkado::StateInitData::Type::ExtendedParams &&
                 s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
                 ext = &s;
@@ -6717,7 +6701,7 @@ TEST_CASE("Codegen: pingpong() emits DELAY_PINGPONG opcode", "[codegen][stereo]"
         CHECK(pingpong->inputs[4] != 0xFFFF);
 
         const akkado::StateInitData* ext = nullptr;
-        for (const auto& s : result.state_inits) {
+        for (const auto& s : result.program.state_inits) {
             if (s.type == akkado::StateInitData::Type::ExtendedParams &&
                 s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
                 ext = &s;
@@ -6739,7 +6723,7 @@ TEST_CASE("Codegen: pingpong() emits DELAY_PINGPONG opcode", "[codegen][stereo]"
         REQUIRE(pingpong != nullptr);
 
         const akkado::StateInitData* ext = nullptr;
-        for (const auto& s : result.state_inits) {
+        for (const auto& s : result.program.state_inits) {
             if (s.type == akkado::StateInitData::Type::ExtendedParams &&
                 s.state_id == cedar::ext_params_state_id(pingpong->state_id)) {
                 ext = &s;
@@ -7042,7 +7026,7 @@ TEST_CASE("Pattern function: bank()", "[codegen][patterns][bank]") {
 
         // Check that required_samples_extended has entries with bank info
         bool found_bank = false;
-        for (const auto& sample : result.required_samples_extended) {
+        for (const auto& sample : result.requests.required_samples_extended) {
             if (sample.bank == "TR909") {
                 found_bank = true;
                 break;
@@ -7097,7 +7081,7 @@ TEST_CASE("Pattern function: variant()", "[codegen][patterns][variant]") {
 
         // Check that required_samples_extended has entries with variant info
         bool found_variant = false;
-        for (const auto& sample : result.required_samples_extended) {
+        for (const auto& sample : result.requests.required_samples_extended) {
             if (sample.variant == 3) {
                 found_variant = true;
                 break;
@@ -7162,7 +7146,7 @@ TEST_CASE("Pattern function: bank and variant chaining", "[codegen][patterns][ba
         REQUIRE(result.success);
 
         bool found_both = false;
-        for (const auto& sample : result.required_samples_extended) {
+        for (const auto& sample : result.requests.required_samples_extended) {
             if (sample.variant == 2 && sample.bank == "TR909") {
                 found_both = true;
                 break;
@@ -7177,7 +7161,7 @@ TEST_CASE("Pattern function: bank and variant chaining", "[codegen][patterns][ba
 
         // Verify bank was set
         bool all_have_bank = true;
-        for (const auto& sample : result.required_samples_extended) {
+        for (const auto& sample : result.requests.required_samples_extended) {
             if (sample.bank != "TR808") {
                 all_have_bank = false;
             }
@@ -7208,7 +7192,7 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
           "[codegen][patterns][bank][transform]") {
     auto bank_for = [](const akkado::CompileResult& r,
                        const std::string& name) -> std::string {
-        for (const auto& s : r.required_samples_extended) {
+        for (const auto& s : r.requests.required_samples_extended) {
             if (s.name == name) return s.bank;
         }
         return "<missing>";
@@ -7276,7 +7260,7 @@ TEST_CASE("Pattern transforms are transparent to sample requirements",
         // (it's a deduped union of every Pattern's published sample_refs).
         CHECK(bank_for(result, "bd") == "Z");
         bool variant_propagated = false;
-        for (const auto& s : result.required_samples_extended) {
+        for (const auto& s : result.requests.required_samples_extended) {
             if (s.bank == "Z" && s.variant == 1) variant_propagated = true;
         }
         CHECK(variant_propagated);
@@ -7294,7 +7278,7 @@ TEST_CASE("Codegen: Pattern string prefix", "[codegen][pattern-prefix]") {
 
         REQUIRE(prefix_result.success);
         REQUIRE(call_result.success);
-        CHECK(prefix_result.bytecode == call_result.bytecode);
+        CHECK(prefix_result.program.bytecode == call_result.program.bytecode);
     }
 
     SECTION("n\"...\" works in pipeline") {
@@ -7321,7 +7305,7 @@ TEST_CASE("Codegen: velocity suffix in pattern events", "[codegen][pattern][velo
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -7341,7 +7325,7 @@ TEST_CASE("Codegen: velocity suffix in pattern events", "[codegen][pattern][velo
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -7398,9 +7382,9 @@ TEST_CASE("Codegen: poly() is stereo-native", "[codegen][poly][stereo]") {
         std::uint16_t voice_out_r = static_cast<std::uint16_t>(voice_out_l + 1);
 
         // PRD L3: the instrument body lives in the subprogram table region.
-        REQUIRE(result.block_table.size() == 1);
-        const std::size_t body_off = result.block_table[0].offset;
-        const std::size_t body_len = result.block_table[0].length;
+        REQUIRE(result.program.block_table.size() == 1);
+        const std::size_t body_off = result.program.block_table[0].offset;
+        const std::size_t body_len = result.program.block_table[0].length;
         bool copy_to_l = false, copy_to_r = false;
         for (std::size_t i = body_off; i < body_off + body_len; ++i) {
             if (insts[i].opcode == cedar::Opcode::COPY) {
@@ -7465,15 +7449,15 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         // Find FOREACH_EVENT; the body length lives in the block table.
         auto* poly = find_instruction(insts, cedar::Opcode::FOREACH_EVENT);
         REQUIRE(poly != nullptr);
-        REQUIRE(result.block_table.size() == 1);
-        CHECK(result.block_table[0].length > 0);  // body_length >= 1
+        REQUIRE(result.program.block_table.size() == 1);
+        CHECK(result.program.block_table[0].length > 0);  // body_length >= 1
 
         // Verify state_id is set
         CHECK(poly->state_id != 0);
 
         // Verify state_init has PolyAlloc type with correct config
         bool found_poly_init = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_max_voices == 4);
                 CHECK(init.poly_mode == 0);  // poly mode
@@ -7496,7 +7480,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
         // Verify state_init has mode=1 and max_voices=1
         bool found_poly_init = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_mode == 1);
                 CHECK(init.poly_max_voices == 1);
@@ -7516,7 +7500,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         CHECK(count_instructions(insts, cedar::Opcode::FOREACH_EVENT) == 1);
 
         bool found_poly_init = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_mode == 2);
                 CHECK(init.poly_max_voices == 1);
@@ -7541,7 +7525,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         CHECK(count_instructions(insts, cedar::Opcode::POLY_END) == 0);
 
         // Check that poly state_init has a linked seq_state_id
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_seq_state_id != 0);
                 CHECK(init.poly_max_voices == 8);
@@ -7719,7 +7703,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         REQUIRE(result.success);
         // Voices should default to 64
         bool found_default = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_max_voices == 64);
                 found_default = true;
@@ -7771,7 +7755,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -7794,7 +7778,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
 
         // Confirm poly_seq_state_id wires the SequenceState to POLY_BEGIN.
         bool found_poly = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_seq_state_id != 0);
                 CHECK(init.poly_seq_state_id == seq_init->state_id);
@@ -7815,7 +7799,7 @@ TEST_CASE("Codegen: poly()", "[codegen][poly]") {
         REQUIRE(result.success);
 
         const akkado::StateInitData* seq_init = nullptr;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::SequenceProgram) {
                 seq_init = &init;
                 break;
@@ -7951,7 +7935,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_prop_count == 1);
@@ -7966,7 +7950,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
                 saw(freq) * gate) |> out(@, @)
         )");
         REQUIRE(result.success);
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_prop_count == 0);
             }
@@ -7981,7 +7965,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
                 saw(freq) * gate * wobble) |> out(@, @)
         )");
         REQUIRE(result.success);
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_prop_count == 0);
             }
@@ -7996,7 +7980,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_prop_count == 1);
@@ -8031,7 +8015,7 @@ TEST_CASE("Codegen: poly() custom record-suffix fields",
                 saw(freq) * gate * cutoff * res) |> out(@, @)
         )");
         REQUIRE(result.success);
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_prop_count == 2);
             }
@@ -8137,7 +8121,7 @@ TEST_CASE("Codegen: mono/legato callback parity",
                 "({freq, gate, cutoff}) -> osc(\"saw\", freq) * gate * cutoff");
             REQUIRE(r.success);
             bool found = false;
-            for (const auto& init : r.state_inits) {
+            for (const auto& init : r.program.state_inits) {
                 if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                     found = true;
                     CHECK(init.poly_prop_count == 1);
@@ -8152,7 +8136,7 @@ TEST_CASE("Codegen: mono/legato callback parity",
                 "osc(\"saw\", freq) * gate * cutoff");
             REQUIRE(r.success);
             bool found = false;
-            for (const auto& init : r.state_inits) {
+            for (const auto& init : r.program.state_inits) {
                 if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                     found = true;
                     CHECK(init.poly_prop_count == 1);
@@ -8167,7 +8151,7 @@ TEST_CASE("Codegen: mono/legato callback parity",
                                   "({freq, gate}) -> osc(\"sin\", freq) * gate");
             REQUIRE(r.success);
             bool found = false;
-            for (const auto& init : r.state_inits) {
+            for (const auto& init : r.program.state_inits) {
                 if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                     found = true;
                     CHECK(init.poly_mode == m.mode);
@@ -8601,7 +8585,7 @@ TEST_CASE("Timeline curve produces state init", "[timeline_codegen]") {
     auto result = akkado::compile("t\"__''\" |> out(%, %)");
     CHECK(result.diagnostics.empty());
     bool found = false;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::Timeline) {
             found = true;
             CHECK(!init.timeline_breakpoints.empty());
@@ -8642,7 +8626,7 @@ TEST_CASE("Timeline function call form compiles", "[timeline_e2e]") {
     CHECK(find_instruction(insts, cedar::Opcode::TIMELINE) != nullptr);
     // Verify state init exists
     bool found = false;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::Timeline) found = true;
     }
     CHECK(found);
@@ -8692,7 +8676,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& decl : result.viz_decls) {
+        for (const auto& decl : result.artifacts.viz_decls) {
             if (decl.type == akkado::VisualizationType::Waterfall) {
                 CHECK(decl.options_json.find("\"gradient\":\"viridis\"") != std::string::npos);
                 found = true;
@@ -8707,7 +8691,7 @@ TEST_CASE("Codegen: waterfall() emits FFT_PROBE", "[codegen][viz]") {
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& decl : result.viz_decls) {
+        for (const auto& decl : result.artifacts.viz_decls) {
             if (decl.type == akkado::VisualizationType::Waterfall) {
                 CHECK(decl.name == "my-spectrogram");
                 CHECK(decl.state_id != 0);
@@ -8725,7 +8709,7 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& decl : result.viz_decls) {
+        for (const auto& decl : result.artifacts.viz_decls) {
             if (decl.type == akkado::VisualizationType::Spectrum) {
                 CHECK(decl.options_json.find("\"logScale\":true") != std::string::npos);
                 found = true;
@@ -8740,7 +8724,7 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& decl : result.viz_decls) {
+        for (const auto& decl : result.artifacts.viz_decls) {
             if (decl.type == akkado::VisualizationType::PianoRoll) {
                 CHECK(decl.options_json.find("\"showGrid\":false") != std::string::npos);
                 found = true;
@@ -8759,7 +8743,7 @@ TEST_CASE("Codegen: viz options serialize BoolLit values", "[codegen][viz]") {
         )");
         REQUIRE(result.success);
         bool found = false;
-        for (const auto& decl : result.viz_decls) {
+        for (const auto& decl : result.artifacts.viz_decls) {
             if (decl.type == akkado::VisualizationType::PianoRoll) {
                 CHECK(decl.options_json.find("\"width\":200") != std::string::npos);
                 CHECK(decl.options_json.find("\"showGrid\":false") != std::string::npos);
@@ -8785,7 +8769,7 @@ TEST_CASE("Codegen: extract_options preserves recognized fields in source order"
     )");
     REQUIRE(result.success);
     bool found = false;
-    for (const auto& decl : result.viz_decls) {
+    for (const auto& decl : result.artifacts.viz_decls) {
         if (decl.type == akkado::VisualizationType::Waterfall) {
             // Source order preserved (fft before gradient).
             auto pos_fft = decl.options_json.find("\"fft\":1024");
@@ -8810,7 +8794,7 @@ TEST_CASE("Codegen: extract_options drops unknown fields silently",
     )");
     REQUIRE(result.success);
     bool found = false;
-    for (const auto& decl : result.viz_decls) {
+    for (const auto& decl : result.artifacts.viz_decls) {
         if (decl.type == akkado::VisualizationType::Waterfall) {
             CHECK(decl.options_json.find("\"fft\":1024") != std::string::npos);
             CHECK(decl.options_json.find("nonsense") == std::string::npos);
@@ -8830,7 +8814,7 @@ TEST_CASE("Codegen: extract_options yields empty JSON for empty record",
     )");
     REQUIRE(result.success);
     bool found = false;
-    for (const auto& decl : result.viz_decls) {
+    for (const auto& decl : result.artifacts.viz_decls) {
         if (decl.type == akkado::VisualizationType::Waterfall) {
             CHECK(decl.options_json.empty());
             found = true;
@@ -8849,7 +8833,7 @@ TEST_CASE("Codegen: extract_options round-trips Number/Bool/String types",
     )");
     REQUIRE(result.success);
     bool found = false;
-    for (const auto& decl : result.viz_decls) {
+    for (const auto& decl : result.artifacts.viz_decls) {
         if (decl.type == akkado::VisualizationType::PianoRoll) {
             CHECK(decl.options_json.find("\"width\":200") != std::string::npos);
             CHECK(decl.options_json.find("\"showGrid\":false") != std::string::npos);
@@ -8926,9 +8910,9 @@ TEST_CASE("Codegen: bpm assignment generates override metadata", "[codegen][buil
             saw(220) |> out(%, %)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.builtin_var_overrides.size() == 1);
-        CHECK(result.builtin_var_overrides[0].name == "bpm");
-        CHECK(result.builtin_var_overrides[0].value == Catch::Approx(120.0f));
+        REQUIRE(result.artifacts.builtin_var_overrides.size() == 1);
+        CHECK(result.artifacts.builtin_var_overrides[0].name == "bpm");
+        CHECK(result.artifacts.builtin_var_overrides[0].value == Catch::Approx(120.0f));
 
         // bpm is only assigned, not read — no ENV_GET emitted for __bpm
         auto insts = get_instructions(result);
@@ -8948,8 +8932,8 @@ TEST_CASE("Codegen: bpm assignment generates override metadata", "[codegen][buil
             saw(220) |> out(%, %)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.builtin_var_overrides.size() == 1);
-        CHECK(result.builtin_var_overrides[0].value == Catch::Approx(120.0f));
+        REQUIRE(result.artifacts.builtin_var_overrides.size() == 1);
+        CHECK(result.artifacts.builtin_var_overrides[0].value == Catch::Approx(120.0f));
     }
 
     SECTION("bpm value is clamped to valid range") {
@@ -8958,8 +8942,8 @@ TEST_CASE("Codegen: bpm assignment generates override metadata", "[codegen][buil
             saw(220) |> out(%, %)
         )");
         REQUIRE(result.success);
-        REQUIRE(result.builtin_var_overrides.size() == 1);
-        CHECK(result.builtin_var_overrides[0].value == Catch::Approx(1.0f));
+        REQUIRE(result.artifacts.builtin_var_overrides.size() == 1);
+        CHECK(result.artifacts.builtin_var_overrides[0].value == Catch::Approx(1.0f));
     }
 }
 
@@ -9047,9 +9031,9 @@ TEST_CASE("Codegen: multiple bpm assignments both stored", "[codegen][builtins]"
         saw(220) |> out(%, %)
     )");
     REQUIRE(result.success);
-    REQUIRE(result.builtin_var_overrides.size() == 2);
-    CHECK(result.builtin_var_overrides[0].value == Catch::Approx(100.0f));
-    CHECK(result.builtin_var_overrides[1].value == Catch::Approx(140.0f));
+    REQUIRE(result.artifacts.builtin_var_overrides.size() == 2);
+    CHECK(result.artifacts.builtin_var_overrides[0].value == Catch::Approx(100.0f));
+    CHECK(result.artifacts.builtin_var_overrides[1].value == Catch::Approx(140.0f));
 }
 
 TEST_CASE("Codegen: spb is read-only", "[codegen][builtins]") {
@@ -9403,8 +9387,8 @@ namespace {
 void apply_state_inits(cedar::VM& vm, const akkado::CompileResult& result,
                        std::vector<std::vector<cedar::Sequence>>& seq_storage) {
     // We need to keep Sequence storage alive for the duration of the test.
-    seq_storage.reserve(result.state_inits.size());
-    for (const auto& init : result.state_inits) {
+    seq_storage.reserve(result.program.state_inits.size());
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -9463,7 +9447,7 @@ TEST_CASE("Runtime: chord(...) |> poly fires every chord note completely",
     vm.set_sample_rate(48000.0f);
     vm.set_bpm(120.0f);
     // PRD L3: poly() compiles to FOREACH_EVENT — stage the subprogram table.
-    vm.set_block_table(result.block_table, result.main_instruction_count);
+    vm.set_block_table(result.program.block_table, result.program.main_instruction_count);
     REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(insts)));
 
     std::vector<std::vector<cedar::Sequence>> seq_storage;
@@ -9471,7 +9455,7 @@ TEST_CASE("Runtime: chord(...) |> poly fires every chord note completely",
 
     // Find the PolyAllocState ID
     std::uint32_t poly_state_id = 0;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             poly_state_id = init.state_id;
             break;
@@ -9584,8 +9568,8 @@ TEST_CASE("Codegen: in() emits INPUT and produces stereo signal", "[codegen][inp
     SECTION("in() default has empty source string in required_input_sources") {
         auto result = akkado::compile("in() |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_input_sources.size() == 1);
-        CHECK(result.required_input_sources[0] == "");
+        REQUIRE(result.requests.required_input_sources.size() == 1);
+        CHECK(result.requests.required_input_sources[0] == "");
     }
 
     SECTION("in() output reaches OUTPUT (full pipeline compiles)") {
@@ -9601,22 +9585,22 @@ TEST_CASE("Codegen: in() with explicit source string", "[codegen][input]") {
     SECTION("in('mic') compiles") {
         auto result = akkado::compile(R"(in("mic") |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(result.required_input_sources.size() == 1);
-        CHECK(result.required_input_sources[0] == "mic");
+        REQUIRE(result.requests.required_input_sources.size() == 1);
+        CHECK(result.requests.required_input_sources[0] == "mic");
     }
 
     SECTION("in('tab') compiles") {
         auto result = akkado::compile(R"(in("tab") |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(result.required_input_sources.size() == 1);
-        CHECK(result.required_input_sources[0] == "tab");
+        REQUIRE(result.requests.required_input_sources.size() == 1);
+        CHECK(result.requests.required_input_sources[0] == "tab");
     }
 
     SECTION("in('file:NAME') compiles") {
         auto result = akkado::compile(R"(in("file:voice.wav") |> out(%))");
         REQUIRE(result.success);
-        REQUIRE(result.required_input_sources.size() == 1);
-        CHECK(result.required_input_sources[0] == "file:voice.wav");
+        REQUIRE(result.requests.required_input_sources.size() == 1);
+        CHECK(result.requests.required_input_sources[0] == "file:voice.wav");
     }
 
     SECTION("in() with unknown source string is a compile error") {
@@ -9757,9 +9741,9 @@ TEST_CASE("samples() records a single URI", "[samples-builtin]") {
         "0 |> out(%, %)"
     );
     REQUIRE(result.success);
-    REQUIRE(result.required_uris.size() == 1);
-    CHECK(result.required_uris[0].uri == "github:tidalcycles/Dirt-Samples");
-    CHECK(result.required_uris[0].kind == akkado::UriKind::SampleBank);
+    REQUIRE(result.requests.required_uris.size() == 1);
+    CHECK(result.requests.required_uris[0].uri == "github:tidalcycles/Dirt-Samples");
+    CHECK(result.requests.required_uris[0].kind == akkado::UriKind::SampleBank);
 }
 
 TEST_CASE("samples() preserves source order across multiple calls", "[samples-builtin]") {
@@ -9770,10 +9754,10 @@ TEST_CASE("samples() preserves source order across multiple calls", "[samples-bu
         "0 |> out(%, %)"
     );
     REQUIRE(result.success);
-    REQUIRE(result.required_uris.size() == 3);
-    CHECK(result.required_uris[0].uri == "github:foo/bar");
-    CHECK(result.required_uris[1].uri == "https://example.com/strudel.json");
-    CHECK(result.required_uris[2].uri == "file:///tmp/local.json");
+    REQUIRE(result.requests.required_uris.size() == 3);
+    CHECK(result.requests.required_uris[0].uri == "github:foo/bar");
+    CHECK(result.requests.required_uris[1].uri == "https://example.com/strudel.json");
+    CHECK(result.requests.required_uris[2].uri == "file:///tmp/local.json");
 }
 
 TEST_CASE("samples() dedups identical URIs", "[samples-builtin]") {
@@ -9783,8 +9767,8 @@ TEST_CASE("samples() dedups identical URIs", "[samples-builtin]") {
         "0 |> out(%, %)"
     );
     REQUIRE(result.success);
-    REQUIRE(result.required_uris.size() == 1);
-    CHECK(result.required_uris[0].uri == "github:foo/bar");
+    REQUIRE(result.requests.required_uris.size() == 1);
+    CHECK(result.requests.required_uris[0].uri == "github:foo/bar");
 }
 
 TEST_CASE("samples() rejects non-string-literal arg", "[samples-builtin]") {
@@ -9874,13 +9858,13 @@ TEST_CASE("sample() accepts a sample-name string", "[codegen][sample][string-arg
         );
         REQUIRE(result.success);
 
-        REQUIRE(result.required_samples_extended.size() == 1);
-        CHECK(result.required_samples_extended[0].bank.empty());
-        CHECK(result.required_samples_extended[0].name == "bd");
-        CHECK(result.required_samples_extended[0].variant == 0);
+        REQUIRE(result.requests.required_samples_extended.size() == 1);
+        CHECK(result.requests.required_samples_extended[0].bank.empty());
+        CHECK(result.requests.required_samples_extended[0].name == "bd");
+        CHECK(result.requests.required_samples_extended[0].variant == 0);
 
-        REQUIRE(result.scalar_sample_mappings.size() == 1);
-        const auto& mapping = result.scalar_sample_mappings[0];
+        REQUIRE(result.requests.scalar_sample_mappings.size() == 1);
+        const auto& mapping = result.requests.scalar_sample_mappings[0];
         CHECK(mapping.bank.empty());
         CHECK(mapping.name == "bd");
         CHECK(mapping.variant == 0);
@@ -9906,13 +9890,13 @@ TEST_CASE("sample() accepts a sample-name string", "[codegen][sample][string-arg
         );
         REQUIRE(result.success);
 
-        REQUIRE(result.required_samples_extended.size() == 1);
-        CHECK(result.required_samples_extended[0].name == "bd");
-        CHECK(result.required_samples_extended[0].variant == 3);
+        REQUIRE(result.requests.required_samples_extended.size() == 1);
+        CHECK(result.requests.required_samples_extended[0].name == "bd");
+        CHECK(result.requests.required_samples_extended[0].variant == 3);
 
-        REQUIRE(result.scalar_sample_mappings.size() == 1);
-        CHECK(result.scalar_sample_mappings[0].name == "bd");
-        CHECK(result.scalar_sample_mappings[0].variant == 3);
+        REQUIRE(result.requests.scalar_sample_mappings.size() == 1);
+        CHECK(result.requests.scalar_sample_mappings[0].name == "bd");
+        CHECK(result.requests.scalar_sample_mappings[0].variant == 3);
     }
 
     SECTION("bank-qualified name") {
@@ -9922,14 +9906,14 @@ TEST_CASE("sample() accepts a sample-name string", "[codegen][sample][string-arg
         );
         REQUIRE(result.success);
 
-        REQUIRE(result.required_samples_extended.size() == 1);
-        CHECK(result.required_samples_extended[0].bank == "Dirt-Samples");
-        CHECK(result.required_samples_extended[0].name == "amencutup");
-        CHECK(result.required_samples_extended[0].variant == 0);
+        REQUIRE(result.requests.required_samples_extended.size() == 1);
+        CHECK(result.requests.required_samples_extended[0].bank == "Dirt-Samples");
+        CHECK(result.requests.required_samples_extended[0].name == "amencutup");
+        CHECK(result.requests.required_samples_extended[0].variant == 0);
 
-        REQUIRE(result.scalar_sample_mappings.size() == 1);
-        CHECK(result.scalar_sample_mappings[0].bank == "Dirt-Samples");
-        CHECK(result.scalar_sample_mappings[0].name == "amencutup");
+        REQUIRE(result.requests.scalar_sample_mappings.size() == 1);
+        CHECK(result.requests.scalar_sample_mappings[0].bank == "Dirt-Samples");
+        CHECK(result.requests.scalar_sample_mappings[0].name == "amencutup");
     }
 
     SECTION("numeric arg form still works (back-compat)") {
@@ -9939,8 +9923,8 @@ TEST_CASE("sample() accepts a sample-name string", "[codegen][sample][string-arg
         );
         REQUIRE(result.success);
         // Numeric ID does not register a sample name and emits no scalar mapping.
-        CHECK(result.required_samples_extended.empty());
-        CHECK(result.scalar_sample_mappings.empty());
+        CHECK(result.requests.required_samples_extended.empty());
+        CHECK(result.requests.scalar_sample_mappings.empty());
     }
 }
 
@@ -10512,8 +10496,8 @@ TEST_CASE("sf_voice compiles as a poly instrument", "[sf-voice]") {
             }
         }
         // One RequiredSoundFont entry recorded for the host to load.
-        REQUIRE(result.required_soundfonts.size() == 1);
-        CHECK(result.required_soundfonts[0].filename == "piano.sf2");
+        REQUIRE(result.requests.required_soundfonts.size() == 1);
+        CHECK(result.requests.required_soundfonts[0].filename == "piano.sf2");
     }
 
     SECTION("sf_voice usable standalone (outside poly)") {
@@ -10533,8 +10517,8 @@ TEST_CASE("sf_voice compiles as a poly instrument", "[sf-voice]") {
             R"(sf_voice("mysf", 0, sine(440), 1, 1) |> out(@, @))");
         REQUIRE(result.success);
         // The alias must have been resolved to its path in RequiredSoundFont.
-        REQUIRE(result.required_soundfonts.size() == 1);
-        CHECK(result.required_soundfonts[0].filename == "piano.sf2");
+        REQUIRE(result.requests.required_soundfonts.size() == 1);
+        CHECK(result.requests.required_soundfonts[0].filename == "piano.sf2");
     }
 
     SECTION("non-string file argument is rejected (E520)") {
@@ -10598,8 +10582,8 @@ TEST_CASE("voicing on chord pattern preserves multi-voice soundfont path",
         auto result = akkado::compile(
             R"(c"CM" .voicing("close") |> soundfont(@, "gm", 0) |> out(@, @))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& events = result.state_inits[0].sequence_events;
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& events = result.program.state_inits[0].sequence_events;
         REQUIRE_FALSE(events.empty());
         REQUIRE_FALSE(events[0].empty());
         CHECK(events[0][0].num_values == 3);
@@ -10611,8 +10595,8 @@ TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]"
         auto result = akkado::compile(
             R"(c"CM Am Dm G" .transpose(0) |> soundfont(@, "gm", 0) |> out(@, @))");
         REQUIRE(result.success);
-        REQUIRE_FALSE(result.state_inits.empty());
-        const auto& events = result.state_inits[0].sequence_events;
+        REQUIRE_FALSE(result.program.state_inits.empty());
+        const auto& events = result.program.state_inits[0].sequence_events;
         REQUIRE_FALSE(events.empty());
         // Each of the 4 chord events is a triad; voices must not collapse.
         for (const auto& evlist : events) {
@@ -10647,10 +10631,10 @@ TEST_CASE("transpose preserves all chord voices", "[chord-soundfont][transpose]"
             R"(c"CM" .transpose(12) |> soundfont(@, "gm", 0) |> out(@, @))");
         REQUIRE(base.success);
         REQUIRE(up.success);
-        REQUIRE_FALSE(base.state_inits.empty());
-        REQUIRE_FALSE(up.state_inits.empty());
-        const auto& bev = base.state_inits[0].sequence_events[0][0];
-        const auto& uev = up.state_inits[0].sequence_events[0][0];
+        REQUIRE_FALSE(base.program.state_inits.empty());
+        REQUIRE_FALSE(up.program.state_inits.empty());
+        const auto& bev = base.program.state_inits[0].sequence_events[0][0];
+        const auto& uev = up.program.state_inits[0].sequence_events[0][0];
         REQUIRE(bev.num_values == 3);
         REQUIRE(uev.num_values == 3);  // source chord voices preserved
         auto insts = get_instructions(up);
@@ -10838,7 +10822,7 @@ std::size_t find_poly_begin_idx(const std::vector<cedar::Instruction>& insts) {
 // Locate the PolyAlloc state init for a given state_id.
 const akkado::StateInitData* find_poly_alloc_init(
     const akkado::CompileResult& result, std::uint32_t state_id) {
-    for (const auto& s : result.state_inits) {
+    for (const auto& s : result.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ForeachAlloc &&
             s.state_id == state_id) {
             return &s;
@@ -10875,8 +10859,8 @@ TEST_CASE("midi() basic codegen", "[midi]") {
         REQUIRE(pa != nullptr);
         CHECK(pa->poly_seq_state_id == midi_state);
 
-        REQUIRE(result.required_midi_sources.size() == 1);
-        const auto& src = result.required_midi_sources[0];
+        REQUIRE(result.requests.required_midi_sources.size() == 1);
+        const auto& src = result.requests.required_midi_sources[0];
         CHECK(src.state_id == midi_state);
         CHECK(src.kind == cedar::MidiSourceKind::DefaultDevice);
         CHECK(src.name_or_path == "");
@@ -10889,8 +10873,8 @@ TEST_CASE("midi() basic codegen", "[midi]") {
         auto result = akkado::compile(instr_decl +
             "midi({device: \"Launchkey\"}) |> poly(%, synth, 4) |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_sources.size() == 1);
-        const auto& src = result.required_midi_sources[0];
+        REQUIRE(result.requests.required_midi_sources.size() == 1);
+        const auto& src = result.requests.required_midi_sources[0];
         CHECK(src.kind == cedar::MidiSourceKind::NamedDevice);
         CHECK(src.name_or_path == "Launchkey");
     }
@@ -10899,8 +10883,8 @@ TEST_CASE("midi() basic codegen", "[midi]") {
         auto result = akkado::compile(instr_decl +
             "midi({file: \"song.mid\"}) |> poly(%, synth, 8) |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_sources.size() == 1);
-        const auto& src = result.required_midi_sources[0];
+        REQUIRE(result.requests.required_midi_sources.size() == 1);
+        const auto& src = result.requests.required_midi_sources[0];
         CHECK(src.kind == cedar::MidiSourceKind::File);
         CHECK(src.name_or_path == "song.mid");
         CHECK(src.tempo_mode == cedar::MidiQueueState::TempoMode::Follow);
@@ -10912,8 +10896,8 @@ TEST_CASE("midi() basic codegen", "[midi]") {
             "midi({file: \"song.mid\", loop: true, tempo: \"file\"}) "
             "|> poly(%, synth, 8) |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_sources.size() == 1);
-        const auto& src = result.required_midi_sources[0];
+        REQUIRE(result.requests.required_midi_sources.size() == 1);
+        const auto& src = result.requests.required_midi_sources[0];
         CHECK(src.kind == cedar::MidiSourceKind::File);
         CHECK(src.name_or_path == "song.mid");
         CHECK(src.loop == true);
@@ -10924,8 +10908,8 @@ TEST_CASE("midi() basic codegen", "[midi]") {
         auto result = akkado::compile(instr_decl +
             "midi({channel: 1}) |> poly(%, synth, 4) |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_sources.size() == 1);
-        CHECK(result.required_midi_sources[0].channel_filter == 1);
+        REQUIRE(result.requests.required_midi_sources.size() == 1);
+        CHECK(result.requests.required_midi_sources[0].channel_filter == 1);
     }
 
     SECTION("two midi() calls produce two RequiredMidiSource entries with distinct state_ids") {
@@ -10933,9 +10917,9 @@ TEST_CASE("midi() basic codegen", "[midi]") {
             "midi({channel: 1}) |> poly(%, synth, 4) |> out(%)\n"
             "midi({channel: 2}) |> poly(%, synth, 4) |> out(%)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_sources.size() == 2);
-        const auto& a = result.required_midi_sources[0];
-        const auto& b = result.required_midi_sources[1];
+        REQUIRE(result.requests.required_midi_sources.size() == 2);
+        const auto& a = result.requests.required_midi_sources[0];
+        const auto& b = result.requests.required_midi_sources[1];
         CHECK(a.state_id != b.state_id);
         CHECK(a.channel_filter == 1);
         CHECK(b.channel_filter == 2);
@@ -11002,8 +10986,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             CHECK(d.severity != akkado::Severity::Error);
         }
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        const auto& r = result.required_midi_cc_routes[0];
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        const auto& r = result.requests.required_midi_cc_routes[0];
         CHECK(r.param_name == "cutoff");
         CHECK(r.cc_num == 74);
         CHECK(r.channel_filter == 0);
@@ -11018,8 +11002,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             "midi_cc(\"f\", {cc: 74, min: 50, max: 5000})\n"
             "out(f)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        const auto& r = result.required_midi_cc_routes[0];
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        const auto& r = result.requests.required_midi_cc_routes[0];
         CHECK(r.scale == Catch::Approx(4950.0f));
         CHECK(r.bias  == Catch::Approx(50.0f));
     }
@@ -11030,8 +11014,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             "midi_cc(\"bend\", {pb: true})\n"
             "out(b)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        const auto& r = result.required_midi_cc_routes[0];
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        const auto& r = result.requests.required_midi_cc_routes[0];
         CHECK(r.cc_num == -1);
         CHECK(r.scale == Catch::Approx(2.0f));
         CHECK(r.bias  == Catch::Approx(-1.0f));
@@ -11043,8 +11027,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             "midi_cc(\"press\", {at: true})\n"
             "out(p)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        CHECK(result.required_midi_cc_routes[0].cc_num == -2);
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        CHECK(result.requests.required_midi_cc_routes[0].cc_num == -2);
     }
 
     SECTION("midi_cc(name, {cc, channel}) sets channel_filter") {
@@ -11053,8 +11037,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             "midi_cc(\"x\", {cc: 1, channel: 5})\n"
             "out(x)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        CHECK(result.required_midi_cc_routes[0].channel_filter == 5);
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        CHECK(result.requests.required_midi_cc_routes[0].channel_filter == 5);
     }
 
     SECTION("midi_cc(name, {cc, slew}) sets slew_ms") {
@@ -11063,8 +11047,8 @@ TEST_CASE("midi_cc() basic codegen", "[midi_cc]") {
             "midi_cc(\"x\", {cc: 1, slew: 20})\n"
             "out(x)");
         REQUIRE(result.success);
-        REQUIRE(result.required_midi_cc_routes.size() == 1);
-        CHECK(result.required_midi_cc_routes[0].slew_ms == Catch::Approx(20.0f));
+        REQUIRE(result.requests.required_midi_cc_routes.size() == 1);
+        CHECK(result.requests.required_midi_cc_routes[0].slew_ms == Catch::Approx(20.0f));
     }
 
     SECTION("midi_cc emits no bytecode for the directive itself") {
@@ -11165,7 +11149,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
         REQUIRE(result.success);
 
         bool found = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.5f));
@@ -11182,7 +11166,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
         REQUIRE(result.success);
 
         bool found = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.25f));
@@ -11197,7 +11181,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
         REQUIRE(result.success);
 
         bool found = false;
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 found = true;
                 CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
@@ -11225,7 +11209,7 @@ TEST_CASE("poly() accepts release: option", "[polyphony][poly-release]") {
             "n\"c4\" |> poly(%, synth, 4, -1.0) |> out(%)");
         REQUIRE(result.success);
 
-        for (const auto& init : result.state_inits) {
+        for (const auto& init : result.program.state_inits) {
             if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
                 CHECK(init.poly_release_seconds == Catch::Approx(0.0f));
             }
@@ -11302,7 +11286,7 @@ TEST_CASE("midi() |> soundfont() takes the MIDI-upstream path",
     // The state init must reference the upstream midi() state_id and the
     // literal preset index.
     bool found_sf_init = false;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SoundfontEvents) {
             found_sf_init = true;
             CHECK(init.state_id == sf_state_id);
@@ -11334,7 +11318,7 @@ TEST_CASE("n'…' |> soundfont() still takes the legacy buffer path",
     CHECK(sf_count >= 1);
 
     // No SoundfontEvents init should be emitted on the pattern path.
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         CHECK(init.type != akkado::StateInitData::Type::SoundfontEvents);
     }
 }
@@ -11358,7 +11342,7 @@ TEST_CASE("midi() still feeds poly() via state_id (regression)",
     }
     REQUIRE(midi_state_id != 0);
 
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             found_poly_init = true;
             CHECK(init.poly_seq_state_id == midi_state_id);
@@ -11381,7 +11365,7 @@ TEST_CASE("legato() accepts release: option (positional 3-arg form)",
     REQUIRE(result.success);
 
     bool found = false;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::ForeachAlloc) {
             found = true;
             CHECK(init.poly_release_seconds == Catch::Approx(0.3f));
@@ -11640,7 +11624,7 @@ TEST_CASE("F3: pattern_eval no longer invokes parse_chord_symbol",
 // emit_pattern_with_state) to CodeGenerator methods that route through the
 // single `emit()` site — both vectors are pushed in lock-step there. A debug
 // `assert()` in `generate()` enforces parity; these tests assert it
-// independently against the public `CompileResult.source_locations` /
+// independently against the public `CompileResult.program.source_locations` /
 // `bytecode` surface so the invariant is checked even in NDEBUG builds.
 // =============================================================================
 
@@ -11651,8 +11635,7 @@ constexpr std::size_t kInstructionStride = sizeof(cedar::Instruction);
 // Compile a source string with bypass_master so the bus epilogue doesn't add
 // instructions that the test would have to mentally subtract.
 akkado::CompileResult compile_for_parity(std::string_view src) {
-    return akkado::compile(src, "<f2-test>", nullptr, nullptr,
-                           /*lint_strict=*/false, /*bypass_master=*/true);
+    return akkado::compile(src, {.filename = "<f2-test>", .bypass_master = true});
 }
 
 }  // namespace
@@ -11661,9 +11644,9 @@ TEST_CASE("F2: instructions and source_locations have equal length after compile
           "[F2][parity]") {
     auto result = compile_for_parity("osc(\"sin\", 440) |> out(@)\n");
     REQUIRE(result.success);
-    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
-    const std::size_t inst_count = result.bytecode.size() / kInstructionStride;
-    CHECK(inst_count == result.source_locations.size());
+    REQUIRE(result.program.bytecode.size() % kInstructionStride == 0);
+    const std::size_t inst_count = result.program.bytecode.size() / kInstructionStride;
+    CHECK(inst_count == result.program.source_locations.size());
 }
 
 TEST_CASE("F2: parity holds across every fixture",
@@ -11692,9 +11675,9 @@ TEST_CASE("F2: parity holds across every fixture",
         buf << f.rdbuf();
         auto result = compile_for_parity(buf.str());
         REQUIRE(result.success);
-        REQUIRE(result.bytecode.size() % kInstructionStride == 0);
-        const std::size_t inst_count = result.bytecode.size() / kInstructionStride;
-        CHECK(inst_count == result.source_locations.size());
+        REQUIRE(result.program.bytecode.size() % kInstructionStride == 0);
+        const std::size_t inst_count = result.program.bytecode.size() / kInstructionStride;
+        CHECK(inst_count == result.program.source_locations.size());
     }
 }
 
@@ -11709,14 +11692,14 @@ TEST_CASE("F2: emit_push_const-shaped paths produce one source-location per "
         "y = [2.0, 3.0, 4.0]\n"
         "out(osc(\"sin\", x * y[0]))\n");
     REQUIRE(result.success);
-    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
-    CHECK(result.bytecode.size() / kInstructionStride ==
-          result.source_locations.size());
+    REQUIRE(result.program.bytecode.size() % kInstructionStride == 0);
+    CHECK(result.program.bytecode.size() / kInstructionStride ==
+          result.program.source_locations.size());
     // Sanity: at least one PUSH_CONST was emitted (otherwise the test has
     // nothing to assert about).
     std::vector<cedar::Instruction> insts(
-        result.bytecode.size() / kInstructionStride);
-    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+        result.program.bytecode.size() / kInstructionStride);
+    std::memcpy(insts.data(), result.program.bytecode.data(), result.program.bytecode.size());
     const auto push_count = std::count_if(
         insts.begin(), insts.end(),
         [](const cedar::Instruction& i) {
@@ -11734,13 +11717,13 @@ TEST_CASE("F2: pattern with EVENT_RATE_SCALE (slow/fast) holds parity",
     auto result = compile_for_parity(
         "slow(n\"c4 e4\", 2).freq |> saw(@) |> out(@)\n");
     REQUIRE(result.success);
-    REQUIRE(result.bytecode.size() % kInstructionStride == 0);
-    CHECK(result.bytecode.size() / kInstructionStride ==
-          result.source_locations.size());
+    REQUIRE(result.program.bytecode.size() % kInstructionStride == 0);
+    CHECK(result.program.bytecode.size() / kInstructionStride ==
+          result.program.source_locations.size());
     // Sanity: EVENT_RATE_SCALE was actually emitted.
     std::vector<cedar::Instruction> insts(
-        result.bytecode.size() / kInstructionStride);
-    std::memcpy(insts.data(), result.bytecode.data(), result.bytecode.size());
+        result.program.bytecode.size() / kInstructionStride);
+    std::memcpy(insts.data(), result.program.bytecode.data(), result.program.bytecode.size());
     const bool has_ers = std::any_of(
         insts.begin(), insts.end(),
         [](const cedar::Instruction& i) {
@@ -11769,14 +11752,12 @@ TEST_CASE("F14: user voicing defined in compile A does not leak into a fresh ctx
     // Compile A with its own ctx — should succeed and register myV in
     // *that* ctx only.
     akkado::CompileContext ctx_a;
-    auto result_a = akkado::compile(source_a, "<a>", nullptr, nullptr,
-                                    false, /*bypass_master=*/true, &ctx_a);
+    auto result_a = akkado::compile(source_a, {.filename = "<a>", .bypass_master = true, .ctx = &ctx_a});
     REQUIRE(result_a.success);
 
     // Compile B with a *fresh* ctx — myV should not be visible.
     akkado::CompileContext ctx_b;
-    auto result_b = akkado::compile(source_b, "<b>", nullptr, nullptr,
-                                    false, /*bypass_master=*/true, &ctx_b);
+    auto result_b = akkado::compile(source_b, {.filename = "<b>", .bypass_master = true, .ctx = &ctx_b});
     REQUIRE_FALSE(result_b.success);
     const bool has_e141 = std::any_of(
         result_b.diagnostics.begin(), result_b.diagnostics.end(),
@@ -11796,12 +11777,10 @@ TEST_CASE("F14: user voicing persists across compiles sharing the same ctx",
 
     akkado::CompileContext shared_ctx;
 
-    auto result_a = akkado::compile(source_a, "<a>", nullptr, nullptr,
-                                    false, /*bypass_master=*/true, &shared_ctx);
+    auto result_a = akkado::compile(source_a, {.filename = "<a>", .bypass_master = true, .ctx = &shared_ctx});
     REQUIRE(result_a.success);
 
-    auto result_b = akkado::compile(source_b, "<b>", nullptr, nullptr,
-                                    false, /*bypass_master=*/true, &shared_ctx);
+    auto result_b = akkado::compile(source_b, {.filename = "<b>", .bypass_master = true, .ctx = &shared_ctx});
     REQUIRE(result_b.success);
     // No E141 — myV was previously registered in shared_ctx.
     const bool has_e141 = std::any_of(
@@ -11819,8 +11798,7 @@ TEST_CASE("F14: built-in voicings (close/open/drop2/drop3) resolve in every fres
         source += "\") |> out(@)\n";
 
         akkado::CompileContext ctx;
-        auto result = akkado::compile(source, "<input>", nullptr, nullptr,
-                                      false, /*bypass_master=*/true, &ctx);
+        auto result = akkado::compile(source, {.bypass_master = true, .ctx = &ctx});
         INFO("voicing name = " << name);
         REQUIRE(result.success);
         const bool has_e141 = std::any_of(
@@ -11863,4 +11841,65 @@ TEST_CASE("W161: piping past out() coerces void to silence, never emits 0xFFFF i
         // never the 0xFFFF sentinel the VM would pass to BufferPool::get().
         CHECK(inst->inputs[0] == cedar::BUFFER_ZERO);
     }
+}
+
+// ============================================================================
+// prd-parser-codegen-hardening Phase 2: CompileOptions + debug-JSON gate
+// ============================================================================
+
+TEST_CASE("P2: emit_debug_json gates StateInitData::ast_json", "[P2][options]") {
+    constexpr std::string_view src = R"(n"c4 e4 g4" as e |> sine(e.freq) |> out(@))";
+
+    SECTION("default (false) leaves ast_json empty") {
+        auto result = akkado::compile(src);
+        REQUIRE(result.success);
+        bool saw_sequence = false;
+        for (const auto& init : result.program.state_inits) {
+            if (init.type == akkado::StateInitData::Type::SequenceProgram) {
+                saw_sequence = true;
+                CHECK(init.ast_json.empty());
+            }
+        }
+        CHECK(saw_sequence);
+    }
+
+    SECTION("true populates ast_json deterministically") {
+        auto a = akkado::compile(src, {.emit_debug_json = true});
+        auto b = akkado::compile(src, {.emit_debug_json = true});
+        REQUIRE(a.success);
+        REQUIRE(b.success);
+        bool saw_sequence = false;
+        for (std::size_t i = 0; i < a.program.state_inits.size(); ++i) {
+            const auto& ia = a.program.state_inits[i];
+            if (ia.type != akkado::StateInitData::Type::SequenceProgram) continue;
+            saw_sequence = true;
+            CHECK(!ia.ast_json.empty());
+            CHECK(ia.ast_json == b.program.state_inits[i].ast_json);
+        }
+        CHECK(saw_sequence);
+    }
+
+    SECTION("the gate does not change the bytecode") {
+        auto off = akkado::compile(src);
+        auto on = akkado::compile(src, {.emit_debug_json = true});
+        REQUIRE(off.success);
+        REQUIRE(on.success);
+        CHECK(off.program.bytecode == on.program.bytecode);
+    }
+}
+
+TEST_CASE("P2: grouped CompileResult is populated", "[P2][options]") {
+    auto result = akkado::compile(
+        R"(f = param("freq", 440, 20, 2000)
+saw(f) |> out(@))");
+    REQUIRE(result.success);
+    CHECK(!result.program.bytecode.empty());
+    CHECK(result.program.main_instruction_count > 0);
+    CHECK(result.program.required_buffers > 0);
+    REQUIRE(result.artifacts.param_decls.size() == 1);
+    CHECK(result.artifacts.param_decls[0].name == "freq");
+    CHECK(result.artifacts.symbols.has_value());
+    CHECK(result.artifacts.ast != nullptr);
+    // compile() constructed its own context, so it must own the lifetime.
+    CHECK(result.artifacts.owned_ctx != nullptr);
 }

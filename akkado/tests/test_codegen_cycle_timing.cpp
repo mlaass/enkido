@@ -18,7 +18,7 @@
 namespace {
 
 const akkado::StateInitData* find_seq_init(const akkado::CompileResult& result) {
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             return &init;
         }
@@ -147,7 +147,7 @@ TEST_CASE("cycle_timing: slow(2) emits RateScale, SequenceProgram untouched",
     CHECK(si->sequence_events[1].size() == 2);
 
     bool has_rate_scale_init = false;
-    for (const auto& s : result.state_inits) {
+    for (const auto& s : result.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::RateScale)
             has_rate_scale_init = true;
     }
@@ -167,7 +167,7 @@ TEST_CASE("cycle_timing: fast(2) emits RateScale, SequenceProgram untouched",
     CHECK(si->sequence_events[1].size() == 4);
 
     bool has_rate_scale_init = false;
-    for (const auto& s : result.state_inits) {
+    for (const auto& s : result.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::RateScale)
             has_rate_scale_init = true;
     }
@@ -201,7 +201,7 @@ TEST_CASE("cycle_timing: timeline(...) curves keep subdivision semantics",
     REQUIRE(result.success);
 
     bool timeline_seen = false;
-    for (const auto& init : result.state_inits) {
+    for (const auto& init : result.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::Timeline) {
             timeline_seen = true;
             break;

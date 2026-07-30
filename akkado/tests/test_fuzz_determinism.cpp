@@ -143,13 +143,13 @@ struct DiffResult {
 DiffResult diff_bytecode(const akkado::CompileResult& a,
                          const akkado::CompileResult& b) {
     DiffResult r;
-    if (a.bytecode.size() != b.bytecode.size()) {
+    if (a.program.bytecode.size() != b.program.bytecode.size()) {
         r.equal = false;
-        r.detail = "bytecode size differs: " + std::to_string(a.bytecode.size())
-                 + " vs " + std::to_string(b.bytecode.size());
+        r.detail = "bytecode size differs: " + std::to_string(a.program.bytecode.size())
+                 + " vs " + std::to_string(b.program.bytecode.size());
         return r;
     }
-    if (std::memcmp(a.bytecode.data(), b.bytecode.data(), a.bytecode.size()) != 0) {
+    if (std::memcmp(a.program.bytecode.data(), b.program.bytecode.data(), a.program.bytecode.size()) != 0) {
         r.equal = false;
         r.detail = "bytecode bytes differ";
     }
@@ -159,14 +159,14 @@ DiffResult diff_bytecode(const akkado::CompileResult& a,
 DiffResult diff_sequence_events(const akkado::CompileResult& a,
                                 const akkado::CompileResult& b) {
     DiffResult r;
-    if (a.state_inits.size() != b.state_inits.size()) {
+    if (a.program.state_inits.size() != b.program.state_inits.size()) {
         r.equal = false;
         r.detail = "state_inits count differs";
         return r;
     }
-    for (std::size_t i = 0; i < a.state_inits.size(); ++i) {
-        const auto& A = a.state_inits[i];
-        const auto& B = b.state_inits[i];
+    for (std::size_t i = 0; i < a.program.state_inits.size(); ++i) {
+        const auto& A = a.program.state_inits[i];
+        const auto& B = b.program.state_inits[i];
         if (A.state_id != B.state_id) {
             r.equal = false;
             r.detail = "state_id differs at index " + std::to_string(i);
@@ -216,7 +216,7 @@ DiffResult diff_sequence_events(const akkado::CompileResult& a,
 // into arena memory.
 void apply_seq_state_inits(cedar::VM& vm, const akkado::CompileResult& cr,
                            std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type != akkado::StateInitData::Type::SequenceProgram) continue;
         std::vector<cedar::Sequence> seq_copy = init.sequences;
         for (std::size_t i = 0; i < seq_copy.size() && i < init.sequence_events.size(); ++i) {
@@ -247,9 +247,9 @@ RenderResult render_n_blocks(const akkado::CompileResult& cr,
     cedar::VM vm;
     vm.set_crossfade_blocks(0);
 
-    const std::size_t n_inst = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n_inst = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n_inst);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     if (vm.load_program(insts) != cedar::VM::LoadResult::Success) {
         r.failure = "load_program returned non-Success";
         return r;
@@ -290,9 +290,9 @@ HotSwapResult check_hot_swap_idempotence(const akkado::CompileResult& cr) {
     cedar::VM vm;
     vm.set_crossfade_blocks(0);
 
-    const std::size_t n_inst = cr.bytecode.size() / sizeof(cedar::Instruction);
+    const std::size_t n_inst = cr.program.bytecode.size() / sizeof(cedar::Instruction);
     std::vector<cedar::Instruction> insts(n_inst);
-    std::memcpy(insts.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
 
     if (vm.load_program(insts) != cedar::VM::LoadResult::Success) {
         r.failure = "first load_program failed";
@@ -311,7 +311,7 @@ HotSwapResult check_hot_swap_idempotence(const akkado::CompileResult& cr) {
     // step counter. Patterns without ALTERNATE mode return step_before=0
     // and the test passes trivially — that's correct (nothing to preserve).
     std::uint32_t seq_state_id = 0;
-    for (const auto& init : cr.state_inits) {
+    for (const auto& init : cr.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             seq_state_id = init.state_id;
             break;
@@ -339,7 +339,7 @@ HotSwapResult check_hot_swap_idempotence(const akkado::CompileResult& cr) {
     // Recompile and hot-swap. The new compile MUST preserve the alternation
     // step counter.
     std::vector<cedar::Instruction> insts2(n_inst);
-    std::memcpy(insts2.data(), cr.bytecode.data(), cr.bytecode.size());
+    std::memcpy(insts2.data(), cr.program.bytecode.data(), cr.program.bytecode.size());
     if (vm.load_program(insts2) != cedar::VM::LoadResult::Success) {
         r.failure = "second load_program failed";
         return r;

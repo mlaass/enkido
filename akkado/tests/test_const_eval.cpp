@@ -15,9 +15,9 @@ static float decode_const_float(const cedar::Instruction& inst) {
 
 static std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& result) {
     std::vector<cedar::Instruction> instructions;
-    size_t count = result.bytecode.size() / sizeof(cedar::Instruction);
+    size_t count = result.program.bytecode.size() / sizeof(cedar::Instruction);
     instructions.resize(count);
-    std::memcpy(instructions.data(), result.bytecode.data(), result.bytecode.size());
+    std::memcpy(instructions.data(), result.program.bytecode.data(), result.program.bytecode.size());
     return instructions;
 }
 

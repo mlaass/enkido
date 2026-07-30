@@ -17,8 +17,8 @@ namespace {
 
 std::vector<cedar::Instruction> get_instructions(const akkado::CompileResult& r) {
     std::vector<cedar::Instruction> insts(
-        r.bytecode.size() / sizeof(cedar::Instruction));
-    std::memcpy(insts.data(), r.bytecode.data(), r.bytecode.size());
+        r.program.bytecode.size() / sizeof(cedar::Instruction));
+    std::memcpy(insts.data(), r.program.bytecode.data(), r.program.bytecode.size());
     return insts;
 }
 
@@ -37,8 +37,8 @@ bool has_diag(const akkado::CompileResult& r, const std::string& code) {
 // program needs. seq_storage must outlive every process_block() call.
 void apply_inits(cedar::VM& vm, const akkado::CompileResult& r,
                  std::vector<std::vector<cedar::Sequence>>& seq_storage) {
-    seq_storage.reserve(r.state_inits.size());
-    for (const auto& init : r.state_inits) {
+    seq_storage.reserve(r.program.state_inits.size());
+    for (const auto& init : r.program.state_inits) {
         if (init.type == akkado::StateInitData::Type::SequenceProgram) {
             std::vector<cedar::Sequence> seq_copy = init.sequences;
             for (std::size_t i = 0;
@@ -76,7 +76,7 @@ float render_peak(const akkado::CompileResult& r, int blocks) {
     cedar::VM vm;
     vm.set_sample_rate(48000.0f);
     vm.set_bpm(120.0f);
-    vm.set_block_table(r.block_table, r.main_instruction_count);
+    vm.set_block_table(r.program.block_table, r.program.main_instruction_count);
     REQUIRE(vm.load_program_immediate(std::span<const cedar::Instruction>(insts)));
     std::vector<std::vector<cedar::Sequence>> seq_storage;
     apply_inits(vm, r, seq_storage);
@@ -108,15 +108,15 @@ TEST_CASE("poly() compiles to FOREACH_EVENT + a subprogram block", "[L3][poly]")
     CHECK(count_op(insts, cedar::Opcode::POLY_END) == 0);
 
     // One subprogram block — the instrument body.
-    REQUIRE(r.block_table.size() == 1);
-    CHECK(r.block_table[0].length > 0);
-    CHECK(r.block_table[0].output_count == 2);
+    REQUIRE(r.program.block_table.size() == 1);
+    CHECK(r.program.block_table[0].length > 0);
+    CHECK(r.program.block_table[0].output_count == 2);
     // The block body lives after the main program.
-    CHECK(r.block_table[0].offset >= r.main_instruction_count);
+    CHECK(r.program.block_table[0].offset >= r.program.main_instruction_count);
 
     // A ForeachAlloc state init with VOICE_POOL allocator.
     bool found = false;
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
             CHECK(s.foreach_allocator_kind == 0);  // VOICE_POOL
             CHECK(s.poly_max_voices == 4);
@@ -147,11 +147,11 @@ TEST_CASE("each_voice() emits FOREACH_EVENT with the PER_ITERATION allocator",
     auto insts = get_instructions(r);
 
     CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 1);
-    REQUIRE(r.block_table.size() == 1);
-    CHECK(r.block_table[0].length > 0);
+    REQUIRE(r.program.block_table.size() == 1);
+    CHECK(r.program.block_table[0].length > 0);
 
     bool found = false;
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
             CHECK(s.foreach_allocator_kind == 1);  // PER_ITERATION
             found = true;
@@ -216,10 +216,10 @@ TEST_CASE("each() emits FOREACH_EVENT with the PER_ITERATION allocator",
     REQUIRE(r.success);
     auto insts = get_instructions(r);
     CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 1);
-    REQUIRE(r.block_table.size() == 1);
+    REQUIRE(r.program.block_table.size() == 1);
 
     bool found = false;
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
             CHECK(s.foreach_allocator_kind == 1);  // PER_ITERATION
             found = true;
@@ -248,7 +248,7 @@ TEST_CASE("reduce() over a pattern emits FOREACH_EVENT with the SHARED allocator
     CHECK(count_op(insts, cedar::Opcode::FOREACH_EVENT) == 1);
 
     bool found = false;
-    for (const auto& s : r.state_inits) {
+    for (const auto& s : r.program.state_inits) {
         if (s.type == akkado::StateInitData::Type::ForeachAlloc) {
             CHECK(s.foreach_allocator_kind == 2);  // SHARED
             found = true;
