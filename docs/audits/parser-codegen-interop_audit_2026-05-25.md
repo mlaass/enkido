@@ -438,6 +438,12 @@ In addition to F11 (lexer near-clone) and F12 (no interning):
 - **`MiniLexer::lex_token` 5-flag state machine.** `mini_lexer.cpp:242-424` — `curve_mode_`, `value_mode_`, `note_mode_`, `sample_only_`, `last_was_modifier_`, `paren_depth_` all gate which scan path runs. The "snapshot-then-clear `last_was_modifier_`" comment at `:252-255` and "force numeric inside `(`" at `:254` are accretion markers. Highest-churn file in the lexer layer (17 commits). (*High* — but the F11 extract is the natural moment to address this.)
 - **Dead code.** `TokenType::MiniString` declared at `token.hpp:90,159` but never produced (only test_lexer.cpp:839 mentions). `MiniLexer` `bool`-overload ctor (`mini_lexer.hpp:38-39, cpp:31-33`) has no production callers. `codegen/literals.hpp::make_push_const` and `make_mtof` are dead (`grep` returns no users). (*Low*)
 
+  > **RESOLVED 2026-07-31** by Phase 1 of `prd-parser-codegen-hardening.md`.
+  > `MiniString`, the `MiniLexer`/`lex_mini` bool overloads (+
+  > `mode_from_bools`), and the entire dead `codegen/literals.hpp` are
+  > deleted. The `BinOp` path (§3.2) has surviving dead consumers and is
+  > deleted by Phase 4 per the PRD's conservative rule.
+
 ### 3.2 Parser
 
 In addition to F6 (Pratt redundancy) and F7 (`^` right-assoc bug):
@@ -630,6 +636,11 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 ### PRD-15 — Dead-code sweep  *(Low; one-PR cleanup)*
 **Scope:** Remove `TokenType::MiniString` (declared, never produced); `MiniLexer` `bool`-overload ctor; `codegen/literals.hpp::make_push_const` + `make_mtof`; the post-parser dead `BinOp`/`BinaryOpData` path (covered by PRD-10).
 **Effort:** Small (1 day).
+
+> **PARTIALLY SHIPPED.** MiniString + bool overloads + `literals.hpp`
+> deleted via `prd-parser-codegen-hardening.md` Phase 1, 2026-07-31.
+> The `BinOp`/`BinaryOpData` path ships with that PRD's Phase 4 (Pratt
+> table) because dead consumers survive in `codegen.cpp` / `ast_hash.cpp`.
 
 ---
 

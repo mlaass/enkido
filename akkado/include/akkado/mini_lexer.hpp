@@ -34,10 +34,6 @@ public:
     explicit MiniLexer(std::string_view pattern, SourceLocation base_location = {},
                        MiniParseMode mode = MiniParseMode::Note);
 
-    /// Backward-compat constructor (replaces sample_only/curve_mode bools).
-    explicit MiniLexer(std::string_view pattern, SourceLocation base_location,
-                       bool sample_only, bool curve_mode);
-
     /// Lex all tokens from the pattern
     /// @return Vector of tokens, ending with Eof token
     [[nodiscard]] std::vector<MiniToken> lex_all();
@@ -132,10 +128,5 @@ private:
 std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
 lex_mini(std::string_view pattern, SourceLocation base_location = {},
          MiniParseMode mode = MiniParseMode::Note);
-
-/// Backward-compat overload that maps the old bool flags to a MiniParseMode.
-std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
-lex_mini(std::string_view pattern, SourceLocation base_location,
-         bool sample_only, bool curve_mode);
 
 } // namespace akkado

@@ -514,7 +514,7 @@ private:
     // PRD prd-parser-codegen-correctness.md Phase 3 (F2):
     // every instruction-emit helper that needs to allocate a buffer + emit
     // PUSH_CONST/MTOF/etc. is a method that routes through emit(). The free
-    // helpers in codegen/helpers.hpp / codegen/arrays.hpp / codegen/literals.hpp
+    // helpers in codegen/helpers.hpp / codegen/arrays.hpp
     // pushed into `instructions_` directly without updating `source_locations_`,
     // silently desynchronising the two parallel vectors. The bug is now
     // structurally impossible — every push goes through emit().

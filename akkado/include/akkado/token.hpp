@@ -86,9 +86,6 @@ enum class TokenType : std::uint8_t {
     DotDot,         // .. (range in match patterns)
     DotDotDot,      // ... (variadic rest parameter prefix)
 
-    // Mini-notation specific (lexed inside pattern strings)
-    MiniString,     // The raw mini-notation string content
-
     // Directives
     Directive,      // $name (compiler directive like $polyphony)
 
@@ -152,7 +149,6 @@ constexpr std::string_view token_type_name(TokenType type) {
         case TokenType::Underscore:   return "Underscore";
         case TokenType::DotDot:       return "DotDot";
         case TokenType::DotDotDot:    return "DotDotDot";
-        case TokenType::MiniString:   return "MiniString";
         case TokenType::Directive:    return "Directive";
         case TokenType::Error:        return "Error";
     }

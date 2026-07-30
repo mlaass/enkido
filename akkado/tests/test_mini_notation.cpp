@@ -2268,7 +2268,7 @@ TEST_CASE("tune(\"ji\") and tune(\"bp\") compile end-to-end", "[tuning][ji_bp]")
 // ============================================================================
 
 TEST_CASE("Curve mode lexes level characters", "[curve_lexer]") {
-    auto [tokens, diags] = lex_mini("_ . - ^ '", {}, false, true);
+    auto [tokens, diags] = lex_mini("_ . - ^ '", {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(tokens.size() == 6); // 5 levels + Eof
     CHECK(tokens[0].type == MiniTokenType::CurveLevel);
@@ -2284,7 +2284,7 @@ TEST_CASE("Curve mode lexes level characters", "[curve_lexer]") {
 }
 
 TEST_CASE("Curve mode lexes ramp characters", "[curve_lexer]") {
-    auto [tokens, diags] = lex_mini("/ \\", {}, false, true);
+    auto [tokens, diags] = lex_mini("/ \\", {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(tokens.size() == 3);
     CHECK(tokens[0].type == MiniTokenType::CurveRamp);
@@ -2292,35 +2292,35 @@ TEST_CASE("Curve mode lexes ramp characters", "[curve_lexer]") {
 }
 
 TEST_CASE("Curve mode lexes smooth modifier", "[curve_lexer]") {
-    auto [tokens, diags] = lex_mini("~", {}, false, true);
+    auto [tokens, diags] = lex_mini("~", {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(tokens.size() == 2);
     CHECK(tokens[0].type == MiniTokenType::CurveSmooth);
 }
 
 TEST_CASE("Curve mode _ is CurveLevel not Elongate", "[curve_lexer]") {
-    auto [std_tokens, std_diags] = lex_mini("_", {}, false, false);
+    auto [std_tokens, std_diags] = lex_mini("_", {}, MiniParseMode::Note);
     CHECK(std_tokens[0].type == MiniTokenType::Elongate);
-    auto [curve_tokens, curve_diags] = lex_mini("_", {}, false, true);
+    auto [curve_tokens, curve_diags] = lex_mini("_", {}, MiniParseMode::Curve);
     CHECK(curve_tokens[0].type == MiniTokenType::CurveLevel);
     CHECK(std::get<MiniCurveLevelData>(curve_tokens[0].value).value == 0.0f);
 }
 
 TEST_CASE("Curve mode ~ is CurveSmooth not Rest", "[curve_lexer]") {
-    auto [std_tokens, std_diags] = lex_mini("~", {}, false, false);
+    auto [std_tokens, std_diags] = lex_mini("~", {}, MiniParseMode::Note);
     CHECK(std_tokens[0].type == MiniTokenType::Rest);
-    auto [curve_tokens, curve_diags] = lex_mini("~", {}, false, true);
+    auto [curve_tokens, curve_diags] = lex_mini("~", {}, MiniParseMode::Curve);
     CHECK(curve_tokens[0].type == MiniTokenType::CurveSmooth);
 }
 
 TEST_CASE("Curve mode / disambiguation", "[curve_lexer]") {
-    auto [tokens1, diags1] = lex_mini("_/2", {}, false, true);
+    auto [tokens1, diags1] = lex_mini("_/2", {}, MiniParseMode::Curve);
     REQUIRE(diags1.empty());
     CHECK(tokens1[0].type == MiniTokenType::CurveLevel);
     CHECK(tokens1[1].type == MiniTokenType::Slash);
     CHECK(tokens1[2].type == MiniTokenType::Number);
 
-    auto [tokens2, diags2] = lex_mini("_/'", {}, false, true);
+    auto [tokens2, diags2] = lex_mini("_/'", {}, MiniParseMode::Curve);
     REQUIRE(diags2.empty());
     CHECK(tokens2[0].type == MiniTokenType::CurveLevel);
     CHECK(tokens2[1].type == MiniTokenType::CurveRamp);
@@ -2328,7 +2328,7 @@ TEST_CASE("Curve mode / disambiguation", "[curve_lexer]") {
 }
 
 TEST_CASE("Curve mode grouping and modifiers still work", "[curve_lexer]") {
-    auto [tokens, diags] = lex_mini("[_'] *4", {}, false, true);
+    auto [tokens, diags] = lex_mini("[_'] *4", {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     CHECK(tokens[0].type == MiniTokenType::LBracket);
     CHECK(tokens[1].type == MiniTokenType::CurveLevel);
@@ -2349,7 +2349,7 @@ TEST_CASE("Curve mode mini_token_type_name", "[curve_lexer]") {
 
 TEST_CASE("Parse basic curve levels", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_ ' -", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_ ' -", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(root != NULL_NODE);
     CHECK(arena[root].type == NodeType::MiniPattern);
@@ -2372,7 +2372,7 @@ TEST_CASE("Parse basic curve levels", "[curve_parser]") {
 
 TEST_CASE("Parse curve ramps", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_/'", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_/'", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(arena.child_count(root) == 3);
 
@@ -2387,7 +2387,7 @@ TEST_CASE("Parse curve ramps", "[curve_parser]") {
 
 TEST_CASE("Parse smooth modifier ~", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_~'", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_~'", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(arena.child_count(root) == 2);
 
@@ -2401,7 +2401,7 @@ TEST_CASE("Parse smooth modifier ~", "[curve_parser]") {
 
 TEST_CASE("Parse curve with grouping", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("[_'] __", arena, {}, false, true);
+    auto [root, diags] = parse_mini("[_'] __", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(arena.child_count(root) == 3);
     NodeIndex group = arena[root].first_child;
@@ -2411,7 +2411,7 @@ TEST_CASE("Parse curve with grouping", "[curve_parser]") {
 
 TEST_CASE("Parse curve with alternation", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("<[_'] ['_]>", arena, {}, false, true);
+    auto [root, diags] = parse_mini("<[_'] ['_]>", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     REQUIRE(arena.child_count(root) == 1);
     NodeIndex seq = arena[root].first_child;
@@ -2421,7 +2421,7 @@ TEST_CASE("Parse curve with alternation", "[curve_parser]") {
 
 TEST_CASE("Curve ~ before non-level is error", "[curve_parser]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("~/", arena, {}, false, true);
+    auto [root, diags] = parse_mini("~/", arena, {}, MiniParseMode::Curve);
     CHECK(!diags.empty());
 }
 
@@ -2431,7 +2431,7 @@ TEST_CASE("Curve ~ before non-level is error", "[curve_parser]") {
 
 TEST_CASE("Evaluate constant curve", "[curve_eval]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("____", arena, {}, false, true);
+    auto [root, diags] = parse_mini("____", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     PatternEventStream stream = evaluate_pattern(root, arena, 0);
     REQUIRE(stream.events.size() == 4);
@@ -2449,7 +2449,7 @@ TEST_CASE("Evaluate constant curve", "[curve_eval]") {
 
 TEST_CASE("Evaluate step curve", "[curve_eval]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("__''", arena, {}, false, true);
+    auto [root, diags] = parse_mini("__''", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     PatternEventStream stream = evaluate_pattern(root, arena, 0);
     REQUIRE(stream.events.size() == 4);
@@ -2461,7 +2461,7 @@ TEST_CASE("Evaluate step curve", "[curve_eval]") {
 
 TEST_CASE("Evaluate curve with ramp", "[curve_eval]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_/'", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_/'", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     PatternEventStream stream = evaluate_pattern(root, arena, 0);
     REQUIRE(stream.events.size() == 3);
@@ -2474,7 +2474,7 @@ TEST_CASE("Evaluate curve with ramp", "[curve_eval]") {
 
 TEST_CASE("Evaluate curve with smooth modifier", "[curve_eval]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_~'", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_~'", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     PatternEventStream stream = evaluate_pattern(root, arena, 0);
     REQUIRE(stream.events.size() == 2);
@@ -2485,7 +2485,7 @@ TEST_CASE("Evaluate curve with smooth modifier", "[curve_eval]") {
 
 TEST_CASE("Evaluate curve with weight modifier", "[curve_eval]") {
     AstArena arena;
-    auto [root, diags] = parse_mini("_@3 '", arena, {}, false, true);
+    auto [root, diags] = parse_mini("_@3 '", arena, {}, MiniParseMode::Curve);
     REQUIRE(diags.empty());
     PatternEventStream stream = evaluate_pattern(root, arena, 0);
     REQUIRE(stream.events.size() == 2);

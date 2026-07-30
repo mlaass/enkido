@@ -818,7 +818,6 @@ TEST_CASE("token_type_name returns correct strings", "[lexer]") {
     CHECK(token_type_name(TokenType::Question) == "Question");
     CHECK(token_type_name(TokenType::Tilde) == "Tilde");
     CHECK(token_type_name(TokenType::Underscore) == "Underscore");
-    CHECK(token_type_name(TokenType::MiniString) == "MiniString");
     CHECK(token_type_name(TokenType::Error) == "Error");
 }
 

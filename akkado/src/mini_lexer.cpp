@@ -9,12 +9,6 @@
 
 namespace akkado {
 
-static MiniParseMode mode_from_bools(bool sample_only, bool curve_mode) {
-    if (curve_mode) return MiniParseMode::Curve;
-    if (sample_only) return MiniParseMode::Sample;
-    return MiniParseMode::Note;
-}
-
 MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location, MiniParseMode mode)
     : pattern_(pattern)
     , base_location_(base_location)
@@ -26,10 +20,6 @@ MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location, Min
     , curve_mode_(mode == MiniParseMode::Curve)
     , value_mode_(mode == MiniParseMode::Value)
     , note_mode_(mode == MiniParseMode::Note)
-{}
-
-MiniLexer::MiniLexer(std::string_view pattern, SourceLocation base_location, bool sample_only, bool curve_mode)
-    : MiniLexer(pattern, base_location, mode_from_bools(sample_only, curve_mode))
 {}
 
 std::vector<MiniToken> MiniLexer::lex_all() {
@@ -907,11 +897,6 @@ lex_mini(std::string_view pattern, SourceLocation base_location, MiniParseMode m
     MiniLexer lexer(pattern, base_location, mode);
     auto tokens = lexer.lex_all();
     return {std::move(tokens), lexer.diagnostics()};
-}
-
-std::pair<std::vector<MiniToken>, std::vector<Diagnostic>>
-lex_mini(std::string_view pattern, SourceLocation base_location, bool sample_only, bool curve_mode) {
-    return lex_mini(pattern, base_location, mode_from_bools(sample_only, curve_mode));
 }
 
 } // namespace akkado

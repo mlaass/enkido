@@ -1,4 +1,15 @@
-> **Status: NOT STARTED — 9 phases.** Filed 2026-05-26 as the
+> **Status: IN PROGRESS — Phase 1 SHIPPED (2026-07-31), 8 phases remaining.**
+>
+> - **Phase 1 (dead-code + catalogue) — SHIPPED 2026-07-31.** Deleted
+>   `TokenType::MiniString`, the `MiniLexer`/`lex_mini` bool overloads
+>   (+ `mode_from_bools`), and the entirely-dead `codegen/literals.hpp`
+>   (`make_push_const`/`make_mtof`). Authored
+>   `docs/parallelism-blocker-catalogue.md` (PB-001..PB-004 + PB-F5).
+>   `BinOp`/`BinaryOpData` deferred to Phase 4 per the conservative rule
+>   (dead consumers survive in `codegen.cpp:2502`, `ast_hash.cpp`,
+>   `test_ast_arena.cpp`). Commit hashes backfilled at Phase 9.
+>
+> Filed 2026-05-26 as the
 > hardening + parallelism-prep follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
 > Sibling PRD: [`docs/prd-parser-codegen-correctness.md`](prd-parser-codegen-correctness.md)
