@@ -8,6 +8,9 @@
 #include <string_view>
 #include <unordered_map>
 
+#include <frozen/string.h>
+#include <frozen/unordered_map.h>
+
 namespace akkado {
 
 /// Maximum number of parameters for a builtin function (using inputs[0..4] + defaults).
@@ -270,8 +273,11 @@ struct BuiltinInfo {
 };
 
 /// Static mapping of Akkado function names to Cedar opcodes
-/// Used by semantic analyzer to resolve function calls
-inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS = {
+/// Used by semantic analyzer to resolve function calls.
+/// Hardening PRD Phase 3: frozen (compile-time perfect-hash) map — zero
+/// construction cost at process start, immutable by type. Heterogeneous
+/// find/count/at accept std::string_view / literals directly.
+inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::string, BuiltinInfo>({
     // Basic Oscillators
     // All oscillators now support optional phase offset and trigger for phase reset.
     // Phase/trig default to BUFFER_UNUSED, which falls back to BUFFER_ZERO (always 0.0).
@@ -1641,11 +1647,11 @@ inline const std::unordered_map<std::string_view, BuiltinInfo> BUILTIN_FUNCTIONS
                   {"", "", "", "", "", ""},
                   {NAN, NAN, NAN, NAN, NAN},
                   "Get seconds per beat = 60.0 / BPM."}},
-};
+});
 
 /// Alias mappings for convenience syntax
 /// e.g., "sine" -> "sin", "lowpass" -> "lp"
-inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIASES = {
+inline constexpr auto BUILTIN_ALIASES = frozen::make_unordered_map<frozen::string, std::string_view>({
     {"lowpass",   "lp"},
     {"highpass",  "hp"},
     {"bandpass",  "bp"},
@@ -1689,7 +1695,7 @@ inline const std::unordered_map<std::string_view, std::string_view> BUILTIN_ALIA
     {"compressor", "comp"},
     {"limit",     "limiter"},
     {"noisegate", "gate"},
-};
+});
 
 #ifdef CEDAR_HOST_EXTENSIONS
 // Defined in host_extensions.cpp. Declared here (rather than including that
@@ -1745,11 +1751,11 @@ struct BuiltinVarDef {
     float max_value;                // 999.0f (0 = no clamping)
 };
 
-inline const std::unordered_map<std::string_view, BuiltinVarDef> BUILTIN_VARIABLES = {
+inline constexpr auto BUILTIN_VARIABLES = frozen::make_unordered_map<frozen::string, BuiltinVarDef>({
     {"bpm", {"get_bpm", "set_bpm", "__bpm", 120.0f, 1.0f, 999.0f}},
     {"sr",  {"get_sr",  "",         "__sr",  48000.0f, 0.0f, 0.0f}},
     {"spb", {"get_spb", "",         "__spb", 0.5f, 0.0f, 0.0f}},  // seconds per beat = 60.0 / bpm
-};
+});
 
 #ifdef CEDAR_HOST_EXTENSIONS
 // Defined in host_extensions.cpp — see lookup_host_builtin above.

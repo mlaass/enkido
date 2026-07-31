@@ -1,4 +1,21 @@
-> **Status: IN PROGRESS — Phases 1-2 SHIPPED (2026-07-31), 7 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-3 SHIPPED (2026-07-31), 6 phases remaining.**
+>
+> - **Phase 3 (frozen builtin scope) — SHIPPED 2026-07-31.** Vendored
+>   frozen 1.2.0 (`third_party/frozen/` + `THIRD_PARTY.md`);
+>   `BUILTIN_FUNCTIONS` / `BUILTIN_ALIASES` / `BUILTIN_VARIABLES` are
+>   `constexpr frozen::unordered_map`. Process-shared `builtin_scope()`
+>   built once; `SymbolTable` construction does zero builtin inserts.
+>   **Design divergence from the spec above:** SymbolIds are per-compile
+>   interner-sequential, so the shared scope cannot be chained as a
+>   `scopes_[0]` map keyed on SymbolId — it is keyed by name and consulted
+>   as a lookup *fallback* (functions, then aliases; host extensions
+>   consulted live so post-first-compile registrations still resolve),
+>   with the caller's per-compile id patched onto the returned copy.
+>   The insert-into-scope-0 assertion is subsumed by the type system
+>   (the shared scope is `const`; `define()` only ever writes per-compile
+>   scopes). E150 top-level-reassignment and closure-shadowing semantics
+>   preserved and locked by [P3] tests (incl. two-table sharing + a
+>   first-use thread race). Commit hashes backfilled at Phase 9.
 >
 > - **Phase 2 (CompileOptions + grouped CompileResult + debug-JSON gate)
 >   — SHIPPED 2026-07-31.** `compile(source, CompileOptions)` replaces

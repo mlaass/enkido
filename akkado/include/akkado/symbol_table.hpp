@@ -200,6 +200,14 @@ struct Symbol {
     std::string module_path;
 };
 
+/// Process-shared builtin scope (hardening PRD Phase 3). Immutable map from
+/// builtin/alias name to a prototype Symbol (`name_id == NULL_SYMBOL` — ids
+/// are per-compile; `SymbolTable::lookup` patches the caller's id onto the
+/// returned copy). Built once on first use; lives for the process lifetime.
+/// Host-extension builtins are not included — they are consulted live so
+/// registrations between compiles are honored.
+const std::unordered_map<std::string_view, Symbol>& builtin_scope();
+
 /// Outcome of accumulating a user-function definition (Phase 4 overloading).
 enum class DefineFunctionResult {
     Added,                  // first definition of this name in the current scope
@@ -237,8 +245,9 @@ public:
     /// view (Symbol.name remains the authoritative diagnostic text).
     [[nodiscard]] const StringInterner* interner() const { return interner_; }
 
-    /// Register all builtins. Requires an interner to be attached.
-    /// Idempotent — safe to call once after `set_interner`.
+    /// Arm builtin resolution (hardening PRD Phase 3): attaches the interner
+    /// and enables the lookup fallback to the process-shared builtin_scope().
+    /// No per-table inserts happen anymore. Idempotent.
     void register_builtins(StringInterner& interner);
 
     /// Push a new scope (entering block/closure)
@@ -329,6 +338,17 @@ private:
     /// Per-compile string interner (non-owning). Required for
     /// string_view-based define/lookup overloads.
     StringInterner* interner_ = nullptr;
+
+    /// Phase 3: when true (interner ctor / register_builtins), lookups that
+    /// miss every scope fall back to the shared builtin_scope() + host
+    /// extensions. The default ctor leaves it false so scope-mechanics tests
+    /// see a genuinely empty table.
+    bool use_builtins_ = false;
+
+    /// Resolve `name` against builtin_scope() + host extensions, patching
+    /// `id` (the per-compile SymbolId, or NULL_SYMBOL if not interned) onto
+    /// the returned copy.
+    std::optional<Symbol> lookup_builtin(std::string_view name, SymbolId id) const;
 };
 
 } // namespace akkado

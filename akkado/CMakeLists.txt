@@ -119,6 +119,12 @@ target_include_directories(akkado
         $<INSTALL_INTERFACE:include>
 )
 
+# Vendored frozen (third_party/THIRD_PARTY.md) — compile-time perfect-hash
+# maps for the builtin registry. PUBLIC because builtins.hpp is public.
+target_include_directories(akkado SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../third_party/frozen/include>
+)
+
 # Apply compiler options (use BUILD_INTERFACE to avoid export issues)
 target_link_libraries(akkado
     PUBLIC

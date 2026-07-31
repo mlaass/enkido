@@ -12,7 +12,6 @@ Re-run the queries in §Scan-queries below when re-auditing.
 
 | ID | Site | Hazard | Severity | Resolution path |
 |----|------|--------|----------|-----------------|
-| PB-001 | `akkado/src/symbol_table.cpp` (`register_builtins()` from the `SymbolTable` ctor) | 600+ builtin symbol inserts per `SymbolTable` construction; per-import analyzers would each pay it and hammer allocator | High | Phase 3 (frozen builtin scope chained as `scopes_[0]`) |
 | PB-002 | `akkado/include/akkado/codegen.hpp` (`node_types_` member) | Dual-role: memoization cache AND inter-handler channel. Blocks per-statement codegen parallelism only; per-import parallelism unaffected (one `CodeGenerator` per import) | Medium | Out of scope — future per-statement-codegen PRD (catalogued for completeness) |
 | PB-003 | `akkado/src/codegen_arrays.cpp` (`apply_lambda` move/clear/restore of `node_types_`) | Same scope as PB-002; per-iteration mutation thrash | Medium | `prd-codegen-sprawl-cleanup.md` Phase 7 (overlay scoping) |
 | PB-004 | `akkado/src/host_extensions.cpp` (`registry()` function-local `static Registry`) | Process-wide host-extension registry. Safe by documented contract (register-then-freeze before first compile; read-only afterwards; no lock) — but the freeze is not enforced against a compile running concurrently with a late registration | Low | PRD-3 must assert/enforce `frozen == true` before spawning per-import workers; no change needed in this PRD |
@@ -21,7 +20,7 @@ Re-run the queries in §Scan-queries below when re-auditing.
 
 | ID | Resolved in | Commit | Notes |
 |----|-------------|--------|-------|
-| —  |             |        |       |
+| PB-001 | Phase 3 (2026-07-31) | backfilled at Phase 9 | Frozen builtin registry + process-shared name-keyed `builtin_scope()` lookup fallback; zero builtin inserts per `SymbolTable` construction. Shared scope is name-keyed (not a `scopes_[0]` pointer) because SymbolIds are per-compile. |
 
 ## Out of scope — future PRD-3 (per-import parallelism)
 

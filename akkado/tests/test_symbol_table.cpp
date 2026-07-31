@@ -646,3 +646,118 @@ TEST_CASE("F12: SymbolTable.lookup(string_view) routes through interner.find",
     CHECK_FALSE(missing.has_value());
     CHECK(interner.find("never_defined") == NULL_SYMBOL);
 }
+
+// ============================================================================
+// Hardening PRD Phase 3 — process-shared frozen builtin scope [P3]
+// ============================================================================
+
+#include <thread>
+
+TEST_CASE("P3: builtin scope is process-shared — construction does zero inserts",
+          "[P3][symbol_table]") {
+    // Two tables with two distinct per-compile interners resolve the same
+    // builtin without either interner having interned its name up front
+    // (pre-Phase-3, every builtin name was interned + inserted per table).
+    StringInterner i1, i2;
+    SymbolTable a(i1), b(i2);
+
+    CHECK(i1.size() <= 1);  // no builtin names interned at construction
+    CHECK(i2.size() <= 1);
+
+    auto sa = a.lookup("saw");
+    auto sb = b.lookup("saw");
+    REQUIRE(sa.has_value());
+    REQUIRE(sb.has_value());
+    CHECK(sa->kind == SymbolKind::Builtin);
+    CHECK(sa->builtin.opcode == sb->builtin.opcode);
+
+    // Both tables resolve out of the same shared map object.
+    const auto& scope1 = builtin_scope();
+    const auto& scope2 = builtin_scope();
+    CHECK(&scope1 == &scope2);
+    CHECK(&scope1.at("saw") == &scope2.at("saw"));
+}
+
+TEST_CASE("P3: builtin lookup patches the per-compile SymbolId", "[P3][symbol_table]") {
+    StringInterner interner;
+    SymbolTable table(interner);
+
+    // Name interned per-compile (as the lexer would): id must round-trip.
+    SymbolId id = interner.intern("saw");
+    auto by_id = table.lookup(id);
+    REQUIRE(by_id.has_value());
+    CHECK(by_id->kind == SymbolKind::Builtin);
+    CHECK(by_id->name_id == id);
+    CHECK(by_id->name == "saw");
+
+    // The shared prototype itself stays id-less.
+    CHECK(builtin_scope().at("saw").name_id == NULL_SYMBOL);
+}
+
+TEST_CASE("P3: aliases and lookup order preserved in shared scope", "[P3][symbol_table]") {
+    StringInterner interner;
+    SymbolTable table(interner);
+
+    auto lp = table.lookup("lp");
+    auto lowpass = table.lookup("lowpass");
+    REQUIRE(lp.has_value());
+    REQUIRE(lowpass.has_value());
+    CHECK(lowpass->builtin.opcode == lp->builtin.opcode);
+    CHECK(lowpass->name == "lowpass");  // alias keeps its own name
+
+    // notes/freqs stay bindable — never in the builtin scope.
+    CHECK(builtin_scope().count("notes") == 0);
+    CHECK(builtin_scope().count("freqs") == 0);
+}
+
+TEST_CASE("P3: user definitions shadow builtins; E150 gate preserved",
+          "[P3][symbol_table]") {
+    StringInterner interner;
+    SymbolTable table(interner);
+
+    // Builtin names count as defined at global scope (E150: `sin = 5` at
+    // top level is a reassignment error)...
+    CHECK(table.is_defined_in_current_scope("sin"));
+    // ...but notes/freqs remain bindable...
+    CHECK_FALSE(table.is_defined_in_current_scope("notes"));
+    // ...and inside a closure scope builtin names are shadowable.
+    table.push_scope();
+    CHECK_FALSE(table.is_defined_in_current_scope("sin"));
+    table.define_variable("sin", 3);
+    auto shadowed = table.lookup("sin");
+    REQUIRE(shadowed.has_value());
+    CHECK(shadowed->kind == SymbolKind::Variable);
+    table.pop_scope();
+    auto restored = table.lookup("sin");
+    REQUIRE(restored.has_value());
+    CHECK(restored->kind == SymbolKind::Builtin);
+}
+
+TEST_CASE("P3: default-constructed table has no builtin fallback", "[P3][symbol_table]") {
+    StringInterner interner;
+    SymbolTable table;  // scope-mechanics form: genuinely empty
+    table.set_interner(interner);
+    CHECK_FALSE(table.lookup("saw").has_value());
+    table.register_builtins(interner);  // arming the fallback restores builtins
+    CHECK(table.lookup("saw").has_value());
+}
+
+TEST_CASE("P3: concurrent first use of the shared builtin scope is safe",
+          "[P3][symbol_table]") {
+    // Races two threads through SymbolTable construction + builtin lookup.
+    // C++11 static-init guarantees one-shot construction of the shared scope;
+    // under TSan/ASan this also asserts no data race.
+    auto worker = [] {
+        StringInterner interner;
+        SymbolTable table(interner);
+        auto sym = table.lookup("saw");
+        return sym.has_value() && sym->kind == SymbolKind::Builtin;
+    };
+    bool r1 = false, r2 = false;
+    std::thread t1([&] { r1 = worker(); });
+    std::thread t2([&] { r2 = worker(); });
+    t1.join();
+    t2.join();
+    CHECK(r1);
+    CHECK(r2);
+}

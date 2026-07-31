@@ -71,7 +71,7 @@ std::string serialize_builtins_json() {
         if (!first_func) json << ",";
         first_func = false;
 
-        json << "\"" << escape_json(name) << "\":{";
+        json << "\"" << escape_json({name.data(), name.size()}) << "\":{";
         json << "\"params\":[";
 
         bool first_param = true;
@@ -132,7 +132,7 @@ std::string serialize_builtins_json() {
     for (const auto& [alias, canonical] : BUILTIN_ALIASES) {
         if (!first_alias) json << ",";
         first_alias = false;
-        json << "\"" << escape_json(alias) << "\":\"" << escape_json(canonical) << "\"";
+        json << "\"" << escape_json({alias.data(), alias.size()}) << "\":\"" << escape_json(canonical) << "\"";
     }
 
     json << "},\"keywords\":[\"fn\",\"seq\",\"timeline\",\"true\",\"false\",\"match\",\"post\"]}";

@@ -15,53 +15,84 @@ SymbolTable::SymbolTable() {
 
 SymbolTable::SymbolTable(StringInterner& interner) {
     scopes_.emplace_back();
-    register_builtins(interner);
+    // Phase 3: no per-construction builtin registration — lookups fall
+    // back to the process-shared builtin_scope().
+    interner_ = &interner;
+    use_builtins_ = true;
+}
+
+const std::unordered_map<std::string_view, Symbol>& builtin_scope() {
+    // Hardening PRD Phase 3 (PRD-12): process-shared builtin scope, built
+    // exactly once (C++11 static-init guarantees one-shot construction even
+    // under concurrent first use). Keys are views into the frozen tables'
+    // static storage; `name_id` stays NULL_SYMBOL because SymbolIds are
+    // per-compile — SymbolTable::lookup_builtin patches the caller's id onto
+    // the returned copy. Host-extension builtins are NOT baked in here: the
+    // host registry can gain entries between compiles, so lookup_builtin
+    // consults it live.
+    static const std::unordered_map<std::string_view, Symbol> scope = [] {
+        std::unordered_map<std::string_view, Symbol> s;
+        s.reserve(BUILTIN_FUNCTIONS.size() + BUILTIN_ALIASES.size());
+        for (const auto& [name, info] : BUILTIN_FUNCTIONS) {
+            std::string_view sv{name.data(), name.size()};
+            // notes/freqs (pattern-event-arrays PRD) are codegen-dispatched
+            // but intentionally NOT pre-registered as global symbols: they
+            // are common variable names and must remain bindable
+            // (`notes = [...]`). The analyzer special-cases the call form;
+            // codegen's special_handlers map dispatches it.
+            if (sv == "notes" || sv == "freqs") continue;
+            Symbol sym{};
+            sym.kind = SymbolKind::Builtin;
+            sym.name = std::string(sv);
+            sym.buffer_index = 0xFFFF;  // Not applicable for builtins
+            sym.builtin = info;
+            s.emplace(sv, std::move(sym));
+        }
+        // Aliases resolve after functions (preserves the historical
+        // BUILTIN_FUNCTIONS-then-BUILTIN_ALIASES registration order).
+        for (const auto& [alias, canonical] : BUILTIN_ALIASES) {
+            auto it = s.find(canonical);
+            if (it == s.end()) continue;
+            std::string_view sv{alias.data(), alias.size()};
+            Symbol alias_sym = it->second;
+            alias_sym.name = std::string(sv);
+            s.emplace(sv, std::move(alias_sym));
+        }
+        return s;
+    }();
+    return scope;
 }
 
 void SymbolTable::register_builtins(StringInterner& interner) {
+    // Hardening PRD Phase 3: builtins live in the process-shared
+    // builtin_scope() and are consulted as a lookup fallback — nothing is
+    // inserted per SymbolTable anymore. This just arms the fallback.
     interner_ = &interner;
+    use_builtins_ = true;
+}
 
-    // Register all built-in functions from the builtins table
-    for (const auto& [name, info] : BUILTIN_FUNCTIONS) {
-        // notes/freqs (pattern-event-arrays PRD) are codegen-dispatched but
-        // intentionally NOT pre-registered as global symbols: they are common
-        // variable names and must remain bindable (`notes = [...]`). The
-        // analyzer special-cases the call form; codegen's special_handlers
-        // map dispatches it.
-        if (name == "notes" || name == "freqs") continue;
-        Symbol sym{};
-        sym.kind = SymbolKind::Builtin;
-        sym.name_id = interner.intern(name);
-        sym.name = std::string(name);
-        sym.buffer_index = 0xFFFF;  // Not applicable for builtins
-        sym.builtin = info;
-        define(sym);
+std::optional<Symbol> SymbolTable::lookup_builtin(std::string_view name, SymbolId id) const {
+    const auto& bs = builtin_scope();
+    auto it = bs.find(name);
+    if (it != bs.end()) {
+        Symbol sym = it->second;
+        sym.name_id = id;  // patch the per-compile id onto the shared copy
+        return sym;
     }
-
-    // Also register aliases
-    for (const auto& [alias, canonical] : BUILTIN_ALIASES) {
-        auto sym_opt = lookup(canonical);
-        if (sym_opt) {
-            Symbol alias_sym = *sym_opt;
-            alias_sym.name_id = interner.intern(alias);
-            alias_sym.name = std::string(alias);
-            define(alias_sym);
-        }
-    }
-
 #ifdef CEDAR_HOST_EXTENSIONS
     // Embedder-registered names resolve exactly like core builtins. Collisions
     // were rejected at registration, so nothing above can be shadowed here.
-    for (const auto& [name, info] : host_functions()) {
+    if (const BuiltinInfo* info = lookup_host_builtin(name)) {
         Symbol sym{};
         sym.kind = SymbolKind::Builtin;
-        sym.name_id = interner.intern(name);
+        sym.name_id = id;
         sym.name = std::string(name);
         sym.buffer_index = 0xFFFF;
         sym.builtin = *info;
-        define(sym);
+        return sym;
     }
 #endif
+    return std::nullopt;
 }
 
 void SymbolTable::push_scope() {
@@ -234,24 +265,36 @@ std::optional<Symbol> SymbolTable::lookup(std::string_view name) const {
     // PRD Phase 5: route through find() — an absent name does not
     // bloat the interner.
     SymbolId id = interner_ ? interner_->find(name) : NULL_SYMBOL;
-    if (id == NULL_SYMBOL) return std::nullopt;
-    return lookup(id);
+    if (id != NULL_SYMBOL) return lookup(id);
+    // Phase 3: a builtin name the source never mentions is not interned,
+    // but by-name lookup must still resolve it (pre-Phase-3 every builtin
+    // was interned at construction, so find() always succeeded).
+    if (use_builtins_) return lookup_builtin(name, NULL_SYMBOL);
+    return std::nullopt;
 }
 
 std::optional<Symbol> SymbolTable::lookup(SymbolId id) const {
     if (id == NULL_SYMBOL) return std::nullopt;
-    // Search from innermost scope outward
+    // Search from innermost scope outward — user definitions shadow builtins.
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto found = it->find(id);
         if (found != it->end()) {
             return found->second;
         }
     }
+    // Phase 3: fall back to the process-shared builtin scope.
+    if (use_builtins_ && interner_) return lookup_builtin(interner_->view(id), id);
     return std::nullopt;
 }
 
 bool SymbolTable::is_defined_in_current_scope(std::string_view name) const {
     if (scopes_.empty() || !interner_) return false;
+    // Phase 3: builtins used to be materialized in scope 0, which made their
+    // names count as "defined" at global scope (E150 forbids `sin = 5` at
+    // top level but allows shadowing inside a closure). Preserve that.
+    if (use_builtins_ && scopes_.size() == 1 && lookup_builtin(name, NULL_SYMBOL)) {
+        return true;
+    }
     SymbolId id = interner_->find(name);
     if (id == NULL_SYMBOL) return false;
     return scopes_.back().find(id) != scopes_.back().end();

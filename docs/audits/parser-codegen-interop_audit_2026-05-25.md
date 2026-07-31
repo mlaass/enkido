@@ -491,6 +491,14 @@ In addition to F4 (visit() Call branch), F9 (transform boilerplate), F10 (StateI
 In addition to F5 (concatenation) and F14 (voicing registry):
 
 - **SymbolTable re-registers 600+ builtins on every compile.** `symbol_table.cpp:236-264` is run from the `SymbolTable()` ctor (line 5-9) on every analyzer construction. Could be replaced by a process-shared frozen-hash builtin scope chained as parent of the per-compile scope; or a perfect-hash table (`frozen::map`) given the set is closed and build-time-known. (*Medium*)
+
+  > **RESOLVED 2026-07-31** by Phase 3 of `prd-parser-codegen-hardening.md`.
+  > `BUILTIN_FUNCTIONS` / `BUILTIN_ALIASES` / `BUILTIN_VARIABLES` are now
+  > `frozen::unordered_map` (vendored frozen 1.2.0, `third_party/frozen/`);
+  > a process-shared name-keyed `builtin_scope()` is consulted as a lookup
+  > fallback (not a literal `scopes_[0]` pointer — SymbolIds are per-compile,
+  > so the shared scope is keyed by name and the caller's id is patched on
+  > return). `SymbolTable` construction does zero builtin inserts.
 - **`serialize_mini_ast_json` runs unconditionally** at `codegen_patterns.cpp:1379` for every pattern in every compile — even `nkido-cli` and `akkado-cli --check` which never read it. Gate behind `CompilerOptions::emit_debug_json = false` (default) for headless; WASM build sets true. (*Medium* — trivial fix, real CPU savings.)
 
   > **RESOLVED 2026-07-31** by Phase 2 of `prd-parser-codegen-hardening.md`.
