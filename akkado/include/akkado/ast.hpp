@@ -43,7 +43,6 @@ enum class NodeType : std::uint8_t {
     Hole,           // % (pipe input reference)
 
     // Expressions
-    BinaryOp,       // Desugared to Call (add, sub, mul, div, pow)
     Call,           // Function call: f(a, b, c)
     MethodCall,     // Method call: x.f(a, b)
     Index,          // Array indexing: arr[i]
@@ -109,7 +108,6 @@ constexpr const char* node_type_name(NodeType type) {
         case NodeType::ArrayLit:    return "ArrayLit";
         case NodeType::Identifier:  return "Identifier";
         case NodeType::Hole:        return "Hole";
-        case NodeType::BinaryOp:    return "BinaryOp";
         case NodeType::Call:        return "Call";
         case NodeType::MethodCall:  return "MethodCall";
         case NodeType::Index:       return "Index";
@@ -146,27 +144,6 @@ constexpr const char* node_type_name(NodeType type) {
     return "Unknown";
 }
 
-/// Binary operator type (before desugaring to Call)
-enum class BinOp : std::uint8_t {
-    Add,    // +  -> add(a, b)
-    Sub,    // -  -> sub(a, b)
-    Mul,    // *  -> mul(a, b)
-    Div,    // /  -> div(a, b)
-    Pow,    // ^  -> pow(a, b)
-};
-
-/// Get the function name for a binary operator
-constexpr const char* binop_function_name(BinOp op) {
-    switch (op) {
-        case BinOp::Add: return "add";
-        case BinOp::Sub: return "sub";
-        case BinOp::Mul: return "mul";
-        case BinOp::Div: return "div";
-        case BinOp::Pow: return "pow";
-    }
-    return "unknown";
-}
-
 /// AST Node - stored in contiguous arena
 /// Uses indices instead of pointers for cache efficiency
 struct Node {
@@ -187,7 +164,6 @@ struct Node {
     // needed (diagnostics, JSON serialization). Equality compare via
     // `id == id` — no string compare, no rehash.
     struct IdentifierData { SymbolId name; };
-    struct BinaryOpData { BinOp op; };
     struct ArgumentData {
         std::optional<std::string> name;        // Named arg
         NodeIndex spread_source = NULL_NODE;    // ..expr — set when arg is spread; expression hung here, not added as child
@@ -375,7 +351,6 @@ struct Node {
         BoolData,
         StringData,
         IdentifierData,
-        BinaryOpData,
         ArgumentData,
         PitchData,
         ClosureParamData,
@@ -419,9 +394,6 @@ struct Node {
         return std::get<IdentifierData>(data).name;
     }
 
-    [[nodiscard]] BinOp as_binop() const {
-        return std::get<BinaryOpData>(data).op;
-    }
 
     [[nodiscard]] const std::optional<std::string>& as_arg_name() const {
         return std::get<ArgumentData>(data).name;

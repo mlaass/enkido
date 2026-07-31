@@ -1,4 +1,17 @@
-> **Status: IN PROGRESS — Phase 1-3 SHIPPED (2026-07-31), 6 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-4 SHIPPED (2026-07-31), 5 phases remaining.**
+>
+> - **Phase 4 (Pratt OpInfo table) — SHIPPED 2026-07-31.** One
+>   `OPERATORS[]` table + `find_op()` in `parser.hpp` backs
+>   `get_precedence` / `is_infix_operator` / `parse_infix` /
+>   `parse_binary` (associativity from the table; the `^`-specific
+>   branch is gone). Deleted `BinOp`, `binop_function_name`,
+>   `Node::BinaryOpData` (variant arm + `as_binop`),
+>   `NodeType::BinaryOp` (+ name case), the post-parser-dead codegen
+>   arm (codegen.cpp ~2503), and the ast_hash branch; migrated
+>   test_ast_arena.cpp off the family. [P4] data-driven test iterates
+>   `OPERATORS[]` (desugar name + associativity nesting per row);
+>   precedence + `2^3^2` regressions locked. Commit hashes backfilled
+>   at Phase 9.
 >
 > - **Phase 3 (frozen builtin scope) — SHIPPED 2026-07-31.** Vendored
 >   frozen 1.2.0 (`third_party/frozen/` + `THIRD_PARTY.md`);

@@ -2500,57 +2500,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             return cache_and_return(node, result);
         }
 
-        case NodeType::BinaryOp: {
-            // BinaryOp should have been desugared to Call by parser
-            // But handle it anyway in case we get one
-            NodeIndex lhs = n.first_child;
-            NodeIndex rhs = (lhs != NULL_NODE) ?
-                           ast_->arena[lhs].next_sibling : NULL_NODE;
-
-            if (lhs == NULL_NODE || rhs == NULL_NODE) {
-                error("E108", "Invalid binary operation", n.location);
-                return TypedValue::error_val();
-            }
-
-            TypedValue lhs_tv = visit(lhs);
-            TypedValue rhs_tv = visit(rhs);
-
-            std::uint16_t out = buffers_.allocate();
-            if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
-                return TypedValue::error_val();
-            }
-
-            // Map BinOp to opcode
-            cedar::Opcode opcode;
-            switch (n.as_binop()) {
-                case BinOp::Add: opcode = cedar::Opcode::ADD; break;
-                case BinOp::Sub: opcode = cedar::Opcode::SUB; break;
-                case BinOp::Mul: opcode = cedar::Opcode::MUL; break;
-                case BinOp::Div: opcode = cedar::Opcode::DIV; break;
-                case BinOp::Pow: opcode = cedar::Opcode::POW; break;
-                default:
-                    error("E109", "Unknown binary operator", n.location);
-                    return TypedValue::error_val();
-            }
-
-            // Same Void→silence coerce as the builtin-call arg path (W161):
-            // never wire the 0xFFFF sentinel into a required input slot.
-            if (lhs_tv.buffer == 0xFFFF) {
-                warn("W161", "operand has no value (void expression) — coerced to silence",
-                     n.location);
-                lhs_tv.buffer = cedar::BUFFER_ZERO;
-            }
-            if (rhs_tv.buffer == 0xFFFF) {
-                warn("W161", "operand has no value (void expression) — coerced to silence",
-                     n.location);
-                rhs_tv.buffer = cedar::BUFFER_ZERO;
-            }
-
-            emit(cedar::Instruction::make_binary(opcode, out, lhs_tv.buffer, rhs_tv.buffer));
-            return cache_and_return(node, TypedValue::signal(out));
-        }
-
         case NodeType::Hole: {
             // Inside a loop() body the hole is the running accumulator,
             // resolved to the loop's running buffer (see handle_loop). The

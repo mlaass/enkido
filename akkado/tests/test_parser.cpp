@@ -2674,3 +2674,99 @@ TEST_CASE("Parser expression defaults", "[parser][fn]") {
         CHECK_THAT(*cp.default_value, WithinRel(440.0));
     }
 }
+
+// ============================================================================
+// Hardening PRD Phase 4 — OPERATORS[] table [P4]
+// ============================================================================
+
+namespace {
+// Source spelling per operator token — test-local mirror of the lexer.
+const char* op_lexeme(TokenType t) {
+    switch (t) {
+        case TokenType::Pipe:         return "|>";
+        case TokenType::Diamond:      return "<>";
+        case TokenType::OrOr:         return "||";
+        case TokenType::AndAnd:       return "&&";
+        case TokenType::EqualEqual:   return "==";
+        case TokenType::BangEqual:    return "!=";
+        case TokenType::Less:         return "<";
+        case TokenType::Greater:      return ">";
+        case TokenType::LessEqual:    return "<=";
+        case TokenType::GreaterEqual: return ">=";
+        case TokenType::Plus:         return "+";
+        case TokenType::Minus:        return "-";
+        case TokenType::Star:         return "*";
+        case TokenType::Slash:        return "/";
+        case TokenType::Caret:        return "^";
+        default:                      return nullptr;
+    }
+}
+} // namespace
+
+TEST_CASE("P4: every OPERATORS[] entry parses and desugars per its table row",
+          "[P4][parser]") {
+    for (const OpInfo& op : OPERATORS) {
+        if (op.builtin_name == nullptr) continue;  // |> and <> have their own productions
+        const char* lex_text = op_lexeme(op.type);
+        REQUIRE(lex_text != nullptr);
+
+        DYNAMIC_SECTION("a " << lex_text << " b desugars to " << op.builtin_name) {
+            std::string src = std::string("a ") + lex_text + " b";
+            auto ast = parse_ok(src);
+            NodeIndex expr = ast.arena[ast.root].first_child;
+            REQUIRE(ast.arena[expr].type == NodeType::Call);
+            CHECK(ident_text(ast.arena[expr].as_identifier()) == op.builtin_name);
+
+            // Two positional Argument children wrapping the operands.
+            NodeIndex a1 = ast.arena[expr].first_child;
+            REQUIRE(a1 != NULL_NODE);
+            NodeIndex a2 = ast.arena[a1].next_sibling;
+            REQUIRE(a2 != NULL_NODE);
+            CHECK(ast.arena[a2].next_sibling == NULL_NODE);
+        }
+
+        DYNAMIC_SECTION("a " << lex_text << " b " << lex_text
+                        << " c nests per table associativity") {
+            std::string src = std::string("a ") + lex_text + " b " + lex_text + " c";
+            auto ast = parse_ok(src);
+            NodeIndex outer = ast.arena[ast.root].first_child;
+            REQUIRE(ast.arena[outer].type == NodeType::Call);
+
+            // Left-assoc: outer's FIRST arg holds the inner call.
+            // Right-assoc (^): outer's SECOND arg holds the inner call.
+            NodeIndex a1 = ast.arena[outer].first_child;
+            NodeIndex a2 = ast.arena[a1].next_sibling;
+            NodeIndex nested_arg = op.assoc == OpAssoc::Right ? a2 : a1;
+            NodeIndex inner = ast.arena[nested_arg].first_child;
+            REQUIRE(ast.arena[inner].type == NodeType::Call);
+            CHECK(ident_text(ast.arena[inner].as_identifier()) == op.builtin_name);
+        }
+    }
+}
+
+TEST_CASE("P4: get_precedence/is_infix_operator agree with the table",
+          "[P4][parser]") {
+    // find_op is the single source of truth; a token absent from the
+    // table must be rejected as an infix operator.
+    CHECK(find_op(TokenType::Dot) == nullptr);
+    CHECK(find_op(TokenType::Caret) != nullptr);
+    CHECK(find_op(TokenType::Caret)->assoc == OpAssoc::Right);
+    // ^ is the only right-associative operator today.
+    int right_count = 0;
+    for (const OpInfo& op : OPERATORS) {
+        if (op.assoc == OpAssoc::Right) ++right_count;
+    }
+    CHECK(right_count == 1);
+}
+
+TEST_CASE("P4: precedence regression — 2 + 3 * 4 is add(2, mul(3, 4))",
+          "[P4][parser]") {
+    auto ast = parse_ok("2 + 3 * 4");
+    NodeIndex expr = ast.arena[ast.root].first_child;
+    REQUIRE(ast.arena[expr].type == NodeType::Call);
+    CHECK(ident_text(ast.arena[expr].as_identifier()) == "add");
+    NodeIndex second_arg = ast.arena[ast.arena[expr].first_child].next_sibling;
+    NodeIndex mul_expr = ast.arena[second_arg].first_child;
+    REQUIRE(ast.arena[mul_expr].type == NodeType::Call);
+    CHECK(ident_text(ast.arena[mul_expr].as_identifier()) == "mul");
+}

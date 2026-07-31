@@ -1176,7 +1176,7 @@ NodeIndex SemanticAnalyzer::rewrite_pipes(NodeIndex node, bool closure_allowed) 
     }
 
     // For non-pipe nodes, clone and recurse. Inherit closure_allowed so a
-    // non-pipe wrapper (e.g. Argument, BinaryOp) inside a binding RHS still
+    // non-pipe wrapper (e.g. Argument, a desugared operator Call) inside a binding RHS still
     // permits closure rewriting of any pipes within.
     return clone_subtree(node, closure_allowed);
 }
@@ -1442,7 +1442,7 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
     // ConstDecl, PipeBinding, FunctionDef, Closure, DestructureAssignment)
     // are themselves in binding-RHS context — pipes nested within them are
     // eligible for the closure-from-pipe sugar. All other parents (Program,
-    // BinaryOp, Call, Argument, etc.) inherit closure_allowed from above.
+    // Call, Argument, etc.) inherit closure_allowed from above.
     const bool child_closure_allowed =
         clone_propagates_closure_allowed(src.type) ? true : closure_allowed;
 

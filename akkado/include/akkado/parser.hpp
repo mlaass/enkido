@@ -26,6 +26,45 @@ enum class Precedence : std::uint8_t {
     Primary,        // literals, identifiers
 };
 
+/// Hardening PRD Phase 4 (PRD-10): single source of truth for infix
+/// operators. Replaces the four hand-enumerated parser switches
+/// (get_precedence / is_infix_operator / parse_infix / parse_binary).
+enum class OpAssoc : std::uint8_t { Left, Right };
+
+struct OpInfo {
+    TokenType type;
+    Precedence prec;
+    OpAssoc assoc;
+    const char* builtin_name;  // Call desugar target; nullptr = special parse
+                               // production (|> pipe, <> diamond)
+};
+
+inline constexpr OpInfo OPERATORS[] = {
+    {TokenType::Pipe,         Precedence::Pipe,           OpAssoc::Left,  nullptr},
+    {TokenType::Diamond,      Precedence::Pipe,           OpAssoc::Left,  nullptr},
+    {TokenType::OrOr,         Precedence::Or,             OpAssoc::Left,  "bor"},
+    {TokenType::AndAnd,       Precedence::And,            OpAssoc::Left,  "band"},
+    {TokenType::EqualEqual,   Precedence::Equality,       OpAssoc::Left,  "eq"},
+    {TokenType::BangEqual,    Precedence::Equality,       OpAssoc::Left,  "neq"},
+    {TokenType::Less,         Precedence::Comparison,     OpAssoc::Left,  "lt"},
+    {TokenType::Greater,      Precedence::Comparison,     OpAssoc::Left,  "gt"},
+    {TokenType::LessEqual,    Precedence::Comparison,     OpAssoc::Left,  "lte"},
+    {TokenType::GreaterEqual, Precedence::Comparison,     OpAssoc::Left,  "gte"},
+    {TokenType::Plus,         Precedence::Addition,       OpAssoc::Left,  "add"},
+    {TokenType::Minus,        Precedence::Addition,       OpAssoc::Left,  "sub"},
+    {TokenType::Star,         Precedence::Multiplication, OpAssoc::Left,  "mul"},
+    {TokenType::Slash,        Precedence::Multiplication, OpAssoc::Left,  "div"},
+    {TokenType::Caret,        Precedence::Power,          OpAssoc::Right, "pow"},
+};
+
+/// Table lookup; nullptr when `type` is not an infix operator.
+constexpr const OpInfo* find_op(TokenType type) {
+    for (const auto& op : OPERATORS) {
+        if (op.type == type) return &op;
+    }
+    return nullptr;
+}
+
 /// Parsed closure parameter with optional default
 struct ParsedParam {
     std::string name;

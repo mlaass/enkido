@@ -183,48 +183,15 @@ void Parser::synchronize() {
 
 // Precedence helpers
 
+// Phase 4 (PRD-10): both consult the OPERATORS[] table in parser.hpp.
+
 Precedence Parser::get_precedence(TokenType type) const {
-    switch (type) {
-        case TokenType::Pipe:
-        case TokenType::Diamond:      return Precedence::Pipe;
-        case TokenType::OrOr:         return Precedence::Or;
-        case TokenType::AndAnd:       return Precedence::And;
-        case TokenType::EqualEqual:
-        case TokenType::BangEqual:    return Precedence::Equality;
-        case TokenType::Less:
-        case TokenType::Greater:
-        case TokenType::LessEqual:
-        case TokenType::GreaterEqual: return Precedence::Comparison;
-        case TokenType::Plus:
-        case TokenType::Minus:        return Precedence::Addition;
-        case TokenType::Star:
-        case TokenType::Slash:        return Precedence::Multiplication;
-        case TokenType::Caret:        return Precedence::Power;
-        default:                      return Precedence::None;
-    }
+    const OpInfo* op = find_op(type);
+    return op ? op->prec : Precedence::None;
 }
 
 bool Parser::is_infix_operator(TokenType type) const {
-    switch (type) {
-        case TokenType::Pipe:
-        case TokenType::Diamond:
-        case TokenType::OrOr:
-        case TokenType::AndAnd:
-        case TokenType::EqualEqual:
-        case TokenType::BangEqual:
-        case TokenType::Less:
-        case TokenType::Greater:
-        case TokenType::LessEqual:
-        case TokenType::GreaterEqual:
-        case TokenType::Plus:
-        case TokenType::Minus:
-        case TokenType::Star:
-        case TokenType::Slash:
-        case TokenType::Caret:
-            return true;
-        default:
-            return false;
-    }
+    return find_op(type) != nullptr;
 }
 
 // Node creation helpers
@@ -702,29 +669,13 @@ NodeIndex Parser::parse_prefix() {
 }
 
 NodeIndex Parser::parse_infix(NodeIndex left, const Token& op) {
-    switch (op.type) {
-        case TokenType::Pipe:
-            return parse_pipe(left);
-        case TokenType::Diamond:
-            return parse_diamond_infix(left);
-        case TokenType::Plus:
-        case TokenType::Minus:
-        case TokenType::Star:
-        case TokenType::Slash:
-        case TokenType::Caret:
-        case TokenType::OrOr:
-        case TokenType::AndAnd:
-        case TokenType::EqualEqual:
-        case TokenType::BangEqual:
-        case TokenType::Less:
-        case TokenType::Greater:
-        case TokenType::LessEqual:
-        case TokenType::GreaterEqual:
-            return parse_binary(left, op);
-        default:
-            error("Unknown infix operator");
-            return left;
-    }
+    // Phase 4 (PRD-10): |> and <> keep their special productions; every
+    // other table entry desugars through parse_binary.
+    if (op.type == TokenType::Pipe) return parse_pipe(left);
+    if (op.type == TokenType::Diamond) return parse_diamond_infix(left);
+    if (find_op(op.type) != nullptr) return parse_binary(left, op);
+    error("Unknown infix operator");
+    return left;
 }
 
 // Literal parsers
@@ -1427,42 +1378,22 @@ NodeIndex Parser::parse_block() {
 // Binary operator parsing
 
 NodeIndex Parser::parse_binary(NodeIndex left, const Token& op) {
-    // Determine the function name for the operator
-    const char* func_name = nullptr;
-    switch (op.type) {
-        case TokenType::Plus:         func_name = "add"; break;
-        case TokenType::Minus:        func_name = "sub"; break;
-        case TokenType::Star:         func_name = "mul"; break;
-        case TokenType::Slash:        func_name = "div"; break;
-        case TokenType::Caret:        func_name = "pow"; break;
-        case TokenType::OrOr:         func_name = "bor"; break;
-        case TokenType::AndAnd:       func_name = "band"; break;
-        case TokenType::EqualEqual:   func_name = "eq"; break;
-        case TokenType::BangEqual:    func_name = "neq"; break;
-        case TokenType::Less:         func_name = "lt"; break;
-        case TokenType::Greater:      func_name = "gt"; break;
-        case TokenType::LessEqual:    func_name = "lte"; break;
-        case TokenType::GreaterEqual: func_name = "gte"; break;
-        default:
-            error("Unknown binary operator");
-            return left;
+    // Phase 4 (PRD-10): name + precedence + associativity all come from
+    // the OPERATORS[] table.
+    const OpInfo* info = find_op(op.type);
+    if (info == nullptr || info->builtin_name == nullptr) {
+        error("Unknown binary operator");
+        return left;
     }
+    const char* func_name = info->builtin_name;
 
-    // Get precedence for right-hand side
-    // For left-associative operators, use same precedence
-    // For right-associative (^), use lower precedence
-    Precedence next_prec = get_precedence(op.type);
-    if (op.type == TokenType::Caret) {
-        // Power is right-associative.
-        // Pratt: pass the SAME precedence (not p+1) so parse_precedence(p)
-        // accepts another `^` (since `p >= p`), yielding `a ^ (b ^ c)`. The
-        // cast-int-and-back is a deliberate no-op kept for symmetry with the
-        // left-assoc branch. See docs/prd-parser-codegen-correctness.md §1.3.
-        next_prec = static_cast<Precedence>(static_cast<int>(next_prec));
-    } else {
-        // Left-associative: increment to bind tighter on right
-        next_prec = static_cast<Precedence>(static_cast<int>(next_prec) + 1);
-    }
+    // Right-associative (^ only today): pass the SAME precedence so
+    // parse_precedence(p) accepts another `^` (since `p >= p`), yielding
+    // `a ^ (b ^ c)`. Left-associative: increment to bind tighter on the
+    // right. See docs/prd-parser-codegen-correctness.md §1.3.
+    Precedence next_prec = info->assoc == OpAssoc::Right
+        ? info->prec
+        : static_cast<Precedence>(static_cast<int>(info->prec) + 1);
 
     NodeIndex right = parse_precedence(next_prec);
 

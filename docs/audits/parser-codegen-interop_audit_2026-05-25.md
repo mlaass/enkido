@@ -225,6 +225,13 @@ Other monoliths in codegen.cpp:
 
 Four switches enumerating the same operator set.
 
+> **RESOLVED (Pratt portion) 2026-07-31** by Phase 4 of
+> `prd-parser-codegen-hardening.md`. One `OPERATORS[]` table
+> (`parser.hpp`) now backs all four parser switches; `BinOp` /
+> `BinaryOpData` / `binop_function_name` / `NodeType::BinaryOp` and the
+> post-parser-dead codegen arm are deleted. Codegen-side tables (rows
+> 4-7) remain — owned by `prd-codegen-sprawl-cleanup.md`.
+
 **Why it bites.** Adding a new operator or builtin requires touching 3-4 places; nothing keeps them in sync. The `special_handlers` table contains ~40 names that also exist in `BUILTIN_FUNCTIONS` with no enforced consistency. `BUILTIN_ALIASES` is not consulted before `special_handlers` lookup, so alias dispatch is path-dependent.
 
 **Fix sketch.**
@@ -622,6 +629,10 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Scope:** Single `OpInfo[]` table over the 4 Pratt switches. Fix right-assoc `^` (F7). Drop the dead `BinOp`/`BinaryOpData`/`binop_function_name` path.
 **Files touched:** `parser.hpp`, `parser.cpp:184-203, 205-226, 702-726, 1431-1487`, `ast.hpp:160-169`.
 **Effort:** Small (3-5 days). One correctness bug fixed.
+
+> **SHIPPED (Pratt-table portion) 2026-07-31** by Phase 4 of
+> `prd-parser-codegen-hardening.md` (the `^` fix portion was withdrawn
+> earlier — F7 was already correct on master).
 
 ### PRD-11 — `CompileOptions` + voicing-registry-per-compile + debug-JSON gate  *(Medium; bundles 3 cleanups)*
 

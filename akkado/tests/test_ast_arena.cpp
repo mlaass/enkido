@@ -63,10 +63,10 @@ TEST_CASE("AstArena allocation basics", "[ast_arena]") {
 
     SECTION("operator[] const access") {
         SourceLocation loc{1, 1, 0, 0};
-        NodeIndex idx = arena.alloc(NodeType::BinaryOp, loc);
+        NodeIndex idx = arena.alloc(NodeType::Call, loc);
 
         const AstArena& const_arena = arena;
-        CHECK(const_arena[idx].type == NodeType::BinaryOp);
+        CHECK(const_arena[idx].type == NodeType::Call);
     }
 
     SECTION("valid returns correct values") {
@@ -184,13 +184,6 @@ TEST_CASE("AstArena node data", "[ast_arena]") {
         CHECK(sview(arena[idx].as_identifier()) == "my_var");
     }
 
-    SECTION("BinaryOpData storage") {
-        NodeIndex idx = arena.alloc(NodeType::BinaryOp, loc);
-        arena[idx].data = Node::BinaryOpData{BinOp::Add};
-
-        CHECK(arena[idx].type == NodeType::BinaryOp);
-        CHECK(arena[idx].as_binop() == BinOp::Add);
-    }
 }
 
 // ============================================================================
@@ -336,7 +329,6 @@ TEST_CASE("node_type_name returns correct strings", "[ast_arena]") {
     CHECK(std::string(node_type_name(NodeType::ArrayLit)) == "ArrayLit");
     CHECK(std::string(node_type_name(NodeType::Identifier)) == "Identifier");
     CHECK(std::string(node_type_name(NodeType::Hole)) == "Hole");
-    CHECK(std::string(node_type_name(NodeType::BinaryOp)) == "BinaryOp");
     CHECK(std::string(node_type_name(NodeType::Call)) == "Call");
     CHECK(std::string(node_type_name(NodeType::MethodCall)) == "MethodCall");
     CHECK(std::string(node_type_name(NodeType::Index)) == "Index");
@@ -362,18 +354,6 @@ TEST_CASE("node_type_name returns correct strings", "[ast_arena]") {
     CHECK(std::string(node_type_name(NodeType::FieldAccess)) == "FieldAccess");
     CHECK(std::string(node_type_name(NodeType::PipeBinding)) == "PipeBinding");
     CHECK(std::string(node_type_name(NodeType::Program)) == "Program");
-}
-
-// ============================================================================
-// BinOp Function Name Tests [ast_arena]
-// ============================================================================
-
-TEST_CASE("binop_function_name returns correct strings", "[ast_arena]") {
-    CHECK(std::string(binop_function_name(BinOp::Add)) == "add");
-    CHECK(std::string(binop_function_name(BinOp::Sub)) == "sub");
-    CHECK(std::string(binop_function_name(BinOp::Mul)) == "mul");
-    CHECK(std::string(binop_function_name(BinOp::Div)) == "div");
-    CHECK(std::string(binop_function_name(BinOp::Pow)) == "pow");
 }
 
 // ============================================================================
@@ -738,8 +718,8 @@ TEST_CASE("AstArena stress test", "[ast_arena][stress]") {
             arena.add_child(func, body);
 
             for (int stmt = 0; stmt < 10; ++stmt) {
-                NodeIndex binop = arena.alloc(NodeType::BinaryOp, loc);
-                arena[binop].data = Node::BinaryOpData{BinOp::Add};
+                NodeIndex binop = arena.alloc(NodeType::Call, loc);
+                arena[binop].data = Node::IdentifierData{sym("add")};
 
                 NodeIndex lhs = arena.alloc(NodeType::Identifier, loc);
                 arena[lhs].data = Node::IdentifierData{sym("var_" + std::to_string(fn) + "_" + std::to_string(stmt))};
@@ -763,13 +743,13 @@ TEST_CASE("AstArena stress test", "[ast_arena][stress]") {
     SECTION("balanced binary tree") {
         // Create a balanced binary tree of depth 10 (1023 nodes)
         std::vector<NodeIndex> level;
-        level.push_back(arena.alloc(NodeType::BinaryOp, loc));
+        level.push_back(arena.alloc(NodeType::Call, loc));
 
         for (int depth = 0; depth < 10; ++depth) {
             std::vector<NodeIndex> next_level;
             for (NodeIndex parent : level) {
-                NodeIndex left = arena.alloc(NodeType::BinaryOp, loc);
-                NodeIndex right = arena.alloc(NodeType::BinaryOp, loc);
+                NodeIndex left = arena.alloc(NodeType::Call, loc);
+                NodeIndex right = arena.alloc(NodeType::Call, loc);
                 arena.add_child(parent, left);
                 arena.add_child(parent, right);
                 next_level.push_back(left);
