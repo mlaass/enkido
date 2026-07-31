@@ -1,4 +1,27 @@
-> **Status: IN PROGRESS — Phase 1-4 SHIPPED (2026-07-31), 5 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-5 SHIPPED (2026-07-31), 4 phases remaining.**
+>
+> - **Phase 5 (lex_primitives extract) — SHIPPED 2026-07-31.** New
+>   `akkado/include/akkado/lex_primitives.hpp` + `src/lex_primitives.cpp`
+>   with `CursorBase` (nav + F8-correct line/column tracking),
+>   classifiers, `scan_number`, `scan_velocity_suffix` (replaces the 3
+>   in-file near-clones), and `pitch_to_midi`. Both lexers now inherit
+>   `CursorBase`. **Divergences from the spec above:** (1) namespace is
+>   `akkado::lex_primitives` — `akkado::lex` is already the convenience
+>   function; (2) `pitch_to_midi(char, int, int)` instead of the
+>   string_view-parsing sketch — both call sites scan char-by-char with
+>   lexer-specific lookahead, that signature is the actually-shared
+>   tail; (3) `scan_number` takes `NumericScanOpts` (sign / exponent /
+>   greedy-dot / seen-dot) because the four numeric scanners have
+>   deliberately different dot/exponent behavior — all preserved and
+>   unit-locked; invalid exponents are now rejected by pure lookahead
+>   (fixes a latent column-drift on v"…" rollback). LOC: lexer.cpp
+>   607→490 (−117), mini_lexer.cpp 902→721 (−181); combined −298 meets
+>   the ≥250 combined target, the per-file ≥150/≥200 stretch numbers
+>   were not reachable without breaking observable lex_number error
+>   behavior. [P5] unit tests cover cursor, classifiers, all
+>   scan_number modes, velocity suffix, pitch_to_midi. Full suites
+>   green; snapshot byte-identical; wasm green. Commit hashes
+>   backfilled at Phase 9.
 >
 > - **Phase 4 (Pratt OpInfo table) — SHIPPED 2026-07-31.** One
 >   `OPERATORS[]` table + `find_op()` in `parser.hpp` backs

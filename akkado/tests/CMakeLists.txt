@@ -33,6 +33,7 @@ add_executable(akkado_tests
     test_const_eval.cpp
     test_diagnostics.cpp
     test_fm_detection.cpp
+    test_lex_primitives.cpp
     test_lexer.cpp
     test_parser.cpp
     test_mini_notation.cpp

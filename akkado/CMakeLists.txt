@@ -77,6 +77,7 @@ add_library(akkado STATIC
     src/compile_context.cpp
     src/string_interner.cpp
     src/diagnostics.cpp
+    src/lex_primitives.cpp
     src/lexer.cpp
     src/parser.cpp
     src/mini_lexer.cpp

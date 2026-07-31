@@ -344,6 +344,16 @@ Pitch-MIDI semitone table identical in both (`lexer.cpp:540`, `mini_lexer.cpp:22
 
 **Severity: High** (also where the F8 fix lands naturally).
 
+> **RESOLVED 2026-07-31** by Phase 5 of `prd-parser-codegen-hardening.md`.
+> `lex_primitives` (`akkado::lex_primitives` — the `akkado::lex` name
+> was taken by the convenience function) ships `CursorBase`,
+> classifiers, `scan_number` (opts-driven: sign / exponent-by-lookahead
+> / greedy-dot / seen-dot), `scan_velocity_suffix` (kills the 3× clone),
+> and `pitch_to_midi`. Both lexers inherit `CursorBase`. −117 LOC
+> lexer.cpp, −181 LOC mini_lexer.cpp (−298 combined, within the
+> 250-300 estimate). `chain_reaches_digit` twin lambdas and the
+> token-enum merge were left as-is (pitch-gate specific / out of scope).
+
 ---
 
 ### F12. Lexers don't intern strings — identifiers re-hashed 16+ times per compile — *High*
@@ -613,6 +623,10 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Scope:** Extract `lex_primitives.hpp` (`CursorBase`, `scan_number`, `scan_velocity_suffix`, `parse_pitch_to_midi`, classifiers). Lexers compose it. Fixes F8 multi-line source-position bug as a side effect. Estimated 250-300 LOC removal.
 **Files touched:** New `lex_primitives.hpp`, `lexer.cpp`, `mini_lexer.cpp`, `token.hpp`/`mini_token.hpp` (optional template-based merge).
 **Effort:** Medium (1-2 weeks).
+
+> **SHIPPED 2026-07-31** by Phase 5 of `prd-parser-codegen-hardening.md`
+> (F8 had already been fixed by the correctness PRD; the optional
+> token-enum template merge was not taken). See F11 above for details.
 
 ### PRD-9 — Real string interning at lex time  *(High; foundational)*
 

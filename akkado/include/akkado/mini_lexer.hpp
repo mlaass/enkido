@@ -6,6 +6,7 @@
 #include <optional>
 #include "mini_token.hpp"
 #include "diagnostics.hpp"
+#include "lex_primitives.hpp"
 
 namespace akkado {
 
@@ -25,7 +26,11 @@ namespace akkado {
 ///   "<c e g>"           - Alternating sequence
 ///   "bd*2"              - Speed modifier
 ///   "bd(3,8)"           - Euclidean rhythm
-class MiniLexer {
+/// Phase 5 (PRD-8): source navigation + line/column tracking live in the
+/// shared lex_primitives::CursorBase (the pattern string is the base's
+/// `source_`); character classifiers are the lex_primitives free
+/// functions.
+class MiniLexer : lex_primitives::CursorBase {
 public:
     /// Construct a mini-lexer for a pattern string
     /// @param pattern The pattern string content (without quotes)
@@ -45,21 +50,6 @@ public:
     [[nodiscard]] bool has_errors() const;
 
 private:
-    // Source navigation
-    [[nodiscard]] bool is_at_end() const;
-    [[nodiscard]] char peek() const;
-    [[nodiscard]] char peek_next() const;
-    [[nodiscard]] char peek_ahead(std::size_t n) const;
-    char advance();
-    bool match(char expected);
-
-    // Character classification
-    [[nodiscard]] static bool is_digit(char c);
-    [[nodiscard]] static bool is_alpha(char c);
-    [[nodiscard]] static bool is_pitch_letter(char c);
-    [[nodiscard]] static bool is_accidental(char c);
-    [[nodiscard]] static bool is_whitespace(char c);
-
     // Token creation
     MiniToken make_token(MiniTokenType type);
     MiniToken make_token(MiniTokenType type, MiniTokenValue value);
@@ -76,7 +66,6 @@ private:
 
     // Pitch detection
     [[nodiscard]] bool looks_like_pitch() const;
-    [[nodiscard]] std::uint8_t parse_pitch_to_midi(char note, int accidental, int octave) const;
 
     // Phase 2 PRD: scan a record-suffix `{key:value, ...}` immediately after
     // a note token (no whitespace). Caller has already produced the note
@@ -91,7 +80,6 @@ private:
     // Location helpers
     [[nodiscard]] SourceLocation current_location() const;
 
-    std::string_view pattern_;
     SourceLocation base_location_;
     std::vector<Diagnostic> diagnostics_;
     MiniParseMode mode_ = MiniParseMode::Note;
@@ -111,11 +99,7 @@ private:
     // as plain Number tokens regardless of value/note mode.
     int paren_depth_ = 0;
 
-    // Current position
-    std::uint32_t start_ = 0;    // Start of current token
-    std::uint32_t current_ = 0;  // Current position
-    std::uint32_t line_ = 1;     // Line within pattern (1-based), bumped on `\n`
-    std::uint32_t column_ = 1;   // Column within current line (1-based)
+    // Token start position (cursor position lives in CursorBase)
     std::uint32_t start_line_ = 1;    // line_ snapshotted at token start
     std::uint32_t start_column_ = 1;  // column_ snapshotted at token start
 };

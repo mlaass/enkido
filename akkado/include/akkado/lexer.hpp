@@ -6,6 +6,7 @@
 #include <optional>
 #include "token.hpp"
 #include "diagnostics.hpp"
+#include "lex_primitives.hpp"
 #include "string_interner.hpp"
 
 namespace akkado {
@@ -17,7 +18,10 @@ namespace akkado {
 /// - Generate detailed source locations for LSP integration
 /// - Handle UTF-8 source correctly (treating multibyte chars as single units)
 /// - Continue after errors to find as many issues as possible
-class Lexer {
+/// Phase 5 (PRD-8): source navigation + line/column tracking live in the
+/// shared lex_primitives::CursorBase; character classifiers are the
+/// lex_primitives free functions.
+class Lexer : lex_primitives::CursorBase {
 public:
     /// Construct a lexer for the given source
     /// @param source The source code to lex (must remain valid during lexing
@@ -41,19 +45,6 @@ public:
     [[nodiscard]] bool has_errors() const;
 
 private:
-    // Source navigation
-    [[nodiscard]] bool is_at_end() const;
-    [[nodiscard]] char peek() const;
-    [[nodiscard]] char peek_next() const;
-    char advance();
-    bool match(char expected);
-
-    // Character classification
-    [[nodiscard]] static bool is_digit(char c);
-    [[nodiscard]] static bool is_alpha(char c);
-    [[nodiscard]] static bool is_alphanumeric(char c);
-    [[nodiscard]] static bool is_whitespace(char c);
-
     // Token creation
     Token make_token(TokenType type);
     Token make_token(TokenType type, TokenValue value);
@@ -77,19 +68,11 @@ private:
     void add_error(std::string_view message, SourceLocation loc);
 
     // Source tracking
-    void update_location(char c);
     [[nodiscard]] SourceLocation current_location() const;
 
-    std::string_view source_;
     StringInterner* interner_ = nullptr;  // PRD Phase 5: identifier interning at lex time
     std::string filename_;
     std::vector<Diagnostic> diagnostics_;
-
-    // Current position
-    std::uint32_t start_ = 0;    // Start of current token
-    std::uint32_t current_ = 0;  // Current position
-    std::uint32_t line_ = 1;     // Current line (1-based)
-    std::uint32_t column_ = 1;   // Current column (1-based)
 
     // Token start position
     std::uint32_t token_line_ = 1;

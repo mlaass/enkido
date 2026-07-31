@@ -6,6 +6,9 @@
 
 namespace akkado {
 
+// Phase 5 (PRD-8): classifiers + cursor come from lex_primitives.
+using namespace lex_primitives;
+
 namespace {
 
 // Keyword lookup table
@@ -28,7 +31,7 @@ const std::unordered_map<std::string_view, TokenType> keywords = {
 
 Lexer::Lexer(std::string_view source, StringInterner& interner,
              std::string_view filename)
-    : source_(source)
+    : lex_primitives::CursorBase(source)
     , interner_(&interner)
     , filename_(filename)
 {}
@@ -50,51 +53,6 @@ std::vector<Token> Lexer::lex_all() {
 
 bool Lexer::has_errors() const {
     return akkado::has_errors(diagnostics_);
-}
-
-bool Lexer::is_at_end() const {
-    return current_ >= source_.size();
-}
-
-char Lexer::peek() const {
-    if (is_at_end()) return '\0';
-    return source_[current_];
-}
-
-char Lexer::peek_next() const {
-    if (current_ + 1 >= source_.size()) return '\0';
-    return source_[current_ + 1];
-}
-
-char Lexer::advance() {
-    char c = source_[current_++];
-    update_location(c);
-    return c;
-}
-
-bool Lexer::match(char expected) {
-    if (is_at_end()) return false;
-    if (source_[current_] != expected) return false;
-    advance();
-    return true;
-}
-
-bool Lexer::is_digit(char c) {
-    return c >= '0' && c <= '9';
-}
-
-bool Lexer::is_alpha(char c) {
-    return (c >= 'a' && c <= 'z') ||
-           (c >= 'A' && c <= 'Z') ||
-           c == '_';
-}
-
-bool Lexer::is_alphanumeric(char c) {
-    return is_alpha(c) || is_digit(c);
-}
-
-bool Lexer::is_whitespace(char c) {
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
 Token Lexer::make_token(TokenType type) {
@@ -181,7 +139,7 @@ Token Lexer::lex_token() {
 
     // Identifiers and keywords (handle standalone _ specially)
     if (is_alpha(c)) {
-        if (c == '_' && !is_alphanumeric(peek())) {
+        if (c == '_' && !is_alpha_numeric(peek())) {
             return make_token(TokenType::Underscore);
         }
         return lex_identifier();
@@ -311,71 +269,17 @@ Token Lexer::lex_token() {
 }
 
 Token Lexer::lex_number() {
-    bool has_dot = false;
-    bool has_exponent = false;
-    bool is_negative = source_[start_] == '-';
-
-    // Handle leading decimal (.001, .5)
-    if (source_[start_] == '.') {
-        has_dot = true;
-        // Digits after decimal already confirmed by caller
-        while (is_digit(peek())) {
-            advance();
-        }
-    } else {
-        // Consume digits before decimal point
-        while (is_digit(peek())) {
-            advance();
-        }
-
-        // Look for decimal part
-        if (peek() == '.' && is_digit(peek_next())) {
-            has_dot = true;
-            advance(); // consume '.'
-
-            while (is_digit(peek())) {
-                advance();
-            }
-        }
-    }
-
-    // Look for scientific notation (e/E with optional +/- and digits)
-    if (peek() == 'e' || peek() == 'E') {
-        char next = peek_next();
-        bool valid_exponent = is_digit(next) ||
-            ((next == '+' || next == '-') && current_ + 2 < source_.size() &&
-             is_digit(source_[current_ + 2]));
-
-        if (valid_exponent) {
-            has_exponent = true;
-            advance(); // consume 'e' or 'E'
-
-            if (peek() == '+' || peek() == '-') {
-                advance(); // consume sign
-            }
-
-            if (!is_digit(peek())) {
-                return make_error_token("Expected digit after exponent");
-            }
-
-            while (is_digit(peek())) {
-                advance();
-            }
-        }
-    }
-
-    // Parse the number
-    std::string_view text = source_.substr(start_, current_ - start_);
-    std::string buf(text);
-    char* end = nullptr;
-    double value = std::strtod(buf.c_str(), &end);
-    if (end == buf.c_str()) {
+    // The first char (digit / '.' / '-') was already consumed by
+    // lex_token's dispatch; scan_number continues from the cursor and
+    // parses the full text from start_.
+    auto res = scan_number(*this, start_, {
+        .allow_exponent = true,
+        .seen_dot = source_[start_] == '.',
+    });
+    if (!res.ok) {
         return make_error_token("Invalid number");
     }
-
-    // Integer only if no decimal and no exponent
-    bool is_integer = !has_dot && !has_exponent;
-    return make_token(TokenType::Number, NumericValue{value, is_integer});
+    return make_token(TokenType::Number, NumericValue{res.value, res.is_integer});
 }
 
 Token Lexer::lex_string(char quote) {
@@ -449,7 +353,7 @@ Token Lexer::lex_identifier() {
         }
     }
 
-    while (is_alphanumeric(peek())) {
+    while (is_alpha_numeric(peek())) {
         advance();
     }
 
@@ -481,7 +385,7 @@ Token Lexer::lex_directive() {
     }
 
     // Read identifier characters
-    while (is_alphanumeric(peek())) {
+    while (is_alpha_numeric(peek())) {
         advance();
     }
 
@@ -535,24 +439,12 @@ std::optional<Token> Lexer::try_lex_pitch() {
     }
 
     // We have a valid pitch literal - now parse it
-    // Note letter semitones: C=0, D=2, E=4, F=5, G=7, A=9, B=11
-    static constexpr int semitones[] = {9, 11, 0, 2, 4, 5, 7}; // a, b, c, d, e, f, g
-    char note_lower = note_char | 0x20; // to lowercase
-    int note_semitone = semitones[note_lower - 'a'];
-
-    // Parse octave
     int octave = source_[octave_start] - '0';
     if (octave_end - octave_start > 1) {
         // Double digit octave
         octave = octave * 10 + (source_[octave_start + 1] - '0');
     }
-
-    // MIDI note: (octave + 1) * 12 + semitone + accidental
-    int midi_note = (octave + 1) * 12 + note_semitone + accidental;
-
-    // Clamp to valid MIDI range
-    if (midi_note < 0) midi_note = 0;
-    if (midi_note > 127) midi_note = 127;
+    std::uint8_t midi_note = pitch_to_midi(note_char, accidental, octave);
 
     // Consume all characters including closing quote
     while (current_ < lookahead) {
@@ -560,7 +452,7 @@ std::optional<Token> Lexer::try_lex_pitch() {
     }
     advance(); // closing quote
 
-    return make_token(TokenType::PitchLit, PitchValue{static_cast<std::uint8_t>(midi_note)});
+    return make_token(TokenType::PitchLit, PitchValue{midi_note});
 }
 
 void Lexer::add_error(std::string_view message) {
@@ -575,15 +467,6 @@ void Lexer::add_error(std::string_view message, SourceLocation loc) {
         .filename = filename_,
         .location = loc
     });
-}
-
-void Lexer::update_location(char c) {
-    if (c == '\n') {
-        line_++;
-        column_ = 1;
-    } else {
-        column_++;
-    }
 }
 
 SourceLocation Lexer::current_location() const {
