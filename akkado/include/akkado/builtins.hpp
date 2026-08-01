@@ -24,13 +24,14 @@ namespace akkado {
 /// BUILTIN_FUNCTIONS entry (the old 100-entry name-keyed dispatch map in
 /// visit() is gone).
 struct BuiltinHandlers {
+    static constexpr CodegenHandler emit_param = &CodeGenerator::emit_param;
+    static constexpr CodegenHandler emit_visualization = &CodeGenerator::emit_visualization;
     static constexpr CodegenHandler handle_add_voicings_call = &CodeGenerator::handle_add_voicings_call;
     static constexpr CodegenHandler handle_anchor_call = &CodeGenerator::handle_anchor_call;
     static constexpr CodegenHandler handle_bank_call = &CodeGenerator::handle_bank_call;
     static constexpr CodegenHandler handle_binary_call = &CodeGenerator::handle_binary_call;
     static constexpr CodegenHandler handle_binary_n_call = &CodeGenerator::handle_binary_n_call;
     static constexpr CodegenHandler handle_bus_call = &CodeGenerator::handle_bus_call;
-    static constexpr CodegenHandler handle_button_call = &CodeGenerator::handle_button_call;
     static constexpr CodegenHandler handle_chord_call = &CodeGenerator::handle_chord_call;
     static constexpr CodegenHandler handle_compose_call = &CodeGenerator::handle_compose_call;
     static constexpr CodegenHandler handle_compress_call = &CodeGenerator::handle_compress_call;
@@ -59,10 +60,7 @@ struct BuiltinHandlers {
     static constexpr CodegenHandler handle_ms_encode_call = &CodeGenerator::handle_ms_encode_call;
     static constexpr CodegenHandler handle_normalize_call = &CodeGenerator::handle_normalize_call;
     static constexpr CodegenHandler handle_notes_call = &CodeGenerator::handle_notes_call;
-    static constexpr CodegenHandler handle_oscilloscope_call = &CodeGenerator::handle_oscilloscope_call;
     static constexpr CodegenHandler handle_palindrome_call = &CodeGenerator::handle_palindrome_call;
-    static constexpr CodegenHandler handle_param_call = &CodeGenerator::handle_param_call;
-    static constexpr CodegenHandler handle_pianoroll_call = &CodeGenerator::handle_pianoroll_call;
     static constexpr CodegenHandler handle_ply_call = &CodeGenerator::handle_ply_call;
     static constexpr CodegenHandler handle_random_call = &CodeGenerator::handle_random_call;
     static constexpr CodegenHandler handle_range_call = &CodeGenerator::handle_range_call;
@@ -76,14 +74,12 @@ struct BuiltinHandlers {
     static constexpr CodegenHandler handle_samples_call = &CodeGenerator::handle_samples_call;
     static constexpr CodegenHandler handle_scalar_call = &CodeGenerator::handle_scalar_call;
     static constexpr CodegenHandler handle_segment_call = &CodeGenerator::handle_segment_call;
-    static constexpr CodegenHandler handle_select_call = &CodeGenerator::handle_select_call;
     static constexpr CodegenHandler handle_set_call = &CodeGenerator::handle_set_call;
     static constexpr CodegenHandler handle_sf_voice_call = &CodeGenerator::handle_sf_voice_call;
     static constexpr CodegenHandler handle_shuffle_call = &CodeGenerator::handle_shuffle_call;
     static constexpr CodegenHandler handle_slow_call = &CodeGenerator::handle_slow_call;
     static constexpr CodegenHandler handle_sort_call = &CodeGenerator::handle_sort_call;
     static constexpr CodegenHandler handle_soundfont_call = &CodeGenerator::handle_soundfont_call;
-    static constexpr CodegenHandler handle_spectrum_call = &CodeGenerator::handle_spectrum_call;
     static constexpr CodegenHandler handle_spread_call = &CodeGenerator::handle_spread_call;
     static constexpr CodegenHandler handle_state_call = &CodeGenerator::handle_state_call;
     static constexpr CodegenHandler handle_stereo_call = &CodeGenerator::handle_stereo_call;
@@ -91,12 +87,9 @@ struct BuiltinHandlers {
     static constexpr CodegenHandler handle_take_call = &CodeGenerator::handle_take_call;
     static constexpr CodegenHandler handle_tap_delay_call = &CodeGenerator::handle_tap_delay_call;
     static constexpr CodegenHandler handle_timeline_call = &CodeGenerator::handle_timeline_call;
-    static constexpr CodegenHandler handle_toggle_call = &CodeGenerator::handle_toggle_call;
     static constexpr CodegenHandler handle_tune_call = &CodeGenerator::handle_tune_call;
     static constexpr CodegenHandler handle_variant_call = &CodeGenerator::handle_variant_call;
     static constexpr CodegenHandler handle_voicing_call = &CodeGenerator::handle_voicing_call;
-    static constexpr CodegenHandler handle_waterfall_call = &CodeGenerator::handle_waterfall_call;
-    static constexpr CodegenHandler handle_waveform_call = &CodeGenerator::handle_waveform_call;
     static constexpr CodegenHandler handle_when_call = &CodeGenerator::handle_when_call;
     static constexpr CodegenHandler handle_width_call = &CodeGenerator::handle_width_call;
     static constexpr CodegenHandler handle_wt_load_call = &CodeGenerator::handle_wt_load_call;
@@ -1698,7 +1691,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  .param_names = {"name", "default", "min", "max", "", ""},
                  .defaults = {NAN, 0.0f, 0.0f, 1.0f},
                  .description = "Continuous parameter (slider). Reads from EnvMap.",
-                 .codegen_handler = BuiltinHandlers::handle_param_call}},
+                 .codegen_handler = BuiltinHandlers::emit_param,
+                 .kind = BuiltinKind::Param,
+                 .param_meta = ParamMeta{ParamType::Continuous, "param", "E150", "E151"}}},
     {"button",  {.opcode = cedar::Opcode::ENV_GET,
                  .input_count = 1,
                  .optional_count = 0,
@@ -1706,7 +1701,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  .param_names = {"name", "", "", "", "", ""},
                  .defaults = {NAN, NAN, NAN},
                  .description = "Momentary button. 1 while pressed, 0 otherwise.",
-                 .codegen_handler = BuiltinHandlers::handle_button_call}},
+                 .codegen_handler = BuiltinHandlers::emit_param,
+                 .kind = BuiltinKind::Param,
+                 .param_meta = ParamMeta{ParamType::Button, "button", "E152", "E153"}}},
     {"toggle",  {.opcode = cedar::Opcode::ENV_GET,
                  .input_count = 1,
                  .optional_count = 1,
@@ -1714,7 +1711,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  .param_names = {"name", "default", "", "", "", ""},
                  .defaults = {NAN, 0.0f, NAN},
                  .description = "Boolean toggle. Click to flip between 0 and 1.",
-                 .codegen_handler = BuiltinHandlers::handle_toggle_call}},
+                 .codegen_handler = BuiltinHandlers::emit_param,
+                 .kind = BuiltinKind::Param,
+                 .param_meta = ParamMeta{ParamType::Toggle, "toggle", "E154", "E155"}}},
     {"dropdown", {.opcode = cedar::Opcode::ENV_GET,
                  .input_count = 2,
                  .optional_count = 6,
@@ -1722,7 +1721,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  .param_names = {"name", "opt1", "opt2", "opt3", "opt4", "opt5"},
                  .defaults = {NAN, NAN, NAN},
                  .description = "Selection dropdown. Returns index (0, 1, ...) of selected option.",
-                 .codegen_handler = BuiltinHandlers::handle_select_call}},
+                 .codegen_handler = BuiltinHandlers::emit_param,
+                 .kind = BuiltinKind::Param,
+                 .param_meta = ParamMeta{ParamType::Select, "dropdown", "E156", "E157"}}},
 
     // Visualization builtins (handled specially by codegen)
     // These create visualization widgets in the editor and pass signal through
@@ -1745,7 +1746,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                        /*field_count=*/5,
                    }},
                    .option_schema_count = 1,
-                 .codegen_handler = BuiltinHandlers::handle_pianoroll_call}},
+                 .codegen_handler = BuiltinHandlers::emit_visualization,
+                 .kind = BuiltinKind::Visualization,
+                 .viz_meta = VizMeta{VisualizationType::PianoRoll, "pianoroll", "Piano Roll", "E170", 0}}},
     {"oscilloscope", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                       .param_names = {"signal", "name", "options", "", "", ""},
                       .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1762,7 +1765,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                           /*field_count=*/4,
                       }},
                       .option_schema_count = 1,
-                 .codegen_handler = BuiltinHandlers::handle_oscilloscope_call}},
+                 .codegen_handler = BuiltinHandlers::emit_visualization,
+                 .kind = BuiltinKind::Visualization,
+                 .viz_meta = VizMeta{VisualizationType::Oscilloscope, "oscilloscope", "Oscilloscope", "E171", 1}}},
     {"waveform", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                   .param_names = {"signal", "name", "options", "", "", ""},
                   .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1780,7 +1785,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                       /*field_count=*/5,
                   }},
                   .option_schema_count = 1,
-                 .codegen_handler = BuiltinHandlers::handle_waveform_call}},
+                 .codegen_handler = BuiltinHandlers::emit_visualization,
+                 .kind = BuiltinKind::Visualization,
+                 .viz_meta = VizMeta{VisualizationType::Waveform, "waveform", "Waveform", "E172", 1}}},
     {"spectrum", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                   .param_names = {"signal", "name", "options", "", "", ""},
                   .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1799,7 +1806,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                       /*field_count=*/6,
                   }},
                   .option_schema_count = 1,
-                 .codegen_handler = BuiltinHandlers::handle_spectrum_call}},
+                 .codegen_handler = BuiltinHandlers::emit_visualization,
+                 .kind = BuiltinKind::Visualization,
+                 .viz_meta = VizMeta{VisualizationType::Spectrum, "spectrum", "Spectrum", "E173", 2}}},
     {"waterfall", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                     .param_names = {"signal", "name", "options", "", "", ""},
                     .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1820,7 +1829,9 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                         /*field_count=*/8,
                     }},
                     .option_schema_count = 1,
-                 .codegen_handler = BuiltinHandlers::handle_waterfall_call}},
+                 .codegen_handler = BuiltinHandlers::emit_visualization,
+                 .kind = BuiltinKind::Visualization,
+                 .viz_meta = VizMeta{VisualizationType::Waterfall, "waterfall", "Waterfall", "E174", 2}}},
 
     // Builtin variable getters (desugared from identifier reads like `bpm`, `spb`)
     // These are registered in BUILTIN_FUNCTIONS so the analyzer accepts them as builtins.

@@ -301,3 +301,42 @@ TEST_CASE("pattern-transform builtins carry BuiltinKind::PatternTransform", "[bu
         CHECK(info->kind != akkado::BuiltinKind::PatternTransform);
     }
 }
+
+TEST_CASE("viz + param builtins carry kind + emitter metadata", "[builtins][kind]") {
+    // Phase 6: the data-driven emitters read viz_meta / param_meta off the
+    // entry — a new visualizer or control must ship both kind and meta.
+    struct VizCase { const char* name; akkado::VisualizationType type; std::uint8_t probe; };
+    const VizCase viz[] = {
+        {"pianoroll", akkado::VisualizationType::PianoRoll, 0},
+        {"oscilloscope", akkado::VisualizationType::Oscilloscope, 1},
+        {"waveform", akkado::VisualizationType::Waveform, 1},
+        {"spectrum", akkado::VisualizationType::Spectrum, 2},
+        {"waterfall", akkado::VisualizationType::Waterfall, 2},
+    };
+    for (const auto& c : viz) {
+        CAPTURE(c.name);
+        const akkado::BuiltinInfo* info = akkado::lookup_builtin(c.name);
+        REQUIRE(info != nullptr);
+        CHECK(info->kind == akkado::BuiltinKind::Visualization);
+        REQUIRE(info->viz_meta.has_value());
+        CHECK(info->viz_meta->type == c.type);
+        CHECK(info->viz_meta->probe == c.probe);
+        CHECK(std::string_view(info->viz_meta->name) == c.name);
+    }
+
+    struct ParamCase { const char* name; akkado::ParamType kind; };
+    const ParamCase params[] = {
+        {"param", akkado::ParamType::Continuous},
+        {"button", akkado::ParamType::Button},
+        {"toggle", akkado::ParamType::Toggle},
+        {"dropdown", akkado::ParamType::Select},
+    };
+    for (const auto& c : params) {
+        CAPTURE(c.name);
+        const akkado::BuiltinInfo* info = akkado::lookup_builtin(c.name);
+        REQUIRE(info != nullptr);
+        CHECK(info->kind == akkado::BuiltinKind::Param);
+        REQUIRE(info->param_meta.has_value());
+        CHECK(info->param_meta->decl_kind == c.kind);
+    }
+}

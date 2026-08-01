@@ -61,12 +61,7 @@ struct CompilerOptions {
 // ============================================================================
 
 /// Type of exposed parameter for UI generation
-enum class ParamType : std::uint8_t {
-    Continuous = 0,  // Float value in range [min, max] - rendered as slider
-    Button = 1,      // Momentary: 1 while pressed, 0 otherwise
-    Toggle = 2,      // Boolean: 0 or 1, click to flip
-    Select = 3       // Discrete: integer index into options array
-};
+// ParamType lives in builtin_info.hpp (ParamMeta on BuiltinInfo needs it).
 
 /// Declaration of an exposed parameter extracted at compile time
 /// Used for auto-generating UI controls and external binding (Godot, MIDI, etc.)
@@ -100,13 +95,7 @@ struct BuiltinVarOverride {
 // ============================================================================
 
 /// Type of visualization widget for UI generation
-enum class VisualizationType : std::uint8_t {
-    PianoRoll = 0,   // Musical pattern display with notes/events
-    Oscilloscope = 1, // Time-domain waveform (short window, real-time)
-    Waveform = 2,     // Time-domain waveform (longer window)
-    Spectrum = 3,     // Frequency-domain FFT display
-    Waterfall = 4     // Scrolling spectrogram
-};
+// VisualizationType lives in builtin_info.hpp (VizMeta needs it).
 
 /// Declaration of a visualization widget extracted at compile time
 /// Used for generating UI visualization blocks below source lines
@@ -1226,36 +1215,18 @@ private:
     // Parameter exposure handlers
     // ============================================================================
 
-    /// Handle param(name, default, min?, max?) - continuous slider parameter
-    TypedValue handle_param_call(NodeIndex node, const Node& n);
 
-    /// Handle button(name) - momentary button parameter
-    TypedValue handle_button_call(NodeIndex node, const Node& n);
 
-    /// Handle toggle(name, default?) - boolean toggle parameter
-    TypedValue handle_toggle_call(NodeIndex node, const Node& n);
 
-    /// Handle select(name, opt1, opt2, ...) - selection dropdown parameter
-    TypedValue handle_select_call(NodeIndex node, const Node& n);
 
     // ============================================================================
     // Visualization exposure handlers
     // ============================================================================
 
-    /// Handle pianoroll(signal, name?) - attach piano roll visualization
-    TypedValue handle_pianoroll_call(NodeIndex node, const Node& n);
 
-    /// Handle oscilloscope(signal, name?) - attach oscilloscope visualization
-    TypedValue handle_oscilloscope_call(NodeIndex node, const Node& n);
 
-    /// Handle waveform(signal, name?) - attach waveform visualization
-    TypedValue handle_waveform_call(NodeIndex node, const Node& n);
 
-    /// Handle spectrum(signal, name?) - attach spectrum visualization
-    TypedValue handle_spectrum_call(NodeIndex node, const Node& n);
 
-    /// Handle waterfall(signal, name?, options?) - attach waterfall spectrogram visualization
-    TypedValue handle_waterfall_call(NodeIndex node, const Node& n);
 
     /// Handle compose(f, g, ...) - function composition
     TypedValue handle_compose_call(NodeIndex node, const Node& n);
@@ -1280,6 +1251,14 @@ private:
     /// Processes the directive and updates compiler options.
     /// @return void TypedValue (directives don't produce values)
     TypedValue handle_directive(NodeIndex node, const Node& n);
+
+    /// Data-driven UI-exposure emitters (PRD prd-codegen-sprawl-cleanup
+    /// Phase 6). One handler each for the visualization family (pianoroll/
+    /// oscilloscope/waveform/spectrum/waterfall — driven by
+    /// BuiltinInfo::viz_meta) and the param-control family (param/button/
+    /// toggle/dropdown — driven by BuiltinInfo::param_meta).
+    TypedValue emit_visualization(NodeIndex node, const Node& n);
+    TypedValue emit_param(NodeIndex node, const Node& n);
 
     // ============================================================================
     // Call-branch emitters (call_dispatch.cpp, PRD sprawl-cleanup Phase 4)

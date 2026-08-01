@@ -1,6 +1,9 @@
-// Visualization exposure codegen implementations
-// Handles pianoroll(), oscilloscope(), waveform(), spectrum() for UI auto-generation
-// These functions pass signal through while creating visualization metadata
+// Visualization exposure codegen — pianoroll(), oscilloscope(), waveform(),
+// spectrum(), waterfall() for UI auto-generation. One data-driven emitter
+// (PRD prd-codegen-sprawl-cleanup Phase 6): each builtin's BUILTIN_FUNCTIONS
+// entry carries a VizMeta describing its widget type, default name,
+// diagnostic code, and probe opcode; adding a visualizer is a table entry,
+// not a new handler. Signal passes through while creating viz metadata.
 
 #include "akkado/codegen.hpp"
 #include "akkado/compile_context.hpp"
@@ -41,8 +44,7 @@ static NodeIndex next_arg(const AstArena& arena, NodeIndex arg_node) {
 
 // Helper: Extract a viz builtin's options record into a typed payload using
 // the schema declared on the BuiltinInfo. Falls back to a permissive empty
-// schema if the builtin has none — preserves the pre-Phase-5 behaviour for
-// callers without a registered schema (none today, but defensive).
+// schema if the builtin has none — defensive; every registered viz has one.
 static codegen::OptionsPayload extract_viz_options(const AstArena& arena,
                                                     NodeIndex arg_node,
                                                     std::string_view builtin_name) {
@@ -69,15 +71,26 @@ static std::uint8_t fft_log2_from_payload(const codegen::OptionsPayload& payload
     return default_log2;
 }
 
-// ============================================================================
-// pianoroll(signal, name?, options?) - Piano roll pattern visualization
-// ============================================================================
+// The canonical viz emit shape:
+//   validate signal arg → visit → name → options → [state_id] →
+//   push VisualizationDecl → [emit PROBE / FFT_PROBE]
+// PianoRoll (probe == 0) emits no probe: it links to the pattern's own
+// state_init instead and passes the signal buffer straight through.
+TypedValue CodeGenerator::emit_visualization(NodeIndex node, const Node& n) {
+    const std::string func_name{ctx_->interner->view(n.as_identifier())};
+    const BuiltinInfo* info = lookup_builtin(func_name);
+    if (info == nullptr || !info->viz_meta.has_value()) {
+        error("E107", "Unknown visualization builtin: " + func_name, n.location);
+        return TypedValue::error_val();
+    }
+    const VizMeta& meta = *info->viz_meta;
 
-TypedValue CodeGenerator::handle_pianoroll_call(NodeIndex node, const Node& n) {
     // 1. Get signal argument (required)
     NodeIndex signal_arg = n.first_child;
     if (signal_arg == NULL_NODE) {
-        error("E170", "pianoroll() requires a signal argument", n.location);
+        error(meta.err_code,
+              std::string(meta.name) + "() requires a signal argument",
+              n.location);
         return TypedValue::void_val();
     }
 
@@ -91,293 +104,69 @@ TypedValue CodeGenerator::handle_pianoroll_call(NodeIndex node, const Node& n) {
 
     // 3. Extract optional name argument
     NodeIndex name_arg = next_arg(ast_->arena, signal_arg);
-    std::string name = extract_name_arg(ast_->arena, name_arg, "Piano Roll");
+    std::string name = extract_name_arg(ast_->arena, name_arg, meta.default_name);
 
     // 4. Extract optional options argument
     NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    auto options = extract_viz_options(ast_->arena, options_arg, "pianoroll");
+    auto options = extract_viz_options(ast_->arena, options_arg, meta.name);
 
-    // 5. Create visualization declaration
+    // 5. Generate state_id for the probe buffer (probed widgets only).
+    // Include source offset for uniqueness when multiple viz with same name
+    // exist. PianoRoll links to the pattern's state_id instead (below).
+    std::uint32_t state_id = 0;
+    if (meta.probe != 0) {
+        push_path(meta.name);
+        push_path(name);
+        push_path(std::to_string(n.location.offset));
+        state_id = compute_state_id();
+        pop_path();
+        pop_path();
+        pop_path();
+    }
+
+    // 6. Create visualization declaration
     VisualizationDecl decl;
     decl.name = name;
-    decl.type = VisualizationType::PianoRoll;
-    decl.state_id = 0;  // Not used for piano roll
+    decl.type = meta.type;
+    decl.state_id = state_id;
     decl.options_json = options.to_json();
     decl.source_offset = n.location.offset;
     decl.source_length = n.location.length;
-
-    // 6. Try to find corresponding pattern state_init for linking
-    // The signal may come from a pattern - search state_inits for matching source location
-    // This enables the piano roll to access pattern events without duplication
     decl.pattern_state_init_index = -1;
-    for (std::size_t i = 0; i < state_inits_.size(); ++i) {
-        const auto& init = state_inits_[i];
-        if (init.type == StateInitData::Type::SequenceProgram) {
-            // Check if pattern location is within or near this call
-            // For now, use most recent pattern if signal comes from a pattern node
-            decl.pattern_state_init_index = static_cast<std::int32_t>(i);
-            // Store the pattern's state_id for direct lookup on the JS side
-            decl.state_id = init.state_id;
+
+    if (meta.probe == 0) {
+        // PianoRoll: link to a pattern state_init so the widget can read
+        // pattern events without duplication. For now, use the most recent
+        // SequenceProgram init.
+        for (std::size_t i = 0; i < state_inits_.size(); ++i) {
+            const auto& init = state_inits_[i];
+            if (init.type == StateInitData::Type::SequenceProgram) {
+                decl.pattern_state_init_index = static_cast<std::int32_t>(i);
+                // Store the pattern's state_id for direct lookup on the JS side
+                decl.state_id = init.state_id;
+            }
         }
     }
 
-    // 7. Add to declarations (no deduplication - multiple piano rolls allowed)
+    // 7. Add to declarations (no deduplication - multiple widgets allowed)
     viz_decls_.push_back(std::move(decl));
 
-    // 8. Signal passes through unchanged
-    return cache_and_return(node, TypedValue::signal(signal_buf));
-}
-
-// ============================================================================
-// oscilloscope(signal, name?, options?) - Time-domain oscilloscope visualization
-// ============================================================================
-
-TypedValue CodeGenerator::handle_oscilloscope_call(NodeIndex node, const Node& n) {
-    // 1. Get signal argument (required)
-    NodeIndex signal_arg = n.first_child;
-    if (signal_arg == NULL_NODE) {
-        error("E171", "oscilloscope() requires a signal argument", n.location);
-        return TypedValue::void_val();
+    // 8. PianoRoll: signal passes through unchanged, no probe emitted.
+    if (meta.probe == 0) {
+        return cache_and_return(node, TypedValue::signal(signal_buf));
     }
 
-    NodeIndex signal_node = unwrap_argument(ast_->arena, signal_arg);
-
-    // 2. Visit signal to get its buffer
-    std::uint16_t signal_buf = visit(signal_node).buffer;
-    if (signal_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
+    // 9. Emit the probe opcode capturing signal data. FFT_PROBE carries
+    // log2(fft bins) in the rate field.
+    const cedar::Opcode probe_op =
+        (meta.probe == 2) ? cedar::Opcode::FFT_PROBE : cedar::Opcode::PROBE;
+    codegen::InstructionBuilder probe(probe_op);
+    if (meta.probe == 2) {
+        probe.rate(fft_log2_from_payload(options));
     }
-
-    // 3. Extract optional name argument
-    NodeIndex name_arg = next_arg(ast_->arena, signal_arg);
-    std::string name = extract_name_arg(ast_->arena, name_arg, "Oscilloscope");
-
-    // 4. Extract optional options argument
-    NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    auto options = extract_viz_options(ast_->arena, options_arg, "oscilloscope");
-
-    // 5. Generate state_id for probe buffer
-    // Include source offset for uniqueness when multiple viz with same name exist
-    push_path("oscilloscope");
-    push_path(name);
-    push_path(std::to_string(n.location.offset));
-    std::uint32_t state_id = compute_state_id();
-    pop_path();
-    pop_path();
-    pop_path();
-
-    // 6. Create visualization declaration
-    VisualizationDecl decl;
-    decl.name = name;
-    decl.type = VisualizationType::Oscilloscope;
-    decl.state_id = state_id;
-    decl.options_json = options.to_json();
-    decl.source_offset = n.location.offset;
-    decl.source_length = n.location.length;
-    decl.pattern_state_init_index = -1;
-
-    viz_decls_.push_back(std::move(decl));
-
-    // 7. Emit PROBE opcode to capture signal data
-    const std::uint16_t out_buf =
-        codegen::InstructionBuilder(cedar::Opcode::PROBE)
-            .input(0, signal_buf)
-            .state_id(state_id)
-            .emit(*this, n.location);
-    if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    return cache_and_return(node, TypedValue::signal(out_buf));
-}
-
-// ============================================================================
-// waveform(signal, name?, options?) - Time-domain waveform visualization (longer window)
-// ============================================================================
-
-TypedValue CodeGenerator::handle_waveform_call(NodeIndex node, const Node& n) {
-    // 1. Get signal argument (required)
-    NodeIndex signal_arg = n.first_child;
-    if (signal_arg == NULL_NODE) {
-        error("E172", "waveform() requires a signal argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    NodeIndex signal_node = unwrap_argument(ast_->arena, signal_arg);
-
-    // 2. Visit signal to get its buffer
-    std::uint16_t signal_buf = visit(signal_node).buffer;
-    if (signal_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    // 3. Extract optional name argument
-    NodeIndex name_arg = next_arg(ast_->arena, signal_arg);
-    std::string name = extract_name_arg(ast_->arena, name_arg, "Waveform");
-
-    // 4. Extract optional options argument
-    NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    auto options = extract_viz_options(ast_->arena, options_arg, "waveform");
-
-    // 5. Generate state_id for probe buffer
-    // Include source offset for uniqueness when multiple viz with same name exist
-    push_path("waveform");
-    push_path(name);
-    push_path(std::to_string(n.location.offset));
-    std::uint32_t state_id = compute_state_id();
-    pop_path();
-    pop_path();
-    pop_path();
-
-    // 6. Create visualization declaration
-    VisualizationDecl decl;
-    decl.name = name;
-    decl.type = VisualizationType::Waveform;
-    decl.state_id = state_id;
-    decl.options_json = options.to_json();
-    decl.source_offset = n.location.offset;
-    decl.source_length = n.location.length;
-    decl.pattern_state_init_index = -1;
-
-    viz_decls_.push_back(std::move(decl));
-
-    // 7. Emit PROBE opcode to capture signal data
-    const std::uint16_t out_buf =
-        codegen::InstructionBuilder(cedar::Opcode::PROBE)
-            .input(0, signal_buf)
-            .state_id(state_id)
-            .emit(*this, n.location);
-    if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    return cache_and_return(node, TypedValue::signal(out_buf));
-}
-
-// ============================================================================
-// spectrum(signal, name?, options?) - Frequency-domain FFT visualization
-// ============================================================================
-
-TypedValue CodeGenerator::handle_spectrum_call(NodeIndex node, const Node& n) {
-    // 1. Get signal argument (required)
-    NodeIndex signal_arg = n.first_child;
-    if (signal_arg == NULL_NODE) {
-        error("E173", "spectrum() requires a signal argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    NodeIndex signal_node = unwrap_argument(ast_->arena, signal_arg);
-
-    // 2. Visit signal to get its buffer
-    std::uint16_t signal_buf = visit(signal_node).buffer;
-    if (signal_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    // 3. Extract optional name argument
-    NodeIndex name_arg = next_arg(ast_->arena, signal_arg);
-    std::string name = extract_name_arg(ast_->arena, name_arg, "Spectrum");
-
-    // 4. Extract optional options argument
-    NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    auto options = extract_viz_options(ast_->arena, options_arg, "spectrum");
-
-    // 5. Generate state_id for probe buffer
-    // Include source offset for uniqueness when multiple viz with same name exist
-    push_path("spectrum");
-    push_path(name);
-    push_path(std::to_string(n.location.offset));
-    std::uint32_t state_id = compute_state_id();
-    pop_path();
-    pop_path();
-    pop_path();
-
-    // 6. Create visualization declaration
-    VisualizationDecl decl;
-    decl.name = name;
-    decl.type = VisualizationType::Spectrum;
-    decl.state_id = state_id;
-    decl.options_json = options.to_json();
-    decl.source_offset = n.location.offset;
-    decl.source_length = n.location.length;
-    decl.pattern_state_init_index = -1;
-
-    viz_decls_.push_back(std::move(decl));
-
-    // 7. Emit FFT_PROBE opcode (migrated from PROBE for WASM FFT)
-    std::uint8_t fft_log2 = fft_log2_from_payload(options);
-
-    const std::uint16_t out_buf =
-        codegen::InstructionBuilder(cedar::Opcode::FFT_PROBE)
-            .rate(fft_log2)
-            .input(0, signal_buf)
-            .state_id(state_id)
-            .emit(*this, n.location);
-    if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    return cache_and_return(node, TypedValue::signal(out_buf));
-}
-
-// ============================================================================
-// waterfall(signal, name?, options?) - Spectral waterfall visualization
-// ============================================================================
-
-TypedValue CodeGenerator::handle_waterfall_call(NodeIndex node, const Node& n) {
-    // 1. Get signal argument (required)
-    NodeIndex signal_arg = n.first_child;
-    if (signal_arg == NULL_NODE) {
-        error("E174", "waterfall() requires a signal argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    NodeIndex signal_node = unwrap_argument(ast_->arena, signal_arg);
-
-    // 2. Visit signal to get its buffer
-    std::uint16_t signal_buf = visit(signal_node).buffer;
-    if (signal_buf == BufferAllocator::BUFFER_UNUSED) {
-        return TypedValue::void_val();
-    }
-
-    // 3. Extract optional name argument
-    NodeIndex name_arg = next_arg(ast_->arena, signal_arg);
-    std::string name = extract_name_arg(ast_->arena, name_arg, "Waterfall");
-
-    // 4. Extract optional options argument
-    NodeIndex options_arg = next_arg(ast_->arena, name_arg);
-    auto options = extract_viz_options(ast_->arena, options_arg, "waterfall");
-
-    // 5. Generate state_id for FFT probe
-    push_path("waterfall");
-    push_path(name);
-    push_path(std::to_string(n.location.offset));
-    std::uint32_t state_id = compute_state_id();
-    pop_path();
-    pop_path();
-    pop_path();
-
-    // 6. Create visualization declaration
-    VisualizationDecl decl;
-    decl.name = name;
-    decl.type = VisualizationType::Waterfall;
-    decl.state_id = state_id;
-    decl.options_json = options.to_json();
-    decl.source_offset = n.location.offset;
-    decl.source_length = n.location.length;
-    decl.pattern_state_init_index = -1;
-
-    viz_decls_.push_back(std::move(decl));
-
-    // 7. Emit FFT_PROBE opcode
-    std::uint8_t fft_log2 = fft_log2_from_payload(options);
-
-    const std::uint16_t out_buf =
-        codegen::InstructionBuilder(cedar::Opcode::FFT_PROBE)
-            .rate(fft_log2)
-            .input(0, signal_buf)
-            .state_id(state_id)
-            .emit(*this, n.location);
+    const std::uint16_t out_buf = probe.input(0, signal_buf)
+                                      .state_id(state_id)
+                                      .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
         return TypedValue::void_val();
     }

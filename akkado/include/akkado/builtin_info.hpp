@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 
@@ -122,6 +123,40 @@ struct OptionSchema {
     bool                                                  accepts_spread = true;
 };
 
+enum class ParamType : std::uint8_t {
+    Continuous = 0,  // Float value in range [min, max] - rendered as slider
+    Button = 1,      // Momentary: 1 while pressed, 0 otherwise
+    Toggle = 2,      // Boolean: 0 or 1, click to flip
+    Select = 3       // Discrete: integer index into options array
+};
+
+enum class VisualizationType : std::uint8_t {
+    PianoRoll = 0,   // Musical pattern display with notes/events
+    Oscilloscope = 1, // Time-domain waveform (short window, real-time)
+    Waveform = 2,     // Time-domain waveform (longer window)
+    Spectrum = 3,     // Frequency-domain FFT display
+    Waterfall = 4     // Scrolling spectrogram
+};
+
+/// Per-builtin metadata for the data-driven visualization emitter
+/// (PRD prd-codegen-sprawl-cleanup Phase 6). `name` doubles as the semantic
+/// path segment and the "<name>() requires ..." diagnostic prefix.
+struct VizMeta {
+    VisualizationType type;
+    const char* name;          // "oscilloscope" — path segment + diagnostics
+    const char* default_name;  // "Oscilloscope" — widget default display name
+    const char* err_code;      // "E171" — missing-signal-argument code
+    std::uint8_t probe;        // 0 = no probe (pianoroll), 1 = PROBE, 2 = FFT_PROBE
+};
+
+/// Per-builtin metadata for the data-driven param-control emitter (Phase 6).
+struct ParamMeta {
+    ParamType decl_kind;
+    const char* name;            // "dropdown" — diagnostics prefix
+    const char* err_missing;     // "E156" — missing name argument
+    const char* err_not_string;  // "E157" — name not a string literal
+};
+
 // PRD prd-codegen-sprawl-cleanup Phase 4: per-builtin codegen dispatch.
 // CodeGenerator is incomplete here (codegen.hpp includes this header);
 // member pointers to incomplete classes are fine. The NodeIndex parameter
@@ -230,6 +265,11 @@ struct BuiltinInfo {
     // emitter selected by `kind`.
     CodegenHandler codegen_handler = nullptr;
     BuiltinKind kind = BuiltinKind::Function;
+
+    // Phase 6: data for the shared emit_visualization / emit_param emitters.
+    // Set exactly when kind == Visualization / Param respectively.
+    std::optional<VizMeta> viz_meta;
+    std::optional<ParamMeta> param_meta;
 
     /// Get total parameter count (required + optional)
     [[nodiscard]] std::uint8_t total_params() const {
