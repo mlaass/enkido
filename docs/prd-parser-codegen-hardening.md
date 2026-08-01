@@ -1,4 +1,16 @@
-> **Status: IN PROGRESS — Phase 1-8 SHIPPED (2026-08-01), 1 phase remaining.**
+> **Status: DONE — All 9 phases shipped.** Filed 2026-05-26; closed
+> 2026-08-01. All audit hardening findings RESOLVED (F6 Pratt portion,
+> F11, F13, F15, §3.3 ghost-fields, §3.5 builtin re-inserts +
+> debug-JSON gate); the parallelism-blocker catalogue's only open entry
+> is the PB-F5 handover to PRD-3.
+>
+> - **Phase 9 (close-out) — SHIPPED 2026-08-01.** Catalogue scan
+>   queries re-run clean (only verified-safe pure-function statics +
+>   the catalogued PB-004 singleton); Open table reduced to the PB-F5
+>   PRD-3 handover entry (PB-002/003/004 moved to an out-of-scope
+>   section with owners); "Precondition list for PRD-3" added to the
+>   catalogue; audit-doc executive summary gained the hardening
+>   resolution tally; all phase commit hashes backfilled below.
 >
 > - **Phase 8 (shape_index over CompileArtifacts) — SHIPPED 2026-08-01.**
 >   `serialize_shape_index(const CompileArtifacts&, cursor)` replaces
@@ -23,8 +35,7 @@
 >   contract win). Tradeoff documented in the audit note: shapes now
 >   reflect the last compile rather than the live buffer. Full suites
 >   green; snapshot byte-identical; wasm green; svelte-check clean;
->   web unit (164) + Playwright e2e (15) green. Commit hashes
->   backfilled at Phase 9.
+>   web unit (164) + Playwright e2e (15) green. Commit `26f92c9`.
 >
 > - **Phase 7 (expr_kinds + named_args consolidation) — SHIPPED
 >   2026-08-01.** New `expr_kinds.hpp/.cpp`: `midi_to_hz` (exit-grep
@@ -51,7 +62,7 @@
 >   test_expr_kinds.cpp (predicates, midi_to_hz, analyzer-binding
 >   round-trip) + test_named_args.cpp (all three schema variants +
 >   every error code). Full suites green (1264 cases); snapshot
->   byte-identical; wasm green. Commit hashes backfilled at Phase 9.
+>   byte-identical; wasm green. Commit `bb9a512`.
 >
 > - **Phase 6 (Node::extra_children ghost-field migration) — SHIPPED
 >   2026-08-01.** `Node` grew `std::vector<NodeIndex> extra_children`
@@ -78,7 +89,7 @@
 >   accessor units, slot names, and analyzer round-trips for guard /
 >   record spread / arg spread / destructure defaults (statement +
 >   param). Full suites green; snapshot byte-identical; wasm green.
->   Commit hashes backfilled at Phase 9.
+>   Commit `bec5696`.
 >
 > - **Phase 5 (lex_primitives extract) — SHIPPED 2026-07-31.** New
 >   `akkado/include/akkado/lex_primitives.hpp` + `src/lex_primitives.cpp`
@@ -100,8 +111,7 @@
 >   were not reachable without breaking observable lex_number error
 >   behavior. [P5] unit tests cover cursor, classifiers, all
 >   scan_number modes, velocity suffix, pitch_to_midi. Full suites
->   green; snapshot byte-identical; wasm green. Commit hashes
->   backfilled at Phase 9.
+>   green; snapshot byte-identical; wasm green. Commit `fae7c86`.
 >
 > - **Phase 4 (Pratt OpInfo table) — SHIPPED 2026-07-31.** One
 >   `OPERATORS[]` table + `find_op()` in `parser.hpp` backs
@@ -113,8 +123,7 @@
 >   arm (codegen.cpp ~2503), and the ast_hash branch; migrated
 >   test_ast_arena.cpp off the family. [P4] data-driven test iterates
 >   `OPERATORS[]` (desugar name + associativity nesting per row);
->   precedence + `2^3^2` regressions locked. Commit hashes backfilled
->   at Phase 9.
+>   precedence + `2^3^2` regressions locked. Commit `18a3228`.
 >
 > - **Phase 3 (frozen builtin scope) — SHIPPED 2026-07-31.** Vendored
 >   frozen 1.2.0 (`third_party/frozen/` + `THIRD_PARTY.md`);
@@ -131,7 +140,7 @@
 >   (the shared scope is `const`; `define()` only ever writes per-compile
 >   scopes). E150 top-level-reassignment and closure-shadowing semantics
 >   preserved and locked by [P3] tests (incl. two-table sharing + a
->   first-use thread race). Commit hashes backfilled at Phase 9.
+>   first-use thread race). Commit `b74107b`.
 >
 > - **Phase 2 (CompileOptions + grouped CompileResult + debug-JSON gate)
 >   — SHIPPED 2026-07-31.** `compile(source, CompileOptions)` replaces
@@ -140,7 +149,7 @@
 >   `diagnostics`); `StateInitData::ast_json` is gated behind
 >   `emit_debug_json` (default false; wasm passes true). All in-tree
 >   callers migrated (tools, wasm, ~40 test files). [P2] tests cover
->   the gate + grouped population. Commit hashes backfilled at Phase 9.
+>   the gate + grouped population. Commit `706d2ad`.
 >
 > - **Phase 1 (dead-code + catalogue) — SHIPPED 2026-07-31.** Deleted
 >   `TokenType::MiniString`, the `MiniLexer`/`lex_mini` bool overloads
@@ -149,7 +158,7 @@
 >   `docs/parallelism-blocker-catalogue.md` (PB-001..PB-004 + PB-F5).
 >   `BinOp`/`BinaryOpData` deferred to Phase 4 per the conservative rule
 >   (dead consumers survive in `codegen.cpp:2502`, `ast_hash.cpp`,
->   `test_ast_arena.cpp`). Commit hashes backfilled at Phase 9.
+>   `test_ast_arena.cpp`). Commit `6a369c2`.
 >
 > Filed 2026-05-26 as the
 > hardening + parallelism-prep follow-up to

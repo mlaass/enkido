@@ -23,6 +23,19 @@ The dominant simplification opportunity is the codegen `visit()` Call branch (**
 
 **Resolution status.** All six critical findings are scoped into `docs/prd-parser-codegen-correctness.md` (filed 2026-05-25; closed 2026-05-26). **5 resolved (F1, F2, F8, F12, F14), 1 withdrawn (F7 — already correct on master).** Per-finding RESOLVED / WITHDRAWN tags appear below in §2; see the PRD's status block for the per-phase commit log.
 
+**Hardening resolution status (2026-08-01).** The hardening +
+parallelism-prep findings are closed via
+`docs/prd-parser-codegen-hardening.md` (filed 2026-05-26; closed
+2026-08-01, 9 phases): **F6 (Pratt portion), F11, F13, F15, §3.3
+ghost-fields, §3.5 builtin re-inserts + debug-JSON gate all RESOLVED**;
+PRD-2, PRD-8, PRD-10, PRD-11, PRD-13, PRD-14, PRD-15 SHIPPED.
+`docs/parallelism-blocker-catalogue.md` carries the live shared-mutable-
+state inventory — after the Phase 9 re-scan the only open entry is the
+PB-F5 source-concatenation handover to the future per-import
+parallelism PRD (audit F5 / PRD-3). Remaining unscoped findings (token-
+shape redundancy, mini-lexer flag machine internals, codegen-sprawl
+F4/F9/F10) belong to `docs/prd-codegen-sprawl-cleanup.md`.
+
 ---
 
 ## 1. Scope and methodology
