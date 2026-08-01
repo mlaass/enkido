@@ -2,6 +2,7 @@
 // Handles stereo(), left(), right(), pan(), width(), ms_encode(), ms_decode(), pingpong()
 
 #include "akkado/codegen.hpp"
+#include "akkado/builtins.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"

@@ -1,282 +1,110 @@
 #pragma once
 
-#include <cedar/vm/instruction.hpp>
-#include "akkado/typed_value.hpp"
-#include <array>
-#include <cmath>
-#include <cstdint>
-#include <string_view>
-#include <unordered_map>
+// The builtin registry: BUILTIN_FUNCTIONS / BUILTIN_ALIASES /
+// BUILTIN_VARIABLES tables + lookup helpers. The BuiltinInfo struct and
+// friends live in builtin_info.hpp so headers that only need the type
+// (symbol_table.hpp, host_extensions.hpp) don't depend on this table —
+// and so this header can include codegen.hpp: the table stores
+// &CodeGenerator::... codegen_handler member pointers, which require the
+// complete CodeGenerator class (PRD prd-codegen-sprawl-cleanup Phase 4).
+
+#include "akkado/builtin_info.hpp"
+#include "akkado/codegen.hpp"
 
 #include <frozen/string.h>
 #include <frozen/unordered_map.h>
 
 namespace akkado {
 
-/// Maximum number of parameters for a builtin function (using inputs[0..4] + defaults).
-/// Up to 5 of these reach the instruction's input slots; positions 5+ are reserved
-/// for codegen-only literals (e.g. phaser packs stages/feedback into inst.rate).
-/// For builtins needing more *runtime* parameters, use extended_param_count with
-/// ExtendedParams<N>.
-constexpr std::size_t MAX_BUILTIN_PARAMS = 8;
-
-/// Maximum number of optional parameters with defaults.
-constexpr std::size_t MAX_BUILTIN_DEFAULTS = 7;
-
-/// Maximum number of extended parameters (stored in StatePool)
-constexpr std::size_t MAX_EXTENDED_PARAMS = 8;
-
-// `ParamValueType` is defined in typed_value.hpp (alongside `ValueType`) so the
-// AST and parser headers can reference it without pulling in the heavy builtin-
-// metadata header. The helpers below (`param_value_type_name`, `type_compatible`)
-// live here because they are only consumed by the builtin / codegen layers.
-
-/// Human-readable name for a ParamValueType (for error messages)
-constexpr const char* param_value_type_name(ParamValueType type) {
-    switch (type) {
-        case ParamValueType::Any:      return "Any";
-        case ParamValueType::Signal:   return "Signal";
-        case ParamValueType::Pattern:  return "Pattern";
-        case ParamValueType::String:   return "String";
-        case ParamValueType::Function: return "Function";
-        case ParamValueType::Array:    return "Array";
-        case ParamValueType::Record:   return "Record";
-        case ParamValueType::Stream:   return "Stream";
-        case ParamValueType::Number:   return "Number";
-    }
-    return "Unknown";
-}
-
-/// Check if actual ValueType is compatible with expected ParamValueType.
-/// Rules:
-///   Any       — always compatible
-///   Signal    — accepts Signal or Number (Number auto-promotes to constant buffer)
-///   Pattern   — accepts Pattern only
-///   String    — accepts String only
-///   Function  — accepts Function only
-///   Array     — accepts Array only
-///   Record    — accepts Record or Pattern (Pattern is structurally a record)
-///   Stream    — accepts Pattern (post-Phase-5-Commit-I covers runtime event sources via PatternPayload::is_runtime_event_source)
-///   Number    — accepts Number only (strict compile-time constant; PRD prd-parameter-type-annotations-phase-2 §4.2)
-inline bool type_compatible(ValueType actual, ParamValueType expected) {
-    switch (expected) {
-        case ParamValueType::Any:      return true;
-        // Signal accepts Signal, Number (auto-promoted), and mono Pattern
-        // (voice-0 coerce). Array is deliberately NOT accepted: chord/array
-        // expansion (`expand_call_arguments`) flattens an array into per-element
-        // Signals BEFORE this check runs, so a raw Array reaching here means the
-        // array was not expandable in this position — a genuine type error
-        // (e.g. `out([1,2,3])`). DynArray is handled separately (E181) earlier.
-        case ParamValueType::Signal:   return actual == ValueType::Signal || actual == ValueType::Number || actual == ValueType::Pattern;
-        case ParamValueType::Pattern:  return actual == ValueType::Pattern;
-        case ParamValueType::String:   return actual == ValueType::String;
-        case ParamValueType::Function: return actual == ValueType::Function;
-        case ParamValueType::Array:    return actual == ValueType::Array;
-        case ParamValueType::Record:   return actual == ValueType::Record || actual == ValueType::Pattern;
-        case ParamValueType::Stream:   return actual == ValueType::Pattern;
-        case ParamValueType::Number:   return actual == ValueType::Number;
-    }
-    return false;
-}
-
-/// Concrete value type for an individual option field within a record-shaped
-/// parameter. Distinct from ParamValueType (which describes top-level function
-/// parameter types) — option fields are always one of: number, string, bool, enum.
-enum class OptionFieldType : std::uint8_t {
-    Number = 0,
-    String,
-    Bool,
-    Enum,
+/// PRD prd-codegen-sprawl-cleanup Phase 4: named member-pointer constants
+/// for every builtin with custom codegen. CodeGenerator befriends this
+/// struct, so the pointers can name private handler methods; the table
+/// below references them via `.codegen_handler = BuiltinHandlers::...`.
+/// Adding a custom-codegen builtin = one constant here + one field on its
+/// BUILTIN_FUNCTIONS entry (the old 100-entry name-keyed dispatch map in
+/// visit() is gone).
+struct BuiltinHandlers {
+    static constexpr CodegenHandler handle_add_voicings_call = &CodeGenerator::handle_add_voicings_call;
+    static constexpr CodegenHandler handle_anchor_call = &CodeGenerator::handle_anchor_call;
+    static constexpr CodegenHandler handle_bank_call = &CodeGenerator::handle_bank_call;
+    static constexpr CodegenHandler handle_binary_call = &CodeGenerator::handle_binary_call;
+    static constexpr CodegenHandler handle_binary_n_call = &CodeGenerator::handle_binary_n_call;
+    static constexpr CodegenHandler handle_bus_call = &CodeGenerator::handle_bus_call;
+    static constexpr CodegenHandler handle_button_call = &CodeGenerator::handle_button_call;
+    static constexpr CodegenHandler handle_chord_call = &CodeGenerator::handle_chord_call;
+    static constexpr CodegenHandler handle_compose_call = &CodeGenerator::handle_compose_call;
+    static constexpr CodegenHandler handle_compress_call = &CodeGenerator::handle_compress_call;
+    static constexpr CodegenHandler handle_drop_call = &CodeGenerator::handle_drop_call;
+    static constexpr CodegenHandler handle_event_filter_call = &CodeGenerator::handle_event_filter_call;
+    static constexpr CodegenHandler handle_event_map_call = &CodeGenerator::handle_event_map_call;
+    static constexpr CodegenHandler handle_fast_call = &CodeGenerator::handle_fast_call;
+    static constexpr CodegenHandler handle_freqs_call = &CodeGenerator::handle_freqs_call;
+    static constexpr CodegenHandler handle_get_call = &CodeGenerator::handle_get_call;
+    static constexpr CodegenHandler handle_harmonics_call = &CodeGenerator::handle_harmonics_call;
+    static constexpr CodegenHandler handle_input_call = &CodeGenerator::handle_input_call;
+    static constexpr CodegenHandler handle_iter_back_call = &CodeGenerator::handle_iter_back_call;
+    static constexpr CodegenHandler handle_iter_call = &CodeGenerator::handle_iter_call;
+    static constexpr CodegenHandler handle_key_deltas_call = &CodeGenerator::handle_key_deltas_call;
+    static constexpr CodegenHandler handle_left_call = &CodeGenerator::handle_left_call;
+    static constexpr CodegenHandler handle_len_call = &CodeGenerator::handle_len_call;
+    static constexpr CodegenHandler handle_linger_call = &CodeGenerator::handle_linger_call;
+    static constexpr CodegenHandler handle_linspace_call = &CodeGenerator::handle_linspace_call;
+    static constexpr CodegenHandler handle_map_call = &CodeGenerator::handle_map_call;
+    static constexpr CodegenHandler handle_mean_call = &CodeGenerator::handle_mean_call;
+    static constexpr CodegenHandler handle_midi_cc_call = &CodeGenerator::handle_midi_cc_call;
+    static constexpr CodegenHandler handle_minmax_call = &CodeGenerator::handle_minmax_call;
+    static constexpr CodegenHandler handle_mixer_call = &CodeGenerator::handle_mixer_call;
+    static constexpr CodegenHandler handle_mode_call = &CodeGenerator::handle_mode_call;
+    static constexpr CodegenHandler handle_ms_decode_call = &CodeGenerator::handle_ms_decode_call;
+    static constexpr CodegenHandler handle_ms_encode_call = &CodeGenerator::handle_ms_encode_call;
+    static constexpr CodegenHandler handle_normalize_call = &CodeGenerator::handle_normalize_call;
+    static constexpr CodegenHandler handle_notes_call = &CodeGenerator::handle_notes_call;
+    static constexpr CodegenHandler handle_oscilloscope_call = &CodeGenerator::handle_oscilloscope_call;
+    static constexpr CodegenHandler handle_palindrome_call = &CodeGenerator::handle_palindrome_call;
+    static constexpr CodegenHandler handle_param_call = &CodeGenerator::handle_param_call;
+    static constexpr CodegenHandler handle_pianoroll_call = &CodeGenerator::handle_pianoroll_call;
+    static constexpr CodegenHandler handle_ply_call = &CodeGenerator::handle_ply_call;
+    static constexpr CodegenHandler handle_random_call = &CodeGenerator::handle_random_call;
+    static constexpr CodegenHandler handle_range_call = &CodeGenerator::handle_range_call;
+    static constexpr CodegenHandler handle_reduce_call = &CodeGenerator::handle_reduce_call;
+    static constexpr CodegenHandler handle_repeat_call = &CodeGenerator::handle_repeat_call;
+    static constexpr CodegenHandler handle_rev_call = &CodeGenerator::handle_rev_call;
+    static constexpr CodegenHandler handle_reverse_call = &CodeGenerator::handle_reverse_call;
+    static constexpr CodegenHandler handle_right_call = &CodeGenerator::handle_right_call;
+    static constexpr CodegenHandler handle_rotate_call = &CodeGenerator::handle_rotate_call;
+    static constexpr CodegenHandler handle_run_call = &CodeGenerator::handle_run_call;
+    static constexpr CodegenHandler handle_samples_call = &CodeGenerator::handle_samples_call;
+    static constexpr CodegenHandler handle_scalar_call = &CodeGenerator::handle_scalar_call;
+    static constexpr CodegenHandler handle_segment_call = &CodeGenerator::handle_segment_call;
+    static constexpr CodegenHandler handle_select_call = &CodeGenerator::handle_select_call;
+    static constexpr CodegenHandler handle_set_call = &CodeGenerator::handle_set_call;
+    static constexpr CodegenHandler handle_sf_voice_call = &CodeGenerator::handle_sf_voice_call;
+    static constexpr CodegenHandler handle_shuffle_call = &CodeGenerator::handle_shuffle_call;
+    static constexpr CodegenHandler handle_slow_call = &CodeGenerator::handle_slow_call;
+    static constexpr CodegenHandler handle_sort_call = &CodeGenerator::handle_sort_call;
+    static constexpr CodegenHandler handle_soundfont_call = &CodeGenerator::handle_soundfont_call;
+    static constexpr CodegenHandler handle_spectrum_call = &CodeGenerator::handle_spectrum_call;
+    static constexpr CodegenHandler handle_spread_call = &CodeGenerator::handle_spread_call;
+    static constexpr CodegenHandler handle_state_call = &CodeGenerator::handle_state_call;
+    static constexpr CodegenHandler handle_stereo_call = &CodeGenerator::handle_stereo_call;
+    static constexpr CodegenHandler handle_sum_call = &CodeGenerator::handle_sum_call;
+    static constexpr CodegenHandler handle_take_call = &CodeGenerator::handle_take_call;
+    static constexpr CodegenHandler handle_tap_delay_call = &CodeGenerator::handle_tap_delay_call;
+    static constexpr CodegenHandler handle_timeline_call = &CodeGenerator::handle_timeline_call;
+    static constexpr CodegenHandler handle_toggle_call = &CodeGenerator::handle_toggle_call;
+    static constexpr CodegenHandler handle_tune_call = &CodeGenerator::handle_tune_call;
+    static constexpr CodegenHandler handle_variant_call = &CodeGenerator::handle_variant_call;
+    static constexpr CodegenHandler handle_voicing_call = &CodeGenerator::handle_voicing_call;
+    static constexpr CodegenHandler handle_waterfall_call = &CodeGenerator::handle_waterfall_call;
+    static constexpr CodegenHandler handle_waveform_call = &CodeGenerator::handle_waveform_call;
+    static constexpr CodegenHandler handle_when_call = &CodeGenerator::handle_when_call;
+    static constexpr CodegenHandler handle_width_call = &CodeGenerator::handle_width_call;
+    static constexpr CodegenHandler handle_wt_load_call = &CodeGenerator::handle_wt_load_call;
+    static constexpr CodegenHandler handle_zipWith_call = &CodeGenerator::handle_zipWith_call;
+    static constexpr CodegenHandler handle_zip_call = &CodeGenerator::handle_zip_call;
+    static constexpr CodegenHandler handle_zoom_call = &CodeGenerator::handle_zoom_call;
 };
 
-constexpr const char* option_field_type_name(OptionFieldType t) {
-    switch (t) {
-        case OptionFieldType::Number: return "number";
-        case OptionFieldType::String: return "string";
-        case OptionFieldType::Bool:   return "bool";
-        case OptionFieldType::Enum:   return "enum";
-    }
-    return "unknown";
-}
-
-/// One field of a record-shaped option parameter. The default_repr is the
-/// textual representation as it would appear in source — "180", "\"viridis\"",
-/// "true". Empty default_repr means "no default" (omitted from JSON).
-struct OptionField {
-    std::string_view name = {};
-    OptionFieldType  type = OptionFieldType::Number;
-    std::string_view default_repr = {};
-    std::string_view description = {};
-    std::string_view enum_values = {};  // comma-separated, only when type == Enum
-};
-
-constexpr std::size_t MAX_OPTION_FIELDS_PER_SCHEMA = 16;
-constexpr std::size_t MAX_OPTION_SCHEMAS_PER_BUILTIN = 2;
-
-/// Schema for one record-typed parameter slot of a builtin. param_index points
-/// at the parameter (0-based). field_count is the number of populated entries
-/// in fields[].
-struct OptionSchema {
-    std::uint8_t                                          param_index = 0;
-    std::array<OptionField, MAX_OPTION_FIELDS_PER_SCHEMA> fields = {};
-    std::uint8_t                                          field_count = 0;
-    bool                                                  accepts_spread = true;
-};
-
-/// Metadata for a built-in function
-struct BuiltinInfo {
-    cedar::Opcode opcode;       // VM opcode to emit
-    std::uint8_t input_count;   // Number of required inputs
-    std::uint8_t optional_count; // Number of optional inputs with defaults
-    bool requires_state;        // Whether opcode needs state_id (oscillators, filters)
-    std::array<std::string_view, MAX_BUILTIN_PARAMS> param_names;  // Parameter names for named args
-    std::array<float, MAX_BUILTIN_DEFAULTS> defaults;              // Default values (NaN = required)
-    std::string_view description;  // One-line docstring for autocomplete
-    std::uint8_t extended_param_count = 0;  // Parameters beyond inputs[5] (stored in ExtendedParams)
-    std::array<ParamValueType, MAX_BUILTIN_PARAMS> param_types = {};  // All Any by default
-
-    // Channel-type signature (PRD prd-stereo-support §5.2, G1).
-    // Only consulted for slots where param_types[i] == Signal; non-signal slots ignore.
-    // Default-initialized = all Mono, output Mono — matches the mono-only
-    // contract most non-audio builtins have.
-    //
-    // `output_channels = Match` (only valid on stereo-native builtins) means
-    // the result width follows the primary signal input: mono in → mono out,
-    // stereo in → stereo out. Use this for control-rate utilities (slew,
-    // interp_*, env_follower, sah, gateup, gatedown, counter) so their output
-    // does not collide with downstream mono parameter slots.
-    std::array<ChannelCount, MAX_BUILTIN_PARAMS> input_channels = {};
-    ChannelCount output_channels = ChannelCount::Mono;
-
-    // PRD prd-stereo-native-opcodes §5.1: when true, this opcode handles both
-    // stereo channels in one dispatch with one state struct. The codegen
-    // allocates an adjacent L/R output buffer pair and emits a single
-    // instruction with the STEREO_OUTPUT flag set; STEREO_INPUT is added when
-    // the primary signal argument is stereo. The opcode body itself splits
-    // L/R internally (per-channel arrays in the state struct). Auto-escalates
-    // mono inputs by reading the same buffer for both internal lanes.
-    //
-    // Every audio-signal builtin is stereo_native as of Phase 5; the legacy
-    // auto-lift mechanism (run-the-opcode-twice via STEREO_INPUT) is retired.
-    // A Stereo signal in a Mono slot of a non-stereo_native builtin is a
-    // compile error (E186). See the STEREO_INPUT / STEREO_OUTPUT truth table
-    // in cedar/vm/instruction.hpp.
-    bool stereo_native = false;
-
-    // Static value to assign to inst.rate when this builtin lowers to its opcode.
-    // Used by mode-dispatched opcodes (EDGE_OP modes 0-3, etc.) so multiple
-    // builtin names share one opcode. Defaults to 0 — most opcodes ignore rate.
-    std::uint8_t inst_rate = 0;
-
-    // PRD prd-patterns-as-scalar-values §5.3: when true, the generic
-    // dispatcher coerces any Pattern arg to Signal (via the freq buffer)
-    // before this builtin runs. Pattern-aware builtins (`pat`, `slow`,
-    // `transpose`, `bend`, ...) opt out by setting `args_are_signal = false`
-    // in their entry. Orthogonal to `stereo_native` (Mono→Stereo).
-    bool args_are_signal = true;
-
-    // PRD prd-records-system-unification §5.1: option-field schemas for any
-    // record-typed parameter slot. Empty by default; populated for builtins
-    // whose record param has a known field shape (e.g. visualizers). Editor
-    // autocomplete consumes these to suggest fields inside record literals.
-    std::array<OptionSchema, MAX_OPTION_SCHEMAS_PER_BUILTIN> option_schemas = {};
-    std::uint8_t option_schema_count = 0;
-
-    // True for instruments that natively dispatch chord polyphony — i.e. they
-    // accept a polyphonic pattern (max_voices > 1) without an enclosing
-    // `poly()` because they have an internal voice allocator. When set, the
-    // builtin's handler is responsible for erasing the pattern node from
-    // CodeGenerator::polyphonic_pattern_nodes_ so the E410 warning doesn't
-    // fire. Today: `soundfont`. Future: SF_PLAY / SAMPLE_VOICE.
-    bool consumes_polyphonic_pattern = false;
-
-    // PRD prd-extended-params §5 (canonical extended-param mechanism). When
-    // extended_param_count > 0, args at positions
-    // [total_params() .. total_params() + extended_param_count) lower into
-    // an ExtendedParams<N> state init rather than inst.inputs[]. Names are
-    // searched by reorder_named_arguments() just like the input names;
-    // defaults are emitted as constant slots when the caller omits the arg.
-    // These live at the end of the struct so existing positional aggregate-
-    // init call sites do not need to change.
-    std::array<std::string_view, MAX_EXTENDED_PARAMS> extended_param_names = {};
-    std::array<float, MAX_EXTENDED_PARAMS> extended_defaults = {};  // NaN = required (rare)
-
-    /// Get total parameter count (required + optional)
-    [[nodiscard]] std::uint8_t total_params() const {
-        return input_count + optional_count;
-    }
-
-    /// Check if this builtin uses extended parameters (stored in StatePool)
-    [[nodiscard]] bool has_extended_params() const {
-        return extended_param_count > 0;
-    }
-
-    /// Get total parameter count including extended params
-    [[nodiscard]] std::uint8_t total_with_extended() const {
-        return total_params() + extended_param_count;
-    }
-
-    /// Find parameter index by name, returns -1 if not found. Searches
-    /// regular input names first, then extended-param names; extended
-    /// matches return total_params() + ext_idx (so callers can use the
-    /// same index space for reordering).
-    [[nodiscard]] int find_param(std::string_view name) const {
-        for (std::size_t i = 0; i < MAX_BUILTIN_PARAMS; ++i) {
-            if (param_names[i].empty()) break;
-            if (param_names[i] == name) return static_cast<int>(i);
-        }
-        const std::size_t base = total_params();
-        for (std::size_t i = 0; i < extended_param_count && i < MAX_EXTENDED_PARAMS; ++i) {
-            if (extended_param_names[i].empty()) break;
-            if (extended_param_names[i] == name) return static_cast<int>(base + i);
-        }
-        return -1;
-    }
-
-    /// Check if parameter at index has a default value (covers both input
-    /// slots and extended-param slots).
-    [[nodiscard]] bool has_default(std::size_t index) const {
-        if (index < input_count) return false;  // Required input params don't have defaults
-        if (index < total_params()) {
-            std::size_t default_idx = index - input_count;
-            if (default_idx >= MAX_BUILTIN_DEFAULTS) return false;
-            return !std::isnan(defaults[default_idx]);
-        }
-        // Extended-param slot
-        std::size_t ext_idx = index - total_params();
-        if (ext_idx >= extended_param_count || ext_idx >= MAX_EXTENDED_PARAMS) return false;
-        return !std::isnan(extended_defaults[ext_idx]);
-    }
-
-    /// Get default value for parameter at index (must check has_default first).
-    [[nodiscard]] float get_default(std::size_t index) const {
-        if (index < total_params()) {
-            std::size_t default_idx = index - input_count;
-            return defaults[default_idx];
-        }
-        std::size_t ext_idx = index - total_params();
-        return extended_defaults[ext_idx];
-    }
-
-    /// Find the option-field schema attached to the parameter at `param_index`,
-    /// or nullptr if no schema is declared for that slot. PRD prd-records-
-    /// system-unification §5.5 — used by codegen::extract_options to validate
-    /// caller-supplied record-literal field names.
-    [[nodiscard]] const OptionSchema* find_option_schema(std::uint8_t param_index) const {
-        for (std::uint8_t i = 0; i < option_schema_count; ++i) {
-            if (option_schemas[i].param_index == param_index) {
-                return &option_schemas[i];
-            }
-        }
-        return nullptr;
-    }
-};
-
-/// Static mapping of Akkado function names to Cedar opcodes
-/// Used by semantic analyzer to resolve function calls.
-/// Hardening PRD Phase 3: frozen (compile-time perfect-hash) map — zero
-/// construction cost at process start, immutable by type. Heterogeneous
-/// find/count/at accept std::string_view / literals directly.
 inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::string, BuiltinInfo>({
     // Basic Oscillators
     // All oscillators now support optional phase offset and trigger for phase reset.
@@ -361,22 +189,30 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // wt_load — compile-time directive that registers a wavetable bank for
     // the host to load. Mirrors `soundfont` in shape: opcode = NOP because
     // there is no audio-time instruction; codegen special-handles it (see
-    // codegen.cpp special_handlers table) to extract the string-literal args
+    // codegen_handler dispatch) to extract the string-literal args
     // into result.required_wavetables. The host loads the bank after compile.
-    {"wt_load",   {cedar::Opcode::NOP, 2, 0, false,
-                   {"name", "path", "", "", "", ""},
-                   {NAN, NAN, NAN, NAN, NAN},
-                   "Load a wavetable bank (compile-time): wt_load(\"name\", \"path\")."}},
+    {"wt_load",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"name", "path", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN, NAN, NAN},
+                 .description = "Load a wavetable bank (compile-time): wt_load(\"name\", \"path\").",
+                 .codegen_handler = BuiltinHandlers::handle_wt_load_call}},
 
     // samples — compile-time directive that declares a sample-bank URI for
     // the host to load. Mirrors wt_load in shape: opcode = NOP, special-cased
-    // by codegen (see codegen.cpp special_handlers) to extract the string-
+    // by codegen (via codegen_handler dispatch) to extract the string-
     // literal argument and append a UriRequest to `required_uris_`. The host
     // fetches each URI via the resolver before swapping bytecode.
-    {"samples",   {cedar::Opcode::NOP, 1, 0, false,
-                   {"uri", "", "", "", "", ""},
-                   {NAN, NAN, NAN, NAN, NAN},
-                   "Declare a sample-bank URI (compile-time): samples(\"github:user/repo\")."}},
+    {"samples",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"uri", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN, NAN, NAN},
+                 .description = "Declare a sample-bank URI (compile-time): samples(\"github:user/repo\").",
+                 .codegen_handler = BuiltinHandlers::handle_samples_call}},
 
     // Filters (signal, cutoff required; q optional with default 0.707)
     // Stereo-native (prd-stereo-native-opcodes Phase 4a): per-channel filter
@@ -496,7 +332,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                    .param_names = {"input", "file", "preset", "", "", ""},
                    .defaults = {NAN, NAN, NAN, NAN, NAN},
                    .description = "SoundFont playback: soundfont(pattern, \"file.sf2\", preset). Accepts midi() upstream for live polyphonic SF2 playback.",
-                   .consumes_polyphonic_pattern = true}},
+                   .consumes_polyphonic_pattern = true,
+                 .codegen_handler = BuiltinHandlers::handle_soundfont_call}},
     // Single-voice SoundFont player. Custom codegen (handle_sf_voice_call)
     // resolves `file` (literal path or $soundfont_alias) and `preset` at
     // compile time, then emits one SF_VOICE driven by the freq/gate/vel
@@ -505,7 +342,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                   .param_names = {"file", "preset", "freq", "gate", "vel", ""},
                   .defaults = {NAN, NAN, NAN, NAN, NAN},
                   .description = "Single-voice SoundFont player: sf_voice(file, preset, freq, gate, vel). Stereo output; designed as an instrument for poly().",
-                  .output_channels = ChannelCount::Stereo, .stereo_native = true}},
+                  .output_channels = ChannelCount::Stereo, .stereo_native = true,
+                 .codegen_handler = BuiltinHandlers::handle_sf_voice_call}},
     // PRD prd-midi-input §4.7: runtime MIDI event source. The `options` record
     // selects the source (default device / named device / .mid file) and tunes
     // the live filter. Special-cased in codegen as handle_midi_call.
@@ -556,7 +394,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                      }},
                      /*field_count=*/7,
                  }},
-                 .option_schema_count = 1}},
+                 .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_midi_cc_call}},
 
     // Delays — stereo-native (prd-stereo-native-opcodes Phase 4c).
     // Per-channel ring buffers; mono control inputs (time/fb/dry/wet) shared.
@@ -581,18 +420,30 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // tap_delay(in, time, fb, processor) where processor is a closure: (x) -> ...
     // The closure receives the delayed signal and its output is mixed back with feedback.
     // Category A (parallel-mix): defaults dry=1.0, wet=0.5.
-    {"tap_delay", {cedar::Opcode::DELAY_TAP, 4, 2, true,
-                   {"in", "time", "fb", "processor", "dry", "wet"},
-                   {1.0f, 0.5f, NAN, NAN, NAN},
-                   "Tap delay with feedback chain (time in seconds)"}},
-    {"tap_delay_ms", {cedar::Opcode::DELAY_TAP, 4, 2, true,
-                      {"in", "time_ms", "fb", "processor", "dry", "wet"},
-                      {1.0f, 0.5f, NAN, NAN, NAN},
-                      "Tap delay with feedback chain (time in milliseconds)"}},
-    {"tap_delay_smp", {cedar::Opcode::DELAY_TAP, 4, 2, true,
-                       {"in", "time_smp", "fb", "processor", "dry", "wet"},
-                       {1.0f, 0.5f, NAN, NAN, NAN},
-                       "Tap delay with feedback chain (time in samples)"}},
+    {"tap_delay", {.opcode = cedar::Opcode::DELAY_TAP,
+                 .input_count = 4,
+                 .optional_count = 2,
+                 .requires_state = true,
+                 .param_names = {"in", "time", "fb", "processor", "dry", "wet"},
+                 .defaults = {1.0f, 0.5f, NAN, NAN, NAN},
+                 .description = "Tap delay with feedback chain (time in seconds)",
+                 .codegen_handler = BuiltinHandlers::handle_tap_delay_call}},
+    {"tap_delay_ms", {.opcode = cedar::Opcode::DELAY_TAP,
+                 .input_count = 4,
+                 .optional_count = 2,
+                 .requires_state = true,
+                 .param_names = {"in", "time_ms", "fb", "processor", "dry", "wet"},
+                 .defaults = {1.0f, 0.5f, NAN, NAN, NAN},
+                 .description = "Tap delay with feedback chain (time in milliseconds)",
+                 .codegen_handler = BuiltinHandlers::handle_tap_delay_call}},
+    {"tap_delay_smp", {.opcode = cedar::Opcode::DELAY_TAP,
+                 .input_count = 4,
+                 .optional_count = 2,
+                 .requires_state = true,
+                 .param_names = {"in", "time_smp", "fb", "processor", "dry", "wet"},
+                 .defaults = {1.0f, 0.5f, NAN, NAN, NAN},
+                 .description = "Tap delay with feedback chain (time in samples)",
+                 .codegen_handler = BuiltinHandlers::handle_tap_delay_call}},
 
     // Reverbs (stateful - large delay networks)
     // All three reverbs are stereo-native (prd-stereo-native-opcodes Phases 0–2):
@@ -920,14 +771,22 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
 
     // Math binary (2 inputs)
     // min/max can be binary or unary (reduction over array)
-    {"min",     {cedar::Opcode::MIN, 1, 1, false,
-                 {"a", "b", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Minimum: min(a, b) or min(array)"}},
-    {"max",     {cedar::Opcode::MAX, 1, 1, false,
-                 {"a", "b", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Maximum: max(a, b) or max(array)"}},
+    {"min",     {.opcode = cedar::Opcode::MIN,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"a", "b", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Minimum: min(a, b) or min(array)",
+                 .codegen_handler = BuiltinHandlers::handle_minmax_call}},
+    {"max",     {.opcode = cedar::Opcode::MAX,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"a", "b", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Maximum: max(a, b) or max(array)",
+                 .codegen_handler = BuiltinHandlers::handle_minmax_call}},
 
     // Math ternary (3 inputs)
     {"clamp",   {cedar::Opcode::CLAMP, 3, 0, false,
@@ -948,10 +807,14 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // Conditionals - Block-rate bypass. opcode = NOP: handle_when_call in
     // codegen_control_flow.cpp lowers this to SKIP_IF_* opcodes before the
     // generic emission path runs. Entry exists for arity-checking + autocomplete.
-    {"when",    {cedar::Opcode::NOP, 3, 0, false,
-                 {"cond", "true_branch", "false_branch", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Block-rate conditional bypass: runs only the taken branch"}},
+    {"when",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"cond", "true_branch", "false_branch", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Block-rate conditional bypass: runs only the taken branch",
+                 .codegen_handler = BuiltinHandlers::handle_when_call}},
 
     // Conditionals - Comparisons (return 0.0 or 1.0)
     {"gt",      {cedar::Opcode::CMP_GT, 2, 0, false,
@@ -998,13 +861,18 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // string is a compile-time literal: "mic" | "tab" | "file:NAME". Codegen
     // emits an INPUT instruction and forwards the source string to the host
     // via the required-input-source table. Output is always Stereo.
-    {"in",      {cedar::Opcode::INPUT, 0, 1, false,
-                 {"source", "", "", "", "", ""},
-                 {NAN, NAN, NAN, NAN, NAN},
-                 "Live audio input. Optional source: 'mic' (default), 'tab', 'file:NAME'.",
-                 0,
-                 {ParamValueType::String, {}, {}, {}, {}, {}},
-                 {}, ChannelCount::Stereo}},
+    {"in",      {.opcode = cedar::Opcode::INPUT,
+                 .input_count = 0,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"source", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN, NAN, NAN},
+                 .description = "Live audio input. Optional source: 'mic' (default), 'tab', 'file:NAME'.",
+                 .extended_param_count = 0,
+                 .param_types = {ParamValueType::String, {}, {}, {}, {}, {}},
+                 .input_channels = {},
+                 .output_channels = ChannelCount::Stereo,
+                 .codegen_handler = BuiltinHandlers::handle_input_call}},
 
     // Utility
     {"noise",   {cedar::Opcode::NOISE, 0, 3, true,
@@ -1075,11 +943,16 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
 
     // Output (1 required for mono, 2 for stereo)
     // out(...) is an alias for bus(0, ...) — the master bus (prd-bus-routing).
-    {"out",     {cedar::Opcode::OUTPUT, 1, 1, false,
-                 {"L", "R", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Audio output (mono or stereo) — alias for bus(0, ...)", 0,
-                 {ParamValueType::Signal, ParamValueType::Signal}}},
+    {"out",     {.opcode = cedar::Opcode::OUTPUT,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"L", "R", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Audio output (mono or stereo) — alias for bus(0, ...)",
+                 .extended_param_count = 0,
+                 .param_types = {ParamValueType::Signal, ParamValueType::Signal},
+                 .codegen_handler = BuiltinHandlers::handle_bus_call}},
 
     // Bus routing (prd-bus-routing Phase 1). bus(N, L, R?) sums a signal
     // into numbered bus N. Bus 0 is the master/device bus; every non-zero
@@ -1087,10 +960,14 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // integer literal. Handled entirely by handle_bus_call in codegen.
     // The optional trailing string is a friendly bus label (OQ4): it names the
     // stem file + mixer strip. bus(N, L, "kick") / bus(N, L, R, "kick").
-    {"bus",     {cedar::Opcode::OUTPUT, 2, 2, false,
-                 {"N", "L", "R", "label", "", ""},
-                 {NAN, NAN, NAN},
-                 "Route a signal into numbered bus N (bus 0 is the master)"}},
+    {"bus",     {.opcode = cedar::Opcode::OUTPUT,
+                 .input_count = 2,
+                 .optional_count = 2,
+                 .requires_state = false,
+                 .param_names = {"N", "L", "R", "label", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Route a signal into numbered bus N (bus 0 is the master)",
+                 .codegen_handler = BuiltinHandlers::handle_bus_call}},
 
     // Per-bus FX (prd-bus-routing Phase 2). mixer(N, closure) attaches a
     // processing closure to bus N; master(closure) is an alias for
@@ -1099,36 +976,65 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // epilogue. The closure body runs once per block on the bus's summed
     // signal.
     // Both take an optional trailing string label (OQ4), same as bus().
-    {"mixer",   {cedar::Opcode::NOP, 2, 1, false,
-                 {"N", "closure", "label", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Attach a processing closure to bus N"}},
-    {"master",  {cedar::Opcode::NOP, 1, 1, false,
-                 {"closure", "label", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Attach a processing closure to bus 0 — alias for "
-                 "mixer(0, ...)"}},
+    {"mixer",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"N", "closure", "label", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Attach a processing closure to bus N",
+                 .codegen_handler = BuiltinHandlers::handle_mixer_call}},
+    {"master",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"closure", "label", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Attach a processing closure to bus 0 — alias for "
+                 "mixer(0, ...)",
+                 .codegen_handler = BuiltinHandlers::handle_mixer_call}},
 
     // Stereo Operations (handled specially by codegen for stereo signal propagation)
     // stereo(mono) creates stereo from mono by duplicating to both channels
     // stereo(left, right) creates stereo from two separate signals
-    {"stereo",  {cedar::Opcode::NOP, 1, 1, false,
-                 {"L", "R", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Create stereo signal from mono or L/R pair",
-                 0, {}, {}, ChannelCount::Stereo}},
+    {"stereo",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"L", "R", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Create stereo signal from mono or L/R pair",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {},
+                 .output_channels = ChannelCount::Stereo,
+                 .codegen_handler = BuiltinHandlers::handle_stereo_call}},
     // Extract left channel from stereo signal
-    {"left",    {cedar::Opcode::NOP, 1, 0, false,
-                 {"stereo", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Extract left channel from stereo signal",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
+    {"left",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"stereo", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Extract left channel from stereo signal",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {ChannelCount::Stereo},
+                 .output_channels = ChannelCount::Mono,
+                 .codegen_handler = BuiltinHandlers::handle_left_call}},
     // Extract right channel from stereo signal
-    {"right",   {cedar::Opcode::NOP, 1, 0, false,
-                 {"stereo", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Extract right channel from stereo signal",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Mono}},
+    {"right",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"stereo", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Extract right channel from stereo signal",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {ChannelCount::Stereo},
+                 .output_channels = ChannelCount::Mono,
+                 .codegen_handler = BuiltinHandlers::handle_right_call}},
     // Pan signal to stereo position. Same-arity overload: mono input emits PAN
     // (constant-power mono→stereo); stereo input emits PAN_STEREO (equal-power
     // DAW-style balance). Dispatch handled by handle_pan_call in codegen_stereo.cpp.
@@ -1139,25 +1045,46 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  0, {}, {}, ChannelCount::Stereo}},
     // Stereo width control (0=mono, 1=normal, >1=wide)
     // Convenience: width(stereo, amount) or explicit: width(L, R, amount)
-    {"width",   {cedar::Opcode::WIDTH, 2, 0, false,
-                 {"stereo/L", "amount/R", "amount?", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Stereo width via M/S (0=mono, 1=normal, >1=wide) — width(stereo, amt) or width(L, R, amt)",
-                 0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
+    {"width",   {.opcode = cedar::Opcode::WIDTH,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"stereo/L", "amount/R", "amount?", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Stereo width via M/S (0=mono, 1=normal, >1=wide) — width(stereo, amt) or width(L, R, amt)",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {ChannelCount::Stereo},
+                 .output_channels = ChannelCount::Stereo,
+                 .codegen_handler = BuiltinHandlers::handle_width_call}},
     // Mid/side encoding
     // Convenience: ms_encode(stereo) or explicit: ms_encode(L, R)
-    {"ms_encode", {cedar::Opcode::MS_ENCODE, 1, 0, false,
-                   {"stereo/L", "R?", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Encode stereo to mid/side — ms_encode(stereo) or ms_encode(L, R)",
-                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
+    {"ms_encode", {.opcode = cedar::Opcode::MS_ENCODE,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"stereo/L", "R?", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Encode stereo to mid/side — ms_encode(stereo) or ms_encode(L, R)",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {ChannelCount::Stereo},
+                 .output_channels = ChannelCount::Stereo,
+                 .codegen_handler = BuiltinHandlers::handle_ms_encode_call}},
     // Mid/side decoding
     // Convenience: ms_decode(ms) or explicit: ms_decode(M, S)
-    {"ms_decode", {cedar::Opcode::MS_DECODE, 1, 0, false,
-                   {"ms/M", "S?", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Decode mid/side to stereo — ms_decode(ms) or ms_decode(M, S)",
-                   0, {}, {ChannelCount::Stereo}, ChannelCount::Stereo}},
+    {"ms_decode", {.opcode = cedar::Opcode::MS_DECODE,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"ms/M", "S?", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Decode mid/side to stereo — ms_decode(ms) or ms_decode(M, S)",
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {ChannelCount::Stereo},
+                 .output_channels = ChannelCount::Stereo,
+                 .codegen_handler = BuiltinHandlers::handle_ms_decode_call}},
     // True stereo ping-pong delay
     // Convenience: pingpong(stereo, time, fb) or explicit: pingpong(L, R, time, fb, width?)
     // dry/wet ride in ExtendedParams<2> because all 5 input slots are used (L, R, time, fb, width).
@@ -1191,122 +1118,214 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                  {"hits", "steps", "rot", "dur", "", ""},
                  {0.0f, 4.0f, NAN},
                  "Euclidean rhythm trigger generator. dur = pattern span in cycles (default 4)."}},
-    {"timeline", {cedar::Opcode::TIMELINE, 0, 1, true,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Breakpoint automation timeline"}},
+    {"timeline", {.opcode = cedar::Opcode::TIMELINE,
+                 .input_count = 0,
+                 .optional_count = 1,
+                 .requires_state = true,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Breakpoint automation timeline",
+                 .codegen_handler = BuiltinHandlers::handle_timeline_call}},
 
     // Compile-time array functions (handled specially by codegen)
-    {"len",     {cedar::Opcode::PUSH_CONST, 1, 0, false,
-                 {"arr", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Array length (compile-time for static arrays, runtime for dynamic arrays)"}},
-    {"key_deltas", {cedar::Opcode::PUSH_CONST, 2, 0, false,
-                 {"root", "intervals", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Compile-time nearest-tone delta table (12 entries) for a scale "
+    {"len",     {.opcode = cedar::Opcode::PUSH_CONST,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"arr", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Array length (compile-time for static arrays, runtime for dynamic arrays)",
+                 .codegen_handler = BuiltinHandlers::handle_len_call}},
+    {"key_deltas", {.opcode = cedar::Opcode::PUSH_CONST,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"root", "intervals", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Compile-time nearest-tone delta table (12 entries) for a scale "
                  "given as root + semitone interval list; tie snaps lower. "
-                 "Used by the user-defined key() overload (prd-scale-quantize §4.6)"}},
+                 "Used by the user-defined key() overload (prd-scale-quantize §4.6)",
+                 .codegen_handler = BuiltinHandlers::handle_key_deltas_call}},
 
     // Pattern-event chord accessors (PRD prd-pattern-event-arrays). Both are
-    // dispatched by name in codegen.cpp's special_handlers map; the opcode
+    // dispatched via its codegen_handler; the opcode
     // here is a placeholder so the analyzer accepts the call. They take a
     // Pattern and return a DynArray of the active event's chord notes.
     // Not reserved — a user binding shadows them, exactly like len/map.
-    {"notes",   {cedar::Opcode::SEQPAT_VALUES, 1, 0, true,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Active pattern event's chord notes as a dynamic array of MIDI numbers"}},
-    {"freqs",   {cedar::Opcode::SEQPAT_VALUES, 1, 0, true,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Active pattern event's chord notes as a dynamic array of frequencies (Hz)"}},
+    {"notes",   {.opcode = cedar::Opcode::SEQPAT_VALUES,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = true,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Active pattern event's chord notes as a dynamic array of MIDI numbers",
+                 .codegen_handler = BuiltinHandlers::handle_notes_call}},
+    {"freqs",   {.opcode = cedar::Opcode::SEQPAT_VALUES,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = true,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Active pattern event's chord notes as a dynamic array of frequencies (Hz)",
+                 .codegen_handler = BuiltinHandlers::handle_freqs_call}},
 
     // User state cells (Phase 3 of userspace-state PRD). All three are
-    // dispatched by name in codegen.cpp's special_handlers map; the opcode
+    // dispatched via its codegen_handler; the opcode
     // here is just a placeholder so the analyzer accepts the call. Names
     // are reserved at the parser level — users cannot rebind them.
-    {"state",   {cedar::Opcode::STATE_OP, 1, 0, true,
-                 {"init", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Allocate a persistent state cell with the given initial value"}},
-    {"get",     {cedar::Opcode::STATE_OP, 1, 0, false,
-                 {"cell", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Read the current value of a state cell"}},
-    {"set",     {cedar::Opcode::STATE_OP, 2, 0, false,
-                 {"cell", "value", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Write a value to a state cell, returns the new value"}},
+    {"state",   {.opcode = cedar::Opcode::STATE_OP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = true,
+                 .param_names = {"init", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Allocate a persistent state cell with the given initial value",
+                 .codegen_handler = BuiltinHandlers::handle_state_call}},
+    {"get",     {.opcode = cedar::Opcode::STATE_OP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"cell", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Read the current value of a state cell",
+                 .codegen_handler = BuiltinHandlers::handle_get_call}},
+    {"set",     {.opcode = cedar::Opcode::STATE_OP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"cell", "value", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Write a value to a state cell, returns the new value",
+                 .codegen_handler = BuiltinHandlers::handle_set_call}},
 
     // Multi-buffer array primitives for polyphony (handled specially by codegen)
     // These enable user-defined polyphony: fn poly(c, f) = sum(map(c, f)) / len(c)
-    {"map",     {cedar::Opcode::NOP, 2, 0, false,
-                 {"array", "fn", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Apply function to each element: map(array, (val) -> ...) or map(array, (val, idx) -> ...)"}},
+    {"map",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "fn", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Apply function to each element: map(array, (val) -> ...) or map(array, (val, idx) -> ...)",
+                 .codegen_handler = BuiltinHandlers::handle_map_call}},
     // sum() is variadic and handled specially in the analyzer + codegen
     // (arity >= 1, not bounded by input_count/optional_count below).
-    {"sum",     {cedar::Opcode::NOP, 1, 0, false,
-                 {"array", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Sum signals per-channel, preserving stereo: sum(array) or sum(a, b, ...)"}},
-    {"reduce",  {cedar::Opcode::NOP, 3, 0, false,
-                 {"array", "fn", "init", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Reduce array with binary function and initial value"}},
-    {"zipWith", {cedar::Opcode::NOP, 3, 0, false,
-                 {"a", "b", "fn", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Combine two arrays element-wise with binary function"}},
-    {"zip",     {cedar::Opcode::NOP, 2, 0, false,
-                 {"a", "b", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Interleave two arrays: [a0, b0, a1, b1, ...]"}},
-    {"take",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"n", "array", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Take first n elements from array"}},
-    {"drop",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"n", "array", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Drop first n elements from array"}},
-    {"reverse", {cedar::Opcode::NOP, 1, 0, false,
-                 {"array", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Reverse array order"}},
-    {"range",   {cedar::Opcode::NOP, 2, 1, false,
-                 {"start", "end", "step", "", "", ""},
-                 {NAN, NAN, 1.0f},
-                 "Generate array [start, start±step, ...] toward end (exclusive); direction follows start/end, step defaults to 1"}},
-    {"repeat",  {cedar::Opcode::NOP, 2, 0, false,
-                 {"value", "n", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Repeat value n times: [v, v, ..., v]"}},
+    {"sum",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Sum signals per-channel, preserving stereo: sum(array) or sum(a, b, ...)",
+                 .codegen_handler = BuiltinHandlers::handle_sum_call}},
+    {"reduce",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "fn", "init", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Reduce array with binary function and initial value",
+                 .codegen_handler = BuiltinHandlers::handle_reduce_call}},
+    {"zipWith", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"a", "b", "fn", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Combine two arrays element-wise with binary function",
+                 .codegen_handler = BuiltinHandlers::handle_zipWith_call}},
+    {"zip",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"a", "b", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Interleave two arrays: [a0, b0, a1, b1, ...]",
+                 .codegen_handler = BuiltinHandlers::handle_zip_call}},
+    {"take",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "array", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Take first n elements from array",
+                 .codegen_handler = BuiltinHandlers::handle_take_call}},
+    {"drop",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "array", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Drop first n elements from array",
+                 .codegen_handler = BuiltinHandlers::handle_drop_call}},
+    {"reverse", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Reverse array order",
+                 .codegen_handler = BuiltinHandlers::handle_reverse_call}},
+    {"range",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"start", "end", "step", "", "", ""},
+                 .defaults = {NAN, NAN, 1.0f},
+                 .description = "Generate array [start, start±step, ...] toward end (exclusive); direction follows start/end, step defaults to 1",
+                 .codegen_handler = BuiltinHandlers::handle_range_call}},
+    {"repeat",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"value", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Repeat value n times: [v, v, ..., v]",
+                 .codegen_handler = BuiltinHandlers::handle_repeat_call}},
 
     // Array reduction operations
-    {"mean",    {cedar::Opcode::NOP, 1, 0, false,
-                 {"array", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Average of array elements"}},
+    {"mean",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Average of array elements",
+                 .codegen_handler = BuiltinHandlers::handle_mean_call}},
 
     // Array transformation operations
-    {"rotate",    {cedar::Opcode::NOP, 2, 0, false,
-                   {"array", "n", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Rotate array elements by n positions"}},
-    {"shuffle",   {cedar::Opcode::NOP, 1, 1, false,
-                   {"array", "seed", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Deterministic random permutation of array; optional seed mixes into the path-derived seed"}},
-    {"sort",      {cedar::Opcode::NOP, 1, 1, false,
-                   {"array", "reverse", "", "", "", ""},
-                   {NAN, 0.0f, NAN},
-                   "Sort array in ascending order; reverse=true sorts descending"}},
-    {"normalize", {cedar::Opcode::NOP, 1, 2, false,
-                   {"array", "lo", "hi", "", "", ""},
-                   {NAN, 0.0f, 1.0f},
-                   "Scale array to [lo, hi] range (defaults to [0, 1])"}},
+    {"rotate",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"array", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Rotate array elements by n positions",
+                 .codegen_handler = BuiltinHandlers::handle_rotate_call}},
+    {"shuffle",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"array", "seed", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Deterministic random permutation of array; optional seed mixes into the path-derived seed",
+                 .codegen_handler = BuiltinHandlers::handle_shuffle_call}},
+    {"sort",      {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"array", "reverse", "", "", "", ""},
+                 .defaults = {NAN, 0.0f, NAN},
+                 .description = "Sort array in ascending order; reverse=true sorts descending",
+                 .codegen_handler = BuiltinHandlers::handle_sort_call}},
+    {"normalize", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 2,
+                 .requires_state = false,
+                 .param_names = {"array", "lo", "hi", "", "", ""},
+                 .defaults = {NAN, 0.0f, 1.0f},
+                 .description = "Scale array to [lo, hi] range (defaults to [0, 1])",
+                 .codegen_handler = BuiltinHandlers::handle_normalize_call}},
     // Polyphony control. `release` (seconds) holds the voice in the mix
     // for that long past note-off so the instrument's own ADSR can finish
     // its release tail instead of being silenced by gate-multiplied mixing
@@ -1340,19 +1359,35 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // pattern / MIDI stream via a closure returning a field-overlay record;
     // event_filter(events, (e) -> bool) drops events whose predicate is false.
     // Both compile to a closure EVENT_MAP / EVENT_FILTER opcode + a subprogram.
-    {"event_map", {cedar::Opcode::NOP, 2, 0, true,
-                   {"events", "transform", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Per-event rewrite: event_map(events, (e) -> {note: e.note + 7}) "
+    {"event_map", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = true,
+                 .param_names = {"events", "transform", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Per-event rewrite: event_map(events, (e) -> {note: e.note + 7}) "
                    "transforms every event of a pattern or MIDI stream; the closure "
                    "returns a record whose fields overlay the event.",
-                   0, {}, {}, ChannelCount::Mono, false}},
-    {"event_filter", {cedar::Opcode::NOP, 2, 0, true,
-                      {"events", "predicate", "", "", "", ""},
-                      {NAN, NAN, NAN},
-                      "Per-event filter: event_filter(events, (e) -> e.vel > 0.5) "
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {},
+                 .output_channels = ChannelCount::Mono,
+                 .stereo_native = false,
+                 .codegen_handler = BuiltinHandlers::handle_event_map_call}},
+    {"event_filter", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = true,
+                 .param_names = {"events", "predicate", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Per-event filter: event_filter(events, (e) -> e.vel > 0.5) "
                       "keeps only the events whose predicate closure is truthy.",
-                      0, {}, {}, ChannelCount::Mono, false}},
+                 .extended_param_count = 0,
+                 .param_types = {},
+                 .input_channels = {},
+                 .output_channels = ChannelCount::Mono,
+                 .stereo_native = false,
+                 .codegen_handler = BuiltinHandlers::handle_event_filter_call}},
     // Dual-role builtin: mono(stereo_signal) downmixes stereo→mono via (L+R)*0.5,
     // while mono(instrument) is the monophonic voice manager. The codegen
     // dispatcher routes based on argument type (see handle_mono_call).
@@ -1369,65 +1404,105 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                    {"instrument", "input", "release", "", "", ""},
                    {NAN, 0.0f, NAN, NAN, NAN},
                    "Legato voice manager. `release` (seconds) extends mix tail past note-off."}},
-    {"spread",    {cedar::Opcode::NOP, 2, 0, false,
-                   {"n", "source", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Force source to specific voice count (pad/truncate)"}},
+    {"spread",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "source", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Force source to specific voice count (pad/truncate)",
+                 .codegen_handler = BuiltinHandlers::handle_spread_call}},
 
     // Array generation operations
-    {"linspace",  {cedar::Opcode::NOP, 3, 1, false,
-                   {"start", "end", "n", "mode", "", ""},
-                   {NAN, NAN, NAN, NAN},
-                   "Generate n evenly spaced values from start to end; mode=\"linear\" (default), \"log\", or \"geom\""}},
-    {"random",    {cedar::Opcode::NOP, 1, 2, false,
-                   {"n", "min", "max", "", "", ""},
-                   {NAN, 0.0f, 1.0f},
-                   "Generate n random values in [min, max) (deterministic; defaults to [0, 1))"}},
-    {"harmonics", {cedar::Opcode::NOP, 2, 1, false,
-                   {"fundamental", "n", "ratio", "", "", ""},
-                   {NAN, NAN, 1.0f},
-                   "Generate harmonic series; ratio>1 stretches partials (piano-like inharmonicity), <1 compresses"}},
+    {"linspace",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"start", "end", "n", "mode", "", ""},
+                 .defaults = {NAN, NAN, NAN, NAN},
+                 .description = "Generate n evenly spaced values from start to end; mode=\"linear\" (default), \"log\", or \"geom\"",
+                 .codegen_handler = BuiltinHandlers::handle_linspace_call}},
+    {"random",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 2,
+                 .requires_state = false,
+                 .param_names = {"n", "min", "max", "", "", ""},
+                 .defaults = {NAN, 0.0f, 1.0f},
+                 .description = "Generate n random values in [min, max) (deterministic; defaults to [0, 1))",
+                 .codegen_handler = BuiltinHandlers::handle_random_call}},
+    {"harmonics", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"fundamental", "n", "ratio", "", "", ""},
+                 .defaults = {NAN, NAN, 1.0f},
+                 .description = "Generate harmonic series; ratio>1 stretches partials (piano-like inharmonicity), <1 compresses",
+                 .codegen_handler = BuiltinHandlers::handle_harmonics_call}},
 
     // Function composition (handled specially by codegen)
-    {"compose",   {cedar::Opcode::NOP, 2, 0, false,
-                   {"f", "g", "", "", "", ""},
-                   {NAN, NAN, NAN},
-                   "Compose functions: compose(f, g)(x) = g(f(x))"}},
+    {"compose",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"f", "g", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Compose functions: compose(f, g)(x) = g(f(x))",
+                 .codegen_handler = BuiltinHandlers::handle_compose_call}},
 
     // Chord function (handled specially by codegen)
     // chord("Am") -> array of MIDI notes (root note only for now)
     // chord("Am C7 F G") -> pattern of chord progressions
-    {"chord",   {cedar::Opcode::PUSH_CONST, 1, 0, false,
-                 {"symbol", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Chord expansion (Am, C7, Fmaj7, etc.)"}},
+    {"chord",   {.opcode = cedar::Opcode::PUSH_CONST,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"symbol", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Chord expansion (Am, C7, Fmaj7, etc.)",
+                 .codegen_handler = BuiltinHandlers::handle_chord_call}},
 
     // scalar(p) is the explicit Pattern→Signal cast.
-    {"scalar",  {cedar::Opcode::NOP, 1, 0, false,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Cast a note/value/chord pattern to its primary value buffer as a Signal."}},
+    {"scalar",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Cast a note/value/chord pattern to its primary value buffer as a Signal.",
+                 .codegen_handler = BuiltinHandlers::handle_scalar_call}},
     // Pattern transformation builtins (handled specially by codegen).
     // Phase 3 (prd-runtime-event-transforms): fast/slow lower to a runtime
     // EVENT_RATE_SCALE opcode that feeds the upstream SEQPAT_QUERY's
     // external-clock input. Factor accepts constants OR signal-rate
     // buffers (e.g. `n"c d e".fast(sine(0.2) + 2)`).
-    {"slow",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"pattern", "factor", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Slow down pattern by factor (stretch time). Factor may be a "
+    {"slow",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "factor", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Slow down pattern by factor (stretch time). Factor may be a "
                  "constant or a signal; for live MIDI streams this is a "
-                 "warned no-op."}},
-    {"fast",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"pattern", "factor", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Speed up pattern by factor (compress time). Factor may be a "
+                 "warned no-op.",
+                 .codegen_handler = BuiltinHandlers::handle_slow_call}},
+    {"fast",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "factor", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Speed up pattern by factor (compress time). Factor may be a "
                  "constant or a signal; for live MIDI streams this is a "
-                 "warned no-op."}},
-    {"rev",     {cedar::Opcode::NOP, 1, 0, false,
-                 {"pattern", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Reverse pattern event order."}},
+                 "warned no-op.",
+                 .codegen_handler = BuiltinHandlers::handle_fast_call}},
+    {"rev",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Reverse pattern event order.",
+                 .codegen_handler = BuiltinHandlers::handle_rev_call}},
     {"transport", {cedar::Opcode::SEQPAT_TRANSPORT, 2, 2, true,
                  {"pattern", "trig", "step", "reset", "", ""},
                  {1.0f, NAN, NAN, NAN, NAN},
@@ -1437,107 +1512,195 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
     // transpose / velocity / dur / bend / aftertouch live in
     // akkado/stdlib/event_transforms.ak as one-line `event_map` wrappers
     // (prd-runtime-event-transforms Phase 2b).
-    {"bank",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"pattern", "bank_name", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Set sample bank for pattern events."}},
-    {"variant",  {cedar::Opcode::NOP, 2, 0, false,
-                  {"pattern", "index", "", "", "", ""},
-                  {NAN, NAN, NAN},
-                  "Set sample variant for pattern events."}},
-    {"tune",    {cedar::Opcode::NOP, 2, 0, false,
-                 {"tuning", "pattern", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Apply microtonal tuning context to a pattern."}},
+    {"bank",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "bank_name", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Set sample bank for pattern events.",
+                 .codegen_handler = BuiltinHandlers::handle_bank_call}},
+    {"variant",  {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "index", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Set sample variant for pattern events.",
+                 .codegen_handler = BuiltinHandlers::handle_variant_call}},
+    {"tune",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"tuning", "pattern", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Apply microtonal tuning context to a pattern.",
+                 .codegen_handler = BuiltinHandlers::handle_tune_call}},
 
     // Phase 2 PRD: time & structure modifiers (Strudel-compatible).
     // All compile-time event-list rewrites; opcode is NOP.
     // early / late live in akkado/stdlib/event_transforms.ak (Phase 2b).
-    {"palindrome", {cedar::Opcode::NOP, 1, 0, false,
-                    {"pattern", "", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Play pattern forward then reversed (doubles cycle length)."}},
-    {"compress",   {cedar::Opcode::NOP, 3, 0, false,
-                    {"pattern", "start", "end", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Squash pattern into [start, end) of cycle (silence elsewhere)."}},
-    {"ply",        {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "n", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Repeat each event n times within its slot."}},
-    {"linger",     {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "frac", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Keep first frac of pattern; loop it to fill the cycle."}},
-    {"zoom",       {cedar::Opcode::NOP, 3, 0, false,
-                    {"pattern", "start", "end", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Play only [start, end) portion of pattern, stretched to fill cycle."}},
-    {"segment",    {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "n", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Sample pattern at n evenly-spaced points; emit n equal-duration events."}},
+    {"palindrome", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Play pattern forward then reversed (doubles cycle length).",
+                 .codegen_handler = BuiltinHandlers::handle_palindrome_call}},
+    {"compress",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "start", "end", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Squash pattern into [start, end) of cycle (silence elsewhere).",
+                 .codegen_handler = BuiltinHandlers::handle_compress_call}},
+    {"ply",        {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Repeat each event n times within its slot.",
+                 .codegen_handler = BuiltinHandlers::handle_ply_call}},
+    {"linger",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "frac", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Keep first frac of pattern; loop it to fill the cycle.",
+                 .codegen_handler = BuiltinHandlers::handle_linger_call}},
+    {"zoom",       {.opcode = cedar::Opcode::NOP,
+                 .input_count = 3,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "start", "end", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Play only [start, end) portion of pattern, stretched to fill cycle.",
+                 .codegen_handler = BuiltinHandlers::handle_zoom_call}},
+    {"segment",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Sample pattern at n evenly-spaced points; emit n equal-duration events.",
+                 .codegen_handler = BuiltinHandlers::handle_segment_call}},
     // swing / swingBy live in akkado/stdlib/event_transforms.ak (Phase 2b).
-    {"iter",       {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "n", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Rotate pattern start by 1/n per cycle (forward)."}},
-    {"iterBack",   {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "n", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Rotate pattern start by 1/n per cycle (backward)."}},
+    {"iter",       {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Rotate pattern start by 1/n per cycle (forward).",
+                 .codegen_handler = BuiltinHandlers::handle_iter_call}},
+    {"iterBack",   {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "n", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Rotate pattern start by 1/n per cycle (backward).",
+                 .codegen_handler = BuiltinHandlers::handle_iter_back_call}},
 
     // Phase 2 PRD: algorithmic pattern generators.
     // These emit a PatternEventStream directly (no inner pattern).
-    {"run",        {cedar::Opcode::NOP, 1, 0, false,
-                    {"n", "", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Pattern of integers 0..n-1 evenly distributed in cycle."}},
-    {"binary",     {cedar::Opcode::NOP, 1, 0, false,
-                    {"n", "", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Trigger pattern from binary representation of n (MSB first)."}},
-    {"binaryN",    {cedar::Opcode::NOP, 2, 0, false,
-                    {"n", "bits", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Trigger pattern from low `bits` bits of n (zero-padded, MSB first)."}},
+    {"run",        {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Pattern of integers 0..n-1 evenly distributed in cycle.",
+                 .codegen_handler = BuiltinHandlers::handle_run_call}},
+    {"binary",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Trigger pattern from binary representation of n (MSB first).",
+                 .codegen_handler = BuiltinHandlers::handle_binary_call}},
+    {"binaryN",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"n", "bits", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Trigger pattern from low `bits` bits of n (zero-padded, MSB first).",
+                 .codegen_handler = BuiltinHandlers::handle_binary_n_call}},
 
     // Phase 2 PRD: voicing transforms (chord-event manipulation).
-    {"anchor",     {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "note", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Set anchor MIDI note for chord voicing (e.g., \"c4\")."}},
-    {"mode",       {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "mode", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Set chord voicing mode: below/above/duck/root."}},
-    {"voicing",    {cedar::Opcode::NOP, 2, 0, false,
-                    {"pattern", "name", "", "", "", ""},
-                    {NAN, NAN, NAN},
-                    "Apply named voicing dictionary (close/open/drop2/drop3 or custom)."}},
-    {"addVoicings", {cedar::Opcode::NOP, 2, 0, false,
-                     {"name", "intervals", "", "", "", ""},
-                     {NAN, NAN, NAN},
-                     "Register a custom voicing dictionary by name."}},
+    {"anchor",     {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "note", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Set anchor MIDI note for chord voicing (e.g., \"c4\").",
+                 .codegen_handler = BuiltinHandlers::handle_anchor_call}},
+    {"mode",       {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "mode", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Set chord voicing mode: below/above/duck/root.",
+                 .codegen_handler = BuiltinHandlers::handle_mode_call}},
+    {"voicing",    {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"pattern", "name", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Apply named voicing dictionary (close/open/drop2/drop3 or custom).",
+                 .codegen_handler = BuiltinHandlers::handle_voicing_call}},
+    {"addVoicings", {.opcode = cedar::Opcode::NOP,
+                 .input_count = 2,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"name", "intervals", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Register a custom voicing dictionary by name.",
+                 .codegen_handler = BuiltinHandlers::handle_add_voicings_call}},
 
     // Parameter exposure builtins (handled specially by codegen)
     // These extract metadata at compile time for UI generation
-    {"param",   {cedar::Opcode::ENV_GET, 2, 2, false,
-                 {"name", "default", "min", "max", "", ""},
-                 {NAN, 0.0f, 0.0f, 1.0f},
-                 "Continuous parameter (slider). Reads from EnvMap."}},
-    {"button",  {cedar::Opcode::ENV_GET, 1, 0, false,
-                 {"name", "", "", "", "", ""},
-                 {NAN, NAN, NAN},
-                 "Momentary button. 1 while pressed, 0 otherwise."}},
-    {"toggle",  {cedar::Opcode::ENV_GET, 1, 1, false,
-                 {"name", "default", "", "", "", ""},
-                 {NAN, 0.0f, NAN},
-                 "Boolean toggle. Click to flip between 0 and 1."}},
-    {"dropdown", {cedar::Opcode::ENV_GET, 2, 6, false,
-                 {"name", "opt1", "opt2", "opt3", "opt4", "opt5"},
-                 {NAN, NAN, NAN},
-                 "Selection dropdown. Returns index (0, 1, ...) of selected option."}},
+    {"param",   {.opcode = cedar::Opcode::ENV_GET,
+                 .input_count = 2,
+                 .optional_count = 2,
+                 .requires_state = false,
+                 .param_names = {"name", "default", "min", "max", "", ""},
+                 .defaults = {NAN, 0.0f, 0.0f, 1.0f},
+                 .description = "Continuous parameter (slider). Reads from EnvMap.",
+                 .codegen_handler = BuiltinHandlers::handle_param_call}},
+    {"button",  {.opcode = cedar::Opcode::ENV_GET,
+                 .input_count = 1,
+                 .optional_count = 0,
+                 .requires_state = false,
+                 .param_names = {"name", "", "", "", "", ""},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Momentary button. 1 while pressed, 0 otherwise.",
+                 .codegen_handler = BuiltinHandlers::handle_button_call}},
+    {"toggle",  {.opcode = cedar::Opcode::ENV_GET,
+                 .input_count = 1,
+                 .optional_count = 1,
+                 .requires_state = false,
+                 .param_names = {"name", "default", "", "", "", ""},
+                 .defaults = {NAN, 0.0f, NAN},
+                 .description = "Boolean toggle. Click to flip between 0 and 1.",
+                 .codegen_handler = BuiltinHandlers::handle_toggle_call}},
+    {"dropdown", {.opcode = cedar::Opcode::ENV_GET,
+                 .input_count = 2,
+                 .optional_count = 6,
+                 .requires_state = false,
+                 .param_names = {"name", "opt1", "opt2", "opt3", "opt4", "opt5"},
+                 .defaults = {NAN, NAN, NAN},
+                 .description = "Selection dropdown. Returns index (0, 1, ...) of selected option.",
+                 .codegen_handler = BuiltinHandlers::handle_select_call}},
 
     // Visualization builtins (handled specially by codegen)
     // These create visualization widgets in the editor and pass signal through
@@ -1559,7 +1722,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                        }},
                        /*field_count=*/5,
                    }},
-                   .option_schema_count = 1}},
+                   .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_pianoroll_call}},
     {"oscilloscope", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                       .param_names = {"signal", "name", "options", "", "", ""},
                       .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1575,7 +1739,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                           }},
                           /*field_count=*/4,
                       }},
-                      .option_schema_count = 1}},
+                      .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_oscilloscope_call}},
     {"waveform", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                   .param_names = {"signal", "name", "options", "", "", ""},
                   .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1592,7 +1757,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                       }},
                       /*field_count=*/5,
                   }},
-                  .option_schema_count = 1}},
+                  .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_waveform_call}},
     {"spectrum", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                   .param_names = {"signal", "name", "options", "", "", ""},
                   .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1610,7 +1776,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                       }},
                       /*field_count=*/6,
                   }},
-                  .option_schema_count = 1}},
+                  .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_spectrum_call}},
     {"waterfall", {.opcode = cedar::Opcode::COPY, .input_count = 1, .optional_count = 2, .requires_state = true,
                     .param_names = {"signal", "name", "options", "", "", ""},
                     .defaults = {NAN, NAN, NAN, NAN, NAN},
@@ -1630,7 +1797,8 @@ inline constexpr auto BUILTIN_FUNCTIONS = frozen::make_unordered_map<frozen::str
                         }},
                         /*field_count=*/8,
                     }},
-                    .option_schema_count = 1}},
+                    .option_schema_count = 1,
+                 .codegen_handler = BuiltinHandlers::handle_waterfall_call}},
 
     // Builtin variable getters (desugared from identifier reads like `bpm`, `spb`)
     // These are registered in BUILTIN_FUNCTIONS so the analyzer accepts them as builtins.

@@ -2,6 +2,7 @@
 // Extracted from codegen.cpp for maintainability
 
 #include "akkado/codegen.hpp"
+#include "akkado/builtins.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"

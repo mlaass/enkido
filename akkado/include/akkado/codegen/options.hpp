@@ -8,7 +8,7 @@
 // future room for a W160 warning pass once the spread PRD ships W160 infra.
 
 #include "akkado/ast.hpp"
-#include "akkado/builtins.hpp"
+#include "akkado/builtin_info.hpp"
 #include <optional>
 #include <string>
 #include <string_view>

@@ -745,13 +745,13 @@ TEST_CASE("overload fn: redefining the same signature replaces (no extra body)",
 // -----------------------------------------------------------------------------
 // Phase 5 — heavy pattern / higher-order handlers (poly/each/transport/midi).
 //
-// These migrated out of the special_handlers map into lookup_builtin_overloads
+// These migrated out of the legacy name-keyed dispatch map into lookup_builtin_overloads
 // as single-pattern LegacyHandler entries (same shape as Phase 3's pan/pingpong/
 // smooch). The dispatch dimension (arity / mode / options) stays inside each
 // handler, so there is no resolve() — the matched pattern's legacy_handler fully
 // determines dispatch. Family-complete scope: the handler-sharing aliases
 // (legato/mono/each_voice) migrate too, so no handler is reachable from both the
-// overload table and special_handlers.
+// overload table and the codegen_handler dispatch.
 // -----------------------------------------------------------------------------
 
 TEST_CASE("builtin overloads: poly/each/transport/midi carry one LegacyHandler "

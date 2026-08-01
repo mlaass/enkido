@@ -1,7 +1,10 @@
 #pragma once
 
 #include "ast.hpp"
-#include "builtins.hpp"
+// NOTE: builtins.hpp (the table) must NOT be included here — it includes
+// this header for &CodeGenerator::... codegen_handler member pointers.
+// The BuiltinInfo struct itself lives in builtin_info.hpp.
+#include "builtin_info.hpp"
 #include "diagnostics.hpp"
 #include "mini_token.hpp"
 #include "required_sample.hpp"
@@ -466,6 +469,10 @@ public:
     /// (StateInitData::ast_json). Headless hosts leave it false; the
     /// web/wasm host passes true (prd-parser-codegen-hardening Phase 2).
     explicit CodeGenerator(CompileContext& ctx, bool emit_debug_json = false);
+
+    // builtins.hpp's BuiltinHandlers struct names private handler methods in
+    // its member-pointer constants (PRD prd-codegen-sprawl-cleanup Phase 4).
+    friend struct BuiltinHandlers;
 
     /// Accessor used by free helpers in codegen_patterns.cpp etc. that
     /// take a CodeGenerator reference. Returns the per-compile

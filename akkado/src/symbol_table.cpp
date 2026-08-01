@@ -1,4 +1,5 @@
 #include "akkado/symbol_table.hpp"
+#include "akkado/builtins.hpp"
 #ifdef CEDAR_HOST_EXTENSIONS
 #include "akkado/host_extensions.hpp"
 #endif
@@ -39,7 +40,7 @@ const std::unordered_map<std::string_view, Symbol>& builtin_scope() {
             // but intentionally NOT pre-registered as global symbols: they
             // are common variable names and must remain bindable
             // (`notes = [...]`). The analyzer special-cases the call form;
-            // codegen's special_handlers map dispatches it.
+            // its BuiltinInfo::codegen_handler dispatches it.
             if (sv == "notes" || sv == "freqs") continue;
             Symbol sym{};
             sym.kind = SymbolKind::Builtin;

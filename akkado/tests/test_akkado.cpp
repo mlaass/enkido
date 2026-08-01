@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "akkado/akkado.hpp"
+#include "akkado/builtins.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cedar/dsp/constants.hpp>  // cedar::BUFFER_UNUSED
 #include <cstring>

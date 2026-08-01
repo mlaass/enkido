@@ -15,7 +15,7 @@
 
 #ifdef CEDAR_HOST_EXTENSIONS
 
-#include "akkado/builtins.hpp"
+#include "akkado/builtin_info.hpp"
 #include "akkado/typed_value.hpp"
 
 #include <cedar/vm/host_op_registry.hpp>

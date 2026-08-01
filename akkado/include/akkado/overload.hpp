@@ -36,7 +36,7 @@
 // resolver-only with no codegen consumer yet.)
 
 #include "akkado/typed_value.hpp"
-#include "akkado/builtins.hpp"  // BuiltinInfo, type_compatible, MAX_BUILTIN_PARAMS
+#include "akkado/builtin_info.hpp"  // BuiltinInfo, type_compatible, MAX_BUILTIN_PARAMS
 
 #include <cstddef>
 #include <cstdint>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "builtins.hpp"
+#include "builtin_info.hpp"
 #include "ast.hpp"
 #include "destructure_field.hpp"
 #include "string_interner.hpp"

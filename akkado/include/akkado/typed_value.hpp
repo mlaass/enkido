@@ -11,6 +11,13 @@
 
 namespace akkado {
 
+/// Maximum number of extended parameters (stored in StatePool). Lives here
+/// (not builtins.hpp) so codegen.hpp's StateInitData can use it without
+/// depending on the builtin table (PRD prd-codegen-sprawl-cleanup Phase 4:
+/// builtins.hpp includes codegen.hpp for codegen_handler member pointers,
+/// so the include arrow must point this way).
+constexpr std::size_t MAX_EXTENDED_PARAMS = 8;
+
 /// Type tag for codegen values
 enum class ValueType : std::uint8_t {
     Signal,      // Audio-rate buffer (oscillator, filter output, etc.)

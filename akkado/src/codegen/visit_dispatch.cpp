@@ -731,156 +731,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
             }
 
-            // Dispatch table for special function handlers
-            using Handler = TypedValue (CodeGenerator::*)(NodeIndex, const Node&);
-            static const std::unordered_map<std::string_view, Handler> special_handlers = {
-                {"len",     &CodeGenerator::handle_len_call},
-                // Compile-time quantize table for user-defined key()
-                // (prd-scale-quantize §4.6); const-folds to a 12-element array.
-                {"key_deltas", &CodeGenerator::handle_key_deltas_call},
-                // Bus routing sinks (prd-bus-routing Phase 1). out() is a
-                // pure alias for bus(0, ...); both share handle_bus_call so
-                // out(@) and bus(0, @) produce byte-identical bytecode.
-                {"out",     &CodeGenerator::handle_bus_call},
-                {"bus",     &CodeGenerator::handle_bus_call},
-                // Per-bus FX (prd-bus-routing Phase 2). master is a pure
-                // alias for mixer(0, ...); both share handle_mixer_call.
-                {"mixer",   &CodeGenerator::handle_mixer_call},
-                {"master",  &CodeGenerator::handle_mixer_call},
-                // Pattern-event chord accessors (pattern-event-arrays PRD).
-                // Special-cased by name like len/map (not reserved).
-                {"notes",   &CodeGenerator::handle_notes_call},
-                {"freqs",   &CodeGenerator::handle_freqs_call},
-                // User state cells (Phase 3 of userspace-state PRD). state/get/set
-                // are reserved at parser level — no user closure can shadow them.
-                {"state",   &CodeGenerator::handle_state_call},
-                {"get",     &CodeGenerator::handle_get_call},
-                {"set",     &CodeGenerator::handle_set_call},
-                {"chord",   &CodeGenerator::handle_chord_call},
-                {"scalar",  &CodeGenerator::handle_scalar_call},
-                {"map",     &CodeGenerator::handle_map_call},
-                {"sum",     &CodeGenerator::handle_sum_call},
-                {"reduce",  &CodeGenerator::handle_reduce_call},
-                {"zipWith", &CodeGenerator::handle_zipWith_call},
-                {"zip",     &CodeGenerator::handle_zip_call},
-                {"take",    &CodeGenerator::handle_take_call},
-                {"drop",    &CodeGenerator::handle_drop_call},
-                {"reverse", &CodeGenerator::handle_reverse_call},
-                {"range",   &CodeGenerator::handle_range_call},
-                {"repeat",  &CodeGenerator::handle_repeat_call},
-                {"spread",  &CodeGenerator::handle_spread_call},
-                // Timeline curve call form
-                {"timeline",  &CodeGenerator::handle_timeline_call},
-                // Pattern transformation builtins
-                {"slow",      &CodeGenerator::handle_slow_call},
-                {"fast",      &CodeGenerator::handle_fast_call},
-                {"rev",       &CodeGenerator::handle_rev_call},
-                // Runtime event-stream transforms (closure builtins).
-                // transpose/velocity/dur/bend/aftertouch are now stdlib `fn`s
-                // defined in akkado/stdlib/event_transforms.ak — see
-                // prd-runtime-event-transforms.md §9 Phase 2b.
-                {"event_map",    &CodeGenerator::handle_event_map_call},
-                {"event_filter", &CodeGenerator::handle_event_filter_call},
-                {"bank",      &CodeGenerator::handle_bank_call},
-                {"variant",   &CodeGenerator::handle_variant_call},
-                // NB: transport migrated to the Phase-5 builtin overload table
-                // (lookup_builtin_overloads → LegacyHandler::Transport); it is
-                // dispatched in the block below, not from this map.
-                {"tune",      &CodeGenerator::handle_tune_call},
-                // Phase 2 PRD time/structure transforms.
-                // early/late are stdlib `fn`s in event_transforms.ak.
-                {"palindrome", &CodeGenerator::handle_palindrome_call},
-                {"compress",   &CodeGenerator::handle_compress_call},
-                {"ply",        &CodeGenerator::handle_ply_call},
-                {"linger",     &CodeGenerator::handle_linger_call},
-                {"zoom",       &CodeGenerator::handle_zoom_call},
-                {"segment",    &CodeGenerator::handle_segment_call},
-                // swing / swingBy are stdlib `fn`s in event_transforms.ak.
-                {"iter",       &CodeGenerator::handle_iter_call},
-                {"iterBack",   &CodeGenerator::handle_iter_back_call},
-                // Phase 2 PRD generators
-                {"run",        &CodeGenerator::handle_run_call},
-                {"binary",     &CodeGenerator::handle_binary_call},
-                {"binaryN",    &CodeGenerator::handle_binary_n_call},
-                // Phase 2 PRD voicing
-                {"anchor",     &CodeGenerator::handle_anchor_call},
-                {"mode",       &CodeGenerator::handle_mode_call},
-                {"voicing",    &CodeGenerator::handle_voicing_call},
-                {"addVoicings", &CodeGenerator::handle_add_voicings_call},
-                // Parameter exposure builtins
-                {"param",   &CodeGenerator::handle_param_call},
-                {"button",  &CodeGenerator::handle_button_call},
-                {"toggle",  &CodeGenerator::handle_toggle_call},
-                {"dropdown", &CodeGenerator::handle_select_call},
-                // Array reduction operations
-                {"mean",    &CodeGenerator::handle_mean_call},
-                // Array transformation operations
-                {"rotate",    &CodeGenerator::handle_rotate_call},
-                {"shuffle",   &CodeGenerator::handle_shuffle_call},
-                {"sort",      &CodeGenerator::handle_sort_call},
-                {"normalize", &CodeGenerator::handle_normalize_call},
-                // Array generation operations
-                {"linspace",  &CodeGenerator::handle_linspace_call},
-                {"random",    &CodeGenerator::handle_random_call},
-                {"harmonics", &CodeGenerator::handle_harmonics_call},
-                // Binary operation broadcasting (desugared from +, -, *, /, ^)
-                // is dispatched via the operator OverloadTable below
-                // (LegacyHandler → handle_binary_op_call), not from this map.
-                // min/max with array support
-                {"min",     &CodeGenerator::handle_minmax_call},
-                {"max",     &CodeGenerator::handle_minmax_call},
-                // Tap delay with configurable feedback chain (all time unit variants)
-                {"tap_delay", &CodeGenerator::handle_tap_delay_call},
-                {"tap_delay_ms", &CodeGenerator::handle_tap_delay_call},
-                {"tap_delay_smp", &CodeGenerator::handle_tap_delay_call},
-                // Stereo operations.
-                // NB: pan / pingpong migrated to the Phase-3 builtin overload
-                // table (lookup_builtin_overloads → LegacyHandler); they are
-                // dispatched in the block below, not from this map.
-                {"stereo", &CodeGenerator::handle_stereo_call},
-                {"left", &CodeGenerator::handle_left_call},
-                {"right", &CodeGenerator::handle_right_call},
-                {"width", &CodeGenerator::handle_width_call},
-                {"ms_encode", &CodeGenerator::handle_ms_encode_call},
-                {"ms_decode", &CodeGenerator::handle_ms_decode_call},
-                // Visualization builtins
-                {"pianoroll", &CodeGenerator::handle_pianoroll_call},
-                {"oscilloscope", &CodeGenerator::handle_oscilloscope_call},
-                {"waveform", &CodeGenerator::handle_waveform_call},
-                {"spectrum", &CodeGenerator::handle_spectrum_call},
-                {"waterfall", &CodeGenerator::handle_waterfall_call},
-                // Function composition
-                {"compose", &CodeGenerator::handle_compose_call},
-                // SoundFont playback
-                {"soundfont", &CodeGenerator::handle_soundfont_call},
-                {"sf_voice", &CodeGenerator::handle_sf_voice_call},
-                // Runtime MIDI event source (PRD prd-midi-input §4.7).
-                // NB: midi migrated to the Phase-5 builtin overload table
-                // (lookup_builtin_overloads → LegacyHandler::Midi); it is
-                // dispatched in the block below, not from this map.
-                // MIDI CC / PB / AT → param() route (PRD prd-midi-input §4.8)
-                {"midi_cc", &CodeGenerator::handle_midi_cc_call},
-                // Wavetable: wt_load(name, path) is a compile-time directive
-                // (records required_wavetables, no instruction emitted).
-                // smooch / wt / wavetable (the OSC_WAVETABLE oscillator) migrated
-                // to the Phase-3 builtin overload table (lookup_builtin_overloads
-                // → LegacyHandler::Smooch); dispatched in the block below.
-                {"wt_load",   &CodeGenerator::handle_wt_load_call},
-                // samples("uri") — compile-time URI declaration for sample
-                // banks; records to required_uris_ for host to fetch.
-                {"samples",   &CodeGenerator::handle_samples_call},
-                // Live audio input (microphone / tab / file)
-                {"in", &CodeGenerator::handle_input_call},
-                // Polyphony: poly / mono / legato migrated to the Phase-5 builtin
-                // overload table (lookup_builtin_overloads → LegacyHandler::
-                // Poly/Mono); dispatched in the block below, not from this map.
-                // Forward control flow (PRD prd-runtime-functions-control-flow L1)
-                {"when",   &CodeGenerator::handle_when_call},
-                // Higher-order DSL (PRD prd-runtime-functions-control-flow L3):
-                // each / each_voice migrated to the Phase-5 builtin overload table
-                // (lookup_builtin_overloads → LegacyHandler::Each/EachVoice);
-                // dispatched in the block below, not from this map.
-            };
 
             // Phase-2 operator dispatch (PRD prd-builtin-overload-resolution
             // §5.4): operators reuse their existing builtin names as keys into a
@@ -911,7 +761,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Phase-3 builtin-overload dispatch (PRD prd-builtin-overload-
             // resolution §8): the migrated multi-form families resolve through
             // lookup_builtin_overloads. Placed after the operator / user-fn
-            // checks (same shadowing rules) and before the special_handlers map
+            // checks (same shadowing rules) and before the codegen_handler dispatch
             // and generic path.
             if (const auto* bov = lookup_builtin_overloads(func_name)) {
                 if (bov->size() == 1) {
@@ -923,7 +773,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     // double-visit.
                     const DispatchTarget& tgt = bov->front().target;
                     if (tgt.kind == DispatchTarget::Kind::LegacyHandler) {
-                        Handler h = nullptr;
+                        CodegenHandler h = nullptr;
                         switch (tgt.legacy_handler) {
                             case LegacyHandlerId::Pan:
                                 h = &CodeGenerator::handle_pan_call; break;
@@ -1007,9 +857,16 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
             }
 
-            auto handler_it = special_handlers.find(func_name);
-            if (handler_it != special_handlers.end()) {
-                TypedValue tv = (this->*(handler_it->second))(node, n);
+            // PRD prd-codegen-sprawl-cleanup Phase 4: per-builtin custom
+            // codegen dispatch lives on BuiltinInfo::codegen_handler (see
+            // BuiltinHandlers in builtins.hpp). Key-set parity with the old
+            // name-keyed dispatch map: only exact BUILTIN_FUNCTIONS names
+            // dispatch here — aliases resolve later via the normal builtin
+            // lookup path, exactly as before.
+            auto handler_it = BUILTIN_FUNCTIONS.find(std::string_view(func_name));
+            if (handler_it != BUILTIN_FUNCTIONS.end() &&
+                handler_it->second.codegen_handler != nullptr) {
+                TypedValue tv = (this->*(handler_it->second.codegen_handler))(node, n);
                 // Most handlers cache via cache_and_return on success, but
                 // several pattern-transform handlers (handle_fast_call et al.)
                 // leave error paths uncached. Without this defensive write a
@@ -1514,7 +1371,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // For builtins that are not stereo_native, a stereo signal in a
             // Mono slot (or vice versa) is a compile error E186. Bespoke-handler
             // builtins (stereo/mono/left/right/width/ms_encode/ms_decode via the
-            // special_handlers map; pan/pingpong via the builtin overload table)
+            // codegen_handler dispatch; pan/pingpong via the builtin overload table)
             // never reach this path — they enforce their own signatures with
             // E181–E184. `out()` is handled above via E185 and the single-arg
             // expansion branch.

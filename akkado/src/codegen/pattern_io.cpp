@@ -2,6 +2,7 @@
 // Extracted verbatim from patterns.cpp (prd-codegen-sprawl-cleanup Phase 3).
 
 #include "akkado/codegen.hpp"
+#include "akkado/builtins.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/codegen/state_init_builder.hpp"
