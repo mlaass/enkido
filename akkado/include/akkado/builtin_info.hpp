@@ -308,4 +308,13 @@ struct BuiltinInfo {
 /// construction cost at process start, immutable by type. Heterogeneous
 /// find/count/at accept std::string_view / literals directly.
 
+struct BuiltinVarDef {
+    std::string_view getter_name;   // "get_bpm"
+    std::string_view setter_name;   // "set_bpm" (empty = read-only)
+    std::string_view env_key;       // "__bpm" — reserved EnvMap key for getter
+    float default_value;            // 120.0f
+    float min_value;                // 1.0f (0 = no clamping)
+    float max_value;                // 999.0f (0 = no clamping)
+};
+
 } // namespace akkado

@@ -90,6 +90,7 @@ add_library(akkado STATIC
     src/const_eval.cpp
     src/codegen/codegen.cpp
     src/codegen/visit_dispatch.cpp
+    src/codegen/call_dispatch.cpp
     src/codegen/bus.cpp
     src/codegen/records.cpp
     src/codegen/arrays.cpp

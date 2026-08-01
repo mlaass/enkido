@@ -1910,14 +1910,8 @@ inline std::string_view canonical_name(std::string_view name) {
 
 /// Definition of a builtin variable that desugars to ENV_GET reads and
 /// compile-time constant extraction for writes.
-struct BuiltinVarDef {
-    std::string_view getter_name;   // "get_bpm"
-    std::string_view setter_name;   // "set_bpm" (empty = read-only)
-    std::string_view env_key;       // "__bpm" — reserved EnvMap key for getter
-    float default_value;            // 120.0f
-    float min_value;                // 1.0f (0 = no clamping)
-    float max_value;                // 999.0f (0 = no clamping)
-};
+// BuiltinVarDef lives in builtin_info.hpp (host_extensions.hpp needs it
+// without pulling in this table header).
 
 inline constexpr auto BUILTIN_VARIABLES = frozen::make_unordered_map<frozen::string, BuiltinVarDef>({
     {"bpm", {"get_bpm", "set_bpm", "__bpm", 120.0f, 1.0f, 999.0f}},

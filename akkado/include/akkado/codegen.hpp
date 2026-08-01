@@ -1229,6 +1229,76 @@ private:
     /// @return void TypedValue (directives don't produce values)
     TypedValue handle_directive(NodeIndex node, const Node& n);
 
+    // ============================================================================
+    // Call-branch emitters (call_dispatch.cpp, PRD sprawl-cleanup Phase 4)
+    // ============================================================================
+
+    /// Scan a call's children for a `..spread` Argument; when present, run
+    /// expand_call_arguments and fill `expanded_args` / set `did_spread_swap`.
+    /// Returns false on hard error (diagnostic already emitted by
+    /// expand_call_arguments) — caller returns TypedValue::error_val().
+    bool collect_spread_args(NodeIndex node,
+                             std::vector<ExpandedArg>& expanded_args,
+                             bool& did_spread_swap);
+
+    /// Phase-2 operator dispatch (PRD prd-builtin-overload-resolution §5.4).
+    /// Engaged optional = the call was handled (arithmetic broadcast path);
+    /// nullopt = fall through to the next dispatch step (comparison/logical
+    /// operators use the generic builtin emission).
+    std::optional<TypedValue> try_operator_dispatch(NodeIndex node, const Node& n,
+                                                    const std::string& func_name);
+
+    /// Phase-3 builtin-overload dispatch (PRD prd-builtin-overload-resolution
+    /// §8): LegacyHandler routing for single-pattern families plus the
+    /// sample/sample_loop literal-id gate (E424). Engaged optional = handled
+    /// (or hard error); nullopt = fall through to the generic path.
+    std::optional<TypedValue> try_builtin_overload_dispatch(
+        NodeIndex node, const Node& n, const std::string& func_name);
+
+    /// Shared context for the emission tail of a generic builtin call.
+    /// Bundles the values emit_builtin_call's argument loop collected; every
+    /// reference member points at an emit_builtin_call local, so the struct
+    /// never outlives that frame.
+    struct BuiltinEmitCtx {
+        NodeIndex node;                       ///< The Call AST node
+        const Node& n;                        ///< ast_->arena[node]
+        const std::string& func_name;
+        const BuiltinInfo& builtin;
+        SourceLocation call_loc;              ///< Saved call-site location
+        bool pushed_path;                     ///< Stateful path segment pushed (emitters pop it)
+        std::vector<std::uint16_t>& arg_buffers;  ///< Per-arg buffers (generic tail appends defaults)
+        int expansion_arg_idx;                ///< Multi-buffer arg position (-1 = none)
+        const std::vector<std::uint16_t>& expansion_buffers;
+        const std::vector<NodeIndex>& arg_nodes;  ///< Unwrapped arg value nodes (empty when spread)
+        std::uint32_t host_seq_state_id;      ///< Upstream event source (CEDAR_HOST_EXTENSIONS; 0 = none)
+    };
+
+    /// Generic builtin emission (step 10 of the Call dispatch ladder):
+    /// lookup_builtin → overload pattern → named-spread reorder → CallSlot
+    /// materialisation → per-arg visit loop (E160/E181/W161 checks, E185/E186
+    /// channel checks, out() special-casing) → multi-buffer detection → one of
+    /// the per-shape emitters below. `expanded_args` / `did_spread_swap` carry
+    /// the spread state collected by collect_spread_args (reorder mutates the
+    /// vector in place).
+    TypedValue emit_builtin_call(NodeIndex node, const Node& n,
+                                 const std::string& func_name,
+                                 SourceLocation call_loc,
+                                 std::vector<ExpandedArg>& expanded_args,
+                                 bool did_spread_swap);
+
+    /// Stereo-native emission path (prd-stereo-native-opcodes Phase 1):
+    /// single dispatch, adjacent L/R output pair, STEREO_INPUT flag when the
+    /// primary input is stereo; E187 on chord expansion into the signal slot.
+    TypedValue emit_stereo_native_call(const BuiltinEmitCtx& c);
+
+    /// Chord/array expansion to N instances (stateful UGens only — per-voice
+    /// state via a per-instance `elemN` path segment).
+    TypedValue emit_chord_expanded_call(const BuiltinEmitCtx& c);
+
+    /// Remaining generic path: default fill, SAMPLE_PLAY scalar chain, ADSR
+    /// rate packing, FM detection, single-instruction emission.
+    TypedValue emit_generic_builtin_tail(const BuiltinEmitCtx& c);
+
     // Context
     CompilerOptions options_;  // Compiler options set by directives
     bool bypass_master_ = false;  // Test-only: suppress the bus epilogue
