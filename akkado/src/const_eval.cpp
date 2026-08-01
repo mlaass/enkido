@@ -1,4 +1,5 @@
 #include "akkado/const_eval.hpp"
+#include "akkado/expr_kinds.hpp"
 #include "akkado/music_theory.hpp"
 #include <cmath>
 #include <cstdlib>
@@ -37,12 +38,9 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
         case NodeType::BoolLit:
             return ConstValue{n.as_bool() ? 1.0 : 0.0};
 
-        case NodeType::PitchLit: {
-            // MIDI note -> Hz: 440 * 2^((note - 69) / 12)
-            double midi = static_cast<double>(n.as_pitch());
-            double hz = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
-            return ConstValue{hz};
-        }
+        case NodeType::PitchLit:
+            return ConstValue{
+                expr_kinds::midi_to_hz(static_cast<double>(n.as_pitch()))};
 
         case NodeType::Identifier: {
             std::string name;
@@ -499,7 +497,7 @@ std::optional<ConstValue> ConstEvaluator::eval_math_builtin(
         if (name == "fract") return ConstValue{*x - std::floor(*x)};
         if (name == "sign") return ConstValue{(*x > 0.0) ? 1.0 : ((*x < 0.0) ? -1.0 : 0.0)};
         if (name == "cbrt") return ConstValue{std::cbrt(*x)};
-        if (name == "mtof") return ConstValue{440.0 * std::pow(2.0, (*x - 69.0) / 12.0)};
+        if (name == "mtof") return ConstValue{expr_kinds::midi_to_hz(*x)};
         if (name == "ftom") return ConstValue{69.0 + 12.0 * std::log2(*x / 440.0)};
         // Boolean NOT (desugared from !)
         if (name == "bnot") return ConstValue{*x == 0.0 ? 1.0 : 0.0};

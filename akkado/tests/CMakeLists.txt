@@ -30,6 +30,8 @@ add_executable(akkado_tests
     test_block_call.cpp
     test_higher_order.cpp
     test_types.cpp
+    test_expr_kinds.cpp
+    test_named_args.cpp
     test_const_eval.cpp
     test_diagnostics.cpp
     test_fm_detection.cpp

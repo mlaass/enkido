@@ -1,4 +1,31 @@
-> **Status: IN PROGRESS — Phase 1-6 SHIPPED (2026-08-01), 3 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-7 SHIPPED (2026-08-01), 2 phases remaining.**
+>
+> - **Phase 7 (expr_kinds + named_args consolidation) — SHIPPED
+>   2026-08-01.** New `expr_kinds.hpp/.cpp`: `midi_to_hz` (exit-grep
+>   hits exactly one formula site; const_eval's PitchLit + `mtof`
+>   folds and codegen_functions' const gate all route through it),
+>   `is_literal_value`, structural `is_pattern_producer`, and
+>   `try_const_value` (the moved `resolve_const_value`, deliberately
+>   narrower than ConstEvaluator so the zero-side-effect const gate
+>   stays byte-identical — divergence from the "subsume into
+>   ConstEvaluator" sketch above). **Canonical pattern-call list
+>   divergence:** `chord, seq, timeline` — NOT the spec's
+>   `chord/seq/timeline/sample/pat`, because `pat`/`value`/`note` call
+>   forms were removed by prd-remove-pat-builtin (2026-05-20) and
+>   `sample(...)` is the SAMPLE_PLAY player. Analyzer keeps its
+>   Identifier/MethodCall symbol-table cases locally and delegates the
+>   structural core; shape_index's divergent copy (dead Call branch —
+>   it read the callee from `first_child`) is deleted. New
+>   `named_args.hpp/.cpp`: `assign_named_arg_slots()` core (E009/E010/
+>   E011/E012, kNamedArgAbort for the E263 open-kwarg path,
+>   drop-unknown mode for W160); analyzer's two overloads → thin
+>   collect + shared `apply_named_arg_order()` materialiser; codegen's
+>   spread variant keeps only ExpandedArg materialisation. Mirror LOC
+>   ~430 → ~150 caller-side + ~100 shared core. [P7] tests:
+>   test_expr_kinds.cpp (predicates, midi_to_hz, analyzer-binding
+>   round-trip) + test_named_args.cpp (all three schema variants +
+>   every error code). Full suites green (1264 cases); snapshot
+>   byte-identical; wasm green. Commit hashes backfilled at Phase 9.
 >
 > - **Phase 6 (Node::extra_children ghost-field migration) — SHIPPED
 >   2026-08-01.** `Node` grew `std::vector<NodeIndex> extra_children`

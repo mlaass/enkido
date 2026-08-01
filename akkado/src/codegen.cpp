@@ -1,4 +1,5 @@
 #include "akkado/codegen.hpp"
+#include "akkado/named_args.hpp"
 #include "akkado/codegen/codegen.hpp"  // Master include for all codegen helpers
 #include "akkado/builtins.hpp"
 #include "akkado/overload.hpp"
@@ -3785,103 +3786,49 @@ bool CodeGenerator::reorder_spread_named_args(const BuiltinInfo& builtin,
                                               SourceLocation call_loc) {
     if (args.empty()) return true;
 
-    struct ArgInfo {
-        std::size_t arg_idx;              // index into args
-        std::optional<std::string> name;  // none → positional
-        int target_pos;                   // slot index, -1 = dropped/unknown
+    std::vector<NamedArgInput> inputs;
+    inputs.reserve(args.size());
+    for (const auto& a : args) {
+        inputs.push_back({a.name, a.loc});
+    }
+
+    // Named args map by find_param() into the unified regular+extended
+    // index space. Unknown field names are non-fatal here (PRD decision):
+    // warned (W160) and dropped, matching the user-function spread path.
+    auto find_param = [&](std::string_view name, std::size_t) -> int {
+        return builtin.find_param(name);
     };
-    std::vector<ArgInfo> infos;
-    infos.reserve(args.size());
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        infos.push_back({i, args[i].name, -1});
-    }
+    NamedArgSlots slots = assign_named_arg_slots(inputs, func_name,
+                                                 find_param,
+                                                 /*drop_unknown=*/true);
 
-    // Resolve each argument to a target slot. Positional args fill 0,1,2…;
-    // named args map by find_param() into the unified regular+extended index
-    // space. Unknown field names are warned (W160) and dropped.
-    bool has_named = false;
-    bool seen_named = false;
-    std::set<std::string> used_params;
-    for (std::size_t i = 0; i < infos.size(); ++i) {
-        if (infos[i].name.has_value()) {
-            has_named = true;
-            seen_named = true;
-            const std::string& name = *infos[i].name;
-
-            if (!used_params.insert(name).second) {
-                error("E010", "Duplicate named argument '" + name +
-                      "' in call to '" + func_name + "'",
-                      args[infos[i].arg_idx].loc);
-                return false;
-            }
-
-            int param_idx = builtin.find_param(name);
-            if (param_idx < 0) {
-                // PRD decision: an unknown spread field is non-fatal — warn
-                // and drop it, matching the user-function spread path.
-                std::string sig;
-                for (std::size_t p = 0; p < MAX_BUILTIN_PARAMS &&
-                         !builtin.param_names[p].empty(); ++p) {
-                    if (!sig.empty()) sig += ", ";
-                    sig += std::string(builtin.param_names[p]);
-                }
-                for (std::size_t p = 0; p < builtin.extended_param_count &&
-                         p < MAX_EXTENDED_PARAMS &&
-                         !builtin.extended_param_names[p].empty(); ++p) {
-                    if (!sig.empty()) sig += ", ";
-                    sig += std::string(builtin.extended_param_names[p]);
-                }
-                warn("W160", "Spread field '" + name +
-                     "' has no matching parameter in " + func_name +
-                     "(" + sig + ")", args[infos[i].arg_idx].loc);
-                continue;  // target_pos stays -1 → dropped
-            }
-            infos[i].target_pos = param_idx;
-        } else {
-            if (seen_named) {
-                error("E009", "Positional argument cannot follow named argument "
-                      "in call to '" + func_name + "'",
-                      args[infos[i].arg_idx].loc);
-                return false;
-            }
-            infos[i].target_pos = static_cast<int>(i);
+    for (std::size_t idx : slots.dropped) {
+        std::string sig;
+        for (std::size_t p = 0; p < MAX_BUILTIN_PARAMS &&
+                 !builtin.param_names[p].empty(); ++p) {
+            if (!sig.empty()) sig += ", ";
+            sig += std::string(builtin.param_names[p]);
         }
-    }
-
-    if (!has_named) return true;  // already positional — nothing to reorder
-
-    // A named arg must not collide with a positional one filling the same slot.
-    for (std::size_t i = 0; i < infos.size(); ++i) {
-        if (infos[i].name.has_value()) continue;
-        for (std::size_t j = 0; j < infos.size(); ++j) {
-            if (infos[j].name.has_value() && infos[j].target_pos >= 0 &&
-                infos[j].target_pos == static_cast<int>(i)) {
-                error("E012", "Parameter '" + *infos[j].name + "' at position " +
-                      std::to_string(i) + " conflicts with positional argument "
-                      "in call to '" + func_name + "'",
-                      args[infos[i].arg_idx].loc);
-                return false;
-            }
+        for (std::size_t p = 0; p < builtin.extended_param_count &&
+                 p < MAX_EXTENDED_PARAMS &&
+                 !builtin.extended_param_names[p].empty(); ++p) {
+            if (!sig.empty()) sig += ", ";
+            sig += std::string(builtin.extended_param_names[p]);
         }
+        warn("W160", "Spread field '" + *args[idx].name +
+             "' has no matching parameter in " + func_name +
+             "(" + sig + ")", args[idx].loc);
     }
 
-    // Build the canonical-order slot vector.
-    int max_pos = -1;
-    for (const auto& info : infos) {
-        if (info.target_pos > max_pos) max_pos = info.target_pos;
+    if (!slots.ok) {
+        if (slots.code) error(slots.code, slots.message, slots.error_loc);
+        return false;
     }
-    if (max_pos < 0) {
+    if (!slots.has_named) return true;  // already positional
+    if (slots.slot_source.empty()) {
         // Every argument was a dropped unknown field — emit an empty call.
         args.clear();
         return true;
-    }
-    // -1 = empty (needs underscore gap-fill); ≥0 = source index into `args`.
-    std::vector<int> slot_source(static_cast<std::size_t>(max_pos) + 1, -1);
-    for (const auto& info : infos) {
-        if (info.target_pos >= 0) {
-            slot_source[static_cast<std::size_t>(info.target_pos)] =
-                static_cast<int>(info.arg_idx);
-        }
     }
 
     // Materialise the slot-ordered ExpandedArg vector. Names are positional
@@ -3889,9 +3836,9 @@ bool CodeGenerator::reorder_spread_named_args(const BuiltinInfo& builtin,
     // gap-fills carry call_loc and is_underscore=true; the per-arg loop turns
     // each into the parameter's declared default (or E106).
     std::vector<ExpandedArg> reordered;
-    reordered.reserve(slot_source.size());
-    for (std::size_t i = 0; i < slot_source.size(); ++i) {
-        if (slot_source[i] < 0) {
+    reordered.reserve(slots.slot_source.size());
+    for (std::size_t i = 0; i < slots.slot_source.size(); ++i) {
+        if (slots.slot_source[i] < 0) {
             ExpandedArg gap;
             gap.name = std::nullopt;
             gap.source_node = NULL_NODE;
@@ -3900,7 +3847,8 @@ bool CodeGenerator::reorder_spread_named_args(const BuiltinInfo& builtin,
             gap.is_underscore = true;
             reordered.push_back(std::move(gap));
         } else {
-            ExpandedArg moved = std::move(args[static_cast<std::size_t>(slot_source[i])]);
+            ExpandedArg moved = std::move(
+                args[static_cast<std::size_t>(slots.slot_source[i])]);
             moved.name = std::nullopt;
             reordered.push_back(std::move(moved));
         }

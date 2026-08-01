@@ -443,6 +443,24 @@ Hot identifiers like `freq`, `gate`, `vel` get rehashed dozens of times per comp
 
 **Severity: High.**
 
+> **RESOLVED** via `prd-parser-codegen-hardening.md` Phase 7, 2026-08-01.
+> New `expr_kinds.hpp/.cpp`: `midi_to_hz` (single formula site — the
+> exit-criterion grep hits exactly one line),
+> `is_pattern_producing_call_name` (canonical list **chord, seq,
+> timeline** — divergence from the audit-era sketch: `pat` was removed
+> by prd-remove-pat-builtin 2026-05-20 and `sample` is the SAMPLE_PLAY
+> player, not a producer), structural `is_pattern_producer`,
+> `is_literal_value`, and `try_const_value` (the moved, renamed
+> `resolve_const_value` — kept deliberately narrower than ConstEvaluator
+> so codegen's zero-side-effect const gate stays byte-identical).
+> `reorder_named_arguments`: shared slot resolver
+> `assign_named_arg_slots()` in new `named_args.hpp/.cpp` (E009/E010/
+> E011/E012 + drop-unknown mode); the analyzer's two overloads collapse
+> to input-collection + a shared AST materialiser, codegen's spread
+> variant keeps only its ExpandedArg materialisation. shape_index's
+> divergent copy (whose Call branch read the callee from `first_child`
+> and never fired) is deleted in favor of the canonical helper.
+
 ---
 
 ## 3. By-stage notes
@@ -681,6 +699,10 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Scope:** One `expr_kinds.hpp` module with `is_const_evaluable`, `is_pattern_producer`, `is_literal_value`. ConstEvaluator becomes the single MIDI→Hz site (called by codegen_functions). `reorder_named_arguments` parameterised into one helper.
 **Files touched:** New `expr_kinds.hpp`, `const_eval.cpp`, `codegen_functions.cpp`, `analyzer.cpp` (2 sites + 2 inline checks), `shape_index.cpp`.
 **Effort:** Small (3-5 days).
+
+> **SHIPPED** via `prd-parser-codegen-hardening.md` Phase 7, 2026-08-01.
+> See F15 RESOLVED note for the delivered shape (`expr_kinds.hpp` +
+> `named_args.hpp`).
 
 ### PRD-14 — AST handover hardening  *(Medium; foundational for future LSP)*
 **Scope:** Move ghost-field children (`MatchArmData::guard_node`, spreads, destructure defaults) into a uniform `Node::extra_children[]` slot. Eliminates 80+ lines of special-cased bookkeeping in `clone_subtree` / substitute paths.

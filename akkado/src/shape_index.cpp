@@ -1,6 +1,7 @@
 #include "akkado/shape_index.hpp"
 
 #include "akkado/ast.hpp"
+#include "akkado/expr_kinds.hpp"
 #include "akkado/lexer.hpp"
 #include "akkado/parser.hpp"
 #include "akkado/typed_value.hpp"
@@ -126,47 +127,12 @@ void emit_record_shape_from_ast(std::ostringstream& json,
     json << "]";
 }
 
-// Walk back through a method-call chain to find the innermost receiver.
-// Returns NULL_NODE when the chain doesn't bottom out at a recognisable
-// pattern producer.
-NodeIndex chain_receiver(const Ast& ast, NodeIndex node) {
-    while (node != NULL_NODE && ast.arena[node].type == NodeType::MethodCall) {
-        node = ast.arena[node].first_child;
-    }
-    return node;
-}
-
-bool is_pattern_producer(const Ast& ast, NodeIndex node,
-                         const StringInterner& interner) {
-    if (node == NULL_NODE) return false;
-    const Node& n = ast.arena[node];
-    if (n.type == NodeType::MiniLiteral) return true;
-    // `pat(...)`, `seq(...)`, etc. as Call nodes — the lexer surfaces these
-    // as MiniLiteral when used as prefix forms, but `pat(string)` can also
-    // appear as a Call. Conservatively recognise Call whose callee is a
-    // known pattern-producing identifier.
-    if (n.type == NodeType::Call && n.first_child != NULL_NODE) {
-        const Node& callee = ast.arena[n.first_child];
-        if (callee.type == NodeType::Identifier) {
-            std::string_view name = interner.view(callee.as_identifier());
-            return name == "seq" || name == "timeline" ||
-                   name == "sample" || name == "chord";
-        }
-    }
-    return false;
-}
-
 // True when `rhs` is a method-call chain rooted at a pattern producer or
-// a direct pattern producer.
+// a direct pattern producer. Delegates to the canonical
+// expr_kinds::is_pattern_producer (Phase 7 — one list, no local copy).
 bool rhs_is_pattern(const Ast& ast, NodeIndex rhs,
                     const StringInterner& interner) {
-    if (rhs == NULL_NODE) return false;
-    const Node& n = ast.arena[rhs];
-    if (is_pattern_producer(ast, rhs, interner)) return true;
-    if (n.type == NodeType::MethodCall) {
-        return is_pattern_producer(ast, chain_receiver(ast, rhs), interner);
-    }
-    return false;
+    return expr_kinds::is_pattern_producer(ast.arena, rhs, interner);
 }
 
 // Walk a method-call chain from `outer` towards the receiver, collecting

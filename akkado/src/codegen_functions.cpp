@@ -6,6 +6,7 @@
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/const_eval.hpp"
+#include "akkado/expr_kinds.hpp"
 #include "akkado/overload.hpp"
 #include <cstring>
 
@@ -21,58 +22,6 @@ using codegen::closure_body;
 // in get_or_compile_shared_block self-limits in practice. A `fn` with more
 // parameters falls back to per-site inlining.
 static constexpr std::size_t MAX_SHARED_FN_PARAMS = 32;
-
-// Try to resolve an AST node to a compile-time constant value.
-// Returns nullopt if the node cannot be resolved at compile time.
-static std::optional<ConstValue> resolve_const_value(
-    const AstArena& arena, NodeIndex node, const SymbolTable& symbols) {
-
-    if (node == NULL_NODE) return std::nullopt;
-
-    const Node& n = arena[node];
-
-    switch (n.type) {
-        case NodeType::NumberLit:
-            return ConstValue{n.as_number()};
-
-        case NodeType::BoolLit:
-            return ConstValue{n.as_bool() ? 1.0 : 0.0};
-
-        case NodeType::PitchLit: {
-            double midi = static_cast<double>(n.as_pitch());
-            double hz = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
-            return ConstValue{hz};
-        }
-
-        case NodeType::Identifier: {
-            // Phase 5 (F12): lookup by SymbolId — no rehash. The const_eval
-            // helper doesn't need to materialize the name as a string.
-            if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                auto sym = symbols.lookup(n.as_identifier());
-                if (sym && sym->is_const && sym->const_value.has_value()) {
-                    return *sym->const_value;
-                }
-            }
-            return std::nullopt;
-        }
-
-        case NodeType::ArrayLit: {
-            std::vector<double> elements;
-            NodeIndex child = n.first_child;
-            while (child != NULL_NODE) {
-                auto val = resolve_const_value(arena, child, symbols);
-                if (!val) return std::nullopt;
-                if (!std::holds_alternative<double>(*val)) return std::nullopt;
-                elements.push_back(std::get<double>(*val));
-                child = arena[child].next_sibling;
-            }
-            return ConstValue{std::move(elements)};
-        }
-
-        default:
-            return std::nullopt;
-    }
-}
 
 // User function call handler - inlines function bodies at call sites
 TypedValue CodeGenerator::handle_user_function_call(
@@ -91,7 +40,7 @@ TypedValue CodeGenerator::handle_user_function_call(
                 arg_value = arg_node.first_child;
             }
 
-            auto cv = resolve_const_value(ast_->arena, arg_value, *symbols_);
+            auto cv = expr_kinds::try_const_value(ast_->arena, arg_value, *symbols_);
             if (!cv) {
                 all_const = false;
                 break;

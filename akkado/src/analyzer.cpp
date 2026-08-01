@@ -1,6 +1,8 @@
 #include "akkado/analyzer.hpp"
 #include "akkado/builtins.hpp"
+#include "akkado/expr_kinds.hpp"
 #include "akkado/host_extensions.hpp"
+#include "akkado/named_args.hpp"
 #include "akkado/overload.hpp"
 #include "akkado/source_map.hpp"
 #include <algorithm>
@@ -24,19 +26,12 @@ bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
     if (idx == NULL_NODE || input_ast_ == nullptr) return false;
     const Node& n = (*input_ast_).arena[idx];
     switch (n.type) {
-        case NodeType::MiniLiteral:
-            return true;
         case NodeType::MethodCall:
             // Method calls preserve pattern-ness of the receiver
             // (.slow/.fast/.rev/.transpose/etc. all return patterns).
+            // Recurse through this method (not the structural helper) so
+            // Identifier receivers resolve against the symbol table.
             return is_pattern_producing_expr(n.first_child);
-        case NodeType::Call: {
-            std::string call_name;
-            if (std::holds_alternative<Node::IdentifierData>(n.data)) {
-                call_name = interner_->view(n.as_identifier());
-            }
-            return call_name == "chord" || call_name == "seq";
-        }
         case NodeType::Identifier: {
             std::string name;
             if (std::holds_alternative<Node::IdentifierData>(n.data)) {
@@ -47,7 +42,10 @@ bool SemanticAnalyzer::is_pattern_producing_expr(NodeIndex idx) const {
             return sym && sym->kind == SymbolKind::Pattern;
         }
         default:
-            return false;
+            // MiniLiteral + pattern-producing builtin calls (canonical
+            // list in expr_kinds).
+            return expr_kinds::is_pattern_producer((*input_ast_).arena, idx,
+                                                   *interner_);
     }
 }
 
@@ -600,7 +598,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     sym.buffer_index = 0xFFFF;
                     sym.is_state_cell = true;
                     symbols_.define(sym);
-                } else if (callee_name == "chord" || callee_name == "seq") {
+                } else if (expr_kinds::is_pattern_producing_call_name(callee_name)) {
                     // Pattern-producing builtin call bound to a variable.
                     // Register as Pattern so downstream `notes |> saw(@freq)`
                     // field access passes E061. (Typed-prefix literals like
@@ -765,7 +763,7 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
                     call_name = interner_->view(expr_node.as_identifier());
                 }
-                if (call_name == "chord" || call_name == "seq") {
+                if (expr_kinds::is_pattern_producing_call_name(call_name)) {
                     PatternInfo pat_info{};
                     pat_info.pattern_node = bound_expr;
                     pat_info.is_sample_pattern = false;
@@ -2382,7 +2380,7 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 if (std::holds_alternative<Node::IdentifierData>(expr_node.data)) {
                     call_name = interner_->view(expr_node.as_identifier());
                 }
-                if (call_name == "chord" || call_name == "seq") {
+                if (expr_kinds::is_pattern_producing_call_name(call_name)) {
                     // Pattern-producing call - define as Pattern for field access
                     PatternInfo pat_info{};
                     pat_info.pattern_node = bound_expr;
@@ -2738,302 +2736,148 @@ bool SemanticAnalyzer::has_spread_arg(NodeIndex call_node) const {
     return false;
 }
 
-bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
-                                                const BuiltinInfo& builtin,
-                                                const std::string& func_name) {
-    Node& call = output_arena_[call_node];
+// Shared materialiser for the two reorder overloads below: clear the
+// now-positional argument names (open kwargs keep theirs — the name IS
+// the payload the hosted-node manifest records), fill slot gaps with `_`
+// placeholder identifiers so codegen's default-filling path still runs
+// (without this, `phaser(sig, 0.5, 0.8, 200, 4000, lfo_phase: 0.3)`
+// would collapse to a 6-arg call and lfo_phase would bind to feedback),
+// then rebuild the call's child list in canonical slot order.
+static void apply_named_arg_order(AstArena& arena, StringInterner& interner,
+                                  NodeIndex call_node,
+                                  const std::vector<NodeIndex>& arg_nodes,
+                                  const std::vector<int>& slot_source,
+                                  const std::set<NodeIndex>& keep_names) {
+    for (NodeIndex a : arg_nodes) {
+        Node& arg_node = arena[a];
+        if (arg_node.type == NodeType::Argument &&
+            arg_node.as_arg_name().has_value() && keep_names.count(a) == 0) {
+            arg_node.data = Node::ArgumentData{std::nullopt};
+        }
+    }
 
-    // Collect all arguments
-    struct ArgInfo {
-        NodeIndex node;
-        std::optional<std::string> name;
-        int target_pos;  // Position in reordered list (-1 = unknown)
-    };
-    std::vector<ArgInfo> args;
+    const SourceLocation call_loc = arena[call_node].location;
+    std::vector<NodeIndex> reordered(slot_source.size(), NULL_NODE);
+    for (std::size_t i = 0; i < slot_source.size(); ++i) {
+        if (slot_source[i] >= 0) {
+            reordered[i] = arg_nodes[static_cast<std::size_t>(slot_source[i])];
+        }
+    }
+    for (auto& slot : reordered) {
+        if (slot != NULL_NODE) continue;
+        NodeIndex underscore = arena.alloc(NodeType::Identifier, call_loc);
+        arena[underscore].data = Node::IdentifierData{interner.intern("_")};
+        arena[underscore].next_sibling = NULL_NODE;
+        slot = underscore;
+    }
 
-    NodeIndex arg = call.first_child;
+    arena[call_node].first_child = NULL_NODE;
+    NodeIndex prev = NULL_NODE;
+    for (NodeIndex idx : reordered) {
+        arena[idx].next_sibling = NULL_NODE;
+        if (prev == NULL_NODE) {
+            arena[call_node].first_child = idx;
+        } else {
+            arena[prev].next_sibling = idx;
+        }
+        prev = idx;
+    }
+}
+
+// Collect (node, name, loc) for every argument of a call.
+static void collect_call_args(const AstArena& arena, NodeIndex call_node,
+                              std::vector<NodeIndex>& arg_nodes,
+                              std::vector<NamedArgInput>& inputs) {
+    NodeIndex arg = arena[call_node].first_child;
     while (arg != NULL_NODE) {
-        const Node& arg_node = output_arena_[arg];
+        const Node& arg_node = arena[arg];
         std::optional<std::string> arg_name;
         if (arg_node.type == NodeType::Argument) {
             arg_name = arg_node.as_arg_name();
         }
-        args.push_back({arg, arg_name, -1});
-        arg = output_arena_[arg].next_sibling;
+        arg_nodes.push_back(arg);
+        inputs.push_back({std::move(arg_name), arg_node.location});
+        arg = arena[arg].next_sibling;
     }
+}
 
-    if (args.empty()) return true;
+bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
+                                                const BuiltinInfo& builtin,
+                                                const std::string& func_name) {
+    std::vector<NodeIndex> arg_nodes;
+    std::vector<NamedArgInput> inputs;
+    collect_call_args(output_arena_, call_node, arg_nodes, inputs);
+    if (inputs.empty()) return true;
 
-    // Check for named arguments and determine if reordering is needed
-    bool has_named = false;
-    bool seen_named = false;
-    std::set<std::string> used_params;
     std::set<NodeIndex> open_kwarg_nodes;  // keep their names through reorder
-
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i].name.has_value()) {
-            has_named = true;
-            seen_named = true;
-
-            const std::string& name = *args[i].name;
-
-            // Check for duplicate parameter
-            if (used_params.count(name)) {
-                error("E010", "Duplicate named argument '" + name + "' in call to '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            used_params.insert(name);
-
-            // Find parameter index
-            int param_idx = builtin.find_param(name);
+    auto find_param = [&](std::string_view name, std::size_t arg_idx) -> int {
+        int param_idx = builtin.find_param(name);
 #ifdef CEDAR_HOST_EXTENSIONS
-            // Open-kwarg host nodes accept names beyond the declared params:
-            // each takes the next free input slot after them, and keeps its
-            // name in the AST so codegen can record {slot, name} into the
-            // hosted-node manifest (the host owns the matching policy).
-            if (param_idx < 0 && host_node_open_kwargs(func_name)) {
-                param_idx = static_cast<int>(builtin.input_count) +
-                            static_cast<int>(builtin.optional_count) +
-                            static_cast<int>(open_kwarg_nodes.size());
-                if (param_idx > 4) {
-                    error("E263", "Too many parameters at one '" + func_name +
-                          "' call site — at most " +
-                          std::to_string(5 - builtin.input_count -
-                                         builtin.optional_count) +
-                          " keyword parameters fit one call",
-                          output_arena_[args[i].node].location);
-                    return false;
-                }
-                open_kwarg_nodes.insert(args[i].node);
+        // Open-kwarg host nodes accept names beyond the declared params:
+        // each takes the next free input slot after them, and keeps its
+        // name in the AST so codegen can record {slot, name} into the
+        // hosted-node manifest (the host owns the matching policy).
+        if (param_idx < 0 && host_node_open_kwargs(func_name)) {
+            param_idx = static_cast<int>(builtin.input_count) +
+                        static_cast<int>(builtin.optional_count) +
+                        static_cast<int>(open_kwarg_nodes.size());
+            if (param_idx > 4) {
+                error("E263", "Too many parameters at one '" + func_name +
+                      "' call site — at most " +
+                      std::to_string(5 - builtin.input_count -
+                                     builtin.optional_count) +
+                      " keyword parameters fit one call",
+                      inputs[arg_idx].loc);
+                return kNamedArgAbort;
             }
+            open_kwarg_nodes.insert(arg_nodes[arg_idx]);
+        }
+#else
+        (void)arg_idx;
 #endif
-            if (param_idx < 0) {
-                error("E011", "Unknown parameter '" + name + "' for function '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            args[i].target_pos = param_idx;
-        } else {
-            // Positional argument
-            if (seen_named) {
-                error("E009", "Positional argument cannot follow named argument in call to '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            // Positional args fill slots in order
-            args[i].target_pos = static_cast<int>(i);
-        }
+        return param_idx;
+    };
+
+    NamedArgSlots slots = assign_named_arg_slots(inputs, func_name,
+                                                 find_param,
+                                                 /*drop_unknown=*/false);
+    if (!slots.ok) {
+        if (slots.code) error(slots.code, slots.message, slots.error_loc);
+        return false;
     }
+    if (!slots.has_named) return true;  // no reordering needed
 
-    if (!has_named) {
-        return true;  // No reordering needed
-    }
-
-    // Check that positional args don't conflict with named args
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (!args[i].name.has_value()) {
-            // Check if this positional slot was also filled by a named arg
-            for (std::size_t j = 0; j < args.size(); ++j) {
-                if (args[j].name.has_value() && args[j].target_pos == static_cast<int>(i)) {
-                    error("E012", "Parameter '" + *args[j].name + "' at position " +
-                          std::to_string(i) + " conflicts with positional argument in call to '" +
-                          func_name + "'", output_arena_[args[i].node].location);
-                    return false;
-                }
-            }
-        }
-    }
-
-    // Reorder arguments: create array indexed by target position
-    std::size_t max_pos = 0;
-    for (const auto& a : args) {
-        if (a.target_pos >= 0) {
-            max_pos = std::max(max_pos, static_cast<std::size_t>(a.target_pos));
-        }
-    }
-
-    std::vector<NodeIndex> reordered(max_pos + 1, NULL_NODE);
-    for (const auto& a : args) {
-        if (a.target_pos >= 0) {
-            reordered[a.target_pos] = a.node;
-        }
-    }
-
-    // Clear argument names after reordering (they're now positional).
-    // Open kwargs keep theirs: the name IS the payload the hosted-node
-    // manifest records for the host's parameter matching.
-    for (auto& a : args) {
-        if (a.name.has_value() && a.node != NULL_NODE &&
-            open_kwarg_nodes.count(a.node) == 0) {
-            Node& arg_node = output_arena_[a.node];
-            if (arg_node.type == NodeType::Argument) {
-                arg_node.data = Node::ArgumentData{std::nullopt};
-            }
-        }
-    }
-
-    // Fill gaps (skipped positionals between named args) with `_` placeholder
-    // identifiers so the codegen default-filling path still runs for those
-    // slots. Without this, `phaser(sig, 0.5, 0.8, 200, 4000, lfo_phase: 0.3)`
-    // would collapse to a 6-arg call and the user's lfo_phase value would
-    // bind to feedback instead of lfo_phase.
-    const SourceLocation call_loc = call.location;
-    for (std::size_t i = 0; i < reordered.size(); ++i) {
-        if (reordered[i] != NULL_NODE) continue;
-        NodeIndex underscore = output_arena_.alloc(NodeType::Identifier, call_loc);
-        output_arena_[underscore].data = Node::IdentifierData{interner_->intern("_")};
-        output_arena_[underscore].next_sibling = NULL_NODE;
-        reordered[i] = underscore;
-    }
-
-    // Rebuild child list in new order
-    call.first_child = NULL_NODE;
-    NodeIndex prev = NULL_NODE;
-    for (NodeIndex idx : reordered) {
-        if (idx == NULL_NODE) continue;
-
-        output_arena_[idx].next_sibling = NULL_NODE;
-
-        if (prev == NULL_NODE) {
-            call.first_child = idx;
-        } else {
-            output_arena_[prev].next_sibling = idx;
-        }
-        prev = idx;
-    }
-
+    apply_named_arg_order(output_arena_, *interner_, call_node, arg_nodes,
+                          slots.slot_source, open_kwarg_nodes);
     return true;
 }
 
 bool SemanticAnalyzer::reorder_named_arguments(NodeIndex call_node,
                                                 const std::vector<std::string>& param_names,
                                                 const std::string& func_name) {
-    Node& call = output_arena_[call_node];
+    std::vector<NodeIndex> arg_nodes;
+    std::vector<NamedArgInput> inputs;
+    collect_call_args(output_arena_, call_node, arg_nodes, inputs);
+    if (inputs.empty()) return true;
 
-    // Collect all arguments
-    struct ArgInfo {
-        NodeIndex node;
-        std::optional<std::string> name;
-        int target_pos;
+    auto find_param = [&](std::string_view name, std::size_t) -> int {
+        for (std::size_t j = 0; j < param_names.size(); ++j) {
+            if (param_names[j] == name) return static_cast<int>(j);
+        }
+        return -1;
     };
-    std::vector<ArgInfo> args;
 
-    NodeIndex arg = call.first_child;
-    while (arg != NULL_NODE) {
-        const Node& arg_node = output_arena_[arg];
-        std::optional<std::string> arg_name;
-        if (arg_node.type == NodeType::Argument) {
-            arg_name = arg_node.as_arg_name();
-        }
-        args.push_back({arg, arg_name, -1});
-        arg = output_arena_[arg].next_sibling;
+    NamedArgSlots slots = assign_named_arg_slots(inputs, func_name,
+                                                 find_param,
+                                                 /*drop_unknown=*/false);
+    if (!slots.ok) {
+        if (slots.code) error(slots.code, slots.message, slots.error_loc);
+        return false;
     }
+    if (!slots.has_named) return true;
 
-    if (args.empty()) return true;
-
-    // Check for named arguments and determine if reordering is needed
-    bool has_named = false;
-    bool seen_named = false;
-    std::set<std::string> used_params;
-
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i].name.has_value()) {
-            has_named = true;
-            seen_named = true;
-
-            const std::string& name = *args[i].name;
-
-            if (used_params.count(name)) {
-                error("E010", "Duplicate named argument '" + name + "' in call to '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            used_params.insert(name);
-
-            // Find parameter index by linear search
-            int param_idx = -1;
-            for (std::size_t j = 0; j < param_names.size(); ++j) {
-                if (param_names[j] == name) {
-                    param_idx = static_cast<int>(j);
-                    break;
-                }
-            }
-            if (param_idx < 0) {
-                error("E011", "Unknown parameter '" + name + "' for function '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            args[i].target_pos = param_idx;
-        } else {
-            if (seen_named) {
-                error("E009", "Positional argument cannot follow named argument in call to '" +
-                      func_name + "'", output_arena_[args[i].node].location);
-                return false;
-            }
-            args[i].target_pos = static_cast<int>(i);
-        }
-    }
-
-    if (!has_named) {
-        return true;
-    }
-
-    // Check that positional args don't conflict with named args
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (!args[i].name.has_value()) {
-            for (std::size_t j = 0; j < args.size(); ++j) {
-                if (args[j].name.has_value() && args[j].target_pos == static_cast<int>(i)) {
-                    error("E012", "Parameter '" + *args[j].name + "' at position " +
-                          std::to_string(i) + " conflicts with positional argument in call to '" +
-                          func_name + "'", output_arena_[args[i].node].location);
-                    return false;
-                }
-            }
-        }
-    }
-
-    // Reorder arguments: create array indexed by target position
-    std::size_t max_pos = 0;
-    for (const auto& a : args) {
-        if (a.target_pos >= 0) {
-            max_pos = std::max(max_pos, static_cast<std::size_t>(a.target_pos));
-        }
-    }
-
-    std::vector<NodeIndex> reordered(max_pos + 1, NULL_NODE);
-    for (const auto& a : args) {
-        if (a.target_pos >= 0) {
-            reordered[a.target_pos] = a.node;
-        }
-    }
-
-    // Clear argument names after reordering
-    for (auto& a : args) {
-        if (a.name.has_value() && a.node != NULL_NODE) {
-            Node& arg_node = output_arena_[a.node];
-            if (arg_node.type == NodeType::Argument) {
-                arg_node.data = Node::ArgumentData{std::nullopt};
-            }
-        }
-    }
-
-    // Rebuild child list in new order
-    call.first_child = NULL_NODE;
-    NodeIndex prev = NULL_NODE;
-    for (NodeIndex idx : reordered) {
-        if (idx == NULL_NODE) continue;
-
-        output_arena_[idx].next_sibling = NULL_NODE;
-
-        if (prev == NULL_NODE) {
-            call.first_child = idx;
-        } else {
-            output_arena_[prev].next_sibling = idx;
-        }
-        prev = idx;
-    }
-
+    apply_named_arg_order(output_arena_, *interner_, call_node, arg_nodes,
+                          slots.slot_source, /*keep_names=*/{});
     return true;
 }
 

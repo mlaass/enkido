@@ -85,6 +85,8 @@ add_library(akkado STATIC
     src/pattern_eval.cpp
     src/symbol_table.cpp
     src/analyzer.cpp
+    src/expr_kinds.cpp
+    src/named_args.cpp
     src/const_eval.cpp
     src/codegen.cpp
     src/codegen_arrays.cpp
