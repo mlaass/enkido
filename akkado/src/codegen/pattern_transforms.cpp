@@ -1,5 +1,7 @@
 // Pattern-transform call handlers (bank/variant/transport/tune/...).
-// Phase 5 consolidates these onto PatternTransformEmitter.
+// Phase 5 consolidated the SequenceProgram-recompiling handlers onto
+// emit_seqpat_transform (bank/variant/tune/anchor/mode) and the runtime
+// structural transforms onto emit_reorder_call / emit_fanout_call.
 // Extracted verbatim from patterns.cpp (prd-codegen-sprawl-cleanup Phase 3).
 
 #include "akkado/codegen.hpp"
@@ -1384,30 +1386,22 @@ TypedValue CodeGenerator::emit_pattern_readout(NodeIndex node,
     return cache_and_return(node, TypedValue::make_pattern(payload, result_buf));
 }
 
-TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
-    // bank(pattern, bank_name) - set sample bank for all events
-    // Sets the bank field on all sample mappings for deferred resolution
-
-    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
-    auto bank_name = get_string_arg(*ast_, n, 1);
-
-    if (pattern_arg == NULL_NODE) {
-        error("E130", "bank() requires a pattern as first argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!bank_name.has_value()) {
-        error("E131", "bank() requires a string as second argument (e.g., \"TR808\")", n.location);
-        return TypedValue::void_val();
-    }
-
-    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
-        error("E133", "bank() first argument must be a pattern", n.location);
-        return TypedValue::void_val();
-    }
-
+// PRD prd-codegen-sprawl-cleanup Phase 5 — canonical emitter for the
+// SequenceProgram-recompiling transforms (bank / variant / tune / anchor /
+// mode). Shared shape: compile the inner pattern, push "<name>#N" onto the
+// semantic-ID path, then lower to the SEQPAT pipeline. Per-transform
+// variation (tuning context, voicing mutation, sample-mapping mutation,
+// per-voice vs single-voice emission) is injected via SeqpatTransformHooks —
+// see codegen.hpp for the hook contract. transport and voicing deliberately
+// stay standalone (see their handlers).
+TypedValue CodeGenerator::emit_seqpat_transform(NodeIndex node, const Node& n,
+                                                const char* transform_name,
+                                                NodeIndex pattern_arg,
+                                                const SeqpatTransformHooks& hooks) {
     // Compile the pattern (may include inner transforms applied recursively)
     SequenceCompiler compiler(ast_->arena, sample_registry_);
+    if (hooks.pre_compile) hooks.pre_compile(compiler);
+
     NodeIndex pattern_node = NULL_NODE;
     const AstArena* pattern_arena = nullptr;
     std::uint32_t num_elements = 1;
@@ -1417,23 +1411,44 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
     if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
                                         compiler, pattern_node, pattern_arena, num_elements,
                                         sequence_events, cycle_length)) {
-        error("E130", "bank() failed to compile pattern argument", n.location);
+        error("E130", std::string(transform_name) +
+                  "() failed to compile pattern argument", n.location);
         return TypedValue::void_val();
     }
 
+    if (hooks.post_compile) hooks.post_compile(compiler, sequence_events);
+
     // Set up state ID
-    std::uint32_t bank_count = call_counters_["bank"]++;
-    push_path("bank#" + std::to_string(bank_count));
+    std::uint32_t call_count = call_counters_[transform_name]++;
+    push_path(std::string(transform_name) + "#" + std::to_string(call_count));
     std::uint32_t state_id = compute_state_id();
 
-    auto sample_mappings = compiler.sample_mappings();
+    if (hooks.emission == SeqpatTransformHooks::Emission::PerVoice) {
+        // tune / anchor / mode: per-voice emission via the shared helper;
+        // sample mappings and sample_refs both come from the compiler.
+        const Node& pattern = (*pattern_arena)[pattern_node];
+        auto result_tv = emit_pattern_with_state(
+            *this, buffers_, state_inits_, required_samples_,
+            node_types_, node, state_id, cycle_length,
+            compiler, sequence_events, pattern.location, n.location);
 
-    // Update bank field on all sample mappings
-    for (auto& mapping : sample_mappings) {
-        mapping.bank = *bank_name;
+        pop_path();
+
+        if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
+            error("E101", "Buffer pool exhausted", n.location);
+        }
+
+        return result_tv;
     }
 
-    // Collect required samples (with updated bank info)
+    // Emission::SingleVoiceMutatedMappings (bank / variant): copy the
+    // compiler's mappings, mutate them, and move the mutated copy into the
+    // SequenceProgram state init.
+    auto sample_mappings = compiler.sample_mappings();
+
+    if (hooks.mutate_mappings) hooks.mutate_mappings(sample_mappings);
+
+    // Collect required samples (with updated mapping info)
     compiler.collect_samples(required_samples_);
 
     bool is_sample_pattern = compiler.is_sample_pattern();
@@ -1464,7 +1479,6 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
         .emit(*this);
 
     // Store sequence program initialization data
-    StateInitData seq_init;
     const Node& pattern = (*pattern_arena)[pattern_node];
     codegen::StateInitBuilder::sequence_program(state_id)
         .cycle_length(cycle_length)
@@ -1508,7 +1522,7 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
     payload->max_voices = compiler.max_voices();
 
     // Records-and-field-access PRD §3: populate extended fields so %.field
-    // works on bank-mutated patterns.
+    // works on transform-mutated patterns.
     if (!emit_extended_field_buffers(*payload, state_id, n.location)) {
         pop_path();
         error("E101", "Buffer pool exhausted", n.location);
@@ -1522,15 +1536,48 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Bank-mutated mappings live in state_inits_.back() (we moved the local
+    // The mutated mappings live in state_inits_.back() (we moved the local
     // sample_mappings into it above). Project them into the Pattern's
-    // sample_refs so the bank info travels with the value.
+    // sample_refs so the mutation (bank / variant) travels with the value.
     payload->sample_refs = sample_refs_from_mappings(
         state_inits_.back().sequence_sample_mappings);
     publish_sample_refs(payload->sample_refs);
 
     pop_path();
     return cache_and_return(node, TypedValue::make_pattern(payload, result_buf));
+}
+
+TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
+    // bank(pattern, bank_name) - set sample bank for all events
+    // Sets the bank field on all sample mappings for deferred resolution
+
+    NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
+    auto bank_name = get_string_arg(*ast_, n, 1);
+
+    if (pattern_arg == NULL_NODE) {
+        error("E130", "bank() requires a pattern as first argument", n.location);
+        return TypedValue::void_val();
+    }
+
+    if (!bank_name.has_value()) {
+        error("E131", "bank() requires a string as second argument (e.g., \"TR808\")", n.location);
+        return TypedValue::void_val();
+    }
+
+    if (!is_pattern_node(*ast_, *symbols_, pattern_arg, *ctx_->interner)) {
+        error("E133", "bank() first argument must be a pattern", n.location);
+        return TypedValue::void_val();
+    }
+
+    SeqpatTransformHooks hooks;
+    hooks.emission = SeqpatTransformHooks::Emission::SingleVoiceMutatedMappings;
+    // Update bank field on all sample mappings
+    hooks.mutate_mappings = [&](std::vector<SequenceSampleMapping>& sample_mappings) {
+        for (auto& mapping : sample_mappings) {
+            mapping.bank = *bank_name;
+        }
+    };
+    return emit_seqpat_transform(node, n, "bank", pattern_arg, hooks);
 }
 
 TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
@@ -1573,171 +1620,62 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Compile the main pattern (may include inner transforms applied recursively)
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    const AstArena* pattern_arena = nullptr;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
+    SeqpatTransformHooks hooks;
+    hooks.emission = SeqpatTransformHooks::Emission::SingleVoiceMutatedMappings;
+    hooks.mutate_mappings = [&](std::vector<SequenceSampleMapping>& sample_mappings) {
+        if (is_fixed_variant) {
+            // Case 1: Fixed variant - set on all sample mappings
+            for (auto& mapping : sample_mappings) {
+                mapping.variant = static_cast<std::uint8_t>(fixed_variant);
+            }
+        } else {
+            // Case 2: Per-event variant from pattern
+            // Compile the variant pattern to get its events
+            SequenceCompiler variant_compiler(ast_->arena, sample_registry_);
+            NodeIndex variant_pattern_node = NULL_NODE;
+            const AstArena* variant_pattern_arena = nullptr;
+            std::uint32_t variant_num_elements = 1;
+            std::vector<std::vector<cedar::Event>> variant_events;
+            float variant_cycle_length = 1.0f;
 
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, pattern_arena, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "variant() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
+            if (compile_pattern_for_transform(*this, *ast_, variant_arg, sample_registry_,
+                                              variant_compiler, variant_pattern_node, variant_pattern_arena, variant_num_elements,
+                                              variant_events, variant_cycle_length)) {
 
-    // Set up state ID
-    std::uint32_t variant_count = call_counters_["variant"]++;
-    push_path("variant#" + std::to_string(variant_count));
-    std::uint32_t state_id = compute_state_id();
+                // Match events: for each sample event in the main pattern,
+                // look up the corresponding variant value from the variant pattern.
+                // If the variant pattern has fewer events, cycle through them.
+                if (!variant_events.empty() && !variant_events[0].empty()) {
+                    std::size_t variant_idx = 0;
+                    std::size_t variant_count = variant_events[0].size();
 
-    auto sample_mappings = compiler.sample_mappings();
-
-    if (is_fixed_variant) {
-        // Case 1: Fixed variant - set on all sample mappings
-        for (auto& mapping : sample_mappings) {
-            mapping.variant = static_cast<std::uint8_t>(fixed_variant);
-        }
-    } else {
-        // Case 2: Per-event variant from pattern
-        // Compile the variant pattern to get its events
-        SequenceCompiler variant_compiler(ast_->arena, sample_registry_);
-        NodeIndex variant_pattern_node = NULL_NODE;
-        const AstArena* variant_pattern_arena = nullptr;
-        std::uint32_t variant_num_elements = 1;
-        std::vector<std::vector<cedar::Event>> variant_events;
-        float variant_cycle_length = 1.0f;
-
-        if (compile_pattern_for_transform(*this, *ast_, variant_arg, sample_registry_,
-                                          variant_compiler, variant_pattern_node, variant_pattern_arena, variant_num_elements,
-                                          variant_events, variant_cycle_length)) {
-
-            // Match events: for each sample event in the main pattern,
-            // look up the corresponding variant value from the variant pattern.
-            // If the variant pattern has fewer events, cycle through them.
-            if (!variant_events.empty() && !variant_events[0].empty()) {
-                std::size_t variant_idx = 0;
-                std::size_t variant_count = variant_events[0].size();
-
-                for (auto& mapping : sample_mappings) {
-                    // Get the variant value from the variant pattern
-                    const auto& variant_evt = variant_events[0][variant_idx % variant_count];
-                    if (variant_evt.type == cedar::EventType::DATA && variant_evt.num_values > 0) {
-                        // Use the first value as the variant index
-                        int var_val = static_cast<int>(variant_evt.values[0]);
-                        if (var_val >= 0) {
-                            mapping.variant = static_cast<std::uint8_t>(var_val);
+                    for (auto& mapping : sample_mappings) {
+                        // Get the variant value from the variant pattern
+                        const auto& variant_evt = variant_events[0][variant_idx % variant_count];
+                        if (variant_evt.type == cedar::EventType::DATA && variant_evt.num_values > 0) {
+                            // Use the first value as the variant index
+                            int var_val = static_cast<int>(variant_evt.values[0]);
+                            if (var_val >= 0) {
+                                mapping.variant = static_cast<std::uint8_t>(var_val);
+                            }
                         }
+                        variant_idx++;
                     }
-                    variant_idx++;
                 }
             }
         }
-    }
-
-    // Collect required samples
-    compiler.collect_samples(required_samples_);
-
-    bool is_sample_pattern = compiler.is_sample_pattern();
-
-    // Allocate buffers for outputs
-    std::uint16_t value_buf = alloc_buffer(n.location);
-    std::uint16_t velocity_buf = alloc_buffer(n.location);
-    std::uint16_t trigger_buf = alloc_buffer(n.location);
-
-    if (value_buf == BufferAllocator::BUFFER_UNUSED ||
-        velocity_buf == BufferAllocator::BUFFER_UNUSED ||
-        trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        pop_path();
-        return TypedValue::void_val();
-    }
-
-    // Emit SEQPAT_QUERY instruction
-    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
-        .output(0xFFFF)
-        .state_id(state_id)
-        .emit(*this);
-
-    // Emit SEQPAT_STEP
-    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
-        .inputs({velocity_buf, trigger_buf, /*voice*/ 0})
-        .output(value_buf)
-        .state_id(state_id)
-        .emit(*this);
-
-    // Store sequence program initialization data
-    StateInitData seq_init;
-    const Node& pattern = (*pattern_arena)[pattern_node];
-    codegen::StateInitBuilder::sequence_program(state_id)
-        .cycle_length(cycle_length)
-        .sequences(compiler.sequences())
-        .sequence_events(std::move(sequence_events))
-        .total_events(compiler.total_events())
-        .is_sample_pattern(is_sample_pattern)
-        .pattern_location(pattern.location)
-        .sequence_sample_mappings(std::move(sample_mappings))
-        .publish(*this);
-
-    // Wire up SAMPLE_PLAY for sample patterns. Without this the returned
-    // buffer would be raw sample-IDs (DC), not audio.
-    std::uint16_t result_buf = value_buf;
-    if (is_sample_pattern) {
-        SamplePatternEmitCtx ctx;
-        ctx.kind = SamplePatternEmitCtx::Kind::Pattern;
-        ctx.seq_state_id = state_id;
-        ctx.value_buf = value_buf;
-        ctx.trigger_buf = trigger_buf;
-        ctx.velocity_buf = velocity_buf;
-        ctx.loc = n.location;
-        std::uint16_t output_buf = emit_sample_chain(
-            buffers_, [this](const cedar::Instruction& i){ emit(i); }, ctx);
-        if (output_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            pop_path();
-            return TypedValue::void_val();
-        }
-        result_buf = output_buf;
-    }
-
-    // Build PatternPayload
-    auto payload = std::make_shared<PatternPayload>();
-    payload->fields[PatternPayload::FREQ] = value_buf;
-    payload->fields[PatternPayload::VEL] = velocity_buf;
-    payload->fields[PatternPayload::TRIG] = trigger_buf;
-    payload->state_id = state_id;
-    payload->cycle_length = cycle_length;
-    payload->is_sample_pattern = is_sample_pattern;
-    payload->max_voices = compiler.max_voices();
-
-    // Records-and-field-access PRD §3: populate extended fields so %.field
-    // works on variant-mutated patterns.
-    if (!emit_extended_field_buffers(*payload, state_id, n.location)) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Phase 2.1 PRD §11: emit per-key SEQPAT_PROP buffers for custom properties.
-    if (!emit_custom_property_buffers(compiler, *payload, state_id)) {
-        pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Variant-mutated mappings live in state_inits_.back() (moved above).
-    payload->sample_refs = sample_refs_from_mappings(
-        state_inits_.back().sequence_sample_mappings);
-    publish_sample_refs(payload->sample_refs);
-
-    pop_path();
-    return cache_and_return(node, TypedValue::make_pattern(payload, result_buf));
+    };
+    return emit_seqpat_transform(node, n, "variant", pattern_arg, hooks);
 }
 
 TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     // transport(pattern, trig, step?, reset?) - trigger-driven pattern clock
     // Decouples pattern from global BPM by using trigger edges to advance
+    //
+    // Deliberately not routed through emit_seqpat_transform: transport emits
+    // extra SEQPAT_TRANSPORT + ExtendedParams instructions, uses dual state
+    // IDs ("transport#N" + nested "pat"), and threads a clock-override buffer
+    // through SEQPAT_QUERY / per-voice readout — hooks would contort.
 
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     if (pattern_arg == NULL_NODE) {
@@ -1870,7 +1808,6 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     }
 
     // Store sequence program initialization data
-    StateInitData seq_init;
     const Node& pattern = (*pattern_arena)[pattern_node];
     codegen::StateInitBuilder::sequence_program(seq_state_id)
         .cycle_length(cycle_length)
@@ -1941,41 +1878,12 @@ TypedValue CodeGenerator::handle_tune_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
+    SeqpatTransformHooks hooks;
     // Compile the pattern with the tuning context set
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    compiler.set_tuning(*tuning);
-
-    NodeIndex pattern_node = NULL_NODE;
-    const AstArena* pattern_arena = nullptr;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, pattern_arena, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "tune() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    // Set up state ID
-    std::uint32_t tune_count = call_counters_["tune"]++;
-    push_path("tune#" + std::to_string(tune_count));
-    std::uint32_t state_id = compute_state_id();
-
-    const Node& pattern = (*pattern_arena)[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location);
-
-    pop_path();
-
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-
-    return result_tv;
+    hooks.pre_compile = [&](SequenceCompiler& compiler) {
+        compiler.set_tuning(*tuning);
+    };
+    return emit_seqpat_transform(node, n, "tune", pattern_arg, hooks);
 }
 
 // ============================================================================
@@ -2387,37 +2295,13 @@ TypedValue CodeGenerator::handle_anchor_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    const AstArena* pattern_arena = nullptr;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, pattern_arena, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "anchor() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    compiler.set_voicing_anchor(*midi);
-    apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
-
-    std::uint32_t cnt = call_counters_["anchor"]++;
-    push_path("anchor#" + std::to_string(cnt));
-    std::uint32_t state_id = compute_state_id();
-
-    const Node& pattern = (*pattern_arena)[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    SeqpatTransformHooks hooks;
+    hooks.post_compile = [&](SequenceCompiler& compiler,
+                             std::vector<std::vector<cedar::Event>>& sequence_events) {
+        compiler.set_voicing_anchor(*midi);
+        apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
+    };
+    return emit_seqpat_transform(node, n, "anchor", pattern_arg, hooks);
 }
 
 TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
@@ -2441,40 +2325,19 @@ TypedValue CodeGenerator::handle_mode_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    SequenceCompiler compiler(ast_->arena, sample_registry_);
-    NodeIndex pattern_node = NULL_NODE;
-    const AstArena* pattern_arena = nullptr;
-    std::uint32_t num_elements = 1;
-    std::vector<std::vector<cedar::Event>> sequence_events;
-    float cycle_length = 1.0f;
-    if (!compile_pattern_for_transform(*this, *ast_, pattern_arg, sample_registry_,
-                                        compiler, pattern_node, pattern_arena, num_elements,
-                                        sequence_events, cycle_length)) {
-        error("E130", "mode() failed to compile pattern argument", n.location);
-        return TypedValue::void_val();
-    }
-
-    compiler.set_voicing_mode(*m);
-    apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
-
-    std::uint32_t cnt = call_counters_["mode"]++;
-    push_path("mode#" + std::to_string(cnt));
-    std::uint32_t state_id = compute_state_id();
-
-    const Node& pattern = (*pattern_arena)[pattern_node];
-    auto result_tv = emit_pattern_with_state(
-        *this, buffers_, state_inits_, required_samples_,
-        node_types_, node, state_id, cycle_length,
-        compiler, sequence_events, pattern.location, n.location);
-
-    pop_path();
-    if (result_tv.buffer == BufferAllocator::BUFFER_UNUSED && !result_tv.pattern) {
-        error("E101", "Buffer pool exhausted", n.location);
-    }
-    return result_tv;
+    SeqpatTransformHooks hooks;
+    hooks.post_compile = [&](SequenceCompiler& compiler,
+                             std::vector<std::vector<cedar::Event>>& sequence_events) {
+        compiler.set_voicing_mode(*m);
+        apply_voicing(compiler, *ctx_->voicing_registry, sequence_events);
+    };
+    return emit_seqpat_transform(node, n, "mode", pattern_arg, hooks);
 }
 
 TypedValue CodeGenerator::handle_voicing_call(NodeIndex node, const Node& n) {
+    // Deliberately not routed through emit_seqpat_transform: voicing does
+    // dictionary-lookup + apply, not the canonical compile/mutate/emit shape
+    // (PRD Phase 5 reviewer decision).
     NodeIndex pattern_arg = get_pattern_arg(*ast_, n, 0);
     auto name_str = get_string_arg(*ast_, n, 1);
     if (pattern_arg == NULL_NODE) {

@@ -275,3 +275,29 @@ TEST_CASE("canonical_name", "[builtins]") {
         CHECK(canonical_name("") == "");
     }
 }
+
+// =============================================================================
+// BuiltinKind tags (PRD prd-codegen-sprawl-cleanup Phase 5)
+// =============================================================================
+
+TEST_CASE("pattern-transform builtins carry BuiltinKind::PatternTransform", "[builtins][kind]") {
+    // Guard the metadata that drives (and documents) transform dispatch —
+    // a new transform builtin must be tagged, and non-transforms must not be.
+    const char* transforms[] = {"slow", "fast", "rev", "transport", "bank",
+                                "variant", "tune", "palindrome", "compress",
+                                "ply", "linger", "zoom", "segment", "iter",
+                                "iterBack", "anchor", "mode", "voicing"};
+    for (const char* name : transforms) {
+        CAPTURE(name);
+        const akkado::BuiltinInfo* info = akkado::lookup_builtin(name);
+        REQUIRE(info != nullptr);
+        CHECK(info->kind == akkado::BuiltinKind::PatternTransform);
+    }
+    // Spot-check non-transforms stay Function.
+    for (const char* name : {"sin", "lp", "reverb", "out", "param"}) {
+        CAPTURE(name);
+        const akkado::BuiltinInfo* info = akkado::lookup_builtin(name);
+        REQUIRE(info != nullptr);
+        CHECK(info->kind != akkado::BuiltinKind::PatternTransform);
+    }
+}

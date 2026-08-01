@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -988,6 +989,57 @@ private:
         const SequenceCompiler& compiler,
         std::vector<std::vector<cedar::Event>>& sequence_events,
         const SourceLocation& pattern_loc);
+
+    /// PRD prd-codegen-sprawl-cleanup Phase 5 — variation points for
+    /// emit_seqpat_transform(), the shared emitter for the SequenceProgram-
+    /// recompiling transforms (bank / variant / tune / anchor / mode). The
+    /// emitter reproduces the exact per-handler sequence:
+    ///   compile_pattern_for_transform → push_path("<name>#N") →
+    ///   compute_state_id → emit SEQPAT pipeline → pop_path.
+    /// All hooks are optional (empty std::function = skipped).
+    struct SeqpatTransformHooks {
+        /// How the compiled pattern is lowered to instructions + state inits.
+        enum class Emission : std::uint8_t {
+            /// tune / anchor / mode: delegate to the static
+            /// emit_pattern_with_state helper in pattern_transforms.cpp
+            /// (per-voice SEQPAT_STEP; sample mappings AND sample_refs both
+            /// sourced from the compiler).
+            PerVoice,
+            /// bank / variant: single-voice SEQPAT_STEP; sample mappings are
+            /// copied out of the compiler, mutated via `mutate_mappings`,
+            /// moved into the SequenceProgram state init, and sample_refs
+            /// are projected from state_inits_.back().sequence_sample_mappings
+            /// so the mutation travels with the pattern value.
+            SingleVoiceMutatedMappings,
+        };
+        Emission emission = Emission::PerVoice;
+
+        /// Runs on the fresh SequenceCompiler BEFORE
+        /// compile_pattern_for_transform (tune: set_tuning).
+        std::function<void(SequenceCompiler&)> pre_compile;
+
+        /// Runs AFTER compile, BEFORE push_path (anchor / mode: set the
+        /// voicing knob and apply_voicing over the local event copy).
+        std::function<void(SequenceCompiler&,
+                           std::vector<std::vector<cedar::Event>>&)> post_compile;
+
+        /// SingleVoiceMutatedMappings only: mutate the copied sample
+        /// mappings. Runs AFTER push_path / compute_state_id — exactly where
+        /// bank / variant ran their mutation (variant compiles its index
+        /// pattern inside this hook).
+        std::function<void(std::vector<SequenceSampleMapping>&)> mutate_mappings;
+    };
+
+    /// PRD prd-codegen-sprawl-cleanup Phase 5 — canonical emitter for the
+    /// SequenceProgram-recompiling pattern transforms. Handles the shared
+    /// shape (compile → path/state-id → SEQPAT_QUERY/STEP → sequence_program
+    /// state init → sample chain → payload/extended fields/custom props →
+    /// sample_refs); per-transform variation is injected via `hooks`.
+    /// The caller does its own argument validation first.
+    TypedValue emit_seqpat_transform(NodeIndex node, const Node& n,
+                                     const char* transform_name,
+                                     NodeIndex pattern_arg,
+                                     const SeqpatTransformHooks& hooks);
 
     /// Handle bank(pattern, bank_name) - set sample bank for all events
     TypedValue handle_bank_call(NodeIndex node, const Node& n);
