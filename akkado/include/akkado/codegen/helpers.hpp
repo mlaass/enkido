@@ -8,6 +8,8 @@
 #include "akkado/string_interner.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cstring>
+#include <optional>
+#include <set>
 #include <vector>
 #include <string>
 
@@ -272,6 +274,144 @@ inline std::uint16_t emit_sample_chain(
     mul_r.inputs[4] = 0xFFFF;
     emit(mul_r);
     return scaled_buf;
+}
+
+
+// ============================================================================
+// Pattern Codegen Shared Helpers
+// ============================================================================
+// Promoted from file-local statics in akkado/src/codegen/patterns.cpp during
+// the prd-codegen-sprawl-cleanup Phase 3 file split: these are shared by the
+// pattern (patterns.cpp), pattern-transform (pattern_transforms.cpp) and
+// pattern-I/O (pattern_io.cpp) TUs.
+
+// Project per-event SequenceSampleMappings to a deduped Pattern-level
+// sample_refs vector. One entry per (bank, name, variant) tuple — the global
+// `required_samples_extended_` ledger does its own dedup across patterns, but
+// per-Pattern dedup keeps the sample_refs surface small for any consumer
+// that wants to iterate a single pattern's requirements.
+inline std::vector<RequiredSample> sample_refs_from_mappings(
+    const std::vector<SequenceSampleMapping>& mappings) {
+    std::vector<RequiredSample> refs;
+    std::set<std::string> seen;
+    refs.reserve(mappings.size());
+    for (const auto& m : mappings) {
+        RequiredSample r;
+        r.bank = m.bank;
+        r.name = m.sample_name;
+        r.variant = static_cast<int>(m.variant);
+        if (seen.insert(r.key()).second) {
+            refs.push_back(std::move(r));
+        }
+    }
+    return refs;
+}
+
+// Adjust a string-literal token's SourceLocation so it points at the first
+// character *inside* the quotes (and spans only the content). This mirrors the
+// adjustment the main parser applies in parse_mini_literal(), and must be used
+// by every parse_mini() caller so mini-notation node offsets — and therefore
+// pattern step-highlighting in the IDE — are consistent across all forms.
+inline SourceLocation mini_content_location(const SourceLocation& string_tok) {
+    SourceLocation loc = string_tok;
+    loc.offset += 1;
+    loc.column += 1;
+    loc.length = (string_tok.length >= 2) ? string_tok.length - 2 : 0;
+    return loc;
+}
+
+// Helper: Get pattern argument from a function call
+// Returns the MiniLiteral node or NULL_NODE if not a valid pattern
+inline NodeIndex get_pattern_arg(const Ast& ast, const Node& n, std::size_t arg_index) {
+    NodeIndex arg = n.first_child;
+    std::size_t idx = 0;
+    while (arg != NULL_NODE && idx < arg_index) {
+        arg = ast.arena[arg].next_sibling;
+        idx++;
+    }
+    if (arg == NULL_NODE) return NULL_NODE;
+
+    // Unwrap Argument node if present
+    const Node& arg_node = ast.arena[arg];
+    if (arg_node.type == NodeType::Argument) {
+        arg = arg_node.first_child;
+    }
+
+    return arg;
+}
+
+// Helper: Get numeric argument from a function call
+// Returns the value or default if not a valid number
+inline std::optional<float> get_number_arg(const Ast& ast, const Node& n, std::size_t arg_index) {
+    NodeIndex arg = get_pattern_arg(ast, n, arg_index);
+    if (arg == NULL_NODE) return std::nullopt;
+
+    const Node& arg_node = ast.arena[arg];
+    if (arg_node.type == NodeType::NumberLit) {
+        return static_cast<float>(arg_node.as_number());
+    }
+    return std::nullopt;
+}
+
+// Helper: Get string argument from a function call
+// Returns the string value or nullopt if not a valid string
+inline std::optional<std::string> get_string_arg(const Ast& ast, const Node& n, std::size_t arg_index) {
+    NodeIndex arg = get_pattern_arg(ast, n, arg_index);
+    if (arg == NULL_NODE) return std::nullopt;
+
+    const Node& arg_node = ast.arena[arg];
+    if (arg_node.type == NodeType::StringLit) {
+        return arg_node.as_string();
+    }
+    return std::nullopt;
+}
+
+// Helper: Check if a Call node calls a known pattern-producing function.
+// Does not check MiniLiteral or StringLit (those should be handled separately).
+inline bool is_pattern_call(const Node& n, const StringInterner& interner) {
+    if (n.type != NodeType::Call) return false;
+    std::string func_name = std::string(interner.view(n.as_identifier()));
+    return func_name == "timeline" ||
+           func_name == "chord" ||
+           func_name == "slow" || func_name == "fast" ||
+           func_name == "rev" || func_name == "transpose" || func_name == "velocity" ||
+           func_name == "bank" || func_name == "variant" || func_name == "transport" ||
+           func_name == "tune" ||
+           // Phase 2 PRD time/structure transforms
+           func_name == "early" || func_name == "late" ||
+           func_name == "palindrome" || func_name == "compress" ||
+           func_name == "ply" || func_name == "linger" ||
+           func_name == "zoom" || func_name == "segment" ||
+           func_name == "swing" || func_name == "swingBy" ||
+           func_name == "iter" || func_name == "iterBack" ||
+           // Phase 2 PRD generators (constructors)
+           func_name == "run" || func_name == "binary" || func_name == "binaryN" ||
+           // Phase 2 PRD voicing transforms (anchor / mode / voicing only;
+           // addVoicings is a registry call, not a pattern producer)
+           func_name == "anchor" || func_name == "mode" || func_name == "voicing" ||
+           // Phase 2.1 PRD §11.2: standalone note-property transforms
+           func_name == "bend" || func_name == "aftertouch" || func_name == "dur";
+}
+
+// Helper: Check if a node is a pattern-producing expression.
+// Uses symbol table for Identifier nodes (type-based), AST checks for literals/calls.
+inline bool is_pattern_node(const Ast& ast, const SymbolTable& symbols, NodeIndex node,
+                             const StringInterner& interner) {
+    if (node == NULL_NODE) return false;
+
+    const Node& n = ast.arena[node];
+
+    if (n.type == NodeType::MiniLiteral) return true;
+    if (n.type == NodeType::StringLit) return true;
+    if (is_pattern_call(n, interner)) return true;
+
+    // Identifier: check symbol table for Pattern kind (SymbolId fast path)
+    if (n.type == NodeType::Identifier) {
+        auto sym = symbols.lookup(n.as_identifier());
+        return sym && sym->kind == SymbolKind::Pattern;
+    }
+
+    return false;
 }
 
 } // namespace codegen
