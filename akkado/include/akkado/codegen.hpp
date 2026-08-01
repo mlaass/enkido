@@ -519,6 +519,13 @@ public:
     /// sentinel and unwind without re-emitting the diagnostic.
     [[nodiscard]] std::uint16_t alloc_buffer(SourceLocation loc);
 
+    /// Append a StateInitData. The single push site for state_inits_ —
+    /// every construction goes through codegen::StateInitBuilder::publish()
+    /// (PRD prd-codegen-sprawl-cleanup Phase 2).
+    void push_state_init(StateInitData&& init) {
+        state_inits_.push_back(std::move(init));
+    }
+
 private:
     // ============================================================================
     // PRD prd-parser-codegen-correctness.md Phase 3 (F2):

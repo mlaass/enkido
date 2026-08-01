@@ -8,6 +8,7 @@
 #include "akkado/mini_parser.hpp"
 #include "akkado/sample_registry.hpp"
 #include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/state_init_builder.hpp"
 #include "akkado/codegen/helpers.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cedar/vm/vm.hpp>
@@ -12013,4 +12014,126 @@ TEST_CASE("Buffer pool exhaustion emits E101", "[codegen][builder][e101]") {
         if (d.code == "E101") saw_e101 = true;
     }
     CHECK(saw_e101);
+}
+
+// =============================================================================
+// StateInitBuilder (PRD prd-codegen-sprawl-cleanup Phase 2)
+// =============================================================================
+
+TEST_CASE("StateInitBuilder: factories match manual construction", "[codegen][state_init_builder]") {
+    using akkado::codegen::StateInitBuilder;
+    using akkado::StateInitData;
+
+    SECTION("sequence_program") {
+        std::vector<std::vector<cedar::Event>> events(1);
+        events[0].resize(3);
+        akkado::StateInitData manual{};
+        manual.type = StateInitData::Type::SequenceProgram;
+        manual.state_id = 0xABCD1234u;
+        manual.cycle_length = 4.0f;
+        manual.is_sample_pattern = true;
+        manual.total_events = 3;
+        manual.ast_json = "{}";
+        manual.pattern_location = akkado::SourceLocation{7, 3, 21, 5};
+
+        auto events_copy = events;
+        StateInitData built = StateInitBuilder::sequence_program(0xABCD1234u)
+                                  .cycle_length(4.0f)
+                                  .is_sample_pattern(true)
+                                  .total_events(3)
+                                  .ast_json("{}")
+                                  .pattern_location(akkado::SourceLocation{7, 3, 21, 5})
+                                  .sequence_events(std::move(events_copy))
+                                  .take();
+
+        CHECK(built.type == manual.type);
+        CHECK(built.state_id == manual.state_id);
+        CHECK(built.cycle_length == manual.cycle_length);
+        CHECK(built.is_sample_pattern == manual.is_sample_pattern);
+        CHECK(built.total_events == manual.total_events);
+        CHECK(built.ast_json == manual.ast_json);
+        CHECK(built.pattern_location.offset == manual.pattern_location.offset);
+        REQUIRE(built.sequence_events.size() == 1);
+        CHECK(built.sequence_events[0].size() == 3);
+        // Untouched fields keep their defaults.
+        CHECK(built.timeline_breakpoints.empty());
+        CHECK(built.poly_max_voices == manual.poly_max_voices);
+        CHECK(built.ext_count == 0);
+    }
+
+    SECTION("poly_alloc") {
+        StateInitData built = StateInitBuilder::poly_alloc(42u)
+                                  .poly_seq_state_id(7u)
+                                  .poly_max_voices(16)
+                                  .poly_mode(2)
+                                  .poly_steal_strategy(0)
+                                  .poly_release_seconds(0.25f)
+                                  .take();
+        CHECK(built.type == StateInitData::Type::PolyAlloc);
+        CHECK(built.state_id == 42u);
+        CHECK(built.poly_seq_state_id == 7u);
+        CHECK(built.poly_max_voices == 16);
+        CHECK(built.poly_mode == 2);
+        CHECK(built.poly_release_seconds == 0.25f);
+    }
+
+    SECTION("extended_params") {
+        StateInitData built = StateInitBuilder::extended_params(9u)
+                                  .ext_slot(0, 0.5f, 0xFFFF)
+                                  .ext_slot(1, 0.0f, 12)
+                                  .ext_count(2)
+                                  .take();
+        CHECK(built.type == StateInitData::Type::ExtendedParams);
+        CHECK(built.ext_count == 2);
+        CHECK(built.ext_constants[0] == 0.5f);
+        CHECK(built.ext_buffer_indices[0] == 0xFFFF);
+        CHECK(built.ext_buffer_indices[1] == 12);
+        // Factory pre-fills unset slots with 0xFFFF (constant mode).
+        for (std::size_t i = 2; i < built.ext_buffer_indices.size(); ++i) {
+            CHECK(built.ext_buffer_indices[i] == 0xFFFF);
+        }
+    }
+
+    SECTION("timeline") {
+        std::vector<cedar::TimelineState::Breakpoint> bps(2);
+        StateInitData built = StateInitBuilder::timeline(5u)
+                                  .timeline_breakpoints(std::move(bps))
+                                  .timeline_loop(true, 8.0f)
+                                  .take();
+        CHECK(built.type == StateInitData::Type::Timeline);
+        CHECK(built.timeline_breakpoints.size() == 2);
+        CHECK(built.timeline_loop);
+        CHECK(built.timeline_loop_length == 8.0f);
+    }
+
+    SECTION("foreach_alloc") {
+        StateInitData built = StateInitBuilder::foreach_alloc(11u)
+                                  .foreach_block_id(2u)
+                                  .foreach_event_src_state_id(33u)
+                                  .foreach_max_iterations(128)
+                                  .foreach_allocator_kind(1)
+                                  .foreach_field_slot_count(4)
+                                  .foreach_output_count(2)
+                                  .take();
+        CHECK(built.type == StateInitData::Type::ForeachAlloc);
+        CHECK(built.foreach_block_id == 2u);
+        CHECK(built.foreach_event_src_state_id == 33u);
+        CHECK(built.foreach_max_iterations == 128);
+        CHECK(built.foreach_allocator_kind == 1);
+        CHECK(built.foreach_field_slot_count == 4);
+        CHECK(built.foreach_output_count == 2);
+    }
+
+    SECTION("event-transform family types tag correctly") {
+        CHECK(StateInitBuilder::event_transform(1u).take().type ==
+              StateInitData::Type::EventTransform);
+        CHECK(StateInitBuilder::rate_scale(1u).take().type ==
+              StateInitData::Type::RateScale);
+        CHECK(StateInitBuilder::reorder(1u).take().type ==
+              StateInitData::Type::Reorder);
+        CHECK(StateInitBuilder::fanout(1u).take().type ==
+              StateInitData::Type::Fanout);
+        CHECK(StateInitBuilder::soundfont_events(1u).take().type ==
+              StateInitData::Type::SoundfontEvents);
+    }
 }

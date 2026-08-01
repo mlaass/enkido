@@ -6,6 +6,7 @@
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/state_init_builder.hpp"
 #include "akkado/const_eval.hpp"
 #include "akkado/expr_kinds.hpp"
 #include "akkado/overload.hpp"
@@ -3129,33 +3130,30 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     pop_path();
 
     // State-init: PolyAlloc (legacy) or ForeachAlloc/VOICE_POOL (new path).
-    StateInitData poly_init;
-    poly_init.state_id = poly_state_id;
-    poly_init.poly_seq_state_id = seq_state_id;
-    poly_init.poly_max_voices = max_voices;
-    poly_init.poly_mode = mode;
-    poly_init.poly_steal_strategy = 0;  // oldest
-    poly_init.poly_release_seconds = release_seconds;
-    // Phase 3: custom record-suffix property plumbing. prop_count contiguous
-    // field-bank slots follow the 11 fixed fields; prop_defaults are applied
-    // per voice by the VM when an event omits the property.
-    poly_init.poly_prop_count = static_cast<std::uint8_t>(prop_count);
-    for (std::size_t i = 0; i < cedar::MAX_PROPS_PER_EVENT; ++i) {
-        poly_init.poly_prop_defaults[i] = prop_defaults[i];
+    auto poly_init = (legacy_poly
+                          ? codegen::StateInitBuilder::poly_alloc(poly_state_id)
+                          : codegen::StateInitBuilder::foreach_alloc(poly_state_id))
+                         .poly_seq_state_id(seq_state_id)
+                         .poly_max_voices(max_voices)
+                         .poly_mode(mode)
+                         .poly_steal_strategy(0)  // oldest
+                         .poly_release_seconds(release_seconds)
+                         // Phase 3: custom record-suffix property plumbing.
+                         // prop_count contiguous field-bank slots follow the
+                         // 11 fixed fields; prop_defaults are applied per
+                         // voice by the VM when an event omits the property.
+                         .poly_props(static_cast<std::uint8_t>(prop_count),
+                                     prop_defaults);
+    if (!legacy_poly) {
+        poly_init.foreach_allocator_kind(0)  // VOICE_POOL
+            .foreach_block_id(poly_block_id)
+            .foreach_event_src_state_id(seq_state_id)
+            // VOICE_POOL never indexes a param bank (run_voice_pool fills
+            // the field bank directly), so this slot count is inert here.
+            .foreach_field_slot_count(5)
+            .foreach_output_count(2);
     }
-    if (legacy_poly) {
-        poly_init.type = StateInitData::Type::PolyAlloc;
-    } else {
-        poly_init.type = StateInitData::Type::ForeachAlloc;
-        poly_init.foreach_allocator_kind = 0;  // VOICE_POOL
-        poly_init.foreach_block_id = poly_block_id;
-        poly_init.foreach_event_src_state_id = seq_state_id;
-        // VOICE_POOL never indexes a param bank (run_voice_pool fills the
-        // field bank directly), so this slot count is inert here.
-        poly_init.foreach_field_slot_count = 5;
-        poly_init.foreach_output_count = 2;
-    }
-    state_inits_.push_back(std::move(poly_init));
+    poly_init.publish(*this);
 
     register_stereo(node, mix_buf, mix_buf_r);
     return cache_and_return(node, TypedValue::stereo_signal(mix_buf, mix_buf_r));

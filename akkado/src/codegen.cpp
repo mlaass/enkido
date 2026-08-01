@@ -2,6 +2,7 @@
 #include "akkado/named_args.hpp"
 #include "akkado/codegen/codegen.hpp"  // Master include for all codegen helpers
 #include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/state_init_builder.hpp"
 #include "akkado/builtins.hpp"
 #include "akkado/overload.hpp"
 #include "akkado/compile_context.hpp"
@@ -97,38 +98,32 @@ void CodeGenerator::emit_extended_params_init(std::uint32_t state_id,
     if (info.extended_param_count == 0) return;
 
     const std::size_t base = info.total_params();
-    StateInitData ext{};
     // ExtendedParams lives in a sibling StatePool slot keyed off the
     // opcode's state_id XOR'd with EXT_PARAMS_STATE_XOR. This keeps the
     // opcode's primary DSP state (e.g. ChorusState) and its ExtendedParams
     // in distinct slots — get_or_create<DSPState> would otherwise overwrite
     // the ExtendedParams.
-    ext.state_id = cedar::ext_params_state_id(state_id);
-    ext.type = StateInitData::Type::ExtendedParams;
-    ext.ext_count = info.extended_param_count;
-    ext.ext_buffer_indices.fill(static_cast<std::uint16_t>(0xFFFF));
+    auto ext = codegen::StateInitBuilder::extended_params(
+                   cedar::ext_params_state_id(state_id))
+                   .ext_count(info.extended_param_count);
 
     for (std::uint8_t i = 0; i < info.extended_param_count && i < MAX_EXTENDED_PARAMS; ++i) {
         const std::size_t arg_idx = base + i;
         if (arg_idx < arg_buffers.size() &&
             arg_buffers[arg_idx] != BufferAllocator::BUFFER_UNUSED) {
             // Caller supplied an argument — read from its buffer at runtime.
-            ext.ext_buffer_indices[i] = arg_buffers[arg_idx];
-            ext.ext_constants[i] = 0.0f;
-        } else if (i < info.extended_param_count &&
-                   !std::isnan(info.extended_defaults[i])) {
+            ext.ext_slot(i, 0.0f, arg_buffers[arg_idx]);
+        } else if (!std::isnan(info.extended_defaults[i])) {
             // Use the declared default as a constant slot.
-            ext.ext_constants[i] = info.extended_defaults[i];
-            ext.ext_buffer_indices[i] = 0xFFFFu;
+            ext.ext_slot(i, info.extended_defaults[i], 0xFFFFu);
         } else {
             // Required ext param missing — emit zero constant. The analyzer
             // is responsible for surfacing the missing-arg error upstream.
-            ext.ext_constants[i] = 0.0f;
-            ext.ext_buffer_indices[i] = 0xFFFFu;
+            ext.ext_slot(i, 0.0f, 0xFFFFu);
         }
     }
 
-    state_inits_.push_back(std::move(ext));
+    ext.publish(*this);
 }
 
 CodeGenResult CodeGenerator::generate(const Ast& ast, SymbolTable& symbols,

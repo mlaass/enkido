@@ -22,6 +22,7 @@
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/state_init_builder.hpp"
 
 #include <cedar/opcodes/event_transform_encoding.hpp>
 
@@ -385,16 +386,14 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
     pop_path();
 
     // FOREACH_EVENT instance config.
-    StateInitData fe_init;
-    fe_init.state_id = state_id;
-    fe_init.type = StateInitData::Type::ForeachAlloc;
-    fe_init.foreach_allocator_kind = allocator_kind;
-    fe_init.foreach_block_id = block_id;
-    fe_init.foreach_event_src_state_id = seq_state_id;
-    fe_init.foreach_max_iterations = 64;
-    fe_init.foreach_field_slot_count = need_bank ? 8 : 1;
-    fe_init.foreach_output_count = output_count;
-    state_inits_.push_back(std::move(fe_init));
+    codegen::StateInitBuilder::foreach_alloc(state_id)
+        .foreach_allocator_kind(allocator_kind)
+        .foreach_block_id(block_id)
+        .foreach_event_src_state_id(seq_state_id)
+        .foreach_max_iterations(64)
+        .foreach_field_slot_count(need_bank ? 8 : 1)
+        .foreach_output_count(output_count)
+        .publish(*this);
 
     if (kind == 0) {
         register_stereo(node, mix_l, mix_r);
@@ -761,13 +760,11 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     // EventTransform StateInitData — allocates the transform's OutputEvents
     // buffer. total_events is not known from an already-compiled upstream
     // payload; size generously (the runtime floors to >=32 regardless).
-    StateInitData et_init;
-    et_init.state_id = state_id;
-    et_init.type = StateInitData::Type::EventTransform;
-    et_init.cycle_length = cycle_length;
-    et_init.is_sample_pattern = is_sample_pattern;
-    et_init.total_events = 256;
-    state_inits_.push_back(std::move(et_init));
+    codegen::StateInitBuilder::event_transform(state_id)
+        .cycle_length(cycle_length)
+        .is_sample_pattern(is_sample_pattern)
+        .total_events(256)
+        .publish(*this);
 
     // --- Emit the readout for the transform-owned SequenceState ------------
     PatternQuerySource src;

@@ -4,6 +4,7 @@
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/state_init_builder.hpp"
 #include "akkado/codegen/options.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/chord_parser.hpp"
@@ -1475,20 +1476,18 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     }
 
     // Store sequence program initialization data
-    StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = compiler.sequence_events();  // Store event vectors
-    seq_init.total_events = compiler.total_events();        // Size hint for arena allocation
-    seq_init.is_sample_pattern = is_sample_pattern;
-    seq_init.pattern_location = pattern.location;  // Store pattern content location for UI
-    seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
+    auto seq_init = codegen::StateInitBuilder::sequence_program(state_id)
+                        .cycle_length(cycle_length)
+                        .sequences(compiler.sequences())
+                        .sequence_events(compiler.sequence_events())
+                        .total_events(compiler.total_events())
+                        .is_sample_pattern(is_sample_pattern)
+                        .pattern_location(pattern.location)
+                        .sequence_sample_mappings(compiler.sample_mappings());
     if (emit_debug_json_) {
-        seq_init.ast_json = serialize_mini_ast_json(pattern_node, mini_arena);  // Serialize AST for debug UI
+        seq_init.ast_json(serialize_mini_ast_json(pattern_node, mini_arena));
     }
-    state_inits_.push_back(std::move(seq_init));
+    seq_init.publish(*this);
 
     pattern_payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
     publish_sample_refs(pattern_payload->sample_refs);
@@ -1780,16 +1779,14 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     }
 
     // Store sequence program
-    StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = compiler.sequence_events();  // Store event vectors
-    seq_init.total_events = compiler.total_events();        // Size hint for arena allocation
-    seq_init.is_sample_pattern = is_sample_pattern;
-    seq_init.sequence_sample_mappings = compiler.sample_mappings();  // For deferred sample ID resolution
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(compiler.sequence_events())
+        .total_events(compiler.total_events())
+        .is_sample_pattern(is_sample_pattern)
+        .sequence_sample_mappings(compiler.sample_mappings())
+        .publish(*this);
 
     pattern_payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
     publish_sample_refs(pattern_payload->sample_refs);
@@ -1926,17 +1923,15 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     }
 
     // Store sequence program initialization data
-    StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = compiler.sequence_events();
-    seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = false;
-    seq_init.pattern_location = pattern.location;
-    seq_init.sequence_sample_mappings = compiler.sample_mappings();
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(compiler.sequence_events())
+        .total_events(compiler.total_events())
+        .is_sample_pattern(false)
+        .pattern_location(pattern.location)
+        .sequence_sample_mappings(compiler.sample_mappings())
+        .publish(*this);
 
     payload->state_id = state_id;
     payload->cycle_length = cycle_length;
@@ -2934,17 +2929,15 @@ CodeGenerator::PatternQuerySource CodeGenerator::emit_pattern_query_only(
         .emit(*this);
 
     // Store sequence program initialization data for the inner SequenceState.
-    StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = std::move(sequence_events);
-    seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = compiler.is_sample_pattern();
-    seq_init.pattern_location = pattern_loc;
-    seq_init.sequence_sample_mappings = compiler.sample_mappings();
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(std::move(sequence_events))
+        .total_events(compiler.total_events())
+        .is_sample_pattern(compiler.is_sample_pattern())
+        .pattern_location(pattern_loc)
+        .sequence_sample_mappings(compiler.sample_mappings())
+        .publish(*this);
 
     src.ok = true;
     src.state_id = state_id;
@@ -3007,14 +3000,10 @@ TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n)
         return TypedValue::void_val();
     }
 
-    // Create StateInitData for timeline breakpoints
-    StateInitData timeline_init;
-    timeline_init.state_id = state_id;
-    timeline_init.type = StateInitData::Type::Timeline;
-    timeline_init.timeline_breakpoints = std::move(breakpoints);
-    timeline_init.timeline_loop = true;
-    timeline_init.timeline_loop_length = stream.cycle_span;  // cycle = beat
-    state_inits_.push_back(std::move(timeline_init));
+    codegen::StateInitBuilder::timeline(state_id)
+        .timeline_breakpoints(std::move(breakpoints))
+        .timeline_loop(true, stream.cycle_span)  // cycle = beat
+        .publish(*this);
 
     pop_path();
     return cache_and_return(node, TypedValue::signal(out_buf));
@@ -3101,14 +3090,10 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Create StateInitData for timeline breakpoints
-    StateInitData timeline_init;
-    timeline_init.state_id = state_id;
-    timeline_init.type = StateInitData::Type::Timeline;
-    timeline_init.timeline_breakpoints = std::move(breakpoints);
-    timeline_init.timeline_loop = true;
-    timeline_init.timeline_loop_length = stream.cycle_span;  // cycle = beat
-    state_inits_.push_back(std::move(timeline_init));
+    codegen::StateInitBuilder::timeline(state_id)
+        .timeline_breakpoints(std::move(breakpoints))
+        .timeline_loop(true, stream.cycle_span)  // cycle = beat
+        .publish(*this);
 
     pop_path();
     return cache_and_return(node, TypedValue::signal(out_buf));
@@ -3337,11 +3322,9 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
         emit(ers);
     }
 
-    StateInitData rs_init{};
-    rs_init.state_id = ers_state_id;
-    rs_init.type = StateInitData::Type::RateScale;
-    rs_init.pattern_location = n.location;
-    state_inits_.push_back(std::move(rs_init));
+    codegen::StateInitBuilder::rate_scale(ers_state_id)
+        .pattern_location(n.location)
+        .publish(*this);
 
     return result_tv;
 }
@@ -3427,16 +3410,14 @@ TypedValue CodeGenerator::emit_reorder_call(
 
     // Downstream transform state: holds the rewritten OutputEvents that the
     // readout reads via SEQPAT_STEP / SEQPAT_FIELD etc.
-    StateInitData rd_init{};
-    rd_init.state_id = transform_state_id;
-    rd_init.type = StateInitData::Type::Reorder;
-    rd_init.cycle_length = cycle_length * cycle_length_factor;
-    rd_init.is_sample_pattern = compiler.is_sample_pattern();
     // OutputEvents capacity: max(upstream * fanout_factor, 32). The state
     // pool clamps to a 32-floor and rounds up internally.
-    rd_init.total_events = compiler.total_events() * capacity_factor;
-    rd_init.pattern_location = pattern.location;
-    state_inits_.push_back(std::move(rd_init));
+    codegen::StateInitBuilder::reorder(transform_state_id)
+        .cycle_length(cycle_length * cycle_length_factor)
+        .is_sample_pattern(compiler.is_sample_pattern())
+        .total_events(compiler.total_events() * capacity_factor)
+        .pattern_location(pattern.location)
+        .publish(*this);
 
     pop_path();  // out of "<fn>#N"
 
@@ -3528,14 +3509,12 @@ TypedValue CodeGenerator::emit_fanout_call(
         .state_id(transform_state_id)
         .emit(*this);
 
-    StateInitData fn_init{};
-    fn_init.state_id = transform_state_id;
-    fn_init.type = StateInitData::Type::Fanout;
-    fn_init.cycle_length = cycle_length * cycle_length_factor;
-    fn_init.is_sample_pattern = compiler.is_sample_pattern();
-    fn_init.total_events = compiler.total_events() * capacity_factor;
-    fn_init.pattern_location = pattern.location;
-    state_inits_.push_back(std::move(fn_init));
+    codegen::StateInitBuilder::fanout(transform_state_id)
+        .cycle_length(cycle_length * cycle_length_factor)
+        .is_sample_pattern(compiler.is_sample_pattern())
+        .total_events(compiler.total_events() * capacity_factor)
+        .pattern_location(pattern.location)
+        .publish(*this);
 
     pop_path();  // out of "<fn>#N"
 
@@ -3717,17 +3696,16 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
 
     // Store sequence program initialization data
     StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = std::move(sequence_events);
-    seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = is_sample_pattern;
     const Node& pattern = (*pattern_arena)[pattern_node];
-    seq_init.pattern_location = pattern.location;
-    seq_init.sequence_sample_mappings = std::move(sample_mappings);  // Use updated mappings
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(std::move(sequence_events))
+        .total_events(compiler.total_events())
+        .is_sample_pattern(is_sample_pattern)
+        .pattern_location(pattern.location)
+        .sequence_sample_mappings(std::move(sample_mappings))
+        .publish(*this);
 
     // Wire up SAMPLE_PLAY for sample patterns. Without this the returned
     // buffer would be raw sample-IDs (DC), not audio.
@@ -3922,17 +3900,16 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
 
     // Store sequence program initialization data
     StateInitData seq_init;
-    seq_init.state_id = state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = std::move(sequence_events);
-    seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = is_sample_pattern;
     const Node& pattern = (*pattern_arena)[pattern_node];
-    seq_init.pattern_location = pattern.location;
-    seq_init.sequence_sample_mappings = std::move(sample_mappings);  // Use updated mappings
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(std::move(sequence_events))
+        .total_events(compiler.total_events())
+        .is_sample_pattern(is_sample_pattern)
+        .pattern_location(pattern.location)
+        .sequence_sample_mappings(std::move(sample_mappings))
+        .publish(*this);
 
     // Wire up SAMPLE_PLAY for sample patterns. Without this the returned
     // buffer would be raw sample-IDs (DC), not audio.
@@ -4079,13 +4056,11 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     }
 
     // cycle_length → ExtendedParams<1> slot 0 (constant).
-    StateInitData transport_ext{};
-    transport_ext.state_id = cedar::ext_params_state_id(transport_state_id);
-    transport_ext.type = StateInitData::Type::ExtendedParams;
-    transport_ext.ext_count = 1;
-    transport_ext.ext_buffer_indices.fill(0xFFFFu);
-    transport_ext.ext_constants[0] = cycle_length;
-    state_inits_.push_back(transport_ext);
+    codegen::StateInitBuilder::extended_params(
+            cedar::ext_params_state_id(transport_state_id))
+        .ext_count(1)
+        .ext_slot(0, cycle_length, 0xFFFFu)
+        .publish(*this);
 
     // Emit SEQPAT_QUERY with clock override
     codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
@@ -4127,17 +4102,16 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
 
     // Store sequence program initialization data
     StateInitData seq_init;
-    seq_init.state_id = seq_state_id;
-    seq_init.type = StateInitData::Type::SequenceProgram;
-    seq_init.cycle_length = cycle_length;
-    seq_init.sequences = compiler.sequences();
-    seq_init.sequence_events = std::move(sequence_events);
-    seq_init.total_events = compiler.total_events();
-    seq_init.is_sample_pattern = is_sample_pattern;
     const Node& pattern = (*pattern_arena)[pattern_node];
-    seq_init.pattern_location = pattern.location;
-    seq_init.sequence_sample_mappings = compiler.sample_mappings();
-    state_inits_.push_back(std::move(seq_init));
+    codegen::StateInitBuilder::sequence_program(seq_state_id)
+        .cycle_length(cycle_length)
+        .sequences(compiler.sequences())
+        .sequence_events(std::move(sequence_events))
+        .total_events(compiler.total_events())
+        .is_sample_pattern(is_sample_pattern)
+        .pattern_location(pattern.location)
+        .sequence_sample_mappings(compiler.sample_mappings())
+        .publish(*this);
 
     pattern_payload->sample_refs = sample_refs_from_mappings(compiler.sample_mappings());
     publish_sample_refs(pattern_payload->sample_refs);
@@ -5089,12 +5063,10 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
 
         // Tell the host to seed the SoundFontVoiceState with the upstream
         // state_id and the preset index before audio starts.
-        StateInitData sf_init;
-        sf_init.state_id          = state_id;
-        sf_init.type              = StateInitData::Type::SoundfontEvents;
-        sf_init.sf_seq_state_id   = upstream_seq_state_id;
-        sf_init.sf_preset_idx     = preset_index;
-        state_inits_.push_back(std::move(sf_init));
+        codegen::StateInitBuilder::soundfont_events(state_id)
+            .sf_seq_state_id(upstream_seq_state_id)
+            .sf_preset_idx(preset_index)
+            .publish(*this);
 
         per_voice_outs.push_back(out_buf);
     } else {
