@@ -88,16 +88,22 @@ add_library(akkado STATIC
     src/expr_kinds.cpp
     src/named_args.cpp
     src/const_eval.cpp
-    src/codegen.cpp
-    src/codegen_arrays.cpp
-    src/codegen_functions.cpp
-    src/codegen_control_flow.cpp
-    src/codegen_higher_order.cpp
-    src/codegen_state.cpp
-    src/codegen_params.cpp
-    src/codegen_patterns.cpp
-    src/codegen_stereo.cpp
-    src/codegen_viz.cpp
+    src/codegen/codegen.cpp
+    src/codegen/visit_dispatch.cpp
+    src/codegen/bus.cpp
+    src/codegen/records.cpp
+    src/codegen/arrays.cpp
+    src/codegen/functions.cpp
+    src/codegen/control_flow.cpp
+    src/codegen/higher_order.cpp
+    src/codegen/state.cpp
+    src/codegen/params.cpp
+    src/codegen/patterns.cpp
+    src/codegen/pattern_compiler.cpp
+    src/codegen/pattern_transforms.cpp
+    src/codegen/pattern_io.cpp
+    src/codegen/stereo.cpp
+    src/codegen/viz.cpp
     src/codegen/options.cpp
     src/builtins_json.cpp
     # Whole file is #ifdef CEDAR_HOST_EXTENSIONS — an empty TU when the flag is off.
