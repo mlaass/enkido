@@ -7,6 +7,7 @@
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
 #include "akkado/codegen/options.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/builtins.hpp"
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <algorithm>
@@ -178,22 +179,14 @@ TypedValue CodeGenerator::handle_oscilloscope_call(NodeIndex node, const Node& n
     viz_decls_.push_back(std::move(decl));
 
     // 7. Emit PROBE opcode to capture signal data
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PROBE)
+            .input(0, signal_buf)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction probe_inst{};
-    probe_inst.opcode = cedar::Opcode::PROBE;
-    probe_inst.out_buffer = out_buf;
-    probe_inst.inputs[0] = signal_buf;
-    probe_inst.inputs[1] = 0xFFFF;
-    probe_inst.inputs[2] = 0xFFFF;
-    probe_inst.inputs[3] = 0xFFFF;
-    probe_inst.inputs[4] = 0xFFFF;
-    probe_inst.state_id = state_id;
-    emit(probe_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -249,22 +242,14 @@ TypedValue CodeGenerator::handle_waveform_call(NodeIndex node, const Node& n) {
     viz_decls_.push_back(std::move(decl));
 
     // 7. Emit PROBE opcode to capture signal data
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PROBE)
+            .input(0, signal_buf)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction probe_inst{};
-    probe_inst.opcode = cedar::Opcode::PROBE;
-    probe_inst.out_buffer = out_buf;
-    probe_inst.inputs[0] = signal_buf;
-    probe_inst.inputs[1] = 0xFFFF;
-    probe_inst.inputs[2] = 0xFFFF;
-    probe_inst.inputs[3] = 0xFFFF;
-    probe_inst.inputs[4] = 0xFFFF;
-    probe_inst.state_id = state_id;
-    emit(probe_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -322,23 +307,15 @@ TypedValue CodeGenerator::handle_spectrum_call(NodeIndex node, const Node& n) {
     // 7. Emit FFT_PROBE opcode (migrated from PROBE for WASM FFT)
     std::uint8_t fft_log2 = fft_log2_from_payload(options);
 
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::FFT_PROBE)
+            .rate(fft_log2)
+            .input(0, signal_buf)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction probe_inst{};
-    probe_inst.opcode = cedar::Opcode::FFT_PROBE;
-    probe_inst.rate = fft_log2;
-    probe_inst.out_buffer = out_buf;
-    probe_inst.inputs[0] = signal_buf;
-    probe_inst.inputs[1] = 0xFFFF;
-    probe_inst.inputs[2] = 0xFFFF;
-    probe_inst.inputs[3] = 0xFFFF;
-    probe_inst.inputs[4] = 0xFFFF;
-    probe_inst.state_id = state_id;
-    emit(probe_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -395,23 +372,15 @@ TypedValue CodeGenerator::handle_waterfall_call(NodeIndex node, const Node& n) {
     // 7. Emit FFT_PROBE opcode
     std::uint8_t fft_log2 = fft_log2_from_payload(options);
 
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::FFT_PROBE)
+            .rate(fft_log2)
+            .input(0, signal_buf)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction probe_inst{};
-    probe_inst.opcode = cedar::Opcode::FFT_PROBE;
-    probe_inst.rate = fft_log2;
-    probe_inst.out_buffer = out_buf;
-    probe_inst.inputs[0] = signal_buf;
-    probe_inst.inputs[1] = 0xFFFF;
-    probe_inst.inputs[2] = 0xFFFF;
-    probe_inst.inputs[3] = 0xFFFF;
-    probe_inst.inputs[4] = 0xFFFF;
-    probe_inst.state_id = state_id;
-    emit(probe_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }

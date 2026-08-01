@@ -1,6 +1,7 @@
 #include "akkado/codegen.hpp"
 #include "akkado/named_args.hpp"
 #include "akkado/codegen/codegen.hpp"  // Master include for all codegen helpers
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/builtins.hpp"
 #include "akkado/overload.hpp"
 #include "akkado/compile_context.hpp"
@@ -339,49 +340,24 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
         }
 
         case NodeType::NumberLit: {
-            // Emit PUSH_CONST
-            std::uint16_t out = buffers_.allocate();
+            const std::uint16_t out =
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(static_cast<float>(n.as_number()))
+                    .emit(*this, n.location);
             if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
             }
-
-            cedar::Instruction inst{};
-            inst.opcode = cedar::Opcode::PUSH_CONST;
-            inst.out_buffer = out;
-            inst.inputs[0] = 0xFFFF;
-            inst.inputs[1] = 0xFFFF;
-            inst.inputs[2] = 0xFFFF;
-            inst.inputs[3] = 0xFFFF;
-
-            // Encode float value (split across inputs[4] and state_id)
-            float value = static_cast<float>(n.as_number());
-            encode_const_value(inst, value);
-
-            emit(inst);
             return cache_and_return(node, TypedValue::number(out));
         }
 
         case NodeType::BoolLit: {
-            // Emit PUSH_CONST with 1.0 or 0.0
-            std::uint16_t out = buffers_.allocate();
+            const std::uint16_t out =
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(n.as_bool() ? 1.0f : 0.0f)
+                    .emit(*this, n.location);
             if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
             }
-
-            cedar::Instruction inst{};
-            inst.opcode = cedar::Opcode::PUSH_CONST;
-            inst.out_buffer = out;
-            inst.inputs[0] = 0xFFFF;
-            inst.inputs[1] = 0xFFFF;
-            inst.inputs[2] = 0xFFFF;
-            inst.inputs[3] = 0xFFFF;
-
-            float value = n.as_bool() ? 1.0f : 0.0f;
-            encode_const_value(inst, value);
-
-            emit(inst);
             return cache_and_return(node, TypedValue::number(out));
         }
 
@@ -404,20 +380,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // for any consumer that reads it directly), but tag the TypedValue
                 // as a zero-length Array so array operators can detect it and
                 // fire their empty-array branches (e.g. mean → 0, reduce → init).
-                std::uint16_t out = buffers_.allocate();
+                const std::uint16_t out =
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(0.0f)
+                        .emit(*this, n.location);
                 if (out == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
                 }
-                cedar::Instruction inst{};
-                inst.opcode = cedar::Opcode::PUSH_CONST;
-                inst.out_buffer = out;
-                inst.inputs[0] = 0xFFFF;
-                inst.inputs[1] = 0xFFFF;
-                inst.inputs[2] = 0xFFFF;
-                inst.inputs[3] = 0xFFFF;
-                encode_const_value(inst, 0.0f);
-                emit(inst);
                 return cache_and_return(node, TypedValue::make_array({}, out));
             }
 
@@ -450,20 +419,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             if (elements.empty()) {
                 // All spreads were empty — emit a zero placeholder buffer like the
                 // empty-array branch above.
-                std::uint16_t out = buffers_.allocate();
+                const std::uint16_t out =
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(0.0f)
+                        .emit(*this, n.location);
                 if (out == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
                 }
-                cedar::Instruction inst{};
-                inst.opcode = cedar::Opcode::PUSH_CONST;
-                inst.out_buffer = out;
-                inst.inputs[0] = 0xFFFF;
-                inst.inputs[1] = 0xFFFF;
-                inst.inputs[2] = 0xFFFF;
-                inst.inputs[3] = 0xFFFF;
-                encode_const_value(inst, 0.0f);
-                emit(inst);
                 return cache_and_return(node, TypedValue::make_array({}, out));
             }
 
@@ -510,22 +472,15 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // handles per-sample varying length and the empty-event case.
             if (arr_tv.type == ValueType::DynArray && arr_tv.dyn) {
                 TypedValue idx_tv = visit(idx_node);
-                std::uint16_t out = buffers_.allocate();
+                const std::uint16_t out =
+                    codegen::InstructionBuilder(cedar::Opcode::ARRAY_INDEX)
+                        .inputs({arr_tv.dyn->data_buffer, idx_tv.buffer,
+                                 arr_tv.dyn->len_buffer})
+                        .rate(0)  // 0 = wrap mode
+                        .emit(*this, n.location);
                 if (out == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
                 }
-                cedar::Instruction index_inst{};
-                index_inst.opcode = cedar::Opcode::ARRAY_INDEX;
-                index_inst.out_buffer = out;
-                index_inst.inputs[0] = arr_tv.dyn->data_buffer;
-                index_inst.inputs[1] = idx_tv.buffer;
-                index_inst.inputs[2] = arr_tv.dyn->len_buffer;
-                index_inst.inputs[3] = 0xFFFF;
-                index_inst.inputs[4] = 0xFFFF;
-                index_inst.rate = 0;  // 0 = wrap mode
-                index_inst.state_id = 0;
-                emit(index_inst);
                 return cache_and_return(node, TypedValue::signal(out));
             }
 
@@ -549,23 +504,14 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 }
 
                 // For runtime arrays, emit ARRAY_UNPACK
-                std::uint16_t out = buffers_.allocate();
+                const std::uint16_t out =
+                    codegen::InstructionBuilder(cedar::Opcode::ARRAY_UNPACK)
+                        .input(0, arr_tv.buffer)
+                        .rate(static_cast<std::uint8_t>(idx_val))
+                        .emit(*this, n.location);
                 if (out == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
                 }
-
-                cedar::Instruction unpack_inst{};
-                unpack_inst.opcode = cedar::Opcode::ARRAY_UNPACK;
-                unpack_inst.out_buffer = out;
-                unpack_inst.inputs[0] = arr_tv.buffer;
-                unpack_inst.inputs[1] = 0xFFFF;
-                unpack_inst.inputs[2] = 0xFFFF;
-                unpack_inst.inputs[3] = 0xFFFF;
-                unpack_inst.inputs[4] = 0xFFFF;
-                unpack_inst.rate = static_cast<std::uint8_t>(idx_val);
-                unpack_inst.state_id = 0;
-                emit(unpack_inst);
 
                 return cache_and_return(node, TypedValue::signal(out));
             }
@@ -581,43 +527,28 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
                 // Pack multi-buffer into single array buffer
                 // For arrays larger than 5, we need multiple ARRAY_PACK calls
-                std::uint16_t packed_buf = buffers_.allocate();
+                // Pack first 5 elements
+                std::uint8_t pack_count = std::min(arr_len, static_cast<std::uint8_t>(5));
+                codegen::InstructionBuilder pack_builder(cedar::Opcode::ARRAY_PACK);
+                pack_builder.rate(pack_count);
+                for (std::uint8_t i = 0; i < pack_count; ++i) {
+                    pack_builder.input(i, buffers[i]);
+                }
+                std::uint16_t packed_buf = pack_builder.emit(*this, n.location);
                 if (packed_buf == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     return TypedValue::error_val();
                 }
 
-                // Pack first 5 elements
-                cedar::Instruction pack_inst{};
-                pack_inst.opcode = cedar::Opcode::ARRAY_PACK;
-                pack_inst.out_buffer = packed_buf;
-                std::uint8_t pack_count = std::min(arr_len, static_cast<std::uint8_t>(5));
-                pack_inst.rate = pack_count;
-                for (std::uint8_t i = 0; i < 5; ++i) {
-                    pack_inst.inputs[i] = (i < pack_count) ? buffers[i] : 0xFFFF;
-                }
-                pack_inst.state_id = 0;
-                emit(pack_inst);
-
                 // For arrays > 5 elements, we need to pack remaining with ARRAY_PUSH
                 for (std::uint8_t i = 5; i < arr_len; ++i) {
-                    std::uint16_t new_packed = buffers_.allocate();
+                    const std::uint16_t new_packed =
+                        codegen::InstructionBuilder(cedar::Opcode::ARRAY_PUSH)
+                            .inputs({packed_buf, buffers[i]})
+                            .rate(i)  // Current length before push
+                            .emit(*this, n.location);
                     if (new_packed == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::error_val();
                     }
-
-                    cedar::Instruction push_inst{};
-                    push_inst.opcode = cedar::Opcode::ARRAY_PUSH;
-                    push_inst.out_buffer = new_packed;
-                    push_inst.inputs[0] = packed_buf;
-                    push_inst.inputs[1] = buffers[i];
-                    push_inst.inputs[2] = 0xFFFF;
-                    push_inst.inputs[3] = 0xFFFF;
-                    push_inst.inputs[4] = 0xFFFF;
-                    push_inst.rate = i;  // Current length before push
-                    push_inst.state_id = 0;
-                    emit(push_inst);
 
                     packed_buf = new_packed;
                 }
@@ -627,40 +558,25 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
             // Now emit ARRAY_INDEX for dynamic per-sample indexing
             TypedValue idx_tv = visit(idx_node);
-            std::uint16_t out = buffers_.allocate();
+            std::uint16_t out = alloc_buffer(n.location);
             if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
             }
 
             // Create a constant buffer with the array length for ARRAY_INDEX
-            std::uint16_t len_buf = buffers_.allocate();
+            const std::uint16_t len_buf =
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(static_cast<float>(arr_len > 0 ? arr_len : 1))
+                    .emit(*this, n.location);
             if (len_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
             }
 
-            cedar::Instruction len_inst{};
-            len_inst.opcode = cedar::Opcode::PUSH_CONST;
-            len_inst.out_buffer = len_buf;
-            len_inst.inputs[0] = 0xFFFF;
-            len_inst.inputs[1] = 0xFFFF;
-            len_inst.inputs[2] = 0xFFFF;
-            len_inst.inputs[3] = 0xFFFF;
-            encode_const_value(len_inst, static_cast<float>(arr_len > 0 ? arr_len : 1));
-            emit(len_inst);
-
-            cedar::Instruction index_inst{};
-            index_inst.opcode = cedar::Opcode::ARRAY_INDEX;
-            index_inst.out_buffer = out;
-            index_inst.inputs[0] = arr_buf;
-            index_inst.inputs[1] = idx_tv.buffer;
-            index_inst.inputs[2] = len_buf;  // Array length
-            index_inst.inputs[3] = 0xFFFF;
-            index_inst.inputs[4] = 0xFFFF;
-            index_inst.rate = 0;  // 0 = wrap mode (default), 1 = clamp mode
-            index_inst.state_id = 0;
-            emit(index_inst);
+            codegen::InstructionBuilder(cedar::Opcode::ARRAY_INDEX)
+                .inputs({arr_buf, idx_tv.buffer, len_buf})
+                .rate(0)  // 0 = wrap mode (default), 1 = clamp mode
+                .output(out)
+                .emit(*this);
 
             return cache_and_return(node, TypedValue::signal(out));
         }
@@ -677,37 +593,23 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         bv.env_key.data(), bv.env_key.size());
 
                     // Emit PUSH_CONST for default/fallback value
-                    std::uint16_t fallback_buf = buffers_.allocate();
+                    const std::uint16_t fallback_buf =
+                        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                            .const_value(bv.default_value)
+                            .emit(*this, n.location);
                     if (fallback_buf == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::error_val();
                     }
-                    cedar::Instruction push_inst{};
-                    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                    push_inst.out_buffer = fallback_buf;
-                    push_inst.inputs[0] = 0xFFFF;
-                    push_inst.inputs[1] = 0xFFFF;
-                    push_inst.inputs[2] = 0xFFFF;
-                    push_inst.inputs[3] = 0xFFFF;
-                    encode_const_value(push_inst, bv.default_value);
-                    emit(push_inst);
 
                     // Emit ENV_GET with reserved key hash
-                    std::uint16_t out_buf = buffers_.allocate();
+                    const std::uint16_t out_buf =
+                        codegen::InstructionBuilder(cedar::Opcode::ENV_GET)
+                            .input(0, fallback_buf)
+                            .state_id(key_hash)
+                            .emit(*this, n.location);
                     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         return TypedValue::error_val();
                     }
-                    cedar::Instruction env_inst{};
-                    env_inst.opcode = cedar::Opcode::ENV_GET;
-                    env_inst.out_buffer = out_buf;
-                    env_inst.inputs[0] = fallback_buf;
-                    env_inst.inputs[1] = 0xFFFF;
-                    env_inst.inputs[2] = 0xFFFF;
-                    env_inst.inputs[3] = 0xFFFF;
-                    env_inst.inputs[4] = 0xFFFF;
-                    env_inst.state_id = key_hash;
-                    emit(env_inst);
 
                     return cache_and_return(node, TypedValue::signal(out_buf));
                 }
@@ -770,17 +672,13 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                                                           sym->array.buffer_indices[0]);
                         return cache_and_return(node, tv);
                     }
-                    // Empty rest → zero
+                    // Empty rest → zero. (Historically no E101 check here —
+                    // keep manual allocation to preserve that behaviour.)
                     auto zero_buf = buffers_.allocate();
-                    cedar::Instruction push_zero{};
-                    push_zero.opcode = cedar::Opcode::PUSH_CONST;
-                    push_zero.out_buffer = zero_buf;
-                    push_zero.inputs[0] = 0xFFFF;
-                    push_zero.inputs[1] = 0xFFFF;
-                    push_zero.inputs[2] = 0xFFFF;
-                    push_zero.inputs[3] = 0xFFFF;
-                    codegen::encode_const_value(push_zero, 0.0f);
-                    emit(push_zero);
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(0.0f)
+                        .output(zero_buf)
+                        .emit(*this);
                     return cache_and_return(node, TypedValue::signal(zero_buf));
                 }
 
@@ -1397,21 +1295,14 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                     current_source_loc_ = call_loc;
 
                     for (std::uint16_t mb : midi_buffers) {
-                        std::uint16_t freq_buf = buffers_.allocate();
+                        const std::uint16_t freq_buf =
+                            codegen::InstructionBuilder(cedar::Opcode::MTOF)
+                                .input(0, mb)
+                                .input(4, 0)  // preserved zero-init (was never set to 0xFFFF)
+                                .emit(*this, n.location);
                         if (freq_buf == BufferAllocator::BUFFER_UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
                             return TypedValue::error_val();
                         }
-
-                        cedar::Instruction mtof_inst{};
-                        mtof_inst.opcode = cedar::Opcode::MTOF;
-                        mtof_inst.out_buffer = freq_buf;
-                        mtof_inst.inputs[0] = mb;
-                        mtof_inst.inputs[1] = 0xFFFF;
-                        mtof_inst.inputs[2] = 0xFFFF;
-                        mtof_inst.inputs[3] = 0xFFFF;
-                        mtof_inst.state_id = 0;
-                        emit(mtof_inst);
 
                         freq_elements.push_back(TypedValue::signal(freq_buf));
                     }
@@ -1546,21 +1437,14 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
                 if (slot.kind == CallSlot::Kind::Underscore) {
                     if (builtin->has_default(arg_idx)) {
-                        std::uint16_t default_buf = buffers_.allocate();
+                        const std::uint16_t default_buf =
+                            codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                                .const_value(builtin->get_default(arg_idx))
+                                .emit(*this, n.location);
                         if (default_buf == BufferAllocator::BUFFER_UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
                             if (pushed_path) pop_path();
                             return TypedValue::error_val();
                         }
-                        cedar::Instruction push_inst{};
-                        push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                        push_inst.out_buffer = default_buf;
-                        push_inst.inputs[0] = 0xFFFF;
-                        push_inst.inputs[1] = 0xFFFF;
-                        push_inst.inputs[2] = 0xFFFF;
-                        push_inst.inputs[3] = 0xFFFF;
-                        encode_const_value(push_inst, builtin->get_default(arg_idx));
-                        emit(push_inst);
                         arg_buffers.push_back(default_buf);
                     } else {
                         error("E106", "Cannot skip required parameter '" +
@@ -1626,25 +1510,15 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         } else {
                             publish_sample_refs({RequiredSample{bank, name, variant}});
 
-                            std::uint16_t buf = buffers_.allocate();
-                            if (buf == BufferAllocator::BUFFER_UNUSED) {
-                                error("E101", "Buffer pool exhausted", val_node.location);
-                            } else {
-                                cedar::Instruction push_inst{};
-                                push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                                push_inst.out_buffer = buf;
-                                push_inst.inputs[0] = 0xFFFF;
-                                push_inst.inputs[1] = 0xFFFF;
-                                push_inst.inputs[2] = 0xFFFF;
-                                push_inst.inputs[3] = 0xFFFF;
-                                encode_const_value(push_inst, 0.0f);
-
-                                std::uint32_t inst_idx =
-                                    static_cast<std::uint32_t>(instructions_.size());
+                            const std::uint32_t inst_idx =
+                                static_cast<std::uint32_t>(instructions_.size());
+                            const std::uint16_t buf =
+                                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                                    .const_value(0.0f)
+                                    .emit(*this, val_node.location);
+                            if (buf != BufferAllocator::BUFFER_UNUSED) {
                                 scalar_sample_mappings_.push_back(
                                     ScalarSampleMapping{inst_idx, bank, name, variant});
-
-                                emit(push_inst);
                                 arg_tv = TypedValue::signal(buf);
                             }
                         }
@@ -1841,16 +1715,10 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                             left_in  = resolved[ai].buffer;
                             right_in = resolved[ai].right_buffer;
                         }
-                        cedar::Instruction out_inst{};
-                        out_inst.opcode = cedar::Opcode::OUTPUT;
-                        out_inst.out_buffer = 0xFFFF;
-                        out_inst.inputs[0] = left_in;
-                        out_inst.inputs[1] = right_in;
-                        out_inst.inputs[2] = 0xFFFF;
-                        out_inst.inputs[3] = 0xFFFF;
-                        out_inst.inputs[4] = 0xFFFF;
-                        out_inst.state_id = 0;
-                        emit(out_inst);
+                        codegen::InstructionBuilder(cedar::Opcode::OUTPUT)
+                            .inputs({left_in, right_in})
+                            .output(0xFFFF)
+                            .emit(*this);
                     }
                     if (pushed_path) pop_path();
                     return cache_and_return(node, TypedValue::void_val());
@@ -2086,38 +1954,29 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 // Fill in any remaining defaults with control-rate constants
                 for (std::size_t j = expanded_args.size(); j < n_params; ++j) {
                     if (builtin->has_default(j)) {
-                        std::uint16_t default_buf = buffers_.allocate();
+                        const std::uint16_t default_buf =
+                            codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                                .const_value(builtin->get_default(j))
+                                .emit(*this, n.location);
                         if (default_buf == BufferAllocator::BUFFER_UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
                             if (pushed_path) pop_path();
                             return TypedValue::error_val();
                         }
-                        cedar::Instruction push_inst{};
-                        push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                        push_inst.out_buffer = default_buf;
-                        push_inst.inputs[0] = 0xFFFF;
-                        push_inst.inputs[1] = 0xFFFF;
-                        push_inst.inputs[2] = 0xFFFF;
-                        push_inst.inputs[3] = 0xFFFF;
-                        encode_const_value(push_inst, builtin->get_default(j));
-                        emit(push_inst);
                         expanded_args.push_back(default_buf);
                     }
                 }
 
                 // Allocate output buffer(s): adjacent L/R pair when emitting
                 // stereo, otherwise a single buffer (Match+mono input path).
-                std::uint16_t out_left = buffers_.allocate();
+                std::uint16_t out_left = alloc_buffer(n.location);
                 if (out_left == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     if (pushed_path) pop_path();
                     return TypedValue::error_val();
                 }
                 std::uint16_t out_right = 0xFFFF;
                 if (emit_stereo) {
-                    out_right = buffers_.allocate();
+                    out_right = alloc_buffer(n.location);
                     if (out_right == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         if (pushed_path) pop_path();
                         return TypedValue::error_val();
                     }
@@ -2198,22 +2057,15 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                         // Fill in defaults for this instance
                         for (std::size_t j = expanded_args.size(); j < n_params; ++j) {
                             if (builtin->has_default(j)) {
-                                std::uint16_t default_buf = buffers_.allocate();
+                                const std::uint16_t default_buf =
+                                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                                        .const_value(builtin->get_default(j))
+                                        .emit(*this, n.location);
                                 if (default_buf == BufferAllocator::BUFFER_UNUSED) {
-                                    error("E101", "Buffer pool exhausted", n.location);
                                     pop_path();
                                     if (pushed_path) pop_path();
                                     return TypedValue::error_val();
                                 }
-                                cedar::Instruction push_inst{};
-                                push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                                push_inst.out_buffer = default_buf;
-                                push_inst.inputs[0] = 0xFFFF;
-                                push_inst.inputs[1] = 0xFFFF;
-                                push_inst.inputs[2] = 0xFFFF;
-                                push_inst.inputs[3] = 0xFFFF;
-                                encode_const_value(push_inst, builtin->get_default(j));
-                                emit(push_inst);
                                 expanded_args.push_back(default_buf);
                             }
                         }
@@ -2240,18 +2092,16 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
 
                         // Allocate output buffer(s): adjacent L/R pair when
                         // emitting stereo, single buffer otherwise.
-                        std::uint16_t inst_out = buffers_.allocate();
+                        std::uint16_t inst_out = alloc_buffer(n.location);
                         std::uint16_t inst_out_r = 0xFFFF;
                         if (inst_out == BufferAllocator::BUFFER_UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
                             pop_path();
                             if (pushed_path) pop_path();
                             return TypedValue::error_val();
                         }
                         if (emit_stereo) {
-                            inst_out_r = buffers_.allocate();
+                            inst_out_r = alloc_buffer(n.location);
                             if (inst_out_r == BufferAllocator::BUFFER_UNUSED) {
-                                error("E101", "Buffer pool exhausted", n.location);
                                 pop_path();
                                 if (pushed_path) pop_path();
                                 return TypedValue::error_val();
@@ -2325,25 +2175,14 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             std::size_t total_params = builtin->total_params();
             for (std::size_t i = arg_buffers.size(); i < total_params; ++i) {
                 if (builtin->has_default(i)) {
-                    // Emit PUSH_CONST for the default value
-                    std::uint16_t default_buf = buffers_.allocate();
+                    const std::uint16_t default_buf =
+                        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                            .const_value(builtin->get_default(i))
+                            .emit(*this, n.location);
                     if (default_buf == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         if (pushed_path) pop_path();
                         return TypedValue::error_val();
                     }
-
-                    cedar::Instruction push_inst{};
-                    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                    push_inst.out_buffer = default_buf;
-                    push_inst.inputs[0] = 0xFFFF;
-                    push_inst.inputs[1] = 0xFFFF;
-                    push_inst.inputs[2] = 0xFFFF;
-                    push_inst.inputs[3] = 0xFFFF;
-
-                    float default_val = builtin->get_default(i);
-                    encode_const_value(push_inst, default_val);
-                    emit(push_inst);
 
                     arg_buffers.push_back(default_buf);
                 }
@@ -2393,9 +2232,8 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             }
 
             // Allocate output buffer
-            std::uint16_t out = buffers_.allocate();
+            std::uint16_t out = alloc_buffer(n.location);
             if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 if (pushed_path) pop_path();
                 return TypedValue::error_val();
             }
@@ -2924,18 +2762,11 @@ TypedValue CodeGenerator::handle_bus_call(NodeIndex node, const Node& n) {
         bypass_master_ ? std::uint16_t{0}
                        : std::uint16_t{cedar::InstructionFlag::BUS_WRITE};
     auto emit_output = [&](std::uint16_t l, std::uint16_t r) {
-        cedar::Instruction o{};
-        o.opcode = cedar::Opcode::OUTPUT;
-        o.rate = 0;
-        o.out_buffer = dst;
-        o.inputs[0] = l;
-        o.inputs[1] = r;
-        o.inputs[2] = 0xFFFF;
-        o.inputs[3] = 0xFFFF;
-        o.inputs[4] = 0xFFFF;
-        o.flags = out_flags;
-        o.state_id = 0;
-        emit(o);
+        codegen::InstructionBuilder(cedar::Opcode::OUTPUT)
+            .inputs({l, r})
+            .output(dst)
+            .flags(out_flags)
+            .emit(*this);
     };
 
     if (sig_count == 1) {
@@ -3208,9 +3039,8 @@ void CodeGenerator::inline_mixer_closure(const MixerCall& mc,
         const bool swap = (rl == bus_r && rr == bus_l);
         const bool right_reads_bus_l = (rr == bus_l && rl != bus_r);
         if (swap) {
-            std::uint16_t tmp = buffers_.allocate();
+            std::uint16_t tmp = alloc_buffer(mc.call_loc);
             if (tmp == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", mc.call_loc);
                 return;
             }
             emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, tmp,
@@ -3387,16 +3217,10 @@ void CodeGenerator::emit_bus_epilogue() {
     }
 
     auto emit_push_const = [&](std::uint16_t dst, float value) {
-        cedar::Instruction push{};
-        push.opcode = cedar::Opcode::PUSH_CONST;
-        push.out_buffer = dst;
-        push.inputs[0] = 0xFFFF;
-        push.inputs[1] = 0xFFFF;
-        push.inputs[2] = 0xFFFF;
-        push.inputs[3] = 0xFFFF;
-        push.inputs[4] = 0xFFFF;
-        encode_const_value(push, value);
-        emit(push);
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(value)
+            .output(dst)
+            .emit(*this);
     };
 
     // Per-bus mixer trim (OQ5): stereo in-place ×gain from the host-poked
@@ -3406,23 +3230,18 @@ void CodeGenerator::emit_bus_epilogue() {
     emit_push_const(unity_trim, 1.0f);
     auto emit_bus_trim = [&](std::uint16_t l, int idx) {
         const std::string name = "__bus_trim_" + std::to_string(idx);
-        cedar::Instruction t{};
-        t.opcode = cedar::Opcode::BUS_TRIM;
         // rate carries the bus index (a compile-time count field, no audio
         // meaning) so the VM can recover this program's bus→buffer map by
         // scanning for BUS_TRIM — used by the per-bus hot-swap crossfade.
-        t.rate = static_cast<std::uint8_t>(idx);
-        t.out_buffer = l;              // stereo in place: l, l+1
-        t.inputs[0] = 0xFFFF;
-        t.inputs[1] = unity_trim;      // unity fallback
-        t.inputs[2] = 0xFFFF;
-        t.inputs[3] = 0xFFFF;
-        t.inputs[4] = 0xFFFF;
-        t.state_id = cedar::fnv1a_hash_runtime(name.data(), name.size());
-        t.flags = static_cast<std::uint16_t>(
-            cedar::InstructionFlag::STEREO_INPUT |
-            cedar::InstructionFlag::STEREO_OUTPUT);
-        emit(t);
+        codegen::InstructionBuilder(cedar::Opcode::BUS_TRIM)
+            .rate(static_cast<std::uint8_t>(idx))
+            .output(l)                  // stereo in place: l, l+1
+            .input(1, unity_trim)       // unity fallback
+            .state_id(cedar::fnv1a_hash_runtime(name.data(), name.size()))
+            .flags(static_cast<std::uint16_t>(
+                cedar::InstructionFlag::STEREO_INPUT |
+                cedar::InstructionFlag::STEREO_OUTPUT))
+            .emit(*this);
     };
 
     // 5. Emit the epilogue into the main stream.
@@ -3436,16 +3255,11 @@ void CodeGenerator::emit_bus_epilogue() {
                                  static_cast<std::uint16_t>(l + 1));
         }
         emit_bus_trim(l, idx);
-        cedar::Instruction o{};
-        o.opcode = cedar::Opcode::OUTPUT;
-        o.out_buffer = bus0_l;
-        o.inputs[0] = l;
-        o.inputs[1] = static_cast<std::uint16_t>(l + 1);
-        o.inputs[2] = 0xFFFF;
-        o.inputs[3] = 0xFFFF;
-        o.inputs[4] = 0xFFFF;
-        o.flags = cedar::InstructionFlag::BUS_WRITE;
-        emit(o);
+        codegen::InstructionBuilder(cedar::Opcode::OUTPUT)
+            .inputs({l, static_cast<std::uint16_t>(l + 1)})
+            .output(bus0_l)
+            .flags(cedar::InstructionFlag::BUS_WRITE)
+            .emit(*this);
     }
 
     // (b) Bus-0 tone chain: the master / mixer(0) closure if one was given,
@@ -3457,19 +3271,14 @@ void CodeGenerator::emit_bus_epilogue() {
             inline_mixer_closure(mit->second, bus0_l, bus0_r);
         } else {
             emit_push_const(c1, 0.9f);         // c1 = soft-clip threshold
-            cedar::Instruction soft{};
-            soft.opcode = cedar::Opcode::DISTORT_SOFT;
-            soft.out_buffer = bus0_l;          // in place: bus0_l, bus0_l+1
-            soft.inputs[0] = bus0_l;           // STEREO_INPUT → reads bus0_l+1
-            soft.inputs[1] = c1;
-            soft.inputs[2] = 0xFFFF;           // dry  → default 0.0
-            soft.inputs[3] = 0xFFFF;           // wet  → default 1.0
-            soft.inputs[4] = 0xFFFF;
-            soft.flags = static_cast<std::uint16_t>(
-                cedar::InstructionFlag::STEREO_INPUT |
-                cedar::InstructionFlag::STEREO_OUTPUT);
-            soft.state_id = 0;
-            emit(soft);
+            // Unwired slots 2/3 (dry/wet) fall back to defaults 0.0 / 1.0.
+            codegen::InstructionBuilder(cedar::Opcode::DISTORT_SOFT)
+                .inputs({bus0_l, c1})           // STEREO_INPUT → reads bus0_l+1
+                .output(bus0_l)                 // in place: bus0_l, bus0_l+1
+                .flags(static_cast<std::uint16_t>(
+                    cedar::InstructionFlag::STEREO_INPUT |
+                    cedar::InstructionFlag::STEREO_OUTPUT))
+                .emit(*this);
         }
     }
 
@@ -3491,17 +3300,10 @@ void CodeGenerator::emit_bus_epilogue() {
 
     // (d) Device store: a plain OUTPUT (no BUS_WRITE flag) accumulates into
     //     the device sinks and sanitizes NaN/Inf → 0 on the way.
-    {
-        cedar::Instruction o{};
-        o.opcode = cedar::Opcode::OUTPUT;
-        o.out_buffer = 0xFFFF;
-        o.inputs[0] = bus0_l;
-        o.inputs[1] = bus0_r;
-        o.inputs[2] = 0xFFFF;
-        o.inputs[3] = 0xFFFF;
-        o.inputs[4] = 0xFFFF;
-        emit(o);
-    }
+    codegen::InstructionBuilder(cedar::Opcode::OUTPUT)
+        .inputs({bus0_l, bus0_r})
+        .output(0xFFFF)
+        .emit(*this);
 
     // 6. Prologue: clear every bus accumulator to silence before any writer.
     //    Prepended to the main stream — safe because no opcode encodes an
@@ -4139,23 +3941,14 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
             }
             const TypedValue& sub_cell = sub_it->second;
 
-            std::uint16_t out = buffers_.allocate();
+            const std::uint16_t out =
+                codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+                    .rate(1)  // load mode
+                    .state_id(sub_cell.cell_state_id)
+                    .emit(*this, n.location);
             if (out == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::error_val();
             }
-
-            cedar::Instruction inst{};
-            inst.opcode = cedar::Opcode::STATE_OP;
-            inst.rate = 1;  // load mode
-            inst.out_buffer = out;
-            inst.inputs[0] = 0xFFFF;
-            inst.inputs[1] = 0xFFFF;
-            inst.inputs[2] = 0xFFFF;
-            inst.inputs[3] = 0xFFFF;
-            inst.inputs[4] = 0xFFFF;
-            inst.state_id = sub_cell.cell_state_id;
-            emit(inst);
 
             return cache_and_return(node, TypedValue::signal(out));
         }

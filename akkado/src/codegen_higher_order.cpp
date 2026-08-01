@@ -21,6 +21,7 @@
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 
 #include <cedar/opcodes/event_transform_encoding.hpp>
 
@@ -225,9 +226,8 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
     // Convention-slot buffers. freq is the primary slot; the record bank is a
     // contiguous EVENT_BANK_COUNT-buffer run (10 slots — 7 scalar + 3 chord),
     // allocated only when a non-freq field is used.
-    std::uint16_t freq_buf = buffers_.allocate();
+    std::uint16_t freq_buf = alloc_buffer(n.location);
     if (freq_buf == UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
     std::uint16_t bank_buf = UNUSED;
@@ -252,27 +252,24 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
     std::uint16_t mix_l = UNUSED, mix_r = UNUSED;
     std::uint16_t acc_buf = UNUSED, result_buf = UNUSED;
     if (kind == 0) {  // each_voice — stereo voice-out + stereo mix bus
-        voice_out_l = buffers_.allocate();
-        voice_out_r = buffers_.allocate();
-        mix_l = buffers_.allocate();
-        mix_r = buffers_.allocate();
-        if (voice_out_l == UNUSED || voice_out_r == UNUSED ||
-            mix_l == UNUSED || mix_r == UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            return TypedValue::void_val();
-        }
+        voice_out_l = alloc_buffer(n.location);
+        if (voice_out_l == UNUSED) return TypedValue::void_val();
+        voice_out_r = alloc_buffer(n.location);
+        if (voice_out_r == UNUSED) return TypedValue::void_val();
+        mix_l = alloc_buffer(n.location);
+        if (mix_l == UNUSED) return TypedValue::void_val();
+        mix_r = alloc_buffer(n.location);
+        if (mix_r == UNUSED) return TypedValue::void_val();
         if (voice_out_r != voice_out_l + 1 || mix_r != mix_l + 1) {
             error("E166", "Internal error: each_voice stereo buffers not "
                   "adjacent", n.location);
             return TypedValue::void_val();
         }
     } else if (is_reduce) {  // reduce — accumulator slot + mono result
-        acc_buf = buffers_.allocate();
-        result_buf = buffers_.allocate();
-        if (acc_buf == UNUSED || result_buf == UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
-            return TypedValue::void_val();
-        }
+        acc_buf = alloc_buffer(n.location);
+        if (acc_buf == UNUSED) return TypedValue::void_val();
+        result_buf = alloc_buffer(n.location);
+        if (result_buf == UNUSED) return TypedValue::void_val();
     }
 
     std::uint32_t count = call_counters_[name]++;
@@ -365,32 +362,25 @@ TypedValue CodeGenerator::emit_foreach(NodeIndex node, const Node& n, int kind) 
     end_subprogram(block_id, /*frame_slot_count=*/5, output_count);
 
     // Emit the FOREACH_EVENT opcode into the main stream.
-    cedar::Instruction fe{};
-    fe.opcode = cedar::Opcode::FOREACH_EVENT;
-    fe.rate = 0;
-    fe.state_id = state_id;
-    for (auto& in : fe.inputs) in = UNUSED;
+    codegen::InstructionBuilder fe(cedar::Opcode::FOREACH_EVENT);
+    fe.state_id(state_id);
     std::uint8_t allocator_kind;
     if (is_reduce) {
         allocator_kind = 2;  // SHARED
-        fe.out_buffer = result_buf;
-        fe.inputs[0] = acc_buf;
-        fe.inputs[1] = seed_buf;
-        fe.inputs[2] = freq_buf;
-        fe.inputs[3] = bank_buf;
+        fe.output(result_buf)
+          .inputs({acc_buf, seed_buf, freq_buf, bank_buf});
     } else {
         allocator_kind = 1;  // PER_ITERATION
-        fe.inputs[0] = freq_buf;
-        fe.inputs[1] = bank_buf;
+        fe.inputs({freq_buf, bank_buf});
         if (kind == 0) {  // each_voice — mixed stereo output
-            fe.out_buffer = mix_l;
-            fe.inputs[4] = voice_out_l;
-            fe.flags = cedar::InstructionFlag::STEREO_OUTPUT;
+            fe.output(mix_l)
+              .input(4, voice_out_l)
+              .flags(cedar::InstructionFlag::STEREO_OUTPUT);
         } else {          // each — side-effecting sink, no mix
-            fe.out_buffer = UNUSED;
+            fe.output(UNUSED);
         }
     }
-    emit(fe);
+    fe.emit(*this);
 
     pop_path();
 
@@ -520,9 +510,8 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     }
 
     // --- Allocate the closure's input convention buffers -------------------
-    std::uint16_t freq_buf = buffers_.allocate();
+    std::uint16_t freq_buf = alloc_buffer(n.location);
     if (freq_buf == UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
     std::uint16_t bank_buf = UNUSED;
@@ -548,9 +537,8 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     std::uint16_t out_bank = UNUSED;
     std::uint16_t pred_buf = UNUSED;
     if (is_filter) {
-        pred_buf = buffers_.allocate();
+        pred_buf = alloc_buffer(n.location);
         if (pred_buf == UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
     } else {
@@ -661,41 +649,29 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
                         }
                         const std::uint8_t arr_len =
                             static_cast<std::uint8_t>(buffers.size());
-                        std::uint16_t packed = buffers_.allocate();
-                        if (packed == UNUSED) {
-                            error("E101", "Buffer pool exhausted", n.location);
-                            continue;
-                        }
-                        cedar::Instruction pack{};
-                        pack.opcode = cedar::Opcode::ARRAY_PACK;
-                        pack.out_buffer = packed;
                         const std::uint8_t pack_count =
                             std::min<std::uint8_t>(arr_len, 5);
-                        pack.rate = pack_count;
-                        for (std::uint8_t k = 0; k < 5; ++k) {
-                            pack.inputs[k] = (k < pack_count)
-                                ? buffers[k] : UNUSED;
+                        codegen::InstructionBuilder pack(
+                            cedar::Opcode::ARRAY_PACK);
+                        pack.rate(pack_count);
+                        for (std::uint8_t k = 0; k < pack_count; ++k) {
+                            pack.input(k, buffers[k]);
                         }
-                        pack.state_id = 0;
-                        emit(pack);
+                        std::uint16_t packed = pack.emit(*this, n.location);
+                        if (packed == UNUSED) {
+                            continue;
+                        }
                         for (std::uint8_t k = 5; k < arr_len; ++k) {
-                            std::uint16_t next = buffers_.allocate();
+                            const std::uint16_t next =
+                                codegen::InstructionBuilder(
+                                    cedar::Opcode::ARRAY_PUSH)
+                                    .input(0, packed)
+                                    .input(1, buffers[k])
+                                    .rate(k)
+                                    .emit(*this, n.location);
                             if (next == UNUSED) {
-                                error("E101", "Buffer pool exhausted",
-                                      n.location);
                                 break;
                             }
-                            cedar::Instruction push{};
-                            push.opcode = cedar::Opcode::ARRAY_PUSH;
-                            push.out_buffer = next;
-                            push.inputs[0] = packed;
-                            push.inputs[1] = buffers[k];
-                            push.inputs[2] = UNUSED;
-                            push.inputs[3] = UNUSED;
-                            push.inputs[4] = UNUSED;
-                            push.rate = k;
-                            push.state_id = 0;
-                            emit(push);
                             packed = next;
                         }
                         data_buf = packed;

@@ -5,6 +5,7 @@
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/const_eval.hpp"
 #include "akkado/expr_kinds.hpp"
 #include "akkado/overload.hpp"
@@ -12,7 +13,6 @@
 
 namespace akkado {
 
-using codegen::encode_const_value;
 using codegen::closure_body;
 
 // Maximum parameter count for a shareable `fn` (PRD §4.2). Params 0..4 travel
@@ -297,24 +297,17 @@ TypedValue CodeGenerator::handle_user_function_call(
                     }
                 }
             } else if (param.default_value.has_value()) {
-                param_buf = buffers_.allocate();
+                param_buf =
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(static_cast<float>(*param.default_value))
+                        .emit(*this, n.location);
                 if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     param_literals_ = std::move(saved_param_literals);
                     param_string_defaults_ = std::move(saved_param_string_defaults);
                     param_multi_buffer_sources_ = std::move(saved_param_multi_buffer_sources);
                     param_function_refs_ = std::move(saved_param_function_refs);
                     return TypedValue::void_val();
                 }
-                cedar::Instruction push_inst{};
-                push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                push_inst.out_buffer = param_buf;
-                push_inst.inputs[0] = 0xFFFF;
-                push_inst.inputs[1] = 0xFFFF;
-                push_inst.inputs[2] = 0xFFFF;
-                push_inst.inputs[3] = 0xFFFF;
-                encode_const_value(push_inst, static_cast<float>(*param.default_value));
-                emit(push_inst);
             } else if (param.default_string.has_value()) {
                 param_buf = BufferAllocator::BUFFER_UNUSED;
                 std::uint32_t param_hash = fnv1a_hash(param.name);
@@ -418,22 +411,14 @@ TypedValue CodeGenerator::handle_user_function_call(
             if (is_placeholder) {
                 // Use parameter default (same logic as trailing omission below)
                 if (func.params[i].default_value.has_value()) {
-                    param_buf = buffers_.allocate();
+                    param_buf =
+                        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                            .const_value(static_cast<float>(*func.params[i].default_value))
+                            .emit(*this, n.location);
                     if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-                        error("E101", "Buffer pool exhausted", n.location);
                         param_literals_ = std::move(saved_param_literals);
                         return TypedValue::void_val();
                     }
-                    cedar::Instruction push_inst{};
-                    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                    push_inst.out_buffer = param_buf;
-                    push_inst.inputs[0] = 0xFFFF;
-                    push_inst.inputs[1] = 0xFFFF;
-                    push_inst.inputs[2] = 0xFFFF;
-                    push_inst.inputs[3] = 0xFFFF;
-                    float default_val = static_cast<float>(*func.params[i].default_value);
-                    encode_const_value(push_inst, default_val);
-                    emit(push_inst);
                 } else if (func.params[i].default_node != NULL_NODE &&
                            !func.params[i].default_string.has_value()) {
                     ConstEvaluator evaluator(*ast_, *symbols_, *ctx_->interner);
@@ -679,24 +664,14 @@ TypedValue CodeGenerator::handle_user_function_call(
                 std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
                 param_literals_[param_hash] = func.params[i].default_node;
             }
-            param_buf = buffers_.allocate();
+            param_buf =
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(static_cast<float>(*func.params[i].default_value))
+                    .emit(*this, n.location);
             if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 param_literals_ = std::move(saved_param_literals);
                 return TypedValue::void_val();
             }
-
-            cedar::Instruction push_inst{};
-            push_inst.opcode = cedar::Opcode::PUSH_CONST;
-            push_inst.out_buffer = param_buf;
-            push_inst.inputs[0] = 0xFFFF;
-            push_inst.inputs[1] = 0xFFFF;
-            push_inst.inputs[2] = 0xFFFF;
-            push_inst.inputs[3] = 0xFFFF;
-
-            float default_val = static_cast<float>(*func.params[i].default_value);
-            encode_const_value(push_inst, default_val);
-            emit(push_inst);
         } else if (func.params[i].default_node != NULL_NODE &&
                    !func.params[i].default_string.has_value()) {
             // Expression default: evaluate at compile time via ConstEvaluator
@@ -1348,9 +1323,8 @@ TypedValue CodeGenerator::emit_block_call(
     std::uint16_t out_l = BufferAllocator::BUFFER_UNUSED;
     std::uint16_t out_r = BufferAllocator::BUFFER_UNUSED;
     if (block.body_output != BufferAllocator::BUFFER_UNUSED) {
-        out_l = buffers_.allocate();
+        out_l = alloc_buffer(n.location);
         if (out_l == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
         if (block.is_stereo) {
@@ -1370,33 +1344,24 @@ TypedValue CodeGenerator::emit_block_call(
     // inputs[0..4]. Fns with <=5 params emit no BLOCK_BIND (bit-identical to
     // pre-§4.2 codegen).
     for (std::size_t i = 5; i < arg_bufs.size(); ++i) {
-        cedar::Instruction bind{};
-        bind.opcode = cedar::Opcode::BLOCK_BIND;
-        bind.rate = static_cast<std::uint8_t>(i);
-        bind.out_buffer = 0xFFFF;
-        bind.inputs[0] = arg_bufs[i];
-        bind.inputs[1] = bind.inputs[2] = bind.inputs[3] =
-            bind.inputs[4] = 0xFFFF;
-        bind.flags = 0;
-        bind.state_id = 0;
-        emit(bind);
+        codegen::InstructionBuilder(cedar::Opcode::BLOCK_BIND)
+            .rate(static_cast<std::uint8_t>(i))
+            .output(0xFFFF)
+            .input(0, arg_bufs[i])
+            .emit(*this);
     }
 
-    cedar::Instruction bc{};
-    bc.opcode = cedar::Opcode::BLOCK_CALL;
-    bc.rate = static_cast<std::uint8_t>(block.block_id);
-    bc.out_buffer = out_l;
-    bc.inputs[0] = bc.inputs[1] = bc.inputs[2] = bc.inputs[3] =
-        bc.inputs[4] = 0xFFFF;
+    codegen::InstructionBuilder bc(cedar::Opcode::BLOCK_CALL);
+    bc.rate(static_cast<std::uint8_t>(block.block_id))
+        .output(out_l)
+        .state_id(state_id);
     for (std::size_t i = 0; i < arg_bufs.size() && i < 5; ++i) {
-        bc.inputs[i] = arg_bufs[i];
+        bc.input(static_cast<int>(i), arg_bufs[i]);
     }
-    bc.flags = 0;
     if (block.is_stereo) {
-        bc.flags = cedar::InstructionFlag::STEREO_OUTPUT;
+        bc.flags(cedar::InstructionFlag::STEREO_OUTPUT);
     }
-    bc.state_id = state_id;
-    emit(bc);
+    bc.emit(*this);
 
     if (out_l == BufferAllocator::BUFFER_UNUSED) {
         return cache_and_return(node, TypedValue::void_val());
@@ -1511,22 +1476,15 @@ TypedValue CodeGenerator::handle_function_value_call(
                     }
                 }
             } else if (param.default_value.has_value()) {
-                param_buf = buffers_.allocate();
+                param_buf =
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(static_cast<float>(*param.default_value))
+                        .emit(*this, n.location);
                 if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-                    error("E101", "Buffer pool exhausted", n.location);
                     param_literals_ = std::move(saved_param_literals);
                     param_string_defaults_ = std::move(saved_param_string_defaults);
                     return TypedValue::void_val();
                 }
-                cedar::Instruction push_inst{};
-                push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                push_inst.out_buffer = param_buf;
-                push_inst.inputs[0] = 0xFFFF;
-                push_inst.inputs[1] = 0xFFFF;
-                push_inst.inputs[2] = 0xFFFF;
-                push_inst.inputs[3] = 0xFFFF;
-                encode_const_value(push_inst, static_cast<float>(*param.default_value));
-                emit(push_inst);
             } else if (param.default_string.has_value()) {
                 param_buf = BufferAllocator::BUFFER_UNUSED;
                 std::uint32_t param_hash = fnv1a_hash(param.name);
@@ -1607,25 +1565,15 @@ TypedValue CodeGenerator::handle_function_value_call(
                 std::uint32_t param_hash = fnv1a_hash(func.params[i].name);
                 param_literals_[param_hash] = func.params[i].default_node;
             }
-            param_buf = buffers_.allocate();
+            param_buf =
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(static_cast<float>(*func.params[i].default_value))
+                    .emit(*this, n.location);
             if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 param_literals_ = std::move(saved_param_literals);
                 param_string_defaults_ = std::move(saved_param_string_defaults);
                 return TypedValue::void_val();
             }
-
-            cedar::Instruction push_inst{};
-            push_inst.opcode = cedar::Opcode::PUSH_CONST;
-            push_inst.out_buffer = param_buf;
-            push_inst.inputs[0] = 0xFFFF;
-            push_inst.inputs[1] = 0xFFFF;
-            push_inst.inputs[2] = 0xFFFF;
-            push_inst.inputs[3] = 0xFFFF;
-
-            float default_val = static_cast<float>(*func.params[i].default_value);
-            encode_const_value(push_inst, default_val);
-            emit(push_inst);
         } else if (func.params[i].default_node != NULL_NODE &&
                    !func.params[i].default_string.has_value()) {
             // Expression default: evaluate at compile time via ConstEvaluator
@@ -1878,9 +1826,8 @@ TypedValue CodeGenerator::handle_closure(NodeIndex node, const Node& n) {
 
     // Allocate input buffers for parameters and bind them
     for (const auto& param : param_names) {
-        std::uint16_t param_buf = buffers_.allocate();
+        std::uint16_t param_buf = alloc_buffer(n.location);
         if (param_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
         // Update symbol table with actual buffer index
@@ -2259,15 +2206,10 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                 // Empty body -> emit 0.0 (a signal-like constant; no agreement
                 // constraint contributed).
                 body_buf = buffers_.allocate();
-                cedar::Instruction push_inst{};
-                push_inst.opcode = cedar::Opcode::PUSH_CONST;
-                push_inst.out_buffer = body_buf;
-                push_inst.inputs[0] = 0xFFFF;
-                push_inst.inputs[1] = 0xFFFF;
-                push_inst.inputs[2] = 0xFFFF;
-                push_inst.inputs[3] = 0xFFFF;
-                codegen::encode_const_value(push_inst, 0.0f);
-                emit(push_inst);
+                codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                    .const_value(0.0f)
+                    .output(body_buf)
+                    .emit(*this);
             }
 
             if (arm_data.is_wildcard) {
@@ -2289,76 +2231,57 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                 std::uint16_t cond_buf = BufferAllocator::BUFFER_UNUSED;
 
                 if (match_data.has_scrutinee && arm_data.is_range) {
-                    // Range pattern: scrutinee >= low AND scrutinee < high
+                    // Range pattern: scrutinee >= low AND scrutinee < high.
+                    // The comparison/logic instructions keep inputs[4] at 0
+                    // (zero-init in the pre-builder code) for byte-identical
+                    // bytecode.
                     // Emit PUSH_CONST for low bound
                     std::uint16_t low_buf = buffers_.allocate();
-                    cedar::Instruction push_low{};
-                    push_low.opcode = cedar::Opcode::PUSH_CONST;
-                    push_low.out_buffer = low_buf;
-                    push_low.inputs[0] = 0xFFFF;
-                    push_low.inputs[1] = 0xFFFF;
-                    push_low.inputs[2] = 0xFFFF;
-                    push_low.inputs[3] = 0xFFFF;
-                    codegen::encode_const_value(push_low, static_cast<float>(arm_data.range_low));
-                    emit(push_low);
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(static_cast<float>(arm_data.range_low))
+                        .output(low_buf)
+                        .emit(*this);
 
                     // CMP_GTE: scrutinee >= low
                     std::uint16_t gte_buf = buffers_.allocate();
-                    cedar::Instruction gte_inst{};
-                    gte_inst.opcode = cedar::Opcode::CMP_GTE;
-                    gte_inst.out_buffer = gte_buf;
-                    gte_inst.inputs[0] = scrutinee_buf;
-                    gte_inst.inputs[1] = low_buf;
-                    gte_inst.inputs[2] = 0xFFFF;
-                    gte_inst.inputs[3] = 0xFFFF;
-                    emit(gte_inst);
+                    codegen::InstructionBuilder(cedar::Opcode::CMP_GTE)
+                        .inputs({scrutinee_buf, low_buf})
+                        .input(4, 0)
+                        .output(gte_buf)
+                        .emit(*this);
 
                     // Emit PUSH_CONST for high bound
                     std::uint16_t high_buf = buffers_.allocate();
-                    cedar::Instruction push_high{};
-                    push_high.opcode = cedar::Opcode::PUSH_CONST;
-                    push_high.out_buffer = high_buf;
-                    push_high.inputs[0] = 0xFFFF;
-                    push_high.inputs[1] = 0xFFFF;
-                    push_high.inputs[2] = 0xFFFF;
-                    push_high.inputs[3] = 0xFFFF;
-                    codegen::encode_const_value(push_high, static_cast<float>(arm_data.range_high));
-                    emit(push_high);
+                    codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                        .const_value(static_cast<float>(arm_data.range_high))
+                        .output(high_buf)
+                        .emit(*this);
 
                     // CMP_LT: scrutinee < high
                     std::uint16_t lt_buf = buffers_.allocate();
-                    cedar::Instruction lt_inst{};
-                    lt_inst.opcode = cedar::Opcode::CMP_LT;
-                    lt_inst.out_buffer = lt_buf;
-                    lt_inst.inputs[0] = scrutinee_buf;
-                    lt_inst.inputs[1] = high_buf;
-                    lt_inst.inputs[2] = 0xFFFF;
-                    lt_inst.inputs[3] = 0xFFFF;
-                    emit(lt_inst);
+                    codegen::InstructionBuilder(cedar::Opcode::CMP_LT)
+                        .inputs({scrutinee_buf, high_buf})
+                        .input(4, 0)
+                        .output(lt_buf)
+                        .emit(*this);
 
                     // LOGIC_AND: both conditions
                     cond_buf = buffers_.allocate();
-                    cedar::Instruction and_inst{};
-                    and_inst.opcode = cedar::Opcode::LOGIC_AND;
-                    and_inst.out_buffer = cond_buf;
-                    and_inst.inputs[0] = gte_buf;
-                    and_inst.inputs[1] = lt_buf;
-                    and_inst.inputs[2] = 0xFFFF;
-                    and_inst.inputs[3] = 0xFFFF;
-                    emit(and_inst);
+                    codegen::InstructionBuilder(cedar::Opcode::LOGIC_AND)
+                        .inputs({gte_buf, lt_buf})
+                        .input(4, 0)
+                        .output(cond_buf)
+                        .emit(*this);
                 } else if (match_data.has_scrutinee) {
                     // Scrutinee form: eq(scrutinee, pattern)
                     std::uint16_t pattern_buf = visit(pattern).buffer;
 
                     cond_buf = buffers_.allocate();
-                    cedar::Instruction eq_inst{};
-                    eq_inst.opcode = cedar::Opcode::CMP_EQ;
-                    eq_inst.out_buffer = cond_buf;
-                    eq_inst.inputs[0] = scrutinee_buf;
-                    eq_inst.inputs[1] = pattern_buf;
-                    eq_inst.inputs[2] = 0xFFFF;
-                    eq_inst.inputs[3] = 0xFFFF;
-                    emit(eq_inst);
+                    codegen::InstructionBuilder(cedar::Opcode::CMP_EQ)
+                        .inputs({scrutinee_buf, pattern_buf})
+                        .input(4, 0)  // zero-init slot in pre-builder code
+                        .output(cond_buf)
+                        .emit(*this);
                 } else {
                     // Guard-only form: condition is the guard itself
                     if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
@@ -2371,14 +2294,11 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                     std::uint16_t guard_buf = visit(arm_node.extra_child(0)).buffer;
 
                     std::uint16_t combined_buf = buffers_.allocate();
-                    cedar::Instruction and_inst{};
-                    and_inst.opcode = cedar::Opcode::LOGIC_AND;
-                    and_inst.out_buffer = combined_buf;
-                    and_inst.inputs[0] = cond_buf;
-                    and_inst.inputs[1] = guard_buf;
-                    and_inst.inputs[2] = 0xFFFF;
-                    and_inst.inputs[3] = 0xFFFF;
-                    emit(and_inst);
+                    codegen::InstructionBuilder(cedar::Opcode::LOGIC_AND)
+                        .inputs({cond_buf, guard_buf})
+                        .input(4, 0)  // zero-init slot in pre-builder code
+                        .output(combined_buf)
+                        .emit(*this);
                     cond_buf = combined_buf;
                 }
 
@@ -2435,29 +2355,22 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
     // If no wildcard, emit 0.0 as default
     if (result == BufferAllocator::BUFFER_UNUSED) {
         result = buffers_.allocate();
-        cedar::Instruction push_inst{};
-        push_inst.opcode = cedar::Opcode::PUSH_CONST;
-        push_inst.out_buffer = result;
-        push_inst.inputs[0] = 0xFFFF;
-        push_inst.inputs[1] = 0xFFFF;
-        push_inst.inputs[2] = 0xFFFF;
-        push_inst.inputs[3] = 0xFFFF;
-        codegen::encode_const_value(push_inst, 0.0f);
-        emit(push_inst);
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(0.0f)
+            .output(result)
+            .emit(*this);
     }
 
     // Build select chain in reverse order (last non-wildcard arm first)
     for (auto it = arms.rbegin(); it != arms.rend(); ++it) {
         if (!it->is_wildcard && it->cond_buf != BufferAllocator::BUFFER_UNUSED) {
             std::uint16_t select_buf = buffers_.allocate();
-            cedar::Instruction sel_inst{};
-            sel_inst.opcode = cedar::Opcode::SELECT;
-            sel_inst.out_buffer = select_buf;
-            sel_inst.inputs[0] = it->cond_buf;   // condition
-            sel_inst.inputs[1] = it->body_buf;   // true branch
-            sel_inst.inputs[2] = result;         // false branch (previous result)
-            sel_inst.inputs[3] = 0xFFFF;
-            emit(sel_inst);
+            codegen::InstructionBuilder(cedar::Opcode::SELECT)
+                // condition, true branch, false branch (previous result)
+                .inputs({it->cond_buf, it->body_buf, result})
+                .input(4, 0)  // zero-init slot in pre-builder code
+                .output(select_buf)
+                .emit(*this);
             result = select_buf;
         }
     }
@@ -2598,18 +2511,13 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
     // Emit DELAY_TAP instruction. STEREO_OUTPUT signals the per-channel write
     // pattern in op_delay_tap; STEREO_INPUT is irrelevant here because TAP
     // does not read inputs[0] for audio (only for signal flow).
-    cedar::Instruction tap_inst{};
-    tap_inst.opcode = cedar::Opcode::DELAY_TAP;
-    tap_inst.out_buffer = tap_out_l;
-    tap_inst.inputs[0] = in_buf;
-    tap_inst.inputs[1] = time_buf;
-    tap_inst.inputs[2] = 0xFFFF;
-    tap_inst.inputs[3] = 0xFFFF;
-    tap_inst.inputs[4] = 0xFFFF;
-    tap_inst.rate = time_unit;
-    tap_inst.state_id = delay_state_id;
-    tap_inst.flags = static_cast<std::uint16_t>(cedar::InstructionFlag::STEREO_OUTPUT);
-    emit(tap_inst);
+    codegen::InstructionBuilder(cedar::Opcode::DELAY_TAP)
+        .inputs({in_buf, time_buf})
+        .output(tap_out_l)
+        .rate(time_unit)
+        .state_id(delay_state_id)
+        .flags(static_cast<std::uint16_t>(cedar::InstructionFlag::STEREO_OUTPUT))
+        .emit(*this);
 
     // Bind the closure parameter as a Stereo signal so downstream stereo-
     // native ops in the closure body see stereo input. The L buffer is the
@@ -2676,20 +2584,14 @@ TypedValue CodeGenerator::handle_tap_delay_call(NodeIndex node, const Node& n) {
 
     // Emit DELAY_WRITE instruction with STEREO_OUTPUT + STEREO_INPUT (if the
     // upstream dry input is stereo).
-    cedar::Instruction write_inst{};
-    write_inst.opcode = cedar::Opcode::DELAY_WRITE;
-    write_inst.out_buffer = write_out_l;
-    write_inst.inputs[0] = in_buf;
-    write_inst.inputs[1] = processed_l;
-    write_inst.inputs[2] = fb_buf;
-    write_inst.inputs[3] = dry_buf;
-    write_inst.inputs[4] = wet_buf;
-    write_inst.rate = 0;
-    write_inst.state_id = delay_state_id;  // Same state_id as TAP!
-    write_inst.flags = static_cast<std::uint16_t>(
-        cedar::InstructionFlag::STEREO_OUTPUT |
-        (in_is_stereo ? cedar::InstructionFlag::STEREO_INPUT : 0u));
-    emit(write_inst);
+    codegen::InstructionBuilder(cedar::Opcode::DELAY_WRITE)
+        .inputs({in_buf, processed_l, fb_buf, dry_buf, wet_buf})
+        .output(write_out_l)
+        .state_id(delay_state_id)  // Same state_id as TAP!
+        .flags(static_cast<std::uint16_t>(
+            cedar::InstructionFlag::STEREO_OUTPUT |
+            (in_is_stereo ? cedar::InstructionFlag::STEREO_INPUT : 0u)))
+        .emit(*this);
 
     // Pop the outer path
     pop_path();
@@ -3003,18 +2905,14 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
 
     if (legacy_poly) {
         poly_begin_idx = instructions_.size();
-        cedar::Instruction poly_begin{};
-        poly_begin.opcode = cedar::Opcode::POLY_BEGIN;
-        poly_begin.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        poly_begin.inputs[0] = bank_base;  // per-voice field bank base
-        poly_begin.inputs[1] = 0xFFFF;
-        poly_begin.inputs[2] = 0xFFFF;
-        poly_begin.inputs[3] = 0xFFFF;
-        poly_begin.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
-        poly_begin.flags = cedar::InstructionFlag::STEREO_OUTPUT;
-        poly_begin.rate = 0;  // Patched after body emission
-        poly_begin.state_id = poly_state_id;
-        emit(poly_begin);
+        // rate stays 0 here and is patched to the body length after emission.
+        codegen::InstructionBuilder(cedar::Opcode::POLY_BEGIN)
+            .output(mix_buf)            // L; VM derives mix R = mix_buf + 1
+            .input(0, bank_base)        // per-voice field bank base
+            .input(4, voice_out_buf)    // L; VM derives voice_out R = +1
+            .flags(cedar::InstructionFlag::STEREO_OUTPUT)
+            .state_id(poly_state_id)
+            .emit(*this);
     } else {
         // Opens the subprogram body — emit() now lands in subprograms_[block].
         poly_block_id = begin_subprogram();
@@ -3060,15 +2958,10 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
         }
         std::uint16_t cb = buffers_.allocate();
         if (cb != BufferAllocator::BUFFER_UNUSED) {
-            cedar::Instruction zc{};
-            zc.opcode = cedar::Opcode::PUSH_CONST;
-            zc.out_buffer = cb;
-            zc.inputs[0] = 0xFFFF;
-            zc.inputs[1] = 0xFFFF;
-            zc.inputs[2] = 0xFFFF;
-            zc.inputs[3] = 0xFFFF;
-            encode_const_value(zc, dv);
-            emit(zc);
+            codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                .const_value(dv)
+                .output(cb)
+                .emit(*this);
             const_field_bufs.emplace_back(dv, cb);
         }
         return cb;
@@ -3215,32 +3108,21 @@ TypedValue CodeGenerator::handle_poly_call(NodeIndex node, const Node& n) {
     if (legacy_poly) {
         // Patch POLY_BEGIN.rate = body_length, then emit POLY_END.
         instructions_[poly_begin_idx].rate = static_cast<std::uint8_t>(body_length);
-        cedar::Instruction poly_end{};
-        poly_end.opcode = cedar::Opcode::POLY_END;
-        poly_end.out_buffer = 0xFFFF;
-        poly_end.inputs[0] = 0xFFFF;
-        poly_end.inputs[1] = 0xFFFF;
-        poly_end.inputs[2] = 0xFFFF;
-        poly_end.inputs[3] = 0xFFFF;
-        poly_end.inputs[4] = 0xFFFF;
-        poly_end.state_id = 0;
-        emit(poly_end);
+        codegen::InstructionBuilder(cedar::Opcode::POLY_END)
+            .output(0xFFFF)
+            .emit(*this);
     } else {
         // Close the subprogram body, then emit one FOREACH_EVENT into the
         // main stream referencing it. The body is NOT inline.
         end_subprogram(poly_block_id, /*frame_slot_count=*/5, /*output_count=*/2);
-        cedar::Instruction fe{};
-        fe.opcode = cedar::Opcode::FOREACH_EVENT;
-        fe.out_buffer = mix_buf;  // L; VM derives mix R = mix_buf + 1
-        fe.inputs[0] = bank_base;  // per-voice field bank base
-        fe.inputs[1] = 0xFFFF;
-        fe.inputs[2] = 0xFFFF;
-        fe.inputs[3] = 0xFFFF;
-        fe.inputs[4] = voice_out_buf;  // L; VM derives voice_out R = +1
-        fe.flags = cedar::InstructionFlag::STEREO_OUTPUT;
-        fe.rate = 0;  // body is in the subprogram table, not inline
-        fe.state_id = poly_state_id;
-        emit(fe);
+        // rate stays 0: the body is in the subprogram table, not inline.
+        codegen::InstructionBuilder(cedar::Opcode::FOREACH_EVENT)
+            .output(mix_buf)            // L; VM derives mix R = mix_buf + 1
+            .input(0, bank_base)        // per-voice field bank base
+            .input(4, voice_out_buf)    // L; VM derives voice_out R = +1
+            .flags(cedar::InstructionFlag::STEREO_OUTPUT)
+            .state_id(poly_state_id)
+            .emit(*this);
     }
 
     // Pop semantic path

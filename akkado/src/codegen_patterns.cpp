@@ -3,6 +3,7 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/codegen/options.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/chord_parser.hpp"
@@ -1432,29 +1433,22 @@ TypedValue CodeGenerator::handle_mini_literal(NodeIndex node, const Node& n) {
     bool is_sample_pattern = compiler.is_sample_pattern();
 
     // Allocate buffers for outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(n.location);
+    std::uint16_t velocity_buf = alloc_buffer(n.location);
+    std::uint16_t trigger_buf = alloc_buffer(n.location);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
 
     // Emit SEQPAT_QUERY instruction (queries pattern at block boundaries)
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;  // No direct output
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)  // No direct output
+        .state_id(state_id)
+        .emit(*this);
 
     // Check for polyphonic patterns (chords with multiple values per event)
     std::uint8_t max_voices = compiler.max_voices();
@@ -1539,40 +1533,30 @@ std::shared_ptr<PatternPayload> CodeGenerator::emit_per_voice_seqpat(NodeIndex n
                                            bool is_sample_pattern, SourceLocation loc,
                                            std::uint16_t clock_override) {
     (void)node;
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;
-    step_inst.inputs[0] = velocity_buf;
-    step_inst.inputs[1] = trigger_buf;
-    step_inst.inputs[2] = 0;  // voice 0
-    step_inst.inputs[3] = clock_override;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+        .inputs({velocity_buf, trigger_buf, /*voice*/ 0, clock_override})
+        .output(value_buf)
+        .state_id(state_id)
+        .emit(*this);
 
     // Per-voice freq buffers for chord polyphony. voice_freqs[0] = value_buf
     // (voice 0 already emitted above). Allocate and emit one extra SEQPAT_STEP
     // per chord voice so consumers like soundfont can read every voice's freq.
+    // Velocity/trigger stay on voice 0 (inputs[0..1] unused here).
     std::vector<std::uint16_t> voice_freqs;
     if (max_voices > 1 && !is_sample_pattern) {
         voice_freqs.reserve(max_voices);
         voice_freqs.push_back(value_buf);
         for (std::uint8_t v = 1; v < max_voices; ++v) {
-            std::uint16_t v_buf = buffers_.allocate();
+            const std::uint16_t v_buf =
+                codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+                    .input(2, v)  // voice index
+                    .input(3, clock_override)
+                    .state_id(state_id)
+                    .emit(*this, loc);
             if (v_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", loc);
                 return nullptr;
             }
-            cedar::Instruction v_step{};
-            v_step.opcode = cedar::Opcode::SEQPAT_STEP;
-            v_step.out_buffer = v_buf;
-            v_step.inputs[0] = 0xFFFF;          // velocity already on voice 0
-            v_step.inputs[1] = 0xFFFF;          // trigger already on voice 0
-            v_step.inputs[2] = v;               // voice index
-            v_step.inputs[3] = clock_override;
-            v_step.inputs[4] = 0xFFFF;
-            v_step.state_id = state_id;
-            emit(v_step);
             voice_freqs.push_back(v_buf);
         }
     }
@@ -1604,17 +1588,12 @@ bool CodeGenerator::emit_custom_property_buffers(
     for (const auto& [key, slot] : compiler.custom_property_slots()) {
         std::uint16_t buf = buffers_.allocate();
         if (buf == BufferAllocator::BUFFER_UNUSED) return false;
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::SEQPAT_PROP;
-        inst.out_buffer = buf;
-        inst.rate = slot;
-        inst.inputs[0] = 0;            // voice 0
-        inst.inputs[1] = clock_override;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        inst.inputs[4] = 0xFFFF;
-        inst.state_id = state_id;
-        emit(inst);
+        codegen::InstructionBuilder(cedar::Opcode::SEQPAT_PROP)
+            .inputs({/*voice*/ 0, clock_override})
+            .output(buf)
+            .rate(slot)
+            .state_id(state_id)
+            .emit(*this);
         payload.custom_fields[key] = buf;
         // Phase 3: also record the runtime prop slot so handle_poly_call can
         // plumb this custom field into the per-voice field bank.
@@ -1653,40 +1632,25 @@ bool CodeGenerator::emit_extended_field_buffers(
         return false;
     }
 
-    cedar::Instruction gate_inst{};
-    gate_inst.opcode = cedar::Opcode::SEQPAT_GATE;
-    gate_inst.out_buffer = gate_buf;
-    gate_inst.inputs[0] = 0;  // voice 0
-    gate_inst.inputs[1] = clock_override;
-    gate_inst.inputs[2] = 0xFFFF;
-    gate_inst.inputs[3] = 0xFFFF;
-    gate_inst.inputs[4] = 0xFFFF;
-    gate_inst.state_id = state_id;
-    emit(gate_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_GATE)
+        .inputs({/*voice*/ 0, clock_override})
+        .output(gate_buf)
+        .state_id(state_id)
+        .emit(*this);
 
-    cedar::Instruction type_inst{};
-    type_inst.opcode = cedar::Opcode::SEQPAT_TYPE;
-    type_inst.out_buffer = type_buf;
-    type_inst.inputs[0] = 0;  // voice 0
-    type_inst.inputs[1] = clock_override;
-    type_inst.inputs[2] = 0xFFFF;
-    type_inst.inputs[3] = 0xFFFF;
-    type_inst.inputs[4] = 0xFFFF;
-    type_inst.state_id = state_id;
-    emit(type_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_TYPE)
+        .inputs({/*voice*/ 0, clock_override})
+        .output(type_buf)
+        .state_id(state_id)
+        .emit(*this);
 
     auto emit_field = [&](std::uint16_t out_buf, std::uint8_t selector) {
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::SEQPAT_FIELD;
-        inst.out_buffer = out_buf;
-        inst.rate = selector;
-        inst.inputs[0] = 0;  // voice 0
-        inst.inputs[1] = clock_override;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        inst.inputs[4] = 0xFFFF;
-        inst.state_id = state_id;
-        emit(inst);
+        codegen::InstructionBuilder(cedar::Opcode::SEQPAT_FIELD)
+            .inputs({/*voice*/ 0, clock_override})
+            .output(out_buf)
+            .rate(selector)
+            .state_id(state_id)
+            .emit(*this);
     };
     emit_field(dur_buf,       0);
     emit_field(chance_buf,    1);
@@ -1694,16 +1658,11 @@ bool CodeGenerator::emit_extended_field_buffers(
     emit_field(note_buf,      3);
     emit_field(sample_id_buf, 4);
 
-    cedar::Instruction phase_inst{};
-    phase_inst.opcode = cedar::Opcode::SEQPAT_PHASE;
-    phase_inst.out_buffer = phase_buf;
-    phase_inst.inputs[0] = 0;  // voice 0
-    phase_inst.inputs[1] = clock_override;
-    phase_inst.inputs[2] = 0xFFFF;
-    phase_inst.inputs[3] = 0xFFFF;
-    phase_inst.inputs[4] = 0xFFFF;
-    phase_inst.state_id = state_id;
-    emit(phase_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_PHASE)
+        .inputs({/*voice*/ 0, clock_override})
+        .output(phase_buf)
+        .state_id(state_id)
+        .emit(*this);
 
     payload.fields[PatternPayload::GATE]      = gate_buf;
     payload.fields[PatternPayload::TYPE]      = type_buf;
@@ -1781,29 +1740,22 @@ TypedValue CodeGenerator::handle_pattern_reference(const std::string& name,
     bool is_sample_pattern = compiler.is_sample_pattern();
 
     // Allocate buffers
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(loc);
+    std::uint16_t velocity_buf = alloc_buffer(loc);
+    std::uint16_t trigger_buf = alloc_buffer(loc);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", loc);
         pop_path();
         return TypedValue::void_val();
     }
 
     // Emit SEQPAT_QUERY
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(*this);
 
     // Emit single-voice SEQPAT_STEP/GATE/TYPE
     std::uint8_t max_voices = compiler.max_voices();
@@ -1935,29 +1887,22 @@ TypedValue CodeGenerator::handle_chord_call(NodeIndex node, const Node& n) {
     float cycle_length = compiler.cycle_length();
 
     // Allocate buffers for outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(n.location);
+    std::uint16_t velocity_buf = alloc_buffer(n.location);
+    std::uint16_t trigger_buf = alloc_buffer(n.location);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
 
     // Emit SEQPAT_QUERY instruction
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(*this);
 
     // Check for polyphonic patterns (chords with multiple values per event)
     std::uint8_t max_voices = compiler.max_voices();
@@ -2851,16 +2796,10 @@ static TypedValue emit_pattern_with_state(
     }
 
     // Emit SEQPAT_QUERY instruction
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    gen.emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(gen);
 
     // Check for polyphonic patterns. Compute from the local (possibly
     // post-voicing) sequence_events rather than compiler.max_voices(), since
@@ -2883,16 +2822,13 @@ static TypedValue emit_pattern_with_state(
             return TypedValue::void_val();
         }
 
-        cedar::Instruction step_inst{};
-        step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-        step_inst.out_buffer = voice_value_buf;
-        step_inst.inputs[0] = (voice == 0) ? velocity_buf : 0xFFFF;
-        step_inst.inputs[1] = (voice == 0) ? trigger_buf : 0xFFFF;
-        step_inst.inputs[2] = voice;
-        step_inst.inputs[3] = 0xFFFF;
-        step_inst.inputs[4] = 0xFFFF;
-        step_inst.state_id = state_id;
-        gen.emit(step_inst);
+        codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+            .input(0, (voice == 0) ? velocity_buf : 0xFFFF)
+            .input(1, (voice == 0) ? trigger_buf : 0xFFFF)
+            .input(2, voice)
+            .output(voice_value_buf)
+            .state_id(state_id)
+            .emit(gen);
 
         voice_buffers.push_back(voice_value_buf);
     }
@@ -2992,16 +2928,10 @@ CodeGenerator::PatternQuerySource CodeGenerator::emit_pattern_query_only(
 
     // Emit SEQPAT_QUERY. SEQPAT_STEP / extended fields are emitted by the
     // downstream readout against the transform state_id.
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(*this);
 
     // Store sequence program initialization data for the inner SequenceState.
     StateInitData seq_init;
@@ -3064,29 +2994,18 @@ TypedValue CodeGenerator::handle_timeline_literal(NodeIndex node, const Node& n)
         breakpoints.resize(cedar::TimelineState::MAX_BREAKPOINTS);
     }
 
-    // Allocate state and output buffer
+    // Allocate state and output buffer, emit TIMELINE instruction
     std::uint32_t tl_count = call_counters_["timeline"]++;
     push_path("timeline#" + std::to_string(tl_count));
     std::uint32_t state_id = compute_state_id();
-    std::uint16_t out_buf = buffers_.allocate();
-
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::TIMELINE)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
-
-    // Emit TIMELINE instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::TIMELINE;
-    inst.out_buffer = out_buf;
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = state_id;
-    emit(inst);
 
     // Create StateInitData for timeline breakpoints
     StateInitData timeline_init;
@@ -3169,29 +3088,18 @@ TypedValue CodeGenerator::handle_timeline_call(NodeIndex node, const Node& n) {
         breakpoints.resize(cedar::TimelineState::MAX_BREAKPOINTS);
     }
 
-    // Allocate state and output buffer
+    // Allocate state and output buffer, emit TIMELINE instruction
     std::uint32_t tl_count = call_counters_["timeline"]++;
     push_path("timeline#" + std::to_string(tl_count));
     std::uint32_t state_id = compute_state_id();
-    std::uint16_t out_buf = buffers_.allocate();
-
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::TIMELINE)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
-
-    // Emit TIMELINE instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::TIMELINE;
-    inst.out_buffer = out_buf;
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = state_id;
-    emit(inst);
 
     // Create StateInitData for timeline breakpoints
     StateInitData timeline_init;
@@ -3353,20 +3261,12 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
                 error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
             }
-            factor_buf = buffers_.allocate();
+            factor_buf = codegen::InstructionBuilder(cedar::Opcode::DIV)
+                             .inputs({one_buf, factor_tv.buffer})
+                             .emit(*this, n.location);
             if (factor_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
             }
-            cedar::Instruction div_inst{};
-            div_inst.opcode = cedar::Opcode::DIV;
-            div_inst.out_buffer = factor_buf;
-            div_inst.inputs[0] = one_buf;
-            div_inst.inputs[1] = factor_tv.buffer;
-            div_inst.inputs[2] = 0xFFFF;
-            div_inst.inputs[3] = 0xFFFF;
-            div_inst.inputs[4] = 0xFFFF;
-            emit(div_inst);
         }
     }
 
@@ -3403,17 +3303,16 @@ TypedValue CodeGenerator::emit_rate_scale_call(NodeIndex node, const Node& n,
 
     auto& stream = emit_stream();
     auto& locs = loc_stream();
-    cedar::Instruction ers{};
-    ers.opcode = cedar::Opcode::EVENT_RATE_SCALE;
-    ers.out_buffer = 0xFFFF;
-    ers.inputs[0] = 0xFFFF;
-    ers.inputs[1] = factor_buf;
-    // Pack upstream SequenceState state_id across inputs[2..3] (same encoding
-    // as EVENT_MAP / EVENT_FILTER via event_transform_upstream_id).
-    ers.inputs[2] = static_cast<std::uint16_t>(state_id & 0xFFFF);
-    ers.inputs[3] = static_cast<std::uint16_t>((state_id >> 16) & 0xFFFF);
-    ers.inputs[4] = 0xFFFF;
-    ers.state_id = ers_state_id;
+    // Upstream SequenceState state_id is packed across inputs[2..3] (same
+    // encoding as EVENT_MAP / EVENT_FILTER via event_transform_upstream_id).
+    const cedar::Instruction ers =
+        codegen::InstructionBuilder(cedar::Opcode::EVENT_RATE_SCALE)
+            .output(0xFFFF)
+            .input(1, factor_buf)
+            .input(2, static_cast<std::uint16_t>(state_id & 0xFFFF))
+            .input(3, static_cast<std::uint16_t>((state_id >> 16) & 0xFFFF))
+            .state_id(ers_state_id)
+            .get();
 
     // Insert ERS BEFORE the first SEQPAT_* instruction reading this state_id
     // so the cycle_length mutation lands before any opcode consults it on
@@ -3517,17 +3416,14 @@ TypedValue CodeGenerator::emit_reorder_call(
     std::uint32_t transform_state_id = compute_state_id();
     pop_path();
 
-    cedar::Instruction op{};
-    op.opcode = cedar::Opcode::EVENT_REORDER;
-    op.rate = cedar::event_reorder_rate(kind, flags);
-    op.out_buffer = 0xFFFF;
-    op.inputs[0] = param0_buf;
-    op.inputs[1] = param1_buf;
-    op.inputs[2] = static_cast<std::uint16_t>(inner_state_id & 0xFFFF);
-    op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
-    op.inputs[4] = 0xFFFF;
-    op.state_id = transform_state_id;
-    emit(op);
+    codegen::InstructionBuilder(cedar::Opcode::EVENT_REORDER)
+        .rate(cedar::event_reorder_rate(kind, flags))
+        .output(0xFFFF)
+        .inputs({param0_buf, param1_buf,
+                 static_cast<std::uint16_t>(inner_state_id & 0xFFFF),
+                 static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF)})
+        .state_id(transform_state_id)
+        .emit(*this);
 
     // Downstream transform state: holds the rewritten OutputEvents that the
     // readout reads via SEQPAT_STEP / SEQPAT_FIELD etc.
@@ -3623,17 +3519,14 @@ TypedValue CodeGenerator::emit_fanout_call(
     std::uint32_t transform_state_id = compute_state_id();
     pop_path();
 
-    cedar::Instruction op{};
-    op.opcode = cedar::Opcode::EVENT_FANOUT;
-    op.rate = cedar::event_fanout_rate(kind);
-    op.out_buffer = 0xFFFF;
-    op.inputs[0] = param0_buf;
-    op.inputs[1] = 0xFFFF;
-    op.inputs[2] = static_cast<std::uint16_t>(inner_state_id & 0xFFFF);
-    op.inputs[3] = static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF);
-    op.inputs[4] = 0xFFFF;
-    op.state_id = transform_state_id;
-    emit(op);
+    codegen::InstructionBuilder(cedar::Opcode::EVENT_FANOUT)
+        .rate(cedar::event_fanout_rate(kind))
+        .output(0xFFFF)
+        .input(0, param0_buf)
+        .input(2, static_cast<std::uint16_t>(inner_state_id & 0xFFFF))
+        .input(3, static_cast<std::uint16_t>((inner_state_id >> 16) & 0xFFFF))
+        .state_id(transform_state_id)
+        .emit(*this);
 
     StateInitData fn_init{};
     fn_init.state_id = transform_state_id;
@@ -3657,13 +3550,12 @@ TypedValue CodeGenerator::emit_pattern_readout(NodeIndex node,
                                                SourceLocation loc) {
     const std::uint8_t max_voices = (src.max_voices < 1) ? 1 : src.max_voices;
 
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(loc);
+    std::uint16_t velocity_buf = alloc_buffer(loc);
+    std::uint16_t trigger_buf = alloc_buffer(loc);
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", loc);
         return TypedValue::void_val();
     }
 
@@ -3671,21 +3563,17 @@ TypedValue CodeGenerator::emit_pattern_readout(NodeIndex node,
     std::vector<std::uint16_t> voice_buffers;
     for (std::uint8_t voice = 0; voice < max_voices; ++voice) {
         std::uint16_t voice_value_buf =
-            (voice == 0) ? value_buf : buffers_.allocate();
+            (voice == 0) ? value_buf : alloc_buffer(loc);
         if (voice_value_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", loc);
             return TypedValue::void_val();
         }
-        cedar::Instruction step_inst{};
-        step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-        step_inst.out_buffer = voice_value_buf;
-        step_inst.inputs[0] = (voice == 0) ? velocity_buf : 0xFFFF;
-        step_inst.inputs[1] = (voice == 0) ? trigger_buf : 0xFFFF;
-        step_inst.inputs[2] = voice;
-        step_inst.inputs[3] = 0xFFFF;
-        step_inst.inputs[4] = 0xFFFF;
-        step_inst.state_id = src.state_id;
-        emit(step_inst);
+        codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+            .input(0, (voice == 0) ? velocity_buf : 0xFFFF)
+            .input(1, (voice == 0) ? trigger_buf : 0xFFFF)
+            .input(2, voice)
+            .output(voice_value_buf)
+            .state_id(src.state_id)
+            .emit(*this);
         voice_buffers.push_back(voice_value_buf);
     }
 
@@ -3729,22 +3617,15 @@ TypedValue CodeGenerator::emit_pattern_readout(NodeIndex node,
     // EVENT_MAP copies prop_vals/prop_set_mask through unchanged, so the slot
     // indices match the upstream pattern.
     for (const auto& [key, slot] : src.custom_props) {
-        std::uint16_t buf = buffers_.allocate();
+        const std::uint16_t buf =
+            codegen::InstructionBuilder(cedar::Opcode::SEQPAT_PROP)
+                .input(0, 0)  // voice 0 (inputs[1] unset = internal clock)
+                .rate(slot)
+                .state_id(src.state_id)
+                .emit(*this, loc);
         if (buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", loc);
             return TypedValue::void_val();
         }
-        cedar::Instruction prop_inst{};
-        prop_inst.opcode = cedar::Opcode::SEQPAT_PROP;
-        prop_inst.out_buffer = buf;
-        prop_inst.rate = slot;
-        prop_inst.inputs[0] = 0;       // voice 0
-        prop_inst.inputs[1] = 0xFFFF;  // internal clock
-        prop_inst.inputs[2] = 0xFFFF;
-        prop_inst.inputs[3] = 0xFFFF;
-        prop_inst.inputs[4] = 0xFFFF;
-        prop_inst.state_id = src.state_id;
-        emit(prop_inst);
         payload->custom_fields[key] = buf;
         payload->custom_field_slots[key] = slot;
     }
@@ -3810,41 +3691,29 @@ TypedValue CodeGenerator::handle_bank_call(NodeIndex node, const Node& n) {
     bool is_sample_pattern = compiler.is_sample_pattern();
 
     // Allocate buffers for outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(n.location);
+    std::uint16_t velocity_buf = alloc_buffer(n.location);
+    std::uint16_t trigger_buf = alloc_buffer(n.location);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
         pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
 
     // Emit SEQPAT_QUERY instruction
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(*this);
 
     // Emit SEQPAT_STEP
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;
-    step_inst.inputs[0] = velocity_buf;
-    step_inst.inputs[1] = trigger_buf;
-    step_inst.inputs[2] = 0;
-    step_inst.inputs[3] = 0xFFFF;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+        .inputs({velocity_buf, trigger_buf, /*voice*/ 0})
+        .output(value_buf)
+        .state_id(state_id)
+        .emit(*this);
 
     // Store sequence program initialization data
     StateInitData seq_init;
@@ -4027,41 +3896,29 @@ TypedValue CodeGenerator::handle_variant_call(NodeIndex node, const Node& n) {
     bool is_sample_pattern = compiler.is_sample_pattern();
 
     // Allocate buffers for outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(n.location);
+    std::uint16_t velocity_buf = alloc_buffer(n.location);
+    std::uint16_t trigger_buf = alloc_buffer(n.location);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
         pop_path();
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
 
     // Emit SEQPAT_QUERY instruction
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = 0xFFFF;
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .state_id(state_id)
+        .emit(*this);
 
     // Emit SEQPAT_STEP
-    cedar::Instruction step_inst{};
-    step_inst.opcode = cedar::Opcode::SEQPAT_STEP;
-    step_inst.out_buffer = value_buf;
-    step_inst.inputs[0] = velocity_buf;
-    step_inst.inputs[1] = trigger_buf;
-    step_inst.inputs[2] = 0;
-    step_inst.inputs[3] = 0xFFFF;
-    step_inst.inputs[4] = 0xFFFF;
-    step_inst.state_id = state_id;
-    emit(step_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_STEP)
+        .inputs({velocity_buf, trigger_buf, /*voice*/ 0})
+        .output(value_buf)
+        .state_id(state_id)
+        .emit(*this);
 
     // Store sequence program initialization data
     StateInitData seq_init;
@@ -4207,27 +4064,19 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
         reset_buf = visit(reset_arg).buffer;
     }
 
-    // Allocate beat_pos output buffer
-    std::uint16_t beat_pos_buf = buffers_.allocate();
+    // Emit SEQPAT_TRANSPORT (output = beat_pos). cycle_length used to be
+    // bit-cast into the inputs[3]/[4] slot pair; prd-extended-params-migration
+    // §4.9 moves it to an ExtendedParams<1> companion state, freeing both
+    // signal slots.
+    const std::uint16_t beat_pos_buf =
+        codegen::InstructionBuilder(cedar::Opcode::SEQPAT_TRANSPORT)
+            .inputs({trig_buf, step_buf, reset_buf})
+            .state_id(transport_state_id)
+            .emit(*this, n.location);
     if (beat_pos_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
-
-    // Emit SEQPAT_TRANSPORT. cycle_length used to be bit-cast into the
-    // inputs[3]/[4] slot pair; prd-extended-params-migration §4.9 moves it
-    // to an ExtendedParams<1> companion state, freeing both signal slots.
-    cedar::Instruction transport_inst{};
-    transport_inst.opcode = cedar::Opcode::SEQPAT_TRANSPORT;
-    transport_inst.out_buffer = beat_pos_buf;
-    transport_inst.inputs[0] = trig_buf;
-    transport_inst.inputs[1] = step_buf;
-    transport_inst.inputs[2] = reset_buf;
-    transport_inst.inputs[3] = BufferAllocator::BUFFER_UNUSED;
-    transport_inst.inputs[4] = BufferAllocator::BUFFER_UNUSED;
-    transport_inst.state_id = transport_state_id;
-    emit(transport_inst);
 
     // cycle_length → ExtendedParams<1> slot 0 (constant).
     StateInitData transport_ext{};
@@ -4239,29 +4088,23 @@ TypedValue CodeGenerator::handle_transport_call(NodeIndex node, const Node& n) {
     state_inits_.push_back(transport_ext);
 
     // Emit SEQPAT_QUERY with clock override
-    cedar::Instruction query_inst{};
-    query_inst.opcode = cedar::Opcode::SEQPAT_QUERY;
-    query_inst.out_buffer = 0xFFFF;
-    query_inst.inputs[0] = beat_pos_buf;  // Clock override
-    query_inst.inputs[1] = 0xFFFF;
-    query_inst.inputs[2] = 0xFFFF;
-    query_inst.inputs[3] = 0xFFFF;
-    query_inst.inputs[4] = 0xFFFF;
-    query_inst.state_id = seq_state_id;
-    emit(query_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_QUERY)
+        .output(0xFFFF)
+        .input(0, beat_pos_buf)  // Clock override
+        .state_id(seq_state_id)
+        .emit(*this);
 
     // Collect required samples
     compiler.collect_samples(required_samples_);
 
     // Allocate buffers for pattern outputs
-    std::uint16_t value_buf = buffers_.allocate();
-    std::uint16_t velocity_buf = buffers_.allocate();
-    std::uint16_t trigger_buf = buffers_.allocate();
+    std::uint16_t value_buf = alloc_buffer(n.location);
+    std::uint16_t velocity_buf = alloc_buffer(n.location);
+    std::uint16_t trigger_buf = alloc_buffer(n.location);
 
     if (value_buf == BufferAllocator::BUFFER_UNUSED ||
         velocity_buf == BufferAllocator::BUFFER_UNUSED ||
         trigger_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
@@ -5233,24 +5076,16 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     if (upstream_is_event_source) {
         std::uint32_t state_id = compute_state_id();
 
-        std::uint16_t out_buf = buffers_.allocate();
+        // inputs[0] = 0xFFFF signals event-driven mode to op_soundfont_voice.
+        const std::uint16_t out_buf =
+            codegen::InstructionBuilder(cedar::Opcode::SOUNDFONT_VOICE)
+                .state_id(state_id)
+                .rate(sf_slot)
+                .emit(*this, n.location);
         if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
-
-        cedar::Instruction sf_inst{};
-        sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
-        sf_inst.out_buffer = out_buf;
-        sf_inst.inputs[0] = 0xFFFF;  // signals event-driven mode to op_soundfont_voice
-        sf_inst.inputs[1] = 0xFFFF;
-        sf_inst.inputs[2] = 0xFFFF;
-        sf_inst.inputs[3] = 0xFFFF;
-        sf_inst.inputs[4] = 0xFFFF;
-        sf_inst.state_id = state_id;
-        sf_inst.rate = sf_slot;
-        emit(sf_inst);
 
         // Tell the host to seed the SoundFontVoiceState with the upstream
         // state_id and the preset index before audio starts.
@@ -5277,25 +5112,18 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
             push_path("voice#" + std::to_string(v));
             std::uint32_t state_id = compute_state_id();
 
-            std::uint16_t out_buf = buffers_.allocate();
+            const std::uint16_t out_buf =
+                codegen::InstructionBuilder(cedar::Opcode::SOUNDFONT_VOICE)
+                    .inputs({gate_buf, freq_per_voice[v], vel_buf,
+                             preset_buf, trig_buf})
+                    .state_id(state_id)
+                    .rate(sf_slot)
+                    .emit(*this, n.location);
             if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 pop_path();
                 pop_path();
                 return TypedValue::void_val();
             }
-
-            cedar::Instruction sf_inst{};
-            sf_inst.opcode = cedar::Opcode::SOUNDFONT_VOICE;
-            sf_inst.out_buffer = out_buf;
-            sf_inst.inputs[0] = gate_buf;
-            sf_inst.inputs[1] = freq_per_voice[v];
-            sf_inst.inputs[2] = vel_buf;
-            sf_inst.inputs[3] = preset_buf;
-            sf_inst.inputs[4] = trig_buf;
-            sf_inst.state_id = state_id;
-            sf_inst.rate = sf_slot;
-            emit(sf_inst);
 
             per_voice_outs.push_back(out_buf);
             pop_path();
@@ -5305,9 +5133,8 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
     // Sum per-voice outputs into one buffer. Single voice = no sum needed.
     std::uint16_t mixed = per_voice_outs[0];
     for (std::size_t v = 1; v < per_voice_outs.size(); ++v) {
-        std::uint16_t sum_buf = buffers_.allocate();
+        std::uint16_t sum_buf = alloc_buffer(n.location);
         if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
@@ -5329,9 +5156,8 @@ TypedValue CodeGenerator::handle_soundfont_call(NodeIndex node, const Node& n) {
             pop_path();
             return TypedValue::void_val();
         }
-        std::uint16_t scaled_buf = buffers_.allocate();
+        std::uint16_t scaled_buf = alloc_buffer(n.location);
         if (scaled_buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
@@ -5436,15 +5262,13 @@ TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
     }
 
     // Allocate the adjacent stereo output pair (L = out_left, R = out_left+1).
-    std::uint16_t out_left = buffers_.allocate();
+    std::uint16_t out_left = alloc_buffer(n.location);
     if (out_left == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::error_val();
     }
-    std::uint16_t out_right = buffers_.allocate();
+    std::uint16_t out_right = alloc_buffer(n.location);
     if (out_right == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::error_val();
     }
@@ -5455,19 +5279,14 @@ TypedValue CodeGenerator::handle_sf_voice_call(NodeIndex node, const Node& n) {
         return TypedValue::error_val();
     }
 
-    cedar::Instruction sf_inst{};
-    sf_inst.opcode = cedar::Opcode::SF_VOICE;
-    sf_inst.out_buffer = out_left;
-    sf_inst.inputs[0] = gate_tv.buffer;
-    sf_inst.inputs[1] = freq_tv.buffer;
-    sf_inst.inputs[2] = vel_tv.buffer;
-    sf_inst.inputs[3] = preset_buf;
-    sf_inst.inputs[4] = 0xFFFF;
-    sf_inst.rate = sf_slot;
-    sf_inst.state_id = compute_state_id();
-    sf_inst.flags = static_cast<std::uint16_t>(
-        cedar::InstructionFlag::STEREO_OUTPUT);
-    emit(sf_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SF_VOICE)
+        .inputs({gate_tv.buffer, freq_tv.buffer, vel_tv.buffer, preset_buf})
+        .output(out_left)
+        .rate(sf_slot)
+        .state_id(compute_state_id())
+        .flags(static_cast<std::uint16_t>(
+            cedar::InstructionFlag::STEREO_OUTPUT))
+        .emit(*this);
 
     pop_path();
 
@@ -5640,17 +5459,11 @@ TypedValue CodeGenerator::handle_midi_call(NodeIndex node, const Node& n) {
     // (treated as output destinations by op_midi_query). Slot 4 is unused.
     // POLY / SOUNDFONT continue to read MidiQueueState.output via
     // state_pool_.resolve_output_events for full polyphonic event access.
-    cedar::Instruction midi_inst{};
-    midi_inst.opcode = cedar::Opcode::MIDI_QUERY;
-    midi_inst.out_buffer = 0xFFFF;
-    midi_inst.inputs[0] = gate_buf;
-    midi_inst.inputs[1] = freq_buf;
-    midi_inst.inputs[2] = vel_buf;
-    midi_inst.inputs[3] = trig_buf;
-    midi_inst.inputs[4] = 0xFFFF;
-    midi_inst.rate = 0;
-    midi_inst.state_id = state_id;
-    emit(midi_inst);
+    codegen::InstructionBuilder(cedar::Opcode::MIDI_QUERY)
+        .output(0xFFFF)
+        .inputs({gate_buf, freq_buf, vel_buf, trig_buf})
+        .state_id(state_id)
+        .emit(*this);
 
     // Publish host-facing config. Duplicates by name are NOT collapsed —
     // each call gets its own state_id and its own ring (PRD §3.4).
@@ -5870,11 +5683,10 @@ TypedValue CodeGenerator::handle_input_call(NodeIndex node, const Node& n) {
     required_input_sources_.push_back(source_str);
 
     // Allocate adjacent L/R buffer pair (linear allocator guarantees right=left+1).
-    std::uint16_t left_buf  = buffers_.allocate();
-    std::uint16_t right_buf = buffers_.allocate();
+    std::uint16_t left_buf  = alloc_buffer(n.location);
+    std::uint16_t right_buf = alloc_buffer(n.location);
     if (left_buf == BufferAllocator::BUFFER_UNUSED ||
         right_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
 
@@ -5886,16 +5698,10 @@ TypedValue CodeGenerator::handle_input_call(NodeIndex node, const Node& n) {
         return TypedValue::error_val();
     }
 
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::INPUT;
-    inst.out_buffer = left_buf;
-    inst.inputs[0] = BufferAllocator::BUFFER_UNUSED;
-    inst.inputs[1] = BufferAllocator::BUFFER_UNUSED;
-    inst.inputs[2] = BufferAllocator::BUFFER_UNUSED;
-    inst.inputs[3] = BufferAllocator::BUFFER_UNUSED;
-    inst.inputs[4] = BufferAllocator::BUFFER_UNUSED;
-    inst.state_id = 0;  // Stateless
-    emit(inst);
+    // Stateless (state_id 0).
+    codegen::InstructionBuilder(cedar::Opcode::INPUT)
+        .output(left_buf)
+        .emit(*this);
 
     register_stereo(node, left_buf, right_buf);
     return cache_and_return(node, TypedValue::stereo_signal(left_buf, right_buf));
@@ -6114,23 +5920,15 @@ TypedValue CodeGenerator::handle_smooch_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
     pop_path();
 
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::OSC_WAVETABLE)
+            .inputs({freq_buf, phase_buf, pos_buf})
+            .state_id(state_id)
+            .rate(static_cast<std::uint8_t>(bank_id))
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode    = cedar::Opcode::OSC_WAVETABLE;
-    inst.out_buffer = out_buf;
-    inst.inputs[0] = freq_buf;
-    inst.inputs[1] = phase_buf;
-    inst.inputs[2] = pos_buf;
-    inst.inputs[3] = BufferAllocator::BUFFER_UNUSED;
-    inst.inputs[4] = BufferAllocator::BUFFER_UNUSED;
-    inst.state_id  = state_id;
-    inst.rate      = static_cast<std::uint8_t>(bank_id);
-    emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }

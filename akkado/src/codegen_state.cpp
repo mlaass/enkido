@@ -19,6 +19,7 @@
 // hot-swap diffs stable).
 
 #include "akkado/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/builtins.hpp"
@@ -132,24 +133,16 @@ TypedValue CodeGenerator::handle_state_call(NodeIndex node, const Node& n) {
 
     // Scalar cell: state_id is the parent path's hash. Unchanged from Phase 3.
     std::uint32_t state_id = compute_state_id();
-    std::uint16_t out = buffers_.allocate();
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+            .rate(0)  // init mode
+            .input(0, init_tv.buffer)
+            .state_id(state_id)
+            .emit(*this, n.location);
     if (out == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::STATE_OP;
-    inst.rate = 0;  // init mode
-    inst.out_buffer = out;
-    inst.inputs[0] = init_tv.buffer;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = state_id;
-    emit(inst);
 
     pop_path();
     return cache_and_return(node, TypedValue::state_cell(state_id, out));
@@ -189,24 +182,16 @@ TypedValue CodeGenerator::handle_state_record_init(NodeIndex node, const Node& n
         push_path(field_name);
         std::uint32_t field_state_id = compute_state_id();
 
-        std::uint16_t out = buffers_.allocate();
+        const std::uint16_t out =
+            codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+                .rate(0)  // init mode
+                .input(0, field_tv.buffer)
+                .state_id(field_state_id)
+                .emit(*this, n.location);
         if (out == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::error_val();
         }
-
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::STATE_OP;
-        inst.rate = 0;  // init mode
-        inst.out_buffer = out;
-        inst.inputs[0] = field_tv.buffer;
-        inst.inputs[1] = 0xFFFF;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        inst.inputs[4] = 0xFFFF;
-        inst.state_id = field_state_id;
-        emit(inst);
 
         sub_field_cells.emplace(field_name, TypedValue::state_cell(field_state_id, out));
         if (first_buf == BufferAllocator::BUFFER_UNUSED) first_buf = out;
@@ -248,23 +233,14 @@ TypedValue CodeGenerator::handle_get_call(NodeIndex node, const Node& n) {
         return handle_get_record_cell(node, n, cell_tv);
     }
 
-    std::uint16_t out = buffers_.allocate();
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+            .rate(1)  // load mode
+            .state_id(cell_tv.cell_state_id)
+            .emit(*this, n.location);
     if (out == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::STATE_OP;
-    inst.rate = 1;  // load mode
-    inst.out_buffer = out;
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = cell_tv.cell_state_id;
-    emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out));
 }
@@ -277,23 +253,14 @@ TypedValue CodeGenerator::handle_get_record_cell(NodeIndex node, const Node& n,
     for (const auto& field_name : sorted_field_names(*cell_tv.record)) {
         const TypedValue& sub_cell = cell_tv.record->fields.at(field_name);
 
-        std::uint16_t out = buffers_.allocate();
+        const std::uint16_t out =
+            codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+                .rate(1)  // load mode
+                .state_id(sub_cell.cell_state_id)
+                .emit(*this, n.location);
         if (out == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::error_val();
         }
-
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::STATE_OP;
-        inst.rate = 1;  // load mode
-        inst.out_buffer = out;
-        inst.inputs[0] = 0xFFFF;
-        inst.inputs[1] = 0xFFFF;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        inst.inputs[4] = 0xFFFF;
-        inst.state_id = sub_cell.cell_state_id;
-        emit(inst);
 
         result_fields.emplace(field_name, TypedValue::signal(out));
         if (first_buf == BufferAllocator::BUFFER_UNUSED) first_buf = out;
@@ -364,23 +331,15 @@ TypedValue CodeGenerator::handle_set_call(NodeIndex node, const Node& n) {
         return TypedValue::error_val();
     }
 
-    std::uint16_t out = buffers_.allocate();
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+            .rate(2)  // store mode
+            .input(0, value_tv.buffer)
+            .state_id(cell_tv.cell_state_id)
+            .emit(*this, n.location);
     if (out == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::STATE_OP;
-    inst.rate = 2;  // store mode
-    inst.out_buffer = out;
-    inst.inputs[0] = value_tv.buffer;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = cell_tv.cell_state_id;
-    emit(inst);
 
     // Returning a Signal lets users chain set() in expression position:
     //   arr[s.set(s.get() + 1)] — advance and use the new index in one shot.
@@ -486,23 +445,15 @@ TypedValue CodeGenerator::handle_field_assignment(NodeIndex node, const Node& n)
         return TypedValue::error_val();
     }
 
-    std::uint16_t out = buffers_.allocate();
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+            .rate(2)  // store mode
+            .input(0, value_tv.buffer)
+            .state_id(sub_cell.cell_state_id)
+            .emit(*this, n.location);
     if (out == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::STATE_OP;
-    inst.rate = 2;  // store mode
-    inst.out_buffer = out;
-    inst.inputs[0] = value_tv.buffer;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = sub_cell.cell_state_id;
-    emit(inst);
 
     // The desugaring of `cell.x = expr` is conceptually
     //   `set(cell, {..get(cell), x: expr})`
@@ -536,23 +487,15 @@ TypedValue CodeGenerator::handle_set_record_cell(NodeIndex node, const Node& n,
             return TypedValue::error_val();
         }
 
-        std::uint16_t out = buffers_.allocate();
+        const std::uint16_t out =
+            codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+                .rate(2)  // store mode
+                .input(0, field_value.buffer)
+                .state_id(sub_cell.cell_state_id)
+                .emit(*this, n.location);
         if (out == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::error_val();
         }
-
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::STATE_OP;
-        inst.rate = 2;  // store mode
-        inst.out_buffer = out;
-        inst.inputs[0] = field_value.buffer;
-        inst.inputs[1] = 0xFFFF;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        inst.inputs[4] = 0xFFFF;
-        inst.state_id = sub_cell.cell_state_id;
-        emit(inst);
 
         result_fields.emplace(field_name, TypedValue::signal(out));
         if (first_buf == BufferAllocator::BUFFER_UNUSED) first_buf = out;

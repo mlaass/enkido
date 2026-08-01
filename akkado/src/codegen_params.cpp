@@ -5,13 +5,13 @@
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
 #include <algorithm>
 #include <cmath>
 
 namespace akkado {
 
-using codegen::encode_const_value;
 using codegen::unwrap_argument;
 
 // Helper: Extract float constant from argument node
@@ -115,38 +115,24 @@ TypedValue CodeGenerator::handle_param_call(NodeIndex node, const Node& n) {
     }
 
     // 5. Emit fallback value (for when parameter not set in EnvMap)
-    std::uint16_t fallback_buf = buffers_.allocate();
+    const std::uint16_t fallback_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(default_val)
+            .emit(*this, n.location);
     if (fallback_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction push_inst{};
-    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-    push_inst.out_buffer = fallback_buf;
-    push_inst.inputs[0] = 0xFFFF;
-    push_inst.inputs[1] = 0xFFFF;
-    push_inst.inputs[2] = 0xFFFF;
-    push_inst.inputs[3] = 0xFFFF;
-    encode_const_value(push_inst, default_val);
-    emit(push_inst);
 
     // 6. Emit ENV_GET instruction
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::ENV_GET)
+            .input(0, fallback_buf)  // Fallback if param not in EnvMap
+            .input(4, 0)             // preserve historical zero-init slot
+            .state_id(name_hash)     // Parameter lookup key
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction env_inst{};
-    env_inst.opcode = cedar::Opcode::ENV_GET;
-    env_inst.out_buffer = out_buf;
-    env_inst.inputs[0] = fallback_buf;  // Fallback if param not in EnvMap
-    env_inst.inputs[1] = 0xFFFF;
-    env_inst.inputs[2] = 0xFFFF;
-    env_inst.inputs[3] = 0xFFFF;
-    env_inst.state_id = name_hash;       // Parameter lookup key
-    emit(env_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -192,38 +178,24 @@ TypedValue CodeGenerator::handle_button_call(NodeIndex node, const Node& n) {
     }
 
     // 3. Emit fallback (0.0 = not pressed)
-    std::uint16_t fallback_buf = buffers_.allocate();
+    const std::uint16_t fallback_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(0.0f)
+            .emit(*this, n.location);
     if (fallback_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction push_inst{};
-    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-    push_inst.out_buffer = fallback_buf;
-    push_inst.inputs[0] = 0xFFFF;
-    push_inst.inputs[1] = 0xFFFF;
-    push_inst.inputs[2] = 0xFFFF;
-    push_inst.inputs[3] = 0xFFFF;
-    encode_const_value(push_inst, 0.0f);
-    emit(push_inst);
 
     // 4. Emit ENV_GET
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::ENV_GET)
+            .input(0, fallback_buf)
+            .input(4, 0)  // preserve historical zero-init slot
+            .state_id(name_hash)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction env_inst{};
-    env_inst.opcode = cedar::Opcode::ENV_GET;
-    env_inst.out_buffer = out_buf;
-    env_inst.inputs[0] = fallback_buf;
-    env_inst.inputs[1] = 0xFFFF;
-    env_inst.inputs[2] = 0xFFFF;
-    env_inst.inputs[3] = 0xFFFF;
-    env_inst.state_id = name_hash;
-    emit(env_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -277,38 +249,24 @@ TypedValue CodeGenerator::handle_toggle_call(NodeIndex node, const Node& n) {
     }
 
     // 4. Emit fallback
-    std::uint16_t fallback_buf = buffers_.allocate();
+    const std::uint16_t fallback_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(default_val)
+            .emit(*this, n.location);
     if (fallback_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction push_inst{};
-    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-    push_inst.out_buffer = fallback_buf;
-    push_inst.inputs[0] = 0xFFFF;
-    push_inst.inputs[1] = 0xFFFF;
-    push_inst.inputs[2] = 0xFFFF;
-    push_inst.inputs[3] = 0xFFFF;
-    encode_const_value(push_inst, default_val);
-    emit(push_inst);
 
     // 5. Emit ENV_GET
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::ENV_GET)
+            .input(0, fallback_buf)
+            .input(4, 0)  // preserve historical zero-init slot
+            .state_id(name_hash)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction env_inst{};
-    env_inst.opcode = cedar::Opcode::ENV_GET;
-    env_inst.out_buffer = out_buf;
-    env_inst.inputs[0] = fallback_buf;
-    env_inst.inputs[1] = 0xFFFF;
-    env_inst.inputs[2] = 0xFFFF;
-    env_inst.inputs[3] = 0xFFFF;
-    env_inst.state_id = name_hash;
-    emit(env_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -379,38 +337,24 @@ TypedValue CodeGenerator::handle_select_call(NodeIndex node, const Node& n) {
     }
 
     // 5. Emit fallback (0.0 = first option)
-    std::uint16_t fallback_buf = buffers_.allocate();
+    const std::uint16_t fallback_buf =
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(0.0f)
+            .emit(*this, n.location);
     if (fallback_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction push_inst{};
-    push_inst.opcode = cedar::Opcode::PUSH_CONST;
-    push_inst.out_buffer = fallback_buf;
-    push_inst.inputs[0] = 0xFFFF;
-    push_inst.inputs[1] = 0xFFFF;
-    push_inst.inputs[2] = 0xFFFF;
-    push_inst.inputs[3] = 0xFFFF;
-    encode_const_value(push_inst, 0.0f);
-    emit(push_inst);
 
     // 6. Emit ENV_GET
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::ENV_GET)
+            .input(0, fallback_buf)
+            .input(4, 0)  // preserve historical zero-init slot
+            .state_id(name_hash)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction env_inst{};
-    env_inst.opcode = cedar::Opcode::ENV_GET;
-    env_inst.out_buffer = out_buf;
-    env_inst.inputs[0] = fallback_buf;
-    env_inst.inputs[1] = 0xFFFF;
-    env_inst.inputs[2] = 0xFFFF;
-    env_inst.inputs[3] = 0xFFFF;
-    env_inst.state_id = name_hash;
-    emit(env_inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }

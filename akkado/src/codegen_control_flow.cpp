@@ -8,6 +8,7 @@
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/arrays.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/const_eval.hpp"
 #include <cmath>
 #include <variant>
@@ -60,19 +61,10 @@ TypedValue CodeGenerator::handle_when_call(NodeIndex node, const Node& n) {
 
     // --- SKIP_IF_ZERO (skip true branch) — emitted with placeholder offset --
     std::size_t skip1_idx = instructions_.size();
-    {
-        cedar::Instruction skip{};
-        skip.opcode = cedar::Opcode::SKIP_IF_ZERO;
-        skip.out_buffer = 0xFFFF;
-        skip.inputs[0] = cond_buf;
-        skip.inputs[1] = 0xFFFF;
-        skip.inputs[2] = 0xFFFF;
-        skip.inputs[3] = 0xFFFF;
-        skip.inputs[4] = 0xFFFF;
-        skip.rate = 0;  // patched below
-        skip.state_id = 0;
-        emit(skip);
-    }
+    codegen::InstructionBuilder(cedar::Opcode::SKIP_IF_ZERO)
+        .output(0xFFFF)
+        .input(0, cond_buf)
+        .emit(*this);  // rate (skip offset) patched below
 
     // --- True branch -------------------------------------------------------
     push_path("true");
@@ -97,17 +89,15 @@ TypedValue CodeGenerator::handle_when_call(NodeIndex node, const Node& n) {
     }
 
     // Allocate the merge buffer(s) now that the channel layout is known.
-    std::uint16_t res_l = buffers_.allocate();
+    std::uint16_t res_l = alloc_buffer(n.location);
     std::uint16_t res_r = 0xFFFF;
     if (res_l == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         pop_path();
         return TypedValue::void_val();
     }
     if (true_is_stereo) {
-        res_r = buffers_.allocate();
+        res_r = alloc_buffer(n.location);
         if (res_r == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             pop_path();
             return TypedValue::void_val();
         }
@@ -130,19 +120,10 @@ TypedValue CodeGenerator::handle_when_call(NodeIndex node, const Node& n) {
 
     // --- SKIP_IF_NONZERO (skip false branch) — placeholder offset ----------
     std::size_t skip2_idx = instructions_.size();
-    {
-        cedar::Instruction skip{};
-        skip.opcode = cedar::Opcode::SKIP_IF_NONZERO;
-        skip.out_buffer = 0xFFFF;
-        skip.inputs[0] = cond_buf;
-        skip.inputs[1] = 0xFFFF;
-        skip.inputs[2] = 0xFFFF;
-        skip.inputs[3] = 0xFFFF;
-        skip.inputs[4] = 0xFFFF;
-        skip.rate = 0;  // patched below
-        skip.state_id = 0;
-        emit(skip);
-    }
+    codegen::InstructionBuilder(cedar::Opcode::SKIP_IF_NONZERO)
+        .output(0xFFFF)
+        .input(0, cond_buf)
+        .emit(*this);  // rate (skip offset) patched below
 
     // --- False branch ------------------------------------------------------
     push_path("false");
@@ -272,16 +253,14 @@ TypedValue CodeGenerator::handle_loop(NodeIndex node, const Node& n) {
     }
 
     // --- Allocate the running accumulator buffer R ------------------------
-    std::uint16_t run_l = buffers_.allocate();
+    std::uint16_t run_l = alloc_buffer(n.location);
     std::uint16_t run_r = 0xFFFF;
     if (run_l == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
     if (is_stereo) {
-        run_r = buffers_.allocate();
+        run_r = alloc_buffer(n.location);
         if (run_r == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
         if (run_r != run_l + 1) {
@@ -298,29 +277,17 @@ TypedValue CodeGenerator::handle_loop(NodeIndex node, const Node& n) {
             emit(cedar::Instruction::make_unary(cedar::Opcode::COPY, run_r, seed_r));
         }
     } else {
-        cedar::Instruction zero{};
-        zero.opcode = cedar::Opcode::PUSH_CONST;
-        zero.out_buffer = run_l;
-        codegen::set_unused_inputs(zero);
-        codegen::encode_const_value(zero, 0.0f);
-        emit(zero);
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .output(run_l)
+            .const_value(0.0f)
+            .emit(*this);
     }
 
     // --- LOOP_STATIC header (rate patched after body emission) ------------
     std::size_t loop_idx = instructions_.size();
-    {
-        cedar::Instruction loop{};
-        loop.opcode = cedar::Opcode::LOOP_STATIC;
-        loop.out_buffer = iterations;  // iteration count (not a buffer index)
-        loop.inputs[0] = 0xFFFF;
-        loop.inputs[1] = 0xFFFF;
-        loop.inputs[2] = 0xFFFF;
-        loop.inputs[3] = 0xFFFF;
-        loop.inputs[4] = 0xFFFF;
-        loop.rate = 0;  // body_len, patched below
-        loop.state_id = 0;
-        emit(loop);
-    }
+    codegen::InstructionBuilder(cedar::Opcode::LOOP_STATIC)
+        .output(iterations)  // iteration count (not a buffer index)
+        .emit(*this);        // rate (body_len) patched below
 
     // --- Body: visited once; `@` resolves to the running buffer R ---------
     std::uint32_t count = call_counters_["loop"]++;

@@ -5,11 +5,11 @@
 #include "akkado/compile_context.hpp"
 #include "akkado/string_interner.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include <algorithm>
 
 namespace akkado {
 
-using codegen::encode_const_value;
 using codegen::unwrap_argument;
 using codegen::extract_call_args;
 
@@ -130,22 +130,14 @@ TypedValue CodeGenerator::handle_mono_call(NodeIndex node, const Node& n) {
         right_buf = sb.right;
     }
 
-    std::uint16_t out_buf = buffers_.allocate();
+    const std::uint16_t out_buf =
+        codegen::InstructionBuilder(cedar::Opcode::MONO_DOWNMIX)
+            .input(0, left_buf)
+            .input(1, right_buf)
+            .emit(*this, n.location);
     if (out_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::error_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::MONO_DOWNMIX;
-    inst.out_buffer = out_buf;
-    inst.inputs[0] = left_buf;
-    inst.inputs[1] = right_buf;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out_buf));
 }
@@ -325,23 +317,15 @@ TypedValue CodeGenerator::handle_pan_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    cedar::Instruction inst{};
-    inst.out_buffer = left_buf;  // L output; R is implicitly left_buf + 1
+    codegen::InstructionBuilder builder(
+        src_is_stereo ? cedar::Opcode::PAN_STEREO : cedar::Opcode::PAN);
     if (src_is_stereo) {
-        inst.opcode = cedar::Opcode::PAN_STEREO;
-        inst.inputs[0] = src_left;
-        inst.inputs[1] = src_right;
-        inst.inputs[2] = pos_buf;
+        builder.inputs({src_left, src_right, pos_buf});
     } else {
-        inst.opcode = cedar::Opcode::PAN;
-        inst.inputs[0] = src.buffer;
-        inst.inputs[1] = pos_buf;
-        inst.inputs[2] = 0xFFFF;
+        builder.inputs({src.buffer, pos_buf});
     }
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    emit(inst);
+    // L output; R is implicitly left_buf + 1
+    builder.output(left_buf).emit(*this);
 
     register_stereo(node, left_buf, right_buf);
     return cache_and_return(node, TypedValue::stereo_signal(left_buf, right_buf));
@@ -400,17 +384,10 @@ TypedValue CodeGenerator::handle_width_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Emit WIDTH instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::WIDTH;
-    inst.out_buffer = out_left;
-    inst.inputs[0] = left_buf;
-    inst.inputs[1] = right_buf;
-    inst.inputs[2] = width_buf;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    emit(inst);
+    codegen::InstructionBuilder(cedar::Opcode::WIDTH)
+        .inputs({left_buf, right_buf, width_buf})
+        .output(out_left)
+        .emit(*this);
 
     register_stereo(node, out_left, out_right);
     return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
@@ -467,17 +444,10 @@ TypedValue CodeGenerator::handle_ms_encode_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Emit MS_ENCODE instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::MS_ENCODE;
-    inst.out_buffer = out_mid;
-    inst.inputs[0] = left_buf;
-    inst.inputs[1] = right_buf;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    emit(inst);
+    codegen::InstructionBuilder(cedar::Opcode::MS_ENCODE)
+        .inputs({left_buf, right_buf})
+        .output(out_mid)
+        .emit(*this);
 
     // Register as stereo-like (mid/side pair)
     register_stereo(node, out_mid, out_side);
@@ -513,20 +483,12 @@ TypedValue CodeGenerator::handle_ms_decode_call(NodeIndex node, const Node& n) {
             }
             mid_buf = it->second.buffer;
             // Allocate a zero buffer for side
-            side_buf = buffers_.allocate();
+            side_buf = codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                           .const_value(0.0f)
+                           .emit(*this, n.location);
             if (side_buf == BufferAllocator::BUFFER_UNUSED) {
-                error("E101", "Buffer pool exhausted", n.location);
                 return TypedValue::void_val();
             }
-            cedar::Instruction zero_inst{};
-            zero_inst.opcode = cedar::Opcode::PUSH_CONST;
-            zero_inst.out_buffer = side_buf;
-            zero_inst.inputs[0] = 0xFFFF;
-            zero_inst.inputs[1] = 0xFFFF;
-            zero_inst.inputs[2] = 0xFFFF;
-            zero_inst.inputs[3] = 0xFFFF;
-            encode_const_value(zero_inst, 0.0f);
-            emit(zero_inst);
         }
     } else {
         // ms_decode(M, S) - explicit form
@@ -549,17 +511,10 @@ TypedValue CodeGenerator::handle_ms_decode_call(NodeIndex node, const Node& n) {
         return TypedValue::void_val();
     }
 
-    // Emit MS_DECODE instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::MS_DECODE;
-    inst.out_buffer = out_left;
-    inst.inputs[0] = mid_buf;
-    inst.inputs[1] = side_buf;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    emit(inst);
+    codegen::InstructionBuilder(cedar::Opcode::MS_DECODE)
+        .inputs({mid_buf, side_buf})
+        .output(out_left)
+        .emit(*this);
 
     register_stereo(node, out_left, out_right);
     return cache_and_return(node, TypedValue::stereo_signal(out_left, out_right));
@@ -677,18 +632,12 @@ TypedValue CodeGenerator::handle_pingpong_call(NodeIndex node, const Node& n) {
     std::uint32_t state_id = compute_state_id();
     pop_path();
 
-    // Emit DELAY_PINGPONG instruction
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::DELAY_PINGPONG;
-    inst.out_buffer = out_left;
-    inst.inputs[0] = left_buf;
-    inst.inputs[1] = right_buf;
-    inst.inputs[2] = time_buf;
-    inst.inputs[3] = fb_buf;
-    inst.inputs[4] = width_buf;  // BUFFER_UNUSED if not provided
-    inst.rate = 0;
-    inst.state_id = state_id;
-    emit(inst);
+    // width_buf is BUFFER_UNUSED if not provided
+    codegen::InstructionBuilder(cedar::Opcode::DELAY_PINGPONG)
+        .inputs({left_buf, right_buf, time_buf, fb_buf, width_buf})
+        .state_id(state_id)
+        .output(out_left)
+        .emit(*this);
 
     // Emit ExtendedParams<2> for dry/wet. arg_buffers needs entries 0..6 so
     // emit_extended_params_init() can read [total_params()+i] = [5+i]; the

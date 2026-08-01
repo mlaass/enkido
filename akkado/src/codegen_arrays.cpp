@@ -3,6 +3,7 @@
 
 #include "akkado/codegen.hpp"
 #include "akkado/codegen/codegen.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
 #include "akkado/compile_context.hpp"
 #include "akkado/const_eval.hpp"
 #include "akkado/music_theory.hpp"
@@ -13,7 +14,6 @@
 
 namespace akkado {
 
-using codegen::encode_const_value;
 using codegen::unwrap_argument;
 using codegen::extract_call_args;
 using codegen::get_input_buffers;
@@ -425,22 +425,18 @@ TypedValue CodeGenerator::handle_sum_call(NodeIndex node, const Node& n) {
     // (the dominant source of buffer-pool exhaustion in wide unison/poly
     // patches).
     auto emit_add = [&](std::uint16_t out, std::uint16_t in0, std::uint16_t in1) {
-        cedar::Instruction add_inst{};
-        add_inst.opcode = cedar::Opcode::ADD;
-        add_inst.out_buffer = out;
-        add_inst.inputs[0] = in0;
-        add_inst.inputs[1] = in1;
-        add_inst.inputs[2] = 0xFFFF;
-        add_inst.inputs[3] = 0xFFFF;
-        add_inst.state_id = 0;
-        emit(add_inst);
+        // Slot 4 stays 0 (historical zero-init encoding, kept for
+        // byte-identical bytecode).
+        codegen::InstructionBuilder(cedar::Opcode::ADD)
+            .inputs({in0, in1, 0xFFFF, 0xFFFF, 0})
+            .output(out)
+            .emit(*this);
     };
 
     // Mono path — single accumulator.
     if (!any_stereo) {
-        std::uint16_t acc = buffers_.allocate();
+        std::uint16_t acc = alloc_buffer(n.location);
         if (acc == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
         emit_add(acc, operands[0].l, operands[1].l);
@@ -700,21 +696,13 @@ TypedValue CodeGenerator::handle_range_call(NodeIndex node, const Node& n) {
     auto in_range = [&](int i) { return step > 0 ? i < end : i > end; };
 
     for (int i = start; in_range(i); i += step) {
-        std::uint16_t buf = buffers_.allocate();
+        const std::uint16_t buf =
+            codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                .const_value(static_cast<float>(i))
+                .emit(*this, n.location);
         if (buf == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::void_val();
         }
-
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::PUSH_CONST;
-        inst.out_buffer = buf;
-        inst.inputs[0] = 0xFFFF;
-        inst.inputs[1] = 0xFFFF;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        encode_const_value(inst, static_cast<float>(i));
-        emit(inst);
 
         result_buffers.push_back(buf);
     }
@@ -884,23 +872,13 @@ TypedValue CodeGenerator::handle_len_call(NodeIndex node, const Node& n) {
     }
 
     // Emit the length as a constant
-    std::uint16_t out = buffers_.allocate();
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+            .const_value(static_cast<float>(length))
+            .emit(*this, n.location);
     if (out == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-
-    cedar::Instruction inst{};
-    inst.opcode = cedar::Opcode::PUSH_CONST;
-    inst.out_buffer = out;
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-
-    float len_value = static_cast<float>(length);
-    encode_const_value(inst, len_value);
-    emit(inst);
 
     return cache_and_return(node, TypedValue::signal(out));
 }
@@ -1000,21 +978,14 @@ TypedValue CodeGenerator::handle_key_deltas_call(NodeIndex node, const Node& n) 
     elements.reserve(deltas.size());
     std::uint16_t first_buf = BufferAllocator::BUFFER_UNUSED;
     for (double v : deltas) {
-        std::uint16_t out = buffers_.allocate();
+        const std::uint16_t out =
+            codegen::InstructionBuilder(cedar::Opcode::PUSH_CONST)
+                .const_value(static_cast<float>(v))
+                .emit(*this, n.location);
         if (out == BufferAllocator::BUFFER_UNUSED) {
-            error("E101", "Buffer pool exhausted", n.location);
             return TypedValue::error_val();
         }
         if (first_buf == BufferAllocator::BUFFER_UNUSED) first_buf = out;
-        cedar::Instruction inst{};
-        inst.opcode = cedar::Opcode::PUSH_CONST;
-        inst.out_buffer = out;
-        inst.inputs[0] = 0xFFFF;
-        inst.inputs[1] = 0xFFFF;
-        inst.inputs[2] = 0xFFFF;
-        inst.inputs[3] = 0xFFFF;
-        encode_const_value(inst, static_cast<float>(v));
-        emit(inst);
         elements.push_back(TypedValue::signal(out));
     }
     return cache_and_return(node,
@@ -1051,30 +1022,20 @@ TypedValue CodeGenerator::emit_pattern_values(NodeIndex node,
     }
 
     // Packed chord-note data buffer. rate 1 = MIDI (notes), 0 = Hz (freqs).
-    cedar::Instruction values_inst{};
-    values_inst.opcode = cedar::Opcode::SEQPAT_VALUES;
-    values_inst.out_buffer = data_buf;
-    values_inst.rate = to_midi ? 1 : 0;
-    values_inst.inputs[0] = 0xFFFF;
-    values_inst.inputs[1] = 0xFFFF;  // internal clock
-    values_inst.inputs[2] = 0xFFFF;
-    values_inst.inputs[3] = 0xFFFF;
-    values_inst.inputs[4] = 0xFFFF;
-    values_inst.state_id = state_id;
-    emit(values_inst);
+    // All input slots unused (internal clock).
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_VALUES)
+        .rate(to_midi ? 1 : 0)
+        .state_id(state_id)
+        .output(data_buf)
+        .emit(*this);
 
     // Runtime length buffer — SEQPAT_FIELD num_values selector (5).
-    cedar::Instruction len_inst{};
-    len_inst.opcode = cedar::Opcode::SEQPAT_FIELD;
-    len_inst.out_buffer = len_buf;
-    len_inst.rate = 5;  // num_values
-    len_inst.inputs[0] = 0;       // voice 0 (num_values is event-scoped)
-    len_inst.inputs[1] = 0xFFFF;  // internal clock
-    len_inst.inputs[2] = 0xFFFF;
-    len_inst.inputs[3] = 0xFFFF;
-    len_inst.inputs[4] = 0xFFFF;
-    len_inst.state_id = state_id;
-    emit(len_inst);
+    codegen::InstructionBuilder(cedar::Opcode::SEQPAT_FIELD)
+        .rate(5)                // num_values
+        .input(0, 0)            // voice 0 (num_values is event-scoped)
+        .state_id(state_id)     // inputs[1..4] unused (internal clock)
+        .output(len_buf)
+        .emit(*this);
 
     return cache_and_return(node, TypedValue::make_dyn_array(data_buf, len_buf));
 }
@@ -1135,16 +1096,10 @@ static std::uint16_t emit_binary_op(
         return BufferAllocator::BUFFER_UNUSED;
     }
 
-    cedar::Instruction inst{};
-    inst.opcode = op;
-    inst.out_buffer = out;
-    inst.inputs[0] = lhs;
-    inst.inputs[1] = rhs;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-    inst.state_id = 0;
-    gen.emit(inst);
+    codegen::InstructionBuilder(op)
+        .inputs({lhs, rhs})
+        .output(out)
+        .emit(gen);
 
     return out;
 }
@@ -1251,32 +1206,21 @@ TypedValue CodeGenerator::handle_mean_call(NodeIndex node, const Node& n) {
 
     // Sum all elements with an in-place accumulator (see handle_sum_call
     // for the rationale).
-    std::uint16_t sum_buf = buffers_.allocate();
+    std::uint16_t sum_buf = alloc_buffer(n.location);
     if (sum_buf == BufferAllocator::BUFFER_UNUSED) {
-        error("E101", "Buffer pool exhausted", n.location);
         return TypedValue::void_val();
     }
-    {
-        cedar::Instruction add_inst{};
-        add_inst.opcode = cedar::Opcode::ADD;
-        add_inst.out_buffer = sum_buf;
-        add_inst.inputs[0] = elem_bufs[0];
-        add_inst.inputs[1] = elem_bufs[1];
-        add_inst.inputs[2] = 0xFFFF;
-        add_inst.inputs[3] = 0xFFFF;
-        add_inst.state_id = 0;
-        emit(add_inst);
-    }
+    // Slot 4 stays 0 (historical zero-init encoding, kept for byte-identical
+    // bytecode).
+    codegen::InstructionBuilder(cedar::Opcode::ADD)
+        .inputs({elem_bufs[0], elem_bufs[1], 0xFFFF, 0xFFFF, 0})
+        .output(sum_buf)
+        .emit(*this);
     for (std::size_t i = 2; i < elem_bufs.size(); ++i) {
-        cedar::Instruction add_inst{};
-        add_inst.opcode = cedar::Opcode::ADD;
-        add_inst.out_buffer = sum_buf;
-        add_inst.inputs[0] = sum_buf;
-        add_inst.inputs[1] = elem_bufs[i];
-        add_inst.inputs[2] = 0xFFFF;
-        add_inst.inputs[3] = 0xFFFF;
-        add_inst.state_id = 0;
-        emit(add_inst);
+        codegen::InstructionBuilder(cedar::Opcode::ADD)
+            .inputs({sum_buf, elem_bufs[i], 0xFFFF, 0xFFFF, 0})
+            .output(sum_buf)
+            .emit(*this);
     }
 
     // Divide by length

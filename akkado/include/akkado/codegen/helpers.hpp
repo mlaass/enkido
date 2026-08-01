@@ -134,16 +134,6 @@ inline bool allocate_buffers(BufferAllocator& alloc, std::uint16_t* first, Args*
     return true;
 }
 
-/// Initialize unused inputs in an instruction
-[[gnu::always_inline]]
-inline void set_unused_inputs(cedar::Instruction& inst) {
-    inst.inputs[0] = 0xFFFF;
-    inst.inputs[1] = 0xFFFF;
-    inst.inputs[2] = 0xFFFF;
-    inst.inputs[3] = 0xFFFF;
-    inst.inputs[4] = 0xFFFF;
-}
-
 // ============================================================================
 // SAMPLE_PLAY emission (single source of truth)
 // ============================================================================
