@@ -427,10 +427,9 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             while (elem != NULL_NODE) {
                 const Node& en = ast_->arena[elem];
                 if (en.type == NodeType::Argument &&
-                    std::holds_alternative<Node::ArgumentData>(en.data) &&
-                    en.as_argument().spread_source != NULL_NODE) {
+                    en.extra_child(0) != NULL_NODE) {
                     had_spread = true;
-                    NodeIndex src_node = en.as_argument().spread_source;
+                    NodeIndex src_node = en.extra_child(0);
                     TypedValue src_tv = visit(src_node);
                     if (src_tv.type != ValueType::Array || !src_tv.array) {
                         error("E140", "Spread source is not an array",
@@ -922,7 +921,6 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Evaluate RHS, then bind each named field as an immutable
             // variable using bind_destructure_fields(...). Emits E187 on
             // missing required field and E140 on non-Record/non-Pattern source.
-            const auto& dd = n.as_destructure_assignment();
             NodeIndex value_idx = n.first_child;
             if (value_idx == NULL_NODE) {
                 error("E104", "Invalid destructure assignment", n.location);
@@ -932,7 +930,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             if (value_tv.error) {
                 return cache_and_return(node, TypedValue::error_val());
             }
-            bind_destructure_fields(value_tv, dd.fields, n.location, "E187");
+            bind_destructure_fields(value_tv, destructure_bindings(n), n.location, "E187");
             return cache_and_return(node, TypedValue::void_val());
         }
 
@@ -1068,8 +1066,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
                 while (it != NULL_NODE) {
                     const Node& a = ast_->arena[it];
                     if (a.type == NodeType::Argument &&
-                        std::holds_alternative<Node::ArgumentData>(a.data) &&
-                        a.as_argument().spread_source != NULL_NODE) {
+                        a.extra_child(0) != NULL_NODE) {
                         has_spread = true;
                         break;
                     }
@@ -1909,7 +1906,7 @@ TypedValue CodeGenerator::visit(NodeIndex node) {
             // Gated on !did_spread_swap: with spread expansion the original
             // first_child chain may contain a spread Argument whose
             // first_child is NULL_NODE (the spread source lives in
-            // spread_source, not as a child) — re-visiting that would
+            // extra_children[0], not as a child) — re-visiting that would
             // segfault. Pre-Phase-1a the synthesized chain didn't have this
             // shape; we preserve byte-identical behaviour by skipping the
             // re-walk. Per-arg type checks for the spread case already ran
@@ -3632,11 +3629,11 @@ const TypedValue* CodeGenerator::get_node_type(NodeIndex node) const {
 // fires `missing_field_code`.
 bool CodeGenerator::bind_destructure_fields(
     const TypedValue& source_tv,
-    const std::vector<DestructureField>& fields,
+    const std::vector<DestructureBinding>& fields,
     SourceLocation loc,
     const char* missing_field_code)
 {
-    auto bind_default_or_error = [&](const DestructureField& field,
+    auto bind_default_or_error = [&](const DestructureBinding& field,
                                      const char* missing_msg_for_kind) -> bool {
         if (field.default_node != NULL_NODE) {
             TypedValue def_tv = visit(field.default_node);
@@ -3697,12 +3694,11 @@ CodeGenerator::expand_call_arguments(NodeIndex call_node) {
     while (arg != NULL_NODE) {
         const Node& a = ast_->arena[arg];
 
-        // Spread argument: `..expr` — Argument node with spread_source set.
+        // Spread argument: `..expr` — Argument node with a spread extra child.
         if (a.type == NodeType::Argument &&
-            std::holds_alternative<Node::ArgumentData>(a.data) &&
-            a.as_argument().spread_source != NULL_NODE) {
+            a.extra_child(0) != NULL_NODE) {
 
-            NodeIndex src_node = a.as_argument().spread_source;
+            NodeIndex src_node = a.extra_child(0);
             TypedValue src_tv = visit(src_node);
             SourceLocation src_loc = ast_->arena[src_node].location;
 
@@ -3925,12 +3921,12 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
     std::unordered_map<std::string, TypedValue> field_values;
     std::uint16_t first_buffer = BufferAllocator::BUFFER_UNUSED;
 
-    // Handle spread source: {..base, field: value}
-    if (std::holds_alternative<Node::RecordLitData>(n.data)) {
-        const auto& rec_data = n.as_record_lit();
-        if (rec_data.spread_source != NULL_NODE) {
+    // Handle spread source: {..base, field: value} — extra_children[0]
+    {
+        const NodeIndex spread_src = n.extra_child(0);
+        if (spread_src != NULL_NODE) {
             // Visit the spread source expression
-            TypedValue spread_tv = visit(rec_data.spread_source);
+            TypedValue spread_tv = visit(spread_src);
 
             // If the spread source is a record, copy its fields
             if (spread_tv.type == ValueType::Record && spread_tv.record) {
@@ -3953,7 +3949,7 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
                 }
             } else {
                 // Follow symbol table for identifier spread sources
-                const Node& spread_node = ast_->arena[rec_data.spread_source];
+                const Node& spread_node = ast_->arena[spread_src];
                 if (spread_node.type == NodeType::Identifier) {
                     std::string var_name;
                     if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
@@ -3983,13 +3979,13 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
                                 }
                             }
                         } else {
-                            error("E140", "Spread source is not a record", ast_->arena[rec_data.spread_source].location);
+                            error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
                         }
                     } else {
-                        error("E140", "Spread source is not a record", ast_->arena[rec_data.spread_source].location);
+                        error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
                     }
                 } else {
-                    error("E140", "Spread source is not a record", ast_->arena[rec_data.spread_source].location);
+                    error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
                 }
             }
         }

@@ -37,6 +37,7 @@ add_executable(akkado_tests
     test_lexer.cpp
     test_parser.cpp
     test_mini_notation.cpp
+    test_ast.cpp
     test_ast_arena.cpp
     test_buffer_allocator.cpp
     test_pattern_debug.cpp

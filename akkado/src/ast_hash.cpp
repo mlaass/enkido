@@ -42,7 +42,6 @@ inline void mix_destructure_fields(std::uint64_t& h,
     mix_u64(h, fs.size());
     for (const auto& f : fs) {
         mix_str(h, f.name);
-        mix_u32(h, f.default_node);
     }
 }
 
@@ -69,7 +68,6 @@ void mix_node_data(std::uint64_t& h, const Node& n) {
             mix_u32(h, d.name);
         } else if constexpr (std::is_same_v<T, Node::ArgumentData>) {
             mix_opt_str(h, d.name);
-            mix_u32(h, d.spread_source);
         } else if constexpr (std::is_same_v<T, Node::PitchData>) {
             mix_byte(h, d.midi_note);
         } else if constexpr (std::is_same_v<T, Node::ClosureParamData>) {
@@ -118,7 +116,6 @@ void mix_node_data(std::uint64_t& h, const Node& n) {
         } else if constexpr (std::is_same_v<T, Node::MatchArmData>) {
             mix_byte(h, d.is_wildcard ? 1 : 0);
             mix_byte(h, d.has_guard ? 1 : 0);
-            mix_u32(h, d.guard_node);
             mix_byte(h, d.is_range ? 1 : 0);
             mix_f64(h, d.range_low);
             mix_f64(h, d.range_high);
@@ -130,8 +127,6 @@ void mix_node_data(std::uint64_t& h, const Node& n) {
         } else if constexpr (std::is_same_v<T, Node::RecordFieldData>) {
             mix_str(h, d.name);
             mix_byte(h, d.is_shorthand ? 1 : 0);
-        } else if constexpr (std::is_same_v<T, Node::RecordLitData>) {
-            mix_u32(h, d.spread_source);
         } else if constexpr (std::is_same_v<T, Node::FieldAccessData>) {
             mix_str(h, d.field_name);
         } else if constexpr (std::is_same_v<T, Node::FieldAssignmentData>) {
@@ -165,6 +160,8 @@ std::uint64_t arena_structural_hash(const AstArena& arena) {
         mix_byte(h, static_cast<std::uint8_t>(n.type));
         mix_u32(h, n.first_child);
         mix_u32(h, n.next_sibling);
+        mix_u64(h, n.extra_children.size());
+        for (NodeIndex e : n.extra_children) mix_u32(h, e);
         mix_node_data(h, n);
     }
     return h;

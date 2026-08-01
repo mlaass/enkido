@@ -185,9 +185,9 @@ std::optional<ConstValue> ConstEvaluator::eval(NodeIndex node) {
                             }
                         }
                     } else if (arm_data.has_guard) {
-                        // Guard-only match: evaluate guard
-                        if (arm_data.guard_node != NULL_NODE) {
-                            auto guard_val = eval(arm_data.guard_node);
+                        // Guard-only match: evaluate guard (extra_children[0])
+                        if (arm_node.extra_child(0) != NULL_NODE) {
+                            auto guard_val = eval(arm_node.extra_child(0));
                             if (guard_val) {
                                 auto gv = as_scalar(*guard_val, n.location);
                                 if (gv && *gv != 0.0) {

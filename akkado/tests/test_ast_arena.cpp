@@ -589,23 +589,24 @@ TEST_CASE("Node::as_match_arm accessor", "[ast_arena]") {
 
     SECTION("wildcard arm without guard") {
         NodeIndex idx = arena.alloc(NodeType::MatchArm, loc);
-        arena[idx].data = Node::MatchArmData{true, false, NULL_NODE};
+        arena[idx].data = Node::MatchArmData{true, false};
 
         const auto& arm = arena[idx].as_match_arm();
         CHECK(arm.is_wildcard == true);
         CHECK(arm.has_guard == false);
-        CHECK(arm.guard_node == NULL_NODE);
+        CHECK(arena[idx].extra_child(0) == NULL_NODE);
     }
 
     SECTION("pattern arm with guard") {
         NodeIndex guard = arena.alloc(NodeType::BoolLit, loc);
         NodeIndex idx = arena.alloc(NodeType::MatchArm, loc);
-        arena[idx].data = Node::MatchArmData{false, true, guard};
+        arena[idx].data = Node::MatchArmData{false, true};
+        arena[idx].extra_children.push_back(guard);
 
         const auto& arm = arena[idx].as_match_arm();
         CHECK(arm.is_wildcard == false);
         CHECK(arm.has_guard == true);
-        CHECK(arm.guard_node == guard);
+        CHECK(arena[idx].extra_child(0) == guard);
     }
 }
 

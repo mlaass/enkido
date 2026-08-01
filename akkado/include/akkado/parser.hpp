@@ -4,6 +4,7 @@
 #include <string_view>
 #include "token.hpp"
 #include "ast.hpp"
+#include "destructure_field.hpp"
 #include "diagnostics.hpp"
 #include "string_interner.hpp"
 
@@ -76,7 +77,7 @@ struct ParsedParam {
     // When true, `name` is a synthetic placeholder (`__destr_param_<N>`) and
     // `destructure_fields` carries the actual field-binding spec.
     bool is_destructure = false;
-    std::vector<DestructureField> destructure_fields;
+    std::vector<DestructureBinding> destructure_fields;
     // PRD prd-parameter-type-annotations §4.4: parser-side intermediate for
     // `name: stream` / `name: signal` annotations on `fn` parameters.
     // Defaults to Any (un-annotated). Destructure and rest params reject
@@ -202,7 +203,7 @@ private:
     // (`fn f({x = 1})`) pass `true`. Pipe-binding (`as {x, y}`) and match-arm
     // (`{x, y}:`) destructures pass `false` — defaults in those positions
     // are deferred and emit a clear parse error.
-    std::vector<DestructureField> parse_destructure_fields(bool allow_defaults);
+    std::vector<DestructureBinding> parse_destructure_fields(bool allow_defaults);
 
     // Import parsing
     NodeIndex parse_import_decl();

@@ -589,18 +589,19 @@ private:
     /// Bind destructured fields from a record/pattern TypedValue into the symbol table.
     /// Returns true if all fields were bound, false on error.
     ///
-    /// Each `DestructureField` carries a name and an optional `default_node`
-    /// (the AST index of a default expression). When the source is missing a
-    /// field AND the field has a `default_node`, codegen visits the default
-    /// expression and binds the resulting buffer to the field name; when the
-    /// field has no default, `missing_field_code` fires.
+    /// Each `DestructureBinding` carries a name and an optional `default_node`
+    /// (the AST index of a default expression — zip an AST node's field names
+    /// with its extra_children via `destructure_bindings()`). When the source
+    /// is missing a field AND the field has a default, codegen visits the
+    /// default expression and binds the resulting buffer to the field name;
+    /// when the field has no default, `missing_field_code` fires.
     ///
     /// `missing_field_code` defaults to `"E141"` for the existing
     /// pipe-binding (`as {x, y}`) and match-arm paths; the new statement-level
     /// (`{x, y} = …`) and fn-param destructure paths pass `"E187"` per
     /// `prd-records-system-unification.md` §10.0.
     bool bind_destructure_fields(const TypedValue& source_tv,
-                                 const std::vector<DestructureField>& fields,
+                                 const std::vector<DestructureBinding>& fields,
                                  SourceLocation loc,
                                  const char* missing_field_code = "E141");
 

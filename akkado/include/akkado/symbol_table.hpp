@@ -2,6 +2,7 @@
 
 #include "builtins.hpp"
 #include "ast.hpp"
+#include "destructure_field.hpp"
 #include "string_interner.hpp"
 #include "typed_value.hpp"
 #include <cstdint>
@@ -26,7 +27,7 @@ struct FunctionParamInfo {
     // the per-field bindings live in `destructure_fields`. The corresponding
     // AST node is `DestructureParam`, not `Identifier`.
     bool is_destructure = false;
-    std::vector<DestructureField> destructure_fields;
+    std::vector<DestructureBinding> destructure_fields;
     // PRD prd-parameter-type-annotations §4.4: resolved type annotation on
     // user-fn parameters. Defaults to Any (un-annotated). Read by
     // handle_user_function_call to branch on `: stream` / `: signal`.

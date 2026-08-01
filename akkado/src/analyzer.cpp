@@ -320,11 +320,11 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
 
             // Check for spread source: {..base, ...}
             const Node& rec_node = (*input_ast_).arena[rhs];
-            if (std::holds_alternative<Node::RecordLitData>(rec_node.data)) {
-                const auto& rec_data = rec_node.as_record_lit();
-                if (rec_data.spread_source != NULL_NODE) {
+            {
+                NodeIndex spread_src = rec_node.extra_child(0);
+                if (spread_src != NULL_NODE) {
                     // Look up the spread source's record type
-                    const Node& spread_node = (*input_ast_).arena[rec_data.spread_source];
+                    const Node& spread_node = (*input_ast_).arena[spread_src];
                     if (spread_node.type == NodeType::Identifier) {
                         std::string spread_name;
                         if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
@@ -398,12 +398,11 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
                     // `name` is a synthetic placeholder; the per-field bindings
                     // in `destructure_fields` drive call-time destructure, the
                     // same as the `fn f({x, y})` path.
-                    const auto& dp = child_node.as_destructure_param();
                     FunctionParamInfo param;
                     param.name = "__destr_param_" +
                                  std::to_string(func_ref.params.size());
                     param.is_destructure = true;
-                    param.destructure_fields = dp.fields;
+                    param.destructure_fields = destructure_bindings(child_node);
                     func_ref.params.push_back(std::move(param));
                 } else if (child_node.type == NodeType::Identifier) {
                     FunctionParamInfo param;
@@ -813,10 +812,9 @@ void SemanticAnalyzer::collect_definitions(NodeIndex node) {
             if (child_node.type == NodeType::DestructureParam) {
                 // Phase 3b: `fn f({x, y [= default]})`. Synthetic name; the
                 // actual fields drive per-field local bindings at call time.
-                const auto& dp = child_node.as_destructure_param();
                 param.name = "__destr_param_" + std::to_string(param_idx);
                 param.is_destructure = true;
-                param.destructure_fields = dp.fields;
+                param.destructure_fields = destructure_bindings(child_node);
             } else if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {
                 const auto& cp = child_node.as_closure_param();
                 param.name = cp.name;
@@ -1376,64 +1374,23 @@ NodeIndex SemanticAnalyzer::clone_subtree(NodeIndex src_idx, bool closure_allowe
     // Clone this node
     NodeIndex dst_idx = clone_node(src_idx);
 
-    // Handle MatchArm guard_node specially - it's not a child but stored in data
-    if (src.type == NodeType::MatchArm) {
-        const auto& arm_data = src.as_match_arm();
-        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-            // Clone the guard expression
-            NodeIndex cloned_guard = clone_subtree(arm_data.guard_node, closure_allowed);
-            // Update the MatchArmData in the cloned node
-            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[dst_idx].data);
-            dst_data.guard_node = cloned_guard;
-        }
-    }
-
-    // Handle RecordLit spread_source - it's stored in data, not as a child
-    if (src.type == NodeType::RecordLit &&
-        std::holds_alternative<Node::RecordLitData>(src.data)) {
-        const auto& rec_data = src.as_record_lit();
-        if (rec_data.spread_source != NULL_NODE) {
-            NodeIndex cloned_spread = clone_subtree(rec_data.spread_source, closure_allowed);
-            auto& dst_data = std::get<Node::RecordLitData>(output_arena_[dst_idx].data);
-            dst_data.spread_source = cloned_spread;
-        }
-    }
-
-    // Handle Argument spread_source — `..expr` arg or array element. The
-    // spread expression is hung on ArgumentData.spread_source rather than as
-    // a child, so it must be cloned/remapped here too.
-    if (src.type == NodeType::Argument &&
-        std::holds_alternative<Node::ArgumentData>(src.data)) {
-        const auto& arg_data = src.as_argument();
-        if (arg_data.spread_source != NULL_NODE) {
-            NodeIndex cloned_spread = clone_subtree(arg_data.spread_source, closure_allowed);
-            auto& dst_data = std::get<Node::ArgumentData>(output_arena_[dst_idx].data);
-            dst_data.spread_source = cloned_spread;
-        }
-    }
-
-    // Phase 3b: destructure default expressions ride inside the data variant
-    // (one NodeIndex per field), not as child links. Clone each into the
-    // output arena and patch the cloned data so codegen sees valid indices.
-    if (src.type == NodeType::DestructureAssignment &&
-        std::holds_alternative<Node::DestructureAssignmentData>(src.data)) {
-        const auto& dd_src = src.as_destructure_assignment();
-        auto& dst_data = std::get<Node::DestructureAssignmentData>(output_arena_[dst_idx].data);
-        for (std::size_t i = 0; i < dd_src.fields.size(); ++i) {
-            if (dd_src.fields[i].default_node != NULL_NODE) {
-                dst_data.fields[i].default_node =
-                    clone_subtree(dd_src.fields[i].default_node, /*closure_allowed=*/true);
-            }
-        }
-    }
-    if (src.type == NodeType::DestructureParam &&
-        std::holds_alternative<Node::DestructureParamData>(src.data)) {
-        const auto& dp_src = src.as_destructure_param();
-        auto& dst_data = std::get<Node::DestructureParamData>(output_arena_[dst_idx].data);
-        for (std::size_t i = 0; i < dp_src.fields.size(); ++i) {
-            if (dp_src.fields[i].default_node != NULL_NODE) {
-                dst_data.fields[i].default_node =
-                    clone_subtree(dp_src.fields[i].default_node, /*closure_allowed=*/true);
+    // Clone extra children generically (match-arm guards, spread sources,
+    // destructure defaults). Destructure defaults are a binding-RHS context
+    // (closure sugar stays eligible inside them), matching the pre-migration
+    // per-field special cases.
+    {
+        const bool extra_closure_allowed =
+            (src.type == NodeType::DestructureAssignment ||
+             src.type == NodeType::DestructureParam)
+                ? true
+                : closure_allowed;
+        const std::size_t extra_count = src.extra_children.size();
+        output_arena_[dst_idx].extra_children.assign(extra_count, NULL_NODE);
+        for (std::size_t i = 0; i < extra_count; ++i) {
+            NodeIndex e = (*input_ast_).arena[src_idx].extra_children[i];
+            if (e != NULL_NODE) {
+                NodeIndex cloned = clone_subtree(e, extra_closure_allowed);
+                output_arena_[dst_idx].extra_children[i] = cloned;
             }
         }
     }
@@ -1623,64 +1580,17 @@ NodeIndex SemanticAnalyzer::substitute_nodes(NodeIndex node, const SubstituteOpt
     // 5. Clone node, recurse children
     NodeIndex new_node = clone_node(node);
 
-    // Handle MatchArm guard_node specially
-    if (n.type == NodeType::MatchArm) {
-        const auto& arm_data = n.as_match_arm();
-        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-            NodeIndex new_guard = substitute_nodes(arm_data.guard_node, opts);
-            auto& dst_data = std::get<Node::MatchArmData>(output_arena_[new_node].data);
-            dst_data.guard_node = new_guard;
-        }
-    }
-
-    // Handle RecordLit spread_source specially
-    if (n.type == NodeType::RecordLit &&
-        std::holds_alternative<Node::RecordLitData>(n.data)) {
-        const auto& rec_data = n.as_record_lit();
-        if (rec_data.spread_source != NULL_NODE) {
-            NodeIndex new_spread = substitute_nodes(rec_data.spread_source, opts);
-            auto& dst_data = std::get<Node::RecordLitData>(output_arena_[new_node].data);
-            dst_data.spread_source = new_spread;
-        }
-    }
-
-    // Handle Argument spread_source specially (..expr arg or array element).
-    if (n.type == NodeType::Argument &&
-        std::holds_alternative<Node::ArgumentData>(n.data)) {
-        const auto& arg_data = n.as_argument();
-        if (arg_data.spread_source != NULL_NODE) {
-            NodeIndex new_spread = substitute_nodes(arg_data.spread_source, opts);
-            auto& dst_data = std::get<Node::ArgumentData>(output_arena_[new_node].data);
-            dst_data.spread_source = new_spread;
-        }
-    }
-
-    // Destructure default expressions ride inside the data variant (one
-    // NodeIndex per field), not as child links — substitute/clone them into
-    // the output arena and patch the indices, mirroring clone_subtree. A pipe
-    // RHS that carries a `({x = default}) ->` closure (e.g.
-    // `pat |> poly(@, ({freq, cutoff = 0.5}) -> …)`) reaches this path.
-    if (n.type == NodeType::DestructureParam &&
-        std::holds_alternative<Node::DestructureParamData>(n.data)) {
-        const auto& dp_src = n.as_destructure_param();
-        auto& dst_data =
-            std::get<Node::DestructureParamData>(output_arena_[new_node].data);
-        for (std::size_t i = 0; i < dp_src.fields.size(); ++i) {
-            if (dp_src.fields[i].default_node != NULL_NODE) {
-                dst_data.fields[i].default_node =
-                    substitute_nodes(dp_src.fields[i].default_node, opts);
-            }
-        }
-    }
-    if (n.type == NodeType::DestructureAssignment &&
-        std::holds_alternative<Node::DestructureAssignmentData>(n.data)) {
-        const auto& dd_src = n.as_destructure_assignment();
-        auto& dst_data = std::get<Node::DestructureAssignmentData>(
-            output_arena_[new_node].data);
-        for (std::size_t i = 0; i < dd_src.fields.size(); ++i) {
-            if (dd_src.fields[i].default_node != NULL_NODE) {
-                dst_data.fields[i].default_node =
-                    substitute_nodes(dd_src.fields[i].default_node, opts);
+    // Substitute extra children generically (match-arm guards, spread
+    // sources, destructure defaults) — e.g. a pipe RHS that carries a
+    // `({x = default}) ->` closure reaches this path.
+    {
+        const std::size_t extra_count = n.extra_children.size();
+        output_arena_[new_node].extra_children.assign(extra_count, NULL_NODE);
+        for (std::size_t i = 0; i < extra_count; ++i) {
+            NodeIndex e = (*input_ast_).arena[node].extra_children[i];
+            if (e != NULL_NODE) {
+                NodeIndex substituted = substitute_nodes(e, opts);
+                output_arena_[new_node].extra_children[i] = substituted;
             }
         }
     }
@@ -2402,10 +2312,10 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
                 record_type->source_node = bound_expr;
 
                 // Check for spread source: {..base, ...}
-                if (std::holds_alternative<Node::RecordLitData>(expr_node.data)) {
-                    const auto& rec_data = expr_node.as_record_lit();
-                    if (rec_data.spread_source != NULL_NODE) {
-                        const Node& spread_node = output_arena_[rec_data.spread_source];
+                {
+                    NodeIndex spread_src = expr_node.extra_child(0);
+                    if (spread_src != NULL_NODE) {
+                        const Node& spread_node = output_arena_[spread_src];
                         if (spread_node.type == NodeType::Identifier) {
                             std::string spread_name;
                             if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
@@ -2596,9 +2506,9 @@ void SemanticAnalyzer::resolve_and_validate(NodeIndex node) {
             }
         }
 
-        // Validate guard expression if present
-        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-            resolve_and_validate(arm_data.guard_node);
+        // Validate guard expression if present (extra_children[0])
+        if (arm_data.has_guard && n.extra_child(0) != NULL_NODE) {
+            resolve_and_validate(n.extra_child(0));
         }
 
         // Validate body
@@ -2752,9 +2662,9 @@ void SemanticAnalyzer::check_closure_captures(NodeIndex node,
     if (n.type == NodeType::MatchArm) {
         const auto& arm_data = n.as_match_arm();
 
-        // Check guard expression if present
-        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-            check_closure_captures(arm_data.guard_node, params, closure_loc);
+        // Check guard expression if present (extra_children[0])
+        if (arm_data.has_guard && n.extra_child(0) != NULL_NODE) {
+            check_closure_captures(n.extra_child(0), params, closure_loc);
         }
 
         // Only check the body (second child), not the pattern (first child)
@@ -2820,9 +2730,7 @@ bool SemanticAnalyzer::has_spread_arg(NodeIndex call_node) const {
     NodeIndex arg = output_arena_[call_node].first_child;
     while (arg != NULL_NODE) {
         const Node& a = output_arena_[arg];
-        if (a.type == NodeType::Argument &&
-            std::holds_alternative<Node::ArgumentData>(a.data) &&
-            a.as_argument().spread_source != NULL_NODE) {
+        if (a.type == NodeType::Argument && a.extra_child(0) != NULL_NODE) {
             return true;
         }
         arg = output_arena_[arg].next_sibling;

@@ -850,7 +850,7 @@ TEST_CASE("Parser match destructuring", "[parser][destructure]") {
         const auto& arm_data = ast.arena[arm].as_match_arm();
         CHECK(arm_data.is_destructure == true);
         CHECK(arm_data.has_guard == true);
-        CHECK(arm_data.guard_node != NULL_NODE);
+        CHECK(ast.arena[arm].extra_child(0) != NULL_NODE);
         REQUIRE(arm_data.destructure_fields.size() == 2);
         CHECK(arm_data.destructure_fields[0] == "freq");
         CHECK(arm_data.destructure_fields[1] == "vel");
@@ -921,8 +921,8 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
         REQUIRE(dd.fields.size() == 2);
         CHECK(dd.fields[0].name == "a");
         CHECK(dd.fields[1].name == "b");
-        CHECK(dd.fields[0].default_node == NULL_NODE);
-        CHECK(dd.fields[1].default_node == NULL_NODE);
+        CHECK(ast.arena[stmt].extra_child(0) == NULL_NODE);
+        CHECK(ast.arena[stmt].extra_child(1) == NULL_NODE);
 
         // RHS should be the first child (an Identifier referencing `r`)
         NodeIndex rhs = ast.arena[stmt].first_child;
@@ -944,7 +944,7 @@ TEST_CASE("Parser statement-level destructure assignment", "[parser][destructure
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 1);
         CHECK(dd.fields[0].name == "x");
-        CHECK(dd.fields[0].default_node == NULL_NODE);
+        CHECK(ast.arena[stmt].extra_child(0) == NULL_NODE);
     }
 
     SECTION("destructure RHS can be a complex expression") {
@@ -994,8 +994,8 @@ TEST_CASE("Parser destructure defaults (statement-level)", "[parser][destructure
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 1);
         CHECK(dd.fields[0].name == "a");
-        CHECK(dd.fields[0].default_node != NULL_NODE);
-        CHECK(ast.arena[dd.fields[0].default_node].type == NodeType::NumberLit);
+        CHECK(ast.arena[stmt].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[stmt].extra_child(0)].type == NodeType::NumberLit);
     }
 
     SECTION("mixed defaults and required fields") {
@@ -1011,12 +1011,12 @@ TEST_CASE("Parser destructure defaults (statement-level)", "[parser][destructure
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 3);
         CHECK(dd.fields[0].name == "a");
-        CHECK(dd.fields[0].default_node != NULL_NODE);
+        CHECK(ast.arena[stmt].extra_child(0) != NULL_NODE);
         CHECK(dd.fields[1].name == "b");
-        CHECK(dd.fields[1].default_node == NULL_NODE);
+        CHECK(ast.arena[stmt].extra_child(1) == NULL_NODE);
         CHECK(dd.fields[2].name == "c");
-        CHECK(dd.fields[2].default_node != NULL_NODE);
-        CHECK(ast.arena[dd.fields[2].default_node].type == NodeType::StringLit);
+        CHECK(ast.arena[stmt].extra_child(2) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[stmt].extra_child(2)].type == NodeType::StringLit);
     }
 
     SECTION("expression default with operator") {
@@ -1033,8 +1033,8 @@ TEST_CASE("Parser destructure defaults (statement-level)", "[parser][destructure
         const auto& dd = ast.arena[stmt].as_destructure_assignment();
         REQUIRE(dd.fields.size() == 1);
         // Default is a Call node (binary `+` desugars to `add(...)`).
-        REQUIRE(dd.fields[0].default_node != NULL_NODE);
-        CHECK(ast.arena[dd.fields[0].default_node].type == NodeType::Call);
+        REQUIRE(ast.arena[stmt].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[stmt].extra_child(0)].type == NodeType::Call);
     }
 
     SECTION("disambiguator survives parens in default") {
@@ -1071,8 +1071,8 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
         REQUIRE(dp.fields.size() == 2);
         CHECK(dp.fields[0].name == "x");
         CHECK(dp.fields[1].name == "y");
-        CHECK(dp.fields[0].default_node == NULL_NODE);
-        CHECK(dp.fields[1].default_node == NULL_NODE);
+        CHECK(ast.arena[param_child].extra_child(0) == NULL_NODE);
+        CHECK(ast.arena[param_child].extra_child(1) == NULL_NODE);
     }
 
     SECTION("destructure parameter with defaults") {
@@ -1086,11 +1086,11 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
         const auto& dp = ast.arena[param_child].as_destructure_param();
         REQUIRE(dp.fields.size() == 3);
         CHECK(dp.fields[0].name == "freq");
-        CHECK(dp.fields[0].default_node != NULL_NODE);
+        CHECK(ast.arena[param_child].extra_child(0) != NULL_NODE);
         CHECK(dp.fields[1].name == "wave");
-        CHECK(dp.fields[1].default_node != NULL_NODE);
+        CHECK(ast.arena[param_child].extra_child(1) != NULL_NODE);
         CHECK(dp.fields[2].name == "q");
-        CHECK(dp.fields[2].default_node != NULL_NODE);
+        CHECK(ast.arena[param_child].extra_child(2) != NULL_NODE);
     }
 
     SECTION("destructure mixed with regular params") {
@@ -1113,7 +1113,7 @@ TEST_CASE("Parser fn-param destructure", "[parser][destructure]") {
         REQUIRE(dp.fields.size() == 2);
         CHECK(dp.fields[0].name == "cutoff");
         CHECK(dp.fields[1].name == "q");
-        CHECK(dp.fields[1].default_node != NULL_NODE);
+        CHECK(ast.arena[second_param].extra_child(1) != NULL_NODE);
     }
 }
 
@@ -2316,8 +2316,7 @@ TEST_CASE("Parser record spreading", "[parser][records]") {
         NodeIndex stmt1 = ast.arena[root].first_child;
         NodeIndex record = ast.arena[stmt1].next_sibling;
         REQUIRE(ast.arena[record].type == NodeType::RecordLit);
-        REQUIRE(std::holds_alternative<Node::RecordLitData>(ast.arena[record].data));
-        CHECK(ast.arena[record].as_record_lit().spread_source != NULL_NODE);
+        CHECK(ast.arena[record].extra_child(0) != NULL_NODE);
 
         // Should have one explicit field (freq: 880)
         NodeIndex field = ast.arena[record].first_child;
@@ -2334,7 +2333,7 @@ TEST_CASE("Parser record spreading", "[parser][records]") {
         NodeIndex stmt1 = ast.arena[root].first_child;
         NodeIndex record = ast.arena[stmt1].next_sibling;
         REQUIRE(ast.arena[record].type == NodeType::RecordLit);
-        CHECK(ast.arena[record].as_record_lit().spread_source != NULL_NODE);
+        CHECK(ast.arena[record].extra_child(0) != NULL_NODE);
         // No explicit fields
         CHECK(ast.arena[record].first_child == NULL_NODE);
     }
@@ -2348,7 +2347,7 @@ TEST_CASE("Parser record spreading", "[parser][records]") {
         NodeIndex stmt1 = ast.arena[root].first_child;
         NodeIndex record = ast.arena[stmt1].next_sibling;
         REQUIRE(ast.arena[record].type == NodeType::RecordLit);
-        CHECK(ast.arena[record].as_record_lit().spread_source != NULL_NODE);
+        CHECK(ast.arena[record].extra_child(0) != NULL_NODE);
 
         NodeIndex field = ast.arena[record].first_child;
         REQUIRE(field != NULL_NODE);
@@ -2360,16 +2359,15 @@ TEST_CASE("Parser record spreading", "[parser][records]") {
         NodeIndex root = ast.root;
         NodeIndex record = ast.arena[root].first_child;
         REQUIRE(ast.arena[record].type == NodeType::RecordLit);
-        CHECK(ast.arena[record].as_record_lit().spread_source != NULL_NODE);
+        CHECK(ast.arena[record].extra_child(0) != NULL_NODE);
     }
 
-    SECTION("record without spread has NULL spread_source") {
+    SECTION("record without spread has no spread extra child") {
         auto ast = parse_ok("{x: 1, y: 2}");
         NodeIndex root = ast.root;
         NodeIndex record = ast.arena[root].first_child;
         REQUIRE(ast.arena[record].type == NodeType::RecordLit);
-        REQUIRE(std::holds_alternative<Node::RecordLitData>(ast.arena[record].data));
-        CHECK(ast.arena[record].as_record_lit().spread_source == NULL_NODE);
+        CHECK(ast.arena[record].extra_child(0) == NULL_NODE);
     }
 }
 
@@ -2394,10 +2392,10 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
         REQUIRE(std::holds_alternative<Node::ArgumentData>(ast.arena[arg].data));
         const auto& adata = ast.arena[arg].as_argument();
         CHECK_FALSE(adata.name.has_value());
-        CHECK(adata.spread_source != NULL_NODE);
+        CHECK(ast.arena[arg].extra_child(0) != NULL_NODE);
         // Spread source should be the identifier 'r'
-        CHECK(ast.arena[adata.spread_source].type == NodeType::Identifier);
-        // No child on the spread arg (expression hung off spread_source instead)
+        CHECK(ast.arena[ast.arena[arg].extra_child(0)].type == NodeType::Identifier);
+        // No child on the spread arg (expression hung off extra_children[0] instead)
         CHECK(ast.arena[arg].first_child == NULL_NODE);
         // Only one arg
         CHECK(ast.arena[arg].next_sibling == NULL_NODE);
@@ -2419,8 +2417,8 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
         REQUIRE(ast.arena[arg].type == NodeType::Argument);
         const auto& adata = ast.arena[arg].as_argument();
         CHECK_FALSE(adata.name.has_value());
-        CHECK(adata.spread_source != NULL_NODE);
-        CHECK(ast.arena[adata.spread_source].type == NodeType::Identifier);
+        CHECK(ast.arena[arg].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[arg].extra_child(0)].type == NodeType::Identifier);
     }
 
     SECTION("inline record spread") {
@@ -2431,9 +2429,8 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
 
         NodeIndex arg = ast.arena[call].first_child;
         REQUIRE(arg != NULL_NODE);
-        const auto& adata = ast.arena[arg].as_argument();
-        CHECK(adata.spread_source != NULL_NODE);
-        CHECK(ast.arena[adata.spread_source].type == NodeType::RecordLit);
+        CHECK(ast.arena[arg].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[arg].extra_child(0)].type == NodeType::RecordLit);
     }
 
     SECTION("positional + spread + named arguments mixed") {
@@ -2451,14 +2448,14 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
         REQUIRE(arg1 != NULL_NODE);
         const auto& a1 = ast.arena[arg1].as_argument();
         CHECK_FALSE(a1.name.has_value());
-        CHECK(a1.spread_source == NULL_NODE);
+        CHECK(ast.arena[arg1].extra_child(0) == NULL_NODE);
 
         // arg 2: spread
         NodeIndex arg2 = ast.arena[arg1].next_sibling;
         REQUIRE(arg2 != NULL_NODE);
         const auto& a2 = ast.arena[arg2].as_argument();
         CHECK_FALSE(a2.name.has_value());
-        CHECK(a2.spread_source != NULL_NODE);
+        CHECK(ast.arena[arg2].extra_child(0) != NULL_NODE);
 
         // arg 3: named c: 3
         NodeIndex arg3 = ast.arena[arg2].next_sibling;
@@ -2466,7 +2463,7 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
         const auto& a3 = ast.arena[arg3].as_argument();
         REQUIRE(a3.name.has_value());
         CHECK(*a3.name == "c");
-        CHECK(a3.spread_source == NULL_NODE);
+        CHECK(ast.arena[arg3].extra_child(0) == NULL_NODE);
 
         CHECK(ast.arena[arg3].next_sibling == NULL_NODE);
     }
@@ -2485,19 +2482,19 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
 
         NodeIndex arg1 = ast.arena[call].first_child;
         NodeIndex arg2 = ast.arena[arg1].next_sibling;
-        CHECK(ast.arena[arg1].as_argument().spread_source != NULL_NODE);
-        CHECK(ast.arena[arg2].as_argument().spread_source != NULL_NODE);
+        CHECK(ast.arena[arg1].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[arg2].extra_child(0) != NULL_NODE);
     }
 
-    SECTION("no spread - regular positional has NULL spread_source") {
+    SECTION("no spread - regular positional has no spread extra child") {
         auto ast = parse_ok("f(1, 2)");
         NodeIndex root = ast.root;
         NodeIndex call = ast.arena[root].first_child;
         NodeIndex arg1 = ast.arena[call].first_child;
-        CHECK(ast.arena[arg1].as_argument().spread_source == NULL_NODE);
+        CHECK(ast.arena[arg1].extra_child(0) == NULL_NODE);
     }
 
-    SECTION("no spread - named arg has NULL spread_source") {
+    SECTION("no spread - named arg has no spread extra child") {
         auto ast = parse_ok("f(x: 1)");
         NodeIndex root = ast.root;
         NodeIndex call = ast.arena[root].first_child;
@@ -2505,7 +2502,7 @@ TEST_CASE("Parser spread arguments", "[parser][spread]") {
         const auto& a = ast.arena[arg].as_argument();
         REQUIRE(a.name.has_value());
         CHECK(*a.name == "x");
-        CHECK(a.spread_source == NULL_NODE);
+        CHECK(ast.arena[arg].extra_child(0) == NULL_NODE);
     }
 }
 
@@ -2529,9 +2526,8 @@ TEST_CASE("Parser array literal spread", "[parser][spread][array]") {
         NodeIndex el1 = ast.arena[arr].first_child;
         REQUIRE(el1 != NULL_NODE);
         REQUIRE(ast.arena[el1].type == NodeType::Argument);
-        const auto& a1 = ast.arena[el1].as_argument();
-        CHECK(a1.spread_source != NULL_NODE);
-        CHECK(ast.arena[a1.spread_source].type == NodeType::Identifier);
+        CHECK(ast.arena[el1].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[el1].extra_child(0)].type == NodeType::Identifier);
 
         // Element 2: bare number literal 3
         NodeIndex el2 = ast.arena[el1].next_sibling;
@@ -2555,11 +2551,11 @@ TEST_CASE("Parser array literal spread", "[parser][spread][array]") {
 
         NodeIndex el1 = ast.arena[arr].first_child;
         REQUIRE(el1 != NULL_NODE);
-        CHECK(ast.arena[el1].as_argument().spread_source != NULL_NODE);
+        CHECK(ast.arena[el1].extra_child(0) != NULL_NODE);
 
         NodeIndex el2 = ast.arena[el1].next_sibling;
         REQUIRE(el2 != NULL_NODE);
-        CHECK(ast.arena[el2].as_argument().spread_source != NULL_NODE);
+        CHECK(ast.arena[el2].extra_child(0) != NULL_NODE);
     }
 
     SECTION("inline array spread") {
@@ -2570,9 +2566,8 @@ TEST_CASE("Parser array literal spread", "[parser][spread][array]") {
 
         NodeIndex el1 = ast.arena[arr].first_child;
         REQUIRE(el1 != NULL_NODE);
-        const auto& a1 = ast.arena[el1].as_argument();
-        CHECK(a1.spread_source != NULL_NODE);
-        CHECK(ast.arena[a1.spread_source].type == NodeType::ArrayLit);
+        CHECK(ast.arena[el1].extra_child(0) != NULL_NODE);
+        CHECK(ast.arena[ast.arena[el1].extra_child(0)].type == NodeType::ArrayLit);
     }
 
     SECTION("regular array still has bare children") {
@@ -2603,7 +2598,7 @@ TEST_CASE("Parser array literal spread", "[parser][spread][array]") {
         NodeIndex el2 = ast.arena[el1].next_sibling;
         REQUIRE(el2 != NULL_NODE);
         REQUIRE(ast.arena[el2].type == NodeType::Argument);
-        CHECK(ast.arena[el2].as_argument().spread_source != NULL_NODE);
+        CHECK(ast.arena[el2].extra_child(0) != NULL_NODE);
     }
 }
 

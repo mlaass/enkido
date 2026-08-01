@@ -72,10 +72,10 @@ void emit_record_shape_from_ast(std::ostringstream& json,
     // shadow them but order doesn't strictly matter for autocomplete.
     if (record_node != NULL_NODE) {
         const Node& rec = ast.arena[record_node];
-        if (std::holds_alternative<Node::RecordLitData>(rec.data)) {
-            const auto& rec_data = rec.as_record_lit();
-            if (rec_data.spread_source != NULL_NODE) {
-                const Node& spread = ast.arena[rec_data.spread_source];
+        {
+            NodeIndex spread_src = rec.extra_child(0);
+            if (spread_src != NULL_NODE) {
+                const Node& spread = ast.arena[spread_src];
                 if (spread.type == NodeType::RecordLit) {
                     NodeIndex sf = spread.first_child;
                     while (sf != NULL_NODE) {

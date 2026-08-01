@@ -475,6 +475,14 @@ In addition to F6 (Pratt redundancy) and F7 (`^` right-assoc bug):
 In addition to F1 (codegen AST mutation) and F13 (shape_index re-pipeline):
 
 - **Ghost fields stored in `data` rather than child list.** `MatchArmData::guard_node`, `ArgumentData::spread_source`, `RecordLitData::spread_source`, `DestructureField::default_node`, `HoleData::field_name`, `ClosureParamData::annotated_type`. Each forces every traversal (especially `clone_subtree` at `analyzer.cpp:1262-1321` and the substitute path at `:1508-1568`) to special-case. ~80 lines of pure ghost-field bookkeeping. (*High* — refactor to a uniform `Node::extra_children[]` slot.)
+
+  > **RESOLVED** via `prd-parser-codegen-hardening.md` Phase 6,
+  > 2026-08-01. All four node-ref ghost fields migrated to
+  > `Node::extra_children[]`; `clone_subtree` / substitute now run one
+  > generic extra-children loop each (the then-empty `RecordLitData`
+  > variant arm was deleted). `HoleData::field_name` and
+  > `ClosureParamData::annotated_type` stay in `data` by design — they
+  > are not node references (PRD §3.6).
 - **40 NodeType kinds × 25-arm `std::variant`.** One alternative — `PreResolved` — exists *only* so codegen can splice (see F1). `MiniAtomData` (`ast.hpp:227-248`) has 11 fields including chord-only fields wasted on every Pitch/Sample/Rest atom. (*Medium*)
 - **Dispatch count by file** (every consumer reinventing AST traversal):
   | File | Switches over NodeType |
@@ -678,6 +686,10 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Scope:** Move ghost-field children (`MatchArmData::guard_node`, spreads, destructure defaults) into a uniform `Node::extra_children[]` slot. Eliminates 80+ lines of special-cased bookkeeping in `clone_subtree` / substitute paths.
 **Files touched:** `ast.hpp`, `analyzer.cpp:1262-1321, 1508-1568`, every consumer that traverses (codegen, pattern_debug).
 **Effort:** Medium (1-2 weeks).
+
+> **SHIPPED** via `prd-parser-codegen-hardening.md` Phase 6, 2026-08-01.
+> See §3.3 RESOLVED note for the delivered shape (incl. the
+> `DestructureBinding` plumbing split in `destructure_field.hpp`).
 
 ### PRD-15 — Dead-code sweep  *(Low; one-PR cleanup)*
 **Scope:** Remove `TokenType::MiniString` (declared, never produced); `MiniLexer` `bool`-overload ctor; `codegen/literals.hpp::make_push_const` + `make_mtof`; the post-parser dead `BinOp`/`BinaryOpData` path (covered by PRD-10).

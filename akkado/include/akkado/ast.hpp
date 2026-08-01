@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 #include <variant>
@@ -18,15 +19,14 @@ class AstArena;  // forward declaration for MiniLiteralData
 using NodeIndex = std::uint32_t;
 constexpr NodeIndex NULL_NODE = 0xFFFFFFFF;
 
-/// One field in a destructure pattern (`{x}`, `{x = 1}`, etc.).
-/// Used by statement-level (`{x, y} = r`) and fn-param (`fn f({x, y})`)
-/// destructure forms. `default_node` points at the AST node for the default
-/// expression, or NULL_NODE if no default is declared. The name is bound as
-/// a local variable (with the source's field buffer, or the default's buffer
-/// when the source is missing the field).
+/// One field in a destructure pattern (`{x}`, `{x = 1}`, etc.), as stored on
+/// DestructureAssignment / DestructureParam node data. Used by statement-level
+/// (`{x, y} = r`) and fn-param (`fn f({x, y})`) destructure forms. The field's
+/// default expression (if any) lives in the owning Node's `extra_children[i]`
+/// (same index as the field) — see `destructure_bindings()` in
+/// destructure_field.hpp for the zipped (name, default) view.
 struct DestructureField {
     std::string name;
-    NodeIndex default_node = NULL_NODE;
 };
 
 /// AST node types
@@ -154,6 +154,19 @@ struct Node {
     NodeIndex first_child = NULL_NODE;
     NodeIndex next_sibling = NULL_NODE;
 
+    /// Auxiliary AST-node children that live outside the first_child /
+    /// next_sibling list (match-arm guards, spread sources, destructure
+    /// defaults). Slot meaning is fixed per NodeType — see
+    /// extra_child_kinds(). Generic traversals (clone, substitute, hash)
+    /// visit these AFTER the linked-list children. Entries may be
+    /// NULL_NODE (e.g. a destructure field without a default).
+    std::vector<NodeIndex> extra_children;
+
+    /// extra_children[i], or NULL_NODE when the slot is absent.
+    [[nodiscard]] NodeIndex extra_child(std::size_t i) const {
+        return i < extra_children.size() ? extra_children[i] : NULL_NODE;
+    }
+
     // Node-specific data (union-like via variant)
     struct NumberData { double value; bool is_integer; };
     struct BoolData { bool value; };
@@ -165,8 +178,9 @@ struct Node {
     // `id == id` — no string compare, no rehash.
     struct IdentifierData { SymbolId name; };
     struct ArgumentData {
-        std::optional<std::string> name;        // Named arg
-        NodeIndex spread_source = NULL_NODE;    // ..expr — set when arg is spread; expression hung here, not added as child
+        std::optional<std::string> name;  // Named arg
+        // Spread (`..expr`): the spread expression lives in the node's
+        // extra_children[0], not as a linked-list child.
     };
     struct PitchData { std::uint8_t midi_note; };
     struct ClosureParamData {
@@ -269,11 +283,12 @@ struct Node {
         bool is_inline = false;  // true for #inline fn (per-site inlining)
     };
 
-    // Data for match arms (pattern: body, or pattern && guard: body)
+    // Data for match arms (pattern: body, or pattern && guard: body).
+    // The guard expression (when has_guard) lives in the node's
+    // extra_children[0].
     struct MatchArmData {
         bool is_wildcard;      // true for `_` pattern
         bool has_guard;        // true if `&&` guard follows pattern
-        NodeIndex guard_node;  // Guard expression (NULL_NODE if no guard)
         bool is_range = false;       // true for range pattern (low..high)
         double range_low = 0.0;      // Lower bound (inclusive)
         double range_high = 0.0;     // Upper bound (exclusive)
@@ -306,10 +321,8 @@ struct Node {
         std::string field_name;
     };
 
-    // Data for record literals (with optional spread)
-    struct RecordLitData {
-        NodeIndex spread_source = NULL_NODE;  // {..expr, ...} — source record to spread
-    };
+    // RecordLit nodes carry no data variant arm; a `{..expr, ...}` spread
+    // source lives in the node's extra_children[0].
 
     // Data for pipe binding (expr as name, or expr as {field1, field2})
     struct PipeBindingData {
@@ -318,13 +331,15 @@ struct Node {
     };
 
     // Data for statement-level destructure assignment ({x, y} = expr).
-    // RHS expression is the node's first_child.
+    // RHS expression is the node's first_child. Per-field default-expression
+    // nodes live in extra_children (index-aligned with fields).
     struct DestructureAssignmentData {
-        std::vector<DestructureField> fields;  // Names + optional default-expr nodes
+        std::vector<DestructureField> fields;  // Field names
     };
 
     // Data for a destructuring function parameter (fn f({x, y [= default]})).
     // Lives as a child of FunctionDef in place of the usual Identifier child.
+    // Per-field default-expression nodes live in extra_children.
     struct DestructureParamData {
         std::vector<DestructureField> fields;
     };
@@ -363,7 +378,6 @@ struct Node {
         MatchArmData,
         MatchExprData,
         RecordFieldData,
-        RecordLitData,
         FieldAccessData,
         FieldAssignmentData,
         PipeBindingData,
@@ -451,10 +465,6 @@ struct Node {
         return std::get<RecordFieldData>(data);
     }
 
-    [[nodiscard]] const RecordLitData& as_record_lit() const {
-        return std::get<RecordLitData>(data);
-    }
-
     [[nodiscard]] const FieldAccessData& as_field_access() const {
         return std::get<FieldAccessData>(data);
     }
@@ -483,6 +493,23 @@ struct Node {
         return std::get<DirectiveData>(data);
     }
 };
+
+/// Names of the extra_children slots for a node type (debugging /
+/// pattern-debug serialization). Index-aligned with extra_children; for
+/// Destructure nodes the single "default" kind repeats per field.
+inline std::span<const char* const> extra_child_kinds(NodeType t) {
+    static constexpr const char* kGuard[]   = {"guard"};
+    static constexpr const char* kSpread[]  = {"spread"};
+    static constexpr const char* kDefault[] = {"default"};
+    switch (t) {
+        case NodeType::MatchArm:               return kGuard;
+        case NodeType::Argument:               return kSpread;
+        case NodeType::RecordLit:              return kSpread;
+        case NodeType::DestructureAssignment:  return kDefault;
+        case NodeType::DestructureParam:       return kDefault;
+        default:                               return {};
+    }
+}
 
 /// Arena-based AST storage
 class AstArena {

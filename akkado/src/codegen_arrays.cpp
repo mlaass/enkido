@@ -138,10 +138,9 @@ std::optional<FunctionRef> CodeGenerator::resolve_function_arg(NodeIndex func_no
                 // Inline closure with a `{x, y}` destructure parameter. Mirror
                 // the analyzer's `fn`-path handling (analyzer.cpp ~753): a
                 // synthetic placeholder name plus the per-field bindings.
-                const auto& dp = child_node.as_destructure_param();
                 param.name = "__destr_param_" + std::to_string(i);
                 param.is_destructure = true;
-                param.destructure_fields = dp.fields;
+                param.destructure_fields = destructure_bindings(child_node);
                 ref.params.push_back(std::move(param));
             } else if (child_node.type == NodeType::Identifier) {
                 if (std::holds_alternative<Node::ClosureParamData>(child_node.data)) {

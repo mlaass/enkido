@@ -151,8 +151,7 @@ TypedValue CodeGenerator::handle_user_function_call(
         while (it != NULL_NODE) {
             const Node& a = ast_->arena[it];
             if (a.type == NodeType::Argument &&
-                std::holds_alternative<Node::ArgumentData>(a.data) &&
-                a.as_argument().spread_source != NULL_NODE) {
+                a.extra_child(0) != NULL_NODE) {
                 has_spread = true;
                 break;
             }
@@ -1043,7 +1042,7 @@ TypedValue CodeGenerator::dispatch_overloaded_function_call(
             std::holds_alternative<Node::ArgumentData>(arg_node.data)) {
             const auto& a = arg_node.as_argument();
             if (a.name.has_value()) cannot_type_dispatch = true;            // named arg
-            if (a.spread_source != NULL_NODE) cannot_type_dispatch = true;  // spread
+            if (arg_node.extra_child(0) != NULL_NODE) cannot_type_dispatch = true;  // spread
             value = arg_node.first_child;
         }
         if (value != NULL_NODE) {
@@ -1471,8 +1470,7 @@ TypedValue CodeGenerator::handle_function_value_call(
         while (it != NULL_NODE) {
             const Node& a = ast_->arena[it];
             if (a.type == NodeType::Argument &&
-                std::holds_alternative<Node::ArgumentData>(a.data) &&
-                a.as_argument().spread_source != NULL_NODE) {
+                a.extra_child(0) != NULL_NODE) {
                 has_spread = true;
                 break;
             }
@@ -1962,8 +1960,8 @@ bool CodeGenerator::is_compile_time_match(NodeIndex node, const Node& n) const {
             const Node& arm_node = ast_->arena[arm];
             if (arm_node.type == NodeType::MatchArm) {
                 const auto& arm_data = arm_node.as_match_arm();
-                if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                    const Node& guard_node = ast_->arena[arm_data.guard_node];
+                if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                    const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                     // Only simple literals are compile-time evaluable
                     if (guard_node.type != NodeType::BoolLit &&
                         guard_node.type != NodeType::NumberLit) {
@@ -2020,8 +2018,8 @@ bool CodeGenerator::is_compile_time_match(NodeIndex node, const Node& n) const {
         const Node& arm_node = ast_->arena[arm];
         if (arm_node.type == NodeType::MatchArm) {
             const auto& arm_data = arm_node.as_match_arm();
-            if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                const Node& guard_node = ast_->arena[arm_data.guard_node];
+            if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                 if (guard_node.type != NodeType::BoolLit &&
                     guard_node.type != NodeType::NumberLit) {
                     return false;  // Non-const guard -> runtime
@@ -2107,8 +2105,8 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
 
                 // Check guard if present
                 bool guard_passes = true;
-                if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                    const Node& guard_node = ast_->arena[arm_data.guard_node];
+                if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                    const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                     if (guard_node.type == NodeType::BoolLit) {
                         guard_passes = guard_node.as_bool();
                     } else if (guard_node.type == NodeType::NumberLit) {
@@ -2119,11 +2117,11 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
                 if (guard_passes && body != NULL_NODE) {
                     symbols_->push_scope();
                     // Match-arm destructure has no default expressions —
-                    // wrap names into DestructureField{name, NULL_NODE}.
-                    std::vector<DestructureField> arm_fields;
+                    // wrap names into DestructureBinding{name, NULL_NODE}.
+                    std::vector<DestructureBinding> arm_fields;
                     arm_fields.reserve(arm_data.destructure_fields.size());
                     for (const auto& fname : arm_data.destructure_fields) {
-                        arm_fields.push_back(DestructureField{fname, NULL_NODE});
+                        arm_fields.push_back(DestructureBinding{fname, NULL_NODE});
                     }
                     bind_destructure_fields(scrutinee_tv, arm_fields, arm_node.location);
                     auto result_tv = visit(body);
@@ -2144,8 +2142,8 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
                     if (is_numeric && scrutinee_val >= arm_data.range_low && scrutinee_val < arm_data.range_high) {
                         // Range matches - check guard if present
                         bool guard_passes = true;
-                        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                            const Node& guard_node = ast_->arena[arm_data.guard_node];
+                        if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                            const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                             if (guard_node.type == NodeType::BoolLit) {
                                 guard_passes = guard_node.as_bool();
                             } else if (guard_node.type == NodeType::NumberLit) {
@@ -2174,8 +2172,8 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
                     if (pattern_key == scrutinee_key) {
                         // Pattern matches - check guard if present
                         bool guard_passes = true;
-                        if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                            const Node& guard_node = ast_->arena[arm_data.guard_node];
+                        if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                            const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                             if (guard_node.type == NodeType::BoolLit) {
                                 guard_passes = guard_node.as_bool();
                             } else if (guard_node.type == NodeType::NumberLit) {
@@ -2191,8 +2189,8 @@ TypedValue CodeGenerator::handle_compile_time_match(NodeIndex node, const Node& 
                 }
             } else {
                 // Guard-only form: evaluate guard
-                if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                    const Node& guard_node = ast_->arena[arm_data.guard_node];
+                if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                    const Node& guard_node = ast_->arena[arm_node.extra_child(0)];
                     bool guard_passes = false;
                     if (guard_node.type == NodeType::BoolLit) {
                         guard_passes = guard_node.as_bool();
@@ -2293,10 +2291,10 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                 auto* scrutinee_type = get_node_type(n.first_child);
                 if (scrutinee_type) {
                     // Match-arm destructure has no default expressions.
-                    std::vector<DestructureField> arm_fields;
+                    std::vector<DestructureBinding> arm_fields;
                     arm_fields.reserve(arm_data.destructure_fields.size());
                     for (const auto& fname : arm_data.destructure_fields) {
-                        arm_fields.push_back(DestructureField{fname, NULL_NODE});
+                        arm_fields.push_back(DestructureBinding{fname, NULL_NODE});
                     }
                     bind_destructure_fields(*scrutinee_type, arm_fields, arm_node.location);
                 }
@@ -2328,8 +2326,8 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                 arms.push_back({BufferAllocator::BUFFER_UNUSED, body_buf, true});
             } else if (arm_data.is_destructure) {
                 // Destructuring arm: always matches unless guarded
-                if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                    std::uint16_t guard_buf = visit(arm_data.guard_node).buffer;
+                if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                    std::uint16_t guard_buf = visit(arm_node.extra_child(0)).buffer;
                     if (has_destr_scope) symbols_->pop_scope();
                     arms.push_back({guard_buf, body_buf, false});
                 } else {
@@ -2414,14 +2412,14 @@ TypedValue CodeGenerator::handle_runtime_match(NodeIndex node, const Node& n) {
                     emit(eq_inst);
                 } else {
                     // Guard-only form: condition is the guard itself
-                    if (arm_data.has_guard && arm_data.guard_node != NULL_NODE) {
-                        cond_buf = visit(arm_data.guard_node).buffer;
+                    if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE) {
+                        cond_buf = visit(arm_node.extra_child(0)).buffer;
                     }
                 }
 
                 // If there's a guard, AND it with the pattern condition
-                if (arm_data.has_guard && arm_data.guard_node != NULL_NODE && match_data.has_scrutinee) {
-                    std::uint16_t guard_buf = visit(arm_data.guard_node).buffer;
+                if (arm_data.has_guard && arm_node.extra_child(0) != NULL_NODE && match_data.has_scrutinee) {
+                    std::uint16_t guard_buf = visit(arm_node.extra_child(0)).buffer;
 
                     std::uint16_t combined_buf = buffers_.allocate();
                     cedar::Instruction and_inst{};

@@ -1,4 +1,31 @@
-> **Status: IN PROGRESS — Phase 1-5 SHIPPED (2026-07-31), 4 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-6 SHIPPED (2026-08-01), 3 phases remaining.**
+>
+> - **Phase 6 (Node::extra_children ghost-field migration) — SHIPPED
+>   2026-08-01.** `Node` grew `std::vector<NodeIndex> extra_children`
+>   (+ `extra_child(i)` accessor + `extra_child_kinds(NodeType)` slot
+>   names). Migrated all four node-ref ghost fields:
+>   `MatchArmData::guard_node` → `extra_children[0]`,
+>   `ArgumentData::spread_source` → `extra_children[0]`,
+>   RecordLit spread → `extra_children[0]` (**divergence:** the
+>   then-empty `RecordLitData` variant arm was deleted outright — a
+>   RecordLit node now carries `monostate`), and
+>   `DestructureField::default_node` → `extra_children[i]`
+>   (index-aligned with `fields`, `NULL_NODE` placeholders).
+>   `DestructureField` in ast.hpp keeps only the name; the (name,
+>   default) plumbing pair moved to new
+>   `akkado/include/akkado/destructure_field.hpp` as
+>   `DestructureBinding` + `destructure_bindings(node)` zip helper
+>   (used by parser results, `FunctionParamInfo`, and
+>   `bind_destructure_fields`). `clone_subtree` and `substitute_nodes`
+>   replaced 5 per-Data special-case blocks (~120 LOC) with one generic
+>   extra_children loop each (destructure defaults keep their
+>   binding-RHS `closure_allowed=true` context). `arena_structural_hash`
+>   now mixes extra_children generically in the node loop instead of
+>   per-Data ghost mixes. New `akkado/tests/test_ast.cpp` [P6]:
+>   accessor units, slot names, and analyzer round-trips for guard /
+>   record spread / arg spread / destructure defaults (statement +
+>   param). Full suites green; snapshot byte-identical; wasm green.
+>   Commit hashes backfilled at Phase 9.
 >
 > - **Phase 5 (lex_primitives extract) — SHIPPED 2026-07-31.** New
 >   `akkado/include/akkado/lex_primitives.hpp` + `src/lex_primitives.cpp`
