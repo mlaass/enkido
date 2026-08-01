@@ -7,6 +7,8 @@
 #include "akkado/mini_lexer.hpp"
 #include "akkado/mini_parser.hpp"
 #include "akkado/sample_registry.hpp"
+#include "akkado/codegen/instruction_builder.hpp"
+#include "akkado/codegen/helpers.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <cedar/vm/vm.hpp>
 #include <cedar/vm/state_pool.hpp>  // For fnv1a_hash_runtime
@@ -11902,4 +11904,113 @@ saw(f) |> out(@))");
     CHECK(result.artifacts.ast != nullptr);
     // compile() constructed its own context, so it must own the lifetime.
     CHECK(result.artifacts.owned_ctx != nullptr);
+}
+
+// =============================================================================
+// InstructionBuilder (PRD prd-codegen-sprawl-cleanup Phase 1)
+// =============================================================================
+
+TEST_CASE("InstructionBuilder: field construction", "[codegen][builder]") {
+    using akkado::codegen::InstructionBuilder;
+
+    SECTION("defaults: all inputs unused, zero rate/flags/state") {
+        const cedar::Instruction& inst =
+            InstructionBuilder(cedar::Opcode::OSC_SIN).get();
+        CHECK(inst.opcode == cedar::Opcode::OSC_SIN);
+        for (int i = 0; i < 5; ++i) CHECK(inst.inputs[i] == 0xFFFF);
+        CHECK(inst.rate == 0);
+        CHECK(inst.flags == 0);
+        CHECK(inst.state_id == 0);
+    }
+
+    SECTION("input() sets one slot, others stay unused") {
+        const cedar::Instruction& inst = InstructionBuilder(cedar::Opcode::MUL)
+                                             .input(0, 12)
+                                             .input(2, 34)
+                                             .get();
+        CHECK(inst.inputs[0] == 12);
+        CHECK(inst.inputs[1] == 0xFFFF);
+        CHECK(inst.inputs[2] == 34);
+        CHECK(inst.inputs[3] == 0xFFFF);
+        CHECK(inst.inputs[4] == 0xFFFF);
+    }
+
+    SECTION("inputs() fills from slot 0, tail stays unused") {
+        const cedar::Instruction& inst = InstructionBuilder(cedar::Opcode::ENV_ADSR)
+                                             .inputs({1, 2, 3})
+                                             .get();
+        CHECK(inst.inputs[0] == 1);
+        CHECK(inst.inputs[1] == 2);
+        CHECK(inst.inputs[2] == 3);
+        CHECK(inst.inputs[3] == 0xFFFF);
+        CHECK(inst.inputs[4] == 0xFFFF);
+    }
+
+    SECTION("output/rate/state_id/flags setters") {
+        const cedar::Instruction& inst = InstructionBuilder(cedar::Opcode::OSC_SAW)
+                                             .output(7)
+                                             .rate(3)
+                                             .state_id(0xDEADBEEFu)
+                                             .flags(cedar::InstructionFlag::STEREO_OUTPUT)
+                                             .get();
+        CHECK(inst.out_buffer == 7);
+        CHECK(inst.rate == 3);
+        CHECK(inst.state_id == 0xDEADBEEFu);
+        CHECK(inst.flags == cedar::InstructionFlag::STEREO_OUTPUT);
+    }
+
+    SECTION("const_value matches encode_const_value encoding") {
+        const float v = 440.125f;
+        const cedar::Instruction& built =
+            InstructionBuilder(cedar::Opcode::PUSH_CONST).const_value(v).get();
+
+        cedar::Instruction manual{};
+        manual.opcode = cedar::Opcode::PUSH_CONST;
+        akkado::codegen::encode_const_value(manual, v);
+
+        CHECK(built.state_id == manual.state_id);
+        CHECK(built.inputs[4] == 0xFFFF);
+        CHECK(decode_const_float(built) == v);
+    }
+}
+
+TEST_CASE("BufferAllocator: exhaustion returns BUFFER_UNUSED", "[codegen][builder]") {
+    akkado::BufferAllocator alloc;
+    std::uint16_t last = 0;
+    std::size_t granted = 0;
+    for (;;) {
+        std::uint16_t b = alloc.allocate();
+        if (b == akkado::BufferAllocator::BUFFER_UNUSED) break;
+        // BUFFER_ZERO (always-zero scratch slot) must never be handed out.
+        CHECK(b != cedar::BUFFER_ZERO);
+        last = b;
+        ++granted;
+        REQUIRE(granted <= cedar::MAX_BUFFERS);  // no infinite loop
+    }
+    CHECK(granted > 0);
+    CHECK(last < akkado::BufferAllocator::MAX_ALLOCATABLE);
+    // Once exhausted, it stays exhausted.
+    CHECK(alloc.allocate() == akkado::BufferAllocator::BUFFER_UNUSED);
+    // Releasing one buffer makes exactly one allocation succeed again.
+    alloc.release(last);
+    CHECK(alloc.allocate() == last);
+    CHECK(alloc.allocate() == akkado::BufferAllocator::BUFFER_UNUSED);
+}
+
+TEST_CASE("Buffer pool exhaustion emits E101", "[codegen][builder][e101]") {
+    // Each top-level binding holds its buffers live, so enough of them
+    // exhausts the MAX_BUFFERS pool. Guards the single alloc_buffer() E101
+    // path end-to-end.
+    std::ostringstream src;
+    for (int i = 0; i < 9000; ++i) {
+        src << "a" << i << " = saw(" << (200 + i) << ")\n";
+    }
+    src << "out(a0*0.01)\n";
+    auto result = akkado::compile(src.str());
+    REQUIRE_FALSE(result.success);
+    bool saw_e101 = false;
+    for (const auto& d : result.diagnostics) {
+        if (d.code == "E101") saw_e101 = true;
+    }
+    CHECK(saw_e101);
 }

@@ -2591,6 +2591,14 @@ void CodeGenerator::emit(const cedar::Instruction& inst) {
     source_locations_.push_back(current_source_loc_);
 }
 
+std::uint16_t CodeGenerator::alloc_buffer(SourceLocation loc) {
+    const std::uint16_t out = buffers_.allocate();
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        error("E101", "Buffer pool exhausted", loc);
+    }
+    return out;
+}
+
 std::vector<cedar::Instruction>& CodeGenerator::emit_stream() {
     // Route free-function emit helpers to the same place emit() writes: the
     // open subprogram body, or the main stream when none is open.

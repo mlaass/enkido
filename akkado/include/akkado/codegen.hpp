@@ -512,6 +512,13 @@ public:
     /// Phase 3 (F2).
     void emit(const cedar::Instruction& inst);
 
+    /// Allocate a buffer; on pool exhaustion emit the E101 "Buffer pool
+    /// exhausted" diagnostic at `loc` and return
+    /// BufferAllocator::BUFFER_UNUSED. The single allocation-failure path
+    /// (PRD prd-codegen-sprawl-cleanup Phase 1) — call sites check the
+    /// sentinel and unwind without re-emitting the diagnostic.
+    [[nodiscard]] std::uint16_t alloc_buffer(SourceLocation loc);
+
 private:
     // ============================================================================
     // PRD prd-parser-codegen-correctness.md Phase 3 (F2):
