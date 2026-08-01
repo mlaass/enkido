@@ -1178,6 +1178,67 @@ private:
     TypedValue handle_event_filter_call(NodeIndex node, const Node& n);
     TypedValue emit_event_transform(NodeIndex node, const Node& n, bool is_filter);
 
+    /// Upstream event-source metadata resolved by emit_event_transform;
+    /// threaded through opcode emission and the final pattern readout.
+    struct EventTransformUpstream {
+        std::uint32_t state_id = 0;
+        float cycle_length = 1.0f;
+        bool is_sample_pattern = false;
+        std::uint8_t max_voices = 1;
+        std::vector<RequiredSample> sample_refs;
+        std::vector<std::pair<std::string, std::uint8_t>> custom_props;
+    };
+    /// Convention buffers for an event_map/event_filter closure (input freq +
+    /// record bank, plus the mode-specific output bank / predicate buffer).
+    struct EventTransformBuffers {
+        std::uint16_t freq_buf = BufferAllocator::BUFFER_UNUSED;
+        std::uint16_t bank_buf = BufferAllocator::BUFFER_UNUSED;
+        std::uint16_t out_bank = BufferAllocator::BUFFER_UNUSED;
+        std::uint16_t pred_buf = BufferAllocator::BUFFER_UNUSED;
+    };
+    /// Stage 1 of emit_event_transform: resolve + validate the upstream event
+    /// source (E242); nullopt on error.
+    std::optional<EventTransformUpstream> event_transform_resolve_upstream(
+        NodeIndex input_arg, const char* name, SourceLocation loc);
+    /// Stage 2 of emit_event_transform: resolve the closure, validate its
+    /// arity (E403/E404) and pre-scan its event-field reads (E408).
+    std::optional<FunctionRef> event_transform_resolve_closure(
+        NodeIndex lambda_arg, const char* name, SourceLocation loc,
+        bool& need_bank);
+    /// Stage 3 of emit_event_transform: allocate the closure's convention
+    /// input/output buffers; false on allocation failure.
+    bool event_transform_alloc_buffers(bool is_filter, bool need_bank,
+                                       SourceLocation loc,
+                                       EventTransformBuffers& bufs);
+    /// Stage 4 of emit_event_transform: compile the closure body into a
+    /// subprogram block and wire its result; false when the body is too large.
+    bool event_transform_compile_body(const FunctionRef& func_ref,
+                                      bool is_filter, const char* name,
+                                      const Node& n,
+                                      const EventTransformBuffers& bufs,
+                                      bool need_bank, std::uint32_t& block_id,
+                                      std::uint16_t& write_mask);
+    /// event_map result wiring: COPY each returned record field into the
+    /// output bank (chord arrays pack first); returns the write mask.
+    std::uint16_t event_transform_wire_map_outputs(const TypedValue& body_tv,
+                                                   std::uint16_t out_bank,
+                                                   const Node& n);
+    /// Stage 5 of emit_event_transform: emit the EVENT_MAP/EVENT_FILTER
+    /// instruction + its EventTransform state-init.
+    void event_transform_emit_instruction(bool is_filter,
+                                          std::uint32_t block_id,
+                                          std::uint16_t write_mask,
+                                          const EventTransformBuffers& bufs,
+                                          const EventTransformUpstream& up,
+                                          std::uint32_t state_id);
+    /// Stage 6 of emit_event_transform: emit the readout for the transform-
+    /// owned SequenceState (consumes up.sample_refs / custom_props).
+    TypedValue event_transform_emit_readout(NodeIndex node, bool is_filter,
+                                            std::uint16_t write_mask,
+                                            std::uint32_t state_id,
+                                            EventTransformUpstream& up,
+                                            SourceLocation loc);
+
     // ============================================================================
     // Stereo handlers
     // ============================================================================
@@ -1405,6 +1466,27 @@ private:
     /// (bus_l, bus_l+1) in place. Called from emit_bus_epilogue.
     void inline_mixer_closure(const MixerCall& mc, std::uint16_t bus_l,
                               std::uint16_t bus_r);
+    /// Stage 1 of emit_bus_epilogue: collect referenced bus indices from
+    /// emitted OUTPUT writers (+ mixer targets); returns the writer count.
+    std::size_t collect_bus_writers(std::set<int>& indices,
+                                    std::set<int>& writer_indices);
+    /// Stage 2 of emit_bus_epilogue: resolve mixer/master overrides per bus
+    /// (last call wins, W203) and warn on writerless mixer buses (W205).
+    std::map<int, MixerCall> resolve_winning_mixers(
+        const std::set<int>& writer_indices);
+    /// Stage 3 of emit_bus_epilogue: allocate a stereo scratch pair per bus,
+    /// publish bus_buffers_, rewrite placeholders. False on allocation error.
+    bool allocate_bus_buffers(const std::set<int>& indices,
+                              std::map<int, std::uint16_t>& bus_left);
+    /// Stage 4 of emit_bus_epilogue: per-bus mixer/trim/sum into bus 0, bus-0
+    /// master chain, master fader, safety clamps, device store. False on
+    /// buffer-pool exhaustion.
+    bool emit_bus_master_chain(std::map<int, std::uint16_t>& bus_left,
+                               const std::map<int, MixerCall>& winning_mixers);
+    /// Stage 5 of emit_bus_epilogue: prepend the bus-clear prologue and patch
+    /// shifted absolute-index metadata.
+    void prepend_bus_clear_prologue(
+        const std::map<int, std::uint16_t>& bus_left);
 
     /// Begin a new FOREACH_EVENT subprogram body; returns its block_id and
     /// redirects emit() into it until end_subprogram() is called.
@@ -1501,6 +1583,35 @@ private:
     // Map from AST node index to typed result (replaces node_buffers_, record_fields_,
     // multi_buffers_, array_lengths_, pattern_state_ids_)
     std::unordered_map<NodeIndex, TypedValue> node_types_;
+
+    // PRD prd-codegen-sprawl-cleanup Phase 7: per-lambda-iteration
+    // node_types_ frame. The lambda body must not see cached TypedValues
+    // from the enclosing scope or a prior iteration (those carry the
+    // previous arg's buffers). The frame swaps the live cache out — hiding
+    // enclosing-scope entries exactly as the old move/clear/restore idiom
+    // did — and swaps in a reused scratch map, so repeated iterations stop
+    // re-allocating hash buckets. Fall-through reads of the outer cache
+    // were considered and rejected: hiding outer entries is part of the
+    // pinned byte-identical semantics.
+    class NodeTypesFrame {
+    public:
+        explicit NodeTypesFrame(CodeGenerator& cg)
+            : cg_(cg), saved_(std::move(cg.node_types_)) {
+            cg_.node_types_ = std::move(cg_.node_types_scratch_);
+            cg_.node_types_.clear();
+        }
+        ~NodeTypesFrame() {
+            cg_.node_types_scratch_ = std::move(cg_.node_types_);
+            cg_.node_types_ = std::move(saved_);
+        }
+        NodeTypesFrame(const NodeTypesFrame&) = delete;
+        NodeTypesFrame& operator=(const NodeTypesFrame&) = delete;
+
+    private:
+        CodeGenerator& cg_;
+        std::unordered_map<NodeIndex, TypedValue> saved_;
+    };
+    std::unordered_map<NodeIndex, TypedValue> node_types_scratch_;
 
     // Side-table for pre-evaluated TypedValues produced by call-arg spread
     // expansion. Keyed by (call_node, slot_index): the slot index is the
@@ -1722,8 +1833,42 @@ private:
     /// Handle record literal nodes - expand to multiple buffers
     TypedValue handle_record_literal(NodeIndex node, const Node& n);
 
+    /// Copy fields from a {..base, …} spread source into field_values
+    /// (explicit fields later override; first_buffer tracks the return value).
+    void record_literal_apply_spread(
+        const Node& n,
+        std::unordered_map<std::string, TypedValue>& field_values,
+        std::uint16_t& first_buffer);
+
     /// Handle field access nodes - resolve to correct field buffer
     TypedValue handle_field_access(NodeIndex node, const Node& n);
+
+    /// Module-qualified access (m.name) resolved before visiting the receiver
+    /// (visiting a Module node would fail); nullopt when not a module access.
+    std::optional<TypedValue> resolve_module_field_access(
+        NodeIndex node, const Node& expr, const std::string& field_name,
+        SourceLocation loc);
+    /// Enrich expr_tv from the symbol table for identifier receivers; a
+    /// pattern variable resolves the field immediately (returned value).
+    std::optional<TypedValue> resolve_identifier_field_source(
+        NodeIndex node, const Node& expr, const std::string& field_name,
+        SourceLocation loc, TypedValue& expr_tv);
+    /// Field access on a Pattern value (scalar fields + notes/freqs arrays).
+    TypedValue field_access_on_pattern(NodeIndex node, NodeIndex expr_node,
+                                       const TypedValue& expr_tv,
+                                       const std::string& field_name,
+                                       SourceLocation loc);
+    /// Field access on a Record value (E131 with available fields on miss).
+    TypedValue field_access_on_record(NodeIndex node,
+                                      const TypedValue& expr_tv,
+                                      const std::string& field_name,
+                                      SourceLocation loc);
+    /// Field access on a record-valued StateCell — read sugar for
+    /// get(cell).field (Phase 4b).
+    TypedValue field_access_on_state_cell(NodeIndex node,
+                                          const TypedValue& expr_tv,
+                                          const std::string& field_name,
+                                          SourceLocation loc);
 
     /// Phase 4b (records-system-unification): write sugar for record-valued
     /// state cells. `receiver.field = value` desugars to

@@ -100,12 +100,11 @@ std::uint16_t CodeGenerator::apply_lambda(NodeIndex lambda_node, std::uint16_t a
     symbols_->push_scope();
     symbols_->define_variable(info.params[0], arg_buf);
 
-    auto saved_node_types = std::move(node_types_);
-    node_types_.clear();
-
-    std::uint16_t result = visit(body).buffer;
-
-    node_types_ = std::move(saved_node_types);
+    std::uint16_t result;
+    {
+        NodeTypesFrame frame(*this);
+        result = visit(body).buffer;
+    }
     symbols_->pop_scope();
 
     return result;
@@ -219,19 +218,16 @@ std::uint16_t CodeGenerator::apply_function_ref(const FunctionRef& ref,
         symbols_->define_variable(ref.params[i].name, arg_bufs[i]);
     }
 
-    auto saved_node_types = std::move(node_types_);
-    node_types_.clear();
-
     std::uint16_t result = BufferAllocator::BUFFER_UNUSED;
-
-    if (ref.is_user_function) {
-        if (ref.closure_node != NULL_NODE) result = visit(ref.closure_node).buffer;
-    } else {
-        NodeIndex body = closure_body(ast_->arena, ref.closure_node);
-        if (body != NULL_NODE) result = visit(body).buffer;
+    {
+        NodeTypesFrame frame(*this);
+        if (ref.is_user_function) {
+            if (ref.closure_node != NULL_NODE) result = visit(ref.closure_node).buffer;
+        } else {
+            NodeIndex body = closure_body(ast_->arena, ref.closure_node);
+            if (body != NULL_NODE) result = visit(body).buffer;
+        }
     }
-
-    node_types_ = std::move(saved_node_types);
     symbols_->pop_scope();
 
     return result;

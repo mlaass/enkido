@@ -32,9 +32,11 @@ PRD-2, PRD-8, PRD-10, PRD-11, PRD-13, PRD-14, PRD-15 SHIPPED.
 `docs/parallelism-blocker-catalogue.md` carries the live shared-mutable-
 state inventory — after the Phase 9 re-scan the only open entry is the
 PB-F5 source-concatenation handover to the future per-import
-parallelism PRD (audit F5 / PRD-3). Remaining unscoped findings (token-
-shape redundancy, mini-lexer flag machine internals, codegen-sprawl
-F4/F9/F10) belong to `docs/prd-codegen-sprawl-cleanup.md`.
+parallelism PRD (audit F5 / PRD-3). Remaining unscoped findings: token-shape
+redundancy and mini-lexer flag machine internals (no owning PRD yet).
+The codegen-sprawl findings F4/F9/F10 + §3.4 codegen items are
+**RESOLVED 2026-08-01** via `docs/prd-codegen-sprawl-cleanup.md`
+(7 phases, commits `fd76fd1`..HEAD).
 
 ---
 
@@ -198,6 +200,20 @@ Other monoliths in codegen.cpp:
 - `codegen_bus.cpp` — `handle_bus_call`, `handle_mixer_call`, `inline_mixer_closure`, `scan_closure_for_sinks`, `emit_bus_epilogue` (~620 lines).
 - `codegen_records.cpp` — record + field + pipe-binding + destructure (~750 lines).
 
+> **RESOLVED 2026-08-01** by Phases 3+4 of
+> `prd-codegen-sprawl-cleanup.md` (commits `30ca0e3`, `0c6eaf1`,
+> `388245c`, `4ed80b6`). All codegen sources live under
+> `akkado/src/codegen/` (subdir layout, Option A); `codegen.cpp` is
+> 606 LOC of core plumbing; the Call case is a 128-line dispatch
+> ladder in `visit_dispatch.cpp` with the emission machinery split
+> into named emitters in `call_dispatch.cpp` (`emit_builtin_call`,
+> `emit_stereo_native_call`, `emit_chord_expanded_call`,
+> `emit_generic_builtin_tail`). The 100-entry `special_handlers` map
+> is gone — per-builtin dispatch lives on
+> `BuiltinInfo::codegen_handler`. `emit_bus_epilogue` /
+> `handle_field_access` / `handle_record_literal` were further split
+> into named stage helpers by Phase 7.
+
 **Severity: High.** Highest-payoff codegen refactor; the Call branch is where every new feature gets added and every regression hides.
 
 ---
@@ -324,6 +340,16 @@ Compare e.g. `codegen_patterns.cpp:3636-3660` vs `:3795-3820` vs `:3974-4000` �
 
 **Severity: High.**
 
+> **RESOLVED 2026-08-01** by Phase 5 of `prd-codegen-sprawl-cleanup.md`
+> (commit `9e23178`; the reorder/fanout families had already been
+> consolidated onto `emit_reorder_call` / `emit_fanout_call` by the
+> event-transforms PRD). The SequenceProgram-recompiling handlers
+> (bank/variant/tune/anchor/mode) collapse onto
+> `emit_seqpat_transform` + a 4-knob `SeqpatTransformHooks` config —
+> bank went 148→32 LOC, variant 201→87. `transport` (dual state IDs +
+> SEQPAT_TRANSPORT) and `voicing` (dictionary lookup + apply) stay
+> standalone by reviewer decision, each with an explanatory comment.
+
 ---
 
 ### F10. `StateInitData` constructed field-by-field at 19 sites — *High*
@@ -335,6 +361,15 @@ Compare e.g. `codegen_patterns.cpp:3636-3660` vs `:3795-3820` vs `:3974-4000` �
 **Fix sketch.** `StateInitBuilder` with one factory method per `Type`: `StateInitBuilder::sequence_program(state_id).cycle_length(c).sequences(s).publish(*this)`. The single existing centraliser — `emit_extended_params_init` (`codegen.cpp:35-73`) — is bug-free precedent.
 
 **Severity: High.**
+
+> **RESOLVED 2026-08-01** by Phase 2 of `prd-codegen-sprawl-cleanup.md`
+> (commit `ff8fecb`). `codegen::StateInitBuilder` — one typed factory
+> per `StateInitData::Type`, fluent setters, `publish()` as the single
+> push site via `CodeGenerator::push_state_init`. All 18 construction
+> sites migrated; `grep state_inits_.push_back` hits exactly one line.
+> (Delivered as one builder class with typed factories rather than a
+> per-Type sub-builder family — the struct is flat, so sub-builders
+> would only duplicate setters.)
 
 ---
 
@@ -549,13 +584,46 @@ In addition to F1 (codegen AST mutation) and F13 (shape_index re-pipeline):
 In addition to F4 (visit() Call branch), F9 (transform boilerplate), F10 (StateInitData):
 
 - **File organisation has no rule.** Two parallel layouts:  `akkado/include/akkado/codegen/` (subdir, six small `inline` helper headers) AND `akkado/include/akkado/codegen.hpp` (1423-line monolith) + `akkado/src/codegen_*.cpp` (flat). Headers in `codegen/` are included only by some sources (e.g. `codegen_state.cpp` includes none of them); `codegen/literals.hpp` is entirely dead. Either fold everything in `codegen/` back into `codegen.hpp` or move all sources under `src/codegen/`. (*High* — affects every contributor's mental model.)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 3
+  > (commits `30ca0e3`, `0c6eaf1`): all sources under
+  > `akkado/src/codegen/<concern>.cpp` (Option A), one concern per file.
 - **Slot/input parsing repetition.** 126 sites with `cedar::Instruction X{}` declarations; 606 bare `0xFFFF` sentinels across the 10 cpps; 48 manual `inputs[0] = 0xFFFF` inits; 177 `buffers_.allocate()` sites each followed by ~4 lines of `if (out == BUFFER_UNUSED) { error("E101", "Buffer pool exhausted", …); … }`. The `"Buffer pool exhausted"` string literal appears 167 times. A `set_unused_inputs()` helper at `helpers.hpp:156` is called *once*. The `Instruction::make_unary/make_binary` factories on `cedar::Instruction` are used only for COPY (~25 sites). (*High* — write a thin `InstructionBuilder` that defaults all 5 inputs to `0xFFFF`, takes named setters, and routes through a single `emit()` that handles buffer-allocation failure once.)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 1
+  > (commits `fd76fd1`, `27fb66e`): `codegen::InstructionBuilder` +
+  > `CodeGenerator::alloc_buffer` (single E101 path). Bare `0xFFFF`
+  > sentinels 606→106; "Buffer pool exhausted" literals 167→71 (the
+  > remainder are helper-result checks, distinct diagnostic texts, and
+  > E166 adjacency-pair allocations that stay manual by design).
+  > `set_unused_inputs` deleted.
 - **`codegen_patterns.cpp` is not a megapass** — it's `SequenceCompiler` (1199 lines, `:77-1275`) + `compile_pattern_for_transform` (573 lines, `:2096`) + a pile of 30-200-line handlers. Natural split: extract `SequenceCompiler` to `pattern_compiler.cpp`, group transforms into `codegen_pattern_transforms.cpp`, group I/O builtins (midi, soundfont, smooch, wt_load, samples) into `codegen_pattern_io.cpp`. (*High*)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 3
+  > (commit `0c6eaf1`): exactly this split, under `src/codegen/`
+  > (`pattern_compiler.hpp` holds the header-only SequenceCompiler).
 - **Codegen overlaps analyzer work.** `fn_call_counts_` pre-pass at `codegen.cpp:1078-1080` re-walks AST counting call sites — analyzer work. E160 polyphonic-pattern enforcement (`codegen.cpp:1432-1446`) checks types the analyzer's `BuiltinInfo.param_types` already encode. Defensive `lookup_builtin` calls at codegen because the analyzer's validation isn't expressed in the type system. (*Medium*)
 - **`codegen_viz.cpp` (417 LOC) collapsible to ~100.** 5 handlers (pianoroll/oscilloscope/waveform/spectrum/waterfall), all the same shape: validate signal arg → visit → name → options → push_path → state_id → push VisualizationDecl → emit PROBE. Add `BuiltinInfo.kind = Visualization` + a single emitter. Same for `codegen_params.cpp` (416 → ~120) — 4 handlers param/button/toggle/select. (*High*)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 6
+  > (commit `6416bf2`): one `emit_visualization` driven by
+  > `BuiltinInfo::viz_meta` and one `emit_param` driven by
+  > `param_meta`; viz.cpp+params.cpp 782→370 LOC combined.
 - **Stereo handling cluster.** `codegen_stereo.cpp:88-572` is 11 hand-written handlers because stereo channels-as-adjacency is a side-channel — the second buffer index isn't in any AST node. `handle_pingpong` (`:572`, ~130 lines) duplicates ExtendedParams-init instead of going through `emit_extended_params_init`, called out in `CLAUDE.md`. (*Medium*)
 - **`apply_lambda` cache-thrashes per iteration.** `codegen_arrays.cpp:76-230` — `auto saved_node_types = std::move(node_types_); node_types_.clear();` runs every map() iteration. For map over a 32-element array with a 3-instruction lambda, that's 32× the inner visit cost + 32 cache flushes. Significant codegen-time perf debt AND a parallelisation blocker. (*Medium*)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 7:
+  > RAII `NodeTypesFrame` swaps in a reused scratch map (buckets
+  > persist across iterations, zero per-iteration allocation) while
+  > preserving the hide-outer-entries semantics byte-for-byte.
+  > Fall-through reads of the outer cache were evaluated and rejected —
+  > they would change pinned cache-visibility semantics.
 - **`emit_event_transform` = 385 lines** (`codegen_higher_order.cpp:436-820`) — closure compilation + event-bank scratch allocation + write-mask construction + transform-owned SequenceState all in one function. Split into 3-4 stages. (*Medium*)
+
+  > **RESOLVED 2026-08-01** by `prd-codegen-sprawl-cleanup.md` Phase 7:
+  > split into 7 named stage helpers (resolve upstream / resolve
+  > closure / alloc buffers / compile body / wire map outputs / emit
+  > instruction / emit readout); the parent is 58 LOC.
 - **Churn concentration.** 110 commits on codegen.cpp + 83 on codegen_patterns.cpp + 41 on codegen_functions.cpp = **82% of all codegen commits** in just 3 files. These are the hot zones for any refactor. (*N/A — informational*)
 
 ### 3.5 Cross-pass + orchestration
@@ -650,6 +718,9 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Unlocks:** Largest single live-coding latency win; foundation for any future LSP.
 
 ### PRD-4 — Codegen file split + visit() Call-branch refactor  *(High)*
+
+> **SHIPPED 2026-08-01** via `prd-codegen-sprawl-cleanup.md` Phases 3+4
+> (commits `30ca0e3`, `0c6eaf1`, `388245c`, `4ed80b6`). See F4.
 **Scope:** Split `codegen.cpp` (3,898 LOC) into 5 files per §F4. Extract the 100-entry `special_handlers` table; replace with a `codegen_handler` member-fn-ptr on `BuiltinInfo`. Split the Call branch into named sub-helpers (default-fill, chord-expand, stereo-native, scalar-SAMPLE_PLAY, generic). Decide one rule for `akkado/include/akkado/codegen/` vs the flat `codegen.hpp` and apply uniformly.
 **Files touched:** `codegen.hpp`, `codegen.cpp` + 3 new files, `builtins.hpp` (handler field).
 **Effort:** Medium-Large (2-3 weeks).
@@ -661,6 +732,10 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 > [`docs/prd-parser-codegen-correctness.md`](../prd-parser-codegen-correctness.md)
 > Phase 3, commit `<commit>`. The `StateInitBuilder` and
 > `InstructionBuilder` portions remain open.
+>
+> **SHIPPED (remainder) 2026-08-01** via `prd-codegen-sprawl-cleanup.md`
+> Phases 1+2 (commits `fd76fd1`, `27fb66e`, `ff8fecb`). See F10 and
+> §3.4.
 
 **Scope:** Bundle three correctness/complexity wins.
 - `InstructionBuilder` with named setters, default-`0xFFFF` inputs, single failure path → eliminates 606 bare sentinels + 177 manual buffer-alloc-failure blocks.
@@ -670,11 +745,17 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Effort:** Medium (1-2 weeks).
 
 ### PRD-6 — Pattern-transform handler consolidation  *(High; ~900 LOC reduction)*
+
+> **SHIPPED 2026-08-01** via `prd-codegen-sprawl-cleanup.md` Phase 5
+> (commit `9e23178`). See F9.
 **Scope:** Replace the 8+ near-clone pattern-transform handlers with a `PatternTransformEmitter` helper taking `(transform_name, payload_mutator)`. Adding a new transform becomes a 10-line job.
 **Files touched:** `codegen_patterns.cpp:3583-4908` (est. 1500 → 600 LOC).
 **Effort:** Medium (1-2 weeks). Best after PRD-5.
 
 ### PRD-7 — Data-driven viz + param handler families  *(Medium; ~600 LOC reduction)*
+
+> **SHIPPED 2026-08-01** via `prd-codegen-sprawl-cleanup.md` Phase 6
+> (commit `6416bf2`). See §3.4.
 **Scope:** Extend `BuiltinInfo` with `kind = Visualization | Param | …` and target-specific metadata; collapse `codegen_viz.cpp` (417 → ~100) and `codegen_params.cpp` (416 → ~120) to single emitters.
 **Files touched:** `builtins.hpp`, `codegen_viz.cpp`, `codegen_params.cpp`.
 **Effort:** Small-Medium (1 week).

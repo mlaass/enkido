@@ -399,12 +399,11 @@ void CodeGenerator::inline_mixer_closure(const MixerCall& mc,
         symbols_->define_variable(mc.param_r, bus_r);
     }
 
-    auto saved_node_types = std::move(node_types_);
-    node_types_.clear();
-
-    TypedValue result = visit(body);
-
-    node_types_ = std::move(saved_node_types);
+    TypedValue result;
+    {
+        NodeTypesFrame frame(*this);
+        result = visit(body);
+    }
     symbols_->pop_scope();
     pop_path();
 
@@ -476,35 +475,30 @@ void CodeGenerator::inline_mixer_closure(const MixerCall& mc,
     }
 }
 
-// emit_bus_epilogue runs once, after the main DAG is generated. It allocates
-// the per-bus scratch buffers, rewrites bus placeholders to real indices,
-// appends the per-block epilogue (sum non-zero buses into bus 0, default
-// soft-clip @ 0.9, forced NaN/clamp safety stage, device store) and prepends
-// the prologue that clears every bus accumulator to silence.
-void CodeGenerator::emit_bus_epilogue() {
-    // Test-only bypass: out()/bus() already emitted plain device writes.
-    if (bypass_master_) return;
+namespace {
+// Bus placeholder out_buffer range: 0xFF00..0xFFFE (0xFFFF stays the device
+// sink). Mirrors CodeGenerator::bus_placeholder().
+constexpr std::uint16_t kBusPlaceLo = 0xFF00;
+constexpr std::uint16_t kBusPlaceHi = 0xFFFE;
+constexpr bool is_bus_placeholder(std::uint16_t b) {
+    return b >= kBusPlaceLo && b <= kBusPlaceHi;
+}
+}  // namespace
 
-    current_source_loc_ = SourceLocation{};
-
-    constexpr std::uint16_t kPlaceLo = 0xFF00;
-    constexpr std::uint16_t kPlaceHi = 0xFFFE;  // 0xFFFF stays the device sink
-    auto is_placeholder = [](std::uint16_t b) {
-        return b >= kPlaceLo && b <= kPlaceHi;
-    };
-
-    // 1. Collect every referenced bus index from emitted OUTPUT writers
-    //    (main stream + subprogram bodies). Bus 0 always exists.
-    std::set<int> indices;
+// collect_bus_writers (epilogue stage 1) collects every referenced bus index
+// from emitted OUTPUT writers (main stream + subprogram bodies) plus
+// mixer/master targets; returns the out()/bus() writer count.
+std::size_t CodeGenerator::collect_bus_writers(std::set<int>& indices,
+                                               std::set<int>& writer_indices) {
+    // Bus 0 always exists.
     indices.insert(0);
-    std::set<int> writer_indices;   // bus indices with ≥1 out()/bus() writer
     std::size_t writer_count = 0;
     auto scan = [&](const std::vector<cedar::Instruction>& code) {
         for (const auto& inst : code) {
             if (inst.opcode == cedar::Opcode::OUTPUT) {
                 ++writer_count;
-                if (is_placeholder(inst.out_buffer)) {
-                    int idx = inst.out_buffer - kPlaceLo;
+                if (is_bus_placeholder(inst.out_buffer)) {
+                    int idx = inst.out_buffer - kBusPlaceLo;
                     indices.insert(idx);
                     writer_indices.insert(idx);
                 }
@@ -517,20 +511,15 @@ void CodeGenerator::emit_bus_epilogue() {
     // Per-bus FX (Phase 2): a mixer(N,…)/master(…) call references a bus even
     // when no out()/bus() writes to it — allocate that bus too.
     for (const auto& mc : mixer_calls_) indices.insert(mc.bus_index);
+    return writer_count;
+}
 
-    // A program with no out()/bus() writer produces no audio — skip the
-    // whole bus epilogue. (prd-bus-routing §5.3 specifies an always-emitted
-    // epilogue; emitting it only when a sink exists is functionally
-    // identical for every audible program and keeps pure-computation
-    // snippets free of a silent master chain.)
-    if (writer_count == 0) {
-        return;
-    }
-
-    // 1b. Per-bus FX: resolve mixer/master overrides — the last call per bus
-    //     wins (prd-bus-routing §5.4); earlier calls are dropped with W203.
-    //     master(c) was recorded as mixer(0, c), so master and an explicit
-    //     mixer(0, …) collide naturally.
+// resolve_winning_mixers (epilogue stage 2) resolves mixer/master overrides —
+// the last call per bus wins (prd-bus-routing §5.4); earlier calls are
+// dropped with W203. master(c) was recorded as mixer(0, c), so master and an
+// explicit mixer(0, …) collide naturally.
+std::map<int, CodeGenerator::MixerCall>
+CodeGenerator::resolve_winning_mixers(const std::set<int>& writer_indices) {
     std::map<int, MixerCall> winning_mixers;
     for (const auto& mc : mixer_calls_) {
         auto it = winning_mixers.find(mc.bus_index);
@@ -554,21 +543,26 @@ void CodeGenerator::emit_bus_epilogue() {
                  "writers — the closure processes silence", mc.call_loc);
         }
     }
+    return winning_mixers;
+}
 
-    // 2. Allocate a stereo scratch pair per bus index (ascending order).
-    std::map<int, std::uint16_t> bus_left;
+// allocate_bus_buffers (epilogue stage 3) allocates a stereo scratch pair per
+// bus index (ascending order), publishes bus_buffers_ and rewrites bus
+// placeholders to real left-buffer indices. Returns false on error.
+bool CodeGenerator::allocate_bus_buffers(
+    const std::set<int>& indices, std::map<int, std::uint16_t>& bus_left) {
     for (int idx : indices) {
         std::uint16_t l = buffers_.allocate();
         std::uint16_t r = buffers_.allocate();
         if (l == BufferAllocator::BUFFER_UNUSED ||
             r == BufferAllocator::BUFFER_UNUSED) {
             error("E101", "Buffer pool exhausted (bus routing)", {});
-            return;
+            return false;
         }
         if (r != l + 1) {
             error("E166",
                   "Internal error: bus buffer allocation not adjacent", {});
-            return;
+            return false;
         }
         bus_left[idx] = l;
     }
@@ -585,18 +579,28 @@ void CodeGenerator::emit_bus_epilogue() {
                                                          : std::string{}});
     }
 
-    // 3. Rewrite bus placeholders to real left-buffer indices.
+    // Rewrite bus placeholders to real left-buffer indices.
     auto fixup = [&](std::vector<cedar::Instruction>& code) {
         for (auto& inst : code) {
             if (inst.opcode == cedar::Opcode::OUTPUT &&
-                is_placeholder(inst.out_buffer)) {
-                inst.out_buffer = bus_left[inst.out_buffer - kPlaceLo];
+                is_bus_placeholder(inst.out_buffer)) {
+                inst.out_buffer = bus_left[inst.out_buffer - kBusPlaceLo];
             }
         }
     };
     fixup(instructions_);
     for (auto& desc : subprograms_) fixup(desc.body);
+    return true;
+}
 
+// emit_bus_master_chain (epilogue stage 4) emits the per-block epilogue into
+// the main stream: per-bus mixer closure + trim + sum into bus 0, the bus-0
+// master chain (closure or default soft-clip @ 0.9), the master fader, the
+// forced NaN/clamp safety stage and the device store. Returns false on
+// buffer-pool exhaustion.
+bool CodeGenerator::emit_bus_master_chain(
+    std::map<int, std::uint16_t>& bus_left,
+    const std::map<int, MixerCall>& winning_mixers) {
     const std::uint16_t bus0_l = bus_left[0];
     const std::uint16_t bus0_r = static_cast<std::uint16_t>(bus0_l + 1);
 
@@ -611,7 +615,7 @@ void CodeGenerator::emit_bus_epilogue() {
     const std::uint16_t unity_trim = buffers_.allocate();
     if (unity_trim == BufferAllocator::BUFFER_UNUSED) {
         error("E101", "Buffer pool exhausted (bus epilogue)", {});
-        return;
+        return false;
     }
 
     auto emit_push_const = [&](std::uint16_t dst, float value) {
@@ -702,11 +706,17 @@ void CodeGenerator::emit_bus_epilogue() {
         .inputs({bus0_l, bus0_r})
         .output(0xFFFF)
         .emit(*this);
+    return true;
+}
 
-    // 6. Prologue: clear every bus accumulator to silence before any writer.
-    //    Prepended to the main stream — safe because no opcode encodes an
-    //    absolute instruction address (control flow uses relative offsets
-    //    and the post-finalization subprogram table).
+// prepend_bus_clear_prologue (epilogue stage 5) prepends the prologue that
+// clears every bus accumulator to silence before any writer, then patches the
+// absolute-index metadata shifted by the insertion.
+void CodeGenerator::prepend_bus_clear_prologue(
+    const std::map<int, std::uint16_t>& bus_left) {
+    // Prepended to the main stream — safe because no opcode encodes an
+    // absolute instruction address (control flow uses relative offsets
+    // and the post-finalization subprogram table).
     std::vector<cedar::Instruction> prologue;
     for (const auto& [idx, l] : bus_left) {
         (void)idx;
@@ -729,6 +739,51 @@ void CodeGenerator::emit_bus_epilogue() {
     for (auto& m : scalar_sample_mappings_) {
         m.instruction_index += shift;
     }
+}
+
+// emit_bus_epilogue runs once, after the main DAG is generated. It allocates
+// the per-bus scratch buffers, rewrites bus placeholders to real indices,
+// appends the per-block epilogue (sum non-zero buses into bus 0, default
+// soft-clip @ 0.9, forced NaN/clamp safety stage, device store) and prepends
+// the prologue that clears every bus accumulator to silence. The stages run
+// strictly in this order — the mixer-inlining, soft-clip and safety-stage
+// insertion points are ordering invariants.
+void CodeGenerator::emit_bus_epilogue() {
+    // Test-only bypass: out()/bus() already emitted plain device writes.
+    if (bypass_master_) return;
+
+    current_source_loc_ = SourceLocation{};
+
+    // 1. Collect every referenced bus index from emitted OUTPUT writers.
+    std::set<int> indices;
+    std::set<int> writer_indices;   // bus indices with ≥1 out()/bus() writer
+    const std::size_t writer_count =
+        collect_bus_writers(indices, writer_indices);
+
+    // A program with no out()/bus() writer produces no audio — skip the
+    // whole bus epilogue. (prd-bus-routing §5.3 specifies an always-emitted
+    // epilogue; emitting it only when a sink exists is functionally
+    // identical for every audible program and keeps pure-computation
+    // snippets free of a silent master chain.)
+    if (writer_count == 0) {
+        return;
+    }
+
+    // 1b. Per-bus FX: resolve mixer/master overrides (last call per bus wins).
+    std::map<int, MixerCall> winning_mixers =
+        resolve_winning_mixers(writer_indices);
+
+    // 2-3. Allocate the per-bus stereo scratch pairs, publish bus_buffers_
+    //      and rewrite bus placeholders to real indices.
+    std::map<int, std::uint16_t> bus_left;
+    if (!allocate_bus_buffers(indices, bus_left)) return;
+
+    // 4-5. Emit the epilogue chain (per-bus mix/trim/sum, master chain,
+    //      safety stage, device store) into the main stream.
+    if (!emit_bus_master_chain(bus_left, winning_mixers)) return;
+
+    // 6. Prologue: clear every bus accumulator to silence before any writer.
+    prepend_bus_clear_prologue(bus_left);
 }
 
 } // namespace akkado

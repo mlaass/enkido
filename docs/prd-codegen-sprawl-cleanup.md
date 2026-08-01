@@ -1,26 +1,56 @@
-> **Status: DRAFT — 7 phases.** Filed 2026-05-26 as the codegen-
-> monolith follow-up to
+> **Status: DONE — all phases shipped (2026-08-01).** Filed 2026-05-26
+> as the codegen-monolith follow-up to
 > [`docs/audits/parser-codegen-interop_audit_2026-05-25.md`](audits/parser-codegen-interop_audit_2026-05-25.md).
-> Sibling PRDs:
-> [`docs/prd-parser-codegen-correctness.md`](prd-parser-codegen-correctness.md)
-> (in flight) covers the 6 critical correctness findings, and
-> [`docs/prd-parser-codegen-hardening.md`](prd-parser-codegen-hardening.md)
-> (also filed 2026-05-26) covers front-end hardening + parallelism
-> prep. **This PRD** owns the audit's codegen-monolith findings: F4
-> (visit() Call branch — 1,180 LOC in a single switch arm), F9
-> (pattern-transform handler clones — ~1,500 LOC of near-duplicates),
-> F10 (StateInitData manual construction at 19 sites), and the
-> viz/param family data-driven collapse (PRD-7 portion: codegen_viz.cpp
-> 417 LOC → ~100, codegen_params.cpp 416 LOC → ~120).
+> Owns the audit's codegen-monolith findings F4, F9, F10 and the
+> viz/param data-driven collapse; all four carry RESOLVED tags in the
+> audit doc pointing at this PRD.
 >
-> **Status: DRAFT.** Outline is complete; each phase needs reviewer
-> sign-off on the proposed file layout + builder API surface before
-> implementation begins. Phases land independently after Phase 1
-> ships.
+> **Per-phase commit log** (every phase byte-identical on the 36-file
+> corpus + snapshot harness, full akkado + cedar suites green):
+> - Phase 1 `fd76fd1` + `27fb66e` — `InstructionBuilder` + single
+>   `alloc_buffer` E101 path; ~120 emission sites migrated. Bare
+>   `0xFFFF` sentinels 606→106, "Buffer pool exhausted" literals
+>   167→71 (remainder: helper-result checks, distinct diagnostic
+>   texts, E166 adjacency pairs — deliberately manual).
+> - Phase 2 `ff8fecb` — `StateInitBuilder`; all 18 construction sites
+>   migrated; `state_inits_.push_back` appears exactly once.
+> - Phase 3 `30ca0e3` + `0c6eaf1` — Option A subdir layout
+>   (`src/codegen/<concern>.cpp`); codegen.cpp 4,388→606 LOC;
+>   patterns.cpp 6,138→960 (+ pattern_compiler.hpp /
+>   pattern_transforms.cpp / pattern_io.cpp).
+> - Phase 4 `388245c` + `4ed80b6` — `special_handlers` map deleted;
+>   dispatch on `BuiltinInfo::codegen_handler` (84 entries, via the
+>   friend `BuiltinHandlers` constants + a builtin_info.hpp /
+>   builtins.hpp header split so the table can include codegen.hpp);
+>   Call case now a 128-line ladder, emission split into
+>   `emit_builtin_call` / `emit_stereo_native_call` /
+>   `emit_chord_expanded_call` / `emit_generic_builtin_tail` in
+>   call_dispatch.cpp.
+> - Phase 5 `9e23178` — `emit_seqpat_transform` + SeqpatTransformHooks;
+>   bank/variant/tune/anchor/mode collapsed (bank 148→32 LOC);
+>   transport + voicing standalone by reviewer decision.
+> - Phase 6 `6416bf2` — data-driven `emit_visualization` (VizMeta) +
+>   `emit_param` (ParamMeta); viz+params 782→370 LOC.
+> - Phase 7 (this commit) — `NodeTypesFrame` overlay for apply_lambda /
+>   apply_function_ref / inline_mixer_closure (scratch-map reuse, no
+>   per-iteration realloc; outer-cache hiding semantics preserved,
+>   fall-through reads rejected as a semantics change);
+>   emit_bus_epilogue / handle_field_access / handle_record_literal /
+>   emit_event_transform split into named stage helpers; audit
+>   close-out tags.
 >
-> **Total LOC reduction target: ~4,500 LOC** across `codegen*.cpp`
-> (audit's stated payoff). Single largest pure-cleanup in the front-
-> end.
+> **Deviations from the draft, decided in the 2026-08-01 review
+> round:** subdir layout (Option A); no `BuiltinKind::Special` (handler
+> pointers only); voicing outside the transform emitter; overlay-frame
+> apply_lambda. Delivery notes: `StateInitBuilder` is one class with
+> typed factories (flat struct — per-Type sub-builders would only
+> duplicate setters); `kind` is populated where a consumer exists
+> (PatternTransform / Visualization / Param) — StereoNative/Sequencer/
+> Bus/SampleScalar remain driven by `stereo_native` + handler pointers;
+> `emit_builtin_call` (~615 LOC arg-visit loop) and
+> `compile_pattern_for_transform` (~600 LOC) still exceed the 250-LOC
+> aspiration and are the natural next candidates if further splitting
+> ever pays for itself.
 
 # PRD: Codegen Sprawl Cleanup
 

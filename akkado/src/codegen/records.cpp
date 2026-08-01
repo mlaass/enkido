@@ -275,6 +275,80 @@ bool CodeGenerator::reorder_spread_named_args(const BuiltinInfo& builtin,
 // Record support implementation
 // ============================================================================
 
+// record_literal_apply_spread handles the spread source of a record literal:
+// {..base, field: value} — extra_children[0]. Copies the source's fields into
+// field_values (explicit fields later override) and tracks first_buffer.
+void CodeGenerator::record_literal_apply_spread(
+    const Node& n, std::unordered_map<std::string, TypedValue>& field_values,
+    std::uint16_t& first_buffer) {
+    const NodeIndex spread_src = n.extra_child(0);
+    if (spread_src == NULL_NODE) return;
+
+    // Visit the spread source expression
+    TypedValue spread_tv = visit(spread_src);
+
+    // If the spread source is a record, copy its fields
+    if (spread_tv.type == ValueType::Record && spread_tv.record) {
+        for (const auto& [name, tv] : spread_tv.record->fields) {
+            field_values[name] = tv;
+            if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
+                first_buffer = tv.buffer;
+            }
+        }
+    } else if (spread_tv.type == ValueType::Pattern && spread_tv.pattern) {
+        // Pattern as spread source - extract known fields
+        static const char* field_names[] = {"freq", "vel", "trig", "gate", "type"};
+        for (int i = 0; i < 5; ++i) {
+            if (spread_tv.pattern->fields[i] != 0xFFFF) {
+                field_values[field_names[i]] = TypedValue::signal(spread_tv.pattern->fields[i]);
+                if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
+                    first_buffer = spread_tv.pattern->fields[i];
+                }
+            }
+        }
+    } else {
+        // Follow symbol table for identifier spread sources
+        const Node& spread_node = ast_->arena[spread_src];
+        if (spread_node.type == NodeType::Identifier) {
+            std::string var_name;
+            if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
+                var_name = ctx_->interner->view(spread_node.as_identifier());
+            }
+            auto sym = symbols_->lookup(var_name);
+            if (sym && sym->typed_value && sym->typed_value->type == ValueType::Record &&
+                sym->typed_value->record) {
+                for (const auto& [name, tv] : sym->typed_value->record->fields) {
+                    field_values[name] = tv;
+                    if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
+                        first_buffer = tv.buffer;
+                    }
+                }
+            } else if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+                auto rec_it = node_types_.find(sym->record_type->source_node);
+                if (rec_it == node_types_.end()) {
+                    visit(sym->record_type->source_node);
+                    rec_it = node_types_.find(sym->record_type->source_node);
+                }
+                if (rec_it != node_types_.end() && rec_it->second.type == ValueType::Record &&
+                    rec_it->second.record) {
+                    for (const auto& [name, tv] : rec_it->second.record->fields) {
+                        field_values[name] = tv;
+                        if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
+                            first_buffer = tv.buffer;
+                        }
+                    }
+                } else {
+                    error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
+                }
+            } else {
+                error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
+            }
+        } else {
+            error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
+        }
+    }
+}
+
 TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
     // Record literals expand to multiple buffers - one per field
     // We track the field->TypedValue mapping in RecordPayload
@@ -283,74 +357,7 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
     std::uint16_t first_buffer = BufferAllocator::BUFFER_UNUSED;
 
     // Handle spread source: {..base, field: value} — extra_children[0]
-    {
-        const NodeIndex spread_src = n.extra_child(0);
-        if (spread_src != NULL_NODE) {
-            // Visit the spread source expression
-            TypedValue spread_tv = visit(spread_src);
-
-            // If the spread source is a record, copy its fields
-            if (spread_tv.type == ValueType::Record && spread_tv.record) {
-                for (const auto& [name, tv] : spread_tv.record->fields) {
-                    field_values[name] = tv;
-                    if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
-                        first_buffer = tv.buffer;
-                    }
-                }
-            } else if (spread_tv.type == ValueType::Pattern && spread_tv.pattern) {
-                // Pattern as spread source - extract known fields
-                static const char* field_names[] = {"freq", "vel", "trig", "gate", "type"};
-                for (int i = 0; i < 5; ++i) {
-                    if (spread_tv.pattern->fields[i] != 0xFFFF) {
-                        field_values[field_names[i]] = TypedValue::signal(spread_tv.pattern->fields[i]);
-                        if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
-                            first_buffer = spread_tv.pattern->fields[i];
-                        }
-                    }
-                }
-            } else {
-                // Follow symbol table for identifier spread sources
-                const Node& spread_node = ast_->arena[spread_src];
-                if (spread_node.type == NodeType::Identifier) {
-                    std::string var_name;
-                    if (std::holds_alternative<Node::IdentifierData>(spread_node.data)) {
-                        var_name = ctx_->interner->view(spread_node.as_identifier());
-                    }
-                    auto sym = symbols_->lookup(var_name);
-                    if (sym && sym->typed_value && sym->typed_value->type == ValueType::Record &&
-                        sym->typed_value->record) {
-                        for (const auto& [name, tv] : sym->typed_value->record->fields) {
-                            field_values[name] = tv;
-                            if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
-                                first_buffer = tv.buffer;
-                            }
-                        }
-                    } else if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
-                        auto rec_it = node_types_.find(sym->record_type->source_node);
-                        if (rec_it == node_types_.end()) {
-                            visit(sym->record_type->source_node);
-                            rec_it = node_types_.find(sym->record_type->source_node);
-                        }
-                        if (rec_it != node_types_.end() && rec_it->second.type == ValueType::Record &&
-                            rec_it->second.record) {
-                            for (const auto& [name, tv] : rec_it->second.record->fields) {
-                                field_values[name] = tv;
-                                if (first_buffer == BufferAllocator::BUFFER_UNUSED) {
-                                    first_buffer = tv.buffer;
-                                }
-                            }
-                        } else {
-                            error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
-                        }
-                    } else {
-                        error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
-                    }
-                } else {
-                    error("E140", "Spread source is not a record", ast_->arena[spread_src].location);
-                }
-            }
-        }
-    }
+    record_literal_apply_spread(n, field_values, first_buffer);
 
     // Iterate through explicit field children (each is an Argument with RecordFieldData)
     // These override any spread fields with the same name
@@ -388,6 +395,182 @@ TypedValue CodeGenerator::handle_record_literal(NodeIndex node, const Node& n) {
     return cache_and_return(node, tv);
 }
 
+// resolve_module_field_access handles Module-qualified access (m.name). Runs
+// BEFORE the receiver is visited (visiting a Module would fail). Returns
+// nullopt when the receiver is not a module identifier.
+std::optional<TypedValue> CodeGenerator::resolve_module_field_access(
+    NodeIndex node, const Node& expr, const std::string& field_name,
+    SourceLocation loc) {
+    if (expr.type != NodeType::Identifier) return std::nullopt;
+    std::string var_name;
+    if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
+        var_name = ctx_->interner->view(expr.as_identifier());
+    }
+    auto sym = symbols_->lookup(var_name);
+    if (!sym || sym->kind != SymbolKind::Module) return std::nullopt;
+    std::string qname = var_name + "." + field_name;
+    auto qsym = symbols_->lookup(qname);
+    if (!qsym) {
+        error("E504", "Module '" + var_name + "' has no definition '" + field_name + "'", loc);
+        return TypedValue::error_val();
+    }
+    return handle_qualified_symbol_access(node, *qsym, loc);
+}
+
+// resolve_identifier_field_source checks the symbol table for richer type
+// info on an identifier receiver: a pattern variable resolves the field
+// immediately (value returned); otherwise expr_tv may be upgraded from the
+// symbol's typed_value / record type and nullopt is returned.
+std::optional<TypedValue> CodeGenerator::resolve_identifier_field_source(
+    NodeIndex node, const Node& expr, const std::string& field_name,
+    SourceLocation loc, TypedValue& expr_tv) {
+    if (expr.type != NodeType::Identifier) return std::nullopt;
+    std::string var_name;
+    if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
+        var_name = ctx_->interner->view(expr.as_identifier());
+    }
+    auto sym = symbols_->lookup(var_name);
+
+    // Pattern variable - generate pattern code
+    if (sym && sym->kind == SymbolKind::Pattern) {
+        TypedValue pat_tv = handle_pattern_reference(var_name, sym->pattern.pattern_node, loc);
+        if (pat_tv.type == ValueType::Pattern) {
+            TypedValue result = pattern_field(pat_tv, field_name);
+            if (!result.error) {
+                return cache_and_return(node, result);
+            }
+        }
+        std::string avail = (pat_tv.type == ValueType::Pattern && pat_tv.pattern)
+            ? available_fields(*pat_tv.pattern)
+            : std::string("freq, vel, trig, gate, type");
+        error("E136", "Unknown field '" + field_name +
+              "' on pattern. Available: " + avail, loc);
+        return TypedValue::error_val();
+    }
+
+    // Check symbol's typed_value for richer type info
+    if (sym && sym->typed_value) {
+        expr_tv = *sym->typed_value;
+    }
+
+    // Record variable
+    if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
+        auto rec_it = node_types_.find(sym->record_type->source_node);
+        if (rec_it == node_types_.end()) {
+            visit(sym->record_type->source_node);
+            rec_it = node_types_.find(sym->record_type->source_node);
+        }
+        if (rec_it != node_types_.end()) {
+            expr_tv = rec_it->second;
+        }
+    }
+    return std::nullopt;
+}
+
+// field_access_on_pattern resolves `pat.field` — scalar convention fields via
+// pattern_field(), chord arrays (notes/freqs) via emit_pattern_values().
+TypedValue CodeGenerator::field_access_on_pattern(NodeIndex node,
+                                                  NodeIndex expr_node,
+                                                  const TypedValue& expr_tv,
+                                                  const std::string& field_name,
+                                                  SourceLocation loc) {
+    // PRD prd-pattern-event-arrays §5.3: `e.notes` / `e.freqs` are
+    // not pattern scalar fields — they surface the event's chord as
+    // a DynArray. UFCS covers only method calls, so bare field
+    // access is wired here directly.
+    if (field_name == "notes" || field_name == "freqs") {
+        return emit_pattern_values(node, expr_node, expr_tv,
+                                   /*to_midi=*/field_name == "notes",
+                                   loc);
+    }
+
+    TypedValue result = pattern_field(expr_tv, field_name);
+    if (!result.error) {
+        return cache_and_return(node, result);
+    }
+    std::string avail = expr_tv.pattern
+        ? available_fields(*expr_tv.pattern)
+        : std::string("freq, vel, trig, gate, type");
+    error("E136", "Unknown field '" + field_name +
+          "' on pattern. Available: " + avail, loc);
+    return TypedValue::error_val();
+}
+
+// field_access_on_record resolves `rec.field` (E131 with the available
+// field list on a miss).
+TypedValue CodeGenerator::field_access_on_record(NodeIndex node,
+                                                 const TypedValue& expr_tv,
+                                                 const std::string& field_name,
+                                                 SourceLocation loc) {
+    if (expr_tv.record) {
+        auto field_it = expr_tv.record->fields.find(field_name);
+        if (field_it != expr_tv.record->fields.end()) {
+            return cache_and_return(node, field_it->second);
+        }
+    }
+    // Build error message with available fields
+    std::string available;
+    if (expr_tv.record) {
+        bool first = true;
+        for (const auto& [name, _] : expr_tv.record->fields) {
+            if (!first) available += ", ";
+            available += name;
+            first = false;
+        }
+    }
+    error("E131", "Unknown field '" + field_name + "'" +
+          (available.empty() ? "" : ". Available: " + available), loc);
+    return TypedValue::error_val();
+}
+
+// field_access_on_state_cell resolves `cell.field` — Phase 4b read sugar for
+// get(cell).field on record-valued state cells.
+TypedValue CodeGenerator::field_access_on_state_cell(
+    NodeIndex node, const TypedValue& expr_tv, const std::string& field_name,
+    SourceLocation loc) {
+    // Phase 4b: read sugar — `cell.field` desugars to `get(cell).field`
+    // when the cell holds a record. Each access emits a single
+    // STATE_OP rate=1 against the per-field sub-cell, observably
+    // identical to the field-pick from a freshly fanned-out get().
+    // Scalar cells reach this branch with `expr_tv.record == nullptr`
+    // and are rejected — those callers must use `get(cell)` explicitly.
+    if (!expr_tv.record) {
+        error("E135",
+              "Cannot access field '" + field_name +
+              "' on scalar state cell. Use get(cell) to read it.",
+              loc);
+        return TypedValue::error_val();
+    }
+    auto sub_it = expr_tv.record->fields.find(field_name);
+    if (sub_it == expr_tv.record->fields.end()) {
+        std::string available;
+        bool first = true;
+        for (const auto& [name, _] : expr_tv.record->fields) {
+            if (!first) available += ", ";
+            available += name;
+            first = false;
+        }
+        error("E136",
+              "Unknown field '" + field_name +
+              "' on state cell" +
+              (available.empty() ? "" : ". Available: " + available),
+              loc);
+        return TypedValue::error_val();
+    }
+    const TypedValue& sub_cell = sub_it->second;
+
+    const std::uint16_t out =
+        codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
+            .rate(1)  // load mode
+            .state_id(sub_cell.cell_state_id)
+            .emit(*this, loc);
+    if (out == BufferAllocator::BUFFER_UNUSED) {
+        return TypedValue::error_val();
+    }
+
+    return cache_and_return(node, TypedValue::signal(out));
+}
+
 TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
     // Field access: expr.field
     const auto& field_data = n.as_field_access();
@@ -402,159 +585,33 @@ TypedValue CodeGenerator::handle_field_access(NodeIndex node, const Node& n) {
 
     // Check for Module-qualified access BEFORE visiting (visiting a Module would fail)
     const Node& expr = ast_->arena[expr_node];
-    if (expr.type == NodeType::Identifier) {
-        std::string var_name;
-        if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
-            var_name = ctx_->interner->view(expr.as_identifier());
-        }
-        auto sym = symbols_->lookup(var_name);
-        if (sym && sym->kind == SymbolKind::Module) {
-            std::string qname = var_name + "." + field_name;
-            auto qsym = symbols_->lookup(qname);
-            if (!qsym) {
-                error("E504", "Module '" + var_name + "' has no definition '" + field_name + "'", n.location);
-                return TypedValue::error_val();
-            }
-            return handle_qualified_symbol_access(node, *qsym, n.location);
-        }
+    if (auto module_result =
+            resolve_module_field_access(node, expr, field_name, n.location)) {
+        return *module_result;
     }
 
     // Visit expression to get its TypedValue
     TypedValue expr_tv = visit(expr_node);
 
     // Also check the symbol table for richer type info
-    if (expr.type == NodeType::Identifier) {
-        std::string var_name;
-        if (std::holds_alternative<Node::IdentifierData>(expr.data)) {
-            var_name = ctx_->interner->view(expr.as_identifier());
-        }
-        auto sym = symbols_->lookup(var_name);
-
-        // Pattern variable - generate pattern code
-        if (sym && sym->kind == SymbolKind::Pattern) {
-            TypedValue pat_tv = handle_pattern_reference(var_name, sym->pattern.pattern_node, n.location);
-            if (pat_tv.type == ValueType::Pattern) {
-                TypedValue result = pattern_field(pat_tv, field_name);
-                if (!result.error) {
-                    return cache_and_return(node, result);
-                }
-            }
-            std::string avail = (pat_tv.type == ValueType::Pattern && pat_tv.pattern)
-                ? available_fields(*pat_tv.pattern)
-                : std::string("freq, vel, trig, gate, type");
-            error("E136", "Unknown field '" + field_name +
-                  "' on pattern. Available: " + avail, n.location);
-            return TypedValue::error_val();
-        }
-
-        // Check symbol's typed_value for richer type info
-        if (sym && sym->typed_value) {
-            expr_tv = *sym->typed_value;
-        }
-
-        // Record variable
-        if (sym && sym->kind == SymbolKind::Record && sym->record_type) {
-            auto rec_it = node_types_.find(sym->record_type->source_node);
-            if (rec_it == node_types_.end()) {
-                visit(sym->record_type->source_node);
-                rec_it = node_types_.find(sym->record_type->source_node);
-            }
-            if (rec_it != node_types_.end()) {
-                expr_tv = rec_it->second;
-            }
-        }
+    if (auto ident_result = resolve_identifier_field_source(
+            node, expr, field_name, n.location, expr_tv)) {
+        return *ident_result;
     }
 
     // Type-based dispatch
     switch (expr_tv.type) {
-        case ValueType::Pattern: {
-            // PRD prd-pattern-event-arrays §5.3: `e.notes` / `e.freqs` are
-            // not pattern scalar fields — they surface the event's chord as
-            // a DynArray. UFCS covers only method calls, so bare field
-            // access is wired here directly.
-            if (field_name == "notes" || field_name == "freqs") {
-                return emit_pattern_values(node, expr_node, expr_tv,
-                                           /*to_midi=*/field_name == "notes",
-                                           n.location);
-            }
+        case ValueType::Pattern:
+            return field_access_on_pattern(node, expr_node, expr_tv,
+                                           field_name, n.location);
 
-            TypedValue result = pattern_field(expr_tv, field_name);
-            if (!result.error) {
-                return cache_and_return(node, result);
-            }
-            std::string avail = expr_tv.pattern
-                ? available_fields(*expr_tv.pattern)
-                : std::string("freq, vel, trig, gate, type");
-            error("E136", "Unknown field '" + field_name +
-                  "' on pattern. Available: " + avail, n.location);
-            return TypedValue::error_val();
-        }
+        case ValueType::Record:
+            return field_access_on_record(node, expr_tv, field_name,
+                                          n.location);
 
-        case ValueType::Record: {
-            if (expr_tv.record) {
-                auto field_it = expr_tv.record->fields.find(field_name);
-                if (field_it != expr_tv.record->fields.end()) {
-                    return cache_and_return(node, field_it->second);
-                }
-            }
-            // Build error message with available fields
-            std::string available;
-            if (expr_tv.record) {
-                bool first = true;
-                for (const auto& [name, _] : expr_tv.record->fields) {
-                    if (!first) available += ", ";
-                    available += name;
-                    first = false;
-                }
-            }
-            error("E131", "Unknown field '" + field_name + "'" +
-                  (available.empty() ? "" : ". Available: " + available), n.location);
-            return TypedValue::error_val();
-        }
-
-        case ValueType::StateCell: {
-            // Phase 4b: read sugar — `cell.field` desugars to `get(cell).field`
-            // when the cell holds a record. Each access emits a single
-            // STATE_OP rate=1 against the per-field sub-cell, observably
-            // identical to the field-pick from a freshly fanned-out get().
-            // Scalar cells reach this branch with `expr_tv.record == nullptr`
-            // and are rejected — those callers must use `get(cell)` explicitly.
-            if (!expr_tv.record) {
-                error("E135",
-                      "Cannot access field '" + field_name +
-                      "' on scalar state cell. Use get(cell) to read it.",
-                      n.location);
-                return TypedValue::error_val();
-            }
-            auto sub_it = expr_tv.record->fields.find(field_name);
-            if (sub_it == expr_tv.record->fields.end()) {
-                std::string available;
-                bool first = true;
-                for (const auto& [name, _] : expr_tv.record->fields) {
-                    if (!first) available += ", ";
-                    available += name;
-                    first = false;
-                }
-                error("E136",
-                      "Unknown field '" + field_name +
-                      "' on state cell" +
-                      (available.empty() ? "" : ". Available: " + available),
-                      n.location);
-                return TypedValue::error_val();
-            }
-            const TypedValue& sub_cell = sub_it->second;
-
-            const std::uint16_t out =
-                codegen::InstructionBuilder(cedar::Opcode::STATE_OP)
-                    .rate(1)  // load mode
-                    .state_id(sub_cell.cell_state_id)
-                    .emit(*this, n.location);
-            if (out == BufferAllocator::BUFFER_UNUSED) {
-                return TypedValue::error_val();
-            }
-
-            return cache_and_return(node, TypedValue::signal(out));
-        }
+        case ValueType::StateCell:
+            return field_access_on_state_cell(node, expr_tv, field_name,
+                                              n.location);
 
         case ValueType::Signal:
         case ValueType::Number:

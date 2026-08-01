@@ -425,68 +425,58 @@ TypedValue CodeGenerator::handle_each_call(NodeIndex node, const Node& n) {
 // returned field record onto each event; event_filter drops events whose
 // predicate is falsy. The transform owns a downstream SequenceState; the
 // pattern readout is emitted against it so `as e |> …` keeps working.
-TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
-                                               bool is_filter) {
-    using codegen::extract_call_args;
-    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
-    const char* name = is_filter ? "event_filter" : "event_map";
-
-    auto args = extract_call_args(ast_->arena, n.first_child, 2, 2);
-    if (!args.valid) {
-        error("E407", std::string(name) + "() requires 2 arguments "
-              "(events, closure)", n.location);
-        return TypedValue::void_val();
-    }
-    NodeIndex input_arg  = args.nodes[0];
-    NodeIndex lambda_arg = args.nodes[1];
-
-    // --- Resolve the upstream event source ---------------------------------
-    std::uint32_t upstream_state_id = 0;
-    float cycle_length = 1.0f;
-    bool is_sample_pattern = false;
-    std::uint8_t max_voices = 1;
-    std::vector<RequiredSample> sample_refs;
-    std::vector<std::pair<std::string, std::uint8_t>> custom_props;
-    {
-        TypedValue in_tv = visit(input_arg);
-        if (in_tv.type == ValueType::Pattern && in_tv.pattern) {
-            const PatternPayload& p = *in_tv.pattern;
-            upstream_state_id = p.state_id;
-            cycle_length      = p.cycle_length;
-            is_sample_pattern = p.is_sample_pattern;
-            max_voices        = p.max_voices;
-            sample_refs       = p.sample_refs;
-            for (const auto& [key, slot] : p.custom_field_slots) {
-                custom_props.emplace_back(key, slot);
-            }
-        } else {
-            error("E242", std::string(name) + "() first argument must be a "
-                  "pattern or MIDI event source", n.location);
-            return TypedValue::void_val();
+// event_transform_resolve_upstream (stage 1) resolves + validates the
+// upstream event source and captures its readout metadata; nullopt on error.
+std::optional<CodeGenerator::EventTransformUpstream>
+CodeGenerator::event_transform_resolve_upstream(NodeIndex input_arg,
+                                                const char* name,
+                                                SourceLocation loc) {
+    EventTransformUpstream up;
+    TypedValue in_tv = visit(input_arg);
+    if (in_tv.type == ValueType::Pattern && in_tv.pattern) {
+        const PatternPayload& p = *in_tv.pattern;
+        up.state_id          = p.state_id;
+        up.cycle_length      = p.cycle_length;
+        up.is_sample_pattern = p.is_sample_pattern;
+        up.max_voices        = p.max_voices;
+        up.sample_refs       = p.sample_refs;
+        for (const auto& [key, slot] : p.custom_field_slots) {
+            up.custom_props.emplace_back(key, slot);
         }
-        // The upstream is consumed as an event stream — clear its E410
-        // polyphony tracking so a transformed chord is not double-flagged.
-        polyphonic_pattern_nodes_.erase(input_arg);
-        consume_polyphonic_pattern(upstream_state_id);
+    } else {
+        error("E242", std::string(name) + "() first argument must be a "
+              "pattern or MIDI event source", loc);
+        return std::nullopt;
     }
-    if (upstream_state_id == 0) {
-        error("E242", std::string(name) + "() upstream event source has no "
-              "runtime state", n.location);
-        return TypedValue::void_val();
-    }
+    // The upstream is consumed as an event stream — clear its E410
+    // polyphony tracking so a transformed chord is not double-flagged.
+    polyphonic_pattern_nodes_.erase(input_arg);
+    consume_polyphonic_pattern(up.state_id);
 
-    // --- Resolve the closure -----------------------------------------------
+    if (up.state_id == 0) {
+        error("E242", std::string(name) + "() upstream event source has no "
+              "runtime state", loc);
+        return std::nullopt;
+    }
+    return up;
+}
+
+// event_transform_resolve_closure (stage 2) resolves the closure, validates
+// its arity, and pre-scans its event-field reads to decide bank need.
+std::optional<FunctionRef> CodeGenerator::event_transform_resolve_closure(
+    NodeIndex lambda_arg, const char* name, SourceLocation loc,
+    bool& need_bank) {
     auto func_ref = resolve_function_arg(lambda_arg);
     if (!func_ref) {
         error("E403", std::string(name) + "() second argument must be a "
-              "closure", n.location);
-        return TypedValue::void_val();
+              "closure", loc);
+        return std::nullopt;
     }
     if (func_ref->params.size() != 1) {
         error("E404", std::string(name) + "() closure must have exactly 1 "
               "parameter, got " + std::to_string(func_ref->params.size()),
-              n.location);
-        return TypedValue::void_val();
+              loc);
+        return std::nullopt;
     }
     const std::string& record_param = func_ref->params[0].name;
 
@@ -494,30 +484,39 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     std::set<std::string> fields;
     collect_param_fields(ast_->arena, func_ref->closure_node, record_param, *ctx_->interner,
                          fields);
-    bool need_bank = false;
+    need_bank = false;
     for (const auto& f : fields) {
         int slot = field_slot(f);
         if (slot == -2) {
             error("E408", "field '" + f + "' is not available on an event "
                   "record — available fields: freq, vel, dur, note, chance, "
-                  "time, gate, trig, notes, freqs", n.location);
-            return TypedValue::void_val();
+                  "time, gate, trig, notes, freqs", loc);
+            return std::nullopt;
         }
         // -3 is the chord-array sentinel; its DynArray data lives in the
         // bank's slots 7..9, so we need the bank too.
         if (slot >= 0 || slot == -3) need_bank = true;
     }
+    return func_ref;
+}
 
-    // --- Allocate the closure's input convention buffers -------------------
-    std::uint16_t freq_buf = alloc_buffer(n.location);
-    if (freq_buf == UNUSED) {
-        return TypedValue::void_val();
+// event_transform_alloc_buffers (stage 3) allocates the closure's convention
+// input buffers (freq + optional record bank) and mode-specific output
+// buffers (event_map field bank / event_filter predicate). False on failure.
+bool CodeGenerator::event_transform_alloc_buffers(bool is_filter,
+                                                  bool need_bank,
+                                                  SourceLocation loc,
+                                                  EventTransformBuffers& bufs) {
+    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
+    bufs.freq_buf = alloc_buffer(loc);
+    if (bufs.freq_buf == UNUSED) {
+        return false;
     }
-    std::uint16_t bank_buf = UNUSED;
+    bufs.bank_buf = UNUSED;
     if (need_bank) {
-        bank_buf = buffers_.allocate();
-        bool ok = (bank_buf != UNUSED);
-        std::uint16_t prev = bank_buf;
+        bufs.bank_buf = buffers_.allocate();
+        bool ok = (bufs.bank_buf != UNUSED);
+        std::uint16_t prev = bufs.bank_buf;
         for (int i = 1; i < cedar::EVENT_BANK_COUNT && ok; ++i) {
             std::uint16_t b = buffers_.allocate();
             if (b == UNUSED || b != prev + 1) ok = false;
@@ -525,25 +524,24 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         }
         if (!ok) {
             error("E166", "Internal error: event-record bank buffers not "
-                  "contiguous", n.location);
-            return TypedValue::void_val();
+                  "contiguous", loc);
+            return false;
         }
     }
 
-    // --- Allocate the closure's output buffers -----------------------------
     // event_map: a contiguous EVENT_OUT_COUNT-buffer output field bank.
     // event_filter: a single predicate result buffer.
-    std::uint16_t out_bank = UNUSED;
-    std::uint16_t pred_buf = UNUSED;
+    bufs.out_bank = UNUSED;
+    bufs.pred_buf = UNUSED;
     if (is_filter) {
-        pred_buf = alloc_buffer(n.location);
-        if (pred_buf == UNUSED) {
-            return TypedValue::void_val();
+        bufs.pred_buf = alloc_buffer(loc);
+        if (bufs.pred_buf == UNUSED) {
+            return false;
         }
     } else {
-        out_bank = buffers_.allocate();
-        bool ok = (out_bank != UNUSED);
-        std::uint16_t prev = out_bank;
+        bufs.out_bank = buffers_.allocate();
+        bool ok = (bufs.out_bank != UNUSED);
+        std::uint16_t prev = bufs.out_bank;
         for (int i = 1; i < cedar::EVENT_OUT_COUNT && ok; ++i) {
             std::uint16_t b = buffers_.allocate();
             if (b == UNUSED || b != prev + 1) ok = false;
@@ -551,17 +549,152 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         }
         if (!ok) {
             error("E166", "Internal error: event-map output bank buffers not "
-                  "contiguous", n.location);
-            return TypedValue::void_val();
+                  "contiguous", loc);
+            return false;
         }
     }
+    return true;
+}
 
-    std::uint32_t count = call_counters_[name]++;
-    push_path(std::string(name) + "#" + std::to_string(count));
-    std::uint32_t state_id = compute_state_id();
+// event_transform_wire_map_outputs wires an event_map closure's returned
+// record into the output field bank (chord arrays pack to DynArray shape
+// first); returns the EVENT_MASK write mask.
+std::uint16_t CodeGenerator::event_transform_wire_map_outputs(
+    const TypedValue& body_tv, std::uint16_t out_bank, const Node& n) {
+    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
+    std::uint16_t write_mask = 0;
+    if (body_tv.type != ValueType::Record || !body_tv.record) {
+        error("E174", "event_map() closure must return a record literal, "
+              "e.g. (e) -> {note: e.note + 7}", n.location);
+        return write_mask;
+    }
+    // Phase 5 Commit E precedence rule: if the closure returns both
+    // `note` (scalar) and `notes`/`freqs` (chord array), the array
+    // wins and the scalar `note` is dropped. The scalar would
+    // otherwise apply BEFORE the array overlay and silently shift
+    // the primary voice — surprising. Detect dual-write up front.
+    const bool has_chord_array =
+        body_tv.record->fields.count("notes") ||
+        body_tv.record->fields.count("freqs");
 
-    // --- Compile the closure body into a subprogram block ------------------
-    std::uint32_t block_id = begin_subprogram();
+    for (const auto& [fname, fval] : body_tv.record->fields) {
+        int slot = event_map_out_slot(fname);
+        if (slot < 0) {
+            error("E408", "event_map() closure returned field '" +
+                  fname + "' — writable event fields are note, vel, "
+                  "dur, time, chance, bend, at, notes, freqs",
+                  n.location);
+            continue;
+        }
+        const bool is_chord_array =
+            (slot == cedar::EVENT_OUT_NOTES_DATA ||
+             slot == cedar::EVENT_OUT_FREQS_DATA);
+        if (is_chord_array) {
+            // Resolve the chord-array data + length buffers. DynArray
+            // (from `e.notes` or `map(e.notes, …)`) passes through;
+            // a multi-buffer Array (from `map([literal], …)`) is
+            // packed via ARRAY_PACK + ARRAY_PUSH into a DynArray-
+            // shaped (data, len) pair before the COPY emit. Same
+            // packing shape as the dynamic-index Array path in
+            // codegen.cpp:509-557.
+            std::uint16_t data_buf = UNUSED;
+            std::uint16_t len_buf  = UNUSED;
+            if (fval.type == ValueType::DynArray && fval.dyn) {
+                data_buf = fval.dyn->data_buffer;
+                len_buf  = fval.dyn->len_buffer;
+            } else if (fval.type == ValueType::Array && fval.array) {
+                const auto buffers = buffers_of(fval);
+                if (buffers.empty()) {
+                    error("E174", "event_map() field '" + fname +
+                          "' is an empty array", n.location);
+                    continue;
+                }
+                const std::uint8_t arr_len =
+                    static_cast<std::uint8_t>(buffers.size());
+                const std::uint8_t pack_count =
+                    std::min<std::uint8_t>(arr_len, 5);
+                codegen::InstructionBuilder pack(
+                    cedar::Opcode::ARRAY_PACK);
+                pack.rate(pack_count);
+                for (std::uint8_t k = 0; k < pack_count; ++k) {
+                    pack.input(k, buffers[k]);
+                }
+                std::uint16_t packed = pack.emit(*this, n.location);
+                if (packed == UNUSED) {
+                    continue;
+                }
+                for (std::uint8_t k = 5; k < arr_len; ++k) {
+                    const std::uint16_t next =
+                        codegen::InstructionBuilder(
+                            cedar::Opcode::ARRAY_PUSH)
+                            .input(0, packed)
+                            .input(1, buffers[k])
+                            .rate(k)
+                            .emit(*this, n.location);
+                    if (next == UNUSED) {
+                        break;
+                    }
+                    packed = next;
+                }
+                data_buf = packed;
+                len_buf = emit_push_const(static_cast<float>(arr_len));
+            } else {
+                error("E174", "event_map() field '" + fname +
+                      "' must be a chord array (e.g. e.notes or "
+                      "map(intervals, (i) -> e.note + i)); got a "
+                      "scalar", n.location);
+                continue;
+            }
+            if (data_buf == UNUSED || len_buf == UNUSED) continue;
+
+            // COPY the array's data buffer into the bank's data slot
+            // and the array's length signal into the shared NUM_VALUES
+            // slot. Both mask bits are set so the runtime knows to
+            // apply the chord-array overlay.
+            emit(cedar::Instruction::make_unary(
+                cedar::Opcode::COPY,
+                static_cast<std::uint16_t>(out_bank + slot),
+                data_buf));
+            emit(cedar::Instruction::make_unary(
+                cedar::Opcode::COPY,
+                static_cast<std::uint16_t>(out_bank +
+                    cedar::EVENT_OUT_NUM_VALUES),
+                len_buf));
+            write_mask = static_cast<std::uint16_t>(write_mask |
+                (1u << slot) |
+                (1u << cedar::EVENT_OUT_NUM_VALUES));
+            continue;
+        }
+        // Scalar slot — skip the `note` COPY when a chord array is
+        // also present (the array overlay rewrites all voices,
+        // including the primary; an extra coupled shift would
+        // double-apply).
+        if (slot == cedar::EVENT_OUT_NOTE && has_chord_array) {
+            continue;
+        }
+        if (fval.buffer == UNUSED) {
+            error("E174", "event_map() field '" + fname +
+                  "' has no value", n.location);
+            continue;
+        }
+        emit(cedar::Instruction::make_unary(
+            cedar::Opcode::COPY,
+            static_cast<std::uint16_t>(out_bank + slot), fval.buffer));
+        write_mask = static_cast<std::uint16_t>(write_mask | (1u << slot));
+    }
+    return write_mask;
+}
+
+// event_transform_compile_body (stage 4) compiles the closure body into a
+// subprogram block and wires its result into the transform's output buffers;
+// false when the body exceeds 255 instructions. Caller owns push_path/pop_path.
+bool CodeGenerator::event_transform_compile_body(
+    const FunctionRef& func_ref, bool is_filter, const char* name,
+    const Node& n, const EventTransformBuffers& bufs, bool need_bank,
+    std::uint32_t& block_id, std::uint16_t& write_mask) {
+    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
+    const std::string& record_param = func_ref.params[0].name;
+    block_id = begin_subprogram();
 
     symbols_->push_scope();
     {
@@ -569,11 +702,11 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         sym.kind = SymbolKind::Variable;
         sym.name = record_param;
         sym.name_id = ctx_->interner->intern(record_param);
-        sym.buffer_index = freq_buf;
-        sym.typed_value = build_event_record(freq_buf, bank_buf);
+        sym.buffer_index = bufs.freq_buf;
+        sym.typed_value = build_event_record(bufs.freq_buf, bufs.bank_buf);
         symbols_->define(sym);
     }
-    for (const auto& capture : func_ref->captures) {
+    for (const auto& capture : func_ref.captures) {
         symbols_->define_variable(capture.name, capture.buffer_index);
     }
 
@@ -581,145 +714,28 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     node_types_.clear();
 
     TypedValue body_tv = TypedValue::void_val();
-    if (func_ref->is_user_function) {
-        body_tv = visit(func_ref->closure_node);
+    if (func_ref.is_user_function) {
+        body_tv = visit(func_ref.closure_node);
     } else {
-        NodeIndex body = codegen::closure_body(ast_->arena, func_ref->closure_node);
+        NodeIndex body = codegen::closure_body(ast_->arena, func_ref.closure_node);
         if (body != NULL_NODE) body_tv = visit(body);
     }
 
     // Wire the closure result into the transform's output buffers.
     // Mask widened to 16 bits in Phase 5 Commit E (EVENT_OUT_COUNT = 10 now;
     // slots NOTES_DATA/FREQS_DATA/NUM_VALUES bump the high bit past 7).
-    std::uint16_t write_mask = 0;
+    write_mask = 0;
     if (is_filter) {
         if (body_tv.buffer == UNUSED) {
             error("E174", "event_filter() closure must return a numeric "
                   "predicate", n.location);
         } else {
             emit(cedar::Instruction::make_unary(cedar::Opcode::COPY,
-                                                pred_buf, body_tv.buffer));
+                                                bufs.pred_buf, body_tv.buffer));
         }
     } else {
-        if (body_tv.type != ValueType::Record || !body_tv.record) {
-            error("E174", "event_map() closure must return a record literal, "
-                  "e.g. (e) -> {note: e.note + 7}", n.location);
-        } else {
-            // Phase 5 Commit E precedence rule: if the closure returns both
-            // `note` (scalar) and `notes`/`freqs` (chord array), the array
-            // wins and the scalar `note` is dropped. The scalar would
-            // otherwise apply BEFORE the array overlay and silently shift
-            // the primary voice — surprising. Detect dual-write up front.
-            const bool has_chord_array =
-                body_tv.record->fields.count("notes") ||
-                body_tv.record->fields.count("freqs");
-
-            for (const auto& [fname, fval] : body_tv.record->fields) {
-                int slot = event_map_out_slot(fname);
-                if (slot < 0) {
-                    error("E408", "event_map() closure returned field '" +
-                          fname + "' — writable event fields are note, vel, "
-                          "dur, time, chance, bend, at, notes, freqs",
-                          n.location);
-                    continue;
-                }
-                const bool is_chord_array =
-                    (slot == cedar::EVENT_OUT_NOTES_DATA ||
-                     slot == cedar::EVENT_OUT_FREQS_DATA);
-                if (is_chord_array) {
-                    // Resolve the chord-array data + length buffers. DynArray
-                    // (from `e.notes` or `map(e.notes, …)`) passes through;
-                    // a multi-buffer Array (from `map([literal], …)`) is
-                    // packed via ARRAY_PACK + ARRAY_PUSH into a DynArray-
-                    // shaped (data, len) pair before the COPY emit. Same
-                    // packing shape as the dynamic-index Array path in
-                    // codegen.cpp:509-557.
-                    std::uint16_t data_buf = UNUSED;
-                    std::uint16_t len_buf  = UNUSED;
-                    if (fval.type == ValueType::DynArray && fval.dyn) {
-                        data_buf = fval.dyn->data_buffer;
-                        len_buf  = fval.dyn->len_buffer;
-                    } else if (fval.type == ValueType::Array && fval.array) {
-                        const auto buffers = buffers_of(fval);
-                        if (buffers.empty()) {
-                            error("E174", "event_map() field '" + fname +
-                                  "' is an empty array", n.location);
-                            continue;
-                        }
-                        const std::uint8_t arr_len =
-                            static_cast<std::uint8_t>(buffers.size());
-                        const std::uint8_t pack_count =
-                            std::min<std::uint8_t>(arr_len, 5);
-                        codegen::InstructionBuilder pack(
-                            cedar::Opcode::ARRAY_PACK);
-                        pack.rate(pack_count);
-                        for (std::uint8_t k = 0; k < pack_count; ++k) {
-                            pack.input(k, buffers[k]);
-                        }
-                        std::uint16_t packed = pack.emit(*this, n.location);
-                        if (packed == UNUSED) {
-                            continue;
-                        }
-                        for (std::uint8_t k = 5; k < arr_len; ++k) {
-                            const std::uint16_t next =
-                                codegen::InstructionBuilder(
-                                    cedar::Opcode::ARRAY_PUSH)
-                                    .input(0, packed)
-                                    .input(1, buffers[k])
-                                    .rate(k)
-                                    .emit(*this, n.location);
-                            if (next == UNUSED) {
-                                break;
-                            }
-                            packed = next;
-                        }
-                        data_buf = packed;
-                        len_buf = emit_push_const(static_cast<float>(arr_len));
-                    } else {
-                        error("E174", "event_map() field '" + fname +
-                              "' must be a chord array (e.g. e.notes or "
-                              "map(intervals, (i) -> e.note + i)); got a "
-                              "scalar", n.location);
-                        continue;
-                    }
-                    if (data_buf == UNUSED || len_buf == UNUSED) continue;
-
-                    // COPY the array's data buffer into the bank's data slot
-                    // and the array's length signal into the shared NUM_VALUES
-                    // slot. Both mask bits are set so the runtime knows to
-                    // apply the chord-array overlay.
-                    emit(cedar::Instruction::make_unary(
-                        cedar::Opcode::COPY,
-                        static_cast<std::uint16_t>(out_bank + slot),
-                        data_buf));
-                    emit(cedar::Instruction::make_unary(
-                        cedar::Opcode::COPY,
-                        static_cast<std::uint16_t>(out_bank +
-                            cedar::EVENT_OUT_NUM_VALUES),
-                        len_buf));
-                    write_mask = static_cast<std::uint16_t>(write_mask |
-                        (1u << slot) |
-                        (1u << cedar::EVENT_OUT_NUM_VALUES));
-                    continue;
-                }
-                // Scalar slot — skip the `note` COPY when a chord array is
-                // also present (the array overlay rewrites all voices,
-                // including the primary; an extra coupled shift would
-                // double-apply).
-                if (slot == cedar::EVENT_OUT_NOTE && has_chord_array) {
-                    continue;
-                }
-                if (fval.buffer == UNUSED) {
-                    error("E174", "event_map() field '" + fname +
-                          "' has no value", n.location);
-                    continue;
-                }
-                emit(cedar::Instruction::make_unary(
-                    cedar::Opcode::COPY,
-                    static_cast<std::uint16_t>(out_bank + slot), fval.buffer));
-                write_mask = static_cast<std::uint16_t>(write_mask | (1u << slot));
-            }
-        }
+        write_mask = event_transform_wire_map_outputs(body_tv, bufs.out_bank,
+                                                      n);
     }
 
     for (auto& [k, v] : saved_node_types) {
@@ -732,14 +748,20 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         error("E405", std::string(name) + "() closure body too large "
               "(max 255 instructions)", n.location);
         end_subprogram(block_id, need_bank ? 8 : 1, 1);
-        pop_path();
-        return TypedValue::void_val();
+        return false;
     }
     end_subprogram(block_id, /*frame_slot_count=*/need_bank ? 8 : 1,
                    /*output_count=*/1);
-    pop_path();
+    return true;
+}
 
-    // --- Emit the closure EVENT_MAP / EVENT_FILTER opcode ------------------
+// event_transform_emit_instruction (stage 5) emits the closure EVENT_MAP /
+// EVENT_FILTER opcode into the main stream plus its EventTransform state-init.
+void CodeGenerator::event_transform_emit_instruction(
+    bool is_filter, std::uint32_t block_id, std::uint16_t write_mask,
+    const EventTransformBuffers& bufs, const EventTransformUpstream& up,
+    std::uint32_t state_id) {
+    constexpr std::uint16_t UNUSED = BufferAllocator::BUFFER_UNUSED;
     cedar::Instruction et{};
     et.opcode = is_filter ? cedar::Opcode::EVENT_FILTER : cedar::Opcode::EVENT_MAP;
     et.rate = static_cast<std::uint8_t>(block_id);
@@ -749,11 +771,11 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
             et.flags | (write_mask << cedar::InstructionFlag::EVENT_MASK_SHIFT));
     }
     et.out_buffer = UNUSED;
-    et.inputs[0] = freq_buf;
-    et.inputs[1] = bank_buf;
-    et.inputs[2] = static_cast<std::uint16_t>(upstream_state_id & 0xFFFF);
-    et.inputs[3] = static_cast<std::uint16_t>((upstream_state_id >> 16) & 0xFFFF);
-    et.inputs[4] = is_filter ? pred_buf : out_bank;
+    et.inputs[0] = bufs.freq_buf;
+    et.inputs[1] = bufs.bank_buf;
+    et.inputs[2] = static_cast<std::uint16_t>(up.state_id & 0xFFFF);
+    et.inputs[3] = static_cast<std::uint16_t>((up.state_id >> 16) & 0xFFFF);
+    et.inputs[4] = is_filter ? bufs.pred_buf : bufs.out_bank;
     et.state_id = state_id;
     emit(et);
 
@@ -761,21 +783,26 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
     // buffer. total_events is not known from an already-compiled upstream
     // payload; size generously (the runtime floors to >=32 regardless).
     codegen::StateInitBuilder::event_transform(state_id)
-        .cycle_length(cycle_length)
-        .is_sample_pattern(is_sample_pattern)
+        .cycle_length(up.cycle_length)
+        .is_sample_pattern(up.is_sample_pattern)
         .total_events(256)
         .publish(*this);
+}
 
-    // --- Emit the readout for the transform-owned SequenceState ------------
+// event_transform_emit_readout (stage 6) emits the readout for the
+// transform-owned SequenceState (consumes up.sample_refs / custom_props).
+TypedValue CodeGenerator::event_transform_emit_readout(
+    NodeIndex node, bool is_filter, std::uint16_t write_mask,
+    std::uint32_t state_id, EventTransformUpstream& up, SourceLocation loc) {
     PatternQuerySource src;
     src.ok = true;
     src.state_id = state_id;
-    src.cycle_length = cycle_length;
-    src.is_sample_pattern = is_sample_pattern;
-    src.max_voices = max_voices;
+    src.cycle_length = up.cycle_length;
+    src.is_sample_pattern = up.is_sample_pattern;
+    src.max_voices = up.max_voices;
     src.total_events = 256;
-    src.sample_refs = std::move(sample_refs);
-    src.custom_props = std::move(custom_props);
+    src.sample_refs = std::move(up.sample_refs);
+    src.custom_props = std::move(up.custom_props);
     // event_map closures that write bend/at surface them as custom props on
     // the readout (fixed prop slots 0/1, matching overlay_event_field).
     if (!is_filter) {
@@ -790,7 +817,66 @@ TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
         add_prop("bend", 0, cedar::EVENT_OUT_BEND);
         add_prop("aftertouch", 1, cedar::EVENT_OUT_AT);
     }
-    return emit_pattern_readout(node, src, n.location);
+    return emit_pattern_readout(node, src, loc);
+}
+
+TypedValue CodeGenerator::emit_event_transform(NodeIndex node, const Node& n,
+                                               bool is_filter) {
+    using codegen::extract_call_args;
+    const char* name = is_filter ? "event_filter" : "event_map";
+
+    auto args = extract_call_args(ast_->arena, n.first_child, 2, 2);
+    if (!args.valid) {
+        error("E407", std::string(name) + "() requires 2 arguments "
+              "(events, closure)", n.location);
+        return TypedValue::void_val();
+    }
+    NodeIndex input_arg  = args.nodes[0];
+    NodeIndex lambda_arg = args.nodes[1];
+
+    // --- Resolve the upstream event source ---------------------------------
+    auto upstream = event_transform_resolve_upstream(input_arg, name,
+                                                     n.location);
+    if (!upstream) {
+        return TypedValue::void_val();
+    }
+
+    // --- Resolve the closure -----------------------------------------------
+    bool need_bank = false;
+    auto func_ref = event_transform_resolve_closure(lambda_arg, name,
+                                                    n.location, need_bank);
+    if (!func_ref) {
+        return TypedValue::void_val();
+    }
+
+    // --- Allocate the closure's convention buffers -------------------------
+    EventTransformBuffers bufs;
+    if (!event_transform_alloc_buffers(is_filter, need_bank, n.location,
+                                       bufs)) {
+        return TypedValue::void_val();
+    }
+
+    std::uint32_t count = call_counters_[name]++;
+    push_path(std::string(name) + "#" + std::to_string(count));
+    std::uint32_t state_id = compute_state_id();
+
+    // --- Compile the closure body into a subprogram block ------------------
+    std::uint32_t block_id = 0;
+    std::uint16_t write_mask = 0;
+    const bool body_ok = event_transform_compile_body(
+        *func_ref, is_filter, name, n, bufs, need_bank, block_id, write_mask);
+    pop_path();
+    if (!body_ok) {
+        return TypedValue::void_val();
+    }
+
+    // --- Emit the closure EVENT_MAP / EVENT_FILTER opcode + state init -----
+    event_transform_emit_instruction(is_filter, block_id, write_mask, bufs,
+                                     *upstream, state_id);
+
+    // --- Emit the readout for the transform-owned SequenceState ------------
+    return event_transform_emit_readout(node, is_filter, write_mask, state_id,
+                                        *upstream, n.location);
 }
 
 TypedValue CodeGenerator::handle_event_map_call(NodeIndex node, const Node& n) {
