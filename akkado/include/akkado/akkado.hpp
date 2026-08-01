@@ -118,6 +118,21 @@ struct CompileArtifacts {
     std::optional<SymbolTable> symbols;
     std::shared_ptr<Ast>       ast;
 
+    // Hardening Phase 8 (PRD-2): inputs for serialize_shape_index().
+    // `parsed_ast` is the pre-analysis parse tree of the combined
+    // stdlib+modules+user source — method-call chains are still intact
+    // here (the analyzer's transformed AST above desugars them to Calls).
+    // `user_source_offset` is the byte offset where the user-source
+    // region begins in the combined source (the user region is always
+    // the final segment); `user_source_hash` is the FNV-1a hash of the
+    // raw caller-provided source, matching the editor's JS-side cache
+    // key. `interner` points into the compile's context — valid as long
+    // as `owned_ctx` (or the caller's ctx) lives, same rule as `symbols`.
+    std::shared_ptr<Ast>  parsed_ast;
+    std::uint32_t         user_source_offset = 0;
+    std::uint32_t         user_source_hash = 0;
+    const StringInterner* interner = nullptr;
+
     // PRD prd-parser-codegen-correctness.md Phase 5 (F12): the
     // `symbols` SymbolTable above holds a non-owning pointer to a
     // StringInterner inside this context. When `compile()` constructs

@@ -462,13 +462,6 @@ export function createWasmAudioBackend(host: AudioBackendHost): AudioBackend {
 				}
 				break;
 			}
-			case 'shapeIndex': {
-				if (shapeIndexResolve) {
-					shapeIndexResolve(msg.success && msg.data ? (msg.data as ShapeIndexData) : null);
-					shapeIndexResolve = null;
-				}
-				break;
-			}
 			case 'patternInfo': {
 				if (patternInfoResolve) {
 					patternInfoResolve(msg.success ? (msg.patterns as PatternInfo[]) : []);
@@ -662,6 +655,15 @@ export function createWasmAudioBackend(host: AudioBackendHost): AudioBackend {
 	}
 
 	function handleCompileWorkerMessage(msg: { type?: string; [key: string]: unknown }) {
+		// Hardening Phase 8 (PRD-2): shape-index responses come from the
+		// compile worker (serialized from the last compile's artifacts).
+		if (msg?.type === 'shapeIndex') {
+			if (shapeIndexResolve) {
+				shapeIndexResolve(msg.success && msg.data ? (msg.data as ShapeIndexData) : null);
+				shapeIndexResolve = null;
+			}
+			return;
+		}
 		if (msg?.type !== 'compileResult') return;
 		const gen = msg.gen as number;
 		const resolver = pendingCompileResolves.get(gen);
@@ -1833,8 +1835,22 @@ export function createWasmAudioBackend(host: AudioBackendHost): AudioBackend {
 		if (!initialized) {
 			await initialize();
 		}
-		if (!workletNode) {
+		// Hardening Phase 8 (PRD-2): the shape index is serialized from the
+		// last compile's artifacts inside the compile worker — the worklet
+		// no longer parses on the audio thread. `source` only feeds the
+		// editor-side cache key; the worker reflects the last
+		// akkado_compile() regardless.
+		void source;
+		spawnCompileWorker();
+		if (!compileWorker || compileWorkerDead) {
 			return null;
+		}
+		if (compileWorkerReady) {
+			try {
+				await compileWorkerReady;
+			} catch {
+				return null;
+			}
 		}
 
 		// If a previous request is still pending, resolve it with null so
@@ -1853,9 +1869,8 @@ export function createWasmAudioBackend(host: AudioBackendHost): AudioBackend {
 					resolve(null);
 				}
 			}, 2000);
-			workletNode!.port.postMessage({
+			compileWorker!.postMessage({
 				type: 'getShapeIndex',
-				source,
 				cursor: cursorOffset
 			});
 		});

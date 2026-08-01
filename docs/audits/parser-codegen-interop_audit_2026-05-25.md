@@ -396,6 +396,22 @@ Hot identifiers like `freq`, `gate`, `vel` get rehashed dozens of times per comp
 
 **Severity: High.**
 
+> **RESOLVED** via `prd-parser-codegen-hardening.md` Phase 8, 2026-08-01.
+> `serialize_shape_index(const CompileArtifacts&, cursor)` replaces
+> `shape_index_json(source, cursor)` — zero lexer/parser invocations in
+> shape_index.cpp; it walks `artifacts.parsed_ast` (a new field: the
+> pre-analysis parse tree, kept because the transformed AST desugars the
+> method-call chains the `.set()` shape extraction reads) filtered to
+> the user-source region via `artifacts.user_source_offset`. The wasm
+> export reads the last `akkado_compile()`'s artifacts and now runs in
+> the **compile worker**; the AudioWorklet's `getShapeIndex` handler is
+> deleted (per-keystroke parsing off the audio thread entirely).
+> Divergences from the sketch: JSON formatter helpers stay (~370 LOC,
+> file is 472 not ~80 — byte-identical JSON was prioritised over the
+> LOC target), and the shape index now reflects the **last compile**
+> rather than the live editor buffer (the buffer-tolerant re-parse was
+> the thing being removed).
+
 ---
 
 ### F14. `voicing_registry` is process-global and leaks state across compiles — *High*
@@ -608,6 +624,11 @@ Ranked by ROI (impact ÷ effort). Each is a self-contained refactor; most can be
 **Scope:** Once PRD-1 lands, delete the re-lex+re-parse pipeline in `shape_index.cpp:424-435`. Replace with a thin formatter over `SymbolTable` + `output_arena_`. Web IDE keystroke latency drops to one parse pass.
 **Files touched:** `shape_index.cpp` (478 LOC → est. 80 LOC), `nkido_wasm.cpp:1380`.
 **Effort:** Small (3-5 days). Blocked by PRD-1.
+
+> **SHIPPED** via `prd-parser-codegen-hardening.md` Phase 8, 2026-08-01.
+> See F13 RESOLVED note for the delivered shape (formatter over
+> `CompileArtifacts::parsed_ast`, wasm export moved to the compile
+> worker, worklet handler deleted).
 
 ### PRD-3 — Per-import front-end parallelism  *(High)*
 **Scope:** Stop concatenating sources in `akkado.cpp:90-137`. Lex+parse each `ResolvedModule` on its own thread into per-module token/AST/diagnostic vectors. Build a merge step that re-indexes `NodeIndex` and concatenates `SourceMap` regions. Add a content-hash-keyed AST cache for unchanged imports.

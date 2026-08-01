@@ -1293,10 +1293,12 @@ static std::string g_shape_index_json;
 /**
  * Get the analyzer-driven shape index for editor autocomplete.
  *
- * `source` / `source_len` describe the current editor buffer (UTF-8 bytes,
- * not null-terminated — pass the byte length explicitly). `cursor_offset`
- * is the UTF-8 byte offset of the editor caret in `source`; pass UINT32_MAX
- * (or any value past end-of-source) to skip patternHole resolution.
+ * Hardening Phase 8 (PRD-2): serialized from the last akkado_compile()'s
+ * CompileArtifacts — no re-lex/re-parse. Runs in the compile worker (the
+ * instance whose g_compile_result is populated); the worklet no longer
+ * implements this (audio-thread contract). `cursor_offset` is the UTF-8
+ * byte offset of the editor caret in the *user* source; pass UINT32_MAX
+ * to skip patternHole resolution.
  *
  * Returns a pointer to a null-terminated JSON string with the shape index.
  * The returned pointer is valid until the next call to this function.
@@ -1304,11 +1306,9 @@ static std::string g_shape_index_json;
  * Phase 2 of records-system-unification PRD; see `docs/prd-records-system-
  * unification.md` §5.2 for the JSON schema.
  */
-WASM_EXPORT const char* akkado_get_shape_index(const char* source,
-                                                std::uint32_t source_len,
-                                                std::uint32_t cursor_offset) {
-    g_shape_index_json = akkado::shape_index_json(
-        std::string_view(source, source_len), cursor_offset);
+WASM_EXPORT const char* akkado_get_shape_index(std::uint32_t cursor_offset) {
+    g_shape_index_json =
+        akkado::serialize_shape_index(g_compile_result.artifacts, cursor_offset);
     return g_shape_index_json.c_str();
 }
 

@@ -1,9 +1,9 @@
 #include "akkado/shape_index.hpp"
 
+#include "akkado/akkado.hpp"
 #include "akkado/ast.hpp"
 #include "akkado/expr_kinds.hpp"
-#include "akkado/lexer.hpp"
-#include "akkado/parser.hpp"
+#include "akkado/string_interner.hpp"
 #include "akkado/typed_value.hpp"
 
 #include <algorithm>
@@ -32,17 +32,6 @@ std::string escape_json(std::string_view sv) {
         }
     }
     return result;
-}
-
-// FNV-1a 32-bit — same scheme as the editor side and as
-// symbol_table.hpp::fnv1a_hash. Kept private to this TU.
-std::uint32_t hash_source(std::string_view src) {
-    std::uint32_t h = 2166136261u;
-    for (char c : src) {
-        h ^= static_cast<std::uint32_t>(static_cast<unsigned char>(c));
-        h *= 16777619u;
-    }
-    return h;
 }
 
 // Map a field's underlying RHS node type to the textual label exposed in
@@ -293,18 +282,24 @@ bool extract_top_level_assignment(const Ast& ast, NodeIndex idx,
 }
 
 // Walk siblings of a Program node to collect top-level assignments.
+// Statements before `user_source_offset` belong to the stdlib / imported
+// module regions of the combined source and are skipped — the shape
+// index only exposes the user's own bindings.
 std::vector<AssignmentRow> collect_top_level_assignments(const Ast& ast,
-                                                          const StringInterner& interner) {
+                                                          const StringInterner& interner,
+                                                          std::uint32_t user_source_offset) {
     std::vector<AssignmentRow> rows;
     if (ast.root == NULL_NODE) return rows;
     const Node& prog = ast.arena[ast.root];
     NodeIndex stmt = prog.first_child;
     std::unordered_set<std::string> seen;
     while (stmt != NULL_NODE) {
-        AssignmentRow row;
-        if (extract_top_level_assignment(ast, stmt, interner, row)) {
-            if (seen.insert(row.name).second) {
-                rows.push_back(std::move(row));
+        if (ast.arena[stmt].location.offset >= user_source_offset) {
+            AssignmentRow row;
+            if (extract_top_level_assignment(ast, stmt, interner, row)) {
+                if (seen.insert(row.name).second) {
+                    rows.push_back(std::move(row));
+                }
             }
         }
         stmt = ast.arena[stmt].next_sibling;
@@ -395,27 +390,33 @@ NodeIndex resolve_pipe_lhs_rhs(const Ast& ast,
 
 }  // namespace
 
-std::string shape_index_json(std::string_view source,
-                             std::uint32_t cursor_offset) {
+std::uint32_t shape_index_source_hash(std::string_view src) {
+    std::uint32_t h = 2166136261u;
+    for (char c : src) {
+        h ^= static_cast<std::uint32_t>(static_cast<unsigned char>(c));
+        h *= 16777619u;
+    }
+    return h;
+}
+
+std::string serialize_shape_index(const CompileArtifacts& artifacts,
+                                  std::uint32_t cursor_offset) {
     std::ostringstream json;
-    json << "{\"version\":1,\"sourceHash\":" << hash_source(source);
+    json << "{\"version\":1,\"sourceHash\":" << artifacts.user_source_hash;
 
-    // PRD prd-parser-codegen-correctness.md Phase 5 (F12): shape_index
-    // re-lexes/re-parses for its own purposes (audit F1 / PRD-2 covers
-    // sharing the main compile's AST). It owns a local interner so
-    // identifier tokens get SymbolIds — required by the post-Phase-5
-    // Lexer/Parser ctor signatures.
-    StringInterner interner;
-
-    auto [tokens, lex_diags] = lex(source, interner, "<shape-index>");
-    if (tokens.empty()) {
+    // Hardening Phase 8 (PRD-2): no re-lex/re-parse — walk the main
+    // compile's pre-analysis tree. Absent artifacts (lex failure, empty
+    // source) degrade to an empty binding set.
+    if (!artifacts.parsed_ast || !artifacts.interner ||
+        artifacts.parsed_ast->root == NULL_NODE) {
         json << ",\"bindings\":{}}";
         return json.str();
     }
+    const Ast& ast = *artifacts.parsed_ast;
+    const StringInterner& interner = *artifacts.interner;
+    const std::uint32_t user_offset = artifacts.user_source_offset;
 
-    auto [ast, parse_diags] = parse(std::move(tokens), source, interner, "<shape-index>");
-
-    auto bindings = collect_top_level_assignments(ast, interner);
+    auto bindings = collect_top_level_assignments(ast, interner, user_offset);
 
     json << ",\"bindings\":{";
     bool first = true;
@@ -437,7 +438,19 @@ std::string shape_index_json(std::string_view source,
     json << "}";
 
     if (cursor_offset != SHAPE_INDEX_NO_CURSOR) {
-        NodeIndex pipe_idx = deepest_pipe_covering(ast, ast.root, cursor_offset);
+        // The cursor arrives in user-source (editor buffer) coordinates;
+        // AST locations live in combined-source coordinates. Rebase, then
+        // search only the user region's top-level statements.
+        const std::uint32_t combined_cursor = cursor_offset + user_offset;
+        NodeIndex pipe_idx = NULL_NODE;
+        NodeIndex stmt = ast.arena[ast.root].first_child;
+        while (stmt != NULL_NODE) {
+            if (ast.arena[stmt].location.offset >= user_offset) {
+                NodeIndex found = deepest_pipe_covering(ast, stmt, combined_cursor);
+                if (found != NULL_NODE) pipe_idx = found;
+            }
+            stmt = ast.arena[stmt].next_sibling;
+        }
         if (pipe_idx != NULL_NODE) {
             NodeIndex producer = resolve_pipe_lhs_rhs(ast, pipe_idx, interner, bindings);
             if (producer != NULL_NODE && rhs_is_pattern(ast, producer, interner)) {

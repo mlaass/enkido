@@ -117,6 +117,9 @@ function dispatch(msg: { type?: string; [key: string]: unknown }) {
         case 'compile':
             compile(msg.gen as number, msg.source as string);
             break;
+        case 'getShapeIndex':
+            getShapeIndex(msg.cursor as number | undefined);
+            break;
         default:
             // Unknown messages get logged and ignored — forward-compat with
             // future main-thread message types.
@@ -204,6 +207,22 @@ function copyBytes(ptr: number, byteCount: number): Uint8Array {
 
 function utf8(ptr: number): string {
     return ptr ? wasm.UTF8ToString(ptr) : '';
+}
+
+// Hardening Phase 8 (PRD-2): shape index for editor autocomplete,
+// serialized from the last _akkado_compile()'s artifacts in this worker.
+// The worklet no longer implements this (audio-thread contract).
+function getShapeIndex(cursor: number | undefined) {
+    try {
+        const cursorVal =
+            typeof cursor === 'number' && cursor >= 0 ? cursor >>> 0 : 0xffffffff;
+        const jsonPtr = wasm._akkado_get_shape_index(cursorVal);
+        const raw = jsonPtr ? wasm.UTF8ToString(jsonPtr) : '';
+        const data = raw ? JSON.parse(raw) : null;
+        self.postMessage({ type: 'shapeIndex', success: data != null, data });
+    } catch (e) {
+        self.postMessage({ type: 'shapeIndex', success: false, error: String(e) });
+    }
 }
 
 function getRequiredSamples(): string[] {

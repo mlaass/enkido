@@ -231,12 +231,9 @@ class CedarProcessor extends AudioWorkletProcessor {
 				this.getBuiltins();
 				break;
 
-			case 'getShapeIndex':
-				// Phase 2 records-system-unification: editor pulls the
-				// analyzer-driven shape index for r./@./record-literal
-				// completions. Debounced ~300 ms on the main thread.
-				this.getShapeIndex(msg.requestId, msg.source, msg.cursor);
-				break;
+			// 'getShapeIndex' removed (hardening Phase 8 / PRD-2): the shape
+			// index is serialized from compile artifacts in the compile
+			// worker — no parsing on the audio thread.
 
 			case 'getPatternInfo':
 				this.getPatternInfo();
@@ -985,71 +982,6 @@ class CedarProcessor extends AudioWorkletProcessor {
 				success: false,
 				error: String(err)
 			});
-		}
-	}
-
-	/**
-	 * Get the analyzer-driven shape index for editor autocomplete.
-	 * Phase 2 records-system-unification PRD §5.2.
-	 * @param {number|undefined} requestId - correlator passed back unchanged
-	 * @param {string} source - editor buffer
-	 * @param {number} cursor - UTF-8 byte offset; pass 0xFFFFFFFF to skip patternHole resolution
-	 */
-	getShapeIndex(requestId, source, cursor) {
-		if (!this.module) {
-			this.port.postMessage({
-				type: 'shapeIndex',
-				requestId,
-				success: false,
-				error: 'Module not initialized'
-			});
-			return;
-		}
-		let ptr = 0;
-		try {
-			const text = source || '';
-			const utf8ByteLen = this.module.lengthBytesUTF8(text);
-			ptr = this.module._nkido_malloc(utf8ByteLen + 1);
-			if (ptr === 0) {
-				this.port.postMessage({
-					type: 'shapeIndex',
-					requestId,
-					success: false,
-					error: 'allocation failed'
-				});
-				return;
-			}
-			this.module.stringToUTF8(text, ptr, utf8ByteLen + 1);
-			const cursorVal = (typeof cursor === 'number' && cursor >= 0)
-				? cursor >>> 0
-				: 0xFFFFFFFF;
-			const jsonPtr = this.module._akkado_get_shape_index(ptr, utf8ByteLen, cursorVal);
-			if (!jsonPtr) {
-				this.port.postMessage({
-					type: 'shapeIndex',
-					requestId,
-					success: false,
-					error: 'shape_index_json returned null'
-				});
-				return;
-			}
-			const jsonStr = this.module.UTF8ToString(jsonPtr);
-			const data = JSON.parse(jsonStr);
-			this.port.postMessage({
-				type: 'shapeIndex',
-				requestId,
-				success: true,
-				data
-			});
-		} catch (err) {
-			this.port.postMessage({
-				type: 'shapeIndex',
-				requestId,
-				success: false,
-				error: String(err)
-			});
-		} finally {
-			if (ptr !== 0) this.module._nkido_free(ptr);
 		}
 	}
 

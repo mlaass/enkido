@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "akkado/akkado.hpp"
 #include "akkado/shape_index.hpp"
 
 #include <string>
@@ -8,6 +9,16 @@
 using namespace akkado;
 
 namespace {
+
+// Hardening Phase 8 (PRD-2): the shape index is a formatter over the
+// main compile's artifacts. This helper keeps the old driver shape so
+// the expectations below stay byte-for-byte what the pre-rewrite
+// implementation produced.
+std::string shape_index_json(std::string_view src,
+                             std::uint32_t cursor = SHAPE_INDEX_NO_CURSOR) {
+    auto result = akkado::compile(src, {.filename = "<shape-test>"});
+    return akkado::serialize_shape_index(result.artifacts, cursor);
+}
 
 // Locate the JSON object that follows `"<key>":` in `json` and return the
 // indices [open, close] of its enclosing braces. Returns {npos, npos} when

@@ -1,4 +1,30 @@
-> **Status: IN PROGRESS — Phase 1-7 SHIPPED (2026-08-01), 2 phases remaining.**
+> **Status: IN PROGRESS — Phase 1-8 SHIPPED (2026-08-01), 1 phase remaining.**
+>
+> - **Phase 8 (shape_index over CompileArtifacts) — SHIPPED 2026-08-01.**
+>   `serialize_shape_index(const CompileArtifacts&, cursor)` replaces
+>   `shape_index_json(source, cursor)`; zero lexer/parser invocations
+>   remain in shape_index.cpp. **Divergences from the spec above:**
+>   (1) the formatter walks a new `CompileArtifacts::parsed_ast` (the
+>   pre-analysis parse tree) — NOT `artifacts.ast`, because the
+>   transformed AST desugars method-call chains, which would break the
+>   `.set()` custom-field extraction and pattern-chain detection;
+>   compile() also stashes `user_source_offset` (stdlib/module regions
+>   are filtered out; editor cursor offsets are rebased),
+>   `user_source_hash` (the JS cache-key FNV, surfaced as
+>   "sourceHash") and an `interner` pointer. (2) The file is 472 LOC,
+>   not ≤100 — the re-pipeline is gone but the JSON formatter helpers
+>   stay, because byte-identical JSON output (verified by the
+>   unchanged test expectations, now driven through compile()) was
+>   prioritised over the LOC estimate. (3) The API keeps the
+>   `cursor_offset` parameter (patternHole needs it). Web: the wasm
+>   export serializes the **last compile's** artifacts and runs in the
+>   compile worker; the AudioWorklet `getShapeIndex` handler is
+>   deleted (per-keystroke parsing leaves the audio thread — worklet
+>   contract win). Tradeoff documented in the audit note: shapes now
+>   reflect the last compile rather than the live buffer. Full suites
+>   green; snapshot byte-identical; wasm green; svelte-check clean;
+>   web unit (164) + Playwright e2e (15) green. Commit hashes
+>   backfilled at Phase 9.
 >
 > - **Phase 7 (expr_kinds + named_args consolidation) — SHIPPED
 >   2026-08-01.** New `expr_kinds.hpp/.cpp`: `midi_to_hz` (exit-grep

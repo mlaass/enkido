@@ -8,6 +8,7 @@
 #include "akkado/source_map.hpp"
 #include "akkado/import_scanner.hpp"
 #include "akkado/file_resolver.hpp"
+#include "akkado/shape_index.hpp"
 #include <cedar/vm/instruction.hpp>
 #include <fstream>
 #include <optional>
@@ -46,6 +47,12 @@ CompileResult compile(std::string_view source, const CompileOptions& opts) {
         result.artifacts.owned_ctx = std::make_shared<CompileContext>();
         ctx = result.artifacts.owned_ctx.get();
     }
+
+    // Hardening Phase 8 (PRD-2): shape-index inputs, set on every return
+    // path. The interner pointer stays valid as long as the context does
+    // (owned_ctx or the caller's ctx — same lifetime rule as symbols).
+    result.artifacts.interner = ctx->interner.get();
+    result.artifacts.user_source_hash = shape_index_source_hash(source);
 
     if (source.empty()) {
         result.diagnostics.push_back(Diagnostic{
@@ -150,6 +157,13 @@ CompileResult compile(std::string_view source, const CompileOptions& opts) {
     combined_source.append(user_source);
     source_map.add_region(std::string(filename), offset, user_source.size(), cumulative_lines);
 
+    // Hardening Phase 8 (PRD-2): the user region is always the final
+    // segment of the combined source. serialize_shape_index() filters
+    // top-level bindings by this offset and rebases editor cursor
+    // offsets onto it (import lines are blanked in place, so byte
+    // offsets within the user region match the editor buffer 1:1).
+    result.artifacts.user_source_offset = static_cast<std::uint32_t>(offset);
+
     // Phase 1: Lexing
     auto [tokens, lex_diags] = lex(combined_source, *ctx->interner, filename);
     source_map.adjust_all(lex_diags);
@@ -172,6 +186,7 @@ CompileResult compile(std::string_view source, const CompileOptions& opts) {
         // Phase 2 records-system-unification: surface partial AST so callers
         // (e.g. shape-index tooling) can still inspect what was parsed.
         result.artifacts.ast = std::make_shared<Ast>(std::move(ast));
+        result.artifacts.parsed_ast = result.artifacts.ast;
         result.success = false;
         return result;
     }
@@ -184,6 +199,9 @@ CompileResult compile(std::string_view source, const CompileOptions& opts) {
 
     SemanticAnalyzer analyzer(*ctx->interner);
     auto analysis = analyzer.analyze(ast, filename, &source_map, namespaces);
+    // Hardening Phase 8: retain the pre-analysis parse tree — the shape
+    // index walks it (method-call chains intact, unlike transformed_ast).
+    result.artifacts.parsed_ast = std::make_shared<Ast>(std::move(ast));
     source_map.adjust_all(analysis.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(),
                               analysis.diagnostics.begin(),
